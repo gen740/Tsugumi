@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "hosq": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792770762,
+        "narHash": "sha256-hwqkpP10SipanSOWffGruEKWByFb0R4YDYiFiRM5eX0=",
+        "owner": "CLI20-dev",
+        "repo": "hosq",
+        "rev": "38c3c8e21f570a9698006c361fc58bf0365896e0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "CLI20-dev",
+        "repo": "hosq",
+        "rev": "38c3c8e21f570a9698006c361fc58bf0365896e0",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1793341285,
+        "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1c89083e451e891152365b799595cf7790a43325",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "hosq": "hosq",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

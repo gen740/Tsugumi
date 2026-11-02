@@ -1,0 +1,712 @@
+// Tsugumi external RPC. Generation 1.
+//
+// Root: Tsugumi.RPC.Message, file identifier "TSG1".
+// WebSocket subprotocol: "tsugumi.rpc.v1" (one binary message = one FlatBuffer).
+// Unix stream socket: 4 byte little-endian body length + FlatBuffer.
+//
+// Field ids and union tags are explicit and are never changed or reused within
+// generation 1. Defaults written as "= X" in comments are applied by the core
+// when the field is absent; required scalars are optional scalars whose
+// presence is validated. Every request may also be answered with Failure.
+
+include "data.fbs";
+
+namespace Tsugumi.RPC;
+
+// ---- Common ------------------------------------------------------------------
+
+table Ack {}
+
+table Limits {
+  max_frame_bytes:uint32 = null (id: 0);
+  max_connections:uint32 = null (id: 1);
+  max_inflight:uint32 = null (id: 2);
+  mutation_queue_limit:uint32 = null (id: 3);
+  queue_wait_ms:uint32 = null (id: 4);
+  outbox_messages:uint32 = null (id: 5);
+  outbox_bytes:uint64 = null (id: 6);
+  page_limit:uint32 = null (id: 7);
+  file_chunk_bytes:uint32 = null (id: 8);
+  log_chunk_bytes:uint32 = null (id: 9);
+}
+
+table SourceInfo {
+  path:string (id: 0, required);
+  kind:Tsugumi.Data.SourceKind (id: 1);
+  exists:bool = null (id: 2);
+  hash:string (id: 3);
+  size_bytes:uint64 = null (id: 4);
+}
+
+table Definition {
+  id:string (id: 0, required);
+  card_json:string (id: 1, required);
+  meta_json:string (id: 2);
+}
+
+table ResolvedCard {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  inputs:[Tsugumi.Data.Port] (id: 1, required);
+  outputs:[Tsugumi.Data.Port] (id: 2, required);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
+}
+
+table Camera {
+  scope:Tsugumi.Data.CardPath (id: 0, required);
+  x:double = null (id: 1);
+  y:double = null (id: 2);
+  zoom:double = null (id: 3);
+}
+
+table ViewState {
+  scope:Tsugumi.Data.CardPath (id: 0, required);
+  cameras:[Camera] (id: 1, required);
+  selected_cards:[Tsugumi.Data.CardPath] (id: 2, required);
+}
+
+// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,
+// cancelling while a cancel is in progress. Anything but idle carries run_id,
+// rev, execution_rev and accepted_at; terminal states carry ended_at.
+table RunStatus {
+  run_id:string (id: 0);
+  state:Tsugumi.Data.RunState (id: 1);
+  rev:uint64 = null (id: 2);
+  execution_rev:uint64 = null (id: 3);
+  accepted_at:int64 = null (id: 4);
+  started_at:int64 = null (id: 5);
+  ended_at:int64 = null (id: 6);
+  failure:Tsugumi.Data.Failure (id: 7);
+}
+
+table ProjectSnapshot {
+  project_id:string (id: 0, required);
+  rev:uint64 = null (id: 1);
+  execution_rev:uint64 = null (id: 2);
+  project_json:string (id: 3, required);
+  layout_json:string (id: 4, required);
+  definitions:[Definition] (id: 5, required);
+  sources:[SourceInfo] (id: 6, required);
+  resolution:[ResolvedCard] (id: 7, required);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 8, required);
+  run:RunStatus (id: 9, required);
+  view:ViewState (id: 10);
+  view_id:string (id: 11);
+  view_rev:uint64 = null (id: 12);
+}
+
+// ---- Document changes --------------------------------------------------------
+
+table SetProject { json:string (id: 0, required); }
+table SetLayout { json:string (id: 0, required); }
+table PutDefinition {
+  id:string (id: 0, required);
+  card_json:string (id: 1, required);
+  meta_json:string (id: 2);  // omitted removes _meta.json
+}
+table RemoveDefinition { id:string (id: 0, required); }
+table PutSource {
+  path:string (id: 0, required);
+  bytes:[ubyte] (id: 1, required);
+  base_hash:string (id: 2);  // required for existing files, omitted for new
+}
+table SourcePatch {
+  offset:uint64 = null (id: 0);
+  remove:uint64 = null (id: 1);
+  text:string (id: 2, required);
+}
+table PatchSource {
+  path:string (id: 0, required);
+  base_hash:string (id: 1, required);
+  patches:[SourcePatch] (id: 2, required);
+}
+table RemoveSource {
+  path:string (id: 0, required);
+  base_hash:string (id: 1, required);
+}
+
+union DocumentChangeValue {
+  SetProject = 1,
+  SetLayout = 2,
+  PutDefinition = 3,
+  RemoveDefinition = 4,
+  PutSource = 5,
+  PatchSource = 6,
+  RemoveSource = 7,
+}
+
+table DocumentChange { value:DocumentChangeValue (id: 1); }
+
+table DocumentDelta {
+  base_rev:uint64 = null (id: 0);
+  rev:uint64 = null (id: 1);
+  execution_rev:uint64 = null (id: 2);
+  op_id:string (id: 3, required);
+  origin:string (id: 4, required);
+  project_json:string (id: 5);
+  layout_json:string (id: 6);
+  definitions_upsert:[Definition] (id: 7, required);
+  definitions_removed:[string] (id: 8, required);
+  sources_upsert:[SourceInfo] (id: 9, required);
+  sources_removed:[string] (id: 10, required);
+  resolution:[ResolvedCard] (id: 11, required);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 12, required);
+}
+
+table SaveResult {
+  delta:DocumentDelta (id: 0);  // omitted when nothing effectively changed
+  rev:uint64 = null (id: 1);
+  execution_rev:uint64 = null (id: 2);
+  replayed:bool = null (id: 3);
+}
+
+table IdMapping {
+  from:string (id: 0, required);
+  to:string (id: 1, required);
+}
+
+table ImportResult {
+  save:SaveResult (id: 0, required);
+  id_map:[IdMapping] (id: 1, required);
+}
+
+table CacheClearResult {
+  deleted:[string] (id: 0, required);
+  retained:[string] (id: 1, required);
+  freed_bytes:uint64 = null (id: 2);
+}
+
+table SDKFile {
+  path:string (id: 0, required);
+  hash:string (id: 1, required);
+  size_bytes:uint64 = null (id: 2);
+}
+
+table SDKPrepareResult {
+  op_id:string (id: 0, required);
+  rev:uint64 = null (id: 1);
+  state:Tsugumi.Data.SDKState (id: 2);
+  files:[SDKFile] (id: 3, required);  // empty while pending
+}
+
+table RunAccepted {
+  op_id:string (id: 0, required);
+  run:RunStatus (id: 1, required);
+  replayed:bool = null (id: 2);
+}
+
+union ReceiptValue {
+  SaveResult = 1,
+  ImportResult = 2,
+  RunAccepted = 3,
+  CacheClearResult = 4,
+  SDKPrepareResult = 5,
+  Failure: Tsugumi.Data.Failure = 6,
+}
+
+table OperationReceipt {
+  op_id:string (id: 0, required);
+  result:ReceiptValue (id: 2);
+}
+
+// ---- Requests ----------------------------------------------------------------
+
+// -> HelloResult. token is required on WebSocket. Project mismatch is
+// permission_denied. Must be the first request, within 5 s of connecting.
+table SessionHelloRequest {
+  protocol:uint32 = null (id: 0);
+  client_id:string (id: 1, required);
+  expected_project_id:string (id: 2);
+  token:string (id: 3);
+}
+
+// -> OpenResult. Creates (or replaces) the connection's subscription.
+table ProjectOpenRequest { view_id:string (id: 0); }
+
+// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
+table ProjectCloseRequest { subscription_id:string (id: 0, required); }
+
+// -> ProjectSnapshot. No subscription, build or reload.
+table ProjectInspectRequest {}
+
+// -> SaveResult. One project transaction.
+table ProjectSaveRequest {
+  base_rev:uint64 = null (id: 0);
+  op_id:string (id: 1, required);
+  origin:string (id: 2, required);
+  changes:[DocumentChange] (id: 3, required);
+}
+
+// -> SaveResult. Takes external edits of the allowed area into the document.
+table ProjectReloadRequest {
+  base_rev:uint64 = null (id: 0);
+  op_id:string (id: 1, required);
+  origin:string (id: 2, required);
+}
+
+// -> ValidationResult. targets = [] means everything; mode = executable.
+table ProjectValidateRequest {
+  at_rev:uint64 = null (id: 0);
+  targets:[Tsugumi.Data.CardPath] (id: 1);
+  mode:Tsugumi.Data.ValidateMode (id: 2);
+}
+
+// -> ImportResult. definitions = [] imports every definition of the grant.
+table ProjectImportRequest {
+  base_rev:uint64 = null (id: 0);
+  op_id:string (id: 1, required);
+  origin:string (id: 2, required);
+  source_grant:string (id: 3, required);
+  definitions:[string] (id: 4);
+}
+
+// -> CacheClearResult. Only while no run or SDK job is active.
+table ProjectCacheClearRequest { op_id:string (id: 0, required); }
+
+// -> OperationResult.
+table OperationGetRequest { op_id:string (id: 0, required); }
+
+// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
+table ProjectFileListRequest {
+  path:string (id: 0, required);
+  at_rev:uint64 = null (id: 1);
+  depth:uint32 = null (id: 2);
+  include_directories:bool = null (id: 3);
+  cursor:string (id: 4);
+  limit:uint32 = null (id: 5);
+}
+
+// -> SourceInfo.
+table ProjectFileStatRequest {
+  path:string (id: 0, required);
+  at_rev:uint64 = null (id: 1);
+}
+
+// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
+table ProjectFileReadRequest {
+  path:string (id: 0, required);
+  at_rev:uint64 = null (id: 1);
+  if_hash:string (id: 2);
+  offset:uint64 = null (id: 3);
+  limit_bytes:uint32 = null (id: 4);
+}
+
+// -> FormatResult. Never changes the document.
+table ProjectFileFormatRequest {
+  path:string (id: 0, required);
+  text:string (id: 1, required);
+  language:Tsugumi.Data.FormatLanguage (id: 2);
+}
+
+// -> SDKPrepareResult. Accepted asynchronously.
+table CardSDKPrepareRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  at_rev:uint64 = null (id: 1);
+  op_id:string (id: 2, required);
+}
+
+// -> SDKPrepareResult or Failure.
+table CardSDKStatusRequest { op_id:string (id: 0, required); }
+
+// -> RunPlanResult. propagate = true.
+table RunPlanRequest {
+  at_rev:uint64 = null (id: 0);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  propagate:bool = null (id: 2);
+}
+
+// -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),
+// nix_jobs = 1, nix_cores = 1.
+table RunRequest {
+  base_rev:uint64 = null (id: 0);
+  op_id:string (id: 1, required);
+  origin:string (id: 2, required);
+  card:Tsugumi.Data.CardPath (id: 3, required);
+  propagate:bool = null (id: 4);
+  max_concurrency:uint32 = null (id: 5);
+  nix_jobs:uint32 = null (id: 6);
+  nix_cores:uint32 = null (id: 7);
+}
+
+// -> RunStatus. Idempotent. Unknown id is not_found.
+table RunCancelRequest { run_id:string (id: 0, required); }
+
+// -> RunStatus. Omitted run_id: the active run, else the last one, else idle.
+table RunStatusRequest { run_id:string (id: 0); }
+
+// -> RunPage, newest accepted first.
+table RunHistoryRequest {
+  card:Tsugumi.Data.CardPath (id: 0);
+  artifacts_only:bool = null (id: 1);
+  cursor:string (id: 2);
+  limit:uint32 = null (id: 3);
+}
+
+// -> InvocationPage, ascending invocation number.
+table RunInvocationsRequest {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  cursor:string (id: 2);
+  limit:uint32 = null (id: 3);
+}
+
+// -> RecordResult. invocation and follow_latest = true are exclusive.
+table RunRecordRequest {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  invocation:uint64 = null (id: 2);
+  follow_latest:bool = null (id: 3);
+}
+
+// -> FileContent. offset = 0, limit_bytes = 1048576.
+table RunValueReadRequest {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  invocation:uint64 = null (id: 2);
+  side:Tsugumi.Data.ValueSide (id: 3);
+  port:string (id: 4, required);
+  offset:uint64 = null (id: 5);
+  limit_bytes:uint32 = null (id: 6);
+}
+
+// -> ArtifactPage. invocation requires card.
+table ArtifactListRequest {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1);
+  invocation:uint64 = null (id: 2);
+  cursor:string (id: 3);
+  limit:uint32 = null (id: 4);
+}
+
+// -> FileContent. member only for Directory artifacts.
+table ArtifactReadRequest {
+  artifact_id:string (id: 0, required);
+  member:string (id: 1);
+  offset:uint64 = null (id: 2);
+  limit_bytes:uint32 = null (id: 3);
+}
+
+// -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is
+// rejected. invocation requires card.
+table LogRangeRequest {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1);
+  invocation:uint64 = null (id: 2);
+  stream:Tsugumi.Data.LogStream (id: 3);
+  offset:uint64 = null (id: 4);
+  tail:bool = null (id: 5);
+  limit_bytes:uint32 = null (id: 6);
+}
+
+// -> Ack. Replaces the subscription's Display targets. enabled = true.
+table ViewSetVisibleRequest {
+  subscription_id:string (id: 0, required);
+  cards:[Tsugumi.Data.CardPath] (id: 1, required);
+  enabled:bool = null (id: 2);
+}
+
+// -> ViewSaveResult. CAS on view_rev only.
+table ViewSaveRequest {
+  view_id:string (id: 0, required);
+  base_view_rev:uint64 = null (id: 1);
+  view:ViewState (id: 2, required);
+}
+
+union RequestPayload {
+  SessionHelloRequest = 1,
+  ProjectOpenRequest = 2,
+  ProjectCloseRequest = 3,
+  ProjectInspectRequest = 4,
+  ProjectSaveRequest = 5,
+  ProjectReloadRequest = 6,
+  ProjectValidateRequest = 7,
+  ProjectImportRequest = 8,
+  ProjectCacheClearRequest = 9,
+  OperationGetRequest = 10,
+  ProjectFileListRequest = 11,
+  ProjectFileStatRequest = 12,
+  ProjectFileReadRequest = 13,
+  ProjectFileFormatRequest = 14,
+  CardSDKPrepareRequest = 15,
+  CardSDKStatusRequest = 16,
+  RunPlanRequest = 17,
+  RunRequest = 18,
+  RunCancelRequest = 19,
+  RunStatusRequest = 20,
+  RunHistoryRequest = 21,
+  RunInvocationsRequest = 22,
+  RunRecordRequest = 23,
+  RunValueReadRequest = 24,
+  ArtifactListRequest = 25,
+  ArtifactReadRequest = 26,
+  LogRangeRequest = 27,
+  ViewSetVisibleRequest = 28,
+  ViewSaveRequest = 29,
+}
+
+// ---- Replies -----------------------------------------------------------------
+
+table HelloResult {
+  protocol:uint32 = null (id: 0);
+  project_id:string (id: 1, required);
+  server_instance_id:string (id: 2, required);
+  limits:Limits (id: 3, required);
+  capabilities:[string] (id: 4, required);
+}
+
+table OpenResult {
+  snapshot:ProjectSnapshot (id: 0, required);
+  subscription_id:string (id: 1, required);
+  seq:uint64 = null (id: 2);
+}
+
+table ValidationResult {
+  rev:uint64 = null (id: 0);
+  valid:bool = null (id: 1);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 2, required);
+}
+
+table OperationResult {
+  state:Tsugumi.Data.OperationState (id: 0);
+  receipt:OperationReceipt (id: 1);
+}
+
+table SourcePage {
+  rev:uint64 = null (id: 0);
+  entries:[SourceInfo] (id: 1, required);
+  next_cursor:string (id: 2);
+}
+
+table FileContent {
+  name:string (id: 0, required);
+  hash:string (id: 1, required);
+  size_bytes:uint64 = null (id: 2);
+  offset:uint64 = null (id: 3);
+  next_offset:uint64 = null (id: 4);
+  bytes:[ubyte] (id: 5, required);
+  eof:bool = null (id: 6);
+}
+
+table FormatResult {
+  text:string (id: 0, required);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 1, required);
+}
+
+table RunPlanResult {
+  rev:uint64 = null (id: 0);
+  targets:[Tsugumi.Data.CardPath] (id: 1, required);
+  starts:[Tsugumi.Data.CardPath] (id: 2, required);
+  build_candidates:[Tsugumi.Data.CardPath] (id: 3, required);
+  diagnostics:[Tsugumi.Data.Diagnostic] (id: 4, required);
+}
+
+table RunSummary {
+  status:RunStatus (id: 0, required);
+  source_hash:string (id: 1, required);
+  target:Tsugumi.Data.CardPath (id: 2, required);
+  propagate:bool = null (id: 3);
+}
+
+table RunPage {
+  runs:[RunSummary] (id: 0, required);
+  next_cursor:string (id: 1);
+}
+
+table UpstreamPort {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  port:string (id: 1, required);
+}
+
+table WaitingInput {
+  port:string (id: 0, required);
+  upstream:[UpstreamPort] (id: 1, required);
+}
+
+table InvocationSummary {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  invocation:uint64 = null (id: 2);
+  state:Tsugumi.Data.CardState (id: 3);
+  phase:Tsugumi.Data.Phase (id: 4);  // unspecified means omitted
+  started_at:int64 = null (id: 5);
+  ended_at:int64 = null (id: 6);
+  duration_ms:uint64 = null (id: 7);
+  failure:Tsugumi.Data.Failure (id: 8);
+  waiting_inputs:[WaitingInput] (id: 9, required);
+}
+
+table InvocationPage {
+  records:[InvocationSummary] (id: 0, required);
+  next_cursor:string (id: 1);
+}
+
+table InputSource {
+  port:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  invocation:uint64 = null (id: 2);
+}
+
+table InvocationRecord {
+  summary:InvocationSummary (id: 0, required);
+  inputs:[Tsugumi.Data.NamedValue] (id: 1, required);
+  outputs:[Tsugumi.Data.NamedValue] (id: 2, required);
+  input_sources:[InputSource] (id: 3, required);
+  display:Tsugumi.Data.Display (id: 4);
+  record_io:bool = null (id: 5);
+}
+
+table HistoryState {
+  state:Tsugumi.Data.CardState (id: 0);
+  failure:Tsugumi.Data.Failure (id: 1);
+  time:int64 = null (id: 2);
+}
+
+table Aggregate {
+  calls:uint64 = null (id: 0);
+  succeeded:uint64 = null (id: 1);
+  failed:uint64 = null (id: 2);
+  cancelled:uint64 = null (id: 3);
+  total_duration_ms:uint64 = null (id: 4);
+}
+
+table RecordResult {
+  selected_invocation:uint64 = null (id: 0);
+  record:InvocationRecord (id: 1);
+  run:RunSummary (id: 2, required);
+  status:HistoryState (id: 3, required);
+  aggregate:Aggregate (id: 4, required);
+  exists:bool = null (id: 5);
+  recording_disabled:bool = null (id: 6);
+  truncated:bool = null (id: 7);
+  orphaned:bool = null (id: 8);
+}
+
+table ArtifactMember {
+  path:string (id: 0, required);
+  size_bytes:uint64 = null (id: 1);
+  hash:string (id: 2, required);
+}
+
+table ArtifactInfo {
+  artifact_id:string (id: 0, required);
+  run_id:string (id: 1, required);
+  card:Tsugumi.Data.CardPath (id: 2, required);
+  invocation:uint64 = null (id: 3);
+  output:string (id: 4, required);
+  kind:Tsugumi.Data.PortKind (id: 5);
+  name:string (id: 6, required);
+  members:[ArtifactMember] (id: 7, required);
+}
+
+table ArtifactPage {
+  artifacts:[ArtifactInfo] (id: 0, required);
+  next_cursor:string (id: 1);
+}
+
+table LogSlice {
+  text:string (id: 0, required);
+  offset:uint64 = null (id: 1);
+  next_offset:uint64 = null (id: 2);
+  size_bytes:uint64 = null (id: 3);
+  exists:bool = null (id: 4);
+  truncated:bool = null (id: 5);
+}
+
+table ViewSaveResult {
+  view_id:string (id: 0, required);
+  view_rev:uint64 = null (id: 1);
+}
+
+union ReplyPayload {
+  HelloResult = 1,
+  OpenResult = 2,
+  Ack = 3,
+  ProjectSnapshot = 4,
+  SaveResult = 5,
+  ValidationResult = 6,
+  ImportResult = 7,
+  CacheClearResult = 8,
+  OperationResult = 9,
+  SourcePage = 10,
+  SourceInfo = 11,
+  FileContent = 12,
+  FormatResult = 13,
+  SDKPrepareResult = 14,
+  RunPlanResult = 15,
+  RunAccepted = 16,
+  RunStatus = 17,
+  RunPage = 18,
+  InvocationPage = 19,
+  RecordResult = 20,
+  ArtifactPage = 21,
+  LogSlice = 22,
+  ViewSaveResult = 23,
+  Failure: Tsugumi.Data.Failure = 24,
+}
+
+// ---- Notifications -----------------------------------------------------------
+
+table DocPatched { delta:DocumentDelta (id: 0, required); }
+
+table RunTimeline {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  invocation:uint64 = null (id: 1);
+  phase:Tsugumi.Data.Phase (id: 2);
+  lane:uint32 = null (id: 3);
+  start:int64 = null (id: 4);
+  end:int64 = null (id: 5);
+}
+
+table RunAcceptedEvent { status:RunStatus (id: 0, required); }
+table RunStatusChanged { status:RunStatus (id: 0, required); }
+table RunCardChanged { invocation:InvocationSummary (id: 0, required); }
+table RunFinished { summary:RunSummary (id: 0, required); }
+
+union RunEventValue {
+  RunAcceptedEvent = 1,
+  RunStatusChanged = 2,
+  RunCardChanged = 3,
+  RunTimeline = 4,
+  RunFinished = 5,
+}
+
+table RunEvent {
+  run_id:string (id: 0, required);
+  value:RunEventValue (id: 2);
+}
+
+table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
+
+table LogAvailable {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1);
+  invocation:uint64 = null (id: 2);
+  stream:Tsugumi.Data.LogStream (id: 3);
+  end_offset:uint64 = null (id: 4);
+}
+
+union NotificationPayload {
+  DocPatched = 1,
+  RunEvent = 2,
+  DisplayUpdated = 3,
+  LogAvailable = 4,
+}
+
+// ---- Frame -------------------------------------------------------------------
+
+table Request { value:RequestPayload (id: 1); }
+table Reply { value:ReplyPayload (id: 1); }
+table Notification {
+  subscription_id:string (id: 0, required);
+  seq:uint64 = null (id: 1);
+  value:NotificationPayload (id: 3);
+}
+
+union Payload { Request = 1, Reply = 2, Notification = 3 }
+
+table Message {
+  request_id:uint64 = null (id: 0);  // omitted for notifications
+  payload:Payload (id: 2);
+}
+
+root_type Message;
+file_identifier "TSG1";

@@ -1,0 +1,65 @@
+// core <-> Card worker protocol. Independent from the external RPC.
+// Frames: 4 byte little-endian length + FlatBuffer (max 16 MiB).
+//
+// One call at a time per worker. call_id >= 1 and never reused by a worker.
+// A call ends with exactly one WorkerResult or WorkerFailure; WorkerDisplay may
+// be sent any number of times before that.
+
+include "data.fbs";
+
+namespace Tsugumi.Worker;
+
+table EnvVar {
+  name:string (id: 0, required);
+  value:string (id: 1, required);
+}
+
+table WorkerInput {
+  name:string (id: 0, required);
+  kind:Tsugumi.Data.PortKind (id: 1);
+  value:Tsugumi.Data.FlatBufferData (id: 2, required);
+}
+
+table WorkerCall {
+  run_id:string (id: 0, required);
+  card:Tsugumi.Data.CardPath (id: 1, required);
+  invocation:uint64 = null (id: 2);
+  inputs:[WorkerInput] (id: 3, required);
+  params:Tsugumi.Data.FlatBufferData (id: 4, required);
+  outputs:[Tsugumi.Data.Port] (id: 5, required);
+  working_directory:string (id: 6, required);
+  temporary_directory:string (id: 7, required);
+  output_directory:string (id: 8, required);
+  environment:[EnvVar] (id: 9, required);
+  // Remaining time in milliseconds. Omitted means no deadline.
+  deadline_ms:uint64 = null (id: 10);
+}
+
+table WorkerOutput {
+  name:string (id: 0, required);
+  bytes:[ubyte] (id: 1, required);
+}
+
+table WorkerResult { outputs:[WorkerOutput] (id: 0, required); }
+
+table WorkerFailure { failure:Tsugumi.Data.Failure (id: 0, required); }
+
+table WorkerCancel {}
+
+table WorkerDisplay { display:Tsugumi.Data.Display (id: 0, required); }
+
+union WorkerPayload {
+  WorkerCall = 1,
+  WorkerResult = 2,
+  WorkerFailure = 3,
+  WorkerCancel = 4,
+  WorkerDisplay = 5,
+}
+
+table WorkerMessage {
+  call_id:uint64 = null (id: 0);
+  value:WorkerPayload (id: 2);
+}
+
+root_type WorkerMessage;
+file_identifier "TSW1";

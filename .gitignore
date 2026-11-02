@@ -1,0 +1,12 @@
+/build/
+/build-*/
+/compile_commands.json
+/result
+/result-*
+.tsugumi/
+__pycache__/
+*.pyc
+/macOS/.build/
+/macOS/.swiftpm/
+/dist/
+.DS_Store

@@ -1,0 +1,98 @@
+// Tsugumi shared values used by both the external RPC (tsugumi.fbs) and the
+// worker protocol (worker.fbs). Generation 1.
+//
+// Conventions
+// - Required scalars are declared as optional scalars (`= null`) and their
+//   presence is checked by semantic validation.
+// - Id: UUID string. Rev/Seq: uint64. Time: int64 UTC epoch ms.
+//   Duration: uint64 ms. Hash: lowercase SHA-256 hex. Path: project relative.
+// - Maps are vectors of KeyValue; duplicate keys are rejected.
+
+include "tsugumi_enums.fbs";
+
+namespace Tsugumi.Data;
+
+table KeyValue {
+  key:string (id: 0, required);
+  value:string (id: 1, required);
+}
+
+// A Card path such as ["nested", "step"]. Segments never contain '/'.
+// The empty path addresses only the graph root and never a Card.
+table CardPath {
+  segments:[string] (id: 0, required);
+}
+
+table Diagnostic {
+  severity:Severity (id: 0);
+  code:string (id: 1, required);
+  message:string (id: 2, required);
+  card:CardPath (id: 3);
+  path:string (id: 4);
+  offset:uint64 = null (id: 5);
+}
+
+table Failure {
+  kind:FailureKind (id: 0);
+  args:[KeyValue] (id: 1);
+  diagnostic:string (id: 2);
+  current_rev:uint64 = null (id: 3);
+  retry_after_ms:uint32 = null (id: 4);
+}
+
+// A resolved port. For resolved ports schema_bfbs and root_type are always
+// present (for every kind). Unresolved types omit them and carry a Diagnostic
+// on the owning ResolvedCard instead.
+table Port {
+  name:string (id: 0, required);
+  kind:PortKind (id: 1);
+  optional:bool = null (id: 2);
+  schema_bfbs:[ubyte] (id: 3);
+  root_type:string (id: 4);
+  path:string (id: 5);
+}
+
+table FlatBufferData {
+  schema_bfbs:[ubyte] (id: 0, required);
+  root_type:string (id: 1, required);
+  bytes:[ubyte] (id: 2, required);
+}
+
+table NamedValue {
+  name:string (id: 0, required);
+  kind:PortKind (id: 1);
+  schema_bfbs:[ubyte] (id: 2, required);
+  root_type:string (id: 3, required);
+  size_bytes:uint64 = null (id: 4);
+  inline_bytes:[ubyte] (id: 5);
+  artifact_id:string (id: 6);
+}
+
+// ---- Display ---------------------------------------------------------------
+
+table DisplayText { text:string (id: 0, required); }
+
+table DisplayScalar {
+  value:double = null (id: 0);
+  label:string (id: 1, required);
+}
+
+table LineSeries {
+  id:string (id: 0, required);
+  label:string (id: 1, required);
+  x:[double] (id: 2, required);
+  y:[double] (id: 3, required);
+}
+
+table DisplayLineChart { series:[LineSeries] (id: 0, required); }
+
+union DisplayValue { DisplayText = 1, DisplayScalar = 2, DisplayLineChart = 3 }
+
+// Full replacement snapshot. `revision` increases per run/card.
+table Display {
+  card:CardPath (id: 0, required);
+  run_id:string (id: 1, required);
+  invocation:uint64 = null (id: 2);
+  revision:uint64 = null (id: 3);
+  value:DisplayValue (id: 5);
+}

@@ -1,0 +1,377 @@
+// Typed JSON schemas (hosq) for every JSON document the core reads or writes.
+//
+// Reading: the whole input is validated first with json::GenericDom (UTF-8,
+// grammar, duplicate keys anywhere, non-finite numbers), then the validated
+// root is decoded into the typed schema. Unknown members are rejected.
+// Writing: schemas whose fields are all required are encoded with the compact
+// JSON writer. Document files (tsugumi.json, layout.json, _card.json,
+// _meta.json) are never re-encoded: their confirmed bytes are the validated
+// client text, which also keeps the original integer spellings.
+#pragma once
+
+#include <hosq/hosq.hh>
+#include <hosq/json/compact_writer.hh>
+#include <hosq/json/dom.hh>
+#include <hosq/json/fast_reader.hh>
+
+#include <optional>
+#include <type_traits>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace tsugumi::schema {
+
+namespace t = hosq::types;
+namespace v = hosq::types::value;
+
+// Captured arbitrary JSON value (validated, owned, original spelling kept).
+using Json = hosq::Elem<hosq::decode::json_dom<> | hosq::store::assign, hosq::encode::json_dom>;
+// A number accepted from integer or decimal spellings (layout coordinates).
+using Number = hosq::Elem<hosq::scan::scalar | hosq::decode::number<double> | hosq::store::assign,
+                          hosq::encode::value>;
+template <class S>
+using Obj = hosq::Elem<hosq::scan::object | hosq::decode::to<S> | hosq::store::assign, hosq::encode::value>;
+template <hosq::StringLiteral K, class E>
+using Opt = t::Optional<K, E>;
+
+// ---- tsugumi.json ----------------------------------------------------------
+
+struct Endpoint {
+  Opt<"card", v::String> card;
+  Opt<"port", v::String> port;
+};
+
+struct Connection {
+  Opt<"from", Obj<Endpoint>> from;
+  Opt<"to", Obj<Endpoint>> to;
+};
+
+struct Boundary {
+  Opt<"inputs", v::Mapping<v::String, Obj<Endpoint>>> inputs;
+  Opt<"outputs", v::Mapping<v::String, Obj<Endpoint>>> outputs;
+};
+
+// Settings shared by instances (overrides) and definitions (defaults).
+// Optional storage keeps "omitted" distinct from false/0/""/null.
+struct CardInstance {
+  Opt<"id", v::String> id;
+  Opt<"definition", v::String> definition;
+  Opt<"name", v::String> name;
+  Opt<"symbol", v::String> symbol;
+  Opt<"description", v::String> description;
+  Opt<"params", v::Mapping<v::String, Json>> params;
+  Opt<"maxRuns", v::Uint64> max_runs;
+  Opt<"timeoutSeconds", Json> timeout_seconds;            // positive integer or null
+  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;  // positive integer or null
+  Opt<"recordIO", v::Bool> record_io;
+  Opt<"retainArtifact", v::Bool> retain_artifact;
+  Opt<"artifactOutput", v::String> artifact_output;
+  Opt<"filesystem", v::Bool> filesystem;
+  Opt<"sandbox", v::Bool> sandbox;
+  Opt<"loggerDatabaseConnection", v::String> logger_database;
+  Opt<"canvasEnabled", v::Bool> canvas_enabled;
+  Opt<"project", v::String> project;    // external graph (graphs/...)
+  Opt<"canvas", Json> canvas;           // inline graph; decoded as Graph on demand
+  Opt<"boundary", Obj<Boundary>> boundary;
+};
+
+struct Graph {
+  Opt<"cards", v::Array<Obj<CardInstance>>> cards;
+  Opt<"connections", v::Array<Obj<Connection>>> connections;
+};
+
+struct DatabaseConnection {
+  Opt<"name", v::String> name;
+  Opt<"url", v::String> url;
+};
+
+struct Project {
+  Opt<"name", v::String> name;
+  Opt<"pkgsPath", v::String> pkgs_path;
+  Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
+  Opt<"canvas", Obj<Graph>> canvas;
+};
+
+// ---- definitions/<id>/_card.json ---------------------------------------------
+
+struct ParamDef {
+  Opt<"name", v::String> name;
+  Opt<"type", v::String> type;
+  Opt<"data", Json> data;
+  Opt<"nix", v::Bool> nix;
+};
+
+struct InputDef {
+  Opt<"name", v::String> name;
+  Opt<"optional", v::Bool> optional;
+};
+
+struct CardDefinition {
+  Opt<"name", v::String> name;
+  Opt<"symbol", v::String> symbol;
+  Opt<"description", v::String> description;
+  Opt<"language", v::String> language;
+  Opt<"template", v::String> template_name;
+  Opt<"params", v::Array<Obj<ParamDef>>> params;
+  Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
+  Opt<"inputMode", v::String> input_mode;
+  Opt<"maxRuns", v::Uint64> max_runs;
+  Opt<"timeoutSeconds", Json> timeout_seconds;
+  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;
+  Opt<"recordIO", v::Bool> record_io;
+  Opt<"retainArtifact", v::Bool> retain_artifact;
+  Opt<"artifactOutput", v::String> artifact_output;
+  Opt<"filesystem", v::Bool> filesystem;
+  Opt<"sandbox", v::Bool> sandbox;
+  Opt<"loggerDatabaseConnection", v::String> logger_database;
+  Opt<"canvasEnabled", v::Bool> canvas_enabled;
+};
+
+struct CardMeta {
+  Opt<"description", v::String> description;
+  Opt<"plan", v::String> plan;
+};
+
+// ---- layout.json -------------------------------------------------------------
+
+struct Position {
+  Opt<"x", Number> x;
+  Opt<"y", Number> y;
+};
+
+struct StickyNote {
+  Opt<"id", v::String> id;
+  Opt<"scope", v::String> scope;  // graph scope path key ("" = root)
+  Opt<"text", v::String> text;
+  Opt<"x", Number> x;
+  Opt<"y", Number> y;
+};
+
+struct DisplayPanel {
+  Opt<"x", Number> x;
+  Opt<"y", Number> y;
+  Opt<"width", Number> width;
+  Opt<"height", Number> height;
+};
+
+struct Layout {
+  Opt<"cards", v::Mapping<v::String, Obj<Position>>> cards;  // card path key -> position
+  Opt<"notes", v::Array<Obj<StickyNote>>> notes;
+  Opt<"displays", v::Mapping<v::String, Obj<DisplayPanel>>> displays;  // card path key -> panel
+};
+
+// ---- core internal files (all fields required: encodable) ----------------------
+
+struct JournalFile {
+  t::String<"p"> path;
+  t::Bool<"delete"> remove;
+  t::String<"c"> content_b64;
+};
+
+struct JournalRecord {
+  t::String<"t"> type;  // "txn" | "commit" | "receipt"
+  t::Uint64<"rev"> rev;
+  t::Uint64<"execution_rev"> execution_rev;
+  t::String<"op"> op;
+  t::String<"kind"> kind;
+  t::String<"digest"> digest;
+  t::String<"receipt"> receipt_b64;
+  t::Array<"files", Obj<JournalFile>> files;
+};
+
+struct ViewCamera {
+  t::Array<"scope", v::String> scope;
+  t::Float64<"x"> x;
+  t::Float64<"y"> y;
+  t::Float64<"zoom"> zoom;
+};
+
+struct ViewStateJson {
+  t::Array<"scope", v::String> scope;
+  t::Array<"cameras", Obj<ViewCamera>> cameras;
+  t::Array<"selected_cards", v::Array<v::String>> selected_cards;
+};
+
+struct ViewEntry {
+  t::Uint64<"rev"> rev;
+  t::Field<"view", Obj<ViewStateJson>> view;
+};
+
+struct ViewFile {
+  t::Mapping<"views", v::String, Obj<ViewEntry>> views;
+};
+
+struct UpstreamJson {
+  t::String<"card"> card;
+  t::String<"port"> port;
+};
+
+struct WaitingJson {
+  t::String<"port"> port;
+  t::Array<"upstream", Obj<UpstreamJson>> upstream;
+};
+
+struct WaitingList {
+  t::Array<"waiting", Obj<WaitingJson>> items;
+};
+
+struct InputSourceJson {
+  t::String<"port"> port;
+  t::String<"card"> card;
+  t::Uint64<"invocation"> invocation;
+};
+
+struct InputSourceList {
+  t::Array<"sources", Obj<InputSourceJson>> items;
+};
+
+struct MemberJson {
+  t::String<"path"> path;
+  t::Uint64<"size"> size;
+  t::String<"hash"> hash;
+};
+
+struct MemberList {
+  t::Array<"members", Obj<MemberJson>> items;
+};
+
+struct SavedInputJson {
+  t::String<"name"> name;
+  t::Int64<"kind"> kind;
+  t::String<"schema"> schema;
+  t::String<"root_type"> root_type;
+  t::String<"data"> data_b64;
+};
+
+struct SavedInputList {
+  t::Array<"inputs", Obj<SavedInputJson>> items;
+};
+
+struct CursorJson {
+  t::String<"d"> digest;
+  t::Int64<"h"> hi;
+  t::String<"a"> after;
+  t::Int64<"e"> expires;
+};
+
+struct RunJournalLine {
+  t::Int64<"time_ms"> time_ms;
+  t::String<"phase"> phase;
+  t::String<"event"> event;
+  t::String<"message"> message;
+};
+
+struct CardJournalLine {
+  t::Int64<"time_ms"> time_ms;
+  t::String<"phase"> phase;
+  t::String<"event"> event;
+  t::Array<"card", v::String> card;
+  t::Uint64<"invocation"> invocation;
+  t::String<"message"> message;
+};
+
+struct NixpkgsPin {
+  t::String<"url"> url;
+  t::String<"narHash"> nar_hash;
+};
+
+struct BuildCache {
+  t::String<"out"> out;
+};
+
+// The manifest written by the SDK's tsugumi.manifest (read only).
+struct CardManifest {
+  Opt<"package", v::String> package;
+  Opt<"preScript", v::String> pre_script;
+  Opt<"script", v::String> script;
+  Opt<"postScript", v::String> post_script;
+  Opt<"reuseWorker", v::Bool> reuse_worker;
+};
+
+struct SdkFileJson {
+  t::String<"path"> path;
+  t::String<"hash"> hash;
+  t::Uint64<"size"> size;
+};
+
+struct SdkJobJson {
+  t::Array<"card", v::String> card;
+  t::Uint64<"rev"> rev;
+  t::String<"state"> state;  // pending | ready | failed
+  t::Array<"files", Obj<SdkFileJson>> files;
+  t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
+};
+
+// Launcher-managed import grants: grant id -> read-only container path.
+struct Grants {
+  t::Mapping<"grants", v::String, v::String> grants;
+};
+
+// server.ready, written for the launcher into the 0700 control directory.
+struct ServerReady {
+  t::String<"endpoint"> endpoint;  // ws://host:port/rpc as seen inside the environment
+  t::String<"token"> token;
+  t::Uint32<"protocol"> protocol;
+  t::String<"project_id"> project_id;
+  t::String<"server_instance_id"> server_instance_id;
+  t::String<"unix_socket"> unix_socket;
+  t::Int64<"pid"> pid;
+};
+
+// ---- helpers ---------------------------------------------------------------------
+
+struct DecodeError {
+  std::string message;
+  uint64_t offset = 0;
+};
+
+namespace detail {
+std::optional<DecodeError> validate(std::string_view text, hosq::json::GenericDom<>& dom);
+std::string describe(const hosq::Error& e);
+}  // namespace detail
+
+// Strict decode of a complete JSON document into schema S.
+template <class S>
+std::optional<DecodeError> decode(std::string_view text, S& out) {
+  hosq::json::GenericDom<> dom;
+  if (auto err = detail::validate(text, dom)) return err;
+  auto e = dom[""].decode_into(out);
+  if (e) return DecodeError{detail::describe(e), e.offset};
+  return std::nullopt;
+}
+
+// Decodes a captured JSON value into schema/Elem S.
+template <class S>
+std::optional<DecodeError> decode(const hosq::json::GenericDom<>& value, S& out) {
+  auto e = value[""].decode_into(out);
+  if (e) return DecodeError{detail::describe(e), e.offset};
+  return std::nullopt;
+}
+
+template <class S>
+std::string encode(const S& value) {
+  std::string out;
+  hosq::json::CompactWriter<> w{out};
+  if (!hosq::encode_into(value, w)) throw std::runtime_error("JSON encoding failed");
+  return out;
+}
+
+// Source text of a captured value (validated JSON, original spelling).
+std::string text(const hosq::json::GenericDom<>& value);
+// Captures a JSON text as a value. Throws std::runtime_error when invalid.
+hosq::json::GenericDom<> capture(std::string_view json_text);
+// Captures a string value.
+hosq::json::GenericDom<> string_value(const std::string& s);
+// JSON object text from (key, captured value) pairs, in the given order.
+std::string object_text(const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>& members);
+bool is_null(const hosq::json::GenericDom<>& value);
+
+// Value of an optional field.
+template <class F>
+auto get(const F& field) {
+  using T = std::remove_cvref_t<decltype(field->value())>;
+  return field->has_value() ? &field->value() : static_cast<const T*>(nullptr);
+}
+
+}  // namespace tsugumi::schema

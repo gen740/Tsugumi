@@ -1,0 +1,70 @@
+// Tsugumi shared enums. Generation 1.
+// Values are explicit and must never be reused inside the same generation.
+// Value 0 is always a reserved "invalid" marker so that an omitted field is
+// detected by semantic validation instead of silently meaning something.
+
+namespace Tsugumi.Data;
+
+enum FailureKind : ushort {
+  unspecified = 0,
+  invalid_request = 1,
+  protocol_mismatch = 2,
+  unauthenticated = 3,
+  permission_denied = 4,
+  not_found = 5,
+  invalid_path = 6,
+  invalid_range = 7,
+  invalid_cursor = 8,
+  revision_conflict = 9,
+  hash_conflict = 10,
+  external_change = 11,
+  operation_conflict = 12,
+  busy = 13,
+  timeout = 14,
+  resource_limit = 15,
+  invalid_document = 16,
+  validation_failed = 17,
+  input_missing = 18,
+  execution_limit = 19,
+  cancelled = 20,
+  interrupted = 21,
+  nix_failed = 22,
+  worker_failed = 23,
+  output_invalid = 24,
+  persistence_failed = 25,
+  integrity_error = 26,
+  recording_disabled = 27,
+  unsupported = 28,
+  internal_error = 29,
+  type_mismatch = 30,
+}
+
+enum Severity : ubyte { unspecified = 0, error = 1, warning = 2 }
+
+enum PortKind : ubyte { unspecified = 0, File = 1, Directory = 2, FlatBuffer = 3 }
+
+enum RunState : ubyte {
+  unspecified = 0, idle = 1, queued = 2, preparing = 3, running = 4,
+  cancelling = 5, succeeded = 6, failed = 7, cancelled = 8,
+}
+
+enum CardState : ubyte {
+  unspecified = 0, not_started = 1, waiting = 2, ready = 3, preparing = 4,
+  running = 5, succeeded = 6, failed = 7, blocked = 8, cancelled = 9, skipped = 10,
+}
+
+enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, validate = 4 }
+
+enum LogStream : ubyte { unspecified = 0, stdout = 1, stderr = 2, journal = 3 }
+
+enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
+
+enum ValidateMode : ubyte { unspecified = 0, structure = 1, executable = 2 }
+
+enum FormatLanguage : ubyte { unspecified = 0, cpp = 1, python = 2, bash = 3, nix = 4, json = 5, fbs = 6 }
+
+enum OperationState : ubyte { unspecified = 0, unknown = 1, pending = 2, completed = 3 }
+
+enum SDKState : ubyte { unspecified = 0, pending = 1, ready = 2 }
+
+enum SourceKind : ubyte { unspecified = 0, file = 1, directory = 2 }
