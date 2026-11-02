@@ -1,0 +1,41 @@
+{
+  "cards": {
+    "begin": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 0,
+      "y": 140
+    },
+    "loop": {
+      "x": 240,
+      "y": 140
+    },
+    "generate": {
+      "x": 480,
+      "y": 140
+    },
+    "plot": {
+      "x": 720,
+      "y": 140
+    }
+  },
+  "notes": [
+    {
+      "id": "n1",
+      "scope": "",
+      "text": "Edit interval_ms, seed and samples on Stream settings and window on Live chart. Cancel stops the stream; the last chart stays.",
+      "x": 0.0,
+      "y": 320.0
+    }
+  ],
+  "displays": {
+    "plot": {
+      "x": 720.0,
+      "y": 260.0,
+      "width": 520.0,
+      "height": 260.0
+    }
+  }
+}

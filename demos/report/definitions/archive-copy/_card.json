@@ -1,0 +1,12 @@
+{
+  "name": "Copy into archive",
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "report"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "archive",
+  "filesystem": true
+}

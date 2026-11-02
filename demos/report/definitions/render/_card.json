@@ -1,0 +1,16 @@
+{
+  "name": "Report",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "summary"
+    },
+    {
+      "name": "config"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "report",
+  "canvasEnabled": true,
+  "filesystem": true
+}

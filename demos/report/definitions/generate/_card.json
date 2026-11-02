@@ -1,0 +1,10 @@
+{
+  "name": "Generate CSV",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "config"
+    }
+  ],
+  "filesystem": true
+}

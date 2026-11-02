@@ -1,0 +1,13 @@
+{
+  "name": "Feedback",
+  "template": "merge",
+  "maxRuns": 100000,
+  "inputs": [
+    {
+      "name": "init"
+    },
+    {
+      "name": "next"
+    }
+  ]
+}

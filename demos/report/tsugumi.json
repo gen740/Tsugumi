@@ -1,0 +1,108 @@
+{
+  "name": "Data to report",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "begin",
+        "definition": "trigger"
+      },
+      {
+        "id": "settings",
+        "definition": "settings"
+      },
+      {
+        "id": "generate",
+        "definition": "generate"
+      },
+      {
+        "id": "aggregate",
+        "definition": "aggregate"
+      },
+      {
+        "id": "render",
+        "definition": "render"
+      },
+      {
+        "id": "archive",
+        "name": "Archive (nested graph)",
+        "canvas": {
+          "cards": [
+            {
+              "id": "copy",
+              "definition": "archive-copy"
+            }
+          ],
+          "connections": []
+        },
+        "boundary": {
+          "inputs": {
+            "report": {
+              "card": "copy",
+              "port": "report"
+            }
+          },
+          "outputs": {
+            "archive": {
+              "card": "copy",
+              "port": "archive"
+            }
+          }
+        }
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "settings",
+          "port": "config"
+        },
+        "to": {
+          "card": "generate",
+          "port": "config"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "csv"
+        },
+        "to": {
+          "card": "aggregate",
+          "port": "csv"
+        }
+      },
+      {
+        "from": {
+          "card": "aggregate",
+          "port": "summary"
+        },
+        "to": {
+          "card": "render",
+          "port": "summary"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "config"
+        },
+        "to": {
+          "card": "render",
+          "port": "config"
+        }
+      },
+      {
+        "from": {
+          "card": "render",
+          "port": "report"
+        },
+        "to": {
+          "card": "archive",
+          "port": "report"
+        }
+      }
+    ]
+  }
+}

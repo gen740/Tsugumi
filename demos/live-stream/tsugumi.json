@@ -1,0 +1,71 @@
+{
+  "name": "Live Stream",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "begin",
+        "definition": "trigger"
+      },
+      {
+        "id": "settings",
+        "definition": "settings"
+      },
+      {
+        "id": "loop",
+        "definition": "loop"
+      },
+      {
+        "id": "generate",
+        "definition": "generate"
+      },
+      {
+        "id": "plot",
+        "definition": "plot"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "settings",
+          "port": "state"
+        },
+        "to": {
+          "card": "loop",
+          "port": "init"
+        }
+      },
+      {
+        "from": {
+          "card": "loop",
+          "port": "out"
+        },
+        "to": {
+          "card": "generate",
+          "port": "state"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "next"
+        },
+        "to": {
+          "card": "loop",
+          "port": "next"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "sample"
+        },
+        "to": {
+          "card": "plot",
+          "port": "sample"
+        }
+      }
+    ]
+  }
+}
