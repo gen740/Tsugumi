@@ -1,8 +1,9 @@
 // tsugumi-vmd: the supervisor of Tsugumi's shared VM (one VM per app).
 //
-// The app boots one Linux VM with Virtualization.framework and shares its
-// projects into it through one virtiofs device (`/mnt/host`, one directory
-// per project: p-<id> is the project folder, c-<id> its control folder).
+// The app boots one Linux VM with Virtualization.framework. Each open
+// project has its own virtiofs device (slot n, tag tsugumi-<n>, with the
+// folders `project` and `control`), mounted here at /mnt/slots/<n> while the
+// project runs; the app only ever replaces the share of a free slot.
 // Every project gets its own tsugumid, started here:
 //
 //   uid            a fixed uid per project (kept in /persist/tsugumi/uids)
@@ -18,7 +19,7 @@
 //
 //   1024  control, one request line per connection, one reply line:
 //           ping                            -> ok
-//           start <id> <cpus> <name>        -> ok <rpc port>
+//           start <id> <cpus> <name> <slot> -> ok <rpc port>
 //           stop <id>                       -> ok
 //           forget <id>                     -> ok (stopped project's build
 //                                              roots go; data deletion)
@@ -77,7 +78,7 @@ struct Options {
   std::string tsugumid, tini, bash;
   std::string path;       // PATH for project processes
   std::string cert_file;  // CA bundle
-  std::string host = "/mnt/host";
+  std::string host = "/mnt/slots";
   std::string state = "/persist/tsugumi";
   int control_port = 1024, rpc_port = 1025;
 };
@@ -135,6 +136,7 @@ void reply(int fd, const std::string& text) {
 
 struct Project {
   std::string id;
+  int slot = -1;
   uid_t uid = 0;
   int port = 0;
   pid_t pid = 0;  // tini, PID 1 of the project's PID namespace
@@ -187,7 +189,7 @@ void ensure_user(const std::string& id, uid_t uid) {
 struct ChildArgs {
   std::string id, name;
   uid_t uid;
-  int port, cpus;
+  int slot, port, cpus;
   int sync_fd;  // read end: the parent has put the child into its cgroup
   int log_fd;
 };
@@ -211,12 +213,14 @@ std::vector<std::string> project_env(const std::string& id) {
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, nothing of the share, the store disk or other projects.
-void enter_project_view(const std::string& id) {
+void enter_project_view(int slot) {
   if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) die("make / private");
-  std::string p = opt.host + "/p-" + id, c = opt.host + "/c-" + id;
+  std::string dir = opt.host + "/" + std::to_string(slot);
+  std::string p = dir + "/project", c = dir + "/control";
   if (::mount(p.c_str(), "/project", nullptr, MS_BIND, nullptr) != 0) die("bind /project");
   if (::mount(c.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0) die("bind /control");
-  if (::umount2(opt.host.c_str(), MNT_DETACH) != 0) die("hide the share");
+  // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
+  if (::umount2(fs::path(opt.host).parent_path().c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
   if (::mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777") != 0) die("private /tmp");
   ::mkdir("/tmp/home", 0700);
@@ -244,7 +248,7 @@ int project_main(void* arg) {
   ::close(a->sync_fd);
   ::dup2(a->log_fd, 1);
   ::dup2(a->log_fd, 2);
-  enter_project_view(a->id);
+  enter_project_view(a->slot);
   // A fresh /proc for this PID namespace.
   if (::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr) != 0) die("mount /proc");
   ::sethostname(a->name.c_str(), a->name.size());
@@ -271,15 +275,33 @@ std::string sanitize_name(const std::string& s) {
   return out.substr(0, 63);
 }
 
-std::string start_project(const std::string& id, int cpus, const std::string& name) {
+std::string slot_dir(int slot) { return opt.host + "/" + std::to_string(slot); }
+
+// Mounts the slot's virtiofs device afresh (the app has just set its share).
+std::string mount_slot(int slot) {
+  std::string dir = slot_dir(slot);
+  ::umount2(dir.c_str(), MNT_DETACH);
+  fs::create_directories(dir);
+  std::string tag = "tsugumi-" + std::to_string(slot);
+  if (::mount(tag.c_str(), dir.c_str(), "virtiofs", MS_NOSUID | MS_NODEV, nullptr) != 0)
+    return std::string("error cannot mount ") + tag + ": " + std::strerror(errno);
+  return "";
+}
+
+std::string start_project(const std::string& id, int cpus, const std::string& name, int slot) {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + std::to_string(it->second.port);
-  std::string p = opt.host + "/p-" + id, c = opt.host + "/c-" + id;
+  if (slot < 0 || slot > 63) return "error invalid slot";
+  for (const auto& [other, op] : projects)
+    if (op.running && op.slot == slot) return "error slot " + std::to_string(slot) + " is in use";
+  if (auto err = mount_slot(slot); !err.empty()) return err;
+  std::string p = slot_dir(slot) + "/project", c = slot_dir(slot) + "/control";
   if (!fs::is_regular_file(p + "/tsugumi.json")) return "error the project folder is not shared";
   if (!fs::is_directory(c)) return "error the control folder is not shared";
   Project pr;
   pr.id = id;
+  pr.slot = slot;
   pr.uid = uid_for(id);
   pr.port = 7700 + static_cast<int>(pr.uid - 20000);
   ensure_user(id, pr.uid);
@@ -298,7 +320,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
     ::close(log_fd);
     return "error pipe";
   }
-  ChildArgs args{id, sanitize_name(name), pr.uid, pr.port, cpus, sync[0], log_fd};
+  ChildArgs args{id, sanitize_name(name), pr.uid, slot, pr.port, cpus, sync[0], log_fd};
   // The child's fds must survive exec only where dup2'ed, so CLOEXEC is fine.
   static thread_local std::vector<char> stack(1 << 20);
   pid_t pid = ::clone(project_main, stack.data() + stack.size(),
@@ -342,6 +364,8 @@ std::string stop_project(const std::string& id) {
   }
   bool empty = cgroup_empty(id);
   it->second.running = false;
+  // The slot goes back to the app (which then empties its share).
+  ::umount2(slot_dir(it->second.slot).c_str(), MNT_DETACH);
   logf("stopped %s%s", id.c_str(), empty ? "" : " (processes remain)");
   return empty ? "ok" : "error processes of the project remain";
 }
@@ -535,7 +559,8 @@ void control(int conn) {
   if (w.empty()) r = "error empty request";
   else if (w[0] == "ping") r = "ok";
   else if (w[0] == "status") r = status();
-  else if (w[0] == "start" && w.size() == 4 && valid_id(w[1])) r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3]);
+  else if (w[0] == "start" && w.size() == 5 && valid_id(w[1]))
+    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()));
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
   else if (w[0] == "shell" && w.size() == 4 && valid_id(w[1])) {
@@ -641,6 +666,7 @@ int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
   fs::create_directories("/sys/fs/cgroup/tsugumi");
   fs::create_directories("/run/tsugumi");
+  fs::create_directories(opt.host);
   std::thread(reaper).detach();
   std::thread(serve, opt.rpc_port, rpc).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port, opt.rpc_port);

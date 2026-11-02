@@ -79,7 +79,10 @@ final class AppModel {
 
   init() {
     let bundle = Bundle.main
-    environments = EnvironmentManager(image: VMImage.find(bundle: bundle))
+    // TSUGUMI_SUPPORT_DIR: another support folder (VM, store), for checks
+    // that must not touch the user's own environment.
+    let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
+    environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
     demosRoot = bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos()
     loadDemos()
     loadRecents()
@@ -135,7 +138,9 @@ final class AppModel {
 
   /// Copies a bundled demo into a new, editable project (the original stays untouched).
   func copyDemo(_ demo: DemoEntry) throws -> URL {
-    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Tsugumi")
+    // TSUGUMI_PROJECTS_DIR: where copies go instead of ~/Documents/Tsugumi (checks).
+    let docs = ProcessInfo.processInfo.environment["TSUGUMI_PROJECTS_DIR"].map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Tsugumi")
     try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
     var dest = docs.appendingPathComponent(demo.id)
     var n = 2

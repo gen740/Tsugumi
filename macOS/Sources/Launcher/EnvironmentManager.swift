@@ -87,7 +87,15 @@ public actor EnvironmentManager {
   /// project's tsugumid when needed. Concurrent callers share one start.
   @discardableResult
   public func start(_ p: ProjectIdentity) async throws -> Endpoint {
-    if case .ready(let ep) = states[p.id], bridges[p.id] != nil { return ep }
+    // A ready project is reused only while its tsugumid still runs (it may
+    // have exited or crashed since; then it is started again).
+    if case .ready(let ep) = states[p.id], bridges[p.id] != nil {
+      if let status = try? await vm.request("status", timeout: 10), status.split(separator: " ").contains(where: { $0.hasPrefix("\(p.id):") }) {
+        return ep
+      }
+      bridges[p.id]?.close()
+      bridges[p.id] = nil
+    }
     if let t = starting[p.id] { return try await t.value }
     let t = Task { try await self.startProject(p) }
     starting[p.id] = t
@@ -130,13 +138,13 @@ public actor EnvironmentManager {
       try Data(#"{"grants":{}}"#.utf8).write(to: grants, options: .atomic)
     }
     try writeEnvironmentInfo(p)
-    await vm.share(["p-\(p.id)": p.url, "c-\(p.id)": control])
+    let slot = try await vm.attach(p.id, ["project": p.url, "control": control])
     // The share may take a moment to show new folders in the VM.
     var started = false
     var lastError = ""
     for _ in 0..<50 {
       do {
-        try await vm.request("start \(p.id) \(resources.cpus) \(hostName(p))")
+        try await vm.request("start \(p.id) \(resources.cpus) \(hostName(p)) \(slot)")
         started = true
         break
       } catch {
@@ -166,7 +174,7 @@ public actor EnvironmentManager {
   public func stop(_ p: ProjectIdentity) async throws {
     if case .running = vm.state {
       try await vm.request("stop \(p.id)")
-      await vm.unshare(["p-\(p.id)", "c-\(p.id)"])
+      await vm.detach(p.id)
     }
     bridges[p.id]?.close()
     bridges[p.id] = nil

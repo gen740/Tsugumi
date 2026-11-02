@@ -32,6 +32,7 @@ macOS 側の SwiftUI アプリと Agent は同じ FlatBuffers RPC 契約を使�
 | FlatBuffers | 25.12.19（C++/Python は nixpkgs、Swift は SwiftPM で同版を固定） |
 | hosq（C++ JSON） | `CLI20-dev/hosq@38c3c8e`（flake input） |
 | Dawn | `v20261023.194543`（`ui/renderer/CMakeLists.txt`、Metal backend） |
+| SwiftTerm（ターミナル表示、MIT） | 1.11.2（以降の版はシェーダーのために Xcode の Metal Toolchain の追加取得が要るため） |
 
 ## ディレクトリ
 

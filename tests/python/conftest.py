@@ -267,8 +267,12 @@ class VMEnv:
         """Runs a one-line bash script in the project's terminal environment."""
         import re
         out = self.vm.command(f"sh {self.id} {script}", until=lambda l: l.startswith("exit ") or l.startswith("error"))
-        # Terminal control sequences (bracketed paste and the like) are not output.
-        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(out[:-1]))
+        # Terminal control sequences (bracketed paste and the like) are not
+        # output, nor is the echo of the final `exit`.
+        lines = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(out[:-1])).split("\n")
+        while lines and lines[-1].strip() in ("", "exit"):
+            lines.pop()
+        return "\n".join(lines)
 
     def crash(self):
         """Abnormal termination: the project's tsugumid is killed."""

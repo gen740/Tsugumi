@@ -8,7 +8,8 @@
 #   /dev/vdb    the Nix store disk (sparse file in the app's support folder),
 #               formatted on first boot and mounted as /persist; /nix is the
 #               image's store (lower) + /persist/nix (upper) as an overlay
-#   virtiofs "tsugumi" at /mnt/host: p-<id> and c-<id> per open project
+#   virtiofs "tsugumi-<n>" (16 slots): one per open project, with its
+#               `project` and `control` folders, at /mnt/slots/<n> (tsugumi-vmd)
 #   hvc0        console: everything here and in tsugumi-vmd is logged to it,
 #               with "TSUGUMI-STAGE <name>" lines for the app's progress
 #   vsock       1024 control, 1025 RPC (tsugumi-vmd)
@@ -127,8 +128,9 @@ let
     [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start (see /persist/nix-daemon.log)"
     echo "nix-daemon ready; store $(du -sh /persist/nix/upper 2>/dev/null | cut -f1) on the store disk"
 
-    # Open projects: p-<id> (project folder) and c-<id> (control folder).
-    mount -t virtiofs tsugumi /mnt/host || fail "cannot mount the project share"
+    # Open projects: one virtiofs device each (tsugumi-<slot>), mounted by
+    # tsugumi-vmd under /mnt/slots while the project runs.
+    mount -t tmpfs -o mode=755 tmpfs /mnt
 
     stage network
     ip() { ${busybox}/bin/ip "$@"; }
@@ -145,7 +147,7 @@ let
 in
 runCommand "tsugumi-vm-${tsugumid.version}" { nativeBuildInputs = [ erofs-utils ]; } ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,var/empty,bin} $root/mnt/host
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,var/empty,bin,mnt}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

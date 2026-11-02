@@ -129,8 +129,10 @@ public final class ConsoleLog: @unchecked Sendable {
 /// The one Linux VM of the app (Virtualization.framework). It boots from the
 /// bundled kernel and read-only root file system, keeps the shared Nix store
 /// on a sparse disk image in the support folder, and runs one tsugumid per
-/// open project (tsugumi-vmd). Projects are added to and removed from its
-/// virtiofs share while it runs.
+/// open project (tsugumi-vmd). Each open project gets one of `slotCount`
+/// virtiofs devices for its folders: replacing one device's share while the
+/// VM runs leaves the others alone (replacing a share that other projects
+/// had mounted made their files disappear).
 public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   /// Steps of starting the VM; the guest reports the later ones on the console.
   public enum Stage: String, Sendable, CaseIterable {
@@ -152,9 +154,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private let queue = DispatchQueue(label: "app.tsugumi.vm")
   private let lock = NSLock()
   private var vm: VZVirtualMachine?
-  private var fileSystem: VZVirtioFileSystemDevice?
+  public static let slotCount = 16
+  private var fileSystems: [VZVirtioFileSystemDevice] = []
   private var socket: VZVirtioSocketDevice?
-  private var shares: [String: URL] = [:]
+  private var slots: [String: Int] = [:]  // project id -> slot
   private var hostLock: HostLock?
   private var _state: State = .stopped
   private var stateObservers: [UUID: @Sendable (State) -> Void] = [:]
@@ -337,9 +340,12 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     let net = VZVirtioNetworkDeviceConfiguration()
     net.attachment = VZNATNetworkDeviceAttachment()
     c.networkDevices = [net]
-    let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi")
-    fs.share = VZMultipleDirectoryShare(directories: sharedDirectories())
-    c.directorySharingDevices = [fs]
+    lock.withLock { slots.removeAll() }
+    c.directorySharingDevices = (0..<Self.slotCount).map { i in
+      let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-\(i)")
+      fs.share = VZMultipleDirectoryShare(directories: [:])
+      return fs
+    }
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
@@ -398,7 +404,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         let vm = VZVirtualMachine(configuration: config, queue: self.queue)
         vm.delegate = self
         self.vm = vm
-        self.fileSystem = vm.directorySharingDevices.first as? VZVirtioFileSystemDevice
+        self.fileSystems = vm.directorySharingDevices.compactMap { $0 as? VZVirtioFileSystemDevice }
         self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
         vm.start { result in
           switch result {
@@ -442,7 +448,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private func stopped(_ error: Error?) {
     queue.async {
       self.vm = nil
-      self.fileSystem = nil
+      self.fileSystems = []
       self.socket = nil
     }
     hostLock = nil
@@ -461,28 +467,34 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   // MARK: - Shared folders
 
-  private func sharedDirectories() -> [String: VZSharedDirectory] {
-    lock.lock()
-    defer { lock.unlock() }
-    return shares.mapValues { VZSharedDirectory(url: $0, readOnly: false) }
+  /// Gives the project a slot (its own virtiofs device, `tsugumi-<slot>`)
+  /// sharing `entries` (name -> folder); the same slot again for a project
+  /// that has one.
+  public func attach(_ projectId: String, _ entries: [String: URL]) async throws -> Int {
+    let slot: Int? = lock.withLock {
+      if let s = slots[projectId] { return s }
+      let used = Set(slots.values)
+      guard let free = (0..<Self.slotCount).first(where: { !used.contains($0) }) else { return nil }
+      slots[projectId] = free
+      return free
+    }
+    guard let slot else {
+      throw LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: "")
+    }
+    await setShare(slot, entries.mapValues { VZSharedDirectory(url: $0, readOnly: false) })
+    return slot
   }
 
-  /// Adds or replaces folders of the share (`/mnt/host/<name>` in the VM).
-  public func share(_ entries: [String: URL]) async {
-    lock.withLock { for (k, v) in entries { shares[k] = v } }
-    await applyShares()
+  /// Empties the project's slot (after its tsugumid stopped and unmounted it).
+  public func detach(_ projectId: String) async {
+    guard let slot = lock.withLock({ slots.removeValue(forKey: projectId) }) else { return }
+    await setShare(slot, [:])
   }
 
-  public func unshare(_ names: [String]) async {
-    lock.withLock { for n in names { shares[n] = nil } }
-    await applyShares()
-  }
-
-  private func applyShares() async {
-    let dirs = sharedDirectories()
+  private func setShare(_ slot: Int, _ dirs: [String: VZSharedDirectory]) async {
     await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
       queue.async {
-        self.fileSystem?.share = VZMultipleDirectoryShare(directories: dirs)
+        if slot < self.fileSystems.count { self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: dirs) }
         c.resume()
       }
     }
