@@ -66,6 +66,8 @@ cd tests/python && python -m pytest -q test_contract.py
 macOS/Container/build-image.sh
 ```
 
+ビルダーは `TSUGUMI_BUILDER_CPUS`（既定 8）, `TSUGUMI_BUILDER_MEMORY`（既定 16G）, `TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ volume、既定 `tsugumi-builder-nix`）で調整できます。`TSUGUMI_IMAGE_OUT=dist/tsugumi-env.tar` を付けると、アプリ同梱用の OCI アーカイブも残します。
+
 Dawn 描画層（初回は Dawn と依存の取得・ビルドで数分）:
 
 ```bash
@@ -159,3 +161,8 @@ open dist/Tsugumi.app
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮） | 実装済み（fixture 経由の読取→変更→実行→説明、取消、切断再試行を自動テスト）。文脈圧縮は自動テストなし。実 provider（有料 API）での動作は未検証 |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
 | N-Queens・200 Card の大規模デモ、Web UI、3D・WASM 表示、Draft 変換 | 未実装（仕様上の次段階） |
+
+## 既知の問題
+
+- 開発中、Apple container 0.6.0 で一部の VM が `stop`/`rm` に応答しなくなる状態が発生しました（`container ls` では running のまま、`container system stop` でも残る）。原因の一つは、tsugumid 自身が PID 1 だったため sandbox helper（bubblewrap の中間プロセス）の zombie が回収されず VM の終了処理が進まなかったことと考えられ、イメージでは tini を PID 1 にしました。すでに固まった VM は CLI からは止められないため、macOS の再起動などで container の実行状態を初期化してください。固まった VM がキャッシュ volume を掴んでいる間は、`TSUGUMI_BUILDER_VOLUME` で別の volume を指定するとイメージをビルドできます。
+- 環境はプロジェクトごとに独立した Nix store volume を持つため、ツールチェーン（約 0.8 GB）はプロジェクトごとに取得されます（隔離を優先した設計）。

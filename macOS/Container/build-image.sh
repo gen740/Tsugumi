@@ -27,7 +27,7 @@ container volume inspect "$volume" >/dev/null 2>&1 || container volume create -s
 # never depends on how quickly the VM is torn down afterwards.
 builder="tsugumi-image-builder-$(date +%s)"
 container run -d --rm --name "$builder" -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TSUGUMI_BUILDER_MEMORY:-16G}" \
-  -v tsugumi-builder-nix:/cache -v "$stage:/src:ro" -v "$out:/out" \
+  -v "$volume:/cache" -v "$stage:/src:ro" -v "$out:/out" \
   "$TSUGUMI_BUILDER_IMAGE" sh -uc '
     {
       set -e
