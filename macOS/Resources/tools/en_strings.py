@@ -143,6 +143,7 @@ EN = {
 "プロジェクト": "Project",
 "プロジェクトを切り替えられません": "Cannot switch projects",
 "プロジェクトを読み込んでいます…": "Loading the project…",
+"プロジェクトを読み込めませんでした": "Could not load the project",
 "プロジェクトを開けません": "Cannot open the project",
 "プロジェクト名": "Project name",
 "ホーム": "Home",

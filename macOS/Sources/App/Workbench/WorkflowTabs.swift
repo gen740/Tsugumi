@@ -105,54 +105,43 @@ struct Workbench: View {
       }
     }
     .overlay { EnvironmentOverlay(session: session) }
+    .tsugumiLoading(EnvironmentOverlay.loading(session))
   }
 }
 
-/// Covers the workbench while the environment starts or reconnects; shows
-/// the reason and a retry on failure. Unsaved edits stay in the draft.
+/// Covers the workbench when the environment is stopped or failed, with the
+/// reason and a retry. Starting and connecting are shown by the loading card
+/// (`loading(_:)`). Unsaved edits stay in the draft.
 struct EnvironmentOverlay: View {
   let session: ProjectSession
 
+  /// What the loading card says while the environment starts or the project
+  /// opens; nil once connected or when there is a problem to show instead.
+  static func loading(_ session: ProjectSession) -> LoadingContent? {
+    guard !session.connected else { return nil }
+    let dirty = session.dirty
+    switch session.environment {
+    case .failed, .stopped:
+      return nil
+    case .reconnecting:
+      return LoadingContent(title: String(localized: "再接続しています…"),
+                            message: String(localized: "未保存の変更は保持しています。"), dirty: dirty)
+    case .preparing(let s):
+      return LoadingContent(title: String(localized: "初回の準備をしています"), message: s, dirty: dirty)
+    case .starting(let s):
+      return LoadingContent(title: String(localized: "起動しています"), message: s, dirty: dirty)
+    case .ready:
+      if session.connectionMessage != nil { return nil }
+      return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), dirty: dirty)
+    }
+  }
+
   var body: some View {
-    if !session.connected {
+    if !session.connected, let problem {
       ZStack {
         Rectangle().fill(.ultraThinMaterial)
         VStack(spacing: 12) {
-          switch session.environment {
-          case .failed(let m, let recovery, let log):
-            Image(systemName: "xmark.octagon.fill").font(.largeTitle).foregroundStyle(.red)
-            Text("実行環境を起動できませんでした").font(.title2.bold())
-            Text(m).multilineTextAlignment(.center)
-            Text(recovery).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            if !log.isEmpty {
-              ScrollView { Text(log.suffix(4000)).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(maxWidth: 560, maxHeight: 160)
-                .padding(6).background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
-            }
-            HStack {
-              Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
-              Button("環境を停止") { session.stopEnvironment() }
-            }
-          case .stopped:
-            Image(systemName: "pause.circle").font(.largeTitle).foregroundStyle(.secondary)
-            Text("実行環境は停止しています").font(.title2.bold())
-            Button("起動") { session.start() }.buttonStyle(.borderedProminent)
-          case .reconnecting:
-            ProgressView()
-            Text("再接続しています…").font(.title3)
-            Text("未保存の変更は保持しています。").foregroundStyle(.secondary)
-          case .preparing(let s), .starting(let s):
-            ProgressView()
-            Text(session.environment.isPreparing ? "初回の準備をしています" : "起動しています").font(.title3)
-            Text(s).foregroundStyle(.secondary)
-          case .ready:
-            ProgressView()
-            Text("プロジェクトを読み込んでいます…").font(.title3)
-            if let m = session.connectionMessage {
-              Text(m).font(.callout).foregroundStyle(.secondary)
-              Button("再試行") { session.start() }
-            }
-          }
+          problem
           if session.dirty {
             Label("未保存の変更があります（保持しています）", systemImage: "pencil.circle").font(.callout).foregroundStyle(.orange)
           }
@@ -161,6 +150,43 @@ struct EnvironmentOverlay: View {
         .frame(maxWidth: 620)
       }
       .transition(.opacity)
+    }
+  }
+
+  private var problem: AnyView? {
+    switch session.environment {
+    case .failed(let m, let recovery, let log):
+      return AnyView(VStack(spacing: 12) {
+        Image(systemName: "xmark.octagon.fill").font(.largeTitle).foregroundStyle(.red)
+        Text("実行環境を起動できませんでした").font(.title2.bold())
+        Text(m).multilineTextAlignment(.center)
+        Text(recovery).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        if !log.isEmpty {
+          ScrollView { Text(log.suffix(4000)).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+            .frame(maxWidth: 560, maxHeight: 160)
+            .padding(6).background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+        }
+        HStack {
+          Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
+          Button("環境を停止") { session.stopEnvironment() }
+        }
+      })
+    case .stopped:
+      return AnyView(VStack(spacing: 12) {
+        Image(systemName: "pause.circle").font(.largeTitle).foregroundStyle(.secondary)
+        Text("実行環境は停止しています").font(.title2.bold())
+        Button("起動") { session.start() }.buttonStyle(.borderedProminent)
+      })
+    case .ready:
+      guard let m = session.connectionMessage else { return nil }
+      return AnyView(VStack(spacing: 12) {
+        Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(.orange)
+        Text("プロジェクトを読み込めませんでした").font(.title2.bold())
+        Text(m).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).textSelection(.enabled)
+        Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
+      })
+    case .reconnecting, .preparing, .starting:
+      return nil
     }
   }
 }
