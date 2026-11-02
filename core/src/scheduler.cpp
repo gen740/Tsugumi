@@ -940,26 +940,28 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       svc_.history().submit([rec](sql::Db& db) { History::complete_invocation(db, rec); },
                             [this, s = rec.summary](bool) { svc_.server()->broadcast(card_note(s)); });
     }
+    // The terminal state is computed here but becomes visible (RunStatus,
+    // notifications) only after every record above is committed.
     RunSummaryData sum;
     {
       std::lock_guard<std::mutex> l(mu_);
-      auto& st = summary_.status;
-      if (cancel_ && interrupted_) {
-        st.state = RunState::failed;
-        st.failure = FailureData::make(FailureKind::interrupted, "the environment stopped while the run was active");
-      } else if (cancel_) {
-        st.state = RunState::cancelled;
-        st.failure = FailureData::make(FailureKind::cancelled, "the run was cancelled");
-      } else if (start_failure_ || first_failure_ || blocked_failure) {
-        st.state = RunState::failed;
-        st.failure = start_failure_ ? start_failure_ : first_failure_ ? first_failure_ : blocked_failure;
-      } else {
-        st.state = RunState::succeeded;
-        st.failure.reset();
-      }
-      st.ended_at = now_ms();
       sum = summary_;
     }
+    auto& st = sum.status;
+    if (cancel_ && interrupted_) {
+      st.state = RunState::failed;
+      st.failure = FailureData::make(FailureKind::interrupted, "the environment stopped while the run was active");
+    } else if (cancel_) {
+      st.state = RunState::cancelled;
+      st.failure = FailureData::make(FailureKind::cancelled, "the run was cancelled");
+    } else if (start_failure_ || first_failure_ || blocked_failure) {
+      st.state = RunState::failed;
+      st.failure = start_failure_ ? start_failure_ : first_failure_ ? first_failure_ : blocked_failure;
+    } else {
+      st.state = RunState::succeeded;
+      st.failure.reset();
+    }
+    st.ended_at = now_ms();
     journal("run", sum.status.state == RunState::succeeded ? "succeeded"
                    : sum.status.state == RunState::cancelled ? "cancelled" : "failed",
             std::nullopt, std::nullopt, sum.status.failure ? sum.status.failure->diagnostic.value_or("") : "run finished");
@@ -975,6 +977,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           History::update_run(db, sum.status);
         },
         [self, sum](bool) {
+          {
+            std::lock_guard<std::mutex> l(self->mu_);
+            self->summary_ = sum;
+          }
           self->svc_.server()->broadcast(status_note(sum.status, false));
           self->svc_.server()->broadcast(finished_note(sum));
           self->sched_.finished(self.get());

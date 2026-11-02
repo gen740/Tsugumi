@@ -151,6 +151,11 @@ static int ensure_python(void) {
   if (!dlopen(TSUGUMI_LIBPYTHON, RTLD_NOW | RTLD_GLOBAL)) return 0;
 #endif
   if (PyImport_AppendInittab("_tsugumi_host", init_host) != 0) return 0;
+  /* UTF-8 mode: text I/O and file names are UTF-8 regardless of the locale. */
+  PyPreConfig pre;
+  PyPreConfig_InitIsolatedConfig(&pre);
+  pre.utf8_mode = 1;
+  if (PyStatus_Exception(Py_PreInitialize(&pre))) return 0;
   PyConfig config;
   PyConfig_InitIsolatedConfig(&config);
   PyStatus st = PyConfig_SetBytesString(&config, &config.home, TSUGUMI_PY_HOME);

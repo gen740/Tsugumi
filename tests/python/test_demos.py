@@ -1,0 +1,225 @@
+"""End-to-end checks of the bundled demos against the expected results.
+
+Run in the container environment with TSUGUMI_TEST_CONTAINER=1 (the
+reference configuration); without it a host tsugumid is used.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+
+from conftest import demo_environment
+from tsugumi_client import RpcFailure, change, new_id, path, text
+from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
+
+TERMINAL = (RunState.succeeded, RunState.failed, RunState.cancelled)
+
+
+def connect(env):
+    c = env.client()
+    if getattr(env, "client_hello", False):
+        c.hello()
+    return c
+
+
+def wait_run(c, run_id: str, timeout: float = 1800):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = c.call("RunStatusRequest", runId=run_id)
+        if st.state in TERMINAL:
+            return st
+        time.sleep(0.1)
+    raise TimeoutError(run_id)
+
+
+def run(c, card, propagate=True, concurrency=4):
+    rev = c.call("ProjectInspectRequest").rev
+    acc = c.call("RunRequest", baseRev=rev, opId=new_id(), origin="test", card=path(*card),
+                 propagate=propagate, maxConcurrency=concurrency)
+    return text(acc.run.runId)
+
+
+def edit_project(c, fn):
+    snap = c.call("ProjectInspectRequest")
+    doc = json.loads(text(snap.projectJson))
+    fn(doc)
+    return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
+                  changes=[change("SetProject", json=json.dumps(doc))])
+
+
+def find_card(doc, *ids):
+    cards = doc["canvas"]["cards"]
+    for i, id_ in enumerate(ids):
+        card = next(x for x in cards if x["id"] == id_)
+        if i + 1 < len(ids):
+            cards = card["canvas"]["cards"]
+    return card
+
+
+def display_text(c, run_id, *card):
+    rec = c.call("RunRecordRequest", runId=run_id, card=path(*card))
+    return text(rec.record.display.value.text) if rec.record and rec.record.display else None
+
+
+def stderr(c, run_id, *card):
+    return text(c.call("LogRangeRequest", runId=run_id, card=path(*card), stream=2, limitBytes=262144).text)
+
+
+@pytest.fixture
+def collatz(tmp_path):
+    env = demo_environment(tmp_path, "collatz")
+    yield env
+    env.cleanup()
+
+
+@pytest.fixture
+def report(tmp_path):
+    env = demo_environment(tmp_path, "report")
+    yield env
+    env.cleanup()
+
+
+@pytest.fixture
+def live(tmp_path):
+    env = demo_environment(tmp_path, "live-stream")
+    yield env
+    env.cleanup()
+
+
+def collatz_reference(n):
+    seq = [n]
+    while n != 1:
+        n = n // 2 if n % 2 == 0 else 3 * n + 1
+        seq.append(n)
+    return seq
+
+
+def test_collatz_27(collatz):
+    c = connect(collatz)
+    rid = run(c, ["begin"])
+    st = wait_run(c, rid)
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    expected = collatz_reference(27)
+    assert len(expected) == 112
+    assert display_text(c, rid, "compare") == "C++ and Python agree: 112 values, 111 steps to 1"
+    for lang in ("cpp", "python"):
+        shown = display_text(c, rid, lang, "collect")
+        assert shown == "112 values: " + " ".join(map(str, expected))
+
+
+def test_collatz_limit_overflow_and_skipped(collatz):
+    c = connect(collatz)
+    # Iteration limit: the check Card may run only 50 times.
+    edit_project(c, lambda d: [find_card(d, lang, "check").__setitem__("maxRuns", 50) for lang in ("cpp", "python")])
+    st = wait_run(c, run(c, ["begin"]))
+    assert st.state == RunState.failed
+    assert st.failure.kind == 19  # execution_limit
+    # Overflow: 3n+1 exceeds uint64 for this odd value.
+    big = 12297829382473034411
+    edit_project(c, lambda d: (find_card(d, "initial")["params"].__setitem__("value", 0),
+                               [find_card(d, lang, "check").pop("maxRuns") for lang in ("cpp", "python")]))
+    snap = c.call("ProjectInspectRequest")
+    raw = text(snap.projectJson).replace('"value": 0', f'"value": {big}').replace('"value":0', f'"value":{big}')
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[change("SetProject", json=raw)])
+    rid = run(c, ["begin"])
+    st = wait_run(c, rid)
+    assert st.state == RunState.failed
+    assert "integer overflow" in stderr(c, rid, "cpp", "triple")
+    # n = 2: the odd branch is never selected, so triple is skipped.
+    edit_project(c, lambda d: find_card(d, "initial")["params"].__setitem__("value", 2))
+    rid = run(c, ["begin"])
+    assert wait_run(c, rid).state == RunState.succeeded
+    rec = c.call("RunRecordRequest", runId=rid, card=path("cpp", "triple"))
+    assert rec.status.state == CardState.skipped
+
+
+def test_report_failure_rerun_and_artifacts(report):
+    c = connect(report)
+    rid = run(c, ["begin"])
+    assert wait_run(c, rid).state == RunState.succeeded
+    first = display_text(c, rid, "render")
+    assert first.startswith("# Quarterly sales")
+    # Same seed, same aggregate.
+    rid2 = run(c, ["begin"])
+    assert wait_run(c, rid2).state == RunState.succeeded
+    assert display_text(c, rid2, "render") == first
+    # Heading change is reflected.
+    edit_project(c, lambda d: find_card(d, "settings").setdefault("params", {}).__setitem__("heading", "見出し変更"))
+    rid3 = run(c, ["begin"])
+    assert wait_run(c, rid3).state == RunState.succeeded
+    assert display_text(c, rid3, "render").startswith("# 見出し変更")
+    # Intentional failure: stderr is recorded and downstream Cards stop.
+    edit_project(c, lambda d: find_card(d, "aggregate").setdefault("params", {}).__setitem__("fail_on_purpose", True))
+    rid4 = run(c, ["begin"])
+    st = wait_run(c, rid4)
+    assert st.state == RunState.failed
+    assert "failing on purpose" in stderr(c, rid4, "aggregate")
+    assert c.call("RunRecordRequest", runId=rid4, card=path("render")).status.state == CardState.blocked
+    # Fix the setting and re-run only Aggregate with its last saved input.
+    edit_project(c, lambda d: find_card(d, "aggregate")["params"].__setitem__("fail_on_purpose", False))
+    rid5 = run(c, ["aggregate"], propagate=False)
+    assert wait_run(c, rid5).state == RunState.succeeded
+    rec = c.call("RunRecordRequest", runId=rid5, card=path("aggregate"))
+    assert rec.record.recordIo is True and rec.record.inputs[0].name in (b"csv", "csv")
+    arts = c.call("ArtifactListRequest", runId=rid3).artifacts
+    assert {text(a.output) for a in arts} == {"report", "archive"}
+
+
+def test_report_artifacts_survive_restart(report):
+    c = connect(report)
+    rid = run(c, ["begin"])
+    assert wait_run(c, rid).state == RunState.succeeded
+    art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "report")
+    c.close()
+    report.stop()
+    report.start()
+    c = connect(report)
+    content = c.call("ArtifactReadRequest", artifactId=text(art.artifactId), member="report.md")
+    assert bytes(content.bytes).decode().startswith("# Quarterly sales")
+
+
+def live_points(c, rid):
+    rec = c.call("RunRecordRequest", runId=rid, card=path("plot"))
+    series = rec.record.display.value.series
+    return [float(x) for x in series[0].x], rec.aggregate.calls
+
+
+@pytest.mark.parametrize("concurrency", [1, 2])
+def test_live_stream_complete_and_ordered(live, concurrency):
+    c = connect(live)
+    rid = run(c, ["begin"], concurrency=concurrency)
+    assert wait_run(c, rid).state == RunState.succeeded
+    xs, calls = live_points(c, rid)
+    assert calls == 200
+    assert xs == [float(i) for i in range(140, 200)]  # most recent 60 points, none missing
+
+
+def test_live_stream_cancel_and_rerun(live):
+    c = connect(live)
+    opened = c.open()
+    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
+    rid = run(c, ["begin"])
+    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
+    time.sleep(1.0)
+    t0 = time.time()
+    st = c.call("RunCancelRequest", runId=rid)
+    assert time.time() - t0 < 0.1
+    assert st.state in (RunState.cancelling, RunState.cancelled)
+    final = wait_run(c, rid, timeout=10)
+    assert final.state == RunState.cancelled and time.time() - t0 < 2.0
+    xs, calls = live_points(c, rid)
+    assert 0 < calls < 200 and xs  # the last chart is kept
+    # A new run starts the series from the beginning.
+    rid2 = run(c, ["begin"])
+    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
+                        text(n.value.display.runId) == rid2, timeout=60)
+    first = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
+                                text(n.value.display.runId) == rid2, timeout=60)
+    assert first.value.display.value.series[0].x[0] == 0.0
+    c.call("RunCancelRequest", runId=rid2)
+    wait_run(c, rid2, timeout=10)
