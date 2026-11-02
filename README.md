@@ -121,7 +121,8 @@ open dist/Tsugumi.app
 | テスト | 内容 |
 | --- | --- |
 | `tests/python/test_contract.py`（24） | §6.7 の往復例、同時保存で片方だけ成功、同一 op_id の同時再送・再起動後再送、障害注入 3 点、重複キー/未知キー/不正 ID、uint64 最大値と表記保持、明示 false/0、Hello 規則、未知 union・不正長で切断、二重起動拒否、ソースの hash 競合・UTF-8 境界 patch・分割読取、外部変更と Reload、View の CAS、日本語ログの byte 境界・tail・範囲外、ページングと cursor の条件違い、SDK 準備と失効、CacheClear、import grant、遅い peer の切断と他 peer の継続 |
-| `tests/python/test_demos.py`（9） | 3 デモの完成条件（上表）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
+| `tests/python/test_demos.py`（9） | 3 デモの完成条件（上表）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行（最終確認: 9 passed） |
+| アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json> open dist/Tsugumi.app`） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display 受信→Undo を新しい保存として確定、を 3 デモとも確認 |
 | `macOS/Tests`（`swift test`） | UI 側 JSON モデル、Agent × ローカル model fixture × 実 tsugumid（読取→設定変更→実行→説明、取消、切断後の再試行で重複実行なし） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
@@ -138,9 +139,9 @@ open dist/Tsugumi.app
 | 履歴・成果物 | Live Stream 1 回で SQLite 約 5 MB（WAL 込み）、10 回で +8.8 MB。Report の成果物 29 KB | ログと I/O 記録量に比例 |
 | 起動（キャッシュ済みイメージ, 新規コピーのデモを開く→操作可能） | 1.5〜3.1 s（コンテナ起動・store volume 作成・Hello・Open を含む） | 目標 10 s 以内を達成 |
 | 初回準備（新しい store へのツールチェーン取得＋ビルド＋実行） | Collatz 22.5 s, Report 13.4 s, Live Stream 36.7 s（うち標本間隔の待機 20 s） | 回線速度に依存（cache.nixos.org） |
-| 応答（実行中の別接続からの RunStatus） | p50 2.2 ms / p99 14.3 ms | RPC は 100 ms 以内。SwiftUI の入力応答は画面での計測を行っていない（下の「未検証」） |
-| 取消 | RunCancel 応答 12.8 ms、Live Stream の worker 停止まで 0.13 s。Nix 準備中の取消 0.21 s（ホスト環境） | 目標（100 ms / 2 s）を達成 |
-| 継続利用（Live Stream 10 回） | tsugumid RSS 12.2→15.2 MB、store 増加 0。修正前は終了済み sandbox helper の zombie が 1 回あたり 2 個残っていた（PID 1 が reap しない問題）→ tini を PID 1 にして修正 | 修正後の再計測は下の「未検証」 |
+| 応答（Live Stream 実行中の別接続からの RunStatus、100 回） | p50 2.1 ms / p99 10.0 ms | RPC は 100 ms 以内。SwiftUI の入力応答は画面での計測を行っていない（下の「未検証」） |
+| 取消 | RunCancel 応答 8.3 ms、Live Stream の worker 停止→cancelled まで 0.12 s。Nix 準備中の取消 0.11 s（別計測、実コンテナ） | 目標（100 ms / 2 s）を達成 |
+| 継続利用（Live Stream 10 回、各 24.2〜24.8 s） | 残存 worker/sandbox プロセス 0→0、store 増加 0、履歴 +8.9 MB（WAL 込み）、tsugumid RSS 12.2→15.0 MB | 当初は終了済み sandbox helper の zombie が 1 回あたり 2 個残っていた（tsugumid が PID 1 で reap しなかった）。tini を PID 1 にして解消し、再計測で 0 を確認 |
 
 ## 実装状況
 
