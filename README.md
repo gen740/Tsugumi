@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
+</p>
+
 # Tsugumi
 
 Tsugumi は、Card をポートで接続したグラフを、Nix で固定した環境で実行・記録する macOS アプリです。
@@ -40,6 +44,7 @@ ui/renderer/       Dawn 描画層（C API, dylib）
 agent/             Agent（SwiftPM パッケージ: provider, 会話, BFBS 由来の tool, JSON⇄FlatBuffers）
 tests/cpp, tests/python, tests/fixtures   契約・デモ・計測・ローカル model provider fixture
 demos/             UI の Demos 一覧（index.json）と 3 つのデモプロジェクト
+docs/assets/       アイコンとキービジュアルの SVG
 ```
 
 生成 binding（C++/Python/Swift）と BFBS は `flatc` で各ビルドの出力先に生成し、Git には入れていません。
@@ -85,6 +90,8 @@ open dist/Tsugumi.app
 ```
 
 開発中は `cd macOS && swift run Tsugumi` でも起動できます（デモはソースツリーから読みます）。
+
+アプリアイコン `macOS/Resources/AppIcon.icns` は `docs/assets/tsugumi-icon.svg` から生成してコミットしています。SVG を変えたら `swift macOS/Resources/tools/make_icon.swift` で作り直します。
 
 ## 使い方（UI からの操作）
 

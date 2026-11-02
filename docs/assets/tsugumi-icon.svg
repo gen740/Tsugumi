@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Tsugumi</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2d5a5c"/>
+      <stop offset="1" stop-color="#132b33"/>
+    </linearGradient>
+    <clipPath id="squircle">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <!-- background -->
+  <g clip-path="url(#squircle)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <g opacity="0.55">
+      <polygon points="100,100 420,100 230,330" fill="#356769"/>
+      <polygon points="420,100 760,100 560,250" fill="#30605f"/>
+      <polygon points="760,100 924,100 924,330" fill="#2a5556"/>
+      <polygon points="100,100 230,330 100,520" fill="#2c5859"/>
+      <polygon points="420,100 560,250 230,330" fill="#2a5455"/>
+      <polygon points="560,250 760,100 924,330" fill="#25494c"/>
+      <polygon points="100,520 230,330 300,760" fill="#22464a"/>
+      <polygon points="924,330 924,700 760,560" fill="#1f4045"/>
+      <polygon points="100,520 300,760 100,924" fill="#1c3b40"/>
+      <polygon points="300,760 760,560 620,924" fill="#183539"/>
+      <polygon points="100,924 300,760 620,924" fill="#163034"/>
+      <polygon points="620,924 760,560 924,924" fill="#142c31"/>
+      <polygon points="760,560 924,700 924,924" fill="#132a2f"/>
+    </g>
+    <ellipse cx="500" cy="790" rx="260" ry="26" fill="#0b1c21" opacity="0.35"/>
+  </g>
+
+  <g transform="translate(512 500) scale(0.98) translate(-540 -476)">
+  <g id="perch">
+    <polygon points="285,722 330,704 330,722" fill="#523720"/>
+    <polygon points="330,704 450,700 330,722" fill="#7d5834"/>
+    <polygon points="330,722 450,700 450,724" fill="#5c3e24"/>
+    <polygon points="450,700 580,696 450,724" fill="#6b4a2b"/>
+    <polygon points="450,724 580,696 585,720" fill="#4e341e"/>
+    <polygon points="580,696 700,700 585,720" fill="#7d5834"/>
+    <polygon points="585,720 700,700 700,716" fill="#5c3e24"/>
+    <polygon points="700,700 760,706 700,716" fill="#523720"/>
+    <polygon points="640,698 690,662 660,700" fill="#6b4a2b"/>
+    <polygon points="690,662 660,700 672,698" fill="#4e341e"/>
+    <polygon points="690,662 740,640 712,664" fill="#a9b77a"/>
+    <polygon points="690,662 740,640 722,672" fill="#7d9148"/>
+  </g>
+
+  <g id="tsugumi-bird">
+    <!-- legs -->
+    <g>
+      <polygon points="468,600 494,604 486,640 470,640" fill="#d9c29e"/>
+      <polygon points="474,640 484,640 478,702 472,702" fill="#c08d68"/>
+      <polygon points="472,702 478,694 512,704 476,708" fill="#a8744f"/>
+      <polygon points="472,700 476,708 444,708" fill="#8e5f3e"/>
+      <polygon points="528,592 554,596 546,636 530,636" fill="#cdb48c"/>
+      <polygon points="534,636 544,636 540,700 534,700" fill="#b07c58"/>
+      <polygon points="534,700 540,692 572,700 538,706" fill="#a8744f"/>
+      <polygon points="534,698 538,706 508,706" fill="#8e5f3e"/>
+    </g>
+
+    <!-- tail -->
+    <polygon points="330,480 340,585 175,600" fill="#4e3320"/>
+    <polygon points="175,600 340,585 215,655" fill="#3a2617"/>
+    <polygon points="175,600 215,655 160,640" fill="#2f1f13"/>
+
+    <!-- body / breast -->
+    <polygon points="520,330 655,452 420,400" fill="#6f4a2c"/>
+    <polygon points="655,452 605,545 420,400" fill="#efe0c3"/>
+    <polygon points="420,400 605,545 330,480" fill="#e2cca4"/>
+    <polygon points="330,480 605,545 560,610" fill="#f4e9d4"/>
+    <polygon points="330,480 560,610 470,628" fill="#e9d8b8"/>
+    <polygon points="330,480 470,628 340,585" fill="#d4b98d"/>
+    <polygon points="655,452 690,500 605,545" fill="#e6d3b0"/>
+    <polygon points="605,545 690,500 560,610" fill="#f8efdd"/>
+
+    <!-- breast spots -->
+    <g fill="#3b2718">
+      <polygon points="610,470 628,478 612,490"/>
+      <polygon points="575,500 594,505 580,520"/>
+      <polygon points="630,512 648,516 636,532"/>
+      <polygon points="548,540 566,546 552,560"/>
+      <polygon points="596,552 614,556 602,572"/>
+      <polygon points="520,575 536,580 524,592"/>
+      <polygon points="570,590 586,593 576,606"/>
+    </g>
+
+    <!-- head -->
+    <polygon points="590,298 665,320 628,366" fill="#8a5d36"/>
+    <polygon points="520,330 590,298 628,366" fill="#7a5232"/>
+    <polygon points="665,320 694,356 628,366" fill="#9a6a3f"/>
+    <polygon points="520,330 628,366 655,452" fill="#c9a77a"/>
+    <polygon points="628,366 694,356 688,402" fill="#3b2718"/>
+    <polygon points="628,366 688,402 655,452" fill="#f3e6cc"/>
+    <polygon points="655,452 688,402 690,500" fill="#eadbbd"/>
+    <!-- supercilium -->
+    <polygon points="575,338 662,334 668,346 592,352" fill="#f1e2c4"/>
+    <!-- eye -->
+    <polygon points="628,354 641,361 641,376 628,383 615,376 615,361" fill="#16100b"/>
+    <polygon points="623,360 631,358 628,366" fill="#ffffff" opacity="0.9"/>
+
+    <!-- beak -->
+    <polygon points="694,356 776,394 728,384" fill="#2e2117"/>
+    <polygon points="688,402 694,356 728,384" fill="#3d2c1f"/>
+    <polygon points="688,402 728,384 776,394" fill="#d9a441"/>
+
+    <!-- wing -->
+    <polygon points="545,402 440,418 455,500" fill="#b0672f"/>
+    <polygon points="545,402 455,500 525,522" fill="#c97d3d"/>
+    <polygon points="440,418 298,560 455,500" fill="#8f4f22"/>
+    <polygon points="455,500 298,560 525,522" fill="#a35c29"/>
+    <polygon points="298,560 525,522 400,560" fill="#6f3c1a"/>
+    <polygon points="545,402 525,522 565,470" fill="#d58b49"/>
+    <polygon points="380,470 300,556 410,505" fill="#5a3015" opacity="0.6"/>
+  </g>
+
+  <g id="olive-branch">
+    <!-- stem -->
+    <polyline points="735,392 790,418 840,452 878,500" fill="none" stroke="#5b4526" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="815,435 842,410" fill="none" stroke="#5b4526" stroke-width="6" stroke-linecap="round"/>
+    <polyline points="855,472 820,500" fill="none" stroke="#5b4526" stroke-width="6" stroke-linecap="round"/>
+    <!-- leaves: each a diamond split along the midrib -->
+    <polygon points="790,418 826,368 806,380" fill="#a9b77a"/>
+    <polygon points="790,418 826,368 816,400" fill="#7d9148"/>
+    <polygon points="842,410 905,388 878,384" fill="#b6c28c"/>
+    <polygon points="842,410 905,388 880,408" fill="#879b52"/>
+    <polygon points="840,452 912,456 885,440" fill="#9fb070"/>
+    <polygon points="840,452 912,456 884,468" fill="#6d8240"/>
+    <polygon points="820,500 776,548 790,520" fill="#aab97c"/>
+    <polygon points="820,500 776,548 806,532" fill="#76893f"/>
+    <polygon points="878,500 900,570 880,545" fill="#9aab6a"/>
+    <polygon points="878,500 900,570 902,530" fill="#6a7e3c"/>
+    <polygon points="760,404 768,348 754,370" fill="#b3c086"/>
+    <polygon points="760,404 768,348 774,380" fill="#82964b"/>
+    <!-- olives -->
+    <g>
+      <polygon points="842,500 860,494 872,508 868,528 850,534 838,520" fill="#55661f"/>
+      <polygon points="842,500 860,494 856,512" fill="#7e9433"/>
+      <polygon points="860,494 872,508 856,512" fill="#6c8029"/>
+      <polygon points="838,520 842,500 856,512" fill="#4a5a1b"/>
+      <polygon points="848,502 854,500 851,507" fill="#d6e3a0" opacity="0.8"/>
+    </g>
+    <g>
+      <polygon points="884,516 900,510 912,522 910,542 894,548 882,536" fill="#3a2a3e"/>
+      <polygon points="884,516 900,510 896,526" fill="#5e4663"/>
+      <polygon points="900,510 912,522 896,526" fill="#4b3651"/>
+      <polygon points="882,536 884,516 896,526" fill="#2b1f2e"/>
+      <polygon points="889,518 895,516 892,523" fill="#c9b6cf" opacity="0.7"/>
+    </g>
+  </g>
+  </g>
+</svg>

@@ -30,6 +30,8 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
 cp "$image" "$app/Contents/Resources/tsugumi-env.tar"
+# App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
+cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,6 +41,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Tsugumi</string>
   <key>CFBundleIdentifier</key><string>app.tsugumi.Tsugumi</string>
   <key>CFBundleExecutable</key><string>Tsugumi</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
