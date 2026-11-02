@@ -14,7 +14,7 @@ import Testing
   // Every stage keeps its own icon, also while running (no generic check marks).
   #expect(Set(Stage.allCases.map(\.symbol)).count == Stage.allCases.count)
   #expect(Stage.build.activeSymbol == "hammer.fill" && Stage.evaluate.activeSymbol == "snowflake")
-  #expect(Stage.build.logStream == .stderr && Stage.execute.logStream == .stdout && Stage.save.logStream == .journal)
+  #expect(Stage.build.logStream == .build && Stage.execute.logStream == .stdout && Stage.save.logStream == .journal)
 }
 
 @Test func runTextCountsFromTheFirstInvocation() {

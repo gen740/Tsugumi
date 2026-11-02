@@ -370,57 +370,83 @@ private struct SkillSettings: View {
   }
 }
 
+/// Model connections. API keys go to the Keychain only (one item per
+/// provider); they are never written to project files, settings or logs.
 private struct APISettings: View {
   @AppStorage("agent.provider") private var provider = "anthropic"
-  @AppStorage("agent.model") private var model = ProviderConfig.anthropic.model
+  @AppStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
+  @AppStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @AppStorage("agent.fixturePort") private var port = 8765
   @State private var key = ""
-  @State private var hasKey = false
+  @State private var stored: Set<String> = []
   @State private var models: [String] = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
   @State private var message: String?
+
+  private var config: ProviderConfig { provider == "openai" ? .openAI : .anthropic }
 
   var body: some View {
     Form {
       Picker("接続先", selection: $provider) {
-        Text("Anthropic API").tag("anthropic")
+        Text("Anthropic API（API キー）").tag("anthropic")
+        Text("OpenAI API（API キー）").tag("openai")
         Text("ローカル fixture（テスト用・通信なし）").tag("fixture")
       }
-      if provider == "anthropic" {
-        TextField("モデル", text: $model)
-        LabeledContent("API キー", value: hasKey ? "Keychain に保存済み" : "未設定")
-        SecureField("新しい API キー", text: $key)
-        HStack {
-          Button("キーを保存") {
-            do {
-              try Keychain.save(key, account: ProviderConfig.anthropic.name)
-              key = ""
-              hasKey = true
-              message = "Keychain に保存しました。キーは core や Card には渡されません。"
-            } catch { message = "\(error)" }
-          }
-          .disabled(key.isEmpty)
-          Button("モデル一覧を取得") {
-            Task {
+      if provider == "anthropic" || provider == "openai" {
+        Section("API キー") {
+          TextField("モデル", text: provider == "openai" ? $openAIModel : $anthropicModel)
+          LabeledContent("保存先", value: stored.contains(config.name) ? "macOS Keychain（このデバイスのみ・ロック解除中に使用）" : "未設定")
+          SecureField("新しい API キー", text: $key)
+          HStack {
+            Button("キーを保存") {
               do {
-                models = try await MessagesProvider(config: AgentSettings.current()).models()
-                UserDefaults.standard.set(models, forKey: "agent.models")
-                message = "\(models.count) 件のモデルを取得しました。"
+                try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
+                key = ""
+                refresh()
+                message = "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。"
               } catch { message = "\(error)" }
             }
+            .disabled(key.isEmpty)
+            Button("キーを削除", role: .destructive) {
+              Keychain.delete(account: config.name)
+              refresh()
+              message = "\(config.name) のキーを Keychain から削除しました。"
+            }
+            .disabled(!stored.contains(config.name))
+            Button("モデル一覧を取得") {
+              Task {
+                do {
+                  models = try await MessagesProvider(config: AgentSettings.current()).models()
+                  UserDefaults.standard.set(models, forKey: "agent.models")
+                  message = "\(models.count) 件のモデルを取得しました。"
+                } catch { message = "\(error)" }
+              }
+            }
+            .disabled(!stored.contains(config.name))
           }
-        }
-        if !models.isEmpty {
-          Picker("一覧から選択", selection: $model) { ForEach(models, id: \.self) { Text($0).tag($0) } }
+          if !models.isEmpty {
+            Picker("一覧から選択", selection: provider == "openai" ? $openAIModel : $anthropicModel) {
+              ForEach(models, id: \.self) { Text($0).tag($0) }
+            }
+          }
         }
       } else {
         TextField("fixture のポート", value: $port, format: .number)
         Text("起動: python3 tests/fixtures/model_fixture.py --port \(port)").font(.caption.monospaced())
       }
+      Section("ChatGPT アカウントでの接続") {
+        Text("未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
       if let message { Text(message).font(.caption) }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
     }
     .formStyle(.grouped)
-    .onAppear { hasKey = Keychain.load(account: ProviderConfig.anthropic.name) != nil }
+    .onAppear(perform: refresh)
+    .onChange(of: provider) { models = []; message = nil; key = "" }
+  }
+
+  private func refresh() {
+    stored = Set([ProviderConfig.anthropic.name, ProviderConfig.openAI.name].filter { Keychain.load(account: $0) != nil })
   }
 }
 

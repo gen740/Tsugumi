@@ -37,9 +37,11 @@ struct LogTimelinePanel: View {
       Divider()
       switch workspace.bottomPanel {
       case .log:
-        if let runId {
-          RunLogView(session: session, runId: runId, card: workspace.logCard.map(path), invocation: workspace.logInvocation,
-                     stream: $workspace.logStream)
+        if let runId, let card = workspace.logCard {
+          StageLogView(session: session, runId: runId, card: path(card), invocation: workspace.logInvocation, focus: workspace.logStage)
+        } else if let runId {
+          // The whole run: its own journal (Card logs are shown by stage).
+          RunLogView(session: session, runId: runId, card: nil, invocation: nil, stream: $workspace.logStream)
         } else {
           ContentUnavailableView("実行履歴はありません", systemImage: "text.alignleft", description: Text("実行するとここにログが表示されます。"))
         }

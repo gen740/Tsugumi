@@ -1070,7 +1070,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       br.cancel = &cancel_;
       uint64_t inv = s.invocation;
       CardPath card = node.path;
-      br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::stderr, line); };
+      br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::build, line); };
       int64_t stage_start = t0;
       br.on_phase = [&](Phase p) {
         // Closing the previous stage on the timeline, then reporting the new one.

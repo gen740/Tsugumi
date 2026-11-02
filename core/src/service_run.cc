@@ -539,7 +539,8 @@ void Service::log_range(RequestIn& req) {
     inv = *r->invocation();
   }
   auto stream = r->stream();
-  if (stream != LogStream::stdout && stream != LogStream::stderr && stream != LogStream::journal)
+  if (stream != LogStream::stdout && stream != LogStream::stderr && stream != LogStream::journal &&
+      stream != LogStream::build)
     throw Failed(FailureKind::invalid_request, "stream must be stdout, stderr or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);

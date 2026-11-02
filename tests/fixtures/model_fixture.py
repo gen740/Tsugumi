@@ -223,6 +223,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self.path == "/v1/responses":
+            self._responses()
+            return
         if self.path != "/v1/messages":
             self.send_error(404)
             return
@@ -265,6 +268,52 @@ class Handler(BaseHTTPRequestHandler):
             stop = "tool_use"
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
         self._event("message_stop", {"type": "message_stop"})
+
+    def _responses(self):
+        """The same decisions over the OpenAI Responses API wire format."""
+        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        if self.headers.get("authorization") != "Bearer fixture-key":
+            self.send_error(401)
+            return
+        messages = []
+        for item in body.get("input", []):
+            if item.get("type") == "function_call":
+                block = {"type": "tool_use", "id": item["call_id"], "name": item["name"], "input": json.loads(item["arguments"] or "{}")}
+                role = "assistant"
+            elif item.get("type") == "function_call_output":
+                block = {"type": "tool_result", "tool_use_id": item["call_id"], "content": item["output"]}
+                role = "user"
+            else:
+                for c in item.get("content", []):
+                    messages.append({"role": item["role"], "content": [{"type": "text", "text": c.get("text", "")}]})
+                continue
+            if messages and messages[-1]["role"] == role:
+                messages[-1]["content"].append(block)
+            else:
+                messages.append({"role": role, "content": [block]})
+        if body.get("instructions", "").startswith("You summarize"):
+            decision = ("text", "Earlier: the user asked for a setting change and a run.")
+        else:
+            decision = decide(messages)
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        if decision[0] == "text":
+            for w in decision[1].split(" "):
+                self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 0, "delta": w + " "})
+        else:
+            _, name, args = decision
+            call = "call_" + uuid.uuid4().hex[:12]
+            self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": 0,
+                                                       "item": {"type": "function_call", "call_id": call, "name": name, "arguments": ""}})
+            text = json.dumps(args)
+            for i in range(0, len(text), 24):
+                self._event("response.function_call_arguments.delta",
+                            {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": text[i:i + 24]})
+            self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0,
+                                                      "item": {"type": "function_call", "call_id": call, "name": name}})
+        self._event("response.completed", {"type": "response.completed",
+                                           "response": {"usage": {"input_tokens": 100, "output_tokens": 20}}})
 
     def _event(self, name, data):
         self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())

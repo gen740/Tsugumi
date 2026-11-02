@@ -92,7 +92,7 @@ struct CardExecutionView: View {
           switch detail {
           case .io: ioView
           case .log:
-            if let runId { RunLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation, stream: $logStream) }
+            if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
           case .info: infoView
           }
         }

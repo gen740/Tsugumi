@@ -18,6 +18,8 @@ struct ChatPanel: View {
   @State private var model = UserDefaults.standard.string(forKey: "agent.model") ?? ProviderConfig.anthropic.model
   @State private var models: [String] = []
   @State private var skillQuery: String?
+  /// The conversation is taller than its area (only then a scroll bar shows).
+  @State private var overflows = false
   @FocusState private var inputFocused: Bool
 
   var body: some View {
@@ -116,6 +118,8 @@ struct ChatPanel: View {
           .padding(.horizontal, 14).padding(.vertical, 12)
           .frame(maxWidth: 720, alignment: .leading)
         }
+        .scrollIndicators(overflows ? .automatic : .never)
+        .onScrollGeometryChange(for: Bool.self) { g in g.contentSize.height > g.containerSize.height + 1 } action: { _, v in overflows = v }
         .onChange(of: chat.items.count) { scrollToEnd(proxy) }
         .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
@@ -206,6 +210,7 @@ struct ChatPanel: View {
             .font(.body)
             .scrollContentBackground(.hidden)
             .frame(height: min(160, max(22, inputHeight)))
+            .scrollIndicators(inputHeight > 160 ? .automatic : .never)
             .focused($inputFocused)
             .onChange(of: input) { updateSkillQuery() }
             .onKeyPress(.return, phases: .down) { press in
@@ -224,16 +229,15 @@ struct ChatPanel: View {
               .buttonStyle(.borderless)
               .help("選択した Card を参照に追加")
           }
-          Button { input += input.hasSuffix(" ") || input.isEmpty ? "$" : " $"; inputFocused = true } label: { Image(systemName: "dollarsign") }
-            .buttonStyle(.borderless)
-            .help("Skill を選ぶ")
           Picker("", selection: $model) {
             ForEach(Array(Set(models + [model])).sorted(), id: \.self) { Text($0).tag($0) }
           }
           .labelsHidden().fixedSize()
           .controlSize(.small)
-          .onChange(of: model) { UserDefaults.standard.set(model, forKey: "agent.model") }
-          .disabled(chat.provider.name != ProviderConfig.anthropic.name)
+          .onChange(of: model) {
+            UserDefaults.standard.set(model, forKey: chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model")
+          }
+          .disabled(!chat.provider.usesKeychain)
           .help("モデル（接続先: \(chat.provider.name)）")
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)

@@ -405,6 +405,11 @@ enum AgentSettings {
     if d.string(forKey: "agent.provider") == "fixture" {
       return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
     }
+    if d.string(forKey: "agent.provider") == "openai" {
+      var c = ProviderConfig.openAI
+      if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
+      return c
+    }
     var c = ProviderConfig.anthropic
     if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
     return c

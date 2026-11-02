@@ -105,7 +105,9 @@ final class Workspace {
   /// Log filter chosen from elsewhere (an issue, a Card menu, a stage icon).
   var logCard: CardKey?
   var logInvocation: UInt64?
-  var logStream: Tsugumi_Data_LogStream = .stdout
+  var logStream: Tsugumi_Data_LogStream = .journal
+  /// Stage whose log section to open (a click on a stage icon).
+  var logStage: Stage?
 
   var active: WorkflowTab? { tabs.first { $0.id == activeTab } ?? tabs.first }
 
@@ -150,7 +152,8 @@ final class Workspace {
   func showLog(for card: CardKey?, stage: Stage? = nil, invocation: UInt64? = nil) {
     logCard = card
     logInvocation = invocation
-    if let stage { logStream = stage.logStream } else if card == nil { logStream = .journal }
+    logStage = stage
+    if card == nil { logStream = .journal }
     bottomPanel = .log
     showBottom = true
   }

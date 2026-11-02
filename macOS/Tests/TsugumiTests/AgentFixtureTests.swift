@@ -96,14 +96,14 @@ final class EventLog: @unchecked Sendable {
   var text: String { all.compactMap { if case .text(let t) = $0 { return t }; return nil }.joined() }
 }
 
-func makeAgent(_ h: AgentHarness, _ client: RPCClient) throws -> Agent {
+func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil) throws -> Agent {
   let bfbs = try #require(RPCSchema.bfbs())
   let schema = try BFBS(data: bfbs)
   let catalog = try ToolCatalog(schema: schema)
   var names: [UInt8: String] = [:]
   for v in schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" })!.values { names[UInt8(v.value)] = v.name }
   return Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
-               provider: .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"))
+               provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"))
 }
 
 func waitFinished(_ log: EventLog, seconds: Double = 60) async {
@@ -134,6 +134,31 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     // The trace is persisted with op_ids for mutating calls.
     let conv = await agent.conversation
     #expect(conv.tools.contains { $0.name == "project_save" && $0.opId != nil && $0.state == .completed })
+    await client.close()
+  }
+
+  /// The same conversation over the OpenAI Responses API wire format, with the
+  /// key read from the Keychain (a test account, removed afterwards).
+  @Test func openAIResponsesReadChangeRun() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let account = "Tsugumi test OpenAI \(UUID().uuidString)"
+    try Keychain.save("fixture-key", account: account)
+    defer { Keychain.delete(account: account) }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let config = ProviderConfig(name: account, baseURL: URL(string: "http://127.0.0.1:\(h.fixturePort)")!, model: "fixture",
+                                usesKeychain: true, api: .openAIResponses)
+    let agent = try makeAgent(h, client, provider: config)
+    let log = EventLog()
+    await agent.send("set src.text to \"Hello over Responses\" and run, then report out", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(try await client.inspect().projectJson.contains("Hello over Responses"))
+    #expect(Keychain.load(account: account) == "fixture-key")
+    Keychain.delete(account: account)
+    #expect(Keychain.load(account: account) == nil)
     await client.close()
   }
 

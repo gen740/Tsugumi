@@ -63,7 +63,9 @@ enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, vali
 /// build/worker kept from an earlier invocation of the same run).
 enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, reused = 4, failed = 5, cancelled = 6 }
 
-enum LogStream : ubyte { unspecified = 0, stdout = 1, stderr = 2, journal = 3 }
+/// build: what SDK preparation, Nix evaluation and build printed (kept apart
+/// from the Card's own stderr so logs can be shown by stage).
+enum LogStream : ubyte { unspecified = 0, stdout = 1, stderr = 2, journal = 3, build = 4 }
 
 enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 

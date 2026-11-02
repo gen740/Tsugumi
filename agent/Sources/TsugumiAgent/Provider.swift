@@ -77,22 +77,30 @@ public enum StreamEvent {
 }
 
 public struct ProviderConfig: Codable, Equatable, Sendable {
+  /// Wire protocol of the endpoint.
+  public enum API: String, Codable, Sendable { case anthropicMessages, openAIResponses }
+
   public var name: String
   public var baseURL: URL
   public var model: String
   public var usesKeychain: Bool  // false for the local fixture
+  public var api: API = .anthropicMessages
   public var maxTokens = 4096
   public var contextLimit = 180_000
 
-  public init(name: String, baseURL: URL, model: String, usesKeychain: Bool) {
+  public init(name: String, baseURL: URL, model: String, usesKeychain: Bool, api: API = .anthropicMessages) {
     self.name = name
     self.baseURL = baseURL
     self.model = model
     self.usesKeychain = usesKeychain
+    self.api = api
   }
 
   public static let anthropic = ProviderConfig(name: "Anthropic", baseURL: URL(string: "https://api.anthropic.com")!,
                                                model: "claude-sonnet-5-5", usesKeychain: true)
+  /// OpenAI with an API key (Responses API). Not a ChatGPT account sign-in.
+  public static let openAI = ProviderConfig(name: "OpenAI", baseURL: URL(string: "https://api.openai.com")!,
+                                            model: "gpt-6.1-sol", usesKeychain: true, api: .openAIResponses)
   public static func localFixture(port: Int) -> ProviderConfig {
     var c = ProviderConfig(name: "Local fixture", baseURL: URL(string: "http://127.0.0.1:\(port)")!, model: "fixture",
                            usesKeychain: false)
@@ -101,10 +109,19 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
   }
 }
 
-/// Model credentials stay in the macOS Keychain on the host; they are never
-/// sent to tsugumid or to Card workers.
+/// Model credentials stay in the macOS Keychain on the host (one item per
+/// provider, readable only while the Mac is unlocked, not synced). They are
+/// never written to project files, settings or logs, and never sent to
+/// tsugumid or to Card workers.
 public enum Keychain {
   static let service = "app.tsugumi.agent"
+
+  /// Removes the stored secret of a provider (no error when there is none).
+  public static func delete(account: String) {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                            kSecAttrAccount as String: account]
+    SecItemDelete(q as CFDictionary)
+  }
 
   public static func save(_ secret: String, account: String) throws {
     let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
@@ -142,12 +159,15 @@ public struct MessagesProvider: Sendable {
   private func request(path: String) throws -> URLRequest {
     var r = URLRequest(url: config.baseURL.appendingPathComponent(path))
     r.setValue("application/json", forHTTPHeaderField: "content-type")
-    r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    if config.api == .anthropicMessages { r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
     if config.usesKeychain {
       guard let key = Keychain.load(account: config.name) else {
         throw AgentError.provider("no API key for \(config.name); add it in Settings")
       }
-      r.setValue(key, forHTTPHeaderField: "x-api-key")
+      switch config.api {
+      case .anthropicMessages: r.setValue(key, forHTTPHeaderField: "x-api-key")
+      case .openAIResponses: r.setValue("Bearer " + key, forHTTPHeaderField: "authorization")
+      }
     }
     return r
   }
@@ -170,6 +190,7 @@ public struct MessagesProvider: Sendable {
   }
 
   public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
+    if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
     var r = try request(path: "v1/messages")
     r.httpMethod = "POST"
     let body: [String: Any] = [
@@ -235,6 +256,105 @@ public struct MessagesProvider: Sendable {
           }
           // A stream cut before message_stop is a lost connection, not a short answer.
           if !stopped { throw URLError(.networkConnectionLost) }
+          cont.finish()
+        } catch {
+          cont.finish(throwing: error)
+        }
+      }
+      cont.onTermination = { _ in task.cancel() }
+    }
+  }
+}
+
+// MARK: - OpenAI Responses API
+
+extension MessagesProvider {
+  /// The conversation as Responses API input items: messages, function calls
+  /// (the model's tool uses) and their outputs.
+  static func responsesInput(_ messages: [ChatMessage]) -> [[String: Any]] {
+    var out: [[String: Any]] = []
+    for m in messages {
+      var texts: [[String: Any]] = []
+      func flush() {
+        if !texts.isEmpty { out.append(["role": m.role, "content": texts]); texts = [] }
+      }
+      for b in m.content {
+        switch b {
+        case .text(let t): texts.append(["type": m.role == "assistant" ? "output_text" : "input_text", "text": t])
+        case .toolUse(let id, let name, let input):
+          flush()
+          out.append(["type": "function_call", "call_id": id, "name": name, "arguments": input])
+        case .toolResult(let id, let content, _):
+          flush()
+          out.append(["type": "function_call_output", "call_id": id, "output": content])
+        }
+      }
+      flush()
+    }
+    return out
+  }
+
+  func responsesStream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
+    var r = try request(path: "v1/responses")
+    r.httpMethod = "POST"
+    var body: [String: Any] = [
+      "model": config.model,
+      "instructions": system,
+      "input": Self.responsesInput(messages),
+      "max_output_tokens": config.maxTokens,
+      "stream": true,
+      "store": false,
+    ]
+    if !tools.isEmpty {
+      body["tools"] = tools.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }
+    }
+    r.httpBody = try JSONSerialization.data(withJSONObject: body)
+    let session = self.session
+    return AsyncThrowingStream { cont in
+      let task = Task {
+        do {
+          let (bytes, resp) = try await session.bytes(for: r)
+          let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+          if status != 200 {
+            var text = ""
+            for try await line in bytes.lines { text += line }
+            throw HTTPStatusError(status: status, body: text)
+          }
+          var usedTools = false
+          var finished = false
+          for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data:") else { continue }
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] else { continue }
+            let index = obj["output_index"] as? Int ?? 0
+            switch obj["type"] as? String {
+            case "response.output_text.delta":
+              if let d = obj["delta"] as? String { cont.yield(.text(d)) }
+            case "response.output_item.added":
+              if let item = obj["item"] as? [String: Any], item["type"] as? String == "function_call" {
+                usedTools = true
+                cont.yield(.toolStart(index: index, id: item["call_id"] as? String ?? UUID().uuidString, name: item["name"] as? String ?? ""))
+              }
+            case "response.function_call_arguments.delta":
+              if let d = obj["delta"] as? String { cont.yield(.toolInput(index: index, partialJSON: d)) }
+            case "response.output_item.done":
+              if (obj["item"] as? [String: Any])?["type"] as? String == "function_call" { cont.yield(.blockStop(index: index)) }
+            case "response.completed", "response.incomplete":
+              var usage = Usage()
+              let u = (obj["response"] as? [String: Any])?["usage"] as? [String: Any]
+              usage.inputTokens = u?["input_tokens"] as? Int ?? 0
+              usage.outputTokens = u?["output_tokens"] as? Int ?? 0
+              let incomplete = obj["type"] as? String == "response.incomplete"
+              cont.yield(.stop(reason: usedTools ? "tool_use" : incomplete ? "max_tokens" : "end_turn", usage: usage))
+              finished = true
+            case "response.failed", "error":
+              let e = ((obj["response"] as? [String: Any])?["error"] ?? obj["error"]) as? [String: Any]
+              throw AgentError.provider(e?["message"] as? String ?? e?["code"] as? String ?? "stream error")
+            default:
+              break
+            }
+          }
+          if !finished { throw URLError(.networkConnectionLost) }
           cont.finish()
         } catch {
           cont.finish(throwing: error)
