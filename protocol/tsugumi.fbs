@@ -532,6 +532,8 @@ table InvocationSummary {
   duration_ms:uint64 = null (id: 7);
   failure:Tsugumi.Data.Failure (id: 8);
   waiting_inputs:[WaitingInput] (id: 9, required);
+  /// true when the build was reused from the cache (no evaluate/build work).
+  build_cached:bool = null (id: 10);
 }
 
 table InvocationPage {

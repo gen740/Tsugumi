@@ -100,7 +100,7 @@ constexpr const char* kRunCols =
     "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
     "target, propagate";
 
-InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id) {
+InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1) {
   // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
@@ -113,6 +113,7 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id) {
   s.duration_ms = st.opt_u64(6);
   s.failure = col_failure(st, 7);
   s.waiting = waiting_from(st.text(8));
+  if (cached_col >= 0 && !st.is_null(cached_col)) s.build_cached = st.i64(cached_col) != 0;
   return s;
 }
 
@@ -187,6 +188,13 @@ CREATE TABLE IF NOT EXISTS displays(
 CREATE TABLE IF NOT EXISTS receipts(
   op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL);
 )SQL");
+  // Columns added after the first release (older databases are migrated in place).
+  bool has_cached = false;
+  {
+    auto st = db.prepare("SELECT name FROM pragma_table_info('invocations')");
+    while (st.step()) has_cached |= st.text(0) == "build_cached";
+  }
+  if (!has_cached) db.exec("ALTER TABLE invocations ADD COLUMN build_cached INTEGER");
 }
 
 sql::Db& History::reader() {
@@ -314,7 +322,7 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   const auto& s = r.summary;
   auto st = db.prepare(
       "INSERT OR REPLACE INTO invocations(run_id, card, invocation, state, phase, started_at, ended_at, "
-      "duration_ms, failure, waiting, record_io, input_sources, display) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      "duration_ms, failure, waiting, record_io, input_sources, display, build_cached) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
   if (s.phase) st.bind(5, static_cast<int>(*s.phase));
   else st.bind_null(5);
@@ -323,6 +331,8 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   st.bind(10, waiting_json(s.waiting)).bind(11, r.record_io).bind(12, sources_json(r.input_sources));
   if (r.display) st.bind_blob(13, wire::standalone_display(*r.display));
   else st.bind_null(13);
+  if (s.build_cached) st.bind(14, *s.build_cached);
+  else st.bind_null(14);
   st.run();
   // The completion removes exactly this invocation's progress status, never a newer one.
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
@@ -476,15 +486,15 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
                                                         uint64_t limit) {
   // Completed records and in-progress statuses, ascending invocation number.
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL "
       "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
   std::vector<InvocationSummaryData> out;
-  while (st.step()) out.push_back(inv_row(st, run_id));
+  while (st.step()) out.push_back(inv_row(st, run_id, 9));
   return out;
 }
 
@@ -492,11 +502,11 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
                                                         const CardPath& card, uint64_t n) {
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
-      "record_io, input_sources, display FROM invocations WHERE run_id=? AND card=? AND invocation=?");
+      "record_io, input_sources, display, build_cached FROM invocations WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   InvocationRecordData r;
-  r.summary = inv_row(st, run_id);
+  r.summary = inv_row(st, run_id, 12);
   r.record_io = st.i64(9) != 0;
   r.input_sources = sources_from(st.text(10));
   if (!st.is_null(11)) r.display = wire::standalone_display(st.blob(11));

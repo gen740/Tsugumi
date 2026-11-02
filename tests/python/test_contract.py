@@ -478,8 +478,33 @@ def test_validate_and_unsupported_format(client):
         client.call("ProjectValidateRequest", atRev=snap.rev + 5)
     assert e.value.kind == "revision_conflict"
     with pytest.raises(RpcFailure) as e:
-        client.call("ProjectFileFormatRequest", path="x.cpp", text="int x;", language=1)
+        client.call("ProjectFileFormatRequest", path="x.fbs", text="table T {}", language=6)
     assert e.value.kind == "unsupported"
+
+
+def test_format_is_separate_from_saving(client):
+    import shutil
+    snap = client.open().snapshot
+    r = client.call("ProjectFileFormatRequest", path="definitions/a/_card.json", text='{"a":[1,2],"b":{}}')
+    assert text(r.text) == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {}\n}\n'
+    bad = client.call("ProjectFileFormatRequest", path="definitions/a/x.json", text='{"a":')
+    assert [text(d.code) for d in bad.diagnostics] == ["syntax_error"] and text(bad.text) == '{"a":'
+    tools = {"cpp": ("clang-format", "x.cpp", "int  main( ){return 0;}", None),
+             "python": ("ruff", "x.py", "def f(:\n  pass\n", (1, 7)),
+             "nix": ("nixfmt", "x.nix", "{ a = 1; b = [ 1 2 ]; }", None)}
+    for lang, (tool, name, src, err_pos) in tools.items():
+        if not shutil.which(tool):
+            with pytest.raises(RpcFailure) as e:
+                client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
+            assert e.value.kind == "unsupported" and tool in str(e.value)
+            continue
+        res = client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
+        if err_pos:
+            assert [text(d.code) for d in res.diagnostics] == ["syntax_error"]
+            assert res.diagnostics[0].offset is not None
+        else:
+            assert not res.diagnostics and text(res.text) != src
+    assert client.call("ProjectInspectRequest").rev == snap.rev  # formatting never saves
 
 
 def test_sdk_prepare_status_and_read(tmp_path):

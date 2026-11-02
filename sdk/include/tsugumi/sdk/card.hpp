@@ -83,6 +83,28 @@ class Context {
     c_->display_line_chart(c_->host, s.data(), s.size());
   }
 
+  void display_table(const std::vector<std::string>& columns, const std::vector<std::vector<std::string>>& rows) const {
+    std::vector<const char*> cols, cells;
+    for (const auto& c : columns) cols.push_back(c.c_str());
+    for (const auto& r : rows) {
+      if (r.size() != columns.size()) throw Failure("output_invalid", "table rows need one cell per column");
+      for (const auto& c : r) cells.push_back(c.c_str());
+    }
+    c_->display_table(c_->host, cols.data(), cols.size(), cells.data(), rows.size());
+  }
+  void display_image(const std::string& media_type, const std::string& bytes, const std::string& alt = "") const {
+    c_->display_image(c_->host, media_type.c_str(), reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+                      alt.c_str());
+  }
+  void display_points(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
+                      const std::vector<uint32_t>& colors = {}) const {
+    if (x.size() != y.size() || x.size() != z.size()) throw Failure("output_invalid", "x, y and z differ in length");
+    c_->display_points(c_->host, x.data(), y.data(), z.data(), colors.empty() ? nullptr : colors.data(), x.size());
+  }
+  void display_module(const std::string& name, const std::string& data_json) const {
+    c_->display_module(c_->host, name.c_str(), data_json.c_str());
+  }
+
   void log(const std::string& message) const { c_->log(c_->host, message.c_str()); }
   bool cancelled() const { return c_->cancelled(c_->host) != 0; }
   int64_t remaining_ms() const { return c_->remaining_ms(c_->host); }

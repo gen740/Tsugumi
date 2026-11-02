@@ -1,4 +1,5 @@
-/* Tsugumi Card ABI, version 1.
+/* Tsugumi Card ABI, version 2 (version 1 plus the display functions at the
+ * end of tsugumi_call; Cards built for version 1 keep working).
  *
  * A Card package provides lib/main.so exporting tsugumi_main. C++ and Python
  * Cards use the same ABI (Python packages ship a main.so that embeds the
@@ -15,7 +16,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 1u
+#define TSUGUMI_ABI_VERSION 2u
 
 enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
 
@@ -61,6 +62,16 @@ typedef struct tsugumi_call {
   /* Records a structured failure; tsugumi_main should then return non-zero.
    * kind is a FailureKind name such as "worker_failed" or "output_invalid". */
   void (*fail)(void* host, const char* kind, const char* message);
+  /* ABI 2. Table cells are row-major, column_count per row. */
+  int (*display_table)(void* host, const char* const* columns, size_t column_count, const char* const* cells,
+                       size_t row_count);
+  /* PNG or JPEG bytes; media_type is "image/png" or "image/jpeg". */
+  int (*display_image)(void* host, const char* media_type, const uint8_t* data, size_t size, const char* alt);
+  /* colors (0xRRGGBB) may be NULL. */
+  int (*display_points)(void* host, const float* x, const float* y, const float* z, const uint32_t* colors,
+                        size_t count);
+  /* Input for a named UI Canvas module, as JSON text. */
+  int (*display_module)(void* host, const char* name, const char* data_json);
 } tsugumi_call;
 
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call);

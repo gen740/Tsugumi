@@ -86,7 +86,40 @@ table LineSeries {
 
 table DisplayLineChart { series:[LineSeries] (id: 0, required); }
 
-union DisplayValue { DisplayText = 1, DisplayScalar = 2, DisplayLineChart = 3 }
+table TableRow { cells:[string] (id: 0, required); }
+
+/// Up to 64 columns and 10,000 rows; each cell at most 4 KiB.
+table DisplayTable {
+  columns:[string] (id: 0, required);
+  rows:[TableRow] (id: 1, required);
+}
+
+/// PNG or JPEG, at most 8 MiB.
+table DisplayImage {
+  media_type:string (id: 0, required);  // image/png or image/jpeg
+  data:[ubyte] (id: 1, required);
+  alt:string (id: 2);
+}
+
+/// Up to 1,000,000 points; colors (0xRRGGBB) are empty or one per point.
+table DisplayPointCloud {
+  x:[float] (id: 0, required);
+  y:[float] (id: 1, required);
+  z:[float] (id: 2, required);
+  colors:[uint32] (id: 3);
+}
+
+/// Data for a UI-side Canvas module: `name` names the renderer, `data_json`
+/// is its JSON input (at most 1 MiB). The core validates and stores it only.
+table DisplayModule {
+  name:string (id: 0, required);
+  data_json:string (id: 1, required);
+}
+
+union DisplayValue {
+  DisplayText = 1, DisplayScalar = 2, DisplayLineChart = 3, DisplayTable = 4,
+  DisplayImage = 5, DisplayPointCloud = 6, DisplayModule = 7,
+}
 
 // Full replacement snapshot. `revision` increases per run/card.
 table Display {

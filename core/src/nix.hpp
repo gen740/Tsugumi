@@ -38,6 +38,7 @@ struct BuildRequest {
   std::optional<uint64_t> timeout_seconds;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
+  std::function<void(Phase)> on_phase;          // evaluate, then build (not called for cached builds)
 };
 
 struct CacheClearOutcome {
@@ -88,7 +89,7 @@ class NixRunner {
   std::vector<std::string> nix_env() const;
 
   Service& svc_;
-  std::string nix_build_, nix_store_;
+  std::string nix_build_, nix_store_, nix_instantiate_;
   std::string sdk_hash_;  // content hash of the installed SDK (part of every build key)
   std::mutex lane_mu_;
   std::condition_variable lane_cv_;

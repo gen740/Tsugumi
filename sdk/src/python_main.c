@@ -101,6 +101,81 @@ static PyObject* host_display_line_chart(PyObject* self, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* host_display_table(PyObject* self, PyObject* args) {
+  PyObject *cols, *rows;
+  if (!PyArg_ParseTuple(args, "O!O!", &PyList_Type, &cols, &PyList_Type, &rows)) return NULL;
+  Py_ssize_t nc = PyList_Size(cols), nr = PyList_Size(rows);
+  const char** c = calloc((size_t)nc + 1, sizeof(char*));
+  const char** cells = calloc((size_t)(nc * nr) + 1, sizeof(char*));
+  int ok = 1;
+  for (Py_ssize_t i = 0; i < nc && ok; ++i) ok = (c[i] = PyUnicode_AsUTF8(PyList_GetItem(cols, i))) != NULL;
+  for (Py_ssize_t r = 0; r < nr && ok; ++r) {
+    PyObject* row = PyList_GetItem(rows, r);
+    if (!PyList_Check(row) || PyList_Size(row) != nc) {
+      PyErr_SetString(PyExc_ValueError, "every row needs one cell per column");
+      ok = 0;
+      break;
+    }
+    for (Py_ssize_t k = 0; k < nc && ok; ++k) ok = (cells[r * nc + k] = PyUnicode_AsUTF8(PyList_GetItem(row, k))) != NULL;
+  }
+  if (ok) g_call->display_table(g_call->host, c, (size_t)nc, cells, (size_t)nr);
+  free(c);
+  free(cells);
+  if (!ok) return NULL;
+  Py_RETURN_NONE;
+}
+
+static PyObject* host_display_image(PyObject* self, PyObject* args) {
+  const char *media, *alt;
+  Py_buffer data;
+  if (!PyArg_ParseTuple(args, "sy*s", &media, &data, &alt)) return NULL;
+  g_call->display_image(g_call->host, media, (const uint8_t*)data.buf, (size_t)data.len, alt);
+  PyBuffer_Release(&data);
+  Py_RETURN_NONE;
+}
+
+static PyObject* host_display_points(PyObject* self, PyObject* args) {
+  PyObject *xs, *ys, *zs, *cs;
+  if (!PyArg_ParseTuple(args, "OOOO", &xs, &ys, &zs, &cs)) return NULL;
+  Py_ssize_t n = PySequence_Size(xs);
+  if (n < 0 || PySequence_Size(ys) != n || PySequence_Size(zs) != n) {
+    PyErr_SetString(PyExc_ValueError, "x, y and z differ in length");
+    return NULL;
+  }
+  int with_colors = cs != Py_None;
+  if (with_colors && PySequence_Size(cs) != n) {
+    PyErr_SetString(PyExc_ValueError, "colors must be None or one per point");
+    return NULL;
+  }
+  float* p = malloc(sizeof(float) * (size_t)(n * 3 + 1));
+  uint32_t* c = with_colors ? malloc(sizeof(uint32_t) * (size_t)(n + 1)) : NULL;
+  for (Py_ssize_t i = 0; i < n; ++i) {
+    PyObject *a = PySequence_GetItem(xs, i), *b = PySequence_GetItem(ys, i), *d = PySequence_GetItem(zs, i);
+    p[i] = (float)PyFloat_AsDouble(a);
+    p[n + i] = (float)PyFloat_AsDouble(b);
+    p[2 * n + i] = (float)PyFloat_AsDouble(d);
+    Py_XDECREF(a); Py_XDECREF(b); Py_XDECREF(d);
+    if (c) {
+      PyObject* k = PySequence_GetItem(cs, i);
+      c[i] = (uint32_t)PyLong_AsUnsignedLong(k);
+      Py_XDECREF(k);
+    }
+  }
+  int ok = !PyErr_Occurred();
+  if (ok) g_call->display_points(g_call->host, p, p + n, p + 2 * n, c, (size_t)n);
+  free(p);
+  free(c);
+  if (!ok) return NULL;
+  Py_RETURN_NONE;
+}
+
+static PyObject* host_display_module(PyObject* self, PyObject* args) {
+  const char *name, *data;
+  if (!PyArg_ParseTuple(args, "ss", &name, &data)) return NULL;
+  g_call->display_module(g_call->host, name, data);
+  Py_RETURN_NONE;
+}
+
 static PyObject* host_log(PyObject* self, PyObject* args) {
   const char* msg;
   if (!PyArg_ParseTuple(args, "s", &msg)) return NULL;
@@ -131,6 +206,10 @@ static PyMethodDef host_methods[] = {
     {"display_text", host_display_text, METH_VARARGS, NULL},
     {"display_scalar", host_display_scalar, METH_VARARGS, NULL},
     {"display_line_chart", host_display_line_chart, METH_VARARGS, NULL},
+    {"display_table", host_display_table, METH_VARARGS, NULL},
+    {"display_image", host_display_image, METH_VARARGS, NULL},
+    {"display_points", host_display_points, METH_VARARGS, NULL},
+    {"display_module", host_display_module, METH_VARARGS, NULL},
     {"log", host_log, METH_VARARGS, NULL},
     {"cancelled", host_cancelled, METH_NOARGS, NULL},
     {"remaining_ms", host_remaining_ms, METH_NOARGS, NULL},

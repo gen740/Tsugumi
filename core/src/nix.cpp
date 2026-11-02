@@ -96,6 +96,7 @@ std::string dep_json(const CardPath& target, const CardPath& from) {
 NixRunner::NixRunner(Service& svc) : svc_(svc) {
   nix_build_ = find_in_path("nix-build");
   nix_store_ = find_in_path("nix-store");
+  nix_instantiate_ = find_in_path("nix-instantiate");
   if (nix_build_.empty()) log::warn("nix-build not found in PATH; code Cards cannot be built");
   {
     crypto::Sha256 h;
@@ -373,26 +374,57 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
   auto root_link = cache_dir() / "gcroots" / k;
   stdfs::create_directories(root_link.parent_path());
-  proc::Spec spec;
-  spec.argv = {nix_build_, (gen_dir / "entry.nix").string(), "--out-link", root_link.string(),
-               "-I", "tsugumi-gen=" + gen_dir.string(), "-I", "tsugumi-card=" + def_dir.string(),
-               "-I", "tsugumi-sdk=" + svc_.options().sdk_dir.string(),
-               "--option", "restrict-eval", "true",
-               "--option", "allow-import-from-derivation", "false",
-               "--option", "allowed-uris", "https://github.com/NixOS/nixpkgs/archive/",
+  auto check = [&](const proc::Result& res, const char* what) {
+    if (res.cancelled) throw Failed(FailureKind::cancelled, std::string("Nix ") + what + " cancelled");
+    if (res.timed_out)
+      throw Failed(FailureKind::timeout, std::string("Nix ") + what + " exceeded buildTimeoutSeconds",
+                   {{"timeout_seconds", std::to_string(*req.timeout_seconds)}});
+    if (!proc::exited_ok(res.status))
+      throw Failed(FailureKind::nix_failed, std::string("Nix ") + what + " failed (" + proc::describe(res.status) + ")",
+                   {{"card", path_key(node.path)}, {"phase", what}});
+  };
+  std::vector<std::string> eval_args = {
+      (gen_dir / "entry.nix").string(),
+      "-I", "tsugumi-gen=" + gen_dir.string(), "-I", "tsugumi-card=" + def_dir.string(),
+      "-I", "tsugumi-sdk=" + svc_.options().sdk_dir.string(),
+      "--option", "restrict-eval", "true",
+      "--option", "allow-import-from-derivation", "false",
+      "--option", "allowed-uris", "https://github.com/NixOS/nixpkgs/archive/"};
+  eval_args.insert(eval_args.end(), search.begin(), search.end());
+  std::string out;
+  if (!nix_instantiate_.empty()) {
+    // Evaluate, then build: two stages the UI can show separately.
+    if (req.on_phase) req.on_phase(Phase::evaluate);
+    proc::Spec ev;
+    ev.argv = {nix_instantiate_};
+    ev.argv.insert(ev.argv.end(), eval_args.begin(), eval_args.end());
+    ev.env = nix_env();
+    ev.cwd = gen_dir.string();
+    auto er = proc::run(ev, req.cancel, deadline, req.log);
+    check(er, "evaluation");
+    std::string drv = er.out;
+    while (!drv.empty() && (drv.back() == '\n' || drv.back() == '\r')) drv.pop_back();
+    if (req.on_phase) req.on_phase(Phase::build);
+    proc::Spec bs;
+    bs.argv = {nix_store_, "--realise", drv, "--add-root", root_link.string(), "--indirect",
                "--max-jobs", std::to_string(req.jobs), "--cores", std::to_string(req.cores)};
-  spec.argv.insert(spec.argv.end(), search.begin(), search.end());
-  spec.env = nix_env();
-  spec.cwd = gen_dir.string();
-  auto res = proc::run(spec, req.cancel, deadline, req.log);
-  if (res.cancelled) throw Failed(FailureKind::cancelled, "Nix build cancelled");
-  if (res.timed_out)
-    throw Failed(FailureKind::timeout, "Nix build exceeded buildTimeoutSeconds",
-                 {{"timeout_seconds", std::to_string(*req.timeout_seconds)}});
-  if (!proc::exited_ok(res.status))
-    throw Failed(FailureKind::nix_failed, "nix-build failed (" + proc::describe(res.status) + ")",
-                 {{"card", path_key(node.path)}});
-  std::string out = res.out;
+    bs.env = nix_env();
+    bs.cwd = gen_dir.string();
+    auto br = proc::run(bs, req.cancel, deadline, req.log);
+    check(br, "build");
+    out = br.out;
+  } else {
+    if (req.on_phase) req.on_phase(Phase::build);
+    proc::Spec spec;
+    spec.argv = {nix_build_, "--out-link", root_link.string(),
+                 "--max-jobs", std::to_string(req.jobs), "--cores", std::to_string(req.cores)};
+    spec.argv.insert(spec.argv.end(), eval_args.begin(), eval_args.end());
+    spec.env = nix_env();
+    spec.cwd = gen_dir.string();
+    auto res = proc::run(spec, req.cancel, deadline, req.log);
+    check(res, "build");
+    out = res.out;
+  }
   while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
   auto manifest = fs::read_file(out);
   if (!manifest) throw Failed(FailureKind::nix_failed, "nix-build produced no manifest");

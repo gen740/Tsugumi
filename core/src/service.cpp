@@ -1,5 +1,7 @@
 #include "service.hpp"
 
+#include <unistd.h>
+
 #include <flatbuffers/reflection.h>
 
 #include <algorithm>
@@ -9,6 +11,9 @@
 #include "util/crypto.hpp"
 #include "util/fs.hpp"
 #include "util/log.hpp"
+#include "util/process.hpp"
+
+#include <regex>
 
 extern const unsigned char tsugumi_rpc_bfbs[];
 
@@ -1155,25 +1160,147 @@ void Service::file_read(RequestIn& req) {
                                 r->offset().value_or(0), limit));
 }
 
+namespace {
+
+// Indents compact JSON (strings are copied verbatim, so escapes survive).
+std::string pretty_json(const std::string& compact) {
+  std::string out;
+  int depth = 0;
+  bool in_str = false, esc = false;
+  auto newline = [&] { out += '\n' + std::string(static_cast<size_t>(depth) * 2, ' '); };
+  for (size_t i = 0; i < compact.size(); ++i) {
+    char c = compact[i];
+    if (in_str) {
+      out += c;
+      if (esc) esc = false;
+      else if (c == '\\') esc = true;
+      else if (c == '"') in_str = false;
+      continue;
+    }
+    switch (c) {
+      case '"': in_str = true; out += c; break;
+      case '{': case '[':
+        out += c;
+        if (i + 1 < compact.size() && (compact[i + 1] == '}' || compact[i + 1] == ']')) { out += compact[++i]; break; }
+        ++depth;
+        newline();
+        break;
+      case '}': case ']': --depth; newline(); out += c; break;
+      case ',': out += c; newline(); break;
+      case ':': out += ": "; break;
+      default: out += c;
+    }
+  }
+  return out + "\n";
+}
+
+std::optional<D::FormatLanguage> language_of(const std::string& path) {
+  auto ext = stdfs::path(path).extension().string();
+  if (ext == ".json") return D::FormatLanguage::json;
+  if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".hpp" || ext == ".h" || ext == ".hh") return D::FormatLanguage::cpp;
+  if (ext == ".py") return D::FormatLanguage::python;
+  if (ext == ".nix") return D::FormatLanguage::nix;
+  if (ext == ".sh" || ext == ".bash") return D::FormatLanguage::bash;
+  if (ext == ".fbs") return D::FormatLanguage::fbs;
+  return std::nullopt;
+}
+
+// Byte offset of 1-based line/column in text.
+uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
+  uint64_t off = 0, l = 1;
+  while (l < line && off < text.size()) {
+    if (text[off] == '\n') ++l;
+    ++off;
+  }
+  return std::min<uint64_t>(off + (col > 0 ? col - 1 : 0), text.size());
+}
+
+}  // namespace
+
+// Formatting never changes the document: the text comes and goes in the
+// request/reply only. Formatters are external tools of the environment.
 void Service::file_format(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectFileFormatRequest();
-  check_path_arg(r->path()->str(), false);
-  if (r->language() != D::FormatLanguage::json)
-    throw Failed(FailureKind::unsupported, "no formatter is provided for this language");
+  std::string rel = r->path()->str();
+  check_path_arg(rel, false);
+  auto lang = r->language() != D::FormatLanguage::unspecified ? std::optional(r->language()) : language_of(rel);
+  if (!lang) throw Failed(FailureKind::unsupported, "the language of " + rel + " is not known; pass language");
   FBB b;
   std::vector<Diag> diags;
   std::string text = r->text()->str();
-  // JSON is normalized by replaying the validated value through the compact writer.
-  try {
-    schema::Json j;
-    j.value() = schema::capture(text);
-    text = schema::encode(j);
-  } catch (const std::exception& e) {
+  auto syntax = [&](const std::string& message, std::optional<uint64_t> offset) {
     Diag d;
-    d.code = "invalid_json";
-    d.message = e.what();
-    d.path = r->path()->str();
+    d.code = "syntax_error";
+    d.message = message;
+    d.path = rel;
+    d.offset = offset;
     diags.push_back(d);
+  };
+  if (*lang == D::FormatLanguage::json) {
+    try {
+      schema::Json j;
+      j.value() = schema::capture(text);
+      text = pretty_json(schema::encode(j));
+    } catch (const std::exception& e) {
+      syntax(e.what(), std::nullopt);
+    }
+  } else {
+    // tool, arguments before the file, whether it rewrites the file in place
+    struct Tool { const char* exe; std::vector<std::string> args; bool in_place; const char* ext; };
+    Tool tool;
+    switch (*lang) {
+      case D::FormatLanguage::cpp:
+        tool = {"clang-format", {"--style={BasedOnStyle: Google, ColumnLimit: 110}"}, false, ".cpp"};
+        break;
+      case D::FormatLanguage::python: tool = {"ruff", {"format", "--no-cache"}, true, ".py"}; break;
+      case D::FormatLanguage::nix: tool = {"nixfmt", {}, true, ".nix"}; break;
+      case D::FormatLanguage::bash: tool = {"shfmt", {"-i", "2"}, false, ".sh"}; break;
+      default: throw Failed(FailureKind::unsupported, "no formatter is provided for this language");
+    }
+    std::string exe;
+    if (const char* path = std::getenv("PATH")) {
+      std::string p(path);
+      for (size_t s = 0; s <= p.size();) {
+        size_t e = p.find(':', s);
+        auto cand = stdfs::path(p.substr(s, e == std::string::npos ? std::string::npos : e - s)) / tool.exe;
+        if (!cand.parent_path().empty() && ::access(cand.c_str(), X_OK) == 0) { exe = cand.string(); break; }
+        if (e == std::string::npos) break;
+        s = e + 1;
+      }
+    }
+    if (exe.empty())
+      throw Failed(FailureKind::unsupported, std::string("the formatter ") + tool.exe + " is not installed in this environment",
+                   {{"formatter", tool.exe}});
+    auto dir = store_->state_dir() / "format" / crypto::uuid4();
+    auto file = dir / (std::string("source") + tool.ext);
+    fs::write_atomic(file, text, 0600);
+    struct Cleanup { stdfs::path d; ~Cleanup() { std::error_code ec; stdfs::remove_all(d, ec); } } cleanup{dir};
+    proc::Spec spec;
+    spec.argv = {exe};
+    spec.argv.insert(spec.argv.end(), tool.args.begin(), tool.args.end());
+    spec.argv.push_back(file.string());
+    for (const char* k : {"PATH", "HOME", "LANG"})
+      if (const char* v = std::getenv(k)) spec.env.push_back(std::string(k) + "=" + v);
+    spec.cwd = dir.string();
+    std::string err;
+    std::atomic<bool> stop{false};
+    auto res = proc::run(spec, &stop, std::chrono::steady_clock::now() + std::chrono::seconds(20),
+                         [&](const std::string& line) { if (err.size() < 8192) err += line; });
+    if (res.cancelled) throw Failed(FailureKind::cancelled, "formatting was cancelled");
+    if (res.timed_out) throw Failed(FailureKind::timeout, std::string(tool.exe) + " did not finish within 20 s");
+    if (!proc::exited_ok(res.status)) {
+      // Syntax errors: keep the text unchanged and point at the position.
+      static const std::regex pos(R"((\d+):(\d+))");
+      std::smatch m;
+      std::optional<uint64_t> off;
+      if (std::regex_search(err, m, pos)) off = offset_of(text, std::stoull(m[1]), std::stoull(m[2]));
+      std::string msg = err.empty() ? std::string(tool.exe) + " failed" : err;
+      std::string shown = file.string();
+      for (size_t at; (at = msg.find(shown)) != std::string::npos;) msg.replace(at, shown.size(), rel);
+      syntax(msg, off);
+    } else {
+      text = tool.in_place ? fs::read_file_or_throw(file) : res.out;
+    }
   }
   auto t = b.CreateString(text);
   auto dv = wire::diagnostics(b, diags);

@@ -249,6 +249,48 @@ int display_line_chart_impl(void*, const tsugumi_series* series, size_t count) {
   return 0;
 }
 
+int display_table_impl(void*, const char* const* columns, size_t column_count, const char* const* cells,
+                       size_t row_count) {
+  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+    std::vector<std::string> cols(columns, columns + column_count);
+    std::vector<flatbuffers::Offset<D::TableRow>> rows;
+    for (size_t r = 0; r < row_count; ++r) {
+      std::vector<std::string> row(cells + r * column_count, cells + (r + 1) * column_count);
+      rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(row)));
+    }
+    auto c = b.CreateVectorOfStrings(cols);
+    return std::make_pair(D::DisplayValue::DisplayTable, D::CreateDisplayTable(b, c, b.CreateVector(rows)).Union());
+  });
+  return 0;
+}
+
+int display_image_impl(void*, const char* media_type, const uint8_t* data, size_t size, const char* alt) {
+  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+    auto mt = b.CreateString(media_type);
+    auto d = b.CreateVector(data, size);
+    auto a = b.CreateString(alt ? alt : "");
+    return std::make_pair(D::DisplayValue::DisplayImage, D::CreateDisplayImage(b, mt, d, a).Union());
+  });
+  return 0;
+}
+
+int display_points_impl(void*, const float* x, const float* y, const float* z, const uint32_t* colors, size_t count) {
+  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+    auto xv = b.CreateVector(x, count), yv = b.CreateVector(y, count), zv = b.CreateVector(z, count);
+    auto cv = b.CreateVector(colors, colors ? count : 0);
+    return std::make_pair(D::DisplayValue::DisplayPointCloud, D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
+  });
+  return 0;
+}
+
+int display_module_impl(void*, const char* name, const char* data_json) {
+  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+    auto n = b.CreateString(name), d = b.CreateString(data_json);
+    return std::make_pair(D::DisplayValue::DisplayModule, D::CreateDisplayModule(b, n, d).Union());
+  });
+  return 0;
+}
+
 void log_impl(void*, const char* message) {
   std::fprintf(stderr, "%s\n", message);
   std::fflush(stderr);
@@ -481,6 +523,10 @@ void execute(const Options& opt, Call& call) {
       c.cancelled = cancelled_impl;
       c.remaining_ms = remaining_ms_impl;
       c.fail = fail_impl;
+      c.display_table = display_table_impl;
+      c.display_image = display_image_impl;
+      c.display_points = display_points_impl;
+      c.display_module = display_module_impl;
       if (!call.failure) {
         int rc = g_main(&c);
         std::fflush(stdout);

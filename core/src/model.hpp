@@ -96,6 +96,7 @@ struct InvocationSummaryData {
   std::optional<uint64_t> duration_ms;
   std::optional<FailureData> failure;
   std::vector<WaitingInputData> waiting;
+  std::optional<bool> build_cached;
 };
 
 // A value travelling on a port. `type` is the port message type.
@@ -126,9 +127,13 @@ struct DisplayData {
   struct Text { std::string text; };
   struct Scalar { double value = 0; std::string label; };
   struct LineChart { std::vector<LineSeriesData> series; };
-  std::variant<Text, Scalar, LineChart> value;
+  struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
+  struct Image { std::string media_type; std::string data; std::string alt; };
+  struct PointCloud { std::vector<float> x, y, z; std::vector<uint32_t> colors; };
+  struct Module { std::string module; std::string data_json; };
+  std::variant<Text, Scalar, LineChart, Table, Image, PointCloud, Module> value;
 
-  // Validates finiteness, x/y lengths and the 10,000 point / 1 MiB limits.
+  // Validates structure and size limits of every variant (see data.fbs).
   std::optional<std::string> validate() const;
 };
 

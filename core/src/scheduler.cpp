@@ -179,6 +179,12 @@ Note display_note(const DisplayData& d) {
   n.approx_bytes = 1024;
   if (const auto* c = std::get_if<DisplayData::LineChart>(&d.value))
     for (const auto& s : c->series) n.approx_bytes += s.x.size() * 16;
+  if (const auto* t = std::get_if<DisplayData::Table>(&d.value))
+    for (const auto& r : t->rows)
+      for (const auto& c : r) n.approx_bytes += c.size() + 8;
+  if (const auto* im = std::get_if<DisplayData::Image>(&d.value)) n.approx_bytes += im->data.size();
+  if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) n.approx_bytes += p->x.size() * 16;
+  if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) n.approx_bytes += m->data_json.size();
   n.build = std::make_shared<const Note::Build>([shared](FBB& b) {
     auto dv = wire::display(b, *shared);
     return std::make_pair(R::NotificationPayload::DisplayUpdated, R::CreateDisplayUpdated(b, dv).Union());
@@ -606,7 +612,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                                       {{"card", path_key(node.path)}, {"max_runs", std::to_string(node.settings.max_runs)}});
     } else {
       s.state = CardState::running;
-      s.phase = node.kind == Template::Code ? Phase::evaluate : Phase::execute;
+      s.phase = node.kind == Template::Code ? Phase::prepare : Phase::execute;
       card_status(s);
       if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) save_last_inputs(node, w.invocation, inputs);
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
@@ -650,6 +656,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     {
       std::lock_guard<std::mutex> l(mu_);
       rec.display = rt.display && rt.display->invocation == w.invocation ? rt.display : std::nullopt;
+    }
+    if (s.state == CardState::succeeded) {
+      // Records, artifacts and saved values are written in the save stage.
+      s.phase = Phase::save;
+      s.state = CardState::running;
+      card_status(s);
+      s.state = CardState::succeeded;
     }
     // Artifacts are copied before the completion becomes visible.
     if (!out.failure && node.settings.retain_artifact && node.settings.artifact_output) {
@@ -974,7 +987,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in, uint32_t lane) {
     const Node& node = *rt.node;
     if (!rt.build) {
-      s.phase = Phase::build;
+      s.phase = Phase::prepare;
       card_status(s);
       set_state(RunState::preparing);
       int64_t t0 = now_ms();
@@ -990,10 +1003,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       uint64_t inv = s.invocation;
       CardPath card = node.path;
       br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::stderr, line); };
+      int64_t stage_start = t0;
+      br.on_phase = [&](Phase p) {
+        // Closing the previous stage on the timeline, then reporting the new one.
+        svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
+        stage_start = now_ms();
+        s.phase = p;
+        card_status(s);
+      };
       rt.build = svc_.nix().build(br);
-      svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::build, lane, t0, now_ms()));
+      svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
       journal("build", "output", node.path, s.invocation, rt.build->cached ? "build reused from cache" : "built");
     }
+    s.build_cached = rt.build->cached;
     s.phase = Phase::execute;
     card_status(s);
     set_state(RunState::running);

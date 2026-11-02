@@ -110,6 +110,20 @@ class Context:
         _host.display_line_chart([(s["id"], s.get("label", s["id"]), list(map(float, s["x"])),
                                    list(map(float, s["y"]))) for s in series])
 
+    def display_table(self, columns: list, rows: Iterable[Iterable]) -> None:
+        _host.display_table([str(c) for c in columns], [[str(c) for c in r] for r in rows])
+
+    def display_image(self, data: bytes, media_type: str = "image/png", alt: str = "") -> None:
+        _host.display_image(media_type, bytes(data), alt)
+
+    def display_points(self, x, y, z, colors=None) -> None:
+        _host.display_points(list(map(float, x)), list(map(float, y)), list(map(float, z)),
+                             None if colors is None else [int(c) for c in colors])
+
+    def display_module(self, name: str, data) -> None:
+        import json
+        _host.display_module(name, data if isinstance(data, str) else json.dumps(data))
+
     # -- control --
     def log(self, message: str) -> None:
         _host.log(message)

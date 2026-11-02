@@ -191,6 +191,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.duration_ms) ib.add_duration_ms(*s.duration_ms);
   if (s.failure) ib.add_failure(f);
   ib.add_waiting_inputs(wv);
+  if (s.build_cached) ib.add_build_cached(*s.build_cached);
   return ib.Finish();
 }
 
@@ -216,6 +217,27 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
                                            b.CreateVector(s.x), b.CreateVector(s.y)));
     value = D::CreateDisplayLineChart(b, b.CreateVector(series)).Union();
     type = D::DisplayValue::DisplayLineChart;
+  } else if (const auto* t = std::get_if<DisplayData::Table>(&d.value)) {
+    std::vector<Off<D::TableRow>> rows;
+    for (const auto& r : t->rows) rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(r)));
+    auto cols = b.CreateVectorOfStrings(t->columns);
+    value = D::CreateDisplayTable(b, cols, b.CreateVector(rows)).Union();
+    type = D::DisplayValue::DisplayTable;
+  } else if (const auto* im = std::get_if<DisplayData::Image>(&d.value)) {
+    auto mt = b.CreateString(im->media_type);
+    auto data = b.CreateVector(reinterpret_cast<const uint8_t*>(im->data.data()), im->data.size());
+    auto alt = b.CreateString(im->alt);
+    value = D::CreateDisplayImage(b, mt, data, alt).Union();
+    type = D::DisplayValue::DisplayImage;
+  } else if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) {
+    auto x = b.CreateVector(p->x), y = b.CreateVector(p->y), z = b.CreateVector(p->z);
+    auto c = b.CreateVector(p->colors);
+    value = D::CreateDisplayPointCloud(b, x, y, z, c).Union();
+    type = D::DisplayValue::DisplayPointCloud;
+  } else if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
+    auto name = b.CreateString(m->module), data = b.CreateString(m->data_json);
+    value = D::CreateDisplayModule(b, name, data).Union();
+    type = D::DisplayValue::DisplayModule;
   }
   D::DisplayBuilder db(b);
   db.add_card(card);
@@ -264,6 +286,45 @@ DisplayData display(const D::Display* d) {
         lc.series.push_back(std::move(ls));
       }
       out.value = std::move(lc);
+      break;
+    }
+    case D::DisplayValue::DisplayTable: {
+      const auto* t = d->value_as_DisplayTable();
+      if (!t || !t->columns() || !t->rows()) throw Failed(FailureKind::output_invalid, "a table needs columns and rows");
+      DisplayData::Table tb;
+      for (const auto* c : *t->columns()) tb.columns.push_back(c->str());
+      for (const auto* r : *t->rows()) {
+        if (!r->cells()) throw Failed(FailureKind::output_invalid, "a table row needs cells");
+        std::vector<std::string> cells;
+        for (const auto* c : *r->cells()) cells.push_back(c->str());
+        tb.rows.push_back(std::move(cells));
+      }
+      out.value = std::move(tb);
+      break;
+    }
+    case D::DisplayValue::DisplayImage: {
+      const auto* im = d->value_as_DisplayImage();
+      if (!im || !im->media_type() || !im->data()) throw Failed(FailureKind::output_invalid, "an image needs media_type and data");
+      out.value = DisplayData::Image{im->media_type()->str(),
+                                     std::string(reinterpret_cast<const char*>(im->data()->data()), im->data()->size()),
+                                     im->alt() ? im->alt()->str() : ""};
+      break;
+    }
+    case D::DisplayValue::DisplayPointCloud: {
+      const auto* p = d->value_as_DisplayPointCloud();
+      if (!p || !p->x() || !p->y() || !p->z()) throw Failed(FailureKind::output_invalid, "a point cloud needs x, y and z");
+      DisplayData::PointCloud pc;
+      pc.x.assign(p->x()->begin(), p->x()->end());
+      pc.y.assign(p->y()->begin(), p->y()->end());
+      pc.z.assign(p->z()->begin(), p->z()->end());
+      if (p->colors()) pc.colors.assign(p->colors()->begin(), p->colors()->end());
+      out.value = std::move(pc);
+      break;
+    }
+    case D::DisplayValue::DisplayModule: {
+      const auto* m = d->value_as_DisplayModule();
+      if (!m || !m->name() || !m->data_json()) throw Failed(FailureKind::output_invalid, "a Canvas module needs name and data_json");
+      out.value = DisplayData::Module{m->name()->str(), m->data_json()->str()};
       break;
     }
     default:

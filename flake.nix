@@ -39,6 +39,10 @@
             pkg-config
             git
             (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ]))
+            # Source formatters used by ProjectFileFormat (also in the image).
+            ruff
+            nixfmt-rfc-style
+            shfmt
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ];
           MACOSX_DEPLOYMENT_TARGET = "26.0";
           HOSQ_INCLUDE_DIR = "${hosq}/include";
