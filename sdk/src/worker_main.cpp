@@ -316,6 +316,7 @@ void set_env(std::vector<std::string>& env, const std::string& key, const std::s
 std::unique_ptr<flatbuffers::Parser> parser_for(const flatbuffers::Vector<uint8_t>* bfbs, const std::string& root) {
   flatbuffers::IDLOptions o;
   o.strict_json = true;
+  o.natural_utf8 = true;
   o.output_default_scalars_in_json = true;
   auto p = std::make_unique<flatbuffers::Parser>(o);
   p->known_attributes_["tsugumi"] = true;

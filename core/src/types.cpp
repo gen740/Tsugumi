@@ -17,6 +17,7 @@ using reflection::BaseType;
 flatbuffers::IDLOptions idl_options() {
   flatbuffers::IDLOptions o;
   o.strict_json = true;
+  o.natural_utf8 = true;
   o.output_default_scalars_in_json = true;
   o.indent_step = -1;
   return o;

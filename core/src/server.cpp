@@ -573,33 +573,35 @@ void Server::parse_ws(Conn& c) {
 
 void Server::on_readable(Conn& c) {
   char buf[65536];
+  bool eof = false;
   while (!c.closing) {
     ssize_t r = ::recv(c.fd, buf, sizeof buf, 0);
-    if (r == 0) return drop(c, "peer closed");
+    if (r == 0) {
+      eof = true;
+      break;
+    }
     if (r < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) break;
       if (errno == EINTR) continue;
       return drop(c, "read error");
     }
     c.rbuf.append(buf, static_cast<size_t>(r));
-    if (c.rbuf.size() > opts_.limits.max_frame_bytes + 64 && !c.websocket) {
-      // Checked precisely below; this bounds memory use for a lying peer.
+  }
+  // Requests that arrived before the peer closed are still accepted.
+  if (c.websocket) {
+    if (c.ws_open || handle_ws_handshake(c)) parse_ws(c);
+  } else {
+    while (!c.closing && c.rbuf.size() >= 4) {
+      uint32_t len;
+      std::memcpy(&len, c.rbuf.data(), 4);
+      if (len == 0 || len > opts_.limits.max_frame_bytes) return drop(c, "invalid frame length");
+      if (c.rbuf.size() < 4 + size_t(len)) break;
+      std::string frame = c.rbuf.substr(4, len);
+      c.rbuf.erase(0, 4 + size_t(len));
+      handle_frame(c, std::move(frame));
     }
   }
-  if (c.websocket) {
-    if (!c.ws_open && !handle_ws_handshake(c)) return;
-    parse_ws(c);
-    return;
-  }
-  while (!c.closing && c.rbuf.size() >= 4) {
-    uint32_t len;
-    std::memcpy(&len, c.rbuf.data(), 4);
-    if (len == 0 || len > opts_.limits.max_frame_bytes) return drop(c, "invalid frame length");
-    if (c.rbuf.size() < 4 + size_t(len)) return;
-    std::string frame = c.rbuf.substr(4, len);
-    c.rbuf.erase(0, 4 + size_t(len));
-    handle_frame(c, std::move(frame));
-  }
+  if (eof) drop(c, "peer closed");
 }
 
 void Server::handle_frame(Conn& c, std::string frame) {
