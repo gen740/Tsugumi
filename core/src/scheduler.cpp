@@ -340,7 +340,50 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     auto plan = Scheduler::plan(res, p_.card, p_.propagate);
     for (const auto& t : plan.targets) nodes_[res.index.at(path_key(t))].in_targets = true;
-    for (const auto& s : plan.starts) nodes_[res.index.at(path_key(s))].start = true;
+    std::set<std::string> seeded;
+    for (const auto& s : plan.seeds) seeded.insert(path_key(s));
+    for (const auto& s : plan.starts)
+      if (!seeded.count(path_key(s))) nodes_[res.index.at(path_key(s))].start = true;
+    for (const auto& s : plan.seeds) seed_boundary(nodes_[res.index.at(path_key(s))]);
+  }
+
+  // Queues the saved values of the ports an inner Card receives from outside
+  // the subgraph being run. All of them come from one saved invocation.
+  void seed_boundary(NodeRt& n) {
+    const auto& res = *doc_->resolution;
+    std::set<std::string> outside;
+    for (const auto& e : res.edges)
+      if (e.to == n.idx && !nodes_[e.from].in_targets) outside.insert(e.to_port);
+    auto fail = [&](FailureKind k, const std::string& msg) {
+      start_failure_ = FailureData::make(k, msg, {{"card", path_key(n.node->path)}});
+      n.halted = true;
+      n.last = CardState::failed;
+      n.last_failure = start_failure_;
+    };
+    auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
+    if (!last) return fail(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path) +
+                                                           "; run the whole workflow once first");
+    for (const auto& port : outside) {
+      const Value* v = nullptr;
+      for (const auto& x : last->inputs)
+        if (x.name == port) v = &x;
+      if (!v) return fail(FailureKind::input_missing, "the saved inputs of " + path_key(n.node->path) + " have no " + port);
+      const auto* p = n.node->input(port);
+      if (!p || !p->type || !types::compatible(*p->type, *v->type))
+        return fail(FailureKind::type_mismatch, "saved input " + port + " of " + path_key(n.node->path) +
+                                                    " no longer matches the port type");
+      if (v->kind != PortKind::FlatBuffer) {
+        auto path = path_value(*v);
+        std::error_code ec;
+        if (!path || !stdfs::exists(*path, ec))
+          return fail(FailureKind::input_missing, "the saved file for " + port + " no longer exists");
+      }
+      Token t;
+      t.value = *v;
+      t.from_inv = last->invocation;
+      t.seq = ++token_seq_;
+      n.queues[port].push_back(std::move(t));
+    }
   }
 
   // ---- scheduling -------------------------------------------------------------
@@ -1232,11 +1275,43 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
   RunPlanData out;
   const Node* target = res.find(card);
   if (!target) throw Failed(FailureKind::not_found, "unknown card " + path_key(card), {{"card", path_key(card)}});
-  if (target->is_virtual) throw Failed(FailureKind::invalid_request, "subgraph containers cannot be run directly; run a Card inside");
   size_t t = res.index.at(path_key(card));
   std::set<size_t> targets;
-  std::vector<size_t> starts;
-  if (!propagate) {
+  std::vector<size_t> starts, seeds;
+  auto inside = [&](size_t i) {
+    const auto& p = res.nodes[i].path;
+    return p.size() > card.size() && std::equal(card.begin(), card.end(), p.begin());
+  };
+  if (target->is_virtual) {
+    // A subgraph runs like one Card: its inner Cards run; those fed across the
+    // boundary use their saved values for the outside ports; inner sources start.
+    for (size_t i = 0; i < res.nodes.size(); ++i) {
+      if (!inside(i) || res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft) continue;
+      targets.insert(i);
+      bool from_outside = false, any_in = false;
+      for (const auto& e : res.edges)
+        if (e.to == i) {
+          any_in = true;
+          from_outside |= !inside(e.from);
+        }
+      if (from_outside) seeds.push_back(i);
+      else if (!any_in) starts.push_back(i);
+    }
+    if (targets.empty())
+      throw Failed(FailureKind::invalid_request, "the subgraph has no executable Cards", {{"card", path_key(card)}});
+    if (propagate) {
+      std::vector<size_t> stack(targets.begin(), targets.end());
+      while (!stack.empty()) {
+        size_t i = stack.back();
+        stack.pop_back();
+        for (const auto& e : res.edges)
+          if (e.from == i && !targets.count(e.to) && res.nodes[e.to].kind != Template::Draft) {
+            targets.insert(e.to);
+            stack.push_back(e.to);
+          }
+      }
+    }
+  } else if (!propagate) {
     targets.insert(t);
     starts.push_back(t);
   } else if (target->kind == Template::Trigger) {
@@ -1267,6 +1342,10 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].exec_diags.begin(), res.nodes[i].exec_diags.end());
   }
   for (size_t s : starts) out.starts.push_back(res.nodes[s].path);
+  for (size_t s : seeds) {
+    out.seeds.push_back(res.nodes[s].path);
+    out.starts.push_back(res.nodes[s].path);
+  }
   return out;
 }
 

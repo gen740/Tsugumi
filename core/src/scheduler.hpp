@@ -22,6 +22,9 @@ class RunExec;
 
 struct RunPlanData {
   std::vector<CardPath> targets, starts, build_candidates;
+  // Subgraph runs: inner Cards fed from outside the subgraph. They receive
+  // their saved values for exactly those ports (also listed in starts).
+  std::vector<CardPath> seeds;
   std::vector<Diag> diagnostics;
 };
 

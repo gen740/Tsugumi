@@ -1,6 +1,7 @@
 #include "graph.hpp"
 
 #include <limits>
+#include <regex>
 #include <set>
 
 namespace tsugumi {
@@ -153,6 +154,8 @@ class Builder {
     connect_all();
     resolve_types();
     finish_checks();
+    compute_guarantees();
+    check_nix_references();
     return res_;
   }
 
@@ -623,6 +626,127 @@ class Builder {
     }
   }
 
+  // Must-analysis over the flattened graph (greatest fixpoint, so feedback
+  // loops converge): a node is guaranteed before n when it lies on every way
+  // n can fire. One port: common to all edges into it. all: union over the
+  // ports needed to fire. any: common to all connected ports. A branch side
+  // therefore never leaks past a merge with the other side.
+  void compute_guarantees() {
+    size_t n = res_->nodes.size();
+    using Set = std::vector<char>;
+    std::vector<std::map<std::string, std::vector<size_t>>> in(n);
+    for (const auto& e : res_->edges)
+      if (e.from != e.to) in[e.to][e.to_port].push_back(e.from);
+    // Only nodes that can ever fire take part; others guarantee nothing.
+    std::vector<char> reach(n, 0);
+    std::vector<size_t> stack;
+    for (size_t i = 0; i < n; ++i)
+      if (!res_->nodes[i].is_virtual && in[i].empty()) {
+        reach[i] = 1;
+        stack.push_back(i);
+      }
+    while (!stack.empty()) {
+      size_t i = stack.back();
+      stack.pop_back();
+      for (const auto& e : res_->edges)
+        if (e.from == i && !reach[e.to]) {
+          reach[e.to] = 1;
+          stack.push_back(e.to);
+        }
+    }
+    std::vector<Set> g(n, Set(n, 1));
+    for (size_t i = 0; i < n; ++i)
+      if (!reach[i] || in[i].empty()) g[i].assign(n, 0);
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (size_t i = 0; i < n; ++i) {
+        if (!reach[i] || in[i].empty()) continue;
+        const Node& node = res_->nodes[i];
+        std::vector<Set> ports;
+        std::vector<bool> required;
+        for (const auto& [port, froms] : in[i]) {
+          Set s(n, 1);
+          bool any_from = false;
+          for (size_t u : froms) {
+            if (!reach[u]) continue;
+            any_from = true;
+            Set via = g[u];
+            via[u] = 1;
+            for (size_t k = 0; k < n; ++k) s[k] &= via[k];
+          }
+          if (!any_from) continue;
+          const auto* p = node.input(port);
+          ports.push_back(std::move(s));
+          required.push_back(p && !p->optional);
+        }
+        Set r(n, 0);
+        bool any_required = false;
+        for (bool b : required) any_required |= b;
+        if (node.settings.any_mode || !any_required) {
+          r.assign(n, ports.empty() ? 0 : 1);
+          for (const auto& s : ports)
+            for (size_t k = 0; k < n; ++k) r[k] &= s[k];
+        } else {
+          for (size_t j = 0; j < ports.size(); ++j)
+            if (required[j])
+              for (size_t k = 0; k < n; ++k) r[k] |= ports[j][k];
+        }
+        r[i] = 0;
+        if (r != g[i]) {
+          g[i] = std::move(r);
+          changed = true;
+        }
+      }
+    }
+    res_->guaranteed.assign(n, {});
+    for (size_t i = 0; i < n; ++i)
+      for (size_t k = 0; k < n; ++k)
+        if (g[i][k] && !res_->nodes[k].is_virtual) res_->guaranteed[i].push_back(k);
+  }
+
+  // Static check of `inputs.upstream."<path>"` / `inputs.local.<id>` in each
+  // Code Card's default.nix, so a reference to a Card that is not always
+  // upstream is reported before any evaluation.
+  void check_nix_references() {
+    static const std::regex re(R"re((upstream|local)\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_'-]*)))re");
+    for (size_t i = 0; i < res_->nodes.size(); ++i) {
+      Node& n = res_->nodes[i];
+      if (n.kind != Template::Code) continue;
+      std::string rel = "definitions/" + n.definition + "/default.nix";
+      if (!doc_.sources.count(rel)) continue;
+      auto text = read_(rel);
+      if (!text) continue;
+      auto allowed = res_->nix_upstream(i);
+      CardPath scope_path(n.path.begin(), n.path.end() - 1);
+      for (auto it = std::sregex_iterator(text->begin(), text->end(), re); it != std::sregex_iterator(); ++it) {
+        const auto& m = *it;
+        std::string name = m[2].matched ? m[2].str() : m[3].str();
+        CardPath target;
+        if (m[1] == "local") {
+          target = scope_path;
+          target.push_back(name);
+        } else {
+          target = path_from_key(name);
+        }
+        std::string key = path_key(target);
+        auto found = res_->index.find(key);
+        if (target == n.path) {
+          n.diags.push_back(diag(n.path, "nix_reference_self", "default.nix references this Card itself (" + key + ")", true, rel));
+        } else if (found == res_->index.end()) {
+          n.diags.push_back(diag(n.path, "nix_reference_unknown", "default.nix references unknown Card " + key, true, rel));
+        } else if (std::find(allowed.begin(), allowed.end(), found->second) == allowed.end()) {
+          const Node& t = res_->nodes[found->second];
+          std::string why = t.kind != Template::Code ? "is not a code Card"
+                            : std::find(res_->guaranteed[i].begin(), res_->guaranteed[i].end(), found->second) ==
+                                      res_->guaranteed[i].end()
+                                ? "is not upstream on every path to this Card"
+                                : "depends on this Card (cycle)";
+          n.diags.push_back(diag(n.path, "nix_reference_not_guaranteed", "default.nix references " + key + ", which " + why, true, rel));
+        }
+      }
+    }
+  }
+
   const Document& doc_;
   const SourceReader& read_;
   std::shared_ptr<Resolution> res_;
@@ -631,6 +755,18 @@ class Builder {
 };
 
 }  // namespace
+
+std::vector<size_t> Resolution::nix_upstream(size_t node) const {
+  std::vector<size_t> out;
+  if (node >= guaranteed.size()) return out;
+  for (size_t u : guaranteed[node]) {
+    if (nodes[u].kind != Template::Code) continue;
+    const auto& gu = guaranteed[u];
+    if (std::find(gu.begin(), gu.end(), node) != gu.end()) continue;
+    out.push_back(u);
+  }
+  return out;
+}
 
 std::shared_ptr<const Resolution> resolve(const Document& doc, const SourceReader& read) {
   return Builder(doc, read).run();

@@ -83,6 +83,12 @@ struct Resolution {
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;               // between executable nodes only
   std::vector<Diag> diags;
+  // Per node: the nodes that have always run before it fires, whichever path
+  // its inputs arrived on (sorted). The basis for Nix upstream references.
+  std::vector<std::vector<size_t>> guaranteed;
+  // Code Cards a node's default.nix may reference: guaranteed upstream Code
+  // Cards whose own guarantees do not include the node (no cycles).
+  std::vector<size_t> nix_upstream(size_t node) const;
 
   const Node* find(const CardPath& p) const;
   std::vector<Diag> all_diagnostics(bool executable) const;
