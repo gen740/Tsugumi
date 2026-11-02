@@ -26,6 +26,9 @@ cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
+# UI strings: Japanese source strings, English table generated from tools/en_strings.py.
+python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
+cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
 cp "$image" "$app/Contents/Resources/tsugumi-env.tar"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,6 +42,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleDevelopmentRegion</key><string>ja</string>
+  <key>CFBundleLocalizations</key><array><string>ja</string><string>en</string></array>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>

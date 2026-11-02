@@ -65,6 +65,7 @@ public struct ChatMessage: Codable, Equatable {
 public struct Usage: Codable, Equatable {
   public var inputTokens = 0
   public var outputTokens = 0
+  public init() {}
 }
 
 public enum StreamEvent {

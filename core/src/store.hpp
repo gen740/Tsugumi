@@ -107,7 +107,9 @@ class Store {
   void recover_journal();
   void append_record(const std::string& payload);
   void apply_ops(const std::vector<FileOp>& ops, bool inject);
-  std::shared_ptr<Document> finalize(std::shared_ptr<Document> doc) const;
+  // Resolves the document. `pending` holds the transaction's file writes,
+  // which are read instead of the disk (they are applied after resolution).
+  std::shared_ptr<Document> finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending = nullptr) const;
   void check_disk_unchanged(const Document& base, const std::vector<FileOp>& ops) const;
   void fault(const char* point) const;
 

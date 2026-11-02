@@ -97,13 +97,17 @@ void Store::open() {
   doc_ = doc;
 }
 
-std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc) const {
+std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending) const {
   doc->execution_fingerprint = execution_fingerprint(*doc);
   auto root = opts_.root;
   Document* raw = doc.get();
-  doc->resolution = resolve(*doc, [root, raw](const std::string& rel) -> std::optional<std::string> {
+  doc->resolution = resolve(*doc, [root, raw, pending](const std::string& rel) -> std::optional<std::string> {
     auto it = raw->sources.find(rel);
     if (it == raw->sources.end()) return std::nullopt;
+    if (pending) {
+      for (const auto& op : *pending)
+        if (op.path == rel) return op.content;
+    }
     auto data = fs::read_file(root / rel);
     if (!data || crypto::sha256_hex(*data) != it->second.hash) return std::nullopt;
     return data;
@@ -569,7 +573,7 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   doc->execution_fingerprint = execution_fingerprint(*doc);
   doc->execution_rev =
       doc->execution_fingerprint != base->execution_fingerprint ? base->execution_rev + 1 : base->execution_rev;
-  finalize(doc);
+  finalize(doc, &st.ops);
   st.delta.rev = doc->rev;
   st.delta.execution_rev = doc->execution_rev;
   st.delta.doc = doc;

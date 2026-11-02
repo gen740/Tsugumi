@@ -47,6 +47,32 @@ struct CardRunState {
   var failure: String?
 }
 
+/// One invocation on the run timeline (times in ms since 1970, from the core).
+struct TimelineEntry: Identifiable, Hashable {
+  var id: String { "\(card)#\(invocation)" }
+  let card: CardKey
+  let invocation: UInt64
+  var state: Tsugumi_Data_CardState
+  var startedAt: Int64?
+  var endedAt: Int64?
+}
+
+/// Draft of one Card definition (`_card.json` and `_meta.json`), or its removal.
+struct DefinitionDraft: Equatable {
+  var card: JSONValue
+  var meta: JSONValue?
+  var removed = false
+}
+
+/// Save/sync state, shown separately from the run state.
+enum SyncState: Equatable {
+  case saved
+  case unsaved
+  case saving
+  case failed(String)
+  case offline
+}
+
 enum DisplayValue {
   case text(String)
   case scalar(Double, String)
@@ -86,8 +112,8 @@ final class ProjectSession {
   private(set) var executionRev: UInt64 = 0
   private(set) var confirmedProject: JSONValue = .object([])
   private(set) var confirmedLayout: JSONValue = .object([])
-  private(set) var definitions: [String: JSONValue] = [:]
-  private(set) var definitionMeta: [String: JSONValue] = [:]
+  private(set) var confirmedDefinitions: [String: JSONValue] = [:]
+  private(set) var confirmedDefinitionMeta: [String: JSONValue] = [:]
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -96,25 +122,74 @@ final class ProjectSession {
   var project: JSONValue = .object([])
   var layout: JSONValue = .object([])
   var sourceEdits: [String: Data] = [:]  // path -> new bytes
+  var sourceRemovals: Set<String> = []
+  var definitionEdits: [String: DefinitionDraft] = [:]
   private(set) var undoStack: [Snapshot] = []
   private(set) var redoStack: [Snapshot] = []
   private(set) var saveError: String?
   private(set) var remoteChangePending = false
   private(set) var saving = false
+  /// Last user-facing problem of an action (run refused, import failed, ...).
+  var notice: String?
 
-  struct Snapshot {
+  struct Snapshot: Equatable {
     var project: JSONValue
     var layout: JSONValue
     var sources: [String: Data]
+    var removals: Set<String>
+    var definitions: [String: DefinitionDraft]
   }
 
-  var dirty: Bool { project != confirmedProject || layout != confirmedLayout || !sourceEdits.isEmpty }
-  var computationDirty: Bool { project != confirmedProject || !sourceEdits.isEmpty }
+  /// The confirmed state the current draft was started from. While the draft
+  /// is dirty, remote saves move `rev` and the source hashes forward, but a
+  /// save must still be checked against the base the edits were made on;
+  /// otherwise an edit of an old version would pass the conflict check and
+  /// overwrite the newer change.
+  private struct DraftBase {
+    let rev: UInt64
+    let hashes: [String: String]
+  }
+  @ObservationIgnored private var draftBase: DraftBase?
+  /// Revision the draft is based on (equals `rev` while clean).
+  var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
 
-  // View state (camera / selection per scope, saved with ViewSave)
-  var scope: [String] = []
+  var dirty: Bool {
+    project != confirmedProject || layout != confirmedLayout || !sourceEdits.isEmpty || !sourceRemovals.isEmpty ||
+      !definitionEdits.isEmpty
+  }
+  var computationDirty: Bool {
+    project != confirmedProject || !sourceEdits.isEmpty || !sourceRemovals.isEmpty || !definitionEdits.isEmpty
+  }
+
+  var syncState: SyncState {
+    if !connected { return dirty ? .failed(connectionMessage ?? "Not connected") : .offline }
+    if saving { return .saving }
+    if let e = saveError { return .failed(e) }
+    return dirty ? .unsaved : .saved
+  }
+
+  /// Effective definitions: confirmed ones with the draft applied.
+  var definitions: [String: JSONValue] {
+    var d = confirmedDefinitions
+    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.card }
+    return d
+  }
+
+  var definitionMeta: [String: JSONValue] {
+    var d = confirmedDefinitionMeta
+    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.meta }
+    return d
+  }
+
+  /// Source paths of the draft (confirmed, plus new files, minus removed ones).
+  var sourcePaths: [String] {
+    Set(sources.keys).union(sourceEdits.keys).subtracting(sourceRemovals).sorted()
+  }
+
+  // View state saved with ViewSave: the active tab's scope and selection.
+  private(set) var initialScope: [String] = []
+  private(set) var initialSelection: Set<CardKey> = []
   var cameras: [CardKey: (x: Double, y: Double, zoom: Double)] = [:]
-  var selection: Set<CardKey> = []
   @ObservationIgnored private var viewRev: UInt64 = 0
   @ObservationIgnored private var viewSaveTask: Task<Void, Never>?
 
@@ -123,6 +198,8 @@ final class ProjectSession {
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
+  /// Invocations of the current (or last) run, for the timeline.
+  private(set) var timeline: [TimelineEntry] = []
   var runActive: Bool {
     guard let s = runStatus?.state else { return false }
     return [.queued, .preparing, .running, .cancelling].contains(s)
@@ -146,7 +223,8 @@ final class ProjectSession {
   // MARK: - Connection
 
   func start() {
-    Task {
+    Task { [weak self] in
+      guard let self else { return }
       if observerToken == nil {
         observerToken = await environments.observe(identity) { [weak self] s in
           Task { @MainActor in self?.environment = s }
@@ -243,11 +321,11 @@ final class ProjectSession {
     executionRev = s.executionRev ?? 0
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
     confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
-    definitions = [:]
-    definitionMeta = [:]
+    confirmedDefinitions = [:]
+    confirmedDefinitionMeta = [:]
     for d in s.definitions.compactMap({ $0 }) {
-      definitions[d.id] = try? JSONValue.parse(d.cardJson)
-      if let m = d.metaJson { definitionMeta[d.id] = try? JSONValue.parse(m) }
+      confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson)
+      if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
     }
     sources = [:]
     for src in s.sources.compactMap({ $0 }) { sources[src.path] = (src.hash ?? "", src.sizeBytes ?? 0) }
@@ -255,11 +333,11 @@ final class ProjectSession {
     runStatus = s.run
     if let v = s.view {
       viewRev = s.viewRev ?? 0
-      scope = v.scope.path
+      initialScope = v.scope.path
       for cam in v.cameras.compactMap({ $0 }) {
         cameras[key(cam.scope.path)] = (cam.x ?? 0, cam.y ?? 0, cam.zoom ?? 1)
       }
-      selection = Set(v.selectedCards.compactMap { $0.map { key($0.path) } })
+      initialSelection = Set(v.selectedCards.compactMap { $0.map { key($0.path) } })
     } else {
       viewRev = s.viewRev ?? 0
     }
@@ -267,8 +345,11 @@ final class ProjectSession {
       project = confirmedProject
       layout = confirmedLayout
       sourceEdits = [:]
+      sourceRemovals = []
+      definitionEdits = [:]
+      draftBase = nil
       remoteChangePending = false
-    } else {
+    } else if draftBase?.rev != rev {
       remoteChangePending = true
     }
   }
@@ -300,17 +381,20 @@ final class ProjectSession {
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
     if let lj = d.layoutJson, let v = try? JSONValue.parse(lj) { confirmedLayout = v }
     for def in d.definitionsUpsert.compactMap({ $0 }) {
-      definitions[def.id] = try? JSONValue.parse(def.cardJson)
-      definitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
+      confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
+      confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
     }
-    for id in d.definitionsRemoved.compactMap({ $0 }) { definitions[id] = nil; definitionMeta[id] = nil }
+    for id in d.definitionsRemoved.compactMap({ $0 }) { confirmedDefinitions[id] = nil; confirmedDefinitionMeta[id] = nil }
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if wasClean {
+      // Nothing local to keep: follow the confirmed document.
       project = confirmedProject
       layout = confirmedLayout
+      draftBase = nil
     } else if d.origin != "ui:\(viewId.uuidString.lowercased())" {
+      // The draft stays based on draftBase; the next save is checked against it.
       remoteChangePending = true
     }
   }
@@ -322,6 +406,7 @@ final class ProjectSession {
       if let s = (v.value as? Tsugumi_RPC_RunAcceptedEventT)?.status {
         runStatus = s
         cardStates = [:]
+        timeline = []
       }
     case .runstatuschanged:
       if let s = (v.value as? Tsugumi_RPC_RunStatusChangedT)?.status, s.runId == runStatus?.runId || runStatus == nil {
@@ -335,6 +420,7 @@ final class ProjectSession {
           cardStates[k] = CardRunState(state: inv.state, invocation: inv.invocation ?? 0, phase: inv.phase,
                                        failure: inv.failure?.diagnostic)
         }
+        recordTimeline(k, inv)
       }
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
@@ -362,45 +448,100 @@ final class ProjectSession {
     displays[k] = DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: rev, value: value)
   }
 
+  private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
+    let n = inv.invocation ?? 0
+    if let i = timeline.firstIndex(where: { $0.card == k && $0.invocation == n }) {
+      timeline[i].state = inv.state
+      timeline[i].startedAt = inv.startedAt ?? timeline[i].startedAt
+      timeline[i].endedAt = inv.endedAt ?? timeline[i].endedAt
+    } else {
+      timeline.append(TimelineEntry(card: k, invocation: n, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt))
+    }
+  }
+
   // MARK: - Editing (draft, undo/redo)
 
-  private func snapshot() -> Snapshot { Snapshot(project: project, layout: layout, sources: sourceEdits) }
+  private func snapshot() -> Snapshot {
+    Snapshot(project: project, layout: layout, sources: sourceEdits, removals: sourceRemovals, definitions: definitionEdits)
+  }
+
+  private func restore(_ s: Snapshot) {
+    project = s.project
+    layout = s.layout
+    sourceEdits = s.sources
+    sourceRemovals = s.removals
+    definitionEdits = s.definitions
+    settleDraftBase()
+  }
+
+  /// Fixes the draft's base when it leaves the clean state, and forgets it
+  /// when the draft becomes clean again.
+  private func settleDraftBase() {
+    if !dirty {
+      draftBase = nil
+      remoteChangePending = false
+    } else if draftBase == nil {
+      draftBase = DraftBase(rev: rev, hashes: sources.mapValues(\.hash))
+    }
+  }
 
   /// Applies an edit to the draft and records it for undo.
   func edit(_ change: (ProjectSession) -> Void) {
     let before = snapshot()
+    if !dirty { draftBase = DraftBase(rev: rev, hashes: sources.mapValues(\.hash)) }
     change(self)
     let after = snapshot()
-    guard before.project != after.project || before.layout != after.layout || before.sources != after.sources else { return }
+    guard before != after else {
+      settleDraftBase()
+      return
+    }
     undoStack.append(before)
     if undoStack.count > 500 { undoStack.removeFirst() }
     redoStack.removeAll()
+    settleDraftBase()
   }
 
   func undo() {
     guard let s = undoStack.popLast() else { return }
     redoStack.append(snapshot())
-    project = s.project
-    layout = s.layout
-    sourceEdits = s.sources
+    restore(s)
   }
 
   func redo() {
     guard let s = redoStack.popLast() else { return }
     undoStack.append(snapshot())
-    project = s.project
-    layout = s.layout
-    sourceEdits = s.sources
+    restore(s)
   }
 
+  /// Drops every unsaved edit and follows the latest confirmed document.
   func discardDraft() {
     edit { s in
       s.project = s.confirmedProject
       s.layout = s.confirmedLayout
       s.sourceEdits = [:]
+      s.sourceRemovals = []
+      s.definitionEdits = [:]
     }
+    draftBase = nil
     remoteChangePending = false
     saveError = nil
+  }
+
+  /// The unsaved edits as text, for copying them out when they cannot be saved.
+  func draftSummary() -> String {
+    var out = "Tsugumi unsaved edits (based on revision \(draftBaseRev))\n"
+    if project != confirmedProject { out += "\n== tsugumi.json ==\n" + project.serialized() + "\n" }
+    if layout != confirmedLayout { out += "\n== layout.json ==\n" + layout.serialized() + "\n" }
+    for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
+      if d.removed { out += "\n== definitions/\(id) removed ==\n"; continue }
+      out += "\n== definitions/\(id)/_card.json ==\n" + d.card.serialized() + "\n"
+      if let m = d.meta { out += "\n== definitions/\(id)/_meta.json ==\n" + m.serialized() + "\n" }
+    }
+    for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) {
+      out += "\n== \(p) ==\n" + String(decoding: bytes, as: UTF8.self) + "\n"
+    }
+    for p in sourceRemovals.sorted() { out += "\n== \(p) removed ==\n" }
+    return out
   }
 
   /// Commits the draft as one ProjectSave transaction. On conflict the draft is
@@ -409,32 +550,55 @@ final class ProjectSession {
     guard dirty, let client else { return }
     saving = true
     defer { saving = false }
+    // Checked against the base the edits were made on, never the latest rev.
+    let base = draftBase ?? DraftBase(rev: rev, hashes: sources.mapValues(\.hash))
     var changes: [Tsugumi_RPC_DocumentChangeT] = []
     if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
     if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
-    for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) {
-      changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sources[p]?.hash))
+    for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
+      if d.removed {
+        if confirmedDefinitions[id] != nil { changes.append(Change.removeDefinition(id: id)) }
+      } else {
+        changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized()))
+      }
+    }
+    for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) {
+      changes.append(Change.putSource(path: p, bytes: bytes, baseHash: base.hashes[p]))
+    }
+    for p in sourceRemovals.sorted() {
+      if let h = base.hashes[p] { changes.append(Change.removeSource(path: p, baseHash: h)) }
     }
     let op = UUID()
+    let saved = snapshot()
     do {
-      let result = try await client.save(baseRev: rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
       saveError = nil
       if let d = result.delta {
         applyDeltaFromSave(d)
       }
-      sourceEdits = [:]
+      // Edits made while the save was in flight stay in the draft.
+      if snapshot() == saved {
+        sourceEdits = [:]
+        sourceRemovals = []
+        definitionEdits = [:]
+        project = confirmedProject
+        layout = confirmedLayout
+      }
+      // Whatever is left was edited on top of what was just saved.
+      draftBase = nil
+      settleDraftBase()
       remoteChangePending = false
     } catch let f as RPCFailure {
       switch f.kind {
       case .revisionConflict:
-        saveError = "Another window or the Agent saved revision \(f.currentRev ?? 0). Your edits are kept; review them or discard to load the latest."
+        saveError = "別のウインドウまたは Agent が revision \(f.currentRev ?? 0) を保存しました。変更は保持しています。コピーしてから再読込してください。"
         remoteChangePending = true
       case .hashConflict:
-        saveError = "\(f.args["path"] ?? "A source") changed since you started editing. Your edits are kept."
+        saveError = "\(f.args["path"] ?? "ソース") が編集開始後に変更されました。変更は保持しています。"
       case .externalChange:
-        saveError = "\(f.args["path"] ?? "A file") was changed outside Tsugumi. Use Reload to take it in (your edits are kept)."
+        saveError = "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。"
       case .busy:
-        saveError = "A run is in progress; computational changes can be saved when it ends. Layout changes save normally."
+        saveError = "実行中のため Card の変更は保存できません。実行が終わってから保存してください（配置の変更は保存できます）。"
       default:
         saveError = f.description
       }
@@ -442,18 +606,25 @@ final class ProjectSession {
       // The reply may have been lost after the save committed: ask the core.
       if let r = try? await client.operation(op), r.state == .completed {
         saveError = nil
+        if snapshot() == saved {
+          // Committed: the DocPatched notification brings the confirmed copy.
+          sourceEdits = [:]
+          sourceRemovals = []
+          definitionEdits = [:]
+          draftBase = nil
+        }
       } else {
-        saveError = "Saving failed: \(error). Your edits are kept."
+        saveError = "保存できませんでした: \(error)。変更は保持しています。"
       }
     }
   }
 
   private func applyDeltaFromSave(_ d: Tsugumi_RPC_DocumentDeltaT) {
     if d.baseRev == rev {
-      let keepProject = project, keepLayout = layout
+      let keep = snapshot()
       applyDelta(d)
-      project = keepProject
-      layout = keepLayout
+      project = keep.project
+      layout = keep.layout
     }
   }
 
@@ -469,7 +640,7 @@ final class ProjectSession {
 
   // MARK: - View state
 
-  func saveViewSoon() {
+  func saveViewSoon(scope: [String], selection: Set<CardKey>) {
     viewSaveTask?.cancel()
     viewSaveTask = Task {
       try? await Task.sleep(for: .milliseconds(600))
@@ -504,12 +675,14 @@ final class ProjectSession {
 
   func run(card: [String], propagate: Bool) async throws {
     guard let client else { throw RPCError.disconnected }
-    if computationDirty { throw RPCFailure(kind: .validationFailed, diagnostic: "Save your changes before running.") }
+    if computationDirty { throw RPCFailure(kind: .validationFailed, diagnostic: "実行する前に変更を保存してください。") }
     let op = UUID()
+    let parallel = UInt32(max(1, min(64, AppPreferences.shared.maxConcurrency)))
     do {
-      let accepted = try await client.run(baseRev: rev, opId: op, card: card, propagate: propagate)
+      let accepted = try await client.run(baseRev: rev, opId: op, card: card, propagate: propagate, maxConcurrency: parallel)
       runStatus = accepted.run
       cardStates = [:]
+      timeline = []
     } catch RPCError.disconnected {
       // Never re-send blindly: look the operation up after reconnecting.
       reconnect()

@@ -11,6 +11,7 @@ enum SmokeTest {
   static func runIfRequested(_ model: AppModel) {
     let env = ProcessInfo.processInfo.environment
     guard let demoId = env["TSUGUMI_SMOKE_DEMO"], let out = env["TSUGUMI_SMOKE_OUT"] else { return }
+    model.smokeMode = true
     Task {
       var report: [String: Any] = ["demo": demoId]
       let t0 = Date()
@@ -51,8 +52,51 @@ enum SmokeTest {
         s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev
-        report["ok"] = s.saveError == nil
+        var ok = s.saveError == nil
         report["save_error"] = s.saveError ?? ""
+
+        // Layout-only UI data (notes, groups, collapse, hidden output frame) passes the core schema.
+        let first = s.cards(in: []).compactMap { $0["id"]?.string }.prefix(2).map { $0 }
+        _ = s.addNote(in: [], at: CGPoint(x: 10, y: 400))
+        _ = s.addGroup(Set(first), in: [])
+        s.setCollapsed([first[0]], true)
+        if let shown = s.resolution.keys.first(where: { s.cardSetting($0, "canvasEnabled")?.bool == true }) {
+          s.updateDisplayFrame(shown) { $0["hidden"] = .bool(true) }
+        }
+        await s.save()
+        report["layout_extras"] = s.saveError ?? "ok"
+        ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
+
+        // A Draft with provisional outputs can be wired before it is implemented.
+        let draft = s.createDefinition(name: "Smoke draft", template: .draft)
+        s.edit { $0.putSource("definitions/\(draft)/_outputs.fbs", DraftPort.fbs([DraftPort(name: "summary", type: "string")], namespace: "draft_smoke")) }
+        let dk = s.addCard(definition: draft, in: [], at: CGPoint(x: 0, y: 600))
+        await s.save()
+        report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
+        ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.map(\.name) == ["summary"]
+
+        // Review scenario: another client saves while this draft is dirty. The
+        // draft keeps its base revision, so saving it must conflict instead of
+        // overwriting the other change.
+        if case .ready(let ep) = s.environment {
+          s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
+          let base = s.draftBaseRev
+          let other = RPCClient(endpoint: ep.url)
+          _ = try await other.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+          let snap = try await other.inspect()
+          var layout = try JSONValue.parse(snap.layoutJson)
+          layout["cards"]?["begin"] = .object([("x", .real(77)), ("y", .real(77))])
+          _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
+          await other.close()
+          for _ in 0..<50 where s.rev == base { try await Task.sleep(for: .milliseconds(100)) }
+          let remoteRev = s.rev
+          await s.save()
+          let conflicted = s.saveError != nil && s.dirty && s.draftBaseRev == base && s.rev == remoteRev
+          report["review_conflict"] = ["base": base, "remote": remoteRev, "conflicted": conflicted, "error": s.saveError ?? ""] as [String: Any]
+          s.discardDraft()
+          ok = ok && conflicted && !s.dirty && s.confirmedLayout["cards"]?["begin"]?["x"]?.double == 77
+        }
+        report["ok"] = ok
       } catch {
         report["ok"] = false
         report["error"] = "\(error)"

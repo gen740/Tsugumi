@@ -52,7 +52,7 @@ let package = Package(
       swiftSettings: [.swiftLanguageMode(.v5)]),
     .testTarget(
       name: "TsugumiTests",
-      dependencies: ["TsugumiRPC", "TsugumiLauncher", .product(name: "TsugumiAgent", package: "agent")],
+      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", .product(name: "TsugumiAgent", package: "agent")],
       path: "Tests/TsugumiTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),
   ]

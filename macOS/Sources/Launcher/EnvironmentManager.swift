@@ -171,6 +171,49 @@ public actor EnvironmentManager {
     return grant
   }
 
+  // MARK: - Initial setup
+
+  /// What the host still needs before projects can start.
+  public struct SetupStatus: Sendable, Equatable {
+    public var containerInstalled = false
+    public var version: String?
+    public var versionSupported = false
+    public var serviceRunning = false
+    public var imageLoaded = false
+    public var bundledImageAvailable = false
+    public var ready: Bool { containerInstalled && versionSupported && serviceRunning && imageLoaded }
+    public init() {}
+  }
+
+  public func setupStatus() async -> SetupStatus {
+    var s = SetupStatus()
+    s.bundledImageAvailable = bundledImage.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    guard FileManager.default.isExecutableFile(atPath: cli.executable.path) else { return s }
+    s.containerInstalled = true
+    s.version = try? await cli.version()
+    s.versionSupported = s.version?.hasPrefix(ContainerCLI.pinnedVersion) ?? false
+    s.serviceRunning = await cli.serviceRunning()
+    if s.serviceRunning {
+      s.imageLoaded = (try? await cli.run(["image", "inspect", Self.image], timeout: 60).ok) ?? false
+    }
+    return s
+  }
+
+  /// Runs `container system start` (the user confirms in the setup screen).
+  public func startService() async throws {
+    let o = try await cli.run(["system", "start", "--enable-kernel-install"], timeout: 600)
+    guard o.ok else { throw LauncherError.startFailed(reason: "container system start failed", log: o.stderr + o.stdout) }
+  }
+
+  /// Loads the bundled environment image ahead of the first project start.
+  public func loadBundledImage() async throws {
+    guard let bundled = bundledImage, FileManager.default.fileExists(atPath: bundled.path) else {
+      throw LauncherError.imageMissing
+    }
+    let load = try await cli.run(["image", "load", "--input", bundled.path], timeout: 1800)
+    guard load.ok else { throw LauncherError.startFailed(reason: "image load failed", log: load.stderr) }
+  }
+
   // MARK: - Helpers
 
   private func waitLock(_ lock: HostLock) async throws {

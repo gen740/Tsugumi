@@ -131,6 +131,7 @@ struct CardDefinition {
 struct CardMeta {
   Opt<"description", v::String> description;
   Opt<"plan", v::String> plan;
+  Opt<"context", v::String> context;  // extra intent/notes for the Agent and readers
 };
 
 // ---- layout.json -------------------------------------------------------------
@@ -138,14 +139,18 @@ struct CardMeta {
 struct Position {
   Opt<"x", Number> x;
   Opt<"y", Number> y;
+  Opt<"collapsed", v::Bool> collapsed;  // display only; the Card still runs
 };
 
 struct StickyNote {
   Opt<"id", v::String> id;
   Opt<"scope", v::String> scope;  // graph scope path key ("" = root)
-  Opt<"text", v::String> text;
+  Opt<"text", v::String> text;    // Markdown
+  Opt<"color", v::String> color;
   Opt<"x", Number> x;
   Opt<"y", Number> y;
+  Opt<"width", Number> width;
+  Opt<"height", Number> height;
 };
 
 struct DisplayPanel {
@@ -153,12 +158,29 @@ struct DisplayPanel {
   Opt<"y", Number> y;
   Opt<"width", Number> width;
   Opt<"height", Number> height;
+  Opt<"hidden", v::Bool> hidden;  // frame removed from the canvas; the Card is unchanged
+};
+
+struct GroupPort {
+  Opt<"card", v::String> card;
+  Opt<"port", v::String> port;
+};
+
+// Visual grouping only: never changes execution order or the graph.
+struct CardGroup {
+  Opt<"id", v::String> id;
+  Opt<"scope", v::String> scope;
+  Opt<"name", v::String> name;
+  Opt<"color", v::String> color;
+  Opt<"cards", v::Array<v::String>> cards;              // instance ids within scope
+  Opt<"outputs", v::Array<Obj<GroupPort>>> outputs;     // outputs shown on the group frame
 };
 
 struct Layout {
   Opt<"cards", v::Mapping<v::String, Obj<Position>>> cards;  // card path key -> position
   Opt<"notes", v::Array<Obj<StickyNote>>> notes;
   Opt<"displays", v::Mapping<v::String, Obj<DisplayPanel>>> displays;  // card path key -> panel
+  Opt<"groups", v::Array<Obj<CardGroup>>> groups;
 };
 
 // ---- core internal files (all fields required: encodable) ----------------------

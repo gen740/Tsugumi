@@ -24,12 +24,34 @@ public struct ToolRecord: Codable, Equatable {
 /// Conversation persisted per project on the host (messages, tool trace, usage).
 public struct Conversation: Codable, Equatable {
   public var id = UUID().uuidString.lowercased()
+  public var title: String?
+  public var updatedAt = Date()
   public var messages: [ChatMessage] = []
+  /// Messages replaced by the summary when the context was compacted. The
+  /// model no longer sees them, but the full history stays readable and searchable.
+  public var archive: [ChatMessage] = []
   public var tools: [ToolRecord] = []
   public var usage = Usage()
   public var summary: String?  // compacted history
 
   public init() {}
+
+  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, usage, summary }
+
+  public init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    title = try c.decodeIfPresent(String.self, forKey: .title)
+    updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date(timeIntervalSince1970: 0)
+    messages = try c.decode([ChatMessage].self, forKey: .messages)
+    archive = try c.decodeIfPresent([ChatMessage].self, forKey: .archive) ?? []
+    tools = try c.decode([ToolRecord].self, forKey: .tools)
+    usage = try c.decode(Usage.self, forKey: .usage)
+    summary = try c.decodeIfPresent(String.self, forKey: .summary)
+  }
+
+  /// Everything said in this conversation, including compacted messages.
+  public var fullHistory: [ChatMessage] { archive + messages }
 
   public static func load(_ url: URL) -> Conversation {
     (try? JSONDecoder().decode(Conversation.self, from: Data(contentsOf: url))) ?? Conversation()
@@ -104,9 +126,49 @@ public actor Agent {
     turn?.cancel()
     var prompt = text
     if !context.isEmpty { prompt += "\n\n[Context: selected Cards \(context.joined(separator: ", "))]" }
+    send(prompt: prompt, title: text, events: events)
+  }
+
+  /// Sends a prepared prompt (references and skills already attached).
+  public func send(prompt: String, title: String, events: @escaping @Sendable (AgentEvent) -> Void) {
+    turn?.cancel()
+    if conversation.title == nil { conversation.title = String(title.prefix(60)) }
     conversation.messages.append(ChatMessage(role: "user", content: [.text(prompt)]))
+    conversation.updatedAt = Date()
     try? conversation.save(storage)
     turn = Task { await self.loop(events) }
+  }
+
+  /// Retries after a failed or stopped answer. A turn whose model reply never
+  /// arrived is continued; otherwise the last request is asked again. Tool
+  /// calls already confirmed by the core are reconciled, never re-sent.
+  public func retry(events: @escaping @Sendable (AgentEvent) -> Void) {
+    turn?.cancel()
+    if let last = conversation.messages.last, last.role == "user" {
+      turn = Task { await self.loop(events) }
+      return
+    }
+    let lastText = conversation.messages.last { m in
+      m.role == "user" && m.content.contains { if case .text = $0 { return true }; return false }
+    }
+    guard let lastText else { return }
+    conversation.messages.append(lastText)
+    conversation.updatedAt = Date()
+    try? conversation.save(storage)
+    turn = Task { await self.loop(events) }
+  }
+
+  /// Compacts the context now (the full history stays in the archive).
+  public func compact(events: @escaping @Sendable (AgentEvent) -> Void) {
+    turn?.cancel()
+    turn = Task {
+      do {
+        try await self.compactIfNeeded(events, force: true)
+        events(.finished)
+      } catch {
+        events(.error("\(error)"))
+      }
+    }
   }
 
   /// Resumes after a restart or disconnect: tool calls that were sent but never
@@ -291,9 +353,9 @@ public actor Agent {
 
   /// Context compaction: older turns are replaced by a model-written summary
   /// when the last request approached the provider's context limit.
-  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws {
+  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false) async throws {
     let limit = provider.config.contextLimit
-    guard conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > 6 else { return }
+    guard force || conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > (force ? 4 : 6) else { return }
     let keep = 4
     let old = Array(conversation.messages.dropLast(keep))
     var transcript = ""
@@ -317,6 +379,7 @@ public actor Agent {
       tail.removeFirst()
     }
     conversation.summary = [conversation.summary, summary].compactMap { $0 }.joined(separator: "\n")
+    conversation.archive += conversation.messages.dropLast(tail.count)
     conversation.messages = tail
     conversation.usage.inputTokens = 0
     try? conversation.save(storage)

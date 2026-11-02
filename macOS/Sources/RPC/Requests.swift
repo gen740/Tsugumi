@@ -197,6 +197,31 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
+  /// Copies definitions (and their sources) from a granted project snapshot.
+  func importDefinitions(baseRev: UInt64, opId: UUID, origin: String, grant: String, definitions: [String]) async throws -> Tsugumi_RPC_ImportResultT {
+    let r = Tsugumi_RPC_ProjectImportRequestT()
+    r.baseRev = baseRev
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    r.sourceGrant = grant
+    r.definitions = definitions
+    return try await call(.projectimportrequest, r)
+  }
+
+  /// Deletes the project's build caches; documents and history are kept.
+  func clearCache(opId: UUID) async throws -> Tsugumi_RPC_CacheClearResultT {
+    let r = Tsugumi_RPC_ProjectCacheClearRequestT()
+    r.opId = opId.uuidString.lowercased()
+    return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
+  }
+
+  func format(path: String, text: String) async throws -> Tsugumi_RPC_FormatResultT {
+    let r = Tsugumi_RPC_ProjectFileFormatRequestT()
+    r.path = path
+    r.text = text
+    return try await call(.projectfileformatrequest, r)
+  }
+
   func runPlan(atRev: UInt64, card: [String], propagate: Bool) async throws -> Tsugumi_RPC_RunPlanResultT {
     let r = Tsugumi_RPC_RunPlanRequestT()
     r.atRev = atRev

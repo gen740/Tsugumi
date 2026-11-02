@@ -30,6 +30,44 @@ final class AppModel {
   private(set) var sessions: [String: ProjectSession] = [:]
   var error: String?
   let demosRoot: URL?
+  private(set) var setup: EnvironmentManager.SetupStatus?
+  private(set) var checkingSetup = false
+  @ObservationIgnored private var chats: [String: ChatController] = [:]
+  /// Set when a process-level smoke check drives the app (no setup screen).
+  var smokeMode = false
+
+  /// True once the host check finished and something still needs doing.
+  var setupNeeded: Bool { !smokeMode && (setup.map { !$0.ready } ?? false) }
+
+  func refreshSetup() async {
+    checkingSetup = true
+    setup = await environments.setupStatus()
+    checkingSetup = false
+  }
+
+  @ObservationIgnored private var launchProjectTaken = false
+
+  /// A project folder given as a launch argument, handed out once.
+  func takeLaunchProject() -> URL? {
+    guard !launchProjectTaken else { return nil }
+    launchProjectTaken = true
+    for a in CommandLine.arguments.dropFirst() where !a.hasPrefix("-") {
+      let url = URL(fileURLWithPath: a)
+      if FileManager.default.fileExists(atPath: url.appendingPathComponent("tsugumi.json").path) { return url }
+    }
+    return nil
+  }
+
+  /// One chat per project, shared by its panel and its detached window.
+  func chat(for s: ProjectSession) -> ChatController {
+    if let c = chats[s.identity.id] { return c }
+    let c = ChatController(session: s)
+    chats[s.identity.id] = c
+    return c
+  }
+
+  /// The open session for a window value, opening the project if needed.
+  func session(ref: ProjectRef) -> ProjectSession? { try? session(for: ref.url) }
 
   init() {
     let bundle = Bundle.main

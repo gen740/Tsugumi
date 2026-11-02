@@ -590,3 +590,41 @@ def test_slow_peer_is_dropped_without_stopping_others(tmp_path):
         assert total < 300 * 200000
     finally:
         d.cleanup()
+
+
+def test_ui_layout_fields_and_draft_outputs(client):
+    """Groups, note color/size, collapse and hidden output frames are layout
+    only (no execution change); a Draft can declare provisional outputs."""
+    snap = client.open().snapshot
+    layout = {
+        "cards": {"src": {"x": 0, "y": 0, "collapsed": True}},
+        "notes": [{"id": "n", "scope": "", "text": "**memo**", "color": "blue", "x": 1, "y": 2, "width": 240, "height": 120}],
+        "displays": {"src": {"x": 0, "y": 200, "width": 300, "height": 160, "hidden": True}},
+        "groups": [{"id": "g", "scope": "", "name": "G", "color": "green", "cards": ["src"],
+                    "outputs": [{"card": "src", "port": "msg"}]}],
+    }
+    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+                      changes=[change("SetLayout", json=json.dumps(layout))])
+    assert json.loads(text(res.delta.layoutJson))["groups"][0]["name"] == "G"
+    assert res.executionRev == snap.executionRev  # layout never re-resolves computation
+    with pytest.raises(RpcFailure) as e:
+        client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
+                    changes=[change("SetLayout", json=json.dumps({"groups": [{"id": "g", "typo": 1}]}))])
+    assert e.value.kind == "invalid_document"
+
+    doc = project_json(client.call("ProjectInspectRequest"))
+    doc["canvas"]["cards"].append({"id": "plan", "definition": "plan"})
+    fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
+    res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=json.dumps({"name": "Plan", "template": "draft", "inputs": [{"name": "in"}]}),
+               metaJson=json.dumps({"description": "d", "plan": "p", "context": "why"})),
+        change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
+        change("SetProject", json=json.dumps(doc)),
+    ])
+    plan = next(r for r in res2.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
+    assert [text(p.name) for p in plan.outputs] == ["summary"], [(text(d.code), text(d.message)) for d in plan.diagnostics]
+    assert [text(p.name) for p in plan.inputs] == ["in"]
+    meta = next(d for d in res2.delta.definitionsUpsert if text(d.id) == "plan")
+    assert json.loads(text(meta.metaJson))["context"] == "why"
+    v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
+    assert "draft" in [text(d.code) for d in v.diagnostics]

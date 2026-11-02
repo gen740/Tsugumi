@@ -381,6 +381,8 @@ class Builder {
           n.input_defs = {{"in", false}};
           break;
         case Template::Draft:
+          // Provisional outputs (optional) let a Draft be wired before it is implemented.
+          load_catalog(n);
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;
         case Template::Subgraph:
