@@ -1,19 +1,33 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
 @Test func stagesOfCodeAndBuiltinCards() {
-  let code = StageProgress(stages: [.waiting, .prepare, .evaluate, .build, .execute, .validate, .save, .done], current: .build,
-                           reached: [.prepare, .evaluate])
-  #expect(code.stages.first == .waiting && code.stages.last == .done)
+  #expect(Stage.applicable(code: true) == [.prepare, .evaluate, .build, .execute, .validate, .save])
+  #expect(Stage.applicable(code: false) == [.execute, .validate, .save])
   #expect(Stage(phase: .evaluate) == .evaluate && Stage(phase: .save) == .save && Stage(phase: .unspecified) == nil)
   // Stages run in the order the core reports them.
   #expect(Stage.allCases.map(\.rawValue) == Array(0..<Stage.allCases.count))
+  // Every stage keeps its own icon, also while running (no generic check marks).
+  #expect(Set(Stage.allCases.map(\.symbol)).count == Stage.allCases.count)
+  #expect(Stage.build.activeSymbol == "hammer.fill" && Stage.evaluate.activeSymbol == "snowflake")
+  #expect(Stage.build.logStream == .stderr && Stage.execute.logStream == .stdout && Stage.save.logStream == .journal)
+}
+
+@Test func runTextCountsFromTheFirstInvocation() {
+  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
+  #expect(d.runText == nil && d.idleText == "未実行（0 回）")
+  d.state = .succeeded
+  d.invocation = 1
+  #expect(d.runText == "実行 #1 · 成功")
+  d.runContinues = true
+  #expect(d.runText!.hasPrefix("実行 #1 · 成功") && d.runText!.contains("次の入力"))
 }
 
 @Test func wirePortsFollowTheFlow() {
-  let data = CardNodeData(title: "x", kind: .code, subtitle: "", summary: nil,
+  let data = CardNodeData(title: "x", kind: .code, summary: nil,
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")])
   let down = CardGeometry(data, flow: .topToBottom)
   #expect(down.port("a", output: false).y == 0 && down.port("out", output: true).y == down.height)
@@ -54,7 +68,7 @@ import Testing
 }
 
 @Test func collapsedCardsKeepTheirPortsOnTheEdges() {
-  var data = CardNodeData(title: "x", kind: .code, subtitle: "", summary: "s",
+  var data = CardNodeData(title: "x", kind: .code, summary: "s",
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "x")])
   data.collapsed = true
   let closed = CardGeometry(data, flow: .leftToRight)
@@ -67,4 +81,88 @@ import Testing
 @Test func shortcutsHaveNoDefaultConflicts() {
   let keys = ShortcutAction.allCases.map(\.defaultKey)
   #expect(Set(keys).count == keys.count)
+}
+
+@Test func routingCardsHaveTheirShapeAndPorts() {
+  let branch = CardGeometry(CardNodeData(title: "b", kind: .branch, summary: nil,
+                                         inputs: [PortData(name: "value"), PortData(name: "condition")],
+                                         outputs: [PortData(name: "a"), PortData(name: "b")]), flow: .topToBottom)
+  #expect(branch.shape == .branch)
+  let v = branch.port("value", output: false), c = branch.port("condition", output: false)
+  let a = branch.port("a", output: true), b = branch.port("b", output: true)
+  // Data and condition never share a point; a (true) left, b (false) right, below the inputs.
+  #expect(v != c && v.x < c.x && a.x < b.x && a.y > v.y && b.y > c.y)
+  // Every port lies on the diamond's outline.
+  let outline = branch.outline(in: branch.outlineRect)
+  for p in [v, c, a, b] {
+    #expect(outline.strokedPath(StrokeStyle(lineWidth: 2)).contains(p))
+  }
+  let fork = CardGeometry(CardNodeData(title: "f", kind: .fork, summary: nil, inputs: [PortData(name: "in")],
+                                       outputs: [PortData(name: "o1"), PortData(name: "o2"), PortData(name: "o3")]), flow: .topToBottom)
+  let top = fork.port("in", output: false)
+  let outs = ["o1", "o2", "o3"].map { fork.port($0, output: true) }
+  // Narrow top with one input, wide bottom edge with the outputs spread.
+  #expect(abs(top.x - fork.size.width / 2) < 0.5 && top.y == fork.outlineRect.minY)
+  #expect(outs.allSatisfy { $0.y == fork.outlineRect.maxY } && outs[0].x < outs[1].x && outs[1].x < outs[2].x)
+  #expect(outs[2].x - outs[0].x > fork.size.width * 0.4)
+  let merge = CardGeometry(CardNodeData(title: "m", kind: .merge, summary: nil,
+                                        inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]), flow: .topToBottom)
+  #expect(abs(merge.port("out", output: true).x - merge.size.width / 2) < 0.5)
+  #expect(merge.port("a", output: false).y == merge.outlineRect.minY)
+}
+
+@Test func portLabelsSitOnTheirPortsOrHide() {
+  let few = CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [PortData(name: "a"), PortData(name: "b")],
+                                      outputs: []), flow: .topToBottom)
+  #expect(few.showLabels(input: true))
+  let many = CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil,
+                                       inputs: (0..<12).map { PortData(name: "port\($0)") }, outputs: []), flow: .topToBottom)
+  // Twelve ports on 220 points leave no room: names are shown on hover instead.
+  #expect(!many.showLabels(input: true) && many.topLabels == 0)
+}
+
+@Test func feedbackWiresGoAroundTheCards() {
+  let cards = [CGRect(x: 0, y: 0, width: 220, height: 80), CGRect(x: 0, y: 160, width: 220, height: 80),
+               CGRect(x: 0, y: 320, width: 220, height: 80)]
+  var router = WireRouter(flow: .topToBottom, obstacles: cards)
+  // From the bottom Card back up to the top one.
+  let back = router.route(CGPoint(x: 110, y: 400), CGPoint(x: 110, y: 0))
+  let middle = cards[1].insetBy(dx: 2, dy: 2)
+  for t in stride(from: 0.02, through: 0.98, by: 0.02) {
+    let p = back.trimmedPath(from: 0, to: t).currentPoint ?? .zero
+    #expect(!middle.contains(p))
+  }
+  // A second feedback wire gets its own lane.
+  let other = router.route(CGPoint(x: 100, y: 400), CGPoint(x: 100, y: 0))
+  #expect(abs(other.boundingRect.minX - back.boundingRect.minX) >= 12)
+  // Forward wires stay curves along the flow.
+  #expect(router.isForward(CGPoint(x: 0, y: 80), CGPoint(x: 0, y: 160)))
+}
+
+@Test func editedOutputsAreReadFromTheText() {
+  let ok = OutputCatalog.parse("""
+    namespace t; // ports
+    table Num { value:ulong; }
+    table Outputs { out:Num (required); extra:Num; /* note */ }
+    root_type Outputs;
+    """)
+  #expect(ok == .ports([PortData(name: "out", typeName: "Num", optional: false), PortData(name: "extra", typeName: "Num", optional: true)]))
+  if case .error = OutputCatalog.parse("table Outputs { out:Num ") {} else { Issue.record("an unfinished catalog is an error") }
+  if case .error = OutputCatalog.parse("table Outputs { out:Num; }") {} else { Issue.record("root_type is required") }
+}
+
+@Test func recentAgesHaveNoSeconds() {
+  let now = Date()
+  #expect(relativeAge(now.addingTimeInterval(-20), now: now) == "たった今")
+  #expect(relativeAge(now.addingTimeInterval(-20 * 60 - 51), now: now) == "20 分前")
+  #expect(relativeAge(now.addingTimeInterval(-3 * 3600), now: now) == "3 時間前")
+  #expect(relativeAge(now.addingTimeInterval(-2 * 86400), now: now) == "2 日前")
+}
+
+@Test func cameraFitsInsideTheFreeArea() {
+  var c = CanvasCamera()
+  c.fit(CGRect(x: 0, y: 0, width: 400, height: 300), in: CGSize(width: 800, height: 600),
+        insets: SwiftUI.EdgeInsets(top: 50, leading: 0, bottom: 50, trailing: 0), maxZoom: 1, margin: 0)
+  let tl = c.screen(CGPoint(x: 0, y: 0)), br = c.screen(CGPoint(x: 400, y: 300))
+  #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
 }

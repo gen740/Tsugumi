@@ -18,6 +18,7 @@ using FailureKind = Tsugumi::Data::FailureKind;
 using RunState = Tsugumi::Data::RunState;
 using CardState = Tsugumi::Data::CardState;
 using Phase = Tsugumi::Data::Phase;
+using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
 using PortKind = Tsugumi::Data::PortKind;
 
@@ -86,6 +87,13 @@ struct WaitingInputData {
   std::vector<UpstreamRef> upstream;
 };
 
+struct StageTimeData {
+  Phase phase = Phase::unspecified;
+  StageOutcome outcome = StageOutcome::running;
+  int64_t start = 0;
+  std::optional<int64_t> end;
+};
+
 struct InvocationSummaryData {
   std::string run_id;
   CardPath card;
@@ -97,6 +105,10 @@ struct InvocationSummaryData {
   std::optional<FailureData> failure;
   std::vector<WaitingInputData> waiting;
   std::optional<bool> build_cached;
+  std::vector<StageTimeData> stages;
+  std::optional<bool> worker_reused;
+  std::vector<std::string> outputs_sent;
+  std::optional<int64_t> ready_at;
 };
 
 // A value travelling on a port. `type` is the port message type.

@@ -118,6 +118,9 @@ class History {
     std::vector<Value> inputs;
   };
   static std::optional<LastInput> last_input(sql::Db& db, const CardPath& card);
+  // Rewrites the stage times etc. of a completed invocation (the save stage
+  // ends after its own write).
+  static void update_detail(sql::Db& db, const InvocationSummaryData& s);
   // Latest saved value of one port, whichever invocation consumed it (an
   // `any` Card consumes one port per invocation).
   static void put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t invocation,

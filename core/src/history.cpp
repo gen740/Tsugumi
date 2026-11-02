@@ -41,6 +41,38 @@ std::vector<WaitingInputData> waiting_from(const std::string& s) {
   return out;
 }
 
+std::string detail_json(const InvocationSummaryData& s) {
+  schema::InvocationDetailJson d;
+  for (const auto& st : s.stages) {
+    schema::StageJson j;
+    *j.phase = static_cast<int>(st.phase);
+    *j.outcome = static_cast<int>(st.outcome);
+    *j.start = st.start;
+    *j.end = st.end.value_or(-1);
+    d.stages->push_back(std::move(j));
+  }
+  *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
+  for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
+  *d.ready_at = s.ready_at.value_or(-1);
+  return schema::encode(d);
+}
+
+void detail_into(const std::string& text, InvocationSummaryData& s) {
+  schema::InvocationDetailJson d;
+  if (text.empty() || schema::decode(text, d)) return;
+  for (const auto& j : *d.stages) {
+    StageTimeData st;
+    st.phase = static_cast<Phase>(*j.phase);
+    st.outcome = static_cast<StageOutcome>(*j.outcome);
+    st.start = *j.start;
+    if (*j.end >= 0) st.end = *j.end;
+    s.stages.push_back(st);
+  }
+  if (*d.worker_reused >= 0) s.worker_reused = *d.worker_reused == 1;
+  for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
+  if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
+}
+
 std::string sources_json(const std::vector<InputSourceData>& s) {
   schema::InputSourceList list;
   for (const auto& x : s) {
@@ -72,7 +104,8 @@ std::optional<FailureData> col_failure(const sql::Stmt& st, int c) {
 }
 
 std::string put_schema(sql::Db& db, const types::Type& t) {
-  std::string h = crypto::sha256_hex(t.bfbs);
+  // Types do not change: their hash is computed once, where they are made.
+  std::string h = t.hash.empty() ? crypto::sha256_hex(t.bfbs) : t.hash;
   db.prepare("INSERT OR IGNORE INTO schemas(hash, root_type, bfbs) VALUES(?,?,?)")
       .bind(1, h).bind(2, t.root_type).bind_blob(3, t.bfbs).run();
   return h;
@@ -100,7 +133,8 @@ constexpr const char* kRunCols =
     "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
     "target, propagate";
 
-InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1) {
+InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
+                              int detail_col = -1) {
   // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
@@ -114,6 +148,7 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, in
   s.failure = col_failure(st, 7);
   s.waiting = waiting_from(st.text(8));
   if (cached_col >= 0 && !st.is_null(cached_col)) s.build_cached = st.i64(cached_col) != 0;
+  if (detail_col >= 0 && !st.is_null(detail_col)) detail_into(st.text(detail_col), s);
   return s;
 }
 
@@ -189,12 +224,16 @@ CREATE TABLE IF NOT EXISTS receipts(
   op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL);
 )SQL");
   // Columns added after the first release (older databases are migrated in place).
-  bool has_cached = false;
+  bool has_cached = false, has_detail = false;
   {
     auto st = db.prepare("SELECT name FROM pragma_table_info('invocations')");
-    while (st.step()) has_cached |= st.text(0) == "build_cached";
+    while (st.step()) {
+      has_cached |= st.text(0) == "build_cached";
+      has_detail |= st.text(0) == "detail";
+    }
   }
   if (!has_cached) db.exec("ALTER TABLE invocations ADD COLUMN build_cached INTEGER");
+  if (!has_detail) db.exec("ALTER TABLE invocations ADD COLUMN detail TEXT");
 }
 
 sql::Db& History::reader() {
@@ -322,7 +361,8 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   const auto& s = r.summary;
   auto st = db.prepare(
       "INSERT OR REPLACE INTO invocations(run_id, card, invocation, state, phase, started_at, ended_at, "
-      "duration_ms, failure, waiting, record_io, input_sources, display, build_cached) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      "duration_ms, failure, waiting, record_io, input_sources, display, build_cached, detail) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
   if (s.phase) st.bind(5, static_cast<int>(*s.phase));
   else st.bind_null(5);
@@ -333,6 +373,7 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   else st.bind_null(13);
   if (s.build_cached) st.bind(14, *s.build_cached);
   else st.bind_null(14);
+  st.bind(15, detail_json(s));
   st.run();
   // The completion removes exactly this invocation's progress status, never a newer one.
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
@@ -486,15 +527,15 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
                                                         uint64_t limit) {
   // Completed records and in-progress statuses, ascending invocation number.
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
       "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
   std::vector<InvocationSummaryData> out;
-  while (st.step()) out.push_back(inv_row(st, run_id, 9));
+  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10));
   return out;
 }
 
@@ -502,11 +543,11 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
                                                         const CardPath& card, uint64_t n) {
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
-      "record_io, input_sources, display, build_cached FROM invocations WHERE run_id=? AND card=? AND invocation=?");
+      "record_io, input_sources, display, build_cached, detail FROM invocations WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   InvocationRecordData r;
-  r.summary = inv_row(st, run_id, 12);
+  r.summary = inv_row(st, run_id, 12, 13);
   r.record_io = st.i64(9) != 0;
   r.input_sources = sources_from(st.text(10));
   if (!st.is_null(11)) r.display = wire::standalone_display(st.blob(11));
@@ -616,6 +657,11 @@ std::optional<History::LastInput> History::last_port_input(sql::Db& db, const Ca
   return last_input(db, k);
 }
 
+void History::update_detail(sql::Db& db, const InvocationSummaryData& s) {
+  db.prepare("UPDATE invocations SET detail=? WHERE run_id=? AND card=? AND invocation=?")
+      .bind(1, detail_json(s)).bind(2, s.run_id).bind(3, key(s.card)).bind(4, s.invocation).run();
+}
+
 std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPath& card) {
   auto st = db.prepare("SELECT run_id, invocation, inputs FROM last_inputs WHERE card=?");
   st.bind(1, key(card));
@@ -634,6 +680,7 @@ std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPat
     sst.bind(1, *o.schema);
     if (!sst.step()) return std::nullopt;
     t->bfbs = sst.blob(0);
+    t->hash = *o.schema;
     t->root_type = *o.root_type;
     v.type = t;
     crypto::base64_decode(*o.data_b64, v.bytes);

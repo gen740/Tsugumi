@@ -1,5 +1,7 @@
 #include "types.hpp"
 
+#include "util/crypto.hpp"
+
 #include <flatbuffers/idl.h>
 #include <flatbuffers/reflection.h>
 
@@ -129,10 +131,22 @@ class Comparator {
 // Renders reachable declarations of a schema under a namespace prefix.
 class Renderer {
  public:
-  Renderer(const reflection::Schema& s, std::string prefix) : s_(s), prefix_(std::move(prefix)) {}
+  // `nested`: the closure becomes a member of a merged type. A member that is
+  // itself a merged type has its own tsugumi.merge namespaces renamed to
+  // "nested", so no dotted name of one level can be read as another level's
+  // (FlatBuffers also tries shorter namespace prefixes when it resolves a
+  // name). Member types that are not merged keep their names.
+  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false)
+      : s_(s), prefix_(std::move(prefix)), nested_(nested) {}
+
+  std::string original(const std::string& full) const {
+    static const std::string merge = "tsugumi.merge";
+    if (nested_ && (full == merge || full.rfind(merge + ".", 0) == 0)) return "nested" + full.substr(merge.size());
+    return full;
+  }
 
   std::string qualified(const std::string& name) const {
-    return prefix_.empty() ? name : prefix_ + "." + name;
+    return prefix_.empty() ? original(name) : prefix_ + "." + original(name);
   }
 
   void object(int index) {
@@ -153,8 +167,8 @@ class Renderer {
 
   void emit(std::string& out) {
     for (auto [is_obj, index] : order_) {
-      std::string full = is_obj ? s_.objects()->Get(index)->name()->str()
-                                : s_.enums()->Get(index)->name()->str();
+      std::string full = original(is_obj ? s_.objects()->Get(index)->name()->str()
+                                         : s_.enums()->Get(index)->name()->str());
       auto dot = full.rfind('.');
       std::string ns = dot == std::string::npos ? "" : full.substr(0, dot);
       std::string base = dot == std::string::npos ? full : full.substr(dot + 1);
@@ -261,6 +275,7 @@ class Renderer {
 
   const reflection::Schema& s_;
   std::string prefix_;
+  bool nested_ = false;
   std::set<int> objs_, enums_;
   std::vector<std::pair<bool, int>> order_;
 };
@@ -289,6 +304,7 @@ std::optional<TypeRef> compile(const std::string& fbs_text, const std::string& r
   if (bfbs.empty()) return std::nullopt;
   auto t = std::make_shared<Type>();
   t->bfbs = std::move(bfbs);
+  t->hash = crypto::sha256_hex(t->bfbs);
   t->root_type = t->root() ? t->root()->name()->str() : root;
   if (!t->root() || t->root()->is_struct()) {
     *error = "root " + root + " must be a table";
@@ -338,6 +354,7 @@ CatalogResult parse_catalog(const std::string& fbs_text, const std::string& file
     } else {
       auto t = std::make_shared<Type>();
       t->bfbs = std::move(bfbs);
+      t->hash = crypto::sha256_hex(t->bfbs);
       t->root_type = t->root()->name()->str();
       if (port.kind != PortKind::FlatBuffer && !has_string_value(*t))
         r.errors.push_back(filename + ": File/Directory port " + field->name +
@@ -366,12 +383,12 @@ bool compatible(const Type& a, const Type& b) {
   return c.objects(ia, ib);
 }
 
-std::string render_closure(const Type& t, const std::string& prefix, std::string& out) {
+std::string render_closure(const Type& t, const std::string& prefix, std::string& out, bool nested) {
   const auto* s = t.schema();
   int root = -1;
   for (flatbuffers::uoffset_t i = 0; i < s->objects()->size(); ++i)
     if (s->objects()->Get(i) == s->root_table()) root = static_cast<int>(i);
-  Renderer r(*s, prefix);
+  Renderer r(*s, prefix, nested);
   r.object(root);
   r.emit(out);
   return r.qualified(s->root_table()->name()->str());
@@ -399,7 +416,7 @@ std::optional<TypeRef> merged_type(const std::vector<std::pair<std::string, Type
       *error = "input " + port + " has no resolved type";
       return std::nullopt;
     }
-    std::string root = render_closure(*type, "tsugumi.merge.p" + std::to_string(k++), text);
+    std::string root = render_closure(*type, "tsugumi.merge.p" + std::to_string(k++), text, /*nested=*/true);
     members.emplace_back(port, root);
   }
   text += "namespace tsugumi.merge;\nunion Arrival { ";
@@ -441,6 +458,34 @@ std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t, std::string
 }
 
 }  // namespace
+
+std::optional<std::string> wrap_in_union(const Type& merged, const std::string& port, const Type& member,
+                                         const std::string& bytes, std::string* error) {
+  const auto* root = merged.root();
+  const auto* field = root ? root->fields()->LookupByKey("value") : nullptr;
+  if (!field || field->type()->base_type() != BaseType::Union) {
+    *error = "the merged type has no union value";
+    return std::nullopt;
+  }
+  const auto* u = merged.schema()->enums()->Get(field->type()->index());
+  int64_t tag = -1;
+  for (const auto* e : *u->values())
+    if (e->name()->str() == port) tag = e->value();
+  if (tag <= 0) {
+    *error = "no union member for input " + port;
+    return std::nullopt;
+  }
+  const auto* type_field = root->fields()->LookupByKey("value_type");
+  flatbuffers::FlatBufferBuilder b(bytes.size() + 64);
+  auto table = flatbuffers::CopyTable(b, *member.schema(), *member.root(),
+                                      *flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(bytes.data())));
+  auto start = b.StartTable();
+  b.AddOffset(field->offset(), table);
+  b.AddElement<uint8_t>(type_field ? type_field->offset() : static_cast<uint16_t>(field->offset() - 2),
+                        static_cast<uint8_t>(tag), 0);
+  b.Finish(flatbuffers::Offset<flatbuffers::Table>(b.EndTable(start)));
+  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+}
 
 bool verify(const Type& t, const std::string& bytes) {
   return flatbuffers::Verify(*t.schema(), *t.root(),

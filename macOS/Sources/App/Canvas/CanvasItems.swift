@@ -166,10 +166,11 @@ struct OutputFrameView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 6) {
-        Image(systemName: "chart.xyaxis.line").font(.caption)
+        Image(systemName: "chart.xyaxis.line").font(.caption).foregroundStyle(.purple)
         Text(session.displayName(cardKey)).font(.caption.bold()).lineLimit(1)
         if let d = session.displays[cardKey] {
-          Text("#\(d.invocation)").font(.caption2).foregroundStyle(.secondary)
+          Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            .help("Run \(d.runId) の中で、この Card の \(d.invocation) 回目の実行の結果")
         }
         Spacer()
         Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
@@ -182,7 +183,11 @@ struct OutputFrameView: View {
     }
     .padding(8)
     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.secondary.opacity(0.3)))
+    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.purple.opacity(0.45)))
+    .overlay(alignment: .leading) {
+      // Anchor of the display link from the Card (not a computation port).
+      Circle().fill(Color.purple.opacity(0.75)).frame(width: 7, height: 7).offset(x: -3.5)
+    }
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
   }
 }

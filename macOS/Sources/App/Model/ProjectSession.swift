@@ -42,15 +42,34 @@ struct ResolvedCard {
   let diagnostics: [Diagnostic]
 }
 
+/// One stage of an invocation as the core recorded it (core clock, ms).
+struct StageRecord: Equatable {
+  var stage: Stage
+  var outcome: Tsugumi_Data_StageOutcome
+  var start: Int64?
+  var end: Int64?
+}
+
+/// Latest invocation of a Card in the current run, as the core reports it.
 struct CardRunState {
   var state: Tsugumi_Data_CardState
+  /// Number of the latest invocation in this run (1, 2, …); 0 = not run.
   var invocation: UInt64
   var phase: Tsugumi_Data_Phase
   var failure: String?
-  /// Stage of the latest invocation and the stages it already passed.
-  var stage: Stage?
-  var reached: Set<Stage> = []
+  /// Stages of the latest invocation, in the order the core ran them.
+  var stages: [StageRecord] = []
   var cached = false
+  var workerReused = false
+  /// Outputs the latest invocation sent, and every output that sent a value
+  /// in this run (a branch lists only the side it chose).
+  var sent: Set<String> = []
+  var sentInRun: Set<String> = []
+  var startedAt: Int64?
+  var endedAt: Int64?
+  var readyAt: Int64?
+
+  var stage: Stage? { stages.last.map(\.stage) ?? (state == .waiting || state == .ready ? .waiting : nil) }
 }
 
 /// One invocation on the run timeline (times in ms since 1970, from the core).
@@ -218,6 +237,16 @@ final class ProjectSession {
     return [.queued, .preparing, .running, .cancelling].contains(s)
   }
   var currentRunId: String? { runStatus?.runId }
+  /// Mac clock minus core clock (ms), estimated from event timestamps: the
+  /// smallest difference seen (an event is never received before it happened).
+  private(set) var coreClockOffset: Int64?
+  /// The core clock now (ms since 1970), for elapsed times of a running run.
+  func coreNow() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) - (coreClockOffset ?? 0) }
+  private func sampleClock(_ coreMs: Int64?) {
+    guard let coreMs else { return }
+    let d = Int64(Date().timeIntervalSince1970 * 1000) - coreMs
+    if coreClockOffset == nil || d < coreClockOffset! { coreClockOffset = d }
+  }
   private(set) var logRevision = 0  // bumps when new log bytes are available
 
   init(identity: ProjectIdentity, environments: EnvironmentManager) {
@@ -420,6 +449,7 @@ final class ProjectSession {
         runStatus = s
         cardStates = [:]
         timeline = []
+        sampleClock(s.acceptedAt)
       }
     case .runstatuschanged:
       if let s = (v.value as? Tsugumi_RPC_RunStatusChangedT)?.status, s.runId == runStatus?.runId || runStatus == nil {
@@ -432,20 +462,20 @@ final class ProjectSession {
         let n = inv.invocation ?? 0
         if prev == nil || prev!.invocation <= n {
           var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
-          // Stages accumulate within one invocation; a new invocation starts over.
-          if let p = prev, p.invocation == n {
-            next.reached = p.reached
-            next.cached = p.cached
-            next.stage = p.stage
+          // Each notification carries the invocation's stages so far.
+          next.stages = inv.stages.compactMap { $0 }.compactMap { t in
+            Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
           }
-          if inv.buildCached == true { next.cached = true }
-          if inv.state == .waiting || inv.state == .ready { next.stage = .waiting }
-          if let st = Stage(phase: inv.phase) {
-            if let cur = next.stage, cur != st { next.reached.insert(cur) }
-            next.stage = st
-          }
+          next.cached = inv.buildCached == true
+          next.workerReused = inv.workerReused == true
+          next.sent = Set(inv.outputsSent.compactMap { $0 })
+          next.sentInRun = (prev?.sentInRun ?? []).union(next.sent)
+          next.startedAt = inv.startedAt
+          next.endedAt = inv.endedAt
+          next.readyAt = inv.readyAt
           cardStates[k] = next
         }
+        sampleClock(inv.endedAt ?? (inv.state == .running ? inv.stages.last??.start : nil))
         recordTimeline(k, inv)
       }
     case .runfinished:

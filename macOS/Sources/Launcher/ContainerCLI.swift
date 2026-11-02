@@ -84,6 +84,7 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
   case notReady(String)
   case locked
   case invalidProject(String)
+  case deleteFailed(what: String, log: String)
 
   public var description: String {
     switch self {
@@ -103,6 +104,8 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
       return "Another Tsugumi process is starting or stopping this environment."
     case .invalidProject(let s):
       return "Not a Tsugumi project: \(s)"
+    case .deleteFailed(let what, let log):
+      return "Could not remove \(what): \(log.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
   }
 
@@ -125,6 +128,8 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
       return "Wait for the other operation to finish, then retry."
     case .invalidProject:
       return "Choose a folder that contains tsugumi.json."
+    case .deleteFailed:
+      return "Nothing else was removed after this step; the environment's files are kept. Retry the deletion."
     }
   }
 }

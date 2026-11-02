@@ -144,6 +144,31 @@ const char* phase_name(Phase p) {
   }
 }
 
+// Opens stage `p` of an invocation, closing a still open previous stage as
+// done. A stage with another outcome (cached, reused) is closed at once.
+void stage_begin(InvocationSummaryData& s, Phase p, StageOutcome o = StageOutcome::running) {
+  int64_t t = now_ms();
+  if (!s.stages.empty() && s.stages.back().outcome == StageOutcome::running) {
+    s.stages.back().outcome = StageOutcome::done;
+    s.stages.back().end = t;
+  }
+  StageTimeData st;
+  st.phase = p;
+  st.outcome = o;
+  st.start = t;
+  if (o != StageOutcome::running) st.end = t;
+  s.stages.push_back(st);
+  s.phase = p;
+}
+
+// Closes the open stage (if any) with outcome `o`.
+void stage_close(InvocationSummaryData& s, StageOutcome o) {
+  if (!s.stages.empty() && s.stages.back().outcome == StageOutcome::running) {
+    s.stages.back().outcome = o;
+    s.stages.back().end = now_ms();
+  }
+}
+
 // Returns a copy of a File/Directory value whose `value` field is `p`.
 Value with_path(const Value& v, const std::string& p) {
   Value out = v;
@@ -243,6 +268,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     CardPath from;
     uint64_t from_inv = 0;
     uint64_t seq = 0;
+    int64_t arrived_at = now_ms();  // when it entered the queue
   };
   struct NodeRt {
     const Node* node = nullptr;
@@ -268,6 +294,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t invocation;
     std::vector<Token> inputs;
     bool from_saved = false;  // single-Card run on the saved inputs
+    int64_t ready_at = now_ms();  // all inputs there (or the start fired)
   };
 
   // ---- persistence helpers -------------------------------------------------
@@ -615,6 +642,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.card = node.path;
     s.invocation = w.invocation;
     s.started_at = now_ms();
+    // Ready when the last consumed input arrived (a start Card: when it fired).
+    s.ready_at = w.inputs.empty() ? w.ready_at : 0;
+    for (const auto& t : w.inputs) s.ready_at = std::max(*s.ready_at, t.arrived_at);
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
     for (const auto& t : w.inputs) {
@@ -628,7 +658,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                                       {{"card", path_key(node.path)}, {"max_runs", std::to_string(node.settings.max_runs)}});
     } else {
       s.state = CardState::running;
-      s.phase = node.kind == Template::Code ? Phase::prepare : Phase::execute;
+      stage_begin(s, node.kind == Template::Code ? Phase::prepare : Phase::execute);
       card_status(s);
       if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) save_last_inputs(node, w.invocation, inputs);
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
@@ -641,7 +671,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         out.failure = FailureData::make(FailureKind::internal_error, e.what());
       }
       if (!out.failure) {
-        s.phase = Phase::validate;
+        stage_begin(s, Phase::validate);
         int64_t vs = now_ms();
         try {
           validate_outputs(rt, w.invocation, out.outputs, inputs);
@@ -652,9 +682,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         svc_.server()->broadcast(timeline_note(run_id_, node.path, w.invocation, Phase::validate, lane, vs, now_ms()));
       }
     }
+    bool was_cancel = out.failure && out.failure->kind == FailureKind::cancelled;
+    if (out.failure) stage_close(s, was_cancel ? StageOutcome::cancelled : StageOutcome::failed);
+    else for (const auto& v : out.outputs) s.outputs_sent.push_back(v.name);
     s.ended_at = now_ms();
     s.duration_ms = static_cast<uint64_t>(*s.ended_at - *s.started_at);
-    bool was_cancel = out.failure && out.failure->kind == FailureKind::cancelled;
     if (out.failure && out.failure->args.empty()) out.failure->args.emplace_back("card", path_key(node.path));
     s.state = out.failure ? (was_cancel ? CardState::cancelled : CardState::failed) : CardState::succeeded;
     s.failure = out.failure;
@@ -675,7 +707,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     if (s.state == CardState::succeeded) {
       // Records, artifacts and saved values are written in the save stage.
-      s.phase = Phase::save;
+      stage_begin(s, Phase::save);
       s.state = CardState::running;
       card_status(s);
       s.state = CardState::succeeded;
@@ -696,15 +728,32 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (rec.record_io) rec.outputs = out.outputs;
     }
     // The completion is durable before it is announced or its outputs move on.
-    try {
-      History& h = svc_.history();
-      h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
-    } catch (const Failed&) {
-      persistence_lost("invocation " + std::to_string(w.invocation) + " of " + path_key(node.path));
-      s.state = CardState::failed;
-      s.failure = persist_failure();
-      out.failure = s.failure;
-      out.outputs.clear();
+    // The record holds the save stage as done; a failed write reports it failed.
+    {
+      auto done = s;
+      stage_close(done, out.failure ? StageOutcome::failed : StageOutcome::done);
+      rec.summary.stages = done.stages;
+      rec.summary.outputs_sent = done.outputs_sent;
+      rec.summary.worker_reused = done.worker_reused;
+      try {
+        History& h = svc_.history();
+        h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
+        // The save stage includes that write; its end is recorded afterwards.
+        s.stages = done.stages;
+        if (!s.stages.empty() && s.stages.back().phase == Phase::save) {
+          s.stages.back().end = now_ms();
+          auto final = s;
+          h.submit([final](sql::Db& db) { History::update_detail(db, final); }, [](bool) {});
+        }
+      } catch (const Failed&) {
+        persistence_lost("invocation " + std::to_string(w.invocation) + " of " + path_key(node.path));
+        stage_close(s, StageOutcome::failed);
+        s.state = CardState::failed;
+        s.failure = persist_failure();
+        s.outputs_sent.clear();
+        out.failure = s.failure;
+        out.outputs.clear();
+      }
     }
     svc_.server()->broadcast(card_note(s));
     journal(phase_name(s.phase.value_or(Phase::execute)),
@@ -943,16 +992,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       case Template::Merge: {
         if (in.size() != 1) throw Failed(FailureKind::input_missing, "merge consumes exactly one arrival");
         const Value& v = in.front();
-        std::string inner, err;
-        if (!types::flatbuffer_to_json(*v.type, v.bytes, &inner, &err)) throw Failed(FailureKind::output_invalid, err);
-        auto type_name = schema::string_value(v.name);
-        auto value = schema::capture(inner);
-        std::string doc = schema::object_text({{"value_type", &type_name}, {"value", &value}});
-        std::string bytes;
         const auto& out = node.outputs.front();
-        if (!out.type || !types::json_to_flatbuffer(*out.type, doc, &bytes, &err))
-          throw Failed(FailureKind::output_invalid, "merge: " + err);
-        p.outputs.push_back({"out", PortKind::FlatBuffer, out.type, std::move(bytes), {}});
+        if (!out.type) throw Failed(FailureKind::output_invalid, "merge: the output type is not resolved");
+        std::string err;
+        auto bytes = types::wrap_in_union(*out.type, v.name, *v.type, v.bytes, &err);
+        if (!bytes) throw Failed(FailureKind::output_invalid, "merge: " + err);
+        p.outputs.push_back({"out", PortKind::FlatBuffer, out.type, std::move(*bytes), {}});
         break;
       }
       case Template::Logger: {
@@ -1010,7 +1055,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in, uint32_t lane) {
     const Node& node = *rt.node;
     if (!rt.build) {
-      s.phase = Phase::prepare;
+      if (s.phase != Phase::prepare) stage_begin(s, Phase::prepare);
       card_status(s);
       set_state(RunState::preparing);
       int64_t t0 = now_ms();
@@ -1031,15 +1076,25 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         // Closing the previous stage on the timeline, then reporting the new one.
         svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
         stage_start = now_ms();
-        s.phase = p;
+        stage_begin(s, p);
         card_status(s);
       };
       rt.build = svc_.nix().build(br);
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
       journal("build", "output", node.path, s.invocation, rt.build->cached ? "build reused from cache" : "built");
+      if (rt.build->cached) {
+        // The Nix store already had the build: nothing was evaluated or built.
+        stage_begin(s, Phase::evaluate, StageOutcome::cached);
+        stage_begin(s, Phase::build, StageOutcome::cached);
+      }
+    } else {
+      // Built by an earlier invocation of this run.
+      stage_close(s, StageOutcome::reused);
+      stage_begin(s, Phase::evaluate, StageOutcome::reused);
+      stage_begin(s, Phase::build, StageOutcome::reused);
     }
     s.build_cached = rt.build->cached;
-    s.phase = Phase::execute;
+    stage_begin(s, Phase::execute);
     card_status(s);
     set_state(RunState::running);
     auto dir = invocation_dir(node, s.invocation);
@@ -1060,7 +1115,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     ro.erase(std::unique(ro.begin(), ro.end()), ro.end());
     std::string signature = std::string(rt.build->package.value_or("")) + "|" + (node.settings.sandbox ? "s" : "u");
     for (const auto& p : ro) signature += "|" + p;
-    if (!rt.worker || !rt.worker->alive() || !rt.build->reuse_worker || rt.worker_signature != signature) {
+    s.worker_reused = rt.worker && rt.worker->alive() && rt.build->reuse_worker && rt.worker_signature == signature;
+    if (!*s.worker_reused) {
       if (rt.worker) rt.worker->terminate();
       rt.worker_signature = signature;
       WorkerSpawn sp;

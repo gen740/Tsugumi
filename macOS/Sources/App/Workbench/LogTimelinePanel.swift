@@ -13,10 +13,8 @@ struct LogTimelinePanel: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 10) {
-        Picker("", selection: $workspace.bottomPanel) {
-          ForEach(BottomPanel.allCases) { Text($0.title).tag($0) }
-        }
-        .pickerStyle(.segmented).labelsHidden().frame(width: 200)
+        Label(workspace.bottomPanel.title, systemImage: workspace.bottomPanel == .log ? "text.alignleft" : "chart.bar.xaxis")
+          .font(.callout.weight(.medium))
         Picker("実行", selection: $runId) {
           if runs.isEmpty { Text("実行履歴なし").tag(String?.none) }
           ForEach(runs, id: \.status.runId) { r in
@@ -32,20 +30,21 @@ struct LogTimelinePanel: View {
           .frame(maxWidth: 240)
         }
         Spacer()
-        Button { workspace.showBottom = false } label: { Image(systemName: "xmark") }
-          .buttonStyle(.borderless).help("閉じる")
+        Button { workspace.showBottom = false } label: { Image(systemName: "xmark").font(.caption) }
+          .buttonStyle(.borderless).help("閉じる（下部のアイコンでも開閉できます）")
       }
       .padding(6)
       Divider()
       switch workspace.bottomPanel {
       case .log:
         if let runId {
-          RunLogView(session: session, runId: runId, card: workspace.logCard.map(path), invocation: nil)
+          RunLogView(session: session, runId: runId, card: workspace.logCard.map(path), invocation: workspace.logInvocation,
+                     stream: $workspace.logStream)
         } else {
           ContentUnavailableView("実行履歴はありません", systemImage: "text.alignleft", description: Text("実行するとここにログが表示されます。"))
         }
       case .timeline:
-        RunTimelineView(session: session, runId: runId, onSelect: { k in
+        RunTimelineView(session: session, runId: runId, run: runs.first { $0.status.runId == runId }?.status, onSelect: { k in
           let scope = Array(path(k).dropLast())
           tab.enter(scope)
           tab.selection = [k]
@@ -76,7 +75,7 @@ struct RunLogView: View {
   let runId: String
   let card: [String]?
   let invocation: UInt64?
-  @State private var stream: Tsugumi_Data_LogStream = .stdout
+  @Binding var stream: Tsugumi_Data_LogStream
   @State private var log = ""
   @State private var offset: UInt64 = 0
   @State private var scopeKey = ""
@@ -108,7 +107,7 @@ struct RunLogView: View {
       .padding(.horizontal, 6)
       ScrollViewReader { proxy in
         ScrollView {
-          Text(log.isEmpty ? "ログはありません" : log)
+          Text(log.isEmpty ? emptyReason : log)
             .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: .monospaced))
             .foregroundStyle(log.isEmpty ? .secondary : .primary)
             .textSelection(.enabled)
@@ -122,6 +121,19 @@ struct RunLogView: View {
     }
     .task(id: identity) { await reset() }
     .onChange(of: session.logRevision) { Task { await readMore() } }
+  }
+
+  /// Why nothing is shown, so an empty pane is never ambiguous.
+  private var emptyReason: String {
+    if let error { return String(localized: "ログを読み込めませんでした: ") + error }
+    if let card, runId == session.currentRunId, session.cardStates[key(card)] == nil {
+      return String(localized: "この実行では、この Card はまだ動いていません。")
+    }
+    switch stream {
+    case .stderr: return String(localized: "stderr への出力はありません（Nix 評価・build のログもここに出ます）。")
+    case .journal: return String(localized: "記録された段階の出来事はありません。")
+    default: return String(localized: "stdout への出力はありません。")
+    }
   }
 
   private func reset() async {
@@ -169,6 +181,8 @@ struct RunLogView: View {
 struct RunTimelineView: View {
   let session: ProjectSession
   let runId: String?
+  /// Status of the chosen run (past runs); the current run uses the session's.
+  var run: Tsugumi_RPC_RunStatusT?
   let onSelect: (CardKey) -> Void
   @State private var entries: [TimelineEntry] = []
   @State private var loading = false
@@ -176,9 +190,14 @@ struct RunTimelineView: View {
   var body: some View {
     let list = runId == session.currentRunId && !session.timeline.isEmpty ? session.timeline : entries
     let rows = Array(Set(list.map(\.card))).sorted()
-    let start = list.compactMap(\.startedAt).min() ?? 0
-    let now = Int64(Date().timeIntervalSince1970 * 1000)
-    let end = max(start + 1, list.map { $0.endedAt ?? (session.runActive ? now : ($0.startedAt ?? start)) }.max() ?? start + 1)
+    // The axis starts when the run was accepted and ends when it ended (or
+    // now, on the core's clock), like the elapsed time of the run control.
+    let status = runId == session.currentRunId ? session.runStatus : run
+    let live = runId == session.currentRunId && session.runActive
+    let now = session.coreNow()
+    let start = status?.acceptedAt ?? list.compactMap(\.startedAt).min() ?? 0
+    let lastEnd = list.map { $0.endedAt ?? (live ? now : ($0.startedAt ?? start)) }.max() ?? start
+    let end = max(start + 1, status?.endedAt ?? (live ? now : lastEnd), lastEnd)
     Group {
       if list.isEmpty {
         if loading { ProgressView() } else {
@@ -189,9 +208,11 @@ struct RunTimelineView: View {
           VStack(alignment: .leading, spacing: 3) {
             HStack {
               Text("").frame(width: 180)
-              Text("0 秒").font(.caption2).foregroundStyle(.secondary)
+              Text("Run 受付").font(.caption2).foregroundStyle(.secondary)
               Spacer()
-              Text(formatDuration(Double(end - start) / 1000)).font(.caption2).foregroundStyle(.secondary)
+              Text(formatDuration(Double(end - start) / 1000) + (live ? String(localized: "（実行中）") : ""))
+                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                .help("Run の受付から終了まで（準備を含む）。実行中の経過と同じ基準です。")
             }
             ForEach(rows, id: \.self) { k in
               HStack(spacing: 6) {
@@ -201,7 +222,7 @@ struct RunTimelineView: View {
                     Rectangle().fill(.quaternary.opacity(0.4))
                     ForEach(list.filter { $0.card == k }) { e in
                       let s = e.startedAt ?? start
-                      let f = e.endedAt ?? (session.runActive ? now : s)
+                      let f = e.endedAt ?? (live ? now : s)
                       let x = CGFloat(s - start) / CGFloat(end - start) * g.size.width
                       let w = max(3, CGFloat(f - s) / CGFloat(end - start) * g.size.width)
                       RoundedRectangle(cornerRadius: 2)

@@ -67,22 +67,27 @@ struct StatusBar: View {
     .fixedSize(horizontal: true, vertical: false)
   }
 
+  /// Log and timeline icons: each opens its panel, a second click closes
+  /// it, and only the open one is highlighted.
   private func panelPicker(icons: Bool) -> some View {
-    Picker("", selection: Binding(get: { workspace.showBottom ? workspace.bottomPanel : nil },
-                                  set: { v in
-                                    if let v { workspace.bottomPanel = v; workspace.showBottom = true } else { workspace.showBottom = false }
-                                  })) {
-      if icons {
-        Image(systemName: "rectangle.bottomhalf.inset.filled").tag(BottomPanel?.none).help("閉じる")
-        Image(systemName: "text.alignleft").tag(Optional(BottomPanel.log)).help("ログ")
-        Image(systemName: "chart.bar.xaxis").tag(Optional(BottomPanel.timeline)).help("タイムライン")
-      } else {
-        Text("閉じる").tag(BottomPanel?.none)
-        ForEach(BottomPanel.allCases) { Text($0.title).tag(Optional($0)) }
-      }
+    HStack(spacing: 2) {
+      panelButton(.log, symbol: "text.alignleft", shortcut: .toggleLog)
+      panelButton(.timeline, symbol: "chart.bar.xaxis", shortcut: .toggleTimeline)
     }
-    .pickerStyle(.segmented).labelsHidden()
-    .help("全体ログと時間軸上の実行状況")
+  }
+
+  private func panelButton(_ p: BottomPanel, symbol: String, shortcut: ShortcutAction) -> some View {
+    let open = workspace.showBottom && workspace.bottomPanel == p
+    return Button { workspace.togglePanel(p) } label: {
+      Image(systemName: symbol)
+        .frame(width: 26, height: 20)
+        .foregroundStyle(open ? Color.white : Color.secondary)
+        .background(RoundedRectangle(cornerRadius: 5).fill(open ? Color.accentColor : .clear))
+    }
+    .buttonStyle(.borderless)
+    .help("\(p.title)（\(AppPreferences.shared.shortcut(shortcut).label)）")
+    .accessibilityLabel(p.title)
+    .accessibilityAddTraits(open ? .isSelected : [])
   }
 
   private func runState(short: Bool) -> some View {

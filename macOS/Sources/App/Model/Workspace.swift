@@ -1,11 +1,14 @@
 import Foundation
 import SwiftUI
 import Observation
+import TsugumiRPC
 
 /// Window values for the scenes that show one project (and optionally a
 /// Card or scope in it). Codable so windows restore across launches.
 struct ProjectRef: Codable, Hashable {
   var path: String
+  /// Definition to show first (Card definitions window).
+  var definition: String? = nil
   var url: URL { URL(fileURLWithPath: path) }
 }
 
@@ -99,8 +102,10 @@ final class Workspace {
   var columns: NavigationSplitViewVisibility = .all
   var showBottom = false
   var bottomPanel: BottomPanel = .log
-  /// Log filter chosen from elsewhere (an issue, a Card menu).
+  /// Log filter chosen from elsewhere (an issue, a Card menu, a stage icon).
   var logCard: CardKey?
+  var logInvocation: UInt64?
+  var logStream: Tsugumi_Data_LogStream = .stdout
 
   var active: WorkflowTab? { tabs.first { $0.id == activeTab } ?? tabs.first }
 
@@ -134,8 +139,18 @@ final class Workspace {
     if activeTab == id { activeTab = tabs[max(0, i - 1)].id }
   }
 
-  func showLog(for card: CardKey?) {
+  /// Opens the log of a Card. A stage opens the stream that stage writes to
+  /// (Nix evaluation and build: stderr; execution: stdout; others: journal).
+  /// The log / timeline icons: a click opens that panel, or closes it when
+  /// it is already the one shown.
+  func togglePanel(_ p: BottomPanel) {
+    if showBottom && bottomPanel == p { showBottom = false } else { bottomPanel = p; showBottom = true }
+  }
+
+  func showLog(for card: CardKey?, stage: Stage? = nil, invocation: UInt64? = nil) {
     logCard = card
+    logInvocation = invocation
+    if let stage { logStream = stage.logStream } else if card == nil { logStream = .journal }
     bottomPanel = .log
     showBottom = true
   }

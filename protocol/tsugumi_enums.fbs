@@ -58,6 +58,11 @@ enum CardState : ubyte {
 /// save (records, artifacts). Stages a Card does not need are skipped.
 enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, validate = 4, prepare = 5, save = 6 }
 
+/// How a stage of an invocation ended. `running` is a stage still open;
+/// `cached` and `reused` stages did no work of their own (Nix store hit, or a
+/// build/worker kept from an earlier invocation of the same run).
+enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, reused = 4, failed = 5, cancelled = 6 }
+
 enum LogStream : ubyte { unspecified = 0, stdout = 1, stderr = 2, journal = 3 }
 
 enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }

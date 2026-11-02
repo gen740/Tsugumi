@@ -250,6 +250,22 @@ struct WaitingList {
   t::Array<"waiting", Obj<WaitingJson>> items;
 };
 
+// Stage times, reuse and delivered outputs of a completed invocation
+// (invocations.detail). -1 stands for "not set" (all members are required).
+struct StageJson {
+  t::Int64<"phase"> phase;
+  t::Int64<"outcome"> outcome;
+  t::Int64<"start"> start;
+  t::Int64<"end"> end;
+};
+
+struct InvocationDetailJson {
+  t::Array<"stages", Obj<StageJson>> stages;
+  t::Int64<"worker_reused"> worker_reused;
+  t::Array<"outputs_sent", v::String> outputs_sent;
+  t::Int64<"ready_at"> ready_at;
+};
+
 struct InputSourceJson {
   t::String<"port"> port;
   t::String<"card"> card;

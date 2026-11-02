@@ -180,6 +180,19 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
     waits.push_back(R::CreateWaitingInput(b, b.CreateString(w.port), b.CreateVector(ups)));
   }
   auto wv = b.CreateVector(waits);
+  std::vector<Off<R::StageTime>> stages;
+  for (const auto& st : s.stages) {
+    R::StageTimeBuilder sb(b);
+    sb.add_phase(st.phase);
+    sb.add_outcome(st.outcome);
+    sb.add_start(st.start);
+    if (st.end) sb.add_end(*st.end);
+    stages.push_back(sb.Finish());
+  }
+  auto sv = b.CreateVector(stages);
+  std::vector<Off<flatbuffers::String>> sent;
+  for (const auto& p : s.outputs_sent) sent.push_back(b.CreateString(p));
+  auto ov = b.CreateVector(sent);
   R::InvocationSummaryBuilder ib(b);
   ib.add_run_id(run);
   ib.add_card(card);
@@ -192,6 +205,10 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.failure) ib.add_failure(f);
   ib.add_waiting_inputs(wv);
   if (s.build_cached) ib.add_build_cached(*s.build_cached);
+  ib.add_stages(sv);
+  if (s.worker_reused) ib.add_worker_reused(*s.worker_reused);
+  ib.add_outputs_sent(ov);
+  if (s.ready_at) ib.add_ready_at(*s.ready_at);
   return ib.Finish();
 }
 

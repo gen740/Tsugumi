@@ -5,6 +5,7 @@
 #   nix            builds Card packages from their default.nix
 #   cacert         TLS for cache.nixos.org and the pinned nixpkgs archive
 #   bash/coreutils/util-linux  the entrypoint (overlay mount of the store)
+#   e2fsprogs      formats the store disk image on first use (mkfs.ext4)
 #   tini           PID 1: reaps orphaned processes (sandbox helpers) and forwards signals
 #   astyle, ruff, nixfmt, shfmt  source formatting (ProjectFileFormat) of
 #                  C++, Python, Nix and shell (astyle instead of clang-format,
@@ -12,7 +13,7 @@
 # Card compilers, Python and libraries are NOT in the image: they are fetched
 # as pinned Nix dependencies on first use into the persistent store volume.
 { lib, dockerTools, writeShellScript, writeTextDir, closureInfo, buildEnv, tsugumid, nix, cacert
-, bashInteractive, coreutils, util-linux, tini, astyle, ruff, nixfmt-rfc-style, shfmt }:
+, bashInteractive, coreutils, util-linux, e2fsprogs, tini, astyle, ruff, nixfmt-rfc-style, shfmt }:
 let
   nixConf = writeTextDir "etc/nix/nix.conf" ''
     build-users-group =
@@ -33,15 +34,24 @@ let
     ];
   };
   formatters = [ astyle ruff nixfmt-rfc-style shfmt ];
-  runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux tini etc ] ++ formatters;
+  runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux e2fsprogs tini etc ] ++ formatters;
   registration = closureInfo { rootPaths = runtime; };
   entrypoint = writeShellScript "tsugumi-entrypoint" ''
     set -euo pipefail
-    export PATH=${lib.makeBinPath ([ coreutils util-linux nix bashInteractive ] ++ formatters)}
+    export PATH=${lib.makeBinPath ([ coreutils util-linux e2fsprogs nix bashInteractive ] ++ formatters)}
     export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
     export SSL_CERT_FILE=$NIX_SSL_CERT_FILE
     export HOME=/root TMPDIR=/tmp USER=root
     mkdir -p /tmp /root /run/tsugumi && chmod 1777 /tmp && chmod 700 /run/tsugumi
+    # The app keeps each environment's Nix store in a sparse disk image in its
+    # support folder (shared as /hoststore); it is formatted on first use and
+    # mounted as /persist. Without it, /persist is a volume (tests, older apps).
+    if [ -f /hoststore/store.img ] && ! mountpoint -q /persist; then
+      dev=$(losetup -f --show /hoststore/store.img)
+      if ! blkid -p "$dev" >/dev/null 2>&1; then mkfs.ext4 -q -F -L tsugumi-store "$dev"; fi
+      mkdir -p /persist
+      mount -t ext4 -o noatime "$dev" /persist
+    fi
     # The image store is the lower layer; Card builds land in the persistent volume.
     if [ -d /persist ] && ! mountpoint -q /nix; then
       mkdir -p /persist/nix/upper /persist/nix/work

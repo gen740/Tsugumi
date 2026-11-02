@@ -5,6 +5,11 @@ import TsugumiRPC
 // The Card canvas building blocks shared by the main canvas, the appearance
 // preview in Settings and the preview in Card settings: Card data, geometry,
 // the Card view, wires and a small self-contained canvas (CanvasSurface).
+//
+// Cards are drawn at the screen scale (sizes and fonts multiplied by the
+// zoom) instead of being scaled as a bitmap, and placed on whole device
+// pixels, so text stays sharp at any zoom. Ports, wires, the selection and
+// hit-testing all use the same geometry and the same world → screen mapping.
 
 /// Direction the work flows in: inputs enter on the top (or left) edge and
 /// outputs leave on the bottom (or right) edge.
@@ -32,6 +37,22 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
   }
 
+  /// Short "in progress" wording for the status row.
+  var activeLabel: String {
+    switch self {
+    case .waiting: return String(localized: "入力待ち")
+    case .prepare: return String(localized: "SDK 準備中")
+    case .evaluate: return String(localized: "Nix 評価中")
+    case .build: return String(localized: "build 中")
+    case .execute: return String(localized: "実行中")
+    case .validate: return String(localized: "出力を検証中")
+    case .save: return String(localized: "保存中")
+    case .done: return String(localized: "完了")
+    }
+  }
+
+  /// The stage's own icon (kept in every state; the state is shown by color
+  /// and a small badge). Only symbols that exist are named here.
   var symbol: String {
     switch self {
     case .waiting: return "tray.and.arrow.down"
@@ -42,6 +63,27 @@ enum Stage: Int, CaseIterable, Identifiable {
     case .validate: return "checkmark.shield"
     case .save: return "externaldrive"
     case .done: return "flag.checkered"
+    }
+  }
+
+  /// The filled variant shown while the stage runs (where one exists).
+  var activeSymbol: String {
+    switch self {
+    case .prepare: return "shippingbox.fill"
+    case .build: return "hammer.fill"
+    case .execute: return "play.fill"
+    case .validate: return "checkmark.shield.fill"
+    case .save: return "externaldrive.fill"
+    case .waiting, .evaluate, .done: return symbol
+    }
+  }
+
+  /// The log stream that holds what this stage printed.
+  var logStream: Tsugumi_Data_LogStream {
+    switch self {
+    case .prepare, .evaluate, .build: return .stderr
+    case .execute: return .stdout
+    case .waiting, .validate, .save, .done: return .journal
     }
   }
 
@@ -56,16 +98,53 @@ enum Stage: Int, CaseIterable, Identifiable {
     default: return nil
     }
   }
+
+  /// Stages that apply to a Card: code Cards prepare the SDK and build with
+  /// Nix; builtin Cards only execute, validate and save.
+  static func applicable(code: Bool) -> [Stage] {
+    code ? [.prepare, .evaluate, .build, .execute, .validate, .save] : [.execute, .validate, .save]
+  }
 }
 
-/// Progress of the current invocation as the stage strip shows it.
+/// Progress of the latest invocation as the stage strip shows it, from the
+/// stages the core recorded (never inferred from the final state).
 struct StageProgress: Equatable {
-  /// Stages that apply to this Card (code Cards build, builtins do not).
-  var stages: [Stage]
-  var current: Stage?
-  var reached: Set<Stage> = []
-  var failedAt: Stage?
-  var cached = false
+  enum Status: Equatable {
+    case pending     // not reached (yet)
+    case running
+    case done
+    case cached      // the Nix store had the build: no work
+    case reused      // kept from an earlier invocation of the run
+    case failed
+    case cancelled
+    case notRun      // the invocation ended before this stage
+
+    var label: String {
+      switch self {
+      case .pending: return String(localized: "未開始")
+      case .running: return String(localized: "進行中")
+      case .done: return String(localized: "完了")
+      case .cached: return String(localized: "キャッシュを利用（処理なし）")
+      case .reused: return String(localized: "この Run で準備済みのものを再利用")
+      case .failed: return String(localized: "失敗")
+      case .cancelled: return String(localized: "停止")
+      case .notRun: return String(localized: "実行されませんでした")
+      }
+    }
+  }
+
+  struct Item: Equatable, Identifiable {
+    var stage: Stage
+    var status: Status
+    var seconds: Double?
+    var id: Int { stage.rawValue }
+  }
+
+  var items: [Item]
+  var workerReused = false
+
+  var current: Item? { items.first { $0.status == .running } }
+  var failed: Item? { items.first { $0.status == .failed || $0.status == .cancelled } }
 }
 
 struct PortData: Hashable {
@@ -85,8 +164,8 @@ struct ParamData: Hashable {
 struct CardNodeData: Equatable {
   var title: String
   var kind: CardKind
-  var subtitle: String
   var symbol: String?
+  /// Short description (one line on the Card; the whole text on hover).
   var summary: String?
   var inputs: [PortData]
   var outputs: [PortData]
@@ -95,23 +174,69 @@ struct CardNodeData: Equatable {
   var resultFailed = false
   var state: Tsugumi_Data_CardState?
   var stage: StageProgress?
+  /// Invocation number in the current run (0: not run in this run).
+  var invocation: UInt64 = 0
+  /// The run is still going on (a succeeded Card may run again).
+  var runContinues = false
+  var failure: String?
   var errors: [String] = []
   var warnings: [String] = []
   var collapsed = false
+  /// The Card's result has a frame on the canvas (display anchor).
+  var hasDisplay = false
 
   var isDraft: Bool { kind == .draft }
+  var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
+
+  /// "実行 #3 · 成功" and the like; nil before the first invocation.
+  var runText: String? {
+    guard let state, invocation > 0 else { return nil }
+    var s = String(localized: "実行 #\(invocation)")
+    if let cur = stage?.current, state == .running || state == .preparing {
+      s += " · " + cur.stage.activeLabel
+    } else {
+      s += " · " + state.label
+      if state == .succeeded && runContinues { s += String(localized: "（次の入力を待てます）") }
+    }
+    return s
+  }
+
+  /// Plain status for a Card that did not run in this run.
+  var idleText: String {
+    if isDraft { return String(localized: "未実装（Draft）") }
+    if let state, state != .notStarted { return state.label }
+    return String(localized: "未実行（0 回）")
+  }
 }
 
-/// Size and port positions of a Card (world units, relative to its top-left
-/// corner). Shared by drawing and hit-testing.
+/// Outline of a Card on the canvas.
+enum CardShape {
+  case card, branch, fork, merge
+
+  init(_ kind: CardKind) {
+    switch kind {
+    case .branch: self = .branch
+    case .fork: self = .fork
+    case .merge: self = .merge
+    default: self = .card
+    }
+  }
+}
+
+/// Size, outline and port positions of a Card (world units, relative to its
+/// top-left corner). Shared by drawing, wires, the selection and hit-tests.
 struct CardGeometry {
   static let width: CGFloat = 220
-  static let header: CGFloat = 44
-  static let summaryRow: CGFloat = 16
-  static let portRow: CGFloat = 18
+  static let header: CGFloat = 32
+  static let summaryRow: CGFloat = 15
+  static let portRow: CGFloat = 15
   static let paramRow: CGFloat = 26
-  static let resultRow: CGFloat = 20
+  static let resultRow: CGFloat = 18
   static let stageRow: CGFloat = 22
+  /// Labels narrower than this are hidden (shown on hover instead).
+  static let minLabel: CGFloat = 26
+  /// Share of a triangle's wide edge taken by its narrow end (its apex).
+  static let narrow: CGFloat = 0
 
   let inputs: [String]
   let outputs: [String]
@@ -121,64 +246,190 @@ struct CardGeometry {
   let result: Bool
   let stages: Bool
   let flow: FlowDirection
+  let shape: CardShape
 
   init(_ d: CardNodeData, flow: FlowDirection) {
     inputs = d.inputs.map(\.name)
     outputs = d.outputs.map(\.name)
     collapsed = d.collapsed
-    summary = d.summary != nil
+    summary = d.summary != nil && !d.isRouting
     params = d.params.count
-    result = d.result != nil
-    stages = d.stage != nil
+    // Rows are reserved by kind, so a run never makes a Card grow or shrink.
+    result = d.kind == .logger || d.hasDisplay
+    stages = d.kind == .code || d.kind == .draft
     self.flow = flow
+    shape = CardShape(d.kind)
   }
 
-  /// Rows for port labels: one row per port side-by-side (left to right),
-  /// or one label row at the top and one at the bottom (top to bottom).
+  // MARK: Outline
+
+  /// Width across the flow and length along it of a routing Card's outline.
+  private var routingSize: CGSize {
+    switch shape {
+    // Small marks: what they do is plain from the shape (details on hover).
+    case .branch: return CGSize(width: 60, height: 48)
+    case .fork: return CGSize(width: max(56, CGFloat(outputs.count) * 30 + 12), height: 40)
+    case .merge: return CGSize(width: max(56, CGFloat(inputs.count) * 30 + 12), height: 40)
+    case .card: return .zero
+    }
+  }
+
+  /// Labels of a routing Card sit outside its outline, in these bands.
+  private var bandIn: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: true) ? Self.portRow : 0 }
+  private var bandOut: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
+
   var portBand: CGFloat {
-    flow == .leftToRight ? CGFloat(max(inputs.count, outputs.count, 1)) * Self.portRow : 0
+    flow == .leftToRight && shape == .card ? CGFloat(max(inputs.count, outputs.count, 1)) * Self.portRow : 0
   }
-  var topLabels: CGFloat { flow == .topToBottom && !inputs.isEmpty ? Self.portRow : 0 }
-  var bottomLabels: CGFloat { flow == .topToBottom && !outputs.isEmpty ? Self.portRow : 0 }
+  var topLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: true) ? Self.portRow : 0 }
+  var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
-  var height: CGFloat {
-    if collapsed { return Self.header }
-    return topLabels + Self.header + (summary ? Self.summaryRow : 0) + portBand + CGFloat(params) * Self.paramRow +
-      (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 6
+  var size: CGSize {
+    if shape != .card {
+      let r = routingSize
+      return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
+                                  : CGSize(width: r.height + 60, height: r.width)
+    }
+    if collapsed { return CGSize(width: Self.width, height: Self.header) }
+    let h = topLabels + Self.header + (summary ? Self.summaryRow : 0) + portBand + CGFloat(params) * Self.paramRow +
+      (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 4
+    return CGSize(width: Self.width, height: h)
+  }
+  var height: CGFloat { size.height }
+
+  /// The outline's frame inside the Card's box.
+  var outlineRect: CGRect {
+    let s = size
+    guard shape != .card else { return CGRect(origin: .zero, size: s) }
+    if flow == .topToBottom { return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut) }
+    return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
 
-  var size: CGSize { CGSize(width: Self.width, height: height) }
+  /// The outline itself (Card box, diamond, fan or funnel) inside `r`.
+  func outline(in r: CGRect) -> Path {
+    switch shape {
+    case .card:
+      return Path(roundedRect: r, cornerRadius: 9)
+    case .branch:
+      return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
+                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6)
+    case .fork, .merge:
+      // Triangle: apex upstream (fork) or downstream (merge).
+      if flow == .topToBottom {
+        return roundedPolygon(shape == .fork
+          ? [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.midX, y: r.maxY)], radius: 4)
+      }
+      let pts: [CGPoint]
+      if flow == .topToBottom {
+        let inset = r.width * (1 - Self.narrow) / 2
+        pts = shape == .fork
+          ? [CGPoint(x: r.minX + inset, y: r.minY), CGPoint(x: r.maxX - inset, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX - inset, y: r.maxY), CGPoint(x: r.minX + inset, y: r.maxY)]
+      } else {
+        let inset = r.height * (1 - Self.narrow) / 2
+        pts = shape == .fork
+          ? [CGPoint(x: r.minX, y: r.minY + inset), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY - inset)]
+          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY + inset), CGPoint(x: r.maxX, y: r.maxY - inset), CGPoint(x: r.minX, y: r.maxY)]
+      }
+      return roundedPolygon(pts, radius: 7)
+    }
+  }
+
+  // MARK: Ports
+
+  /// The segment ports of one side are spread along (top-to-bottom: an x
+  /// range at a fixed y).
+  private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
+    switch shape {
+    case .card, .branch:
+      let s = shape == .card ? CGSize(width: Self.width, height: collapsed ? Self.header : 0) : routingSize
+      return (0, s.width, 0)
+    case .fork, .merge:
+      let w = routingSize.width
+      let narrowSide = (shape == .fork) == input
+      let span = narrowSide ? w * Self.narrow : w
+      return ((w - span) / 2, span, 0)
+    }
+  }
+
+  /// Room for one port's label on its edge.
+  func spacing(input: Bool) -> CGFloat {
+    let list = input ? inputs : outputs
+    guard !list.isEmpty else { return 0 }
+    if shape == .branch { return routingSize.width / 2 - 8 }
+    let span = edgeSpan(input: input)
+    // A single label may be as wide as the Card; several share the edge
+    // without overlapping their neighbours.
+    let pitch = span.width / CGFloat(list.count + 1)
+    return list.count == 1 ? max(pitch * 2, 90) : pitch - 4
+  }
+
+  /// Labels are shown when there is room for them; otherwise the whole name
+  /// and type show on hover.
+  func showLabels(input: Bool) -> Bool {
+    let list = input ? inputs : outputs
+    guard !list.isEmpty else { return false }
+    if shape == .card && collapsed { return false }
+    // Routing marks name their ports on hover; a branch marks only T / F.
+    if shape == .fork || shape == .merge { return false }
+    if shape == .branch { return !input }
+    return spacing(input: input) >= Self.minLabel
+  }
 
   func port(_ name: String, output: Bool) -> CGPoint {
     let list = output ? outputs : inputs
-    let i = CGFloat(list.firstIndex(of: name) ?? 0)
+    let index = list.firstIndex(of: name) ?? 0
+    let i = CGFloat(index)
+    let n = CGFloat(max(list.count, 1))
+    let r = outlineRect
+    if shape == .branch {
+      // value / condition on the two upper edges, a / b on the two lower edges.
+      let first = index == 0
+      if flow == .topToBottom {
+        return CGPoint(x: r.minX + r.width * (first ? 0.25 : 0.75), y: r.minY + r.height * (output ? 0.75 : 0.25))
+      }
+      return CGPoint(x: r.minX + r.width * (output ? 0.75 : 0.25), y: r.minY + r.height * (first ? 0.25 : 0.75))
+    }
     switch flow {
     case .topToBottom:
-      let x = Self.width * (i + 1) / CGFloat(list.count + 1)
-      return CGPoint(x: x, y: output ? height : 0)
+      let span = edgeSpan(input: !output)
+      return CGPoint(x: span.start + span.width * (i + 1) / (n + 1), y: output ? r.maxY : r.minY)
     case .leftToRight:
+      if shape != .card {
+        let narrowSide = (shape == .fork) == !output
+        let h = narrowSide ? r.height * Self.narrow : r.height
+        return CGPoint(x: output ? r.maxX : r.minX, y: r.midY - h / 2 + h * (i + 1) / (n + 1))
+      }
       let x = output ? Self.width : 0
       if collapsed { return CGPoint(x: x, y: Self.header / 2) }
       let top = Self.header + (summary ? Self.summaryRow : 0)
       return CGPoint(x: x, y: top + i * Self.portRow + Self.portRow / 2)
     }
   }
+
+  /// Anchor of the line to the Card's output frame (on the side, across the flow).
+  var displayAnchor: CGPoint {
+    let r = outlineRect
+    return flow == .topToBottom ? CGPoint(x: r.maxX, y: r.minY + min(Self.header / 2, r.height / 2))
+                                : CGPoint(x: r.midX, y: r.maxY)
+  }
 }
 
-/// Curved wire from an output to an input, following the flow direction.
-func wirePath(_ a: CGPoint, _ b: CGPoint, flow: FlowDirection) -> Path {
-  var path = Path()
-  path.move(to: a)
-  switch flow {
-  case .topToBottom:
-    let dy = max(40, abs(b.y - a.y) / 2)
-    path.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
-  case .leftToRight:
-    let dx = max(40, abs(b.x - a.x) / 2)
-    path.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+/// A closed polygon with rounded corners.
+func roundedPolygon(_ pts: [CGPoint], radius: CGFloat) -> Path {
+  Path { p in
+    let n = pts.count
+    guard n > 2 else { return }
+    p.move(to: CGPoint(x: (pts[n - 1].x + pts[0].x) / 2, y: (pts[n - 1].y + pts[0].y) / 2))
+    for i in 0..<n {
+      p.addArc(tangent1End: pts[i], tangent2End: pts[(i + 1) % n], radius: radius)
+    }
+    p.closeSubpath()
   }
-  return path
 }
+
+// MARK: - Camera
 
 struct CanvasCamera: Equatable {
   var x: Double = 40
@@ -187,6 +438,7 @@ struct CanvasCamera: Equatable {
 
   func screen(_ w: CGPoint) -> CGPoint { CGPoint(x: w.x * zoom + x, y: w.y * zoom + y) }
   func world(_ s: CGPoint) -> CGPoint { CGPoint(x: (s.x - x) / zoom, y: (s.y - y) / zoom) }
+  var transform: CGAffineTransform { CGAffineTransform(a: zoom, b: 0, c: 0, d: zoom, tx: x, ty: y) }
 
   /// Zooms keeping `anchor` (a screen point) fixed.
   mutating func zoom(to z: Double, around anchor: CGPoint) {
@@ -196,23 +448,47 @@ struct CanvasCamera: Equatable {
     zoom = nz
   }
 
-  /// Frames `rect` (world units) in a view of `size`.
-  mutating func fit(_ rect: CGRect, in size: CGSize, maxZoom: Double = 1.5) {
+  /// Frames `rect` (world units) in the part of a view of `size` that is not
+  /// covered by floating controls (`insets`).
+  mutating func fit(_ rect: CGRect, in size: CGSize, insets: EdgeInsets = EdgeInsets(), maxZoom: Double = 1.5,
+                    margin: CGFloat = 40) {
     guard !rect.isNull, size.width > 0, size.height > 0 else { return }
-    let r = rect.insetBy(dx: -50, dy: -60)
-    let z = max(0.2, min(maxZoom, min(size.width / r.width, size.height / r.height)))
+    let r = rect.insetBy(dx: -margin, dy: -margin)
+    let w = max(80, size.width - insets.leading - insets.trailing)
+    let h = max(80, size.height - insets.top - insets.bottom)
+    let z = max(0.2, min(maxZoom, min(w / r.width, h / r.height)))
     zoom = z
-    x = size.width / 2 - r.midX * z
-    y = size.height / 2 - r.midY * z
+    x = insets.leading + w / 2 - r.midX * z
+    y = insets.top + h / 2 - r.midY * z
+  }
+}
+
+extension View {
+  /// Places a view drawn at screen scale (`size` × `zoom`) with its top-left
+  /// corner at `topLeft` (screen units), on whole device pixels.
+  func placeScaled(at topLeft: CGPoint, size: CGSize, zoom: Double, pixel: CGFloat = 2) -> some View {
+    let w = size.width * zoom, h = size.height * zoom
+    let x = (topLeft.x * pixel).rounded() / pixel, y = (topLeft.y * pixel).rounded() / pixel
+    return frame(width: w, height: h).position(x: x + w / 2, y: y + h / 2)
+  }
+
+  /// Places a view laid out in world units and scaled by `zoom` (frames,
+  /// notes, groups): its visual top-left lands exactly at `topLeft`.
+  func place(at topLeft: CGPoint, size: CGSize, zoom: Double) -> some View {
+    frame(width: size.width, height: size.height, alignment: .topLeading)
+      .scaleEffect(zoom, anchor: .topLeading)
+      .frame(width: size.width * zoom, height: size.height * zoom, alignment: .topLeading)
+      .position(x: topLeft.x + size.width * zoom / 2, y: topLeft.y + size.height * zoom / 2)
   }
 }
 
 // MARK: - Card view
 
-/// A Card as drawn on every canvas.
+/// A Card as drawn on every canvas, at the screen scale `zoom`.
 struct CardNodeView: View {
   let data: CardNodeData
   let flow: FlowDirection
+  var zoom: Double = 1
   var selected = false
   /// Committing an edited param of an input Card (nil: read-only).
   var onParamCommit: ((String, String) -> Void)?
@@ -222,136 +498,217 @@ struct CardNodeView: View {
   var onStageTap: ((Stage) -> Void)?
   var onToggleCollapse: (() -> Void)?
 
+  private var z: CGFloat { CGFloat(zoom) }
+  private func s(_ v: CGFloat) -> CGFloat { v * z }
+  private func font(_ size: CGFloat, _ weight: Font.Weight = .regular, mono: Bool = false) -> Font {
+    .system(size: max(6, size * z), weight: weight, design: mono ? .monospaced : .default)
+  }
+
   var body: some View {
     let g = CardGeometry(data, flow: flow)
+    let size = CGSize(width: g.size.width * z, height: g.size.height * z)
+    let o = g.outlineRect
+    let outline = CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z)
+    let path = g.outline(in: outline)
+    ZStack(alignment: .topLeading) {
+      path.fill(fillColor)
+        .shadow(color: .black.opacity(selected ? 0.2 : 0.07), radius: selected ? 4 : 1.5, y: 1)
+      if g.shape == .card { cardBody(g) } else { routingBody(g, outline: outline) }
+      path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
+      portLabels(g)
+      portMarks(g)
+    }
+    .frame(width: size.width, height: size.height, alignment: .topLeading)
+    .contentShape(path)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(accessibilityText)
+  }
+
+  private var accessibilityText: String {
+    var parts = ["Card \(data.title)", data.kind.label, data.runText ?? data.idleText]
+    if let s = data.summary { parts.append(s) }
+    if !data.errors.isEmpty { parts.append(data.errors.joined(separator: " ")) }
+    return parts.joined(separator: ", ")
+  }
+
+  private var fillColor: Color {
+    data.isRouting ? Color(nsColor: .underPageBackgroundColor) : Color(nsColor: .controlBackgroundColor)
+  }
+
+  // MARK: Ordinary Card
+
+  private func cardBody(_ g: CardGeometry) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      if !g.collapsed, g.topLabels > 0 { portLabels(data.inputs, output: false).frame(height: CardGeometry.portRow) }
-      header.frame(height: CardGeometry.header)
+      Color.clear.frame(height: s(g.topLabels))
+      header.frame(height: s(CardGeometry.header))
       if !g.collapsed {
-        if let s = data.summary {
-          Text(s).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-            .padding(.horizontal, 10).frame(height: CardGeometry.summaryRow, alignment: .top)
+        if g.summary, let summary = data.summary {
+          Text(summary).font(font(10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
         }
-        if flow == .leftToRight { sidePorts.frame(height: g.portBand) }
+        if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
         ForEach(data.params, id: \.name) { p in
-          ParamFieldView(param: p, editable: onParamCommit != nil && paramsEditable) { onParamCommit?(p.name, $0) }
-            .frame(height: CardGeometry.paramRow)
-            .padding(.horizontal, 10)
+          ParamFieldView(param: p, editable: onParamCommit != nil && paramsEditable, zoom: zoom) { onParamCommit?(p.name, $0) }
+            .frame(height: s(CardGeometry.paramRow))
+            .padding(.horizontal, s(10))
         }
-        if let r = data.result {
-          HStack(spacing: 4) {
-            Image(systemName: data.resultFailed ? "xmark.octagon" : "text.below.photo").font(.system(size: 9))
-            Text(r).font(.system(size: 10, design: .monospaced)).lineLimit(1)
+        if g.result {
+          HStack(spacing: s(4)) {
+            Image(systemName: "text.below.photo").font(font(9))
+            Text(data.result ?? String(localized: "結果はまだありません")).font(font(10, mono: data.result != nil)).lineLimit(1)
           }
-          .foregroundStyle(data.resultFailed ? .red : .secondary)
-          .padding(.horizontal, 10)
-          .frame(height: CardGeometry.resultRow)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, s(10))
+          .frame(height: s(CardGeometry.resultRow))
         }
-        if let st = data.stage { StageStrip(progress: st, onTap: onStageTap).frame(height: CardGeometry.stageRow).padding(.horizontal, 8) }
-        if g.bottomLabels > 0 { portLabels(data.outputs, output: true).frame(height: CardGeometry.portRow) }
+        if g.stages { statusRow.frame(height: s(CardGeometry.stageRow)).padding(.horizontal, s(8)) }
       }
     }
-    .frame(width: CardGeometry.width, height: g.height, alignment: .topLeading)
-    .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay { portDots(g) }
-    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(borderColor,
-                                                            style: StrokeStyle(lineWidth: selected ? 2.5 : 1, dash: data.isDraft ? [5, 3] : [])))
-    .shadow(color: .black.opacity(selected ? 0.22 : 0.08), radius: selected ? 5 : 2, y: 1)
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel("Card \(data.title), \(data.kind.label), \(data.state?.label ?? String(localized: "未実行"))")
+    .frame(width: s(CardGeometry.width), alignment: .leading)
   }
 
   private var header: some View {
-    HStack(spacing: 7) {
-      Image(systemName: data.symbol ?? data.kind.symbol).font(.system(size: 13)).foregroundStyle(.secondary).frame(width: 16)
-      VStack(alignment: .leading, spacing: 1) {
-        Text(data.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-        HStack(spacing: 4) {
-          if data.isDraft {
-            Text("未実装").font(.system(size: 9, weight: .semibold)).padding(.horizontal, 4)
-              .background(Color.orange.opacity(0.2), in: Capsule())
-          }
-          if let s = data.state {
-            Image(systemName: s.symbol).foregroundStyle(s.color)
-          }
-          Text(data.subtitle)
-        }
-        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+    HStack(spacing: s(6)) {
+      Image(systemName: data.symbol ?? data.kind.symbol).font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
+      Text(data.title).font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
+      if data.isDraft {
+        Text("未実装").font(font(9, .semibold)).padding(.horizontal, s(4))
+          .background(Color.orange.opacity(0.2), in: Capsule())
       }
-      Spacer(minLength: 0)
+      Spacer(minLength: s(2))
       if !data.errors.isEmpty {
-        Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).help(data.errors.joined(separator: "\n"))
+        Image(systemName: "xmark.octagon.fill").font(font(11)).foregroundStyle(.red)
       } else if !data.warnings.isEmpty {
-        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).help(data.warnings.joined(separator: "\n"))
+        Image(systemName: "exclamationmark.triangle.fill").font(font(11)).foregroundStyle(.yellow)
       }
-      if let toggle = onToggleCollapse {
+      stateBadge
+      if let toggle = onToggleCollapse, data.kind != .trigger {
         Button(action: toggle) {
-          Image(systemName: data.collapsed ? "chevron.down.circle" : "chevron.up.circle").font(.system(size: 11))
+          Image(systemName: data.collapsed ? "chevron.down" : "chevron.up").font(font(9, .semibold))
         }
         .buttonStyle(.borderless).foregroundStyle(.secondary)
         .help(data.collapsed ? "展開" : "折りたたむ（実行には影響しません）")
       }
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, s(9))
   }
 
-  private func portLabels(_ ports: [PortData], output: Bool) -> some View {
-    HStack(spacing: 0) {
-      ForEach(ports, id: \.name) { p in
-        Text(p.name).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-          .frame(maxWidth: .infinity)
-          .help(portHelp(p, output: output))
+  /// State icon and invocation number.
+  @ViewBuilder private var stateBadge: some View {
+    if let st = data.state, st != .notStarted {
+      HStack(spacing: s(2)) {
+        Image(systemName: st.symbol).foregroundStyle(st.color)
+        if data.invocation > 0 { Text("#\(data.invocation)").monospacedDigit().foregroundStyle(.secondary) }
       }
-    }
-    .padding(.horizontal, 4)
-  }
-
-  private var sidePorts: some View {
-    HStack(alignment: .top, spacing: 0) {
-      VStack(alignment: .leading, spacing: 0) {
-        ForEach(data.inputs, id: \.name) { p in
-          Text(p.name).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-            .padding(.leading, 10).frame(height: CardGeometry.portRow).help(portHelp(p, output: false))
-        }
-      }
-      Spacer(minLength: 4)
-      VStack(alignment: .trailing, spacing: 0) {
-        ForEach(data.outputs, id: \.name) { p in
-          Text(p.name).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-            .padding(.trailing, 10).frame(height: CardGeometry.portRow).help(portHelp(p, output: true))
-        }
-      }
+      .font(font(10))
+      .help(data.runText ?? st.label)
     }
   }
 
-  /// Port dots on the edges; outputs can be dragged to an input to connect.
-  private func portDots(_ g: CardGeometry) -> some View {
-    ZStack(alignment: .topLeading) {
+  /// Stage strip (or the plain status) of a code Card.
+  @ViewBuilder private var statusRow: some View {
+    if let p = data.stage, data.invocation > 0 {
+      StageStrip(progress: p, zoom: zoom, onTap: onStageTap, caption: data.runText ?? "")
+    } else {
+      Text(data.idleText).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  // MARK: Routing Card (branch, fork, merge)
+
+  /// Only the kind's icon, coloured by the state; name and details on hover.
+  private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
+    let y = g.shape == .fork ? outline.minY + outline.height * 0.62 : g.shape == .merge ? outline.minY + outline.height * 0.38 : outline.midY
+    return Image(systemName: data.kind.symbol)
+      .font(font(10, .semibold))
+      .foregroundStyle(data.state.map { $0 == .notStarted ? Color.secondary : $0.color } ?? .secondary)
+      .position(x: outline.midX, y: y)
+      .help(data.title + " · " + data.kind.label + (data.runText.map { " · " + $0 } ?? ""))
+  }
+
+  // MARK: Ports
+
+  /// Port names centred on their ports; hidden when there is no room (the
+  /// whole name and type then show on hover).
+  @ViewBuilder private func portLabels(_ g: CardGeometry) -> some View {
+    if flow == .topToBottom {
+      if g.showLabels(input: true) { ForEach(data.inputs, id: \.name) { p in label(p, g, output: false) } }
+      if g.showLabels(input: false) { ForEach(data.outputs, id: \.name) { p in label(p, g, output: true) } }
+    } else if g.shape == .card, !g.collapsed {
+      let w = CardGeometry.width / 2 - 14
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
-        Circle().strokeBorder(Color.secondary, lineWidth: 1.5).background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
-          .frame(width: 10, height: 10)
-          .position(pt)
+        Text(p.name).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
+          .frame(width: s(w), alignment: .leading)
+          .position(x: s(pt.x + 10 + w / 2), y: s(pt.y))
+      }
+      ForEach(data.outputs, id: \.name) { p in
+        let pt = g.port(p.name, output: true)
+        Text(p.name).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
+          .frame(width: s(w), alignment: .trailing)
+          .position(x: s(pt.x - 10 - w / 2), y: s(pt.y))
+      }
+    }
+  }
+
+  private func label(_ p: PortData, _ g: CardGeometry, output: Bool) -> some View {
+    let pt = g.port(p.name, output: output)
+    let w = g.spacing(input: !output)
+    var text = p.name
+    if data.kind == .branch && output { text = p.name == "a" ? "T" : p.name == "b" ? "F" : p.name }
+    let label = Text(text).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+    if g.shape == .card {
+      // Inside an ordinary Card: below its input, above its output.
+      let half = CardGeometry.portRow / 2 + 0.5
+      return AnyView(label.frame(width: s(w)).position(x: s(pt.x), y: s(pt.y + (output ? -half : half))).allowsHitTesting(false))
+    }
+    // Beside the port of a routing Card, so the wire (vertical at the port)
+    // never runs through the name: right of it, or left on the left half.
+    let left = pt.x < g.outlineRect.midX - 1 && (data.kind == .branch || g.spacing(input: !output) < 70)
+    let lw: CGFloat = data.kind == .branch ? 12 : max(CardGeometry.minLabel, min(w, 80))
+    let dy: CGFloat = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
+    let x = left ? pt.x - 6 - lw / 2 : pt.x + 6 + lw / 2
+    return AnyView(label.frame(width: s(lw), alignment: left ? .trailing : .leading)
+      .position(x: s(x), y: s(pt.y + dy)).allowsHitTesting(false))
+  }
+
+  /// Inputs are small squares, outputs small circles; outputs can be dragged
+  /// to an input to connect. The hit area is larger than the mark.
+  private func portMarks(_ g: CardGeometry) -> some View {
+    let mark = max(6, s(8))
+    let hit = max(16, s(18))
+    return ZStack(alignment: .topLeading) {
+      ForEach(data.inputs, id: \.name) { p in
+        let pt = g.port(p.name, output: false)
+        RoundedRectangle(cornerRadius: max(1, s(1.5)))
+          .fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(Color.secondary, lineWidth: 1.4))
+          .frame(width: mark, height: mark)
+          .frame(width: hit, height: hit)
+          .contentShape(Rectangle())
+          .position(x: s(pt.x), y: s(pt.y))
           .help(portHelp(p, output: false))
       }
       ForEach(data.outputs, id: \.name) { p in
         let pt = g.port(p.name, output: true)
-        Circle().fill(Color.accentColor).frame(width: 10, height: 10)
-          .contentShape(Circle().inset(by: -6))
-          .position(pt)
+        Circle().fill(Color.accentColor)
+          .frame(width: mark, height: mark)
+          .frame(width: hit, height: hit)
+          .contentShape(Circle())
+          .position(x: s(pt.x), y: s(pt.y))
           .gesture(DragGesture(coordinateSpace: .named("canvas"))
             .onChanged { onPortDrag?(p.name, $0.location) }
             .onEnded { onPortDrop?(p.name, $0.location) })
           .help(portHelp(p, output: true) + (onPortDrag != nil ? String(localized: "（ドラッグして入力ポートへ接続）") : ""))
       }
     }
-    .frame(width: CardGeometry.width, height: g.height, alignment: .topLeading)
   }
 
   private func portHelp(_ p: PortData, output: Bool) -> String {
     var s = (output ? String(localized: "出力 ") : String(localized: "入力 ")) + p.name
     if let t = p.typeName { s += " : \(t)" }
-    if p.optional { s += String(localized: "（省略可）") }
+    s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }
@@ -359,42 +716,89 @@ struct CardNodeView: View {
   private var borderColor: Color {
     if selected { return .accentColor }
     if let s = data.state, s != .notStarted { return s.color.opacity(0.7) }
-    return .secondary.opacity(data.isDraft ? 0.7 : 0.35)
+    return .secondary.opacity(data.isDraft ? 0.7 : 0.4)
   }
 }
 
-/// Stages of the current invocation; finished ones are checked, the current
-/// one is highlighted, a failed one is red and opens the log when clicked.
+/// Stages of the latest invocation in their order. Every stage keeps its own
+/// icon; color and a small badge say whether it is pending, running, done,
+/// cached, reused or failed. The running stage is also named in words.
 struct StageStrip: View {
   let progress: StageProgress
+  var zoom: Double = 1
   var onTap: ((Stage) -> Void)?
+  var caption = ""
+
+  private func s(_ v: CGFloat) -> CGFloat { v * CGFloat(zoom) }
 
   var body: some View {
-    HStack(spacing: 2) {
-      ForEach(progress.stages) { st in
-        let failed = progress.failedAt == st
-        let current = progress.current == st && !failed
-        let reached = progress.reached.contains(st)
-        let skippedByCache = progress.cached && (st == .evaluate || st == .build)
-        Button { onTap?(st) } label: {
-          Image(systemName: failed ? "xmark.circle.fill" : skippedByCache ? "arrow.triangle.2.circlepath" :
-                  current ? st.symbol + (st == .waiting ? "" : ".fill") : reached ? "checkmark.circle.fill" : st.symbol)
-            .font(.system(size: 10))
-            .foregroundStyle(failed ? .red : current ? .orange : reached || skippedByCache ? .green : .secondary.opacity(0.5))
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .disabled(onTap == nil)
-        .help(st.label + (skippedByCache ? String(localized: "（キャッシュを利用）") : "") +
-              (failed ? String(localized: "：失敗（クリックでログ）") : current ? String(localized: "：進行中") : reached ? String(localized: "：完了") : ""))
+    HStack(spacing: s(3)) {
+      ForEach(progress.items) { item in
+        Button { onTap?(item.stage) } label: { icon(item) }
+          .buttonStyle(.plain)
+          .disabled(onTap == nil)
+          .help(help(item))
+          .accessibilityLabel(item.stage.label + "：" + item.status.label)
       }
-      if progress.cached {
-        Text("cache").font(.system(size: 8, weight: .semibold)).foregroundStyle(.green)
-          .help("ビルドはキャッシュを利用しました")
+      if progress.workerReused {
+        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: max(6, s(8)))).foregroundStyle(.teal)
+          .help("前回の worker を再利用して実行しました")
       }
+      Text(caption).font(.system(size: max(6, s(9.5)))).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(progress.current.map { String(localized: "段階: ") + $0.label } ?? String(localized: "段階なし"))
+    .accessibilityElement(children: .contain)
+  }
+
+  private func color(_ st: StageProgress.Status) -> Color {
+    switch st {
+    case .pending, .notRun: return .secondary.opacity(0.45)
+    case .running: return .orange
+    case .done: return .green
+    case .cached: return .blue
+    case .reused: return .teal
+    case .failed: return .red
+    case .cancelled: return .brown
+    }
+  }
+
+  private func badge(_ st: StageProgress.Status) -> String? {
+    switch st {
+    case .done: return "checkmark"
+    case .cached: return "bolt.fill"
+    case .reused: return "arrow.triangle.2.circlepath"
+    case .failed: return "xmark"
+    case .cancelled: return "stop.fill"
+    case .pending, .notRun, .running: return nil
+    }
+  }
+
+  private func icon(_ item: StageProgress.Item) -> some View {
+    let c = color(item.status)
+    return Image(systemName: item.status == .running ? item.stage.activeSymbol : item.stage.symbol)
+      .font(.system(size: max(6, s(10))))
+      .foregroundStyle(c)
+      .frame(width: s(15), height: s(15))
+      .background {
+        if item.status == .running { Circle().fill(Color.orange.opacity(0.15)) }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if let b = badge(item.status) {
+          Image(systemName: b).font(.system(size: max(4, s(5)), weight: .heavy))
+            .foregroundStyle(.white)
+            .padding(max(0.5, s(1)))
+            .background(Circle().fill(c))
+            .offset(x: s(2), y: s(2))
+        }
+      }
+  }
+
+  private func help(_ item: StageProgress.Item) -> String {
+    var t = item.stage.label + "：" + item.status.label
+    if let sec = item.seconds { t += " · " + formatDuration(sec) }
+    if item.status == .failed || item.status == .cancelled { t += String(localized: "（クリックでこの段階のログ）") }
+    else if onTap != nil, item.status != .pending { t += String(localized: "（クリックでログ）") }
+    return t
   }
 }
 
@@ -402,22 +806,27 @@ struct StageStrip: View {
 struct ParamFieldView: View {
   let param: ParamData
   let editable: Bool
+  var zoom: Double = 1
   let commit: (String) -> Void
   @State private var text = ""
   @FocusState private var focused: Bool
 
   var body: some View {
-    HStack(spacing: 6) {
-      Text(param.name).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+    let z = CGFloat(zoom)
+    HStack(spacing: 6 * z) {
+      Text(param.name).font(.system(size: max(6, 10 * z))).foregroundStyle(.secondary).lineLimit(1)
       if param.type == "bool" {
         Toggle("", isOn: Binding(get: { param.value == "true" }, set: { commit($0 ? "true" : "false") }))
           .toggleStyle(.switch).controlSize(.mini).labelsHidden()
           .disabled(!editable)
       } else {
         TextField("", text: $text)
-          .textFieldStyle(.roundedBorder)
-          .font(.system(size: 11, design: .monospaced))
-          .controlSize(.small)
+          .textFieldStyle(.plain)
+          .font(.system(size: max(6, 11 * z), design: .monospaced))
+          .padding(.horizontal, 4 * z)
+          .frame(height: 19 * z)
+          .background(RoundedRectangle(cornerRadius: 4 * z).fill(Color(nsColor: .textBackgroundColor)))
+          .overlay(RoundedRectangle(cornerRadius: 4 * z).strokeBorder(focused ? Color.accentColor : .secondary.opacity(0.35)))
           .focused($focused)
           .onSubmit { if text != param.value { commit(text) } }
           .onChange(of: focused) { if !focused && text != param.value { commit(text) } }
@@ -428,6 +837,152 @@ struct ParamFieldView: View {
     .onAppear { text = param.value }
     .onChange(of: param.value) { if !focused { text = param.value } }
   }
+}
+
+// MARK: - Wires
+
+/// A wire as drawn (screen units).
+struct WireDraw {
+  enum Style { case normal, carried, active, selected, display }
+  var path: Path
+  var style: Style
+}
+
+/// Routes wires in world units around the Cards. Forward wires (downstream)
+/// are curves along the flow; wires going back upstream (feedback loops)
+/// leave the graph sideways and run in their own lane outside it, so they
+/// never cross Cards or each other. The same path draws and hit-tests a wire.
+struct WireRouter {
+  let flow: FlowDirection
+  let obstacles: [CGRect]
+  let bounds: CGRect
+  private var lanes: [Bool: Int] = [:]
+
+  init(flow: FlowDirection, obstacles: [CGRect]) {
+    self.flow = flow
+    self.obstacles = obstacles
+    bounds = obstacles.reduce(CGRect.null) { $0.union($1) }
+  }
+
+  /// A forward wire goes along the flow by at least a little.
+  func isForward(_ a: CGPoint, _ b: CGPoint) -> Bool {
+    flow == .topToBottom ? b.y >= a.y + 24 : b.x >= a.x + 24
+  }
+
+  mutating func route(_ a: CGPoint, _ b: CGPoint) -> Path {
+    if isForward(a, b) || bounds.isNull { return curve(a, b) }
+    // Computed top-to-bottom; left-to-right swaps x and y.
+    let swap = flow == .leftToRight
+    func t(_ p: CGPoint) -> CGPoint { swap ? CGPoint(x: p.y, y: p.x) : p }
+    func tr(_ r: CGRect) -> CGRect { swap ? CGRect(x: r.minY, y: r.minX, width: r.height, height: r.width) : r }
+    let A = t(a), B = t(b)
+    let box = tr(bounds)
+    let obs = obstacles.map(tr)
+    let left = (A.x + B.x) / 2 < box.midX
+    let lane = lanes[left, default: 0]
+    lanes[left] = lane + 1
+    let laneX = left ? box.minX - 34 - CGFloat(lane) * 16 : box.maxX + 34 + CGFloat(lane) * 16
+    let stagger = CGFloat(lane) * 5
+    let y1 = freeY(from: A, toX: laneX, start: A.y + 16 + stagger, step: 9, obstacles: obs)
+    let y2 = freeY(from: B, toX: laneX, start: B.y - 16 - stagger, step: -9, obstacles: obs)
+    let pts = [A, CGPoint(x: A.x, y: y1), CGPoint(x: laneX, y: y1), CGPoint(x: laneX, y: y2), CGPoint(x: B.x, y: y2), B]
+    return orthogonal(pts.map(t), radius: 10)
+  }
+
+  /// First y (from `start`, moving by `step`) where the run from the port
+  /// to y and across to the lane crosses no obstacle.
+  private func freeY(from p: CGPoint, toX laneX: CGFloat, start: CGFloat, step: CGFloat, obstacles: [CGRect]) -> CGFloat {
+    var y = start
+    for _ in 0..<40 {
+      let horiz = CGRect(x: min(p.x, laneX), y: y - 3, width: abs(laneX - p.x), height: 6)
+      let vert = CGRect(x: p.x - 2, y: min(p.y, y) + 6, width: 4, height: max(0, abs(y - p.y) - 12))
+      let blocked = obstacles.contains { o in
+        let r = o.insetBy(dx: -8, dy: -6)
+        return r.intersects(horiz) || (vert.height > 0 && r.intersects(vert))
+      }
+      if !blocked { return y }
+      y += step
+    }
+    return start
+  }
+
+  func curve(_ a: CGPoint, _ b: CGPoint) -> Path {
+    var path = Path()
+    path.move(to: a)
+    switch flow {
+    case .topToBottom:
+      let dy = max(30, abs(b.y - a.y) / 2)
+      path.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
+    case .leftToRight:
+      let dx = max(30, abs(b.x - a.x) / 2)
+      path.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+    }
+    return path
+  }
+
+  /// A polyline with rounded corners.
+  func orthogonal(_ pts: [CGPoint], radius: CGFloat) -> Path {
+    Path { p in
+      guard let first = pts.first else { return }
+      p.move(to: first)
+      for i in 1..<pts.count {
+        if i == pts.count - 1 { p.addLine(to: pts[i]); continue }
+        let a = pts[i - 1], c = pts[i], n = pts[i + 1]
+        let r = min(radius, hypot(c.x - a.x, c.y - a.y) / 2, hypot(n.x - c.x, n.y - c.y) / 2)
+        p.addArc(tangent1End: c, tangent2End: n, radius: max(0.1, r))
+      }
+    }
+  }
+}
+
+/// Wires (screen paths). Carried ones are colored; active ones are animated.
+struct WireLayer: View {
+  let wires: [WireDraw]
+  var animate = false
+  var zoom: Double = 1
+
+  var body: some View {
+    let anyActive = animate && wires.contains { $0.style == .active }
+    SwiftUI.TimelineView(.animation(minimumInterval: 1 / 30, paused: !anyActive)) { t in
+      Canvas { ctx, _ in
+        let phase = anyActive ? -CGFloat(t.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 20) : 0
+        let w = max(1, 1.6 * min(1.4, zoom))
+        for wire in wires {
+          let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
+          switch wire.style {
+          case .normal:
+            ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: round)
+          case .carried:
+            ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: w + 0.4, lineCap: .round, lineJoin: .round))
+          case .active:
+            ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: w + 0.6, lineCap: .round, lineJoin: .round,
+                                                                             dash: anyActive ? [8, 6] : [], dashPhase: phase))
+          case .selected:
+            ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: w + 1.4, lineCap: .round, lineJoin: .round))
+          case .display:
+            ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
+          }
+        }
+      }
+    }
+    .allowsHitTesting(false)
+  }
+}
+
+/// Path (world units) from a Card's display anchor to its output frame.
+func displayLink(from a: CGPoint, to frame: CGRect, flow: FlowDirection) -> Path {
+  var p = Path()
+  p.move(to: a)
+  if flow == .topToBottom {
+    let b = CGPoint(x: frame.minX, y: min(max(a.y, frame.minY + 14), frame.maxY - 14))
+    let dx = max(16, (b.x - a.x) / 2)
+    p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+  } else {
+    let b = CGPoint(x: min(max(a.x, frame.minX + 14), frame.maxX - 14), y: frame.minY)
+    let dy = max(16, (b.y - a.y) / 2)
+    p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
+  }
+  return p
 }
 
 // MARK: - Self-contained canvas (previews)
@@ -448,6 +1003,8 @@ struct CanvasWire: Equatable {
 
 /// A small canvas with the main canvas' Card view, wires, selection, drag,
 /// collapse and zoom, over local state only (it never edits a project).
+/// It frames its Cards once they are there and again when `fitKey` or its
+/// size changes, until the user moves or zooms it.
 struct CanvasSurface: View {
   @Binding var items: [CanvasItem]
   var wires: [CanvasWire]
@@ -455,11 +1012,15 @@ struct CanvasSurface: View {
   var grid = true
   var gridSize: Double = 20
   var animateWires = false
+  var fitKey: String = ""
+  var maxZoom: Double = 1
+  @Environment(\.displayScale) private var displayScale
   @State private var camera = CanvasCamera()
   @State private var selection: Set<String> = []
   @State private var drag: (id: String, offset: CGSize)?
   @State private var zoomStart: Double?
-  @State private var fitted = false
+  @State private var userAdjusted = false
+  @State private var lastPan: CGSize?
 
   var body: some View {
     GeometryReader { geo in
@@ -468,20 +1029,20 @@ struct CanvasSurface: View {
           .contentShape(Rectangle())
           .onTapGesture { selection = [] }
           .gesture(DragGesture(minimumDistance: 2).onChanged { v in
+            userAdjusted = true
             camera.x += v.translation.width - (lastPan?.width ?? 0)
             camera.y += v.translation.height - (lastPan?.height ?? 0)
             lastPan = v.translation
           }.onEnded { _ in lastPan = nil })
-        WireLayer(wires: wires.map { w in (start: point(w.from, w.fromPort, output: true), end: point(w.to, w.toPort, output: false), active: w.active, selected: false) },
-                  flow: flow, animate: animateWires)
+        WireLayer(wires: wireDraws, animate: animateWires, zoom: camera.zoom)
         ForEach(items) { item in
-          let o = origin(item)
-          CardNodeView(data: item.data, flow: flow, selected: selection.contains(item.id),
+          CardNodeView(data: item.data, flow: flow, zoom: camera.zoom, selected: selection.contains(item.id),
                        onToggleCollapse: { toggle(item.id) })
-            .scaleEffect(camera.zoom, anchor: .topLeading)
-            .place(at: camera.screen(o), size: CardGeometry(item.data, flow: flow).size, zoom: camera.zoom)
+            .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(item.data, flow: flow).size,
+                         zoom: camera.zoom, pixel: displayScale)
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
               .onChanged { v in
+                userAdjusted = true
                 if !selection.contains(item.id) { selection = [item.id] }
                 drag = (item.id, v.translation)
               }
@@ -495,10 +1056,17 @@ struct CanvasSurface: View {
             .onTapGesture { selection = NSEvent.modifierFlags.contains(.shift) ? selection.symmetricDifference([item.id]) : [item.id] }
         }
         HStack(spacing: 4) {
-          Button { camera.zoom(to: camera.zoom / 1.2, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)) } label: { Image(systemName: "minus.magnifyingglass") }
+          Button { userAdjusted = true; camera.zoom(to: camera.zoom / 1.2, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)) } label: {
+            Image(systemName: "minus.magnifyingglass")
+          }
+          .help("縮小")
           Text("\(Int((camera.zoom * 100).rounded()))%").font(.caption.monospacedDigit()).frame(minWidth: 36)
-          Button { camera.zoom(to: camera.zoom * 1.2, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)) } label: { Image(systemName: "plus.magnifyingglass") }
-          Button { fit(geo.size) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help("全体表示")
+          Button { userAdjusted = true; camera.zoom(to: camera.zoom * 1.2, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)) } label: {
+            Image(systemName: "plus.magnifyingglass")
+          }
+          .help("拡大")
+          Button { userAdjusted = false; fit(geo.size) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
+            .help("全体表示")
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
@@ -510,15 +1078,32 @@ struct CanvasSurface: View {
       .coordinateSpace(name: "canvas")
       .clipped()
       .gesture(MagnifyGesture().onChanged { v in
+        userAdjusted = true
         if zoomStart == nil { zoomStart = camera.zoom }
         camera.zoom(to: (zoomStart ?? 1) * v.magnification, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2))
       }.onEnded { _ in zoomStart = nil })
-      .onAppear { if !fitted { fit(geo.size); fitted = true } }
-      .onChange(of: flow) { fit(geo.size) }
+      // Framing waits for the Cards; later content updates do not re-centre
+      // a view the user moved or zoomed.
+      .onAppear { fit(geo.size) }
+      .onChange(of: itemsBox) { if !userAdjusted { fit(geo.size) } }
+      .onChange(of: geo.size) { if !userAdjusted { fit(geo.size) } }
+      .onChange(of: fitKey) { userAdjusted = false; fit(geo.size) }
+      .onChange(of: flow) { userAdjusted = false; fit(geo.size) }
     }
   }
 
-  @State private var lastPan: CGSize?
+  /// Bounding box of the Cards (re-framed when a Card appears or changes size).
+  private var itemsBox: CGRect {
+    items.reduce(CGRect.null) { $0.union(CGRect(origin: $1.origin, size: CardGeometry($1.data, flow: flow).size)) }
+  }
+
+  private var wireDraws: [WireDraw] {
+    var router = WireRouter(flow: flow, obstacles: items.map { CGRect(origin: origin($0), size: CardGeometry($0.data, flow: flow).size) })
+    return wires.map { w in
+      let world = router.route(point(w.from, w.fromPort, output: true), point(w.to, w.toPort, output: false))
+      return WireDraw(path: world.applying(camera.transform), style: w.active ? .active : .normal)
+    }
+  }
 
   private func origin(_ item: CanvasItem) -> CGPoint {
     var o = item.origin
@@ -529,10 +1114,11 @@ struct CanvasSurface: View {
     return o
   }
 
+  /// A port in world units.
   private func point(_ id: String, _ port: String, output: Bool) -> CGPoint {
     guard let item = items.first(where: { $0.id == id }) else { return .zero }
     let o = origin(item), p = CardGeometry(item.data, flow: flow).port(port, output: output)
-    return camera.screen(CGPoint(x: o.x + p.x, y: o.y + p.y))
+    return CGPoint(x: o.x + p.x, y: o.y + p.y)
   }
 
   private func toggle(_ id: String) {
@@ -541,9 +1127,8 @@ struct CanvasSurface: View {
   }
 
   private func fit(_ size: CGSize) {
-    var r = CGRect.null
-    for item in items { r = r.union(CGRect(origin: item.origin, size: CardGeometry(item.data, flow: flow).size)) }
-    camera.fit(r, in: size, maxZoom: 1)
+    guard !items.isEmpty, size.width > 0 else { return }
+    camera.fit(itemsBox, in: size, insets: EdgeInsets(top: 4, leading: 4, bottom: 30, trailing: 4), maxZoom: maxZoom, margin: 24)
   }
 }
 
@@ -573,54 +1158,37 @@ struct CanvasGrid: View {
   }
 }
 
-/// Wires between port positions (screen points); active ones are highlighted
-/// and, when enabled, animated.
-struct WireLayer: View {
-  let wires: [(start: CGPoint, end: CGPoint, active: Bool, selected: Bool)]
-  let flow: FlowDirection
-  var animate = false
-
-  var body: some View {
-    let anyActive = animate && wires.contains { $0.active }
-    SwiftUI.TimelineView(.animation(minimumInterval: 1 / 30, paused: !anyActive)) { t in
-      Canvas { ctx, _ in
-        let phase = anyActive ? -CGFloat(t.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 20) : 0
-        for w in wires {
-          let path = wirePath(w.start, w.end, flow: flow)
-          let color: Color = w.selected ? .accentColor : (w.active ? .orange : .secondary.opacity(0.8))
-          ctx.stroke(path, with: .color(color),
-                     style: StrokeStyle(lineWidth: w.selected ? 3 : 1.7, lineCap: .round,
-                                        dash: w.active && anyActive ? [8, 6] : [], dashPhase: phase))
-        }
-      }
-    }
-    .allowsHitTesting(false)
-  }
-}
-
 /// Sample Cards for previews of appearance settings.
 enum PreviewSamples {
   static func items() -> [CanvasItem] {
     func port(_ n: String) -> PortData { PortData(name: n, typeName: "t.Number") }
-    let input = CardNodeData(title: String(localized: "初期値"), kind: .input, subtitle: String(localized: "入力"), summary: nil,
+    let input = CardNodeData(title: String(localized: "初期値"), kind: .input, summary: nil,
                              inputs: [port("start")], outputs: [port("value")],
-                             params: [ParamData(name: "value", type: "uint64", value: "27")])
-    var step = CardNodeData(title: String(localized: "n / 2"), kind: .code, subtitle: String(localized: "実行中"),
+                             params: [ParamData(name: "value", type: "uint64", value: "27")],
+                             state: .succeeded, invocation: 1)
+    var step = CardNodeData(title: String(localized: "n / 2"), kind: .code,
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],
-                            state: .running)
-    step.stage = StageProgress(stages: [.prepare, .evaluate, .build, .execute, .validate, .save], current: .execute,
-                               reached: [.prepare, .evaluate, .build], cached: true)
-    let out = CardNodeData(title: String(localized: "結果"), kind: .logger, subtitle: String(localized: "成功"), summary: nil,
-                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded)
+                            state: .running, invocation: 3, runContinues: true)
+    step.stage = StageProgress(items: [
+      .init(stage: .prepare, status: .reused), .init(stage: .evaluate, status: .reused), .init(stage: .build, status: .reused),
+      .init(stage: .execute, status: .running), .init(stage: .validate, status: .pending), .init(stage: .save, status: .pending),
+    ], workerReused: true)
+    let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
+                            inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])
+    let out = CardNodeData(title: String(localized: "結果"), kind: .logger, summary: nil,
+                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded, invocation: 1)
     return [
       CanvasItem(id: "input", data: input, origin: CGPoint(x: 0, y: 0)),
-      CanvasItem(id: "step", data: step, origin: CGPoint(x: 0, y: 190)),
-      CanvasItem(id: "out", data: out, origin: CGPoint(x: 0, y: 380)),
+      CanvasItem(id: "step", data: step, origin: CGPoint(x: 0, y: 150)),
+      CanvasItem(id: "gate", data: gate, origin: CGPoint(x: 26, y: 300)),
+      CanvasItem(id: "out", data: out, origin: CGPoint(x: 0, y: 460)),
     ]
   }
 
   static let wires = [
     CanvasWire(from: "input", fromPort: "value", to: "step", toPort: "number", active: true),
-    CanvasWire(from: "step", fromPort: "next", to: "out", toPort: "in"),
+    CanvasWire(from: "step", fromPort: "next", to: "gate", toPort: "value"),
+    CanvasWire(from: "gate", fromPort: "a", to: "out", toPort: "in"),
+    CanvasWire(from: "gate", fromPort: "b", to: "step", toPort: "number"),
   ]
 }

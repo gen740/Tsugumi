@@ -7,6 +7,13 @@ struct TsugumiApp: App {
   private let model = AppModel.shared
   private let prefs = AppPreferences.shared
 
+  init() {
+    // A project folder given on the command line is opened by the app itself
+    // (AppModel.takeLaunchProject). AppKit must not take it as a file to open:
+    // then SwiftUI would not create the main window at all.
+    UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+  }
+
   var body: some Scene {
     WindowGroup("Tsugumi", id: "main") {
       MainWindow()
@@ -25,6 +32,7 @@ struct TsugumiApp: App {
       if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref) } }
     }
     .defaultSize(width: 860, height: 620)
+    .windowToolbarStyle(.unifiedCompact(showsTitle: true))
 
     WindowGroup("Draft", id: "draft", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { DraftEditor(session: $0, cardKey: ref.card) } }
@@ -32,7 +40,7 @@ struct TsugumiApp: App {
     .defaultSize(width: 640, height: 560)
 
     WindowGroup("Card 定義", id: "definitions", for: ProjectRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { CardDatabaseView(session: $0) } }
+      if let ref { DetailHost(path: ref.path) { CardDatabaseView(session: $0, initial: ref.definition) } }
     }
     .defaultSize(width: 900, height: 600)
 
@@ -50,6 +58,7 @@ struct TsugumiApp: App {
       if let ref { DetailHost(path: ref.path) { WorkflowSettingsView(session: $0) } }
     }
     .defaultSize(width: 680, height: 480)
+    .windowToolbarStyle(.unifiedCompact(showsTitle: true))
 
     WindowGroup("可視化", id: "visual", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { VisualizationWindow(session: $0, cardKey: ref.card) } }
@@ -154,8 +163,10 @@ struct WorkbenchCommands: Commands {
       Divider()
       Button("チャットの表示切替") { workspace?.showChat.toggle() }
         .shortcut(.toggleChat)
-      Button("ログの表示切替") { workspace?.showBottom.toggle() }
+      Button("ログの表示切替") { workspace?.togglePanel(.log) }
         .shortcut(.toggleLog)
+      Button("タイムラインの表示切替") { workspace?.togglePanel(.timeline) }
+        .shortcut(.toggleTimeline)
     }
   }
 }
@@ -163,6 +174,10 @@ struct WorkbenchCommands: Commands {
 extension Notification.Name {
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
+  /// Moves a canvas (object: tab id) to a Card (userInfo "card").
+  static let canvasReveal = Notification.Name("tsugumi.canvas.reveal")
+  /// Shows the details bubble of a Card (object: tab id, userInfo "card").
+  static let canvasShowDetails = Notification.Name("tsugumi.canvas.showDetails")
 }
 
 struct ProjectSessionKey: FocusedValueKey { typealias Value = ProjectSession }

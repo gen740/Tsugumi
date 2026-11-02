@@ -10,93 +10,91 @@ struct LoadingContent: Equatable {
   var dirty = false
 }
 
-/// The brand card: with a fraction the branch grows as the bar and the
-/// percentage is shown; without, the bird hops and pecks.
+/// The loading Card, drawn as one Card of a workflow inside the window: an
+/// input (square) above and an output (circle) below with wires running off
+/// the edges. The bird scene is the Card's picture; with a fraction the
+/// branch grows as the bar, without it the bird hops and pecks.
 struct TsugumiLoadingCard: View {
   let content: LoadingContent
   var onCancel: (() -> Void)?
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let f = content.fraction.map { min(1, max(0, $0)) }
     VStack(spacing: 0) {
-      Group {
-        if let f { TsugumiProgressScene(fraction: f) } else { TsugumiIdleScene() }
-      }
-      .frame(height: 175)
-
-      VStack(spacing: 10) {
-        if let f {
-          HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text(verbatim: "\(Int((f * 100).rounded(.down)))")
-              .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-              .contentTransition(.numericText(value: f))
-            Text(verbatim: "%").font(.system(size: 18, weight: .semibold, design: .rounded)).foregroundStyle(TsugumiPalette.mist)
+      wire
+      port(input: true)
+      VStack(spacing: 0) {
+        ZStack(alignment: .top) {
+          LowPolyBackground()
+          WorkflowBackdrop(fraction: f)
+            .opacity(0.5)
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.5),
+                                         .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+          Group {
+            if let f { TsugumiProgressScene(fraction: f) } else { TsugumiIdleScene() }
           }
-          .foregroundStyle(TsugumiPalette.cream)
         }
-        Text(content.title).font(.title3.weight(.semibold)).foregroundStyle(TsugumiPalette.cream)
-        if !content.message.isEmpty {
-          Text(content.message).font(.callout).foregroundStyle(TsugumiPalette.mist)
-            .multilineTextAlignment(.center).lineLimit(3)
-            .contentTransition(.opacity)
+        .frame(height: 150)
+        .environment(\.colorScheme, .dark)
+        .clipped()
+        VStack(spacing: 8) {
+          if let f {
+            Text(verbatim: "\(Int((f * 100).rounded(.down)))%")
+              .font(.system(size: 26, weight: .bold, design: .rounded).monospacedDigit())
+              .contentTransition(.numericText(value: f))
+          }
+          Text(content.title).font(.title3.weight(.semibold))
+          if !content.message.isEmpty {
+            Text(content.message).font(.callout).foregroundStyle(.secondary)
+              .multilineTextAlignment(.center).lineLimit(3)
+              .contentTransition(.opacity)
+          }
+          if let d = content.detail {
+            Text(d).font(.caption.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+          }
+          if content.dirty {
+            Label("未保存の変更があります（保持しています）", systemImage: "pencil.circle")
+              .font(.callout).foregroundStyle(TsugumiPalette.rufous)
+          }
+          if let onCancel {
+            Button("キャンセル", action: onCancel).controlSize(.regular).padding(.top, 2)
+          }
         }
-        stripe
-        if let d = content.detail {
-          Text(d).font(.caption.monospacedDigit()).foregroundStyle(TsugumiPalette.mist)
-        }
-        if content.dirty {
-          Label("未保存の変更があります（保持しています）", systemImage: "pencil.circle")
-            .font(.callout).foregroundStyle(TsugumiPalette.rufous)
-        }
-        if let onCancel {
-          Button("キャンセル", action: onCancel).buttonStyle(.plain)
-            .font(.callout).foregroundStyle(TsugumiPalette.cream)
-            .padding(.horizontal, 14).padding(.vertical, 5)
-            .background(.white.opacity(0.12), in: Capsule())
-            .padding(.top, 4)
-        }
+        .padding(.horizontal, 22).padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
       }
-      .padding(.horizontal, 24).padding(.bottom, 24)
+      .frame(width: 380)
+      .background(Color(nsColor: .controlBackgroundColor))
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.secondary.opacity(0.3)))
+      .shadow(color: .black.opacity(scheme == .dark ? 0.25 : 0.06), radius: 3, y: 1)
+      port(input: false)
+      wire
     }
-    .frame(width: 440)
-    .background {
-      ZStack(alignment: .top) {
-        LowPolyBackground()
-        // the workflow runs faintly behind the bird and fades out above the text
-        WorkflowBackdrop(fraction: f)
-          .opacity(0.6)
-          .frame(height: 200)
-          .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.55),
-                                       .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
-          .padding(.top, 10)
-      }
-    }
-    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-    .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
-    .environment(\.colorScheme, .dark)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(content.title)
     .accessibilityValue(f.map { "\(Int($0 * 100))%" } ?? content.message)
   }
 
-  /// The three-colour slanted stripe under the hero title.
-  private var stripe: some View {
-    HStack(spacing: 4) {
-      ForEach([TsugumiPalette.rufous, TsugumiPalette.olive, TsugumiPalette.cream], id: \.self) { c in
-        SlantedBar().fill(c).frame(width: 34, height: 5)
+  private var wire: some View {
+    Rectangle().fill(Color.secondary.opacity(0.45)).frame(width: 1.7, height: 54)
+      .accessibilityHidden(true)
+  }
+
+  @ViewBuilder private func port(input: Bool) -> some View {
+    Group {
+      if input {
+        RoundedRectangle(cornerRadius: 2).fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.secondary, lineWidth: 1.5))
+      } else {
+        Circle().fill(Color.accentColor)
       }
     }
-    .padding(.vertical, 2)
+    .frame(width: 10, height: 10)
+    .padding(.vertical, -5)
+    .zIndex(1)
     .accessibilityHidden(true)
-  }
-}
-
-private struct SlantedBar: Shape {
-  func path(in r: CGRect) -> Path {
-    Path { p in
-      p.move(to: CGPoint(x: r.minX + 4, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-      p.addLine(to: CGPoint(x: r.maxX - 4, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.closeSubpath()
-    }
   }
 }
 

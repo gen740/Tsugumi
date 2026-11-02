@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiAgent
+import TsugumiRPC
 
 /// Chat: session list or the conversation (answers, progress, input, model
 /// and send/stop). Usable docked beside the canvas or in its own window.
@@ -101,32 +102,55 @@ struct ChatPanel: View {
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 8) {
+          LazyVStack(alignment: .leading, spacing: 12) {
             if chat.items.isEmpty {
               VStack(alignment: .leading, spacing: 6) {
                 Text("Workflow の相談・生成・編集を依頼できます。").font(.callout)
-                Text("Card を右クリックして参照に追加、`$` で Skill を選べます。Agent は UI と同じ保存・実行の RPC を使います。")
-                  .font(.caption).foregroundStyle(.secondary)
+                Text("Card を右クリックして参照に追加、$ で Skill を選べます。").font(.caption).foregroundStyle(.secondary)
               }
-              .padding(.top, 20)
+              .padding(.top, 16)
             }
             ForEach(chat.items) { item in row(item).id(item.id) }
+            if chat.busy { activity.id("activity") }
           }
-          .padding(10)
+          .padding(.horizontal, 14).padding(.vertical, 12)
+          .frame(maxWidth: 720, alignment: .leading)
         }
-        .onChange(of: chat.items.count) { if let last = chat.items.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+        .onChange(of: chat.items.count) { scrollToEnd(proxy) }
+        .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
       if let s = chat.status {
-        HStack {
-          Text(s).font(.caption).foregroundStyle(chat.failed ? .red : .secondary).lineLimit(3)
+        HStack(spacing: 6) {
+          Image(systemName: chat.failed ? "exclamationmark.triangle.fill" : "info.circle")
+            .foregroundStyle(chat.failed ? .red : .secondary)
+          Text(s).font(.caption).foregroundStyle(chat.failed ? .red : .secondary).lineLimit(3).textSelection(.enabled)
           Spacer()
           if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
         }
-        .padding(.horizontal, 10).padding(.vertical, 4)
+        .padding(.horizontal, 12).padding(.vertical, 5)
       }
-      Divider()
       composer
     }
+  }
+
+  private func scrollToEnd(_ proxy: ScrollViewProxy) {
+    if chat.busy { proxy.scrollTo("activity", anchor: .bottom) } else if let last = chat.items.last { proxy.scrollTo(last.id, anchor: .bottom) }
+  }
+
+  /// What the agent is doing right now (no internal reasoning, only the step).
+  private var activity: some View {
+    HStack(spacing: 6) {
+      ProgressView().controlSize(.small)
+      Text(currentStep).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+    }
+  }
+
+  private var currentStep: String {
+    if let t = chat.items.last(where: { $0.role == "tool" && $0.tool?.ok == nil }), let name = t.tool?.name {
+      return ToolStep(name: name, args: t.text).running
+    }
+    if chat.items.last?.role == "assistant" { return String(localized: "回答を書いています…") }
+    return String(localized: "考えています…")
   }
 
   private var composer: some View {
@@ -140,6 +164,7 @@ struct ChatPanel: View {
                 Text(r.label).font(.caption)
                 Button { chat.references.removeAll { $0 == r } } label: { Image(systemName: "xmark.circle.fill") }
                   .buttonStyle(.borderless).font(.caption)
+                  .help("参照を外す")
               }
               .padding(.horizontal, 6).padding(.vertical, 2)
               .background(Color.accentColor.opacity(0.12), in: Capsule())
@@ -169,87 +194,95 @@ struct ChatPanel: View {
         }
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
       }
-      TextEditor(text: $input)
-        .font(.body)
-        .frame(minHeight: 44, maxHeight: 120)
-        .scrollContentBackground(.hidden)
-        .padding(4)
-        .background(.background, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)))
-        .focused($inputFocused)
-        .onChange(of: input) { updateSkillQuery() }
-        .onKeyPress(.return, phases: .down) { press in
-          let cmd = press.modifiers.contains(.command), shift = press.modifiers.contains(.shift)
-          let sends = prefs.sendKey == .returnKey ? (!shift && !cmd) : cmd
-          if sends {
-            send()
-            return .handled
+      VStack(spacing: 4) {
+        // Starts one line high and grows with the text (up to a limit).
+        ZStack(alignment: .topLeading) {
+          if input.isEmpty {
+            Text("メッセージ（\(prefs.sendKey == .returnKey ? "Return" : "⌘Return") で送信）")
+              .foregroundStyle(.tertiary).padding(.leading, 5).padding(.top, 1)
+              .allowsHitTesting(false)
           }
-          return .ignored
+          TextEditor(text: $input)
+            .font(.body)
+            .scrollContentBackground(.hidden)
+            .frame(height: min(160, max(22, inputHeight)))
+            .focused($inputFocused)
+            .onChange(of: input) { updateSkillQuery() }
+            .onKeyPress(.return, phases: .down) { press in
+              let cmd = press.modifiers.contains(.command), shift = press.modifiers.contains(.shift)
+              let sends = prefs.sendKey == .returnKey ? (!shift && !cmd) : cmd
+              if sends {
+                send()
+                return .handled
+              }
+              return .ignored
+            }
         }
-      HStack(spacing: 6) {
-        Picker("", selection: $model) {
-          ForEach(Array(Set(models + [model])).sorted(), id: \.self) { Text($0).tag($0) }
-        }
-        .labelsHidden().frame(maxWidth: 180)
-        .onChange(of: model) { UserDefaults.standard.set(model, forKey: "agent.model") }
-        .disabled(chat.provider.name != ProviderConfig.anthropic.name)
-        .help("モデル（接続先: \(chat.provider.name)）")
-        if let tab, !tab.selection.isEmpty {
-          Button { for k in tab.selection.sorted() { chat.addReference(.card(k)) } } label: {
-            Label("選択を参照", systemImage: "paperclip")
+        HStack(spacing: 8) {
+          if let tab, !tab.selection.isEmpty {
+            Button { for k in tab.selection.sorted() { chat.addReference(.card(k)) } } label: { Image(systemName: "paperclip") }
+              .buttonStyle(.borderless)
+              .help("選択した Card を参照に追加")
           }
+          Button { input += input.hasSuffix(" ") || input.isEmpty ? "$" : " $"; inputFocused = true } label: { Image(systemName: "dollarsign") }
+            .buttonStyle(.borderless)
+            .help("Skill を選ぶ")
+          Picker("", selection: $model) {
+            ForEach(Array(Set(models + [model])).sorted(), id: \.self) { Text($0).tag($0) }
+          }
+          .labelsHidden().fixedSize()
           .controlSize(.small)
-          .help("選択した Card を参照に追加")
-        }
-        Spacer()
-        Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.secondary)
-          .help("直近の入力トークン数（上限に近づくと自動で圧縮）")
-        if chat.busy {
-          Button("停止", action: chat.cancel)
-            .help("回答を停止（Workflow の実行は止まりません）")
-        } else {
-          Button("送信", action: send)
-            .buttonStyle(.borderedProminent)
-            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected || !chat.available)
-            .help(prefs.sendKey == .returnKey ? "Return で送信" : "⌘Return で送信")
+          .onChange(of: model) { UserDefaults.standard.set(model, forKey: "agent.model") }
+          .disabled(chat.provider.name != ProviderConfig.anthropic.name)
+          .help("モデル（接続先: \(chat.provider.name)）")
+          Spacer()
+          Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
+            .help("直近の入力トークン数（上限に近づくと自動で圧縮）")
+          if chat.busy {
+            Button(action: chat.cancel) { Image(systemName: "stop.circle.fill").font(.title2) }
+              .buttonStyle(.borderless)
+              .help("回答を停止（Workflow の実行は止まりません）")
+              .accessibilityLabel("回答を停止")
+          } else {
+            Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+              .buttonStyle(.borderless)
+              .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected || !chat.available)
+              .help(prefs.sendKey == .returnKey ? "送信（Return）" : "送信（⌘Return）")
+              .accessibilityLabel("送信")
+          }
         }
       }
+      .padding(.horizontal, 8).padding(.vertical, 6)
+      .background(.background, in: RoundedRectangle(cornerRadius: 12))
+      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.secondary.opacity(inputFocused ? 0.5 : 0.25)))
     }
-    .padding(8)
+    .padding(10)
     .task { await loadModels() }
+  }
+
+  /// Rough text height for the growing input (17 pt per line).
+  private var inputHeight: CGFloat {
+    let lines = input.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) { $0 + max(1, ($1.count + 39) / 40) }
+    return CGFloat(lines) * 17 + 4
   }
 
   @ViewBuilder private func row(_ item: ChatController.Item) -> some View {
     switch item.role {
     case "user":
-      Text(item.text).textSelection(.enabled)
-        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-        .opacity(item.archived ? 0.6 : 1)
-    case "tool":
-      DisclosureGroup {
-        Text(item.text).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-      } label: {
-        HStack(spacing: 4) {
-          if item.tool?.ok == nil { ProgressView().controlSize(.mini) } else {
-            Image(systemName: item.tool!.ok! ? "checkmark.circle.fill" : "xmark.circle.fill")
-              .foregroundStyle(item.tool!.ok! ? .green : .red)
-          }
-          Text(item.tool?.name ?? "").font(.caption.bold())
-          Text(item.tool?.ok == nil ? "実行中" : (item.tool!.ok! ? "完了" : "失敗")).font(.caption).foregroundStyle(.secondary)
-        }
+      HStack {
+        Spacer(minLength: 40)
+        Text(item.text).textSelection(.enabled)
+          .padding(.horizontal, 11).padding(.vertical, 7)
+          .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
       }
-      .foregroundStyle(.secondary)
       .opacity(item.archived ? 0.6 : 1)
+    case "tool":
+      ToolRow(item: item, tab: tab, session: session).opacity(item.archived ? 0.6 : 1)
     case "note":
       Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
     default:
-      Text((try? AttributedString(markdown: item.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(item.text))
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(item.archived ? 0.6 : 1)
+      MarkdownBlocks(text: item.text).opacity(item.archived ? 0.6 : 1)
     }
   }
 
@@ -281,5 +314,202 @@ struct ChatPanel: View {
   /// Models listed earlier in Settings > API (no network request from here).
   private func loadModels() async {
     models = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
+  }
+}
+
+/// A tool call in words: what is being done and on which Card or file.
+struct ToolStep {
+  let name: String
+  let args: String
+
+  private var target: String? {
+    guard let v = try? JSONValue.parse(args.components(separatedBy: "\n→ ").first ?? args) else { return nil }
+    if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
+    if let c = v["card"]?.string { return c }
+    return v["path"]?.string ?? v["definition"]?.string
+  }
+
+  var card: CardKey? {
+    guard let v = try? JSONValue.parse(args.components(separatedBy: "\n→ ").first ?? args) else { return nil }
+    if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return key(c) }
+    return v["card"]?.string
+  }
+
+  private var verb: (running: String, done: String) {
+    let n = name.lowercased()
+    if n.contains("save") || n.contains("put") || n.contains("write") { return ("変更を保存しています", "変更を保存") }
+    if n.contains("run") && !n.contains("status") { return ("実行しています", "実行") }
+    if n.contains("read") || n.contains("inspect") || n.contains("get") { return ("確認しています", "確認") }
+    if n.contains("log") { return ("ログを読んでいます", "ログを確認") }
+    if n.contains("validate") || n.contains("check") { return ("検証しています", "検証") }
+    if n.contains("format") { return ("整形しています", "整形") }
+    if n.contains("status") || n.contains("record") || n.contains("history") { return ("結果を確認しています", "結果を確認") }
+    return ("\(name) を実行しています", name)
+  }
+
+  var running: String { verb.running + (target.map { "（\($0)）" } ?? "") + "…" }
+  var done: String { verb.done + (target.map { "（\($0)）" } ?? "") }
+}
+
+/// A folded tool step: one line saying what was done; details on demand.
+private struct ToolRow: View {
+  let item: ChatController.Item
+  let tab: WorkflowTab?
+  let session: ProjectSession
+  @State private var open = false
+
+  var body: some View {
+    let step = ToolStep(name: item.tool?.name ?? "", args: item.text)
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 5) {
+        Group {
+          if item.tool?.ok == nil { ProgressView().controlSize(.mini) } else {
+            Image(systemName: item.tool!.ok! ? "checkmark.circle" : "xmark.circle.fill")
+              .foregroundStyle(item.tool!.ok! ? Color.secondary : Color.red)
+          }
+        }
+        .frame(width: 14)
+        Text(item.tool?.ok == nil ? step.running : step.done + (item.tool!.ok! ? "" : String(localized: "：失敗")))
+          .font(.caption).foregroundStyle(item.tool?.ok == false ? .red : .secondary).lineLimit(1)
+        if let k = step.card, let tab, session.instance(k) != nil {
+          Button("Card を表示") {
+            tab.enter(Array(path(k).dropLast()))
+            tab.selection = [k]
+            NotificationCenter.default.post(name: .canvasReveal, object: tab.id, userInfo: ["card": k])
+          }
+          .buttonStyle(.link).font(.caption)
+        }
+        Spacer()
+        Button { open.toggle() } label: { Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2) }
+          .buttonStyle(.borderless).foregroundStyle(.secondary)
+          .help(open ? "詳細を閉じる" : "ツールの詳細")
+      }
+      if open {
+        Text(item.text).font(.caption.monospaced()).textSelection(.enabled)
+          .lineLimit(40)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(6)
+          .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+      }
+    }
+  }
+}
+
+/// Markdown of an answer: paragraphs, headings, lists and code blocks (with
+/// copy). Very long answers are folded.
+struct MarkdownBlocks: View {
+  let text: String
+  @State private var expanded = false
+
+  enum Block: Hashable {
+    case paragraph(String)
+    case heading(String, Int)
+    case bullet(String)
+    case code(String, String)
+  }
+
+  static func blocks(_ text: String) -> [Block] {
+    var out: [Block] = []
+    var para: [String] = []
+    var code: [String]?
+    var lang = ""
+    func flush() {
+      if !para.isEmpty { out.append(.paragraph(para.joined(separator: "\n"))); para = [] }
+    }
+    for line in text.components(separatedBy: "\n") {
+      if line.hasPrefix("```") {
+        if let c = code {
+          out.append(.code(c.joined(separator: "\n"), lang))
+          code = nil
+        } else {
+          flush()
+          lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+          code = []
+        }
+        continue
+      }
+      if code != nil { code!.append(line); continue }
+      let t = line.trimmingCharacters(in: .whitespaces)
+      if t.isEmpty { flush(); continue }
+      if t.hasPrefix("#") {
+        flush()
+        let level = t.prefix { $0 == "#" }.count
+        out.append(.heading(t.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces), level))
+      } else if t.hasPrefix("- ") || t.hasPrefix("* ") {
+        flush()
+        out.append(.bullet(String(t.dropFirst(2))))
+      } else {
+        para.append(line)
+      }
+    }
+    if let c = code { out.append(.code(c.joined(separator: "\n"), lang)) }
+    flush()
+    return out
+  }
+
+  var body: some View {
+    let all = Self.blocks(text)
+    let long = text.count > 6000 && !expanded
+    let shown = long ? Array(all.prefix(12)) : all
+    VStack(alignment: .leading, spacing: 8) {
+      ForEach(Array(shown.enumerated()), id: \.offset) { _, b in block(b) }
+      if long {
+        Button("続きを表示（\(all.count - shown.count) ブロック）") { expanded = true }.buttonStyle(.link).font(.caption)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .textSelection(.enabled)
+  }
+
+  private func inline(_ s: String) -> AttributedString {
+    (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+  }
+
+  @ViewBuilder private func block(_ b: Block) -> some View {
+    switch b {
+    case .paragraph(let s): Text(inline(s)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+    case .heading(let s, let level): Text(inline(s)).font(level <= 1 ? .title3.bold() : .headline)
+    case .bullet(let s):
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Text("•").foregroundStyle(.secondary)
+        Text(inline(s)).fixedSize(horizontal: false, vertical: true)
+      }
+    case .code(let code, let lang): CodeBlock(code: code, language: lang)
+    }
+  }
+}
+
+private struct CodeBlock: View {
+  let code: String
+  let language: String
+  @State private var copied = false
+  @State private var expanded = false
+
+  var body: some View {
+    let lines = code.components(separatedBy: "\n")
+    let folded = lines.count > 30 && !expanded
+    VStack(alignment: .leading, spacing: 0) {
+      HStack {
+        Text(language.isEmpty ? "code" : language).font(.caption2).foregroundStyle(.secondary)
+        Spacer()
+        Button(copied ? "コピーしました" : "コピー") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(code, forType: .string)
+          copied = true
+        }
+        .buttonStyle(.borderless).font(.caption2)
+      }
+      .padding(.horizontal, 8).padding(.vertical, 4)
+      ScrollView(.horizontal, showsIndicators: false) {
+        Text(folded ? lines.prefix(30).joined(separator: "\n") : code)
+          .font(.system(size: 11.5, design: .monospaced))
+          .textSelection(.enabled)
+          .padding(.horizontal, 8).padding(.bottom, 6)
+      }
+      if folded {
+        Button("残り \(lines.count - 30) 行を表示") { expanded = true }.buttonStyle(.link).font(.caption).padding([.horizontal, .bottom], 8)
+      }
+    }
+    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
   }
 }

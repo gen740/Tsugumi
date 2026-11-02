@@ -24,6 +24,11 @@ final class CardEditorModel {
   var applying = false
   /// The project changed since this copy was taken (see `apply`).
   var conflict: String?
+  /// Boundary ports of a Card in Card renamed or removed here, per side
+  /// ("inputs"/"outputs"): current name → name in the project, and removed
+  /// project names. Applying updates the outer connections to match.
+  var boundaryRenames: [String: [String: String]] = [:]
+  var boundaryRemoved: [String: Set<String>] = [:]
   /// Category shown in the window (kept with the model, so edits and the
   /// place survive switching).
   var category: CardEditorCategory = .general
@@ -67,6 +72,9 @@ final class CardEditorModel {
     texts = [:]
     baseTexts = [:]
     baseHashes = [:]
+    loads = [:]
+    boundaryRenames = [:]
+    boundaryRemoved = [:]
     removed = []
     created = []
     message = nil
@@ -80,16 +88,53 @@ final class CardEditorModel {
             def.flatMap { session.confirmedDefinitionMeta[$0] })
   }
 
-  func text(_ p: String) async -> String {
+  /// Whether a source file's content is known. A file that could not be read
+  /// is never shown or treated as an empty file.
+  enum SourceLoad: Equatable {
+    case loading
+    case loaded
+    case failed(String)
+  }
+
+  private(set) var loads: [String: SourceLoad] = [:]
+
+  /// Reads a source file once (later calls return the working copy).
+  /// Throws when it cannot be read; nothing is recorded as its content then.
+  func text(_ p: String) async throws -> String {
     if let t = texts[p] { return t }
+    loads[p] = .loading
     let hash = session.sources[p]?.hash
-    let t = (try? await session.sourceText(p)) ?? ""
-    if texts[p] == nil {
-      texts[p] = t
-      baseTexts[p] = t
-      if let hash { baseHashes[p] = hash }
+    do {
+      let t = try await session.sourceText(p)
+      if texts[p] == nil {
+        texts[p] = t
+        baseTexts[p] = t
+        if let hash { baseHashes[p] = hash }
+      }
+      loads[p] = .loaded
+      return texts[p] ?? t
+    } catch {
+      loads[p] = .failed("\(error)")
+      throw error
     }
-    return texts[p] ?? t
+  }
+
+  /// The working copy of a file, only once it was read (or created here).
+  func loadedText(_ p: String) -> String? { texts[p] }
+
+  /// The file was changed here and not applied yet.
+  func isEdited(_ p: String) -> Bool { texts[p] != nil && (created.contains(p) || texts[p] != baseTexts[p]) }
+
+  /// `_outputs.fbs` of the definition.
+  var outputsPath: String? { definitionId.map { "definitions/\($0)/_outputs.fbs" } }
+
+  /// Output ports from the edited, unapplied `_outputs.fbs` (nil: not edited,
+  /// the resolved ports apply).
+  var editedOutputs: OutputCatalog.Result? {
+    guard let p = outputsPath else { return nil }
+    if removed.contains(p) { return .ports([]) }
+    guard isEdited(p), let t = texts[p] else { return nil }
+    return OutputCatalog.parse(t)
   }
 
   func createFile(_ rel: String, text: String = "") {
@@ -98,17 +143,29 @@ final class CardEditorModel {
     removed.remove(p)
     created.insert(p)
     texts[p] = text
+    loads[p] = .loaded
   }
 
-  func rename(_ p: String, to rel: String) async {
-    let t = await text(p)
+  /// Renames by copying the content that was actually read; a file that
+  /// cannot be read is left as it is.
+  @discardableResult
+  func rename(_ p: String, to rel: String) async -> Bool {
+    let t: String
+    do {
+      t = try await text(p)
+    } catch {
+      message = String(localized: "読み込めないため名前を変更しませんでした: ") + "\(error)"
+      return false
+    }
     removeFile(p)
     createFile(rel, text: t)
+    return true
   }
 
   func removeFile(_ p: String) {
     if created.contains(p) { created.remove(p) } else { removed.insert(p) }
     texts[p] = nil
+    loads[p] = nil
   }
 
   /// Copies the working copy into the project draft as one undoable edit, then
@@ -130,6 +187,7 @@ final class CardEditorModel {
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
     let gone = removed
     let bases = baseHashes
+    let renames = boundaryRenames, dropped = boundaryRemoved
     session.edit { s in
       // Settings only: the inner graph and the id are edited on the canvas.
       s.updateInstance(cardKey) { c in
@@ -137,6 +195,24 @@ final class CardEditorModel {
         var out: [(String, JSONValue)] = (c.object ?? []).filter { keep.contains($0.0) }
         for (k, v) in inst.object ?? [] where !keep.contains(k) { out.append((k, v)) }
         c = .object(out)
+      }
+      // The outer wires follow renamed boundary ports; removed ones go.
+      if !renames.isEmpty || !dropped.isEmpty, let outer = path(cardKey).last {
+        s.updateGraph(Array(path(cardKey).dropLast())) { g in
+          var conns = g["connections"]?.array ?? []
+          for side in ["inputs", "outputs"] {
+            let end = side == "inputs" ? "to" : "from"
+            conns.removeAll { c in
+              c[end]?["card"]?.string == outer && (dropped[side] ?? []).contains(c[end]?["port"]?.string ?? "")
+            }
+            for (current, original) in renames[side] ?? [:] where current != original {
+              for i in conns.indices where conns[i][end]?["card"]?.string == outer && conns[i][end]?["port"]?.string == original {
+                conns[i][end]?["port"] = .string(current)
+              }
+            }
+          }
+          g["connections"] = .array(conns)
+        }
       }
       if let defId, let def, def != s.definitions[defId] || m != s.definitionMeta[defId] {
         s.setDefinition(defId, card: def, meta: m)
@@ -189,7 +265,11 @@ struct CardSettingsEditor: View {
         UIScript.shared.editors[ref.card] = m
       }
     }
-    .navigationTitle("Card 設定 · \(session.displayName(ref.card))")
+    // The Card's name is the title, the project the subtitle (DetailHost);
+    // toolbar, sidebar, preview and form share the window background.
+    .navigationTitle(session.displayName(ref.card))
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    .containerBackground(Color(nsColor: .windowBackgroundColor), for: .window)
   }
 
   private func categories(_ m: CardEditorModel) -> [CardEditorCategory] {
@@ -204,11 +284,8 @@ struct CardSettingsEditor: View {
 
   private func content(_ m: CardEditorModel) -> some View {
     HStack(spacing: 0) {
-      List(categories(m), selection: Binding(get: { Optional(m.category) }, set: { if let c = $0 { m.category = c } })) { c in
-        Label(c.title, systemImage: c.symbol).tag(Optional(c))
-      }
-      .listStyle(.sidebar)
-      .frame(width: 160)
+      SettingsSidebar(items: categories(m), selection: Binding(get: { m.category }, set: { m.category = $0 }),
+                      title: \.title, symbol: \.symbol, width: 160)
       Divider()
       VStack(spacing: 0) {
         CardPreview(session: session, model: m)
@@ -291,21 +368,52 @@ struct CardPreview: View {
 
   var body: some View {
     CanvasSurface(items: $items, wires: [], flow: session.flow, grid: AppPreferences.shared.showGrid,
-                  gridSize: AppPreferences.shared.gridSize)
+                  gridSize: AppPreferences.shared.gridSize, fitKey: model.cardKey)
       .onAppear(perform: refresh)
       .onChange(of: model.instance) { refresh() }
       .onChange(of: model.definition) { refresh() }
       .onChange(of: model.meta) { refresh() }
+      .onChange(of: model.texts) { refresh() }
       .onChange(of: session.cardStates[model.cardKey]?.state) { refresh() }
+      .onChange(of: session.resolution[model.cardKey]?.outputs) { refresh() }
+      .overlay(alignment: .topLeading) { notice.padding(6) }
       .overlay(alignment: .topTrailing) {
         Text("プレビュー").font(.caption2).foregroundStyle(.secondary).padding(6)
       }
   }
 
+  /// What the outputs shown come from, when it is not the resolved definition.
+  @ViewBuilder private var notice: some View {
+    switch model.editedOutputs {
+    case .error(let e)?:
+      Label("_outputs.fbs を読めません: \(e)（出力ポートは表示していません）", systemImage: "exclamationmark.triangle.fill")
+        .font(.caption).foregroundStyle(.orange).lineLimit(2)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+    case .ports?:
+      Label("編集中の _outputs.fbs（未適用・型は適用後に解決）", systemImage: "pencil.circle")
+        .font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+    case nil:
+      if session.saving {
+        Label("解決中…", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
+          .padding(.horizontal, 6).padding(.vertical, 3)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+      }
+    }
+  }
+
   private func refresh() {
     let collapsed = items.first?.data.collapsed ?? session.collapsed(model.cardKey)
+    var outputs: [PortData]?
+    switch model.editedOutputs {
+    case .ports(let p)?: outputs = p
+    case .error?: outputs = []
+    case nil: outputs = nil
+    }
     let data = session.nodeData(model.cardKey, instance: model.instance, definition: model.definition, meta: model.meta,
-                                collapsed: collapsed)
+                                collapsed: collapsed, outputs: outputs)
     if items.isEmpty {
       items = [CanvasItem(id: model.cardKey, data: data, origin: .zero)]
     } else {
@@ -345,7 +453,11 @@ private struct GeneralCategory: View {
         LabeledContent("種類", value: model.kind.label)
         if let id = model.definitionId { LabeledContent("定義", value: id) }
         TextField("名前", text: string("name"), prompt: Text(def?["name"]?.string ?? ""))
-        TextField("記号（SF Symbol 名）", text: string("symbol"), prompt: Text(def?["symbol"]?.string ?? model.kind.symbol))
+        LabeledContent("アイコン") {
+          SymbolPicker(symbol: Binding(get: { model.instance["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
+                                       set: { model.instance["symbol"] = $0.map { .string($0) } }),
+                       inherited: def?["symbol"]?.string ?? model.kind.symbol)
+        }
         TextField("概要", text: string("description"), prompt: Text(def?["description"]?.string ?? ""), axis: .vertical)
           .lineLimit(2...5)
       } footer: {
@@ -659,18 +771,29 @@ private struct BoundaryCategory: View {
     model.instance["boundary"] = b
   }
 
+  /// Renames a boundary port; the outer connections follow on apply.
   private func rename(_ side: String, _ name: String, to new: String) {
-    guard !new.isEmpty, new != name, var b = model.instance["boundary"], var s = b[side]?.object else { return }
+    guard !new.isEmpty, new != name, var b = model.instance["boundary"], var s = b[side]?.object,
+          !s.contains(where: { $0.0 == new }) else { return }
     if let i = s.firstIndex(where: { $0.0 == name }) { s[i].0 = new }
     b[side] = .object(s)
     model.instance["boundary"] = b
+    var map = model.boundaryRenames[side] ?? [:]
+    let original = map[name] ?? name
+    map[name] = nil
+    map[new] = original
+    model.boundaryRenames[side] = map
   }
 
+  /// Removes a boundary port; outer connections to it are removed on apply.
   private func remove(_ side: String, _ name: String) {
     guard var b = model.instance["boundary"], var s = b[side]?.object else { return }
     s.removeAll { $0.0 == name }
     b[side] = .object(s)
     model.instance["boundary"] = b
+    let original = model.boundaryRenames[side]?[name] ?? name
+    model.boundaryRenames[side]?[name] = nil
+    model.boundaryRemoved[side, default: []].insert(original)
   }
 }
 
@@ -706,7 +829,6 @@ private struct SourceCategory: View {
   @Bindable var model: CardEditorModel
   let only: String?
   @State private var selected: String?
-  @State private var text = ""
   @State private var newName = ""
   @State private var renaming: String?
   @State private var showNew = false
@@ -801,21 +923,38 @@ private struct SourceCategory: View {
           .task(id: selected) { await loadGenerated() }
       } else if let selected {
         let markers = coreMarkers(for: selected) + formatMarkers
+        let loaded = model.loadedText(selected) != nil
         HStack(spacing: 8) {
           Text(String(selected.dropFirst(prefix.count))).font(.caption.monospaced())
           if model.created.contains(selected) { Text("新規").font(.caption2).foregroundStyle(.orange) }
           Spacer()
           if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-          Button("整形") { format(selected) }.disabled(formatting).controlSize(.small)
+          Button("整形") { format(selected) }.disabled(formatting || !loaded).controlSize(.small)
         }
         .padding(6)
-        CodeEditor(text: Binding(get: { text }, set: { text = $0; model.texts[selected] = $0; formatMarkers = [] }),
-                   language: (selected as NSString).pathExtension, markers: markers)
-          .task(id: selected) {
-            text = await model.text(selected)
-            formatMarkers = []
-            formatMessage = nil
+        Group {
+          if loaded {
+            CodeEditor(text: Binding(get: { model.loadedText(selected) ?? "" },
+                                     set: { model.texts[selected] = $0; formatMarkers = [] }),
+                       language: (selected as NSString).pathExtension, markers: markers)
+          } else if case .failed(let e)? = model.loads[selected] {
+            // Never an editable empty file: the content is unknown.
+            ContentUnavailableView {
+              Label("ファイルを読み込めませんでした", systemImage: "exclamationmark.triangle")
+            } description: {
+              Text("内容が不明なため、編集・名前変更・保存はできません。\n\(e)")
+            } actions: {
+              Button("再試行") { Task { try? await model.text(selected) } }
+            }
+          } else {
+            ProgressView("読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
           }
+        }
+        .task(id: selected) {
+          formatMarkers = []
+          formatMessage = nil
+          _ = try? await model.text(selected)
+        }
         if !markers.isEmpty {
           ScrollView {
             VStack(alignment: .leading, spacing: 2) {
@@ -873,14 +1012,13 @@ private struct SourceCategory: View {
   }
 
   private func format(_ p: String) {
-    guard let rpc = model.session.rpc else { return }
+    guard let rpc = model.session.rpc, let source = model.loadedText(p) else { return }
     formatting = true
     Task {
       do {
-        let r = try await rpc.format(path: p, text: text)
+        let r = try await rpc.format(path: p, text: source)
         let errors = r.diagnostics.compactMap { $0 }
         if errors.isEmpty {
-          text = r.text
           model.texts[p] = r.text
           formatMessage = String(localized: "整形しました")
           formatMarkers = []

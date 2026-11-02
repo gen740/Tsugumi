@@ -72,30 +72,52 @@ extension ProjectSession {
     return displays[k]?.summary
   }
 
-  /// Stage strip of the latest invocation (nil before any run of the Card).
+  /// Stage strip of the latest invocation (nil before any run of the Card),
+  /// from the stages the core recorded. Stages the invocation did not reach
+  /// are "pending" while it runs and "not run" once it ended.
   func stageProgress(_ k: CardKey) -> StageProgress? {
-    guard let s = cardStates[k] else { return nil }
-    let stages: [Stage] = kind(k) == .code ? [.waiting, .prepare, .evaluate, .build, .execute, .validate, .save, .done]
-                                             : [.waiting, .execute, .validate, .save, .done]
-    var p = StageProgress(stages: stages, current: s.stage, reached: s.reached, cached: s.cached)
-    switch s.state {
-    case .succeeded:
-      p.current = .done
-      p.reached.formUnion(stages)
-    case .failed, .cancelled:
-      p.failedAt = s.stage ?? .execute
-      p.current = nil
-    case .blocked, .waiting:
-      p.current = .waiting
-    case .skipped:
-      p.current = nil
-    default: break
+    guard let s = cardStates[k], s.invocation > 0 else { return nil }
+    let ended = [.succeeded, .failed, .cancelled, .skipped, .blocked].contains(s.state)
+    let items = Stage.applicable(code: kind(k) == .code).map { st -> StageProgress.Item in
+      guard let r = s.stages.last(where: { $0.stage == st }) else {
+        return .init(stage: st, status: ended ? .notRun : .pending)
+      }
+      let status: StageProgress.Status
+      switch r.outcome {
+      case .running: status = ended ? .notRun : .running
+      case .cached: status = .cached
+      case .reused: status = .reused
+      case .failed: status = .failed
+      case .cancelled: status = .cancelled
+      default: status = .done
+      }
+      let sec = r.end.flatMap { e in r.start.map { Double(max(0, e - $0)) / 1000 } }
+      return .init(stage: st, status: status, seconds: sec)
     }
-    return p
+    return StageProgress(items: items, workerReused: s.workerReused)
+  }
+
+  /// State of a Card in Card from the Cards inside it: failed or running
+  /// when one of them is, succeeded when every one that ran succeeded.
+  func compositeState(_ k: CardKey) -> Tsugumi_Data_CardState? {
+    let inner = cardStates.filter { $0.key.hasPrefix(k + "/") }.map(\.value.state)
+    guard !inner.isEmpty else { return nil }
+    if inner.contains(.failed) { return .failed }
+    if inner.contains(.cancelled) { return .cancelled }
+    if inner.contains(where: { [.running, .preparing].contains($0) }) { return .running }
+    if runActive && inner.contains(where: { [.waiting, .ready].contains($0) }) { return .running }
+    if inner.contains(.blocked) { return .blocked }
+    return .succeeded
+  }
+
+  /// The inner Card and port an outer output of a Card in Card comes from.
+  func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
+    guard let ep = instance(k)?["boundary"]?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
+    return (key(path(k) + [c]), p)
   }
 
   func nodeData(_ k: CardKey, instance inst: JSONValue? = nil, definition: JSONValue? = nil, meta: JSONValue? = nil,
-                collapsed: Bool? = nil) -> CardNodeData {
+                collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
     let kind = self.kind(k)
     let state = cardStates[k]
     let diags = resolution[k]?.diagnostics ?? []
@@ -110,21 +132,18 @@ extension ProjectSession {
     if summary?.isEmpty ?? true { summary = def?["description"]?.string }
     if summary?.isEmpty ?? true { summary = (meta ?? defId.flatMap { definitionMeta[$0] })?["description"]?.string }
     if summary?.isEmpty ?? true { summary = nil }
-    let subtitle: String
-    if let s = state {
-      subtitle = s.state.label + (s.invocation > 1 ? " #\(s.invocation)" : "")
-    } else {
-      subtitle = kind == .subgraph ? String(localized: "子 Workflow · ダブルクリックで開く") : kind.label
-    }
+    let display = (i?["canvasEnabled"]?.bool ?? def?["canvasEnabled"]?.bool ?? false) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
-      title: title, kind: kind, subtitle: subtitle,
+      title: title, kind: kind,
       symbol: (i?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 } ?? def?["symbol"]?.string,
-      summary: summary, inputs: ports.inputs, outputs: ports.outputs,
+      summary: summary, inputs: ports.inputs, outputs: outputs ?? ports.outputs,
       params: inlineParams(k, instance: inst, definition: definition),
-      result: resultSummary(k), resultFailed: state?.state == .failed || state?.state == .blocked,
-      state: state?.state, stage: stageProgress(k),
+      result: displays[k]?.summary, resultFailed: false,
+      state: kind == .subgraph ? compositeState(k) : state?.state, stage: stageProgress(k),
+      invocation: state?.invocation ?? 0, runContinues: runActive,
+      failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
-      collapsed: collapsed ?? self.collapsed(k))
+      collapsed: collapsed ?? self.collapsed(k), hasDisplay: display)
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

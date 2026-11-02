@@ -69,11 +69,12 @@ extension View {
   /// Covers this view with the Tsugumi loading card while `content` is non-nil.
   func tsugumiLoading(_ content: LoadingContent?, onCancel: (() -> Void)? = nil) -> some View {
     loadingPresentation(content) { c in
+      // Part of the window: its own background, no floating panel.
       ZStack {
-        Rectangle().fill(.ultraThinMaterial)
-        Rectangle().fill(TsugumiPalette.tealBottom.opacity(0.18))
+        Color(nsColor: .windowBackgroundColor)
         TsugumiLoadingCard(content: c, onCancel: onCancel)
       }
+      .ignoresSafeArea()
     }
   }
 }

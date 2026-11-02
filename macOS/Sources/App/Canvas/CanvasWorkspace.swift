@@ -95,7 +95,10 @@ struct CanvasWorkspace: View {
   }
 }
 
-/// Run / stop, elapsed time, progress, result and the issue list.
+/// Run / stop, the run's state and what it is doing now, elapsed time and
+/// the issue list. Per-Card counts and details are on the Cards, in the
+/// history and on the timeline (a share of finished Cards says nothing about
+/// a run with loops, so there is no progress bar).
 struct CanvasRunControl: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -126,13 +129,14 @@ struct CanvasRunControl: View {
       HStack(spacing: 4) {
         Image(systemName: state.symbol).foregroundStyle(state.color)
         Text(state.label)
+        if session.runActive, let now = activity { Text("· " + now).foregroundStyle(.secondary).lineLimit(1) }
       }
       .accessibilityElement(children: .combine)
       if session.runStatus != nil {
         SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
           Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
+            .help("Run の受付から（準備を含む）の経過時間。実行環境の時計で計ります。")
         }
-        progress
       }
       Button { showIssues.toggle() } label: {
         HStack(spacing: 3) {
@@ -147,7 +151,7 @@ struct CanvasRunControl: View {
         IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
       }
       if session.runActive {
-        Label("実行中は Card を変更できません", systemImage: "lock.fill").font(.caption).foregroundStyle(.secondary)
+        Image(systemName: "lock.fill").foregroundStyle(.secondary).help("実行中は Card を変更できません")
       }
     }
     .font(.callout)
@@ -155,21 +159,23 @@ struct CanvasRunControl: View {
     .background(.regularMaterial, in: Capsule())
   }
 
-  private var elapsed: String {
-    guard let s = session.runStatus else { return "" }
-    guard let start = s.startedAt ?? s.acceptedAt else { return "" }
-    let end = s.endedAt ?? Int64(Date().timeIntervalSince1970 * 1000)
-    return formatDuration(Double(max(0, end - start)) / 1000)
+  /// What the run is doing now: the stage of a running Card, or how many run.
+  private var activity: String? {
+    let running = session.cardStates.filter { [.running, .preparing].contains($0.value.state) }
+    if running.count == 1, let (k, s) = running.first {
+      return session.displayName(k) + " " + (s.stage?.activeLabel ?? s.state.label)
+    }
+    if running.count > 1 { return String(localized: "\(running.count) 枚が実行中") }
+    if session.runStatus?.state == .preparing { return String(localized: "実行環境を準備中") }
+    return nil
   }
 
-  @ViewBuilder private var progress: some View {
-    let total = session.resolution.count
-    let done = session.cardStates.values.filter { [.succeeded, .failed, .skipped, .blocked, .cancelled].contains($0.state) }.count
-    if total > 0 {
-      ProgressView(value: Double(min(done, total)), total: Double(total))
-        .frame(width: 80)
-        .help("終了した Card \(done) / \(total)")
-    }
+  /// Run time on the core's clock from acceptance: the same measure while
+  /// it runs and once it ended (the timeline uses the same origin).
+  private var elapsed: String {
+    guard let s = session.runStatus, let start = s.acceptedAt ?? s.startedAt else { return "" }
+    let end = s.endedAt ?? (session.runActive ? session.coreNow() : start)
+    return formatDuration(Double(max(0, end - start)) / 1000)
   }
 }
 

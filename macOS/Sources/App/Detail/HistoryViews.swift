@@ -11,6 +11,7 @@ struct CardExecutionView: View {
   @State private var runId: String?
   @State private var invocations: [Tsugumi_RPC_InvocationSummaryT] = []
   @State private var invocation: UInt64?
+  @State private var logStream: Tsugumi_Data_LogStream = .stdout
   @State private var record: Tsugumi_RPC_RecordResultT?
   @State private var detail = Detail.io
   @State private var error: String?
@@ -72,7 +73,7 @@ struct CardExecutionView: View {
           switch detail {
           case .io: ioView
           case .log:
-            if let runId { RunLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
+            if let runId { RunLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation, stream: $logStream) }
           case .info: infoView
           }
         }

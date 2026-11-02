@@ -534,6 +534,23 @@ table InvocationSummary {
   waiting_inputs:[WaitingInput] (id: 9, required);
   /// true when the build was reused from the cache (no evaluate/build work).
   build_cached:bool = null (id: 10);
+  /// Stages this invocation went through, in order, with their times (core
+  /// clock, ms since 1970). Stages that do not apply are absent.
+  stages:[StageTime] (id: 11);
+  /// true when the call ran in a worker kept from an earlier invocation.
+  worker_reused:bool = null (id: 12);
+  /// Output ports that carried a value downstream (empty while running).
+  outputs_sent:[string] (id: 13);
+  /// When the inputs were all there; started_at - ready_at is the wait for
+  /// a free lane (parallel limit, serial Card).
+  ready_at:int64 = null (id: 14);
+}
+
+table StageTime {
+  phase:Tsugumi.Data.Phase (id: 0);
+  outcome:Tsugumi.Data.StageOutcome (id: 1);
+  start:int64 = null (id: 2);
+  end:int64 = null (id: 3);
 }
 
 table InvocationPage {

@@ -118,6 +118,8 @@ class Client:
         self._cv = threading.Condition(self._lock)
         self._replies: dict[int, MessageT] = {}
         self.notifications: deque = deque()
+        # Called with (payload, receive time) for every notification (measurements).
+        self.on_notification: Optional[Callable[[Any, float], None]] = None
         self.closed = False
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
@@ -169,6 +171,8 @@ class Client:
                     self._replies[msg.requestId] = msg
                 else:
                     self.notifications.append(msg.payload)
+                    if self.on_notification:
+                        self.on_notification(msg.payload, time.time())
                 self._cv.notify_all()
 
     def close(self) -> None:

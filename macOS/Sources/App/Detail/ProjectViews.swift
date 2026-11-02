@@ -170,6 +170,8 @@ struct DraftEditor: View {
 struct CardDatabaseView: View {
   @Environment(\.openWindow) private var openWindow
   let session: ProjectSession
+  /// The definition the window was opened for ("編集…" in the tree).
+  var initial: String? = nil
   @State private var search = ""
   @State private var selected: String?
   @State private var cardText = ""
@@ -214,6 +216,7 @@ struct CardDatabaseView: View {
     }
     .sheet(isPresented: $importing) { ImportDefinitionsSheet(session: session) }
     .onChange(of: selected) { load() }
+    .onAppear { if selected == nil, let initial, session.definitions[initial] != nil { selected = initial } }
     .navigationTitle("Card 定義")
   }
 
@@ -335,7 +338,9 @@ struct WorkflowSettingsView: View {
       case .cache: CacheSettings(session: session)
       }
     }
-    .navigationTitle("Workflow 設定 · \(session.scopeName([]))")
+    .navigationTitle("Workflow 設定")
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    .containerBackground(Color(nsColor: .windowBackgroundColor), for: .window)
   }
 }
 

@@ -4,8 +4,11 @@ import TsugumiRPC
 
 /// The canvas of one scope: grid, groups, connections, Cards, sticky notes
 /// and output frames, with pan/zoom, selection, wiring and drag & drop.
+/// Inside a Card in Card, the outer Card's inputs and outputs are drawn as
+/// bars above and below the inner graph.
 struct GraphCanvas: View {
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.displayScale) private var displayScale
   @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -18,18 +21,25 @@ struct GraphCanvas: View {
   @State private var size: CGSize = .zero
   @State private var editingNote: String?
   @State private var editingGroup: String?
+  @State private var hover: HoverTarget?
+  @State private var hoverAt: CGPoint = .zero
+  @State private var hoverTask: Task<Void, Never>?
 
   private var scopeKey: CardKey { key(tab.scope) }
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
+  private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
   var body: some View {
+    let routed = routedWires()
     GeometryReader { geo in
       ZStack(alignment: .topLeading) {
         background
         ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
           groupFrame(id)
         }
-        wires
+        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style) },
+                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom)
+        if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
         ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
@@ -47,7 +57,7 @@ struct GraphCanvas: View {
             .frame(width: r.width, height: r.height).offset(x: r.minX, y: r.minY)
             .allowsHitTesting(false)
         }
-        if let i = tab.selectedConnection, let mid = connectionMid(i) {
+        if let i = tab.selectedConnection, let mid = routed.first(where: { $0.connection == i })?.path.applying(cam.transform).midPoint {
           Button { if session.isEditable { session.removeConnection(at: i, in: tab.scope); tab.selectedConnection = nil } } label: {
             Label("切断", systemImage: "scissors").font(.caption)
           }
@@ -55,10 +65,28 @@ struct GraphCanvas: View {
           .disabled(!session.isEditable)
           .position(mid)
         }
+        if let hover, !interacting {
+          HoverBubble(content: hoverContent(hover))
+            .fixedSize()
+            .position(bubblePosition(in: geo.size))
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+        // ⌘I: details of the selected Card without the pointer.
+        Button("") { showDetailsForSelection() }
+          .shortcut(.showDetails)
+          .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
       }
       .coordinateSpace(name: "canvas")
       .clipped()
+      .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
+        switch phase {
+        case .active(let p): trackHover(p, routed: routed)
+        case .ended: clearHover()
+        }
+      }
       .overlay(ScrollCatcher { dx, dy, zoomDelta, at in
+        clearHover()
         if zoomDelta != 0 { zoom(by: 1 + zoomDelta, around: at) } else {
           var c = camera
           c.x += dx
@@ -100,6 +128,15 @@ struct GraphCanvas: View {
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
       }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasShowDetails)) { n in
+        if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.instance(k) != nil {
+          tab.selection = [k]
+          showDetailsForSelection()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasReveal)) { n in
+        if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey { reveal(k) }
+      }
       .sheet(item: Binding(get: { editingNote.map(IdBox.init) }, set: { editingNote = $0?.id })) { box in
         NoteEditor(session: session, noteId: box.id)
       }
@@ -108,6 +145,8 @@ struct GraphCanvas: View {
       }
     }
   }
+
+  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil }
 
   // MARK: - Data
 
@@ -130,27 +169,142 @@ struct GraphCanvas: View {
     return p
   }
 
-  func screen(_ w: CGPoint) -> CGPoint { CGPoint(x: w.x * camera.zoom + camera.x, y: w.y * camera.zoom + camera.y) }
-  func world(_ s: CGPoint) -> CGPoint { CGPoint(x: (s.x - camera.x) / camera.zoom, y: (s.y - camera.y) / camera.zoom) }
+  func screen(_ w: CGPoint) -> CGPoint { cam.screen(w) }
+  func world(_ s: CGPoint) -> CGPoint { cam.world(s) }
+
+  private func cardRect(_ k: CardKey) -> CGRect { CGRect(origin: origin(k), size: session.geometry(k).size) }
 
   private func portWorld(_ k: CardKey, _ port: String, output: Bool) -> CGPoint {
     let o = origin(k), p = session.geometry(k).port(port, output: output)
     return CGPoint(x: o.x + p.x, y: o.y + p.y)
   }
 
-  private func wireEnds(_ c: JSONValue) -> (CGPoint, CGPoint, CardKey)? {
-    guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-          let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-    let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
-    return (screen(portWorld(fk, fp, output: true)), screen(portWorld(tk, tp, output: false)), fk)
+  /// Output frame of a Card (world units): saved place, or beside the Card.
+  private func frameRect(_ k: CardKey) -> CGRect {
+    let o = origin(k)
+    let f = session.displayFrame(k)
+    let sz = CGSize(width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
+    let at = session.flow == .topToBottom
+      ? CGPoint(x: f?["x"]?.double ?? (o.x + session.geometry(k).size.width + 40), y: f?["y"]?.double ?? o.y)
+      : CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + session.geometry(k).height + 30))
+    return CGRect(origin: at, size: sz)
   }
 
-  private func curve(_ a: CGPoint, _ b: CGPoint) -> Path { wirePath(a, b, flow: session.flow) }
+  private func noteRect(_ n: JSONValue) -> CGRect {
+    CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
+  }
 
-  private func connectionMid(_ i: Int) -> CGPoint? {
-    let conns = session.connections(in: tab.scope)
-    guard i < conns.count, let (a, b, _) = wireEnds(conns[i]) else { return nil }
-    return curve(a, b).trimmedPath(from: 0.49, to: 0.51).boundingRect.center
+  // MARK: - Wires
+
+  struct RoutedWire {
+    var connection: Int?   // index in the scope's connections (nil: boundary wire or display link)
+    var path: Path         // world units
+    var style: WireDraw.Style
+  }
+
+  /// Every wire of the scope, routed once per update and used for drawing,
+  /// hover and clicks alike.
+  private func routedWires() -> [RoutedWire] {
+    var obstacles = cardKeys.map(cardRect)
+    obstacles += outputKeys.map(frameRect)
+    let b = boundary
+    if let b { obstacles += [b.top, b.bottom] }
+    var router = WireRouter(flow: session.flow, obstacles: obstacles)
+    var out: [RoutedWire] = []
+    for (i, c) in session.connections(in: tab.scope).enumerated() {
+      guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
+            let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
+      let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
+      let path = router.route(portWorld(fk, fp, output: true), portWorld(tk, tp, output: false))
+      out.append(RoutedWire(connection: i, path: path,
+                            style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk)))
+    }
+    if let b {
+      for p in b.inputs {
+        guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
+        out.append(RoutedWire(connection: nil, path: router.route(p.point, portWorld(inner.0, inner.1, output: false)), style: .normal))
+      }
+      for p in b.outputs {
+        guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
+        out.append(RoutedWire(connection: nil, path: router.route(portWorld(inner.0, inner.1, output: true), p.point),
+                              style: style(from: inner.0, port: inner.1, to: nil)))
+      }
+    }
+    // Display links: which Card a result frame belongs to (not a computation).
+    for k in outputKeys {
+      let o = origin(k), a = session.geometry(k).displayAnchor
+      out.append(RoutedWire(connection: nil, path: displayLink(from: CGPoint(x: o.x + a.x, y: o.y + a.y), to: frameRect(k), flow: session.flow),
+                            style: .display))
+    }
+    return out
+  }
+
+  /// A wire is colored only when a value really went through it in this run
+  /// (a branch colors only the side it chose), and animated while the value
+  /// is on its way to a Card that has not finished with it yet.
+  private func style(from: CardKey, port: String, to: CardKey?) -> WireDraw.Style {
+    // A Card in Card sends what the inner Card behind that output sent.
+    if session.kind(from) == .subgraph, let (inner, p) = session.boundarySource(from, output: port) {
+      return style(from: inner, port: p, to: to)
+    }
+    guard let st = session.cardStates[from] else { return .normal }
+    if session.runActive, st.sent.contains(port) {
+      if let dest = to.flatMap({ session.cardStates[$0] }) {
+        if [.waiting, .ready, .preparing, .running].contains(dest.state) { return .active }
+      } else if to != nil {
+        return .active
+      }
+    }
+    return st.sentInRun.contains(port) ? .carried : .normal
+  }
+
+  // MARK: - Card in Card boundary
+
+  struct BoundaryPort {
+    var name: String
+    var point: CGPoint          // world units, on the bar
+    var inner: (CardKey, String)?
+    var type: String?
+  }
+
+  struct Boundary {
+    var top: CGRect
+    var bottom: CGRect
+    var inputs: [BoundaryPort]
+    var outputs: [BoundaryPort]
+  }
+
+  /// The outer Card's inputs (above the inner graph) and outputs (below it).
+  private var boundary: Boundary? {
+    guard !tab.scope.isEmpty, let outer = session.instance(scopeKey), outer["canvas"] != nil else { return nil }
+    let ins = outer["boundary"]?["inputs"]?.object ?? [], outs = outer["boundary"]?["outputs"]?.object ?? []
+    guard !ins.isEmpty || !outs.isEmpty else { return nil }
+    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.position($1), size: session.geometry($1).size)) }
+    if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
+    let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
+    let x = box.midX - width / 2
+    let top = CGRect(x: x, y: box.minY - 96, width: width, height: 40)
+    let bottom = CGRect(x: x, y: box.maxY + 56, width: width, height: 40)
+    let resolved = session.resolution[scopeKey]
+    func ports(_ list: [(String, JSONValue)], bar: CGRect, output: Bool) -> [BoundaryPort] {
+      list.enumerated().map { i, e in
+        let px = bar.minX + bar.width * CGFloat(i + 1) / CGFloat(list.count + 1)
+        let inner = e.1["card"]?.string.flatMap { c in e.1["port"]?.string.map { (key(tab.scope + [c]), $0) } }
+        let t = (output ? resolved?.outputs : resolved?.inputs)?.first { $0.name == e.0 }?.rootType
+        return BoundaryPort(name: e.0, point: CGPoint(x: px, y: output ? bar.minY : bar.maxY), inner: inner, type: t)
+      }
+    }
+    return Boundary(top: top, bottom: bottom, inputs: ports(ins, bar: top, output: false), outputs: ports(outs, bar: bottom, output: true))
+  }
+
+  private func boundaryBars(_ b: Boundary) -> some View {
+    let z = CGFloat(camera.zoom)
+    return ZStack(alignment: .topLeading) {
+      BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top)
+        .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
+      BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom)
+        .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
+    }
   }
 
   // MARK: - Layers
@@ -184,29 +338,17 @@ struct GraphCanvas: View {
     }
   }
 
-  @ViewBuilder private var wires: some View {
-    let conns = session.connections(in: tab.scope)
-    let list = conns.enumerated().compactMap { i, c -> (start: CGPoint, end: CGPoint, active: Bool, selected: Bool)? in
-      guard let (a, b, from) = wireEnds(c) else { return nil }
-      let state = session.cardStates[from]?.state
-      let active = session.runActive && (state == .running || state == .succeeded)
-      return (a, b, active, i == tab.selectedConnection)
-    }
-    WireLayer(wires: list, flow: session.flow, animate: prefs.animateLines && session.runActive)
-  }
-
   private func cardView(_ k: CardKey) -> some View {
     let data = session.nodeData(k)
     let g = CardGeometry(data, flow: session.flow)
-    return CardNodeView(data: data, flow: session.flow, selected: tab.selection.contains(k),
+    return CardNodeView(data: data, flow: session.flow, zoom: camera.zoom, selected: tab.selection.contains(k),
                         onParamCommit: data.kind == .input ? { name, text in commitParam(k, name, text) } : nil,
                         paramsEditable: session.isEditable,
-                        onPortDrag: { port, pt in if session.isEditable { pending = ((k, port), pt) } },
+                        onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt) } },
                         onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) },
-                        onStageTap: { _ in workspace.showLog(for: k) },
+                        onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) })
-      .scaleEffect(camera.zoom, anchor: .topLeading)
-      .place(at: screen(origin(k)), size: g.size, zoom: camera.zoom)
+      .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }
       .onTapGesture { select(k) }
@@ -217,14 +359,12 @@ struct GraphCanvas: View {
     let g = session.groups(in: tab.scope).first { $0["id"]?.string == id } ?? .object([])
     let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
     var rect = CGRect.null
-    for m in members { rect = rect.union(CGRect(origin: origin(m), size: session.geometry(m).size)) }
+    for m in members { rect = rect.union(cardRect(m)) }
     if rect.isNull { rect = CGRect(x: 0, y: 0, width: 200, height: 100) }
     rect = rect.insetBy(dx: -18, dy: -18)
     rect.origin.y -= 22
     rect.size.height += 22
     return GroupFrameView(session: session, group: g, scope: tab.scope)
-      .frame(width: rect.width, height: rect.height)
-      .scaleEffect(camera.zoom, anchor: .topLeading)
       .place(at: screen(rect.origin), size: rect.size, zoom: camera.zoom)
       .onTapGesture(count: 2) { editingGroup = id }
       .onTapGesture { tab.selection = Set(members) }
@@ -238,21 +378,18 @@ struct GraphCanvas: View {
 
   private func noteView(_ id: String) -> some View {
     let n = (session.layout["notes"]?.array ?? []).first { $0["id"]?.string == id } ?? .object([])
-    let at = CGPoint(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0)
-    let sz = CGSize(width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
+    let r = noteRect(n)
     return StickyNoteView(note: n, onResize: { d in
       session.updateNote(id) { v in
-        v["width"] = .real(max(120, sz.width + d.width / camera.zoom).rounded())
-        v["height"] = .real(max(60, sz.height + d.height / camera.zoom).rounded())
+        v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
+        v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .frame(width: sz.width, height: sz.height)
-    .scaleEffect(camera.zoom, anchor: .topLeading)
-    .place(at: screen(at), size: sz, zoom: camera.zoom)
+    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
     .gesture(DragGesture(minimumDistance: 3).onEnded { v in
       session.updateNote(id) { n in
-        n["x"] = .real((at.x + v.translation.width / camera.zoom).rounded())
-        n["y"] = .real((at.y + v.translation.height / camera.zoom).rounded())
+        n["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
+        n["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -267,33 +404,25 @@ struct GraphCanvas: View {
   }
 
   private func outputFrame(_ k: CardKey) -> some View {
-    let o = origin(k)
-    let f = session.displayFrame(k)
-    let sz = CGSize(width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
-    // Default place: beside the Card, across the flow.
-    let at = session.flow == .topToBottom
-      ? CGPoint(x: f?["x"]?.double ?? (o.x + CardGeometry.width + 24), y: f?["y"]?.double ?? o.y)
-      : CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + session.geometry(k).height + 18))
+    let r = frameRect(k)
     return OutputFrameView(session: session, cardKey: k,
                            onExpand: { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) },
                            onClose: { session.updateDisplayFrame(k) { $0["hidden"] = .bool(true) } },
                            onResize: { d in
                              session.updateDisplayFrame(k) { v in
-                               v["x"] = .real(at.x.rounded())
-                               v["y"] = .real(at.y.rounded())
-                               v["width"] = .real(max(180, sz.width + d.width / camera.zoom).rounded())
-                               v["height"] = .real(max(100, sz.height + d.height / camera.zoom).rounded())
+                               v["x"] = .real(r.minX.rounded())
+                               v["y"] = .real(r.minY.rounded())
+                               v["width"] = .real(max(180, r.width + d.width / camera.zoom).rounded())
+                               v["height"] = .real(max(100, r.height + d.height / camera.zoom).rounded())
                              }
                            })
-      .frame(width: sz.width, height: sz.height)
-      .scaleEffect(camera.zoom, anchor: .topLeading)
-      .place(at: screen(at), size: sz, zoom: camera.zoom)
+      .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
       .gesture(DragGesture(minimumDistance: 3).onEnded { v in
         session.updateDisplayFrame(k) { d in
-          d["x"] = .real((at.x + v.translation.width / camera.zoom).rounded())
-          d["y"] = .real((at.y + v.translation.height / camera.zoom).rounded())
-          d["width"] = .real(sz.width)
-          d["height"] = .real(sz.height)
+          d["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
+          d["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
+          d["width"] = .real(r.width)
+          d["height"] = .real(r.height)
         }
       })
       .contextMenu {
@@ -304,11 +433,97 @@ struct GraphCanvas: View {
       }
   }
 
+  // MARK: - Hover details
+
+  enum HoverTarget: Equatable {
+    case card(CardKey)
+    case wire(Int)
+  }
+
+  private func trackHover(_ p: CGPoint, routed: [RoutedWire]) {
+    hoverAt = p
+    guard !interacting else { clearHover(); return }
+    let w = world(p)
+    var target: HoverTarget?
+    if let k = cardKeys.reversed().first(where: { cardRect($0).contains(w) }) {
+      target = .card(k)
+    } else {
+      let tolerance = max(5, 7 / camera.zoom)
+      target = routed.first { r in
+        r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
+      }?.connection.map(HoverTarget.wire)
+    }
+    if target == hover { return }
+    hoverTask?.cancel()
+    if hover != nil { hover = nil }
+    guard let target else { return }
+    // A short wait, so moving across the canvas does not flash details.
+    hoverTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(450))
+      guard !Task.isCancelled, !interacting else { return }
+      withAnimation(.easeOut(duration: 0.12)) { hover = target }
+    }
+  }
+
+  private func clearHover() {
+    hoverTask?.cancel()
+    hoverTask = nil
+    if hover != nil { hover = nil }
+  }
+
+  private func showDetailsForSelection() {
+    guard tab.selection.count == 1, let k = tab.selection.first else { return }
+    let r = cardRect(k)
+    hoverAt = screen(CGPoint(x: r.maxX, y: r.minY))
+    hover = .card(k)
+  }
+
+  private func bubblePosition(in size: CGSize) -> CGPoint {
+    // Beside the pointer, kept inside the canvas (the bubble is at most 340 wide).
+    let x = min(max(hoverAt.x + 180, 176), max(176, size.width - 176))
+    let y = min(max(hoverAt.y + 70, 64), max(64, size.height - 90))
+    return CGPoint(x: x, y: y)
+  }
+
+  private func hoverContent(_ t: HoverTarget) -> HoverBubble.Content {
+    switch t {
+    case .card(let k):
+      let d = session.nodeData(k)
+      var lines: [String] = []
+      if let desc = session.cardDescription(k) { lines.append(desc) }
+      var status = d.runText ?? d.idleText
+      if let id = session.currentRunId, d.invocation > 0 {
+        status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
+      }
+      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? d.kind.symbol, lines: lines,
+                   status: status, problems: d.errors + (d.failure.map { [$0] } ?? []), warnings: d.warnings)
+    case .wire(let i):
+      let conns = session.connections(in: tab.scope)
+      let symbol = "point.topleft.down.to.point.bottomright.curvepath"
+      guard i < conns.count, let fc = conns[i]["from"]?["card"]?.string, let fp = conns[i]["from"]?["port"]?.string,
+            let tc = conns[i]["to"]?["card"]?.string, let tp = conns[i]["to"]?["port"]?.string else {
+        return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol)
+      }
+      let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
+      let out = session.resolution[fk]?.outputs.first { $0.name == fp }
+      let inp = session.resolution[tk]?.inputs.first { $0.name == tp }
+      var lines = ["\(session.displayName(fk)).\(fp)  →  \(session.displayName(tk)).\(tp)"]
+      lines.append(String(localized: "型: ") + (out?.rootType ?? inp?.rootType ?? String(localized: "未解決")))
+      lines.append((inp?.optional ?? false) ? String(localized: "受け側の入力: 省略可") : String(localized: "受け側の入力: 必須"))
+      var status = String(localized: "この Run ではまだ値が通っていません")
+      if let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
+        status = String(localized: "Run \(String(id.prefix(8))) で値が通りました（送信元の最新は実行 #\(st.invocation)）")
+      }
+      return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol, lines: lines, status: status)
+    }
+  }
+
   // MARK: - Gestures
 
   private var backgroundDrag: some Gesture {
     DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
       .onChanged { v in
+        clearHover()
         if marquee != nil || (panStart == nil && NSEvent.modifierFlags.contains(.shift)) {
           marquee = (v.startLocation, v.location)
           return
@@ -334,6 +549,7 @@ struct GraphCanvas: View {
   private func cardDrag(_ k: CardKey) -> some Gesture {
     DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas"))
       .onChanged { v in
+        clearHover()
         if !tab.selection.contains(k) { tab.selection = [k] }
         drag = (k, v.translation)
       }
@@ -357,16 +573,15 @@ struct GraphCanvas: View {
   }
 
   private func backgroundTap(_ loc: CGPoint) {
-    // A click near a wire selects it; elsewhere clears the selection.
-    let conns = session.connections(in: tab.scope)
-    for (i, c) in conns.enumerated() {
-      guard let (a, b, _) = wireEnds(c) else { continue }
-      let hit = curve(a, b).strokedPath(StrokeStyle(lineWidth: 10)).contains(loc)
-      if hit {
-        tab.selectedConnection = i
-        tab.selection = []
-        return
-      }
+    // A click near a wire selects it (the path as drawn); elsewhere clears the selection.
+    let w = world(loc)
+    let tolerance = max(5, 7 / camera.zoom)
+    if let i = routedWires().first(where: { r in
+      r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
+    })?.connection {
+      tab.selectedConnection = i
+      tab.selection = []
+      return
     }
     tab.selection.removeAll()
     tab.selectedConnection = nil
@@ -453,26 +668,41 @@ struct GraphCanvas: View {
     setZoom(camera.zoom * f, around: p ?? CGPoint(x: size.width / 2, y: size.height / 2))
   }
 
+  /// Centres a Card in the view when it is not fully visible (zoom kept).
+  private func reveal(_ k: CardKey) {
+    guard session.instance(k) != nil, size.width > 0 else { return }
+    let r = cardRect(k)
+    let s = CGRect(origin: screen(r.origin), size: CGSize(width: r.width * camera.zoom, height: r.height * camera.zoom))
+    if CGRect(origin: .zero, size: size).insetBy(dx: 20, dy: 50).contains(s) { return }
+    var c = camera
+    c.x = size.width / 2 - r.midX * c.zoom
+    c.y = size.height / 2 - r.midY * c.zoom
+    withAnimation(.easeInOut(duration: 0.2)) { session.cameras[scopeKey] = c }
+    saveView()
+  }
+
   private func fitIfNew() {
     guard session.cameras[scopeKey] == nil, !cardKeys.isEmpty, size.width > 0 else { return }
     DispatchQueue.main.async { fitAll() }
   }
 
+  /// Frames everything shown in the scope: Cards, output frames, notes,
+  /// groups, the Card in Card bars and the wires (feedback lanes run outside
+  /// the Cards), in the part of the canvas its floating controls leave free.
   func fitAll() {
-    var rect = CGRect.null
-    for k in cardKeys { rect = rect.union(CGRect(origin: session.position(k), size: session.geometry(k).size)) }
-    for id in noteIds {
-      if let n = (session.layout["notes"]?.array ?? []).first(where: { $0["id"]?.string == id }) {
-        rect = rect.union(CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120))
-      }
+    var rect = cardKeys.reduce(CGRect.null) { $0.union(cardRect($1)) }
+    for k in outputKeys { rect = rect.union(frameRect(k)) }
+    for n in session.layout["notes"]?.array ?? [] where (n["scope"]?.string ?? "") == scopeKey { rect = rect.union(noteRect(n)) }
+    for g in session.groups(in: tab.scope) {
+      let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
+      for m in members { rect = rect.union(cardRect(m).insetBy(dx: -18, dy: -40)) }
     }
+    if let b = boundary { rect = rect.union(b.top).union(b.bottom) }
+    for w in routedWires() where w.style != .display { rect = rect.union(w.path.boundingRect) }
     guard !rect.isNull, size.width > 0 else { return }
-    rect = rect.insetBy(dx: -40, dy: -40)
-    // Room for the controls floating on top and at the bottom of the canvas.
-    let top: CGFloat = 56, bottom: CGFloat = 48
-    let h = max(100, size.height - top - bottom)
-    let z = max(0.2, min(1.2, min(size.width / rect.width, h / rect.height)))
-    session.cameras[scopeKey] = (Double(size.width / 2 - rect.midX * z), Double(top + h / 2 - rect.midY * z), Double(z))
+    var c = CanvasCamera()
+    c.fit(rect, in: size, insets: EdgeInsets(top: 52, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
+    session.cameras[scopeKey] = (c.x, c.y, c.zoom)
     saveView()
   }
 }
@@ -483,11 +713,92 @@ extension CGRect {
   var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
 
-extension View {
-  /// Places a view by its top-left corner in canvas coordinates.
-  func place(at topLeft: CGPoint, size: CGSize, zoom: Double) -> some View {
-    position(x: topLeft.x + size.width * zoom / 2, y: topLeft.y + size.height * zoom / 2)
-      .frame(width: size.width, height: size.height, alignment: .topLeading)
+extension Path {
+  /// The point halfway along the path.
+  var midPoint: CGPoint? {
+    let r = trimmedPath(from: 0.495, to: 0.505).boundingRect
+    return r.isNull ? nil : r.center
+  }
+}
+
+/// A bar standing for the outer Card's inputs (above) or outputs (below)
+/// inside a Card in Card: public name, type and the inner port it maps to.
+struct BoundaryBarView: View {
+  let title: String
+  let ports: [GraphCanvas.BoundaryPort]
+  let input: Bool
+  let zoom: CGFloat
+  let rect: CGRect
+
+  var body: some View {
+    ZStack(alignment: .topLeading) {
+      RoundedRectangle(cornerRadius: 8 * zoom).fill(Color.accentColor.opacity(0.08))
+      RoundedRectangle(cornerRadius: 8 * zoom).strokeBorder(Color.accentColor.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+      Label(title, systemImage: input ? "arrow.down.to.line" : "arrow.down.to.line.compact")
+        .font(.system(size: max(6, 9.5 * zoom), weight: .semibold)).foregroundStyle(Color.accentColor)
+        .padding(.leading, 8 * zoom).padding(.top, 3 * zoom)
+      ForEach(Array(ports.enumerated()), id: \.offset) { _, p in
+        let x = (p.point.x - rect.minX) * zoom
+        VStack(spacing: 0) {
+          Text(p.name).font(.system(size: max(6, 10 * zoom), weight: .medium)).lineLimit(1)
+          if let t = p.type { Text(t).font(.system(size: max(5, 8 * zoom), design: .monospaced)).foregroundStyle(.secondary).lineLimit(1) }
+        }
+        .frame(width: 104 * zoom)
+        .position(x: x, y: rect.height * zoom / 2 + 5 * zoom)
+        .help(p.inner.map { String(localized: "内部の接続先: \(String($0.0.split(separator: "/").last ?? "")).\($0.1)") }
+              ?? String(localized: "内部の接続先が未設定です"))
+        Group {
+          if input { Circle().fill(Color.accentColor) } else {
+            RoundedRectangle(cornerRadius: 1.5).fill(Color(nsColor: .controlBackgroundColor))
+              .overlay(RoundedRectangle(cornerRadius: 1.5).strokeBorder(Color.secondary, lineWidth: 1.4))
+          }
+        }
+        .frame(width: max(6, 8 * zoom), height: max(6, 8 * zoom))
+        .position(x: x, y: input ? rect.height * zoom : 0)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(title + ": " + ports.map(\.name).joined(separator: ", "))
+  }
+}
+
+/// Details shown near the pointer over a Card or a wire.
+struct HoverBubble: View {
+  struct Content {
+    var title: String
+    var subtitle: String
+    var symbol: String
+    var lines: [String] = []
+    var status: String?
+    var problems: [String] = []
+    var warnings: [String] = []
+  }
+
+  let content: Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      HStack(spacing: 6) {
+        Image(systemName: content.symbol).foregroundStyle(.secondary)
+        Text(content.title).font(.callout.weight(.semibold)).lineLimit(1)
+        if !content.subtitle.isEmpty { Text(content.subtitle).font(.caption).foregroundStyle(.secondary) }
+      }
+      ForEach(Array(content.lines.enumerated()), id: \.offset) { _, l in
+        Text(l).font(.caption).lineLimit(8).fixedSize(horizontal: false, vertical: true)
+      }
+      if let s = content.status { Text(s).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+      ForEach(Array(content.problems.enumerated()), id: \.offset) { _, p in
+        Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).lineLimit(4)
+      }
+      ForEach(Array(content.warnings.enumerated()), id: \.offset) { _, p in
+        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(3)
+      }
+    }
+    .frame(maxWidth: 340, alignment: .leading)
+    .padding(10)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
+    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
   }
 }
 

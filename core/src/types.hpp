@@ -24,6 +24,7 @@ using PortKind = Tsugumi::Data::PortKind;
 struct Type {
   std::string bfbs;       // reflection schema, root_table = root message
   std::string root_type;  // fully qualified name
+  std::string hash;       // sha256 of bfbs, set where the type is made (computed once)
   const reflection::Schema* schema() const;
   const reflection::Object* root() const;
 };
@@ -55,7 +56,7 @@ bool compatible(const Type& a, const Type& b);
 
 // Renders the closure of `t` into fbs declarations under namespace `prefix`
 // and returns the new fully qualified root name.
-std::string render_closure(const Type& t, const std::string& prefix, std::string& out);
+std::string render_closure(const Type& t, const std::string& prefix, std::string& out, bool nested = false);
 
 // Builtin message types.
 TypeRef empty_type();
@@ -77,6 +78,12 @@ bool json_to_flatbuffer(const Type& t, const std::string& json, std::string* out
 // Renders a FlatBuffer of `t` as JSON (strict, verified first).
 bool flatbuffer_to_json(const Type& t, const std::string& bytes, std::string* out,
                         std::string* error);
+// Builds a buffer of `merged` (a table whose `value` is a union with one
+// member per input port) holding the table `bytes` of `member` as the member
+// `port`, by copying the table directly (no JSON round trip). `bytes` must
+// already be verified against `member` (values are verified when produced).
+std::optional<std::string> wrap_in_union(const Type& merged, const std::string& port, const Type& member,
+                                         const std::string& bytes, std::string* error);
 // Verifies `bytes` as a buffer of `t`.
 bool verify(const Type& t, const std::string& bytes);
 

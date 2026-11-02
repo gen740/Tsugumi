@@ -377,7 +377,7 @@ final class ChatController {
     case .error(let s):
       busy = false
       failed = s != "cancelled"
-      status = s == "cancelled" ? status : "エラー: \(s)"
+      status = s == "cancelled" ? "回答を停止しました（Workflow の実行は止めていません）。" : "エラー: \(s)"
       refreshAfterTurn()
     case .finished:
       busy = false

@@ -34,9 +34,11 @@ struct MainWindow: View {
       }
       UIScript.shared.request = nil
     }
+    .tsugumiLoading(model.preparing)
     .task {
       UIScript.shared.workspace = workspace
       if model.setup == nil { await model.refreshSetup() }
+      await model.prepareIfNeeded()
       // `Tsugumi <project folder>` opens that project in the first window.
       if workspace.session == nil, let url = model.takeLaunchProject() { open(url) }
     }
@@ -135,7 +137,9 @@ struct EnvironmentSetupView: View {
       }
       HStack {
         if let working { ProgressView().controlSize(.small); Text(working) }
-        if let message { Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled) }
+        if let message = message ?? model.prepareError {
+          Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
+        }
         Spacer()
         Button("再確認") { Task { await model.refreshSetup() } }.disabled(working != nil || model.checkingSetup)
       }

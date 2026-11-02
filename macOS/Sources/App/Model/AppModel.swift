@@ -45,6 +45,26 @@ final class AppModel {
     checkingSetup = false
   }
 
+  /// First-start preparation shown with the loading card (nil: none).
+  private(set) var preparing: LoadingContent?
+  private(set) var prepareError: String?
+
+  /// When only the environment image is missing and the app has it, it is
+  /// loaded right away (no step for the user). The loading card says what
+  /// happens; the size is not shown as a percentage because `image load`
+  /// does not report how far it is.
+  func prepareIfNeeded() async {
+    guard let s = setup, s.containerInstalled, s.versionSupported, s.serviceRunning, !s.imageLoaded,
+          s.bundledImageAvailable, preparing == nil else { return }
+    preparing = LoadingContent(title: String(localized: "初回の準備をしています"),
+                               message: String(localized: "実行環境のイメージを読み込んでいます（数分かかることがあります）"),
+                               detail: "container image load \(EnvironmentManager.image)")
+    prepareError = nil
+    do { try await environments.loadBundledImage() } catch { prepareError = "\(error)" }
+    preparing = nil
+    await refreshSetup()
+  }
+
   @ObservationIgnored private var launchProjectTaken = false
 
   /// A project folder given as a launch argument, handed out once.

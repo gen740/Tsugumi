@@ -15,6 +15,12 @@ import TsugumiRPC
 ///   settings <category>             close settings
 ///   edit <card path> <param> <v>    external <card path> <field> <value>
 ///   capture <name>                  arrange
+///   zoom <scale>                    fit
+///   run | waitrun                   enter <scope path or ->
+///   panel log|timeline              details <card path>
+///   click <x> <y> [window title]    move <x> <y> [window title]
+///   (points from the window's top-left; sent to the window like a real
+///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
 @Observable
 final class UIScript {
@@ -50,19 +56,23 @@ final class UIScript {
   }
 
   private func run(_ lines: [String]) async {
-    // Wait until the project is connected.
-    for _ in 0..<600 {
+    // Wait until the project is connected (a first line "nowait" starts at
+    // once, e.g. to capture the loading screen).
+    let waitForProject = lines.first?.trimmingCharacters(in: .whitespaces) != "nowait"
+    for _ in 0..<600 where waitForProject {
       if let s = workspace?.session, s.connected { break }
       try? await Task.sleep(for: .milliseconds(100))
     }
     for line in lines {
       let w = line.split(separator: " ").map(String.init)
-      guard let cmd = w.first, !cmd.hasPrefix("#") else { continue }
+      guard let cmd = w.first, !cmd.hasPrefix("#"), cmd != "nowait" else { continue }
       say("step " + line)
       let session = workspace?.session
       let ref = session.map { ProjectRef(path: $0.identity.url.path) }
       switch cmd {
       case "wait": try? await Task.sleep(for: .milliseconds(Int((Double(w[1]) ?? 1) * 1000)))
+      case "waitconnect":
+        for _ in 0..<900 where !(workspace?.session?.connected ?? false) { try? await Task.sleep(for: .milliseconds(100)) }
       case "sidebar": workspace?.columns = w[1] == "hide" ? .detailOnly : .all
       case "chat": workspace?.showChat = w[1] == "show"
       case "size":
@@ -129,6 +139,41 @@ final class UIScript {
           : mainWindow
         say("capture \(w[1]) \(target?.windowNumber ?? -1)")
         try? await Task.sleep(for: .milliseconds(1800))
+      case "zoom":
+        if let s = session, let t = workspace?.active, let z = Double(w[1]) {
+          let k = key(t.scope)
+          var c = s.cameras[k] ?? (40, 40, 1)
+          c.x *= z / c.zoom
+          c.y *= z / c.zoom
+          c.zoom = z
+          s.cameras[k] = c
+        }
+      case "fit": NotificationCenter.default.post(name: .canvasFitAll, object: workspace?.active?.id)
+      case "run": if let s = session, let t = workspace?.active { RunActions.runAll(s, scope: t.scope) }
+      case "waitrun":
+        try? await Task.sleep(for: .seconds(1))
+        for _ in 0..<6000 where session?.runActive == true { try? await Task.sleep(for: .milliseconds(200)) }
+        say("run \(session?.runStatus?.state.label ?? "-")")
+      case "enter": workspace?.active?.enter(w[1] == "-" ? [] : path(w[1]))
+      case "panel": workspace?.togglePanel(w[1] == "timeline" ? .timeline : .log)
+      case "details":
+        NotificationCenter.default.post(name: .canvasShowDetails, object: workspace?.active?.id, userInfo: ["card": w[1]])
+      case "click", "move":
+        let title = w.dropFirst(3).joined(separator: " ")
+        let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }
+        guard let win, let x = Double(w[1]), let y = Double(w[2]) else { say("no window for " + line); break }
+        let p = NSPoint(x: x, y: win.frame.height - y)
+        func event(_ t: NSEvent.EventType) -> NSEvent? {
+          NSEvent.mouseEvent(with: t, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        if cmd == "move" {
+          if let e = event(.mouseMoved) { win.sendEvent(e) }
+        } else {
+          if let d = event(.leftMouseDown) { win.sendEvent(d) }
+          try? await Task.sleep(for: .milliseconds(60))
+          if let u = event(.leftMouseUp) { win.sendEvent(u) }
+        }
       case "quit": NSApp.terminate(nil)
       default: say("unknown " + line)
       }

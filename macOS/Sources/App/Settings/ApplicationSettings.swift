@@ -40,11 +40,8 @@ struct ApplicationSettings: View {
     // A plain list + content (no split view): switching categories, going back
     // and reopening the window always work, whatever a category is doing.
     HStack(spacing: 0) {
-      List(Category.allCases, selection: Binding(get: { Optional(category) }, set: { if let c = $0 { stored = c.rawValue } })) { c in
-        Label(c.title, systemImage: c.symbol).tag(Optional(c))
-      }
-      .listStyle(.sidebar)
-      .frame(width: 180)
+      SettingsSidebar(items: Category.allCases, selection: Binding(get: { category }, set: { stored = $0.rawValue }),
+                      title: \.title, symbol: \.symbol, width: 180)
       Divider()
       VStack(alignment: .leading, spacing: 0) {
         Text(category.title).font(.title2.bold()).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
@@ -458,6 +455,7 @@ private struct ConnectionSettings: View {
         }
       }
       .overlay { if sessions.isEmpty { ContentUnavailableView("開いているプロジェクトはありません", systemImage: "network.slash") } }
+      EnvironmentStorageSettings()
     }
     .padding()
   }
@@ -465,5 +463,66 @@ private struct ConnectionSettings: View {
   private func copy(_ s: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(s, forType: .string)
+  }
+}
+
+/// Where environments keep their data, and removing it. Deleting checks
+/// every step; on a failure the environment's files are kept and the
+/// message says what is left, so the deletion can be retried.
+private struct EnvironmentStorageSettings: View {
+  @Environment(AppModel.self) private var model
+  @State private var working = false
+  @State private var message: String?
+  @State private var failed = false
+  @State private var confirmReset = false
+
+  var body: some View {
+    GroupBox("実行環境のデータ") {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("各プロジェクトの実行環境（Nix store のディスクイメージと control フォルダ）は次のフォルダにあります。プロジェクトの文書・履歴・成果物はプロジェクトのフォルダにあり、ここには含まれません。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        HStack {
+          Text(model.environments.support.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+          Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([model.environments.support]) }.controlSize(.small)
+        }
+        HStack {
+          Button("すべての実行環境を初期化…", role: .destructive) { confirmReset = true }
+            .disabled(working)
+          if working { ProgressView().controlSize(.small) }
+          if let message {
+            Text(message).font(.caption).foregroundStyle(failed ? .red : .secondary).textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+      }
+      .padding(6)
+    }
+    .confirmationDialog("すべての実行環境を初期化しますか？", isPresented: $confirmReset) {
+      Button("初期化", role: .destructive) { reset() }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("実行中の環境を止め、Tsugumi が作った container・Nix store・環境イメージを削除します。プロジェクトの文書・履歴・成果物、他のアプリの container・image・volume、ホストの /nix/store は削除しません。次に開いたときに作り直します。")
+    }
+  }
+
+  private func reset() {
+    working = true
+    message = nil
+    Task {
+      do {
+        let r = try await model.environments.resetAll()
+        failed = false
+        var parts = [String(localized: "container \(r.containers.count) 件・環境 \(r.environments) 件を削除しました")]
+        if !r.volumes.isEmpty { parts.append(String(localized: "旧 volume \(r.volumes.count) 件を削除")) }
+        if r.imageRemoved { parts.append(String(localized: "環境イメージを削除")) }
+        if let kept = r.imageKept { parts.append(String(localized: "環境イメージは使用中のため残しました（\(kept)）")) }
+        message = parts.joined(separator: "。") + "。"
+      } catch {
+        failed = true
+        message = String(localized: "初期化を完了できませんでした（残りは保持しています。再試行できます）: ") + "\(error)"
+      }
+      working = false
+      await model.refreshSetup()
+    }
   }
 }

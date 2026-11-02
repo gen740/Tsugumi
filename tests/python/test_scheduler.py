@@ -14,6 +14,8 @@ from projects import card, conn
 from test_regressions import run_and_wait, write
 from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.Phase import Phase
+from Tsugumi.Data.StageOutcome import StageOutcome
 from Tsugumi.Data.RunState import RunState
 
 MSG_FBS = """
@@ -101,6 +103,13 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     assert states(c, run_id, "gate") == [CardState.succeeded]
     assert states(c, run_id, "yes") == [CardState.succeeded]
     assert states(c, run_id, "no") in ([], [CardState.skipped])  # b never fired
+    # The record says which output carried the value and which stages ran.
+    rec = c.call("RunInvocationsRequest", runId=run_id, card=path("gate")).records[0]
+    assert [text(p) for p in rec.outputsSent] == ["a"]
+    assert [(st.phase, st.outcome) for st in rec.stages] == [(Phase.execute, StageOutcome.done),
+                                                             (Phase.validate, StageOutcome.done),
+                                                             (Phase.save, StageOutcome.done)]
+    assert all(st.start <= st.end for st in rec.stages)
 
 
 def test_max_runs_is_enforced(env):
@@ -173,3 +182,24 @@ def test_start_wired_to_input_and_drafts_block_only_their_dependents(env):
     assert states(c, run_id, "out") == [CardState.succeeded]
     assert states(c, run_id, "after") == [CardState.blocked]
     assert st.state == RunState.failed and "Draft plan" in text(st.failure.diagnostic)
+
+
+def test_merges_nested_several_levels_deep(env):
+    """A merge whose input comes (through a fork) from a merge, three and more
+    levels deep: the nested union types keep their own names."""
+    cards = [card("begin", "trigger"), card("src", "msg"), card("out", "log")]
+    conns = [conn("begin", "out", "src", "start")]
+    prev = ("src", "msg")
+    for i in range(4):
+        cards += [card(f"f{i}", "fork"), card(f"m{i}", "merge")]
+        conns += [conn(prev[0], prev[1], f"f{i}", "in"), conn(f"f{i}", "out1", f"m{i}", "a")]
+        prev = (f"m{i}", "out")
+    conns.append(conn(prev[0], prev[1], "out", "in"))
+    c = env(cards, conns, defs=dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))
+    run_id, st = run_and_wait(c, "begin")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    out = json.loads(logs(c, run_id, "out")[0])
+    for _ in range(4):
+        assert out["value_type"] == "a"
+        out = out["value"]
+    assert out == {"text": "hello"}

@@ -2,31 +2,18 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// Home (new, existing and recent projects) and Demos (opened as editable copies).
+/// Home (new, existing and recent projects) and the demo list, entered
+/// from "デモを見る" with a way back.
 struct ProjectChooser: View {
   @Environment(AppModel.self) private var model
   let onOpen: (URL) -> Void
-  @State private var page = Page.home
+  @State private var showDemos = false
   @State private var newName = ""
   @State private var showNew = false
 
-  enum Page: String, CaseIterable, Identifiable {
-    case home, demos
-    var id: String { rawValue }
-    var title: String { self == .home ? "ホーム" : "デモ" }
-  }
-
   var body: some View {
     VStack(spacing: 0) {
-      Picker("", selection: $page) {
-        ForEach(Page.allCases) { Text($0.title).tag($0) }
-      }
-      .pickerStyle(.segmented).labelsHidden().frame(width: 240).padding(12)
-      Divider()
-      switch page {
-      case .home: home
-      case .demos: demos
-      }
+      if showDemos { demos } else { home }
       if let e = model.error {
         HStack {
           Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
@@ -37,57 +24,82 @@ struct ProjectChooser: View {
         .background(.red.opacity(0.08))
       }
     }
+    .background(HomeBackground())
+    .tint(TsugumiPalette.rufous)
+    // The home window shows no title: the key visual and the name are in it.
+    .toolbar(removing: .title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .sheet(isPresented: $showNew) { newProjectSheet }
   }
 
   private var home: some View {
-    HStack(alignment: .top, spacing: 24) {
+    HStack(alignment: .top, spacing: 28) {
       VStack(alignment: .leading, spacing: 12) {
+        Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
+          .frame(width: 44, height: 44)
+          .accessibilityHidden(true)
         Text("Tsugumi").font(.largeTitle.bold())
-        Text("Card をつないで処理の流れを作り、隔離環境で実行します。").foregroundStyle(.secondary)
         Button { showNew = true } label: { Label("新規プロジェクト…", systemImage: "plus.square") }
           .controlSize(.large).buttonStyle(.borderedProminent)
         Button { openPanel() } label: { Label("既存のプロジェクトを開く…", systemImage: "folder") }
           .controlSize(.large)
-        Button { page = .demos } label: { Label("デモを見る", systemImage: "sparkles") }
-          .controlSize(.large)
+        Button { showDemos = true } label: { Label("デモを見る", systemImage: "sparkles") }
+          .buttonStyle(.link)
+          .padding(.top, 6)
       }
-      .frame(width: 280, alignment: .leading)
-      VStack(alignment: .leading) {
+      .frame(width: 260, alignment: .leading)
+      VStack(alignment: .leading, spacing: 8) {
         Text("最近のプロジェクト").font(.headline)
         if model.recents.isEmpty {
           ContentUnavailableView("最近開いたプロジェクトはありません", systemImage: "clock",
                                  description: Text("新規作成するか、既存のフォルダを開いてください。"))
+            .frame(maxHeight: 220)
         } else {
-          List(model.recents) { p in
-            Button { onOpen(URL(fileURLWithPath: p.path)) } label: {
-              HStack {
-                Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary)
-                VStack(alignment: .leading) {
-                  Text(p.name).font(.headline)
-                  Text(p.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-                Spacer()
-                Text(p.openedAt, style: .relative).font(.caption).foregroundStyle(.secondary)
+          // Only the projects themselves: no empty striped rows below them.
+          SwiftUI.TimelineView(.periodic(from: .now, by: 60)) { t in
+            ScrollView {
+              VStack(spacing: 2) {
+                ForEach(model.recents) { p in recentRow(p, now: t.date) }
               }
-              .contentShape(Rectangle())
+              .padding(4)
             }
-            .buttonStyle(.plain)
-            .contextMenu {
-              Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p.path)]) }
-            }
+            .scrollBounceBehavior(.basedOnSize)
+            .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+            .fixedSize(horizontal: false, vertical: true)
           }
-          .listStyle(.inset(alternatesRowBackgrounds: true))
         }
+        Spacer(minLength: 0)
       }
     }
-    .padding(24)
+    .padding(28)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  private func recentRow(_ p: RecentProject, now: Date) -> some View {
+    Button { onOpen(URL(fileURLWithPath: p.path)) } label: {
+      HStack {
+        Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary)
+        VStack(alignment: .leading) {
+          Text(p.name).font(.headline)
+          Text(p.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        }
+        Spacer()
+        Text(relativeAge(p.openedAt, now: now)).font(.caption).foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 10).padding(.vertical, 7)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .contextMenu {
+      Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p.path)]) }
+    }
   }
 
   private var demos: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
+        Button { showDemos = false } label: { Label("ホーム", systemImage: "chevron.backward") }
+          .buttonStyle(.link)
         Text("デモ").font(.largeTitle.bold())
         Text("デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。")
           .foregroundStyle(.secondary)
@@ -115,7 +127,7 @@ struct ProjectChooser: View {
           }
         }
       }
-      .padding(24)
+      .padding(28)
     }
   }
 
@@ -153,5 +165,29 @@ struct ProjectChooser: View {
     } catch {
       model.error = "\(error)"
     }
+  }
+}
+
+/// "たった今", "5 分前", "3 時間前", "2 日前": no seconds that tick.
+func relativeAge(_ date: Date, now: Date = Date()) -> String {
+  let s = max(0, now.timeIntervalSince(date))
+  if s < 60 { return String(localized: "たった今") }
+  if s < 3600 { return String(localized: "\(Int(s / 60)) 分前") }
+  if s < 86400 { return String(localized: "\(Int(s / 3600)) 時間前") }
+  return String(localized: "\(Int(s / 86400)) 日前")
+}
+
+/// Home background in the key visual's colours, light enough for text.
+struct HomeBackground: View {
+  @Environment(\.colorScheme) private var scheme
+
+  var body: some View {
+    ZStack {
+      Color(nsColor: .windowBackgroundColor)
+      LinearGradient(colors: [TsugumiPalette.tealTop.opacity(scheme == .dark ? 0.35 : 0.10),
+                              TsugumiPalette.olive.opacity(scheme == .dark ? 0.10 : 0.08)],
+                     startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .ignoresSafeArea()
   }
 }

@@ -132,12 +132,25 @@ struct EnvironmentOverlay: View {
       return LoadingContent(title: String(localized: "再接続しています…"),
                             message: String(localized: "未保存の変更は保持しています。"), dirty: dirty)
     case .preparing(let s):
-      return LoadingContent(title: String(localized: "初回の準備をしています"), message: s, dirty: dirty)
+      return LoadingContent(title: String(localized: "初回の準備をしています"), message: stageText(s), detail: s, dirty: dirty)
     case .starting(let s):
-      return LoadingContent(title: String(localized: "起動しています"), message: s, dirty: dirty)
+      return LoadingContent(title: String(localized: "起動しています"), message: stageText(s), detail: s, dirty: dirty)
     case .ready:
       if session.connectionMessage != nil { return nil }
-      return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), dirty: dirty)
+      return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), detail: "project snapshot", dirty: dirty)
+    }
+  }
+
+  /// The step in words; the internal name stays in the details line.
+  static func stageText(_ raw: String) -> String {
+    switch EnvironmentStage(rawValue: raw) {
+    case .waitingForOthers?: return String(localized: "他のウインドウの起動が終わるのを待っています")
+    case .checkingService?: return String(localized: "container サービスを確認しています")
+    case .loadingImage?: return String(localized: "実行環境のイメージを読み込んでいます（初回のみ）")
+    case .creatingStore?: return String(localized: "Nix store の保存領域を作っています")
+    case .startingDaemon?: return String(localized: "実行環境を起動しています")
+    case .connecting?: return String(localized: "実行環境の応答を待っています")
+    case nil: return raw
     }
   }
 
