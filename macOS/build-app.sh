@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the Dawn renderer, the bundled
-# demos and the environment image for the first start. Run inside `nix develop`
-# (flatc, cmake and ninja come from the flake).
+# demos and the environment image for the first start. Tools (flatc, cmake,
+# ninja) are taken from the flake's nixpkgs; compilers are Apple's.
 #
 #   macOS/build-app.sh            # release build
 set -euo pipefail
@@ -14,10 +14,11 @@ renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 image="$dist/tsugumi-env.tar"
 [ -f "$image" ] || TSUGUMI_IMAGE_OUT="$image" "$repo/macOS/Container/build-image.sh"
 
-# Swift must use the Apple toolchain, not the Nix compiler wrapper.
-(cd "$repo/macOS" && env -u CC -u CXX -u SDKROOT -u NIX_CFLAGS_COMPILE -u NIX_LDFLAGS -u MACOSX_DEPLOYMENT_TARGET \
-  -u DEVELOPER_DIR swift build -c release --product Tsugumi)
-bin="$(cd "$repo/macOS" && env -u SDKROOT swift build -c release --show-bin-path)"
+# Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
+flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
+swiftenv=(env -i HOME="$HOME" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
+(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --product Tsugumi)
+bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --show-bin-path)"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"

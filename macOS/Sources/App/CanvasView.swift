@@ -46,8 +46,18 @@ struct CanvasView: View {
             .gesture(cardDrag(item.key))
             .onTapGesture(count: 2) { enter(item) }
             .onTapGesture { select(item.key) }
+            .contextMenu {
+              Button("Disconnect inputs") { disconnect(item.key, inputs: true) }
+              Button("Disconnect outputs") { disconnect(item.key, inputs: false) }
+              Divider()
+              Button("Delete Card") {
+                session.selection = [item.key]
+                deleteSelection()
+              }
+            }
         }
         displayPanels
+        notes
         if let p = pending {
           Path { path in
             path.move(to: screen(portPoint(p.from.0, p.from.1, output: true)))
@@ -160,6 +170,42 @@ struct CanvasView: View {
         .frame(width: size.width, height: size.height)
         .scaleEffect(camera.zoom, anchor: .topLeading)
         .position(at: screen(at), size: size, zoom: camera.zoom)
+    }
+  }
+
+  /// Sticky notes of the current scope (layout.json "notes").
+  @ViewBuilder private var notes: some View {
+    let all = session.layout["notes"]?.array ?? []
+    ForEach(Array(all.enumerated()), id: \.offset) { i, n in
+      if (n["scope"]?.string ?? "") == scopeKey {
+        let at = CGPoint(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0)
+        Text(n["text"]?.string ?? "")
+          .font(.callout)
+          .padding(8)
+          .frame(width: 240, alignment: .leading)
+          .background(Color.yellow.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+          .scaleEffect(camera.zoom, anchor: .topLeading)
+          .position(at: screen(at), size: CGSize(width: 240, height: 60), zoom: camera.zoom)
+          .gesture(DragGesture(minimumDistance: 3).onEnded { v in
+            session.edit { s in
+              guard var list = s.layout["notes"]?.array, i < list.count else { return }
+              list[i]["x"] = .real(at.x + v.translation.width / camera.zoom)
+              list[i]["y"] = .real(at.y + v.translation.height / camera.zoom)
+              s.layout["notes"] = .array(list)
+            }
+          })
+      }
+    }
+  }
+
+  private func disconnect(_ k: CardKey, inputs: Bool) {
+    let id = path(k).last!
+    session.edit { s in
+      s.updateGraph(s.scope) { g in
+        g["connections"] = .array((g["connections"]?.array ?? []).filter {
+          ($0[inputs ? "to" : "from"]?["card"]?.string ?? "") != id
+        })
+      }
     }
   }
 

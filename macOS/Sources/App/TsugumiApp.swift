@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Launched with `swift run` there is no bundle: still behave as a regular app.
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
+    Task { @MainActor in SmokeTest.runIfRequested(AppModel.shared) }
   }
 }
 

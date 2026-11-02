@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TsugumiLauncher
 import TsugumiRPC
@@ -155,6 +156,7 @@ struct EnvironmentBanner: View {
         Text("Run: \(String(describing: s))").font(.caption.monospaced())
       }
       Menu("Environment") {
+        Button("Duplicate project…") { duplicate() }
         Button("Stop environment") { session.stopEnvironment() }
         Button("Delete environment data (keeps documents)…") {
           Task {
@@ -167,6 +169,26 @@ struct EnvironmentBanner: View {
     .font(.callout)
     .padding(.horizontal, 10).padding(.vertical, 5)
     .background(.bar)
+  }
+}
+
+extension EnvironmentBanner {
+  func duplicate() {
+    let p = NSSavePanel()
+    p.nameFieldStringValue = session.identity.url.lastPathComponent + " copy"
+    p.message = "Choose where to create the copy"
+    guard p.runModal() == .OK, let url = p.url else { return }
+    Task {
+      do {
+        try await session.duplicate(to: url)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+      } catch {
+        let a = NSAlert()
+        a.messageText = "Duplicate failed"
+        a.informativeText = "\(error)"
+        a.runModal()
+      }
+    }
   }
 }
 
