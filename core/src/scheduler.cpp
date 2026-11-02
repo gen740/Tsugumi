@@ -366,12 +366,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       n.last = CardState::failed;
       n.last_failure = start_failure_;
     };
+    // `all` Cards take every outside port from one saved invocation; `any`
+    // Cards consume one port per invocation, so each port has its own latest value.
     auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
     if (!last) return fail(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path) +
                                                            "; run the whole workflow once first");
     for (const auto& port : outside) {
+      std::optional<History::LastInput> one;
+      if (n.node->settings.any_mode)
+        one = svc_.history().read([&](sql::Db& db) { return History::last_port_input(db, n.node->path, port); });
+      const auto& pool = one ? one->inputs : last->inputs;
       const Value* v = nullptr;
-      for (const auto& x : last->inputs)
+      for (const auto& x : pool)
         if (x.name == port) v = &x;
       if (!v) return fail(FailureKind::input_missing, "the saved inputs of " + path_key(n.node->path) + " have no " + port);
       const auto* p = n.node->input(port);
@@ -727,26 +733,29 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void save_last_inputs(const Node& node, uint64_t inv, const std::vector<Value>& inputs) {
     auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
     auto dir = base / (run_id_ + "-" + std::to_string(inv));
-    std::vector<Value> saved;
+    std::vector<Value> saved, per_port;
+    auto copy_into = [&](const Value& v, const stdfs::path& where) -> Value {
+      if (v.kind == PortKind::FlatBuffer) return v;
+      auto src = path_value(v);
+      if (!src) throw Failed(FailureKind::output_invalid, "input " + v.name + " has no path");
+      auto dest = where / stdfs::path(*src).filename();
+      std::error_code ec;
+      stdfs::remove_all(where, ec);
+      stdfs::create_directories(where);
+      if (v.kind == PortKind::File) {
+        fs::write_atomic(dest, fs::read_file_or_throw(*src), 0644);
+      } else {
+        auto listing = fs::list_tree(*src);
+        stdfs::create_directories(dest);
+        for (const auto& f : listing.files)
+          fs::write_atomic(dest / f, fs::read_file_or_throw(stdfs::path(*src) / f), 0644);
+      }
+      return with_path(v, dest.string());
+    };
     try {
       for (const auto& v : inputs) {
-        if (v.kind == PortKind::FlatBuffer) {
-          saved.push_back(v);
-          continue;
-        }
-        auto src = path_value(v);
-        if (!src) throw Failed(FailureKind::output_invalid, "input " + v.name + " has no path");
-        auto dest = dir / v.name / stdfs::path(*src).filename();
-        stdfs::create_directories(dest.parent_path());
-        if (v.kind == PortKind::File) {
-          fs::write_atomic(dest, fs::read_file_or_throw(*src), 0644);
-        } else {
-          auto listing = fs::list_tree(*src);
-          stdfs::create_directories(dest);
-          for (const auto& f : listing.files)
-            fs::write_atomic(dest / f, fs::read_file_or_throw(stdfs::path(*src) / f), 0644);
-        }
-        saved.push_back(with_path(v, dest.string()));
+        saved.push_back(copy_into(v, dir / v.name));
+        per_port.push_back(copy_into(v, base / ("port-" + v.name)));
       }
     } catch (const std::exception& e) {
       persistence_lost(std::string("saved inputs of ") + path_key(node.path) + ": " + e.what());
@@ -754,7 +763,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     auto card = node.path;
     auto run = run_id_;
-    svc_.history().submit([card, run, inv, saved](sql::Db& db) { History::put_last_input(db, card, run, inv, saved); },
+    svc_.history().submit([card, run, inv, saved, per_port](sql::Db& db) {
+                            History::put_last_input(db, card, run, inv, saved);
+                            for (const auto& v : per_port) History::put_last_port_input(db, card, run, inv, v);
+                          },
                           [this, base, dir, card](bool ok) {
                             if (!ok) {
                               persistence_lost("saved inputs of " + path_key(card));
@@ -764,7 +776,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                             std::error_code ec;
                             if (stdfs::is_directory(base, ec))
                               for (const auto& e : stdfs::directory_iterator(base, ec))
-                                if (e.path() != dir) stdfs::remove_all(e.path(), ec);
+                                if (e.path() != dir && !e.path().filename().string().starts_with("port-"))
+                                  stdfs::remove_all(e.path(), ec);
                           });
   }
 

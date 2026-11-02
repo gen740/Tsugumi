@@ -118,6 +118,11 @@ class History {
     std::vector<Value> inputs;
   };
   static std::optional<LastInput> last_input(sql::Db& db, const CardPath& card);
+  // Latest saved value of one port, whichever invocation consumed it (an
+  // `any` Card consumes one port per invocation).
+  static void put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t invocation,
+                                  const Value& value);
+  static std::optional<LastInput> last_port_input(sql::Db& db, const CardPath& card, const std::string& port);
   static std::optional<ArtifactData> artifact(sql::Db& db, const std::string& artifact_id);
   static std::vector<ArtifactData> artifacts(sql::Db& db, const std::string& run_id,
                                              const std::optional<CardPath>& card,

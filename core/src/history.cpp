@@ -602,6 +602,20 @@ std::optional<std::string> History::value_bytes(sql::Db& db, const std::string& 
   return st.blob(0);
 }
 
+void History::put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t invocation,
+                                  const Value& value) {
+  // Stored beside the per-Card rows under "<card>#<port>" ('#' never appears in ids).
+  CardPath k = card;
+  k.back() += "#" + value.name;
+  put_last_input(db, k, run_id, invocation, {value});
+}
+
+std::optional<History::LastInput> History::last_port_input(sql::Db& db, const CardPath& card, const std::string& port) {
+  CardPath k = card;
+  k.back() += "#" + port;
+  return last_input(db, k);
+}
+
 std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPath& card) {
   auto st = db.prepare("SELECT run_id, invocation, inputs FROM last_inputs WHERE card=?");
   st.bind(1, key(card));
