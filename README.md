@@ -126,16 +126,28 @@ open dist/Tsugumi.app
 - **隔離**: ホストと共有するのはプロジェクトフォルダ・0700 の control フォルダ（server.ready と import grant）・永続ストア volume だけです。RPC は 127.0.0.1 にのみ公開し、token は control ファイル（0600）にだけ置いて URL・ログに出しません。Card はコンテナ内で bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成）で実行し、`sandbox: false` でも同じ unprivileged uid のまま、ホスト実行や追加公開はしません。bubblewrap が使えない環境では `sandbox: true` の Card を拒否します。
 - **永続化**: コンテナの `/nix` はイメージ（下層）＋ volume（上層）の overlay で、Card 用ツールチェーンは volume に残ります（コンテナ再作成で失われない）。停止（`stop`）とデータ削除（store volume の削除）は別操作で、文書・履歴は常にプロジェクトフォルダに残ります。
 - **二重起動防止**: ホストではプロジェクト実体（device+inode）ごとの flock で起動・停止を直列化し、別名パスでも同じ環境に接続します。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
+- **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（`nix-instantiate`）→ build（`nix-store --realise`）→ 実行（`preScript → main.so → script → postScript`）→ 出力検証 → 保存 → 完了。各段階を `RunCardChanged` の phase で通知し、ビルドを再利用した場合は `build_cached` を付けます。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preScript の環境変数と `cd` は後段に引き継ぎ、postScript は失敗後も後始末として動きますが、前段の失敗を消しません。
+- **shell の入力**: ポート `P` ごとに `JSON_P`（JSON ファイルのパス、大きさの制限なし）、`BIN_P`（FlatBuffer のパス）、`INPUT_P`（4 KiB 以下の値だけ: 単一の `value` ならその値、他は JSON 文字列）、File/Directory は `FILE_P`/`DIR_P`。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します。スクリプトはファイル経由で実行するので大きさの制限を受けません。
+- **Nix の上流参照**: `default.nix` は `inputs.upstream."<Card path>"`（`inputs.local.<id>` は同じ階層）で、**どの経路で発火しても必ず先に実行される**コード Card の属性集合（`package`・スクリプト・`exports` の関数や値・store context）を参照できます。同じポートへの複数経路は共通部分、`all` は必須入力の和、`any` は全入力の共通部分、ループは最大不動点で求め、分岐の片側だけの Card や下流・自分自身は渡しません（静的診断 `nix_reference_*`）。参照されたものだけが遅延評価され、非選択分岐は build しません。ビルドの鍵はソース・入力型・Nix 用 params・参照する上流定義で決まり、実行時だけの params は含みません。
+- **Card in Card**: 子 Workflow は `boundary.inputs/outputs` で外側のポートを内部 Card のポートに対応づけ、外からは通常の Card として接続・実行できます（Run の対象にでき、単体実行では境界入力に保存済みの値を使う）。状態と履歴は完全な Card path で区別します。見た目だけのグループ（layout.json）とは別物です。
+- **Draft**: `_meta.json` に概要・処理内容・制約・完了条件・入出力の用途を持ち、型なしの仮ポートで配線できます。実行も成功扱いもせず、Draft に依存する Card は理由付きで blocked、独立した部分はそのまま実行します。「Card を生成」は Agent に Draft・配線・説明を渡し、PutDefinition/PutSource の 1 トランザクションで型・Nix・ソースを保存してから検証・実行させます（途中の失敗や取消では何も保存されず、計画は残ります）。
 - **Agent**: `agent/` の独立パッケージ。tool 定義は `tsugumi.bfbs`（FBS の doc comment 付き）から生成し、tool 引数⇄FlatBuffers も同じ BFBS で変換します（64 bit は 10 進文字列）。op_id は tool 呼び出しごとに Agent が付け、会話・tool 証跡と一緒にホスト側へ永続化します。応答を失った変更は OperationGet で照合し、盲目的に再送しません。モデルの API キーは Keychain に保存し core/worker には渡しません。取消はモデル通信と未送信 tool を止め、受理済み run は止めません。
 
 ## テスト
 
 | テスト | 内容 |
 | --- | --- |
-| `tests/python/test_contract.py`（25） | §6.7 の往復例、同時保存で片方だけ成功、同一 op_id の同時再送・再起動後再送、障害注入 3 点、重複キー/未知キー/不正 ID、uint64 最大値と表記保持、明示 false/0、Hello 規則、未知 union・不正長で切断、二重起動拒否、ソースの hash 競合・UTF-8 境界 patch・分割読取、外部変更と Reload、View の CAS、日本語ログの byte 境界・tail・範囲外、ページングと cursor の条件違い、SDK 準備と失効、CacheClear、import grant、遅い peer の切断と他 peer の継続、UI 用 layout 項目（グループ・付箋の色/サイズ・折りたたみ・出力枠の非表示）と Draft の仮出力（同じ保存で追加したソースから型を解決） |
-| `tests/python/test_demos.py`（9） | 3 デモの完成条件（上表）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行（最終確認: 9 passed） |
-| アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json> open dist/Tsugumi.app`） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display 受信→Undo を新しい保存として確定、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力の解決、別クライアントの保存後に古い基準の下書きを保存すると競合になり上書きしないこと、を 3 デモとも確認 |
-| `macOS/Tests`（`swift test`） | UI 側 JSON モデル、Draft の仮出力の往復、ファイル階層、params の整数表記保持、Skill の読込、折りたたみ時のポート位置、ショートカットの重複なし、Agent × ローカル model fixture × 実 tsugumid（読取→設定変更→実行→説明、取消、切断後の再試行で重複実行なし） |
+| `tests/python/test_contract.py`（26） | §6.7 の往復例、同時保存で片方だけ成功、同一 op_id の同時再送・再起動後再送、障害注入 3 点、重複キー/未知キー/不正 ID、uint64 最大値と表記保持、明示 false/0、Hello 規則、未知 union・不正長で切断、二重起動拒否、ソースの hash 競合・UTF-8 境界 patch・分割読取、外部変更と Reload、View の CAS、日本語ログの byte 境界・tail・範囲外、ページングと cursor、SDK 準備と失効、CacheClear、import grant、遅い peer、UI 用 layout 項目と Draft、整形（JSON/C++/Python/Nix・構文エラー位置・formatter 不在・保存しない） |
+| `tests/python/test_regressions.py`（4） | 報告された不具合の再現: 履歴保存失敗で run が成功にならない、File の fork 転送、CacheClear・再起動後も単体再実行の保存入力（File 実体を含む）が使える、保存入力の不足は明示的に失敗 |
+| `tests/python/test_scheduler.py`（6） | any の到着順消費・欠落/重複なし、all の 1 値ずつ消費と optional 出力の非発火、maxRuns、Card in Card の単体実行・伝播・同じ内部 ID の path 区別、保存入力なしの明示的失敗、Start→入力 Card と Draft 依存の blocked |
+| `tests/python/test_history.py`（7） | `recordIO × retainArtifact` 全組合せ×CacheClear×再起動、成果物の改ざん検出・パス逸脱、大容量のページング、UTF-8 境界、過去と最新の記録の分離 |
+| `tests/python/test_transport.py`（5） | WebSocket の Origin/subprotocol/token 拒否、fragment・ping 割り込み・連結、Unix の 1 byte ずつ・連結フレーム、実行元切断後も run 継続・別接続から状態取得 |
+| `tests/python/test_cards_container.py`（9） | 実コンテナ: 背圧で進行不能な run の終了、shell 契約（preScript の cd/環境、300 KB 入力、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
+| `tests/python/test_demos.py`（9） | 3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
+| `tests/cpp`（`tsugumi_core_tests`、15） | 型（catalog・構造的互換・merge union）、型の伝播、Nix 上流参照（直線・分岐+any・all と optional・同一ポート複数経路・feedback loop・入れ子・到達不能な循環・診断）、run plan（全体・単体・子 Workflow）、履歴の状態選択と障害注入、送信キュー（順序・seq・遅い peer の隔離） |
+| アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
+| UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
+| `macOS/Tests`（`swift test`、14） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
 ## 計測（2026-11-02）
@@ -162,20 +174,24 @@ open dist/Tsugumi.app
 | 領域 | 状況 |
 | --- | --- |
 | FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
-| tsugumid: Hello/Open/Close/Inspect/Save/Reload/Validate/Import/CacheClear/OperationGet/FileList/Stat/Read/Format(json)/SDKPrepare/Status/RunPlan/Run/Cancel/Status/History/Invocations/Record/ValueRead/ArtifactList/Read/LogRange/ViewSetVisible/ViewSave | 実装済み（契約テスト）。Format は json のみ、他言語は `unsupported` |
+| tsugumid: Hello/Open/Close/Inspect/Save/Reload/Validate/Import/CacheClear/OperationGet/FileList/Stat/Read/Format/SDKPrepare/Status/RunPlan/Run/Cancel/Status/History/Invocations/Record/ValueRead/ArtifactList/Read/LogRange/ViewSetVisible/ViewSave | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
+| 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft の仮ポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
 | 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
 | スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |
 | 型導出（_outputs.fbs、merge union、File/Directory、構造的互換性） | 実装済み |
 | Nix レーン（restricted eval・IFD 禁止・キャッシュ・GC root・取消・期限）、C++/Python/shell Card | 実装済み |
 | bubblewrap による Card 隔離、環境変数の非継承、`sandbox:false` の扱い | 実装済み（実コンテナ） |
 | Apple container 環境（最小イメージ、永続 store overlay、停止とデータ削除の分離、ローカル限定公開） | 実装済み |
-| SwiftUI アプリ（ui-view.md の構成: 初期設定、ホーム/デモ、階層タブと別ウインドウ、サイドバー、Canvas〔グループ・Markdown 付箋・出力枠・折りたたみ・複製・範囲選択・整列・全体表示・D&D 配置・入力 Card の直接編集〕、実行操作と問題一覧、状態バーとログ/タイムライン、Card 設定〔カテゴリ・作業コピーと適用〕、Draft 編集と生成、Card 定義の管理と Import、実行履歴・成果物、Workflow 設定、アプリ設定、チャット〔会話一覧・検索・参照・Skill・再試行・圧縮〕、日英の表示言語） | 実装済み。アプリのコード経路を smoke モードで 3 デモとも確認し、ホーム画面とワークベンチ（Collatz・Report）の表示をウインドウ単位のスクリーンショットで確認。マウス操作の自動検証（クリック・ドラッグ）は未実施 |
+| SwiftUI アプリ（ui-view.md の構成、split view の sidebar とチャット inspector、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。UI スクリプトで実ウインドウを撮影して確認（上の表）。マウスのクリック・ドラッグは未確認 |
 | Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。Live Stream の折れ線の目視確認は未実施 |
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮） | 実装済み（fixture 経由の読取→変更→実行→説明、取消、切断再試行を自動テスト）。文脈圧縮は自動テストなし。実 provider（有料 API）での動作は未検証 |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
-| N-Queens・200 Card の大規模デモ、Web UI、3D・WASM 表示 | 未実装（仕様上の次段階）。Draft からの生成はチャット（Agent）への依頼として実装 |
+| N-Queens・200 Card の大規模デモ、Web UI、WASM 表示 | 未実装（仕様上の次段階） |
 
 ## 既知の問題
 
 - 開発中、Apple container 0.6.0 で一部の VM が `stop`/`rm` に応答しなくなる状態が発生しました（`container ls` では running のまま、`container system stop` でも残る）。原因の一つは、tsugumid 自身が PID 1 だったため sandbox helper（bubblewrap の中間プロセス）の zombie が回収されず VM の終了処理が進まなかったことと考えられ、イメージでは tini を PID 1 にしました。すでに固まった VM は CLI からは止められないため、macOS の再起動などで container の実行状態を初期化してください。固まった VM がキャッシュ volume を掴んでいる間は、`TSUGUMI_BUILDER_VOLUME` で別の volume を指定するとイメージをビルドできます。
+- 同じ VM の不具合で、**イメージをビルドするたびにビルダー VM が終了処理で固まり、その Nix キャッシュ volume を掴んだままになります**（今回の作業で `tsugumi-image-builder-*` が複数残っています）。ビルドごとに `TSUGUMI_BUILDER_VOLUME` に新しい volume を指定して回避しました（キャッシュがないため 1 回 15〜20 分）。macOS を再起動すると解放されます。
+- CacheClear の Nix GC が環境自身の実行時パスまで回収し、次の起動で entrypoint が壊れる問題がありました。イメージの実行時 closure を GC root にし、起動時に上層の whiteout を取り除くよう修正済みです（既存の volume も自動で回復します）。
+- UI の確認は `TSUGUMI_UI_SCRIPT` による実ウインドウ操作とウインドウ単位のスクリーンショットです。この環境ではアクセシビリティ権限がなく、**マウスでのクリック・ドラッグ（Canvas/プレビューのドラッグ、ポートの接続）は自動確認していません**。
 - 環境はプロジェクトごとに独立した Nix store volume を持つため、ツールチェーン（約 0.8 GB）はプロジェクトごとに取得されます（隔離を優先した設計）。
