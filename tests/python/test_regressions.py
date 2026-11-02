@@ -27,21 +27,25 @@ attribute "tsugumi";
 """
 
 
+def put(p: Path, text: str) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
 def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for d, body in defs.items():
         (root / "definitions" / d).mkdir(parents=True, exist_ok=True)
         card_json = {k: v for k, v in body.items() if k != "_outputs"}
-        (root / "definitions" / d / "_card.json").write_text(json.dumps(card_json))
+        put(root / "definitions" / d / "_card.json", json.dumps(card_json))
         if "_outputs" in body:
-            (root / "definitions" / d / "_outputs.fbs").write_text(body["_outputs"])
+            put(root / "definitions" / d / "_outputs.fbs", body["_outputs"])
     for rel, data in (files or {}).items():
-        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).write_text(data)
-    (root / "tsugumi.json").write_text(json.dumps({
+        put(root / rel, data)
+    put(root / "tsugumi.json", json.dumps({
         "name": "regression", "pkgsPath": "tsugumi:default", "databaseConnections": [],
         "canvas": {"cards": cards, "connections": conns}}))
-    (root / "layout.json").write_text("{}")
+    put(root / "layout.json", "{}")
 
 
 def run_and_wait(c, card_id: str, propagate: bool = True, timeout: float = 30.0):

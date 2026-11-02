@@ -45,10 +45,23 @@ let
     # The image store is the lower layer; Card builds land in the persistent volume.
     if [ -d /persist ] && ! mountpoint -q /nix; then
       mkdir -p /persist/nix/upper /persist/nix/work
+      # Paths of this image deleted in the upper layer (whiteouts, e.g. by an
+      # older garbage collection) are restored before the overlay is mounted.
+      if [ -d /persist/nix/upper/store ]; then
+        for f in /persist/nix/upper/store/*; do
+          if [ -c "$f" ] && [ -e "/nix/store/''${f##*/}" ]; then rm -f "$f"; fi
+        done
+      fi
       # index=off: the upper layer stays valid when a new image changes the lower layer.
       mount -t overlay overlay -o lowerdir=/nix,upperdir=/persist/nix/upper,workdir=/persist/nix/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix
     fi
     nix-store --load-db < ${registration}/registration
+    # The environment's own closure is a GC root: CacheClear's garbage
+    # collection removes Card builds only, never the runtime.
+    mkdir -p /nix/var/nix/gcroots/tsugumi
+    for p in ${lib.concatStringsSep " " (map toString (runtime ++ [ registration ]))}; do
+      ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"
+    done
     # tini stays PID 1 so exited sandbox helpers never accumulate as zombies.
     exec ${tini}/bin/tini -g -- ${tsugumid}/bin/tsugumid --project /project --listen 0.0.0.0:7700 \
       --unix /run/tsugumi/tsugumid.sock --control-dir /control \

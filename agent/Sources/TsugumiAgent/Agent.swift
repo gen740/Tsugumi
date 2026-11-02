@@ -94,6 +94,18 @@ public actor Agent {
   - Never save edits the user did not ask for. If a save returns revision_conflict, inspect again and re-apply.
   - Run with {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}; then poll run_status with the run_id until
     succeeded/failed/cancelled and read results with run_record. Cancelling runs requires an explicit run_cancel.
+  - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
+    "card_json": "<_card.json>", "meta_json": "<_meta.json>"}}, {"value_type": "PutSource", "value": {"path":
+    "definitions/<id>/<file>", "bytes": [...utf-8 bytes...], "base_hash": "<hash when replacing>"}}, RemoveDefinition.
+    One save is one transaction: either everything is stored or nothing is.
+  - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description, plan,
+    constraints, done, inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or
+    bash) and remove "template" in _card.json, write _outputs.fbs (one table per output port, root table Outputs),
+    default.nix ({ pkgs, inputs, params }: { package = inputs.tsugumi.pythonCard { src = ./src; }; } or cppCard,
+    or script for bash) and the sources. Input types come from the connected outputs; never write _inputs.fbs.
+    Keep the instance ids and wiring; you may split one Draft into several Cards (rewire them in SetProject).
+    Keep the intent and the port descriptions in _meta.json. Then project_validate, fix what it reports, run the
+    workflow and check the result. If something fails, report it; never leave a half-written save.
   - 64 bit integers are decimal strings. Explain results briefly in the user's language.
   """
 

@@ -16,8 +16,8 @@ import pytest
 
 from conftest import ContainerEnv
 from projects import card, conn
-from test_regressions import write
-from tsugumi_client import new_id, path, text
+from test_regressions import put, write
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.RunState import RunState
@@ -50,8 +50,7 @@ def make(root: Path, defs: dict, cards, conns) -> None:
         nix = body.pop("_nix", None)
         plain[d] = body
         if nix:
-            (root / "definitions" / d).mkdir(parents=True, exist_ok=True)
-            (root / "definitions" / d / "default.nix").write_text(nix)
+            put(root / "definitions" / d / "default.nix", nix)
     write(root, plain, cards, conns)
 
 
@@ -65,14 +64,25 @@ def env(tmp_path_factory):
     e.cleanup()
 
 
+def reload(c):
+    """Reload; the VM's shared folder may need a moment to show new files."""
+    for attempt in range(20):
+        snap = c.call("ProjectInspectRequest")
+        try:
+            return c.call("ProjectReloadRequest", baseRev=snap.rev, opId=new_id(), origin="test")
+        except RpcFailure as e:
+            if e.kind != "invalid_document" or attempt == 19:
+                raise
+            time.sleep(0.5)
+
+
 def load(env, defs, cards, conns):
     """Replaces the project's documents and takes them in with Reload."""
     root = env.project
     shutil.rmtree(root / "definitions", ignore_errors=True)
     make(root, defs, cards, conns)
     c = env.client()
-    snap = c.call("ProjectInspectRequest")
-    c.call("ProjectReloadRequest", baseRev=snap.rev, opId=new_id(), origin="test")
+    reload(c)
     return c
 
 
@@ -261,10 +271,8 @@ def main(ctx):
                      "_nix": "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
     root = env.project
     c = load(env, defs, [card("begin", "trigger"), card("show", "show")], [])
-    (root / "definitions" / "show" / "src").mkdir(parents=True, exist_ok=True)
-    (root / "definitions" / "show" / "src" / "main.py").write_text(main)
-    snap = c.call("ProjectInspectRequest")
-    c.call("ProjectReloadRequest", baseRev=snap.rev, opId=new_id(), origin="test")
+    put(root / "definitions" / "show" / "src" / "main.py", main)
+    reload(c)
     run_id, st = run(c, "begin", timeout=1800)
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))

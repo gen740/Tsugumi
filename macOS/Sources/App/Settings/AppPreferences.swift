@@ -104,6 +104,8 @@ final class AppPreferences {
   var indentWidth: Int { didSet { d.set(indentWidth, forKey: "editor.indent") } }
   var showIndentGuides: Bool { didSet { d.set(showIndentGuides, forKey: "editor.guides") } }
   var editorFontSize: Double { didSet { d.set(editorFontSize, forKey: "editor.fontSize") } }
+  var editorTheme: EditorTheme { didSet { d.set(editorTheme.rawValue, forKey: "editor.theme") } }
+  var flowDirection: FlowDirection { didSet { d.set(flowDirection.rawValue, forKey: "canvas.flow") } }
   var shortcuts: [ShortcutAction: KeyBinding] { didSet { saveShortcuts() } }
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
@@ -118,6 +120,8 @@ final class AppPreferences {
     indentWidth = d.object(forKey: "editor.indent") as? Int ?? 4
     showIndentGuides = d.object(forKey: "editor.guides") as? Bool ?? true
     editorFontSize = d.object(forKey: "editor.fontSize") as? Double ?? 12
+    editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
+    flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })
     } else {
@@ -165,5 +169,39 @@ extension View {
   func shortcut(_ a: ShortcutAction) -> some View {
     let b = AppPreferences.shared.shortcut(a)
     return keyboardShortcut(b.keyEquivalent, modifiers: b.modifiers)
+  }
+}
+
+/// Colors of the code editor (syntax highlighting).
+enum EditorTheme: String, CaseIterable, Identifiable {
+  case standard, contrast, muted
+  var id: String { rawValue }
+  var label: String {
+    switch self {
+    case .standard: return String(localized: "標準")
+    case .contrast: return String(localized: "高コントラスト")
+    case .muted: return String(localized: "控えめ")
+    }
+  }
+
+  func color(_ token: SyntaxToken) -> NSColor {
+    switch (self, token) {
+    case (_, .plain): return .textColor
+    case (.standard, .comment): return .systemGreen
+    case (.standard, .string): return .systemRed
+    case (.standard, .number): return .systemPurple
+    case (.standard, .keyword): return .systemPink
+    case (.standard, .function): return .systemBlue
+    case (.contrast, .comment): return .systemGray
+    case (.contrast, .string): return .systemOrange
+    case (.contrast, .number): return .systemYellow
+    case (.contrast, .keyword): return .systemTeal
+    case (.contrast, .function): return .systemIndigo
+    case (.muted, .comment): return .tertiaryLabelColor
+    case (.muted, .string): return .systemBrown
+    case (.muted, .number): return .secondaryLabelColor
+    case (.muted, .keyword): return .labelColor
+    case (.muted, .function): return .secondaryLabelColor
+    }
   }
 }

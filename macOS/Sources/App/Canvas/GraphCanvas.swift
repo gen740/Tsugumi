@@ -139,13 +139,7 @@ struct GraphCanvas: View {
     return (screen(portWorld(fk, fp, output: true)), screen(portWorld(tk, tp, output: false)), fk)
   }
 
-  private func curve(_ a: CGPoint, _ b: CGPoint) -> Path {
-    var path = Path()
-    path.move(to: a)
-    let dx = max(40, abs(b.x - a.x) / 2)
-    path.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
-    return path
-  }
+  private func curve(_ a: CGPoint, _ b: CGPoint) -> Path { wirePath(a, b, flow: session.flow) }
 
   private func connectionMid(_ i: Int) -> CGPoint? {
     let conns = session.connections(in: tab.scope)
@@ -186,29 +180,25 @@ struct GraphCanvas: View {
 
   @ViewBuilder private var wires: some View {
     let conns = session.connections(in: tab.scope)
-    let animate = prefs.animateLines && session.runActive
-    SwiftUI.TimelineView(.animation(minimumInterval: 1 / 30, paused: !animate)) { t in
-      Canvas { ctx, _ in
-        let phase = animate ? -CGFloat(t.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 20) : 0
-        for (i, c) in conns.enumerated() {
-          guard let (a, b, from) = wireEnds(c) else { continue }
-          let path = curve(a, b)
-          let selected = i == tab.selectedConnection
-          let active = session.cardStates[from]?.state == .running || session.cardStates[from]?.state == .succeeded && session.runActive
-          let color: Color = selected ? .accentColor : (active ? .orange : .secondary.opacity(0.8))
-          ctx.stroke(path, with: .color(color),
-                     style: StrokeStyle(lineWidth: selected ? 3 : 1.7, lineCap: .round, dash: active && animate ? [8, 6] : [], dashPhase: phase))
-        }
-      }
+    let list = conns.enumerated().compactMap { i, c -> (start: CGPoint, end: CGPoint, active: Bool, selected: Bool)? in
+      guard let (a, b, from) = wireEnds(c) else { return nil }
+      let state = session.cardStates[from]?.state
+      let active = session.runActive && (state == .running || state == .succeeded)
+      return (a, b, active, i == tab.selectedConnection)
     }
-    .allowsHitTesting(false)
+    WireLayer(wires: list, flow: session.flow, animate: prefs.animateLines && session.runActive)
   }
 
   private func cardView(_ k: CardKey) -> some View {
-    let g = session.geometry(k)
-    return CardNode(session: session, cardKey: k, selected: tab.selection.contains(k),
-                    onPortDrag: { port, pt in if session.isEditable { pending = ((k, port), pt) } },
-                    onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) })
+    let data = session.nodeData(k)
+    let g = CardGeometry(data, flow: session.flow)
+    return CardNodeView(data: data, flow: session.flow, selected: tab.selection.contains(k),
+                        onParamCommit: data.kind == .input ? { name, text in commitParam(k, name, text) } : nil,
+                        paramsEditable: session.isEditable,
+                        onPortDrag: { port, pt in if session.isEditable { pending = ((k, port), pt) } },
+                        onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) },
+                        onStageTap: { _ in workspace.showLog(for: k) },
+                        onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) })
       .scaleEffect(camera.zoom, anchor: .topLeading)
       .place(at: screen(origin(k)), size: g.size, zoom: camera.zoom)
       .gesture(cardDrag(k))
@@ -274,7 +264,10 @@ struct GraphCanvas: View {
     let o = origin(k)
     let f = session.displayFrame(k)
     let sz = CGSize(width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
-    let at = CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + session.geometry(k).height + 18))
+    // Default place: beside the Card, across the flow.
+    let at = session.flow == .topToBottom
+      ? CGPoint(x: f?["x"]?.double ?? (o.x + CardGeometry.width + 24), y: f?["y"]?.double ?? o.y)
+      : CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + session.geometry(k).height + 18))
     return OutputFrameView(session: session, cardKey: k,
                            onExpand: { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) },
                            onClose: { session.updateDisplayFrame(k) { $0["hidden"] = .bool(true) } },
@@ -403,6 +396,13 @@ struct GraphCanvas: View {
         }
       }
     }
+  }
+
+  private func commitParam(_ k: CardKey, _ name: String, _ text: String) {
+    guard session.isEditable,
+          let def = session.instance(k)?["definition"]?.string,
+          let type = session.definitions[def]?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string else { return }
+    session.setParam(k, name, parseParam(text, type))
   }
 
   private func deleteSelection() {

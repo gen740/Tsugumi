@@ -336,8 +336,8 @@ extension ProjectSession {
     }
   }
 
-  /// Arranges the Cards of a scope in columns by their distance from the
-  /// sources of the graph (layout only).
+  /// Arranges the Cards of a scope in layers by their distance from the
+  /// sources, following the flow direction (layout only).
   func arrange(_ scope: [String]) {
     let ids = cards(in: scope).compactMap { $0["id"]?.string }
     var incoming: [String: Set<String>] = [:]
@@ -353,13 +353,16 @@ extension ProjectSession {
       return d
     }
     for id in ids { _ = level(id, []) }
-    var rows: [Int: Int] = [:]
+    var layers: [Int: [String]] = [:]
+    for id in ids { layers[depth[id] ?? 0, default: []].append(id) }
+    let vertical = AppPreferences.shared.flowDirection == .topToBottom
     edit { s in
-      for id in ids {
-        let col = depth[id] ?? 0
-        let row = rows[col, default: 0]
-        rows[col] = row + 1
-        s.setPosition(key(scope + [id]), CGPoint(x: Double(col) * 260, y: Double(row) * 150))
+      for (level, members) in layers {
+        for (i, id) in members.enumerated() {
+          let across = Double(i) * 260 - Double(members.count - 1) * 130
+          let along = Double(level) * (vertical ? 200 : 270)
+          s.setPosition(key(scope + [id]), vertical ? CGPoint(x: across, y: along) : CGPoint(x: along, y: across * 0.6))
+        }
       }
     }
   }

@@ -28,6 +28,16 @@
     "connections": [
       {
         "from": {
+          "card": "begin",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
           "card": "settings",
           "port": "state"
         },

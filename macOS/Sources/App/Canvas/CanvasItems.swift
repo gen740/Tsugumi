@@ -212,9 +212,114 @@ struct DisplayContent: View {
           }
         }
       }
+    case .table(let columns, let rows)?:
+      ScrollView([.horizontal, .vertical]) {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+          GridRow {
+            ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.caption.bold()) }
+          }
+          Divider()
+          ForEach(Array(rows.prefix(2000).enumerated()), id: \.offset) { _, r in
+            GridRow {
+              ForEach(Array(r.enumerated()), id: \.offset) { _, cell in
+                Text(cell).font(.system(size: large ? 12 : 10, design: .monospaced)).textSelection(.enabled)
+              }
+            }
+          }
+        }
+        .padding(4)
+      }
+    case .image(_, let data, let alt)?:
+      if let img = NSImage(data: data) {
+        Image(nsImage: img).resizable().interpolation(.none).scaledToFit()
+          .accessibilityLabel(alt)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        Text("画像を表示できません").font(.caption).foregroundStyle(.secondary)
+      }
+    case .points(let x, let y, let z, let colors)?:
+      PointCloudView(x: x, y: y, z: z, colors: colors)
+    case .module(let name, let json)?:
+      ModuleDisplayView(name: name, json: json, large: large)
     case nil:
       ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text("実行すると表示されます。"))
         .font(.caption)
+    }
+  }
+}
+
+/// A 3D point cloud: drag to rotate, scroll or pinch to zoom.
+struct PointCloudView: View {
+  let x: [Float], y: [Float], z: [Float], colors: [UInt32]
+  @State private var yaw = 0.6
+  @State private var pitch = 0.4
+  @State private var scale = 1.0
+  @State private var dragStart: (Double, Double)?
+
+  var body: some View {
+    Canvas { ctx, size in
+      guard !x.isEmpty else { return }
+      let cx = Double(x.reduce(0, +)) / Double(x.count), cy = Double(y.reduce(0, +)) / Double(y.count), cz = Double(z.reduce(0, +)) / Double(z.count)
+      var extent = 1e-9
+      for i in x.indices { extent = max(extent, abs(Double(x[i]) - cx), abs(Double(y[i]) - cy), abs(Double(z[i]) - cz)) }
+      let s = min(size.width, size.height) * 0.42 / extent * scale
+      let (cyw, syw, cp, sp) = (cos(yaw), sin(yaw), cos(pitch), sin(pitch))
+      let step = max(1, x.count / 200_000)
+      for i in stride(from: 0, to: x.count, by: step) {
+        let px = Double(x[i]) - cx, py = Double(y[i]) - cy, pz = Double(z[i]) - cz
+        let rx = px * cyw + pz * syw
+        let rz = -px * syw + pz * cyw
+        let ry = py * cp - rz * sp
+        let sx = size.width / 2 + rx * s, sy = size.height / 2 - ry * s
+        let c = i < colors.count ? colors[i] : 0x4A90E2
+        let color = Color(red: Double((c >> 16) & 0xFF) / 255, green: Double((c >> 8) & 0xFF) / 255, blue: Double(c & 0xFF) / 255)
+        ctx.fill(Path(ellipseIn: CGRect(x: sx - 1.5, y: sy - 1.5, width: 3, height: 3)), with: .color(color))
+      }
+    }
+    .background(Color(nsColor: .textBackgroundColor))
+    .contentShape(Rectangle())
+    .gesture(DragGesture().onChanged { v in
+      if dragStart == nil { dragStart = (yaw, pitch) }
+      yaw = dragStart!.0 + v.translation.width / 120
+      pitch = max(-1.5, min(1.5, dragStart!.1 + v.translation.height / 120))
+    }.onEnded { _ in dragStart = nil })
+    .gesture(MagnifyGesture().onChanged { scale = max(0.2, min(8, $0.magnification)) })
+    .overlay(alignment: .bottomTrailing) {
+      Text("\(x.count) 点 · ドラッグで回転").font(.caption2).foregroundStyle(.secondary).padding(4)
+    }
+    .accessibilityLabel(String(localized: "点群 \(x.count) 点"))
+  }
+}
+
+/// Data for a UI Canvas module. Known modules are drawn natively; any other
+/// module shows its data as formatted JSON.
+struct ModuleDisplayView: View {
+  let name: String
+  let json: String
+  var large = false
+
+  var body: some View {
+    let value = try? JSONValue.parse(json)
+    VStack(alignment: .leading, spacing: 4) {
+      if name == "histogram", let bins = value?["bins"]?.array?.compactMap(\.double), !bins.isEmpty {
+        let top = bins.max() ?? 1
+        GeometryReader { g in
+          HStack(alignment: .bottom, spacing: 2) {
+            ForEach(Array(bins.enumerated()), id: \.offset) { _, b in
+              RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.7))
+                .frame(height: max(1, g.size.height * b / max(top, 1e-9)))
+                .help("\(b)")
+            }
+          }
+          .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+      } else {
+        Text("モジュール \(name)").font(.caption.bold()).foregroundStyle(.secondary)
+        ScrollView {
+          Text(value?.serialized() ?? json).font(.system(size: large ? 12 : 10, design: .monospaced)).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
     }
   }
 }

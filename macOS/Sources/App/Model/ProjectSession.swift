@@ -45,6 +45,10 @@ struct CardRunState {
   var invocation: UInt64
   var phase: Tsugumi_Data_Phase
   var failure: String?
+  /// Stage of the latest invocation and the stages it already passed.
+  var stage: Stage?
+  var reached: Set<Stage> = []
+  var cached = false
 }
 
 /// One invocation on the run timeline (times in ms since 1970, from the core).
@@ -77,6 +81,10 @@ enum DisplayValue {
   case text(String)
   case scalar(Double, String)
   case lineChart([(id: String, label: String, x: [Double], y: [Double])])
+  case table(columns: [String], rows: [[String]])
+  case image(mediaType: String, data: Data, alt: String)
+  case points(x: [Float], y: [Float], z: [Float], colors: [UInt32])
+  case module(name: String, json: String)
 }
 
 struct DisplaySnapshot {
@@ -124,6 +132,9 @@ final class ProjectSession {
   var sourceEdits: [String: Data] = [:]  // path -> new bytes
   var sourceRemovals: Set<String> = []
   var definitionEdits: [String: DefinitionDraft] = [:]
+  /// Base hashes chosen by an editor that read the file before this draft
+  /// started: the save is checked against what the editor actually saw.
+  var sourceBases: [String: String] = [:]
   private(set) var undoStack: [Snapshot] = []
   private(set) var redoStack: [Snapshot] = []
   private(set) var saveError: String?
@@ -416,9 +427,22 @@ final class ProjectSession {
       if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
         let k = key(inv.card.path)
         let prev = cardStates[k]
-        if prev == nil || prev!.invocation <= (inv.invocation ?? 0) {
-          cardStates[k] = CardRunState(state: inv.state, invocation: inv.invocation ?? 0, phase: inv.phase,
-                                       failure: inv.failure?.diagnostic)
+        let n = inv.invocation ?? 0
+        if prev == nil || prev!.invocation <= n {
+          var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+          // Stages accumulate within one invocation; a new invocation starts over.
+          if let p = prev, p.invocation == n {
+            next.reached = p.reached
+            next.cached = p.cached
+            next.stage = p.stage
+          }
+          if inv.buildCached == true { next.cached = true }
+          if inv.state == .waiting || inv.state == .ready { next.stage = .waiting }
+          if let st = Stage(phase: inv.phase) {
+            if let cur = next.stage, cur != st { next.reached.insert(cur) }
+            next.stage = st
+          }
+          cardStates[k] = next
         }
         recordTimeline(k, inv)
       }
@@ -443,6 +467,18 @@ final class ProjectSession {
     case .displaylinechart:
       let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
       value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
+    case .displaytable:
+      let t = d.value?.value as? Tsugumi_Data_DisplayTableT
+      value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
+    case .displayimage:
+      let im = d.value?.value as? Tsugumi_Data_DisplayImageT
+      value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
+    case .displaypointcloud:
+      let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
+      value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
+    case .displaymodule:
+      let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
+      value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
     default: return
     }
     displays[k] = DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: rev, value: value)
@@ -522,6 +558,7 @@ final class ProjectSession {
       s.sourceRemovals = []
       s.definitionEdits = [:]
     }
+    sourceBases = [:]
     draftBase = nil
     remoteChangePending = false
     saveError = nil
@@ -563,10 +600,10 @@ final class ProjectSession {
       }
     }
     for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) {
-      changes.append(Change.putSource(path: p, bytes: bytes, baseHash: base.hashes[p]))
+      changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
     }
     for p in sourceRemovals.sorted() {
-      if let h = base.hashes[p] { changes.append(Change.removeSource(path: p, baseHash: h)) }
+      if let h = sourceBases[p] ?? base.hashes[p] { changes.append(Change.removeSource(path: p, baseHash: h)) }
     }
     let op = UUID()
     let saved = snapshot()
@@ -581,6 +618,7 @@ final class ProjectSession {
         sourceEdits = [:]
         sourceRemovals = []
         definitionEdits = [:]
+        sourceBases = [:]
         project = confirmedProject
         layout = confirmedLayout
       }

@@ -1,5 +1,7 @@
 #include "store.hpp"
 
+#include <thread>
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -511,11 +513,20 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
 Store::Staged Store::stage_reload(const std::string& op_id, const std::string& origin) const {
   auto base = current();
   std::shared_ptr<Document> doc;
-  try {
-    doc = load_from_disk(opts_.root);
-  } catch (const DocumentError& e) {
-    std::vector<std::pair<std::string, std::string>> args(e.args.begin(), e.args.end());
-    throw Failed(failure_kind_from_name(e.code).value_or(FailureKind::invalid_document), e.what(), args);
+  for (int attempt = 0;; ++attempt) {
+    try {
+      doc = load_from_disk(opts_.root);
+      break;
+    } catch (const DocumentError& e) {
+      // A file rewritten in place may be read half-written (or with a stale
+      // size through a VM's shared folder): read once more before failing.
+      if (attempt == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        continue;
+      }
+      std::vector<std::pair<std::string, std::string>> args(e.args.begin(), e.args.end());
+      throw Failed(failure_kind_from_name(e.code).value_or(FailureKind::invalid_document), e.what(), args);
+    }
   }
   Staged st;
   st.delta.base_rev = base->rev;

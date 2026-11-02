@@ -1,32 +1,32 @@
 {
   "cards": {
     "begin": {
-      "x": 0,
-      "y": 0
+      "x": 0.0,
+      "y": 0.0
     },
     "settings": {
-      "x": 0,
-      "y": 140
+      "x": 0.0,
+      "y": 190.0
     },
     "generate": {
-      "x": 240,
-      "y": 140
+      "x": 0.0,
+      "y": 380.0
     },
     "aggregate": {
-      "x": 480,
-      "y": 140
+      "x": 0.0,
+      "y": 570.0
     },
     "render": {
-      "x": 720,
-      "y": 140
+      "x": 0.0,
+      "y": 760.0
     },
     "archive": {
-      "x": 960,
-      "y": 140
+      "x": 0.0,
+      "y": 950.0
     },
     "archive/copy": {
-      "x": 120,
-      "y": 120
+      "x": 0.0,
+      "y": 0.0
     }
   },
   "notes": [
@@ -34,14 +34,14 @@
       "id": "n1",
       "scope": "",
       "text": "Turn on Aggregate's fail_on_purpose to see a failure stop the downstream Cards; turn it off and run Aggregate alone.",
-      "x": 0.0,
-      "y": 320.0
+      "x": -520.0,
+      "y": 0.0
     }
   ],
   "displays": {
     "render": {
-      "x": 720.0,
-      "y": 280.0,
+      "x": 250.0,
+      "y": 760.0,
       "width": 420.0,
       "height": 220.0
     }

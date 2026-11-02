@@ -271,6 +271,14 @@ final class ChatController {
           return "series \(s.label): \(pts)"
         }
         return "Display of Card \(k) (line chart):\n" + lines.joined(separator: "\n")
+      case .table(let cols, let rows)?:
+        return "Display of Card \(k) (table):\n" + ([cols] + rows.prefix(200)).map { $0.joined(separator: "\t") }.joined(separator: "\n")
+      case .image(let type, let data, let alt)?:
+        return "Display of Card \(k): \(type) image, \(data.count) bytes, \(alt)"
+      case .points(let x, _, _, _)?:
+        return "Display of Card \(k): 3D point cloud with \(x.count) points"
+      case .module(let name, let json)?:
+        return "Display of Card \(k) (module \(name)):\n\(json.prefix(4000))"
       case nil: return "Display of Card \(k): no result yet"
       }
     }
