@@ -148,3 +148,34 @@ def test_saved_inputs_missing_port_fails(tmp_path):
         assert "saved" in text(st.failure.diagnostic)
     finally:
         d.cleanup()
+
+
+def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path):
+    """Saved copies of a File input (per invocation and per port) can have a
+    shorter path than the original; rewriting the path must shrink the string
+    without corrupting the buffer (flatbuffers' SetString cannot shrink)."""
+    # The producer's work path contains its Card id; a long id makes the saved copies much shorter.
+    src = "source-" + "x" * 80
+    root = tmp_path / "p"
+    write(root,
+          defs={"doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/doc/report.txt"}],
+                        "_outputs": FILE_FBS},
+                "join": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
+                "log": {"template": "logger"}},
+          cards=[card(src, "doc"), card("join", "join"), card("out", "log")],
+          conns=[conn(src, "doc", "join", "a"), conn("join", "out", "out", "in")],
+          files={"definitions/doc/report.txt": "quarterly numbers\n"})
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        _, st = run_and_wait(c, src)
+        assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+        # The merge reruns from its saved value; the logger shows the path it received.
+        run_id, st2 = run_and_wait(c, "join")
+        assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
+        log = c.call("LogRangeRequest", runId=run_id, card=path("out"), invocation=1, stream=1)
+        received = json.loads(text(log.text))["value"]["value"]
+        assert received.endswith("/a/report.txt") and Path(received).read_text() == "quarterly numbers\n"
+    finally:
+        d.cleanup()

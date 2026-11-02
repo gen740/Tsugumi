@@ -166,8 +166,17 @@ class ContainerEnv:
         time.sleep(1)
 
     def stop(self):
-        self._container("stop", "--time", "20", self.name, check=False)
-        self._container("rm", "-f", self.name, check=False)
+        # TSUGUMI_TEST_LOGS=<dir> keeps the environment's log for diagnosis.
+        if os.environ.get("TSUGUMI_TEST_LOGS"):
+            out = Path(os.environ["TSUGUMI_TEST_LOGS"]) / f"{self.name}-{int(time.time())}.log"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(self._container("logs", self.name, check=False).stdout)
+        try:
+            self._container("stop", "--time", "20", self.name, check=False, timeout=120)
+        except subprocess.TimeoutExpired:
+            # A VM that does not shut down is killed; the test result stands.
+            self._container("kill", "--signal", "KILL", self.name, check=False, timeout=120)
+        self._container("rm", "-f", self.name, check=False, timeout=120)
 
     def cleanup(self, keep_volume: bool = True):
         self.stop()
