@@ -708,7 +708,7 @@ class Builder {
   // Code Card's default.nix, so a reference to a Card that is not always
   // upstream is reported before any evaluation.
   void check_nix_references() {
-    static const std::regex re(R"re((upstream|local)\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_'-]*)))re");
+    static const std::regex re(R"re(\b(upstream|local)\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_'-]*)))re");
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       Node& n = res_->nodes[i];
       if (n.kind != Template::Code) continue;
