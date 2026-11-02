@@ -58,6 +58,9 @@ final class AppModel {
     return nil
   }
 
+  /// Chats already created (opening Settings never creates new ones).
+  var openChats: [ChatController] { Array(chats.values) }
+
   /// One chat per project, shared by its panel and its detached window.
   func chat(for s: ProjectSession) -> ChatController {
     if let c = chats[s.identity.id] { return c }

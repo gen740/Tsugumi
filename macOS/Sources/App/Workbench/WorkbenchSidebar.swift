@@ -10,6 +10,8 @@ struct WorkbenchSidebar: View {
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
   @State private var defSearch = ""
+  /// Expanded tree nodes; kept across searches and reloads.
+  @State private var expanded: Set<String> = ["origin:"]
   @State private var importing = false
 
   var body: some View {
@@ -61,35 +63,13 @@ struct WorkbenchSidebar: View {
 
   @ViewBuilder private var definitions: some View {
     TextField("定義を検索", text: $defSearch).textFieldStyle(.roundedBorder)
-    let ids = session.definitions.keys.sorted().filter { id in
-      defSearch.isEmpty || id.localizedCaseInsensitiveContains(defSearch) ||
-        (session.definitions[id]?["name"]?.string ?? "").localizedCaseInsensitiveContains(defSearch)
-    }
-    if ids.isEmpty { Text(defSearch.isEmpty ? "定義はありません" : "一致する定義はありません").foregroundStyle(.secondary) }
-    ForEach(ids, id: \.self) { id in
-      let def = session.definitions[id]
-      HStack {
-        Image(systemName: definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(def?["name"]?.string ?? id).lineLimit(1)
-          Text("\(definitionKind(def).label) · \(session.usageCount(ofDefinition: id)) 枚で使用")
-            .font(.caption2).foregroundStyle(.secondary)
-        }
-        Spacer()
-        if session.definitionEdits[id] != nil {
-          Image(systemName: "pencil.circle.fill").foregroundStyle(.orange).help("未保存の変更")
-        }
-      }
-      .contentShape(Rectangle())
-      .draggable(DefinitionDrag.prefix + id)
-      .onTapGesture(count: 2) { place(id) }
-      .help("ダブルクリックまたは Canvas へドラッグして配置")
-      .contextMenu {
-        Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
-        Button("編集…") { openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path)) }
-      }
-      .selectionDisabled()
-    }
+    DefinitionTree(session: session, search: defSearch, expanded: $expanded,
+                   onPlace: { place($0) },
+                   onReveal: { k in
+                     tab.enter(Array(path(k).dropLast()))
+                     tab.selection = [k]
+                   },
+                   onEdit: { _ in openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path)) })
   }
 
   private func place(_ id: String) {
@@ -106,6 +86,79 @@ struct WorkbenchSidebar: View {
     if t == .draft, let k = tab.selection.first {
       openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
     }
+  }
+}
+
+/// Card definitions as a tree: where they came from (this project or an
+/// imported project), then each definition with the Cards placed from it.
+/// Changing a definition changes every Card listed under it.
+struct DefinitionTree: View {
+  let session: ProjectSession
+  let search: String
+  @Binding var expanded: Set<String>
+  var onPlace: (String) -> Void
+  var onReveal: (CardKey) -> Void
+  var onEdit: (String) -> Void
+
+  var body: some View {
+    let ids = session.definitions.keys.sorted().filter { id in
+      search.isEmpty || id.localizedCaseInsensitiveContains(search) ||
+        (session.definitions[id]?["name"]?.string ?? "").localizedCaseInsensitiveContains(search) ||
+        (session.definitionMeta[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
+    }
+    let groups = Dictionary(grouping: ids) { session.definitionMeta[$0]?["origin"]?.string ?? "" }
+    if ids.isEmpty { Text(search.isEmpty ? "定義はありません" : "一致する定義はありません").foregroundStyle(.secondary) }
+    ForEach(groups.keys.sorted(), id: \.self) { origin in
+      DisclosureGroup(isExpanded: binding("origin:" + origin, default: !search.isEmpty)) {
+        ForEach(groups[origin] ?? [], id: \.self) { id in row(id) }
+      } label: {
+        Label(origin.isEmpty ? String(localized: "このプロジェクト") : origin,
+              systemImage: origin.isEmpty ? "folder" : "square.and.arrow.down.on.square")
+          .font(.callout.weight(.medium))
+          .help(origin.isEmpty ? "このプロジェクトで作った定義" : "取り込み元: \(origin)")
+      }
+      .selectionDisabled()
+    }
+  }
+
+  private func binding(_ key: String, default value: Bool) -> Binding<Bool> {
+    Binding(get: { value || expanded.contains(key) }, set: { if $0 { expanded.insert(key) } else { expanded.remove(key) } })
+  }
+
+  @ViewBuilder private func row(_ id: String) -> some View {
+    let def = session.definitions[id]
+    let uses = session.instances(ofDefinition: id)
+    DisclosureGroup(isExpanded: binding("def:" + id, default: false)) {
+      if uses.isEmpty { Text("配置されていません").font(.caption).foregroundStyle(.secondary) }
+      ForEach(uses, id: \.self) { k in
+        Button { onReveal(k) } label: {
+          Label(session.displayName(k) + "  " + k, systemImage: "square.on.square.dashed").font(.caption).lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .help("Canvas でこの Card を表示")
+      }
+    } label: {
+      HStack {
+        Image(systemName: definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(def?["name"]?.string ?? id).lineLimit(1)
+          Text("\(definitionKind(def).label) · \(uses.count) 枚に配置").font(.caption2).foregroundStyle(.secondary)
+        }
+        Spacer()
+        if session.definitionEdits[id] != nil {
+          Image(systemName: "pencil.circle.fill").foregroundStyle(.orange).help("未保存の変更")
+        }
+      }
+      .contentShape(Rectangle())
+      .draggable(DefinitionDrag.prefix + id)
+      .onTapGesture(count: 2) { onPlace(id) }
+      .help("ダブルクリックまたは Canvas へドラッグして配置")
+      .contextMenu {
+        Button("Canvas に配置") { onPlace(id) }.disabled(!session.isEditable)
+        Button("編集…") { onEdit(id) }
+      }
+    }
+    .selectionDisabled()
   }
 }
 
@@ -259,6 +312,21 @@ struct ImportDefinitionsSheet: View {
       do {
         let map = try await session.importDefinitions(from: folder, ids: chosen.sorted())
         let renamed = map.filter { $0.key != $0.value }
+        // Remember where each definition came from (shown in the definition tree).
+        let imported = chosen.map { map[$0] ?? $0 }
+        for _ in 0..<40 where !imported.allSatisfy({ session.definitions[$0] != nil }) {
+          try await Task.sleep(for: .milliseconds(50))
+        }
+        let origin = folder.lastPathComponent
+        session.edit { s in
+          for id in imported {
+            guard let card = s.definitions[id] else { continue }
+            var meta = s.definitionMeta[id] ?? .object([])
+            meta["origin"] = .string(origin)
+            s.setDefinition(id, card: card, meta: meta)
+          }
+        }
+        await session.save()
         message = "\(chosen.count) 件をコピーしました。" + (renamed.isEmpty ? "" : " 新しい ID: " + renamed.map { "\($0.key) → \($0.value)" }.joined(separator: ", "))
       } catch {
         message = "コピーできませんでした: \(error)"

@@ -11,6 +11,10 @@ Steps: project_inspect -> project_save (SetProject with the param changed)
 -> run (from the root trigger) -> run_status until terminal -> run_record of
 the reported card -> a final explanation.
 
+A second scripted task implements Drafts ("Implement these Draft Cards ...
+- <path> (definition <id>)"): project_inspect -> one project_save with
+PutDefinition/PutSource per Draft -> project_validate -> run -> report.
+
 Options:
   --slow SECONDS   delay between streamed chunks (cancellation tests)
   --drop-once      drop the first response mid-stream (retry tests)
@@ -75,9 +79,82 @@ def find_card(graph, path):
     return card
 
 
+DRAFTS = re.compile(r"Implement these Draft Cards", re.I)
+DRAFT_LINE = re.compile(r"^- (\S+) \(definition (\S+)\)", re.M)
+
+
+def last_draft_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if m["role"] != "user":
+            continue
+        for b in blocks(m):
+            if b.get("type") == "text" and DRAFTS.search(b["text"]):
+                return b["text"], i
+    return None, -1
+
+
+def implement(definition, meta):
+    """A bash Card that fulfils a Draft: its planned outputs carry a short text."""
+    card = {k: v for k, v in definition.items() if k != "template"}
+    card["language"] = "bash"
+    outs = [o["name"] for o in (meta or {}).get("outputs", [])] or ["out"]
+    fbs = "namespace generated;\ntable Text { value:string; }\ntable Outputs { " + \
+        " ".join(f"{o}:Text;" for o in outs) + " }\nroot_type Outputs;\n"
+    payload = json.dumps({o: {"value": "done"} for o in outs})
+    nix = "{ pkgs, inputs, params }:\n{\n  script = ''\n    echo '" + payload + "' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n"
+    return card, fbs, nix
+
+
+def decide_drafts(messages, text, start):
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "project_inspect", {})
+    name, res, is_error = results[-1]
+    value = res.get("value", {})
+    if name == "project_inspect":
+        defs = {d["id"]: d for d in value.get("definitions", [])}
+        changes = []
+        for _, def_id in DRAFT_LINE.findall(text):
+            d = defs[def_id]
+            meta = json.loads(d["meta_json"]) if d.get("meta_json") else {}
+            card, fbs, nix = implement(json.loads(d["card_json"]), meta)
+            # The intent and the port purposes stay in _meta.json.
+            changes.append({"value_type": "PutDefinition", "value": {
+                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(meta)}})
+            for rel, body in (("_outputs.fbs", fbs), ("default.nix", nix)):
+                changes.append({"value_type": "PutSource", "value": {
+                    "path": f"definitions/{def_id}/{rel}", "bytes": body}})
+        return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": changes})
+    if name == "project_save":
+        if is_error:
+            return ("text", f"Saving failed: {value.get('diagnostic')}. The Drafts are unchanged.")
+        return ("tool", "project_validate", {"at_rev": str(value["rev"])})
+    if name == "project_validate":
+        problems = [d.get("message") for d in value.get("diagnostics", []) if d.get("severity") != "warning"]
+        inspect = next(r for n, r, _ in tool_results(messages[start + 1:]) if n == "project_inspect")
+        doc = json.loads(inspect["value"]["project_json"])
+        trigger = next(c["id"] for c in doc["canvas"]["cards"] if c.get("definition") == "trigger")
+        rev = next(r for n, r, _ in reversed(results) if n == "project_save")["value"]["rev"]
+        return ("tool", "run", {"base_rev": str(rev), "card": {"segments": [trigger]}}) if True else ("text", str(problems))
+    if name in ("run", "run_status"):
+        if is_error:
+            return ("text", f"Implemented and validated; the run could not start: {value.get('diagnostic')}")
+        status = value.get("run", value)
+        if status.get("state") not in TERMINAL:
+            time.sleep(0.2)
+            return ("tool", "run_status", {"run_id": status.get("run_id")})
+        failure = (status.get("failure") or {}).get("diagnostic", "")
+        return ("text", f"Implemented the Drafts and ran the workflow: {status.get('state')} {failure}")
+    return ("text", "Done.")
+
+
 def decide(messages):
     """Returns ("tool", name, input) or ("text", message)."""
+    draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
+    if draft_text is not None and draft_start > start:
+        return decide_drafts(messages, draft_text, draft_start)
     if not task:
         return ("text", "I can change a Card setting and run the graph: say 'set <card>.<param> to <value> and run'.")
     card_path, param, value, report = task.group(1).split("/"), task.group(2), task.group(3).strip(), task.group(4)

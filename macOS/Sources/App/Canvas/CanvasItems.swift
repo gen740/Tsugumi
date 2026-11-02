@@ -49,10 +49,14 @@ struct CardMenu: View {
       }
       .disabled(!session.isEditable)
     }
-    Button("グループ化") {
+    Button("グループ化（見た目だけ）") {
       if !tab.selection.contains(cardKey) { tab.selection = [cardKey] }
       onGroup()
     }
+    Button("子 Workflow にまとめる（入出力のある Card）") {
+      if let k = session.makeSubgraph(targets, in: tab.scope) { tab.selection = [k] }
+    }
+    .disabled(!session.isEditable)
     Divider()
     Button("入力を切断") { session.disconnect(cardKey, inputs: true, in: tab.scope) }.disabled(!session.isEditable)
     Button("出力を切断") { session.disconnect(cardKey, inputs: false, in: tab.scope) }.disabled(!session.isEditable)

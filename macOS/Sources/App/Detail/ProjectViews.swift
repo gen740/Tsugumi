@@ -4,69 +4,32 @@ import TsugumiRPC
 
 // MARK: - Draft
 
-/// Provisional output of a Draft (kept as `_outputs.fbs` so it can be wired).
+/// A planned port of a Draft: a name and what it is for (no type yet).
 struct DraftPort: Identifiable, Equatable {
   let id = UUID()
   var name: String
-  var type: String
+  var purpose: String
 
-  static let types = ["string", "double", "long", "ulong", "bool", "file", "directory"]
-
-  /// Reads the outputs the Draft editor wrote earlier.
-  static func parse(_ fbs: String) -> [DraftPort] {
-    var valueTypes: [String: String] = [:]
-    let tableRe = try! NSRegularExpression(pattern: #"table\s+(\w+)\s*\{\s*value\s*:\s*(\w+)\s*;\s*\}"#)
-    let ns = fbs as NSString
-    for m in tableRe.matches(in: fbs, range: NSRange(location: 0, length: ns.length)) {
-      valueTypes[ns.substring(with: m.range(at: 1))] = ns.substring(with: m.range(at: 2))
-    }
-    guard let r = fbs.range(of: #"table\s+Outputs\s*\{([^}]*)\}"#, options: .regularExpression) else { return [] }
-    let body = String(fbs[r]).drop { $0 != "{" }.dropFirst().prefix { $0 != "}" }
-    let fieldRe = try! NSRegularExpression(pattern: #"(\w+)\s*:\s*(\w+)\s*(\(([^)]*)\))?\s*;"#)
-    let b = String(body) as NSString
-    return fieldRe.matches(in: String(body), range: NSRange(location: 0, length: b.length)).map { m in
-      let name = b.substring(with: m.range(at: 1))
-      let table = b.substring(with: m.range(at: 2))
-      let attrs = m.range(at: 4).location == NSNotFound ? "" : b.substring(with: m.range(at: 4))
-      let type = attrs.contains("\"file\"") ? "file" : attrs.contains("\"directory\"") ? "directory" : (valueTypes[table] ?? "string")
-      return DraftPort(name: name, type: type)
-    }
-  }
-
-  static func fbs(_ ports: [DraftPort], namespace: String) -> String {
-    guard !ports.isEmpty else { return "" }
-    var out = "// Provisional outputs of a Draft (edited in the Draft editor).\nnamespace \(namespace);\n"
-    for p in ports {
-      let t = p.type == "file" || p.type == "directory" ? "string" : p.type
-      out += "table \(tableName(p.name)) { value:\(t); }\n"
-    }
-    out += "table Outputs {"
-    out += ports.map { p in
-      " \(p.name):\(tableName(p.name))" + (p.type == "file" || p.type == "directory" ? " (tsugumi: \"\(p.type)\")" : "") + ";"
-    }.joined()
-    out += " }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
-    return out
-  }
-
-  static func tableName(_ port: String) -> String {
-    let parts = port.split { !$0.isLetter && !$0.isNumber }
-    return parts.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined() + "Value"
-  }
+  static func == (a: DraftPort, b: DraftPort) -> Bool { a.name == b.name && a.purpose == b.purpose }
 }
 
-/// Name, processing description and provisional ports of a Draft Card.
+/// A Draft states what a Card will do before any code exists: name, summary,
+/// detailed processing, constraints, completion criteria and its planned
+/// ports. It can be wired, saved and reloaded; "Card を生成" turns it into an
+/// implementation through the Agent.
 struct DraftEditor: View {
   @Environment(\.dismiss) private var dismiss
   let session: ProjectSession
   let cardKey: CardKey
   @State private var model: CardEditorModel?
+  @State private var inputs: [DraftPort] = []
   @State private var outputs: [DraftPort] = []
-  @State private var baseOutputs: [DraftPort] = []
+  @State private var base: ([DraftPort], [DraftPort]) = ([], [])
 
   var body: some View {
     Group {
-      if let m = model, m.exists, let defId = m.definitionId {
-        form(m, defId)
+      if let m = model, m.exists, m.definitionId != nil {
+        form(m)
       } else if model != nil {
         ContentUnavailableView("Draft が見つかりません", systemImage: "questionmark.square.dashed")
       } else {
@@ -77,64 +40,66 @@ struct DraftEditor: View {
       guard model == nil else { return }
       let m = CardEditorModel(session: session, cardKey: cardKey)
       model = m
-      if let id = m.definitionId, session.sourcePaths.contains("definitions/\(id)/_outputs.fbs") {
-        outputs = DraftPort.parse(await m.text("definitions/\(id)/_outputs.fbs"))
-      }
-      baseOutputs = outputs
+      load(m)
     }
     .navigationTitle("Draft · \(session.displayName(cardKey))")
   }
 
-  private func form(_ m: CardEditorModel, _ defId: String) -> some View {
+  private var changed: Bool { inputs != base.0 || outputs != base.1 }
+
+  private func load(_ m: CardEditorModel) {
+    func ports(_ list: String, names: [String]) -> [DraftPort] {
+      let notes = m.meta?[list]?.array ?? []
+      var out = names.map { n in DraftPort(name: n, purpose: notes.first { $0["name"]?.string == n }?["description"]?.string ?? "") }
+      for n in notes {
+        if let name = n["name"]?.string, !out.contains(where: { $0.name == name }) {
+          out.append(DraftPort(name: name, purpose: n["description"]?.string ?? ""))
+        }
+      }
+      return out
+    }
+    inputs = ports("inputs", names: (m.definition?["inputs"]?.array ?? []).compactMap { $0["name"]?.string })
+    outputs = ports("outputs", names: [])
+    base = (inputs, outputs)
+  }
+
+  private func form(_ m: CardEditorModel) -> some View {
     VStack(spacing: 0) {
+      CardPreview(session: session, model: m).frame(height: 130)
+      Divider()
       Form {
-        Section("Draft") {
-          TextField("名前", text: Binding(get: { m.definition?["name"]?.string ?? "" },
-                                         set: { m.definition?["name"] = .string($0) }))
-          TextField("概要", text: meta(m, "description"), axis: .vertical).lineLimit(2...4)
-          VStack(alignment: .leading) {
-            Text("処理の説明")
-            TextEditor(text: meta(m, "plan")).frame(minHeight: 100).border(.secondary.opacity(0.3))
+        Section {
+          TextField("名前", text: Binding(get: { m.definition?["name"]?.string ?? "" }, set: { m.definition?["name"] = .string($0) }))
+          TextField("短い概要", text: meta(m, "description"))
+          LabeledContent("詳しい処理内容") {
+            TextEditor(text: meta(m, "plan")).frame(minHeight: 80).border(.secondary.opacity(0.3))
           }
-        }
-        Section("仮の入力") {
-          let inputs = m.definition?["inputs"]?.array ?? []
-          ForEach(inputs.indices, id: \.self) { i in
-            HStack {
-              TextField("名前", text: Binding(get: { inputs[i]["name"]?.string ?? "" },
-                                             set: { v in editInputs(m) { $0[i]["name"] = .string(v) } }))
-              Toggle("省略可", isOn: Binding(get: { inputs[i]["optional"]?.bool ?? false },
-                                          set: { v in editInputs(m) { $0[i]["optional"] = v ? .bool(true) : nil } }))
-              Button { editInputs(m) { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
-            }
+          LabeledContent("制約") {
+            TextEditor(text: meta(m, "constraints")).frame(minHeight: 44).border(.secondary.opacity(0.3))
           }
-          Button("入力を追加") { editInputs(m) { $0.append(.object([("name", .string("in\($0.count + 1)"))])) } }
-        }
-        Section("仮の出力") {
-          ForEach($outputs) { $p in
-            HStack {
-              TextField("名前", text: $p.name)
-              Picker("", selection: $p.type) { ForEach(DraftPort.types, id: \.self) { Text($0).tag($0) } }.labelsHidden().frame(width: 120)
-              Button { outputs.removeAll { $0.id == p.id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
-            }
+          LabeledContent("完了条件") {
+            TextEditor(text: meta(m, "done")).frame(minHeight: 44).border(.secondary.opacity(0.3))
           }
-          Button("出力を追加") { outputs.append(DraftPort(name: "out\(outputs.count + 1)", type: "string")) }
-          Text("仮の入出力で先に配線できます。配線と内容を適用した後、Canvas の「Card を生成」で実装を依頼します。")
+        } footer: {
+          Text("型やコードはまだ要りません。仮の入出力で先に配線し、適用した後に Canvas の「Card を生成」で実装を依頼します。")
             .font(.caption).foregroundStyle(.secondary)
         }
+        portSection("仮の入力", ports: $inputs, add: "in")
+        portSection("仮の出力", ports: $outputs, add: "out")
       }
       .formStyle(.grouped)
       Divider()
       HStack {
+        Label("未実装（実行されません）", systemImage: "pencil.and.outline").foregroundStyle(.secondary)
         if let msg = m.message { Text(msg).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
         Spacer()
-        if m.unapplied || outputs != baseOutputs { Label("未適用の変更", systemImage: "pencil.circle.fill").foregroundStyle(.orange) }
-        Button("再読込") { m.reload(); outputs = baseOutputs }
-        Button("適用") { Task { await apply(m, defId) } }
-          .disabled(!(m.unapplied || outputs != baseOutputs) || !session.isEditable)
+        if m.unapplied || changed { Label("未適用の変更", systemImage: "pencil.circle.fill").foregroundStyle(.orange) }
+        Button("再読込") { m.reload(); load(m) }
+        Button("適用") { Task { await apply(m) } }
+          .disabled(!(m.unapplied || changed) || !session.isEditable)
         Button("閉じる") {
           Task {
-            if m.unapplied || outputs != baseOutputs { guard await apply(m, defId) else { return } }
+            if m.unapplied || changed { guard await apply(m) else { return } }
             dismiss()
           }
         }
@@ -144,35 +109,56 @@ struct DraftEditor: View {
     }
   }
 
+  private func portSection(_ title: LocalizedStringKey, ports: Binding<[DraftPort]>, add prefix: String) -> some View {
+    Section(title) {
+      ForEach(ports) { $p in
+        HStack {
+          TextField("名前", text: $p.name).frame(maxWidth: 140)
+          TextField("用途・説明", text: $p.purpose)
+          Button { ports.wrappedValue.removeAll { $0.id == p.id } } label: { Image(systemName: "minus.circle") }
+            .buttonStyle(.borderless)
+        }
+      }
+      Button("追加") {
+        var n = ports.wrappedValue.count + 1
+        while ports.wrappedValue.contains(where: { $0.name == "\(prefix)\(n)" }) { n += 1 }
+        ports.wrappedValue.append(DraftPort(name: "\(prefix)\(n)", purpose: ""))
+      }
+    }
+  }
+
   private func meta(_ m: CardEditorModel, _ k: String) -> Binding<String> {
     Binding(get: { m.meta?[k]?.string ?? "" }, set: { v in
       var meta = m.meta ?? .object([])
-      meta[k] = .string(v)
+      meta[k] = v.isEmpty ? nil : .string(v)
       m.meta = meta
     })
   }
 
-  private func editInputs(_ m: CardEditorModel, _ fn: (inout [JSONValue]) -> Void) {
-    var inputs = m.definition?["inputs"]?.array ?? []
-    fn(&inputs)
-    m.definition?["inputs"] = inputs.isEmpty ? nil : .array(inputs)
-  }
-
   @discardableResult
-  private func apply(_ m: CardEditorModel, _ defId: String) async -> Bool {
-    let p = "definitions/\(defId)/_outputs.fbs"
-    if outputs != baseOutputs {
-      let text = DraftPort.fbs(outputs.filter { !$0.name.isEmpty }, namespace: "draft_" + defId.replacingOccurrences(of: "-", with: "_"))
-      if text.isEmpty { m.removeFile(p) } else if session.sourcePaths.contains(p) { m.texts[p] = text } else { m.createFile("_outputs.fbs", text: text) }
+  private func apply(_ m: CardEditorModel) async -> Bool {
+    let valid = (inputs + outputs).allSatisfy { !$0.name.isEmpty && $0.name.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil }
+    guard valid else {
+      m.message = String(localized: "ポート名は英字・数字・_ で、英字か _ で始めてください。")
+      return false
     }
+    // Names in _card.json (inputs) and purposes in _meta.json (both sides).
+    m.definition?["inputs"] = inputs.isEmpty ? nil : .array(inputs.map { .object([("name", .string($0.name))]) })
+    var meta = m.meta ?? .object([])
+    func notes(_ ports: [DraftPort]) -> JSONValue? {
+      ports.isEmpty ? nil : .array(ports.map { p in
+        var o: JSONValue = .object([("name", .string(p.name))])
+        if !p.purpose.isEmpty { o["description"] = .string(p.purpose) }
+        return o
+      })
+    }
+    meta["inputs"] = notes(inputs)
+    meta["outputs"] = notes(outputs)
+    m.meta = meta
     let ok = await m.apply()
-    if ok { baseOutputs = outputs }
+    if ok { load(m) }
     return ok
   }
-}
-
-extension DraftPort {
-  static func == (a: DraftPort, b: DraftPort) -> Bool { a.name == b.name && a.type == b.type }
 }
 
 // MARK: - Card database

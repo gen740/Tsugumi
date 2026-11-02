@@ -16,6 +16,7 @@ struct Diagnostic: Identifiable, Hashable {
   let message: String
   let card: [String]?
   let path: String?
+  let offset: UInt64?
 
   init(_ d: Tsugumi_Data_DiagnosticT) {
     error = d.severity != .warning
@@ -23,6 +24,7 @@ struct Diagnostic: Identifiable, Hashable {
     message = d.message
     card = d.card?.path
     path = d.path
+    offset = d.offset
   }
 }
 

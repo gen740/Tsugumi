@@ -32,27 +32,36 @@ struct ApplicationSettings: View {
     }
   }
 
-  @State private var category: Category = .general
+  @SceneStorage("settings.category") private var stored = Category.general.rawValue
+
+  private var category: Category { Category(rawValue: stored) ?? .general }
 
   var body: some View {
-    NavigationSplitView {
-      List(Category.allCases, selection: $category) { c in
-        Label(c.title, systemImage: c.symbol).tag(c)
+    // A plain list + content (no split view): switching categories, going back
+    // and reopening the window always work, whatever a category is doing.
+    HStack(spacing: 0) {
+      List(Category.allCases, selection: Binding(get: { Optional(category) }, set: { if let c = $0 { stored = c.rawValue } })) { c in
+        Label(c.title, systemImage: c.symbol).tag(Optional(c))
       }
-      .navigationSplitViewColumnWidth(180)
-    } detail: {
-      Group {
-        switch category {
-        case .general: GeneralSettings()
-        case .appearance: AppearanceSettings()
-        case .editor: EditorSettings()
-        case .shortcuts: ShortcutSettings()
-        case .skills: SkillSettings()
-        case .api: APISettings()
-        case .connections: ConnectionSettings()
+      .listStyle(.sidebar)
+      .frame(width: 180)
+      Divider()
+      VStack(alignment: .leading, spacing: 0) {
+        Text(category.title).font(.title2.bold()).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
+        Group {
+          switch category {
+          case .general: GeneralSettings()
+          case .appearance: AppearanceSettings()
+          case .editor: EditorSettings()
+          case .shortcuts: ShortcutSettings()
+          case .skills: SkillSettings()
+          case .api: APISettings()
+          case .connections: ConnectionSettings()
+          }
         }
+        .id(category)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       }
-      .navigationTitle(category.title)
     }
   }
 }
@@ -80,72 +89,96 @@ private struct GeneralSettings: View {
 
 private struct AppearanceSettings: View {
   @Environment(AppPreferences.self) private var prefs
+  @State private var items = PreviewSamples.items()
 
   var body: some View {
     @Bindable var prefs = prefs
-    HStack(alignment: .top) {
+    HStack(alignment: .top, spacing: 0) {
       Form {
         Picker("テーマ", selection: $prefs.theme) {
           ForEach(AppPreferences.Theme.allCases) { Text($0.label).tag($0) }
+        }
+        Picker("流れの向き", selection: $prefs.flowDirection) {
+          ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
         }
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
       }
       .formStyle(.grouped)
-      VStack(alignment: .leading) {
-        Text("プレビュー").font(.headline)
-        CanvasPreview(grid: prefs.showGrid, gridSize: prefs.gridSize, animate: prefs.animateLines)
-          .frame(width: 240, height: 160)
+      .frame(width: 300)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）")
+          .font(.caption).foregroundStyle(.secondary)
+        CanvasSurface(items: $items, wires: PreviewSamples.wires, flow: prefs.flowDirection, grid: prefs.showGrid,
+                      gridSize: prefs.gridSize, animateWires: prefs.animateLines)
           .clipShape(RoundedRectangle(cornerRadius: 8))
           .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.secondary.opacity(0.3)))
       }
-      .padding()
-    }
-  }
-}
-
-private struct CanvasPreview: View {
-  let grid: Bool
-  let gridSize: Double
-  let animate: Bool
-
-  var body: some View {
-    SwiftUI.TimelineView(.animation(minimumInterval: 1 / 30, paused: !animate)) { t in
-      Canvas { ctx, size in
-        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
-        if grid {
-          var x = 0.0
-          while x < size.width {
-            var y = 0.0
-            while y < size.height {
-              ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.6, height: 1.6)), with: .color(.secondary.opacity(0.35)))
-              y += gridSize
-            }
-            x += gridSize
-          }
-        }
-        let a = CGRect(x: 16, y: 40, width: 80, height: 44), b = CGRect(x: 144, y: 80, width: 80, height: 44)
-        for r in [a, b] {
-          ctx.fill(Path(roundedRect: r, cornerRadius: 6), with: .color(Color(nsColor: .controlBackgroundColor)))
-          ctx.stroke(Path(roundedRect: r, cornerRadius: 6), with: .color(.secondary.opacity(0.5)))
-        }
-        var p = Path()
-        p.move(to: CGPoint(x: a.maxX, y: a.midY))
-        p.addCurve(to: CGPoint(x: b.minX, y: b.midY), control1: CGPoint(x: a.maxX + 40, y: a.midY), control2: CGPoint(x: b.minX - 40, y: b.midY))
-        let phase = animate ? -CGFloat(t.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 20) : 0
-        ctx.stroke(p, with: .color(.orange), style: StrokeStyle(lineWidth: 1.8, dash: animate ? [8, 6] : [], dashPhase: phase))
-      }
+      .padding(12)
     }
   }
 }
 
 private struct EditorSettings: View {
   @Environment(AppPreferences.self) private var prefs
+  @State private var language = "python"
+  @State private var sample = EditorSettings.samples["python"]!
+
+  static let samples: [String: String] = [
+    "python": """
+    # Collatz steps for one starting value
+    def steps(n: int, limit: int = 1000) -> list[int]:
+        \"\"\"Returns the sequence down to 1.\"\"\"
+        seen = [n]
+        while n != 1 and len(seen) < limit:
+            if n % 2 == 0:
+                n = n // 2
+            else:
+                n = 3 * n + 1
+            seen.append(n)
+        return seen
+
+    print("27 ->", len(steps(27)) - 1, "steps")
+
+    """,
+    "cpp": """
+    // Collatz steps for one starting value
+    #include <cstdint>
+    #include <vector>
+
+    std::vector<uint64_t> steps(uint64_t n, size_t limit = 1000) {
+      std::vector<uint64_t> seen{n};
+      while (n != 1 && seen.size() < limit) {
+        if (n % 2 == 0) {
+          n /= 2;
+        } else {
+          n = 3 * n + 1;  // may overflow for large n
+        }
+        seen.push_back(n);
+      }
+      return seen;
+    }
+
+    """,
+    "nix": """
+    # A Python Card with one extra package
+    { pkgs, inputs, params }:
+    {
+      package = inputs.tsugumi.pythonCard {
+        src = ./src;
+        packages = ps: [ ps.numpy ];
+      };
+      reuseWorker = true;
+      exports = { scale = x: x * 2; };
+    }
+
+    """,
+  ]
 
   var body: some View {
     @Bindable var prefs = prefs
-    HStack(alignment: .top) {
+    HStack(alignment: .top, spacing: 0) {
       Form {
         Picker("インデント幅", selection: $prefs.indentWidth) {
           Text("2").tag(2)
@@ -155,15 +188,28 @@ private struct EditorSettings: View {
         .pickerStyle(.segmented)
         Toggle("インデントガイドを表示", isOn: $prefs.showIndentGuides)
         Stepper("文字サイズ: \(Int(prefs.editorFontSize))", value: $prefs.editorFontSize, in: 9...24)
+        Picker("配色", selection: $prefs.editorTheme) {
+          ForEach(EditorTheme.allCases) { Text($0.label).tag($0) }
+        }
       }
       .formStyle(.grouped)
-      VStack(alignment: .leading) {
-        Text("プレビュー").font(.headline)
-        CodeEditor(text: .constant("def main(ctx):\n    if ctx:\n        return 1\n    return 0\n"), language: "python", editable: false)
-          .frame(width: 260, height: 140)
+      .frame(width: 280)
+      VStack(alignment: .leading, spacing: 6) {
+        Picker("", selection: $language) {
+          Text("Python").tag("python")
+          Text("C++").tag("cpp")
+          Text("Nix").tag("nix")
+        }
+        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
+        .onChange(of: language) { sample = Self.samples[language] ?? "" }
+        // The same editor as Card settings: what you see here is what you get there.
+        CodeEditor(text: $sample, language: language)
+          .id("\(prefs.editorFontSize)-\(prefs.indentWidth)-\(prefs.showIndentGuides)-\(prefs.editorTheme.rawValue)")
           .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)))
+        Text("サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。")
+          .font(.caption).foregroundStyle(.secondary)
       }
-      .padding()
+      .padding(12)
     }
   }
 }
@@ -231,37 +277,70 @@ private struct KeyRecorder: NSViewRepresentable {
 
 private struct SkillSettings: View {
   @Environment(AppPreferences.self) private var prefs
-  @State private var counts: [String: Int] = [:]
+  @State private var query = ""
+  @State private var state = LoadState.idle
+  @State private var found: [Skill] = []
+
+  enum LoadState: Equatable {
+    case idle, loading, loaded, failed(String)
+  }
 
   var body: some View {
     @Bindable var prefs = prefs
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 8) {
       Text("チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      List {
-        ForEach($prefs.skillFolders) { $f in
-          HStack {
-            Toggle("", isOn: $f.enabled).labelsHidden()
-            VStack(alignment: .leading) {
-              Text(URL(fileURLWithPath: f.path).lastPathComponent)
-              Text(f.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+      GroupBox("フォルダ") {
+        VStack(alignment: .leading, spacing: 4) {
+          if prefs.skillFolders.isEmpty {
+            Text("フォルダはありません").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+          }
+          ForEach($prefs.skillFolders) { $f in
+            HStack {
+              Toggle("", isOn: $f.enabled).labelsHidden().toggleStyle(.checkbox)
+              Image(systemName: FileManager.default.fileExists(atPath: f.path) ? "folder" : "folder.badge.questionmark")
+                .foregroundStyle(FileManager.default.fileExists(atPath: f.path) ? Color.secondary : Color.orange)
+              Text(f.path).lineLimit(1).truncationMode(.middle).help(f.path)
+              Spacer()
+              Button { prefs.skillFolders.removeAll { $0.path == f.path } } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless).help("一覧から外す")
             }
-            Spacer()
-            Text("\(counts[f.path] ?? 0) 件").foregroundStyle(.secondary)
-            Button { prefs.skillFolders.removeAll { $0.path == f.path } } label: { Image(systemName: "minus.circle") }
-              .buttonStyle(.borderless)
+          }
+          HStack {
+            Button("フォルダを追加…") { add() }
+            Button("再読込") { load() }.disabled(state == .loading)
           }
         }
       }
-      .overlay { if prefs.skillFolders.isEmpty { ContentUnavailableView("フォルダはありません", systemImage: "folder.badge.plus") } }
       HStack {
-        Button("フォルダを追加…") { add() }
-        Button("再読込") { reload() }
-        Spacer()
+        TextField("Skill を検索", text: $query).textFieldStyle(.roundedBorder)
+        if state == .loading { ProgressView().controlSize(.small) }
       }
+      Group {
+        switch state {
+        case .failed(let m):
+          Label(m, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+        case .loading where found.isEmpty:
+          Text("読み込み中…").foregroundStyle(.secondary)
+        default:
+          let shown = found.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.description.localizedCaseInsensitiveContains(query) }
+          if shown.isEmpty {
+            Text(found.isEmpty ? "Skill はまだありません" : "一致する Skill はありません").foregroundStyle(.secondary)
+          } else {
+            List(shown) { sk in
+              VStack(alignment: .leading, spacing: 1) {
+                Text("$" + sk.name).font(.callout.monospaced())
+                Text("\(sk.description) · \(sk.source)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              }
+            }
+            .listStyle(.inset)
+          }
+        }
+      }
+      .frame(maxHeight: .infinity, alignment: .top)
     }
-    .padding()
-    .onAppear(perform: reload)
+    .padding(16)
+    .task(id: prefs.skillFolders) { load() }
   }
 
   private func add() {
@@ -270,12 +349,27 @@ private struct SkillSettings: View {
     p.canChooseFiles = false
     guard p.runModal() == .OK, let url = p.url, !prefs.skillFolders.contains(where: { $0.path == url.path }) else { return }
     prefs.skillFolders.append(SkillFolder(path: url.path))
-    reload()
   }
 
-  private func reload() {
-    for f in prefs.skillFolders { counts[f.path] = loadSkills(in: URL(fileURLWithPath: f.path), source: "").count }
-    for s in AppModel.shared.sessions.values { AppModel.shared.chat(for: s).reloadSkills() }
+  /// Reads the folders off the main thread; a slow or missing folder never blocks the window.
+  private func load() {
+    let folders = prefs.skillFolders.filter(\.enabled)
+    state = .loading
+    Task {
+      let result = await Task.detached(priority: .userInitiated) { () -> (skills: [Skill], missing: [String]) in
+        var out: [Skill] = []
+        var missing: [String] = []
+        for f in folders {
+          let url = URL(fileURLWithPath: f.path)
+          if !FileManager.default.fileExists(atPath: url.path) { missing.append(f.path); continue }
+          out += loadSkills(in: url, source: url.lastPathComponent)
+        }
+        return (out, missing)
+      }.value
+      found = result.skills
+      state = result.missing.isEmpty ? .loaded : .failed(String(localized: "見つからないフォルダ: ") + result.missing.joined(separator: ", "))
+      for chat in AppModel.shared.openChats { chat.reloadSkills() }
+    }
   }
 }
 

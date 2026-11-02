@@ -208,6 +208,23 @@ public extension RPCClient {
     return try await call(.projectimportrequest, r)
   }
 
+  /// Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
+  /// for one revision and returns the file list when ready.
+  func generatedContracts(card: [String], atRev: UInt64) async throws -> [Tsugumi_RPC_SDKFileT] {
+    let r = Tsugumi_RPC_CardSDKPrepareRequestT()
+    r.card = cardPath(card)
+    r.atRev = atRev
+    r.opId = UUID().uuidString.lowercased()
+    var res: Tsugumi_RPC_SDKPrepareResultT = try await call(.cardsdkpreparerequest, r)
+    for _ in 0..<100 where res.state == .pending {
+      try await Task.sleep(for: .milliseconds(100))
+      let s = Tsugumi_RPC_CardSDKStatusRequestT()
+      s.opId = res.opId
+      res = try await call(.cardsdkstatusrequest, s)
+    }
+    return res.files.compactMap { $0 }
+  }
+
   /// Deletes the project's build caches; documents and history are kept.
   func clearCache(opId: UUID) async throws -> Tsugumi_RPC_CacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()

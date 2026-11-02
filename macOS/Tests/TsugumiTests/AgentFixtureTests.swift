@@ -173,3 +173,81 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 }
+
+/// Draft from plan to implementation through the Agent: described and wired,
+/// saved and reloaded, converted by the Agent into a code Card (types, Nix,
+/// sources) that validates; the intent stays in _meta.json. A cancelled
+/// generation leaves the plan untouched.
+@Suite(.serialized) struct DraftGenerationTests {
+  func addDraft(_ client: RPCClient) async throws {
+    let snap = try await client.inspect()
+    var doc = try JSONValue.parse(snap.projectJson)
+    var cards = doc["canvas"]?["cards"]?.array ?? []
+    cards.append(.object([("id", .string("plan")), ("definition", .string("plan"))]))
+    var conns = doc["canvas"]?["connections"]?.array ?? []
+    conns.append(try JSONValue.parse(#"{"from":{"card":"src","port":"msg"},"to":{"card":"plan","port":"data"}}"#))
+    var canvas = doc["canvas"]!
+    canvas["cards"] = .array(cards)
+    canvas["connections"] = .array(conns)
+    doc["canvas"] = canvas
+    let meta = #"{"description":"Count words","plan":"Split the message text and count the words.","constraints":"No network","done":"summary holds the count","inputs":[{"name":"data","description":"the message"}],"outputs":[{"name":"summary","description":"the word count"}]}"#
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.putDefinition(id: "plan", cardJSON: #"{"name":"Word count","template":"draft","inputs":[{"name":"data"}]}"#, metaJSON: meta),
+      Change.setProject(doc.serialized()),
+    ])
+  }
+
+  @Test func draftIsPlannedSavedAndImplemented() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    try await addDraft(client)
+    // Reload from disk: the plan and its ports come back unchanged.
+    let snap0 = try await client.inspect()
+    _ = try await client.reload(baseRev: snap0.rev ?? 0, opId: UUID(), origin: "test")
+    let planned = try await client.inspect()
+    let draftPorts = planned.resolution.compactMap { $0 }.first { $0.card.path == ["plan"] }
+    #expect(draftPorts.map { $0.outputs.compactMap { $0 }.map(\.name) } == ["summary"])
+    #expect(planned.definitions.compactMap { $0 }.first { $0.id == "plan" }?.cardJson.contains("draft") == true)
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("Implement these Draft Cards in the root workflow.\n- plan (definition plan): Count words", context: []) { log.add($0) }
+    await waitFinished(log, seconds: 120)
+    #expect(log.text.contains("Implemented"), "\(log.all)")
+    let after = try await client.inspect()
+    let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == "plan" })
+    let card = try JSONValue.parse(def.cardJson)
+    #expect(card["language"]?.string == "bash" && card["template"] == nil)
+    #expect(def.metaJson?.contains("the word count") == true && def.metaJson?.contains("Count words") == true)
+    #expect(after.sources.compactMap { $0 }.map(\.path).contains("definitions/plan/_outputs.fbs"))
+    // Wiring kept; types now come from the implementation.
+    let resolved = after.resolution.compactMap { $0 }.first { $0.card.path == ["plan"] }
+    #expect(resolved?.inputs.first??.rootType != nil)
+    #expect(resolved?.outputs.first??.rootType == "generated.Text")
+    let validation = try await client.validate(atRev: after.rev ?? 0, targets: [["plan"]], executable: false)
+    #expect(validation.diagnostics.compactMap { $0 }.filter { $0.severity == .error }.isEmpty)
+    await client.close()
+  }
+
+  @Test func cancelledGenerationKeepsThePlan() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--slow", "0.3"])
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    try await addDraft(client)
+    let before = try await client.inspect()
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("Implement these Draft Cards in the root workflow.\n- plan (definition plan): Count words", context: []) { log.add($0) }
+    try await Task.sleep(for: .milliseconds(300))
+    await agent.cancel()
+    try await Task.sleep(for: .milliseconds(800))
+    let after = try await client.inspect()
+    #expect(after.rev == before.rev)
+    #expect(after.definitions.compactMap { $0 }.first { $0.id == "plan" }?.cardJson.contains("draft") == true)
+    await client.close()
+  }
+}

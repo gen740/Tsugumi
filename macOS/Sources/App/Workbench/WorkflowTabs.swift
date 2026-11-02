@@ -11,17 +11,34 @@ struct WorkflowTabs: View {
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
 
+  @State private var columns = NavigationSplitViewVisibility.all
+
   var body: some View {
-    VStack(spacing: 0) {
-      if workspace.tabs.count > 1 { tabBar }
+    // Sidebar, title and toolbar come from the split view so they never overlap,
+    // whatever the window size, sidebar width or project name.
+    NavigationSplitView(columnVisibility: $columns) {
       if let tab = workspace.active {
-        Workbench(workspace: workspace, session: session, tab: tab)
-          .id(tab.id)
-          .focusedSceneValue(\.workflowTab, tab)
-          .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
-          .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
+        WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
+          .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
+      }
+    } detail: {
+      VStack(spacing: 0) {
+        if workspace.tabs.count > 1 { tabBar }
+        if let tab = workspace.active {
+          Workbench(workspace: workspace, session: session, tab: tab)
+            .id(tab.id)
+            .focusedSceneValue(\.workflowTab, tab)
+            .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
+            .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
+        }
+      }
+      .inspector(isPresented: $workspace.showChat) {
+        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
+          .inspectorColumnWidth(min: 280, ideal: 360, max: 560)
       }
     }
+    .overlay { EnvironmentOverlay(session: session) }
+    .tsugumiLoading(EnvironmentOverlay.loading(session))
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
     .navigationTitle(session.scopeName([]))
@@ -39,7 +56,7 @@ struct WorkflowTabs: View {
       Button { Task { await session.save() } } label: { Label("保存", systemImage: "square.and.arrow.down") }
         .disabled(!session.dirty || !session.connected || session.saving)
         .help(session.dirty ? "変更を保存（\(AppPreferences.shared.shortcut(.save).label)）" : "未保存の変更はありません")
-      Toggle(isOn: $workspace.showChat) { Label("チャット", systemImage: "bubble.left.and.text.bubble.right") }
+      Button { workspace.showChat.toggle() } label: { Label("チャット", systemImage: "bubble.left.and.text.bubble.right") }
         .help("チャットの表示切替")
     }
   }
@@ -73,39 +90,29 @@ struct WorkflowTabs: View {
   }
 }
 
-/// Sidebar, canvas, status/log area and chat of one tab.
+/// Canvas and the status/log area of one tab (the sidebar and the chat
+/// belong to the window's split view).
 struct Workbench: View {
-  @Environment(AppModel.self) private var model
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
 
   var body: some View {
-    HSplitView {
-      WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
-        .frame(minWidth: 210, idealWidth: 250, maxWidth: 360)
-      VStack(spacing: 0) {
-        if workspace.showBottom {
-          VSplitView {
-            CanvasWorkspace(workspace: workspace, session: session, tab: tab)
-              .frame(minHeight: 280)
-            LogTimelinePanel(workspace: workspace, session: session, tab: tab)
-              .frame(minHeight: 160, idealHeight: 240)
-          }
-        } else {
+    VStack(spacing: 0) {
+      if workspace.showBottom {
+        VSplitView {
           CanvasWorkspace(workspace: workspace, session: session, tab: tab)
-            .frame(minHeight: 280, maxHeight: .infinity)
+            .frame(minHeight: 240)
+          LogTimelinePanel(workspace: workspace, session: session, tab: tab)
+            .frame(minHeight: 140, idealHeight: 220)
         }
-        StatusBar(workspace: workspace, session: session, tab: tab)
+      } else {
+        CanvasWorkspace(workspace: workspace, session: session, tab: tab)
+          .frame(minHeight: 240, maxHeight: .infinity)
       }
-      .frame(minWidth: 480)
-      if workspace.showChat {
-        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: tab)
-          .frame(minWidth: 300, idealWidth: 360, maxWidth: 560)
-      }
+      StatusBar(workspace: workspace, session: session, tab: tab)
     }
-    .overlay { EnvironmentOverlay(session: session) }
-    .tsugumiLoading(EnvironmentOverlay.loading(session))
+    .frame(minWidth: 360)
   }
 }
 

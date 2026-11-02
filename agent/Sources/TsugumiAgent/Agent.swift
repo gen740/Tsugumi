@@ -96,7 +96,7 @@ public actor Agent {
     succeeded/failed/cancelled and read results with run_record. Cancelling runs requires an explicit run_cancel.
   - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
     "card_json": "<_card.json>", "meta_json": "<_meta.json>"}}, {"value_type": "PutSource", "value": {"path":
-    "definitions/<id>/<file>", "bytes": [...utf-8 bytes...], "base_hash": "<hash when replacing>"}}, RemoveDefinition.
+    "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
     One save is one transaction: either everything is stored or nothing is.
   - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description, plan,
     constraints, done, inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or

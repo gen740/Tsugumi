@@ -3,15 +3,23 @@ import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
-@Test func draftOutputsRoundTrip() {
-  let ports = [DraftPort(name: "report", type: "file"), DraftPort(name: "total", type: "ulong"), DraftPort(name: "label", type: "string")]
-  let fbs = DraftPort.fbs(ports, namespace: "draft_x")
-  #expect(fbs.contains(#"report:ReportValue (tsugumi: "file");"#))
-  #expect(fbs.contains("table TotalValue { value:ulong; }"))
-  let back = DraftPort.parse(fbs)
-  #expect(back.map(\.name) == ["report", "total", "label"])
-  #expect(back.map(\.type) == ["file", "ulong", "string"])
-  #expect(DraftPort.fbs([], namespace: "x").isEmpty)
+@Test func stagesOfCodeAndBuiltinCards() {
+  let code = StageProgress(stages: [.waiting, .prepare, .evaluate, .build, .execute, .validate, .save, .done], current: .build,
+                           reached: [.prepare, .evaluate])
+  #expect(code.stages.first == .waiting && code.stages.last == .done)
+  #expect(Stage(phase: .evaluate) == .evaluate && Stage(phase: .save) == .save && Stage(phase: .unspecified) == nil)
+  // Stages run in the order the core reports them.
+  #expect(Stage.allCases.map(\.rawValue) == Array(0..<Stage.allCases.count))
+}
+
+@Test func wirePortsFollowTheFlow() {
+  let data = CardNodeData(title: "x", kind: .code, subtitle: "", summary: nil,
+                          inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")])
+  let down = CardGeometry(data, flow: .topToBottom)
+  #expect(down.port("a", output: false).y == 0 && down.port("out", output: true).y == down.height)
+  #expect(down.port("a", output: false).x < down.port("b", output: false).x)
+  let right = CardGeometry(data, flow: .leftToRight)
+  #expect(right.port("a", output: false).x == 0 && right.port("out", output: true).x == CardGeometry.width)
 }
 
 @Test func fileTreeGroupsFolders() {
@@ -45,13 +53,15 @@ import Testing
   #expect(skills[1].description == "Review a Card")
 }
 
-@Test func collapsedCardsAnchorPortsOnTheHeader() {
-  let open = CardGeometry(inputs: ["a", "b"], outputs: ["x"], collapsed: false, summary: true, params: 1, result: true)
-  let closed = CardGeometry(inputs: ["a", "b"], outputs: ["x"], collapsed: true, summary: true, params: 1, result: true)
+@Test func collapsedCardsKeepTheirPortsOnTheEdges() {
+  var data = CardNodeData(title: "x", kind: .code, subtitle: "", summary: "s",
+                          inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "x")])
+  data.collapsed = true
+  let closed = CardGeometry(data, flow: .leftToRight)
   #expect(closed.height == CardGeometry.header)
   #expect(closed.port("b", output: false) == CGPoint(x: 0, y: CardGeometry.header / 2))
-  #expect(open.port("b", output: false).y > open.port("a", output: false).y)
-  #expect(open.port("x", output: true).x == CardGeometry.width)
+  let down = CardGeometry(data, flow: .topToBottom)
+  #expect(down.port("x", output: true).y == CardGeometry.header)
 }
 
 @Test func shortcutsHaveNoDefaultConflicts() {

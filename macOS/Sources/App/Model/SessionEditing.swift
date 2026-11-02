@@ -85,6 +85,20 @@ extension ProjectSession {
     }
   }
 
+  /// Every Card (any depth) placed from a definition.
+  func instances(ofDefinition id: String) -> [CardKey] {
+    var out: [CardKey] = []
+    func walk(_ scope: [String]) {
+      for c in cards(in: scope) {
+        guard let cid = c["id"]?.string else { continue }
+        if c["definition"]?.string == id { out.append(key(scope + [cid])) }
+        if c["canvas"] != nil { walk(scope + [cid]) }
+      }
+    }
+    walk([])
+    return out
+  }
+
   func usageCount(ofDefinition id: String) -> Int {
     func count(_ scope: [String]) -> Int {
       cards(in: scope).reduce(0) { n, c in
@@ -106,6 +120,17 @@ extension ProjectSession {
   }
 
   func collapsed(_ k: CardKey) -> Bool { layout["cards"]?[k]?["collapsed"]?.bool ?? false }
+
+  /// The Card instance as last confirmed by the core (not the draft).
+  func confirmedInstance(_ k: CardKey) -> JSONValue? {
+    var graph = confirmedProject["canvas"]
+    let p = path(k)
+    for id in p.dropLast() {
+      guard let card = graph?["cards"]?.array?.first(where: { $0["id"]?.string == id }) else { return nil }
+      graph = card["canvas"]
+    }
+    return graph?["cards"]?.array?.first { $0["id"]?.string == p.last }
+  }
 
   // MARK: - Cards and connections
 
@@ -258,6 +283,86 @@ extension ProjectSession {
         c["params"] = (params.object?.isEmpty ?? true) ? nil : params
       }
     }
+  }
+
+  /// Moves the selected Cards into a new Card in Card. Wires crossing the
+  /// selection become its boundary ports, so the graph computes the same.
+  @discardableResult
+  func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "子 Workflow")) -> CardKey? {
+    let ids = Set(keys.compactMap { path($0).last })
+    guard !ids.isEmpty else { return nil }
+    let newId = uniqueId("sub", in: scope)
+    let newKey = key(scope + [newId])
+    edit { s in
+      var center = CGPoint.zero
+      for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
+      center.x /= CGFloat(keys.count)
+      center.y /= CGFloat(keys.count)
+      s.updateGraph(scope) { g in
+        let all = g["cards"]?.array ?? []
+        let conns = g["connections"]?.array ?? []
+        var inner: [JSONValue] = [], outer: [JSONValue] = []
+        var innerConns: [JSONValue] = [], outerConns: [JSONValue] = []
+        var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
+        for c in all { if ids.contains(c["id"]?.string ?? "") { inner.append(c) } else { outer.append(c) } }
+        func portName(_ list: [(String, JSONValue)], _ card: String, _ port: String) -> String {
+          var n = "\(card)_\(port)"
+          var i = 2
+          while list.contains(where: { $0.0 == n }) { n = "\(card)_\(port)\(i)"; i += 1 }
+          return n
+        }
+        for c in conns {
+          let f = c["from"]?["card"]?.string ?? "", t = c["to"]?["card"]?.string ?? ""
+          let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
+          switch (ids.contains(f), ids.contains(t)) {
+          case (true, true): innerConns.append(c)
+          case (false, false): outerConns.append(c)
+          case (false, true):
+            // One boundary input per inner input port (several wires may share it).
+            let existing = inputs.first { $0.1["card"]?.string == t && $0.1["port"]?.string == tp }?.0
+            let n = existing ?? portName(inputs, t, tp)
+            if existing == nil { inputs.append((n, .object([("card", .string(t)), ("port", .string(tp))]))) }
+            var nc = c
+            nc["to"] = .object([("card", .string(newId)), ("port", .string(n))])
+            outerConns.append(nc)
+          case (true, false):
+            let existing = outputs.first { $0.1["card"]?.string == f && $0.1["port"]?.string == fp }?.0
+            let n = existing ?? portName(outputs, f, fp)
+            if existing == nil { outputs.append((n, .object([("card", .string(f)), ("port", .string(fp))]))) }
+            var nc = c
+            nc["from"] = .object([("card", .string(newId)), ("port", .string(n))])
+            outerConns.append(nc)
+          }
+        }
+        outer.append(.object([
+          ("id", .string(newId)), ("name", .string(name)),
+          ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
+          ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
+        ]))
+        g["cards"] = .array(outer)
+        g["connections"] = .array(outerConns)
+      }
+      // Layout: inner positions keep their arrangement under the new path.
+      if var cards = s.layout["cards"]?.object {
+        cards = cards.map { k, v in
+          for id in ids {
+            let old = key(scope + [id])
+            if k == old || k.hasPrefix(old + "/") {
+              return (newKey + "/" + k.dropFirst(key(scope).isEmpty ? 0 : key(scope).count + 1), v)
+            }
+          }
+          return (k, v)
+        }
+        s.layout["cards"] = .object(cards)
+      }
+      s.setPosition(newKey, center)
+      s.updateGroups { groups in
+        for i in groups.indices where (groups[i]["scope"]?.string ?? "") == key(scope) {
+          groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
+        }
+      }
+    }
+    return newKey
   }
 
   // MARK: - Layout: notes, groups, output frames

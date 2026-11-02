@@ -70,7 +70,11 @@ enum SmokeTest {
 
         // A Draft with provisional outputs can be wired before it is implemented.
         let draft = s.createDefinition(name: "Smoke draft", template: .draft)
-        s.edit { $0.putSource("definitions/\(draft)/_outputs.fbs", DraftPort.fbs([DraftPort(name: "summary", type: "string")], namespace: "draft_smoke")) }
+        s.edit { s in
+          var meta = s.definitionMeta[draft] ?? .object([])
+          meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
+          s.setDefinition(draft, card: s.definitions[draft] ?? .object([]), meta: meta)
+        }
         let dk = s.addCard(definition: draft, in: [], at: CGPoint(x: 0, y: 600))
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
