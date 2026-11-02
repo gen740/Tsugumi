@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Observation
 
 /// Window values for the scenes that show one project (and optionally a
@@ -95,6 +96,7 @@ final class Workspace {
   var tabs: [WorkflowTab] = []
   var activeTab: UUID?
   var showChat = true
+  var columns: NavigationSplitViewVisibility = .all
   var showBottom = false
   var bottomPanel: BottomPanel = .log
   /// Log filter chosen from elsewhere (an issue, a Card menu).

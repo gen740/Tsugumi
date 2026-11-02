@@ -11,12 +11,10 @@ struct WorkflowTabs: View {
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
 
-  @State private var columns = NavigationSplitViewVisibility.all
-
   var body: some View {
     // Sidebar, title and toolbar come from the split view so they never overlap,
     // whatever the window size, sidebar width or project name.
-    NavigationSplitView(columnVisibility: $columns) {
+    NavigationSplitView(columnVisibility: $workspace.columns) {
       if let tab = workspace.active {
         WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)

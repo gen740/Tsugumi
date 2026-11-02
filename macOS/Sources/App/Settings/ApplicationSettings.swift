@@ -32,7 +32,7 @@ struct ApplicationSettings: View {
     }
   }
 
-  @SceneStorage("settings.category") private var stored = Category.general.rawValue
+  @AppStorage("settings.category") private var stored = Category.general.rawValue
 
   private var category: Category { Category(rawValue: stored) ?? .general }
 

@@ -501,10 +501,11 @@ struct CanvasSurface: View {
           Button { fit(geo.size) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help("全体表示")
         }
         .buttonStyle(.borderless)
-        .padding(4)
+        .controlSize(.small)
+        .padding(3)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
         .padding(6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
       }
       .coordinateSpace(name: "canvas")
       .clipped()

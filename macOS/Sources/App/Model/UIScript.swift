@@ -1,0 +1,139 @@
+import AppKit
+import Foundation
+import Observation
+import SwiftUI
+import TsugumiRPC
+
+/// Scripted UI checks: with TSUGUMI_UI_SCRIPT=<file> the app performs the
+/// listed steps on its real windows and writes `capture <name> <window>` lines
+/// to TSUGUMI_UI_LOG, pausing so an outside tool can take the picture.
+///
+///   wait <seconds>                  sidebar hide|show
+///   size <width> <height>           chat show|hide
+///   select <card path>              open card <card path> <category>
+///   open draft <card path>          open definitions | workflow-settings
+///   settings <category>             close settings
+///   edit <card path> <param> <v>    external <card path> <field> <value>
+///   capture <name>                  arrange
+@MainActor
+@Observable
+final class UIScript {
+  static let shared = UIScript()
+
+  enum Request: Equatable {
+    case card(CardRef), draft(CardRef), definitions(ProjectRef), workflowSettings(ProjectRef), settings
+  }
+
+  var request: Request?
+  @ObservationIgnored weak var workspace: Workspace?
+  /// Card settings windows that are open (scripts edit their working copies).
+  @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
+  @ObservationIgnored private var log: FileHandle?
+
+  static func runIfRequested() {
+    let env = ProcessInfo.processInfo.environment
+    guard let script = env["TSUGUMI_UI_SCRIPT"], let text = try? String(contentsOfFile: script, encoding: .utf8) else { return }
+    let logPath = env["TSUGUMI_UI_LOG"] ?? (script + ".log")
+    FileManager.default.createFile(atPath: logPath, contents: nil)
+    shared.log = FileHandle(forWritingAtPath: logPath)
+    Task { await shared.run(text.split(separator: "\n").map(String.init)) }
+  }
+
+  private func say(_ s: String) {
+    log?.write(Data((s + "\n").utf8))
+    try? log?.synchronize()
+  }
+
+  private var mainWindow: NSWindow? {
+    NSApp.windows.first { $0.isVisible && $0.frame.height > 300 && ($0.identifier?.rawValue.contains("main") ?? false) }
+      ?? NSApp.windows.filter { $0.isVisible && $0.frame.height > 300 }.max { $0.frame.width < $1.frame.width }
+  }
+
+  private func run(_ lines: [String]) async {
+    // Wait until the project is connected.
+    for _ in 0..<600 {
+      if let s = workspace?.session, s.connected { break }
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    for line in lines {
+      let w = line.split(separator: " ").map(String.init)
+      guard let cmd = w.first, !cmd.hasPrefix("#") else { continue }
+      say("step " + line)
+      let session = workspace?.session
+      let ref = session.map { ProjectRef(path: $0.identity.url.path) }
+      switch cmd {
+      case "wait": try? await Task.sleep(for: .milliseconds(Int((Double(w[1]) ?? 1) * 1000)))
+      case "sidebar": workspace?.columns = w[1] == "hide" ? .detailOnly : .all
+      case "chat": workspace?.showChat = w[1] == "show"
+      case "size":
+        if let win = mainWindow, let width = Double(w[1]), let height = Double(w[2]) {
+          var f = win.frame
+          f.size = CGSize(width: width, height: height)
+          win.setFrame(f, display: true, animate: false)
+        }
+      case "select": workspace?.active?.selection = [w[1]]
+      case "arrange": if let s = session, let t = workspace?.active { s.arrange(t.scope) }
+      case "open":
+        guard let ref else { break }
+        switch w[1] {
+        case "card":
+          let cat = CardEditorCategory(rawValue: w.count > 3 ? w[3] : "general") ?? .general
+          request = .card(CardRef(path: ref.path, card: w[2], category: cat))
+        case "draft": request = .draft(CardRef(path: ref.path, card: w[2]))
+        case "definitions": request = .definitions(ref)
+        case "workflow-settings": request = .workflowSettings(ref)
+        default: break
+        }
+      case "settings":
+        UserDefaults.standard.set(w[1], forKey: "settings.category")
+        request = .settings
+      case "close":
+        NSApp.windows.first { $0.title.contains(w.dropFirst().joined(separator: " ")) }?.performClose(nil)
+      case "edit":
+        if let s = session { s.setParam(w[1], w[2], parseParam(w[3], "uint64")) }
+      case "external":
+        // Another client changes the Card while this window holds edits.
+        if let s = session, let rpc = s.rpc {
+          var doc = s.confirmedProject
+          func patch(_ g: inout JSONValue, _ p: ArraySlice<String>) {
+            guard var cards = g["cards"]?.array, let i = cards.firstIndex(where: { $0["id"]?.string == p.first }) else { return }
+            if p.count == 1 { cards[i][w[2]] = .string(w.dropFirst(3).joined(separator: " ")) } else if var inner = cards[i]["canvas"] {
+              patch(&inner, p.dropFirst())
+              cards[i]["canvas"] = inner
+            }
+            g["cards"] = .array(cards)
+          }
+          var canvas = doc["canvas"] ?? .object([])
+          patch(&canvas, path(w[1])[...])
+          doc["canvas"] = canvas
+          _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other", changes: [Change.setProject(doc.serialized())])
+        }
+      case "editor":
+        // editor <card> set <field> <value> | category <name> | apply
+        guard let m = editors[w[1]] else { say("no editor for \(w[1])"); break }
+        switch w[2] {
+        case "set": m.instance[w[3]] = .string(w.dropFirst(4).joined(separator: " "))
+        case "category": m.category = CardEditorCategory(rawValue: w[3]) ?? m.category
+        case "apply":
+          let ok = await m.apply()
+          say("apply \(ok) conflict=\(m.conflict != nil) unapplied=\(m.unapplied) description=\(m.instance["description"]?.string ?? "")")
+        default: break
+        }
+      case "windows":
+        for win in NSApp.windows where win.isVisible { say("window \(win.windowNumber) \(win.identifier?.rawValue ?? "-") \(win.title)") }
+      case "capture":
+        let windows = NSApp.windows.filter { $0.isVisible && $0.frame.height > 120 }
+        let wanted = w.dropFirst(2).joined(separator: " ")
+        let target = w.count > 2
+          ? windows.first { $0.title.contains(wanted) || ($0.identifier?.rawValue.localizedCaseInsensitiveContains(wanted) ?? false) }
+          : mainWindow
+        say("capture \(w[1]) \(target?.windowNumber ?? -1)")
+        try? await Task.sleep(for: .milliseconds(1800))
+      case "quit": NSApp.terminate(nil)
+      default: say("unknown " + line)
+      }
+      try? await Task.sleep(for: .milliseconds(500))
+    }
+    say("done")
+  }
+}

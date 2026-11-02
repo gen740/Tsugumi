@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Task { @MainActor in
       AppPreferences.shared.applyTheme()
       SmokeTest.runIfRequested(AppModel.shared)
+      UIScript.runIfRequested()
     }
   }
 }

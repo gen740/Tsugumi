@@ -59,7 +59,7 @@ def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
     root = tmp_path_factory.mktemp("cards") / "p"
     write(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
-    e = ContainerEnv(root, "tsugumi-test-cards").start()
+    e = ContainerEnv(root, os.environ.get("TSUGUMI_TEST_CARDS_NAME", "tsugumi-test-cards")).start()
     yield e
     e.cleanup()
 
@@ -112,7 +112,8 @@ def test_backpressure_stall_ends_the_run(env):
         "trigger": {"template": "trigger"},
         "seed": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"'),
         "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
-        "step": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["x"], maxRuns=1000, reuseWorker=True),
+        "step": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["x"], maxRuns=1000,
+                     extra="  reuseWorker = true;\n"),
         "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
         "branch": {"template": "branch"},
     }
@@ -150,7 +151,9 @@ def test_shell_step_contract(env):
     run_id, st = run(c, "begin")
     states = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)) for k in
               ("make", "use", "small", "postfail", "scriptfail", "slow")}
-    assert states["use"].status.state == CardState.succeeded, log(c, run_id, "use", 2)
+    detail = {k: (r.status.state, r.status.failure and text(r.status.failure.diagnostic)) for k, r in states.items()}
+    assert states["make"].status.state == CardState.succeeded, (detail, log(c, run_id, "make", 2)[-800:])
+    assert states["use"].status.state == CardState.succeeded, (detail, log(c, run_id, "use", 2)[-800:])
     assert states["small"].status.state == CardState.succeeded, log(c, run_id, "small", 2)
     # A later successful step never clears an earlier failure; post failure fails the Card.
     assert states["postfail"].status.state == CardState.failed
@@ -163,9 +166,11 @@ def test_shell_step_contract(env):
 
 
 def proc_count(env, pattern: str) -> int:
-    out = subprocess.run(["container", "exec", env.name, "sh", "-c",
-                          f"cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' | grep -o '{pattern}' | wc -l"],
-                         capture_output=True, text=True)
+    """Processes in the environment whose command line contains `pattern`
+    (NUL separators removed). Bash builtins only: the image has no grep."""
+    script = ("n=0; for f in /proc/[0-9]*/cmdline; do c=$(< \"$f\") 2>/dev/null; "
+              f"case \"$c\" in *{pattern}*) n=$((n+1));; esac; done; echo $n")
+    out = subprocess.run(["container", "exec", env.name, "bash", "-c", script], capture_output=True, text=True)
     return int(out.stdout.strip() or "0")
 
 
@@ -178,28 +183,43 @@ def test_cancel_ends_every_descendant(env, sandbox):
     acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
     run_id = text(acc.run.runId)
     deadline = time.time() + 600
-    while proc_count(env, "sleep 271") == 0:
-        assert time.time() < deadline, "the Card never started"
-        time.sleep(0.5)
-    t0 = time.time()
-    c.call("RunCancelRequest", runId=run_id)
-    while c.call("RunStatusRequest", runId=run_id).state not in (RunState.cancelled, RunState.failed):
-        time.sleep(0.05)
-    assert time.time() - t0 < 5
-    time.sleep(1)
-    assert proc_count(env, "sleep 271") == 0 and proc_count(env, "sleep 3141") == 0
+    try:
+        while proc_count(env, "sleep271") == 0:
+            assert time.time() < deadline, "the Card never started"
+            assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded)
+            time.sleep(0.5)
+        t0 = time.time()
+        c.call("RunCancelRequest", runId=run_id)
+        while c.call("RunStatusRequest", runId=run_id).state not in (RunState.cancelled, RunState.failed):
+            time.sleep(0.05)
+        assert time.time() - t0 < 5
+        time.sleep(1)
+        assert proc_count(env, "sleep271") == 0 and proc_count(env, "sleep3141") == 0
+    finally:
+        c.call("RunCancelRequest", runId=run_id)
 
 
 def test_isolation(env):
-    probe = ("! ls /project 2>/dev/null && ! cat /control/server.ready 2>/dev/null && "
-             "! (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && ! ls /persist 2>/dev/null && "
-             "echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"")
-    open_fs = ("! (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && ! cat /control/server.ready 2>/dev/null && "
-               "test \"$(id -u)\" = 65534 && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"")
+    # Bash builtins only: Cards get no coreutils unless their package brings them.
+    probe = ("set +e; fail=0; "
+             # Only the Card's own work folder exists under /project (empty parents).
+             "[ -e /project/tsugumi.json ] && { echo 'project files visible'; fail=1; }; "
+             "[ -e /project/definitions ] && { echo 'definitions visible'; fail=1; }; "
+             "[ -e /control/server.ready ] && { echo 'control visible'; fail=1; }; "
+             "[ -e /persist ] && { echo 'persist visible'; fail=1; }; "
+             "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
+             "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
+    open_fs = ("set +e; fail=0; "
+               "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
+               "(read -r x < /control/server.ready) 2>/dev/null && { echo 'token readable'; fail=1; }; "
+               "[ \"$UID\" = 65534 ] || { echo \"uid $UID\"; fail=1; }; "
+               "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
     defs = {"trigger": {"template": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
     c = load(env, defs, [card("begin", "trigger"), card("probe", "probe"), card("open", "open")], [])
     run_id, st = run(c, "begin")
-    assert st.state == RunState.succeeded, (log(c, run_id, "probe", 2), log(c, run_id, "open", 2))
+    detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
+              for k in ("probe", "open")}
+    assert st.state == RunState.succeeded, detail
 
 
 def test_nix_upstream_references(env):

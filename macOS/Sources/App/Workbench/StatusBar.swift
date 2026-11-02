@@ -13,32 +13,17 @@ struct StatusBar: View {
   @State private var confirmDiscard = false
 
   var body: some View {
-    HStack(spacing: 14) {
-      runState.fixedSize()
-      Divider().frame(height: 14)
-      syncState.fixedSize()
-      if session.remoteChangePending && session.dirty {
-        Label("他の場所で更新されました", systemImage: "arrow.triangle.2.circlepath")
-          .foregroundStyle(.orange)
-          .help("変更は revision \(session.draftBaseRev) を基準にしています。保存すると競合として検出されます。")
+    // Full, compact and minimal layouts: the bar never overlaps itself, and
+    // the run state and the save state stay visible at any width.
+    ViewThatFits(in: .horizontal) {
+      bar(compact: false)
+      bar(compact: true)
+      HStack(spacing: 8) {
+        runState(short: true)
+        syncState(short: true)
+        Spacer(minLength: 4)
+        panelPicker(icons: true)
       }
-      Divider().frame(height: 14)
-      counts.fixedSize()
-      Spacer(minLength: 8)
-      if let n = session.notice {
-        Label(n, systemImage: "info.circle").lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary).help(n)
-          .layoutPriority(-1)
-        Button { session.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
-      }
-      Picker("", selection: Binding(get: { workspace.showBottom ? workspace.bottomPanel : nil },
-                                    set: { v in
-                                      if let v { workspace.bottomPanel = v; workspace.showBottom = true } else { workspace.showBottom = false }
-                                    })) {
-        Text("閉じる").tag(BottomPanel?.none)
-        ForEach(BottomPanel.allCases) { Text($0.title).tag(Optional($0)) }
-      }
-      .pickerStyle(.segmented).labelsHidden().fixedSize()
-      .help("全体ログと時間軸上の実行状況")
     }
     .font(.callout)
     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -53,28 +38,76 @@ struct StatusBar: View {
     } message: { Text("破棄した変更は取り消せません。必要なら先に「変更をコピー」してください。") }
   }
 
-  private var runState: some View {
+  private func bar(compact: Bool) -> some View {
+    HStack(spacing: compact ? 8 : 14) {
+      runState(short: compact).fixedSize()
+      Divider().frame(height: 14)
+      syncState(short: compact).fixedSize()
+      if session.remoteChangePending && session.dirty {
+        Group {
+          if compact { Image(systemName: "arrow.triangle.2.circlepath") } else {
+            Label("他の場所で更新されました", systemImage: "arrow.triangle.2.circlepath")
+          }
+        }
+          .foregroundStyle(.orange)
+          .help("変更は revision \(session.draftBaseRev) を基準にしています。保存すると競合として検出されます。")
+      }
+      if !compact {
+        Divider().frame(height: 14)
+        counts.fixedSize()
+      }
+      Spacer(minLength: 8)
+      if !compact, let n = session.notice {
+        Label(n, systemImage: "info.circle").lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary).help(n)
+          .frame(maxWidth: 260)
+        Button { session.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
+      }
+      panelPicker(icons: compact).fixedSize()
+    }
+    .fixedSize(horizontal: true, vertical: false)
+  }
+
+  private func panelPicker(icons: Bool) -> some View {
+    Picker("", selection: Binding(get: { workspace.showBottom ? workspace.bottomPanel : nil },
+                                  set: { v in
+                                    if let v { workspace.bottomPanel = v; workspace.showBottom = true } else { workspace.showBottom = false }
+                                  })) {
+      if icons {
+        Image(systemName: "rectangle.bottomhalf.inset.filled").tag(BottomPanel?.none).help("閉じる")
+        Image(systemName: "text.alignleft").tag(Optional(BottomPanel.log)).help("ログ")
+        Image(systemName: "chart.bar.xaxis").tag(Optional(BottomPanel.timeline)).help("タイムライン")
+      } else {
+        Text("閉じる").tag(BottomPanel?.none)
+        ForEach(BottomPanel.allCases) { Text($0.title).tag(Optional($0)) }
+      }
+    }
+    .pickerStyle(.segmented).labelsHidden()
+    .help("全体ログと時間軸上の実行状況")
+  }
+
+  private func runState(short: Bool) -> some View {
     let s = session.runStatus?.state ?? .idle
     return HStack(spacing: 4) {
       Image(systemName: s.symbol).foregroundStyle(s.color)
-      Text("実行: \(s.label)")
-      if let f = session.runStatus?.failure, s == .failed {
-        Text("· \(f.diagnostic ?? String(describing: f.kind))").lineLimit(1).foregroundStyle(.secondary)
+      Text(short ? s.label : String(localized: "実行: \(s.label)"))
+      if !short, let f = session.runStatus?.failure, s == .failed {
+        Text("· \(f.diagnostic ?? String(describing: f.kind))").lineLimit(1).foregroundStyle(.secondary).frame(maxWidth: 260)
       }
     }
+    .help(s.label)
     .accessibilityElement(children: .combine)
   }
 
-  private var syncState: some View {
+  private func syncState(short: Bool) -> some View {
     Button { showSync.toggle() } label: {
       HStack(spacing: 4) {
         switch session.syncState {
         case .saved:
           Image(systemName: "checkmark.icloud").foregroundStyle(.green)
-          Text("保存済み · rev \(session.rev)")
+          Text(short ? String(localized: "保存済み") : String(localized: "保存済み · rev \(session.rev)"))
         case .unsaved:
           Image(systemName: "pencil.circle.fill").foregroundStyle(.orange)
-          Text("未保存の変更")
+          Text(short ? String(localized: "未保存") : String(localized: "未保存の変更"))
         case .saving:
           ProgressView().controlSize(.mini)
           Text("保存中…")

@@ -32,13 +32,19 @@ struct CanvasWorkspace: View {
         .buttonStyle(.borderless)
         .disabled(tab.scope.isEmpty && tab.back.isEmpty)
         .help("戻る")
-      Button(session.scopeName([])) { tab.enter([]) }.buttonStyle(.link).lineLimit(1)
+      Button { tab.enter([]) } label: { Text(session.scopeName([])).lineLimit(1).truncationMode(.middle) }
+        .buttonStyle(.link)
+        .help(session.scopeName([]))
       ForEach(Array(tab.scope.enumerated()), id: \.offset) { i, _ in
         Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-        Button(session.scopeName(Array(tab.scope.prefix(i + 1)))) { tab.enter(Array(tab.scope.prefix(i + 1))) }
-          .buttonStyle(.link)
+        Button { tab.enter(Array(tab.scope.prefix(i + 1))) } label: {
+          Text(session.scopeName(Array(tab.scope.prefix(i + 1)))).lineLimit(1).truncationMode(.middle)
+        }
+        .buttonStyle(.link)
       }
     }
+    .frame(maxWidth: 320, alignment: .leading)
+    .fixedSize(horizontal: false, vertical: true)
     .padding(.horizontal, 8).padding(.vertical, 5)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
   }

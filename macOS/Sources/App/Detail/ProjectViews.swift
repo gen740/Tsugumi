@@ -28,8 +28,11 @@ struct DraftEditor: View {
 
   var body: some View {
     Group {
-      if let m = model, m.exists, m.definitionId != nil {
+      if let m = model, m.exists, m.definitionId != nil, m.kind == .draft {
         form(m)
+      } else if let m = model, m.exists, m.kind != .draft {
+        ContentUnavailableView("Draft ではありません", systemImage: "info.circle",
+                               description: Text("実装済みの Card は Card 設定で編集します。"))
       } else if model != nil {
         ContentUnavailableView("Draft が見つかりません", systemImage: "questionmark.square.dashed")
       } else {

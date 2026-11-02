@@ -9,6 +9,9 @@ struct MainWindow: View {
   @State private var workspace = Workspace()
   @State private var switchError: String?
 
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+
   var body: some View {
     Group {
       if model.setupNeeded {
@@ -19,7 +22,20 @@ struct MainWindow: View {
         ProjectChooser(onOpen: open)
       }
     }
+    .onChange(of: UIScript.shared.request) { _, r in
+      // Scripted UI checks (TSUGUMI_UI_SCRIPT) open windows the way menus do.
+      guard let r else { return }
+      switch r {
+      case .card(let ref): openWindow(id: "card", value: ref)
+      case .draft(let ref): openWindow(id: "draft", value: ref)
+      case .definitions(let ref): openWindow(id: "definitions", value: ref)
+      case .workflowSettings(let ref): openWindow(id: "workflow-settings", value: ref)
+      case .settings: openSettings()
+      }
+      UIScript.shared.request = nil
+    }
     .task {
+      UIScript.shared.workspace = workspace
       if model.setup == nil { await model.refreshSetup() }
       // `Tsugumi <project folder>` opens that project in the first window.
       if workspace.session == nil, let url = model.takeLaunchProject() { open(url) }

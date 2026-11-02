@@ -86,7 +86,13 @@ struct GraphCanvas: View {
         if !placed.isEmpty { tab.selection = Set(placed) }
         return !placed.isEmpty
       }
-      .onAppear { size = geo.size }
+      .onAppear {
+        size = geo.size
+        fitIfNew()
+      }
+      // A scope shown for the first time (no saved camera) shows its whole flow
+      // as soon as its Cards are there.
+      .onChange(of: cardKeys.count) { fitIfNew() }
       .onChange(of: geo.size) { size = geo.size }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
@@ -447,6 +453,11 @@ struct GraphCanvas: View {
     setZoom(camera.zoom * f, around: p ?? CGPoint(x: size.width / 2, y: size.height / 2))
   }
 
+  private func fitIfNew() {
+    guard session.cameras[scopeKey] == nil, !cardKeys.isEmpty, size.width > 0 else { return }
+    DispatchQueue.main.async { fitAll() }
+  }
+
   func fitAll() {
     var rect = CGRect.null
     for k in cardKeys { rect = rect.union(CGRect(origin: session.position(k), size: session.geometry(k).size)) }
@@ -456,9 +467,12 @@ struct GraphCanvas: View {
       }
     }
     guard !rect.isNull, size.width > 0 else { return }
-    rect = rect.insetBy(dx: -60, dy: -80)
-    let z = max(0.2, min(1.5, min(size.width / rect.width, size.height / rect.height)))
-    session.cameras[scopeKey] = (Double(size.width / 2 - rect.midX * z), Double(size.height / 2 - rect.midY * z), Double(z))
+    rect = rect.insetBy(dx: -40, dy: -40)
+    // Room for the controls floating on top and at the bottom of the canvas.
+    let top: CGFloat = 56, bottom: CGFloat = 48
+    let h = max(100, size.height - top - bottom)
+    let z = max(0.2, min(1.2, min(size.width / rect.width, h / rect.height)))
+    session.cameras[scopeKey] = (Double(size.width / 2 - rect.midX * z), Double(top + h / 2 - rect.midY * z), Double(z))
     saveView()
   }
 }

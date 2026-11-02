@@ -24,6 +24,9 @@ final class CardEditorModel {
   var applying = false
   /// The project changed since this copy was taken (see `apply`).
   var conflict: String?
+  /// Category shown in the window (kept with the model, so edits and the
+  /// place survive switching).
+  var category: CardEditorCategory = .general
   private var baseInstance: JSONValue = .object([])
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
@@ -165,7 +168,6 @@ struct CardSettingsEditor: View {
   let session: ProjectSession
   let ref: CardRef
   @State private var model: CardEditorModel?
-  @State private var category: CardEditorCategory = .general
   @State private var confirmReload = false
 
   var body: some View {
@@ -181,8 +183,10 @@ struct CardSettingsEditor: View {
     }
     .task {
       if model == nil {
-        model = CardEditorModel(session: session, cardKey: ref.card)
-        category = ref.category
+        let m = CardEditorModel(session: session, cardKey: ref.card)
+        m.category = ref.category
+        model = m
+        UIScript.shared.editors[ref.card] = m
       }
     }
     .navigationTitle("Card 設定 · \(session.displayName(ref.card))")
@@ -200,7 +204,7 @@ struct CardSettingsEditor: View {
 
   private func content(_ m: CardEditorModel) -> some View {
     HStack(spacing: 0) {
-      List(categories(m), selection: Binding(get: { Optional(category) }, set: { if let c = $0 { category = c } })) { c in
+      List(categories(m), selection: Binding(get: { Optional(m.category) }, set: { if let c = $0 { m.category = c } })) { c in
         Label(c.title, systemImage: c.symbol).tag(Optional(c))
       }
       .listStyle(.sidebar)
@@ -211,7 +215,7 @@ struct CardSettingsEditor: View {
           .frame(height: 150)
         Divider()
         Group {
-          switch category {
+          switch m.category {
           case .general: GeneralCategory(model: m)
           case .nix: SourceCategory(model: m, only: "default.nix")
           case .source: SourceCategory(model: m, only: nil)

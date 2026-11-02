@@ -58,6 +58,7 @@ constexpr int kControl = 4;
 std::mutex g_write_mu;
 std::atomic<bool> g_cancel{false};
 std::atomic<pid_t> g_child{0};
+uint64_t g_step = 0;
 
 bool read_full(int fd, void* p, size_t n) {
   auto* c = static_cast<char*>(p);
@@ -310,6 +311,13 @@ int run_shell(const std::string& bash, const std::string& script, const std::vec
   std::vector<char*> envp;
   for (const auto& e : env) envp.push_back(const_cast<char*>(e.c_str()));
   envp.push_back(nullptr);
+  // The script goes through a file: a single argv string is limited to
+  // 128 KiB on Linux, and Card scripts (or values inlined by Nix) can be larger.
+  std::string file;
+  for (const auto& e : env)
+    if (e.starts_with("TSUGUMI_TMP_DIR=")) file = e.substr(16);
+  file = (file.empty() ? std::string("/tmp") : file) + "/step-" + std::to_string(++g_step) + ".sh";
+  write_text(file, script);
   pid_t pid = ::fork();
   if (pid == 0) {
     ::setpgid(0, 0);
@@ -317,7 +325,7 @@ int run_shell(const std::string& bash, const std::string& script, const std::vec
     if (::chdir(cwd.c_str()) != 0) ::_exit(126);
     ::close(kData);
     ::close(kControl);
-    const char* argv[] = {bash.c_str(), "-e", "-o", "pipefail", "-c", script.c_str(), nullptr};
+    const char* argv[] = {bash.c_str(), "-e", "-o", "pipefail", file.c_str(), nullptr};
     ::execve(bash.c_str(), const_cast<char**>(argv), envp.data());
     ::_exit(127);
   }
