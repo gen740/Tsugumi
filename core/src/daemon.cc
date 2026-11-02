@@ -37,6 +37,7 @@ struct Options {
   stdfs::path worker;
   uint32_t cpus = 2;
   bool own_nix_store = false;
+  stdfs::path gcroots_dir;
   std::string fault;
 };
 
@@ -44,7 +45,7 @@ void usage() {
   std::fprintf(stderr,
                "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
-               "                [--worker PATH] [--cpus N] [--own-nix-store]\n");
+               "                [--worker PATH] [--cpus N] [--own-nix-store] [--gcroots-dir DIR]\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -70,6 +71,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--worker") o.worker = next();
     else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--own-nix-store") o.own_nix_store = true;
+    else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--help") return std::nullopt;
     else throw std::runtime_error("unknown option " + a);
   }
@@ -153,6 +155,7 @@ int run_daemon(int argc, char** argv) {
   so.fault = opt.fault;
   so.env_cpus = opt.cpus;
   so.own_nix_store = opt.own_nix_store;
+  so.gcroots_dir = opt.gcroots_dir;
   // Block termination signals before threads start; they are taken with sigwait.
   sigset_t set;
   sigemptyset(&set);

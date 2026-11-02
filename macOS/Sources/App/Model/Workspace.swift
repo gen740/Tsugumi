@@ -86,9 +86,22 @@ final class WorkflowTab: Identifiable {
 }
 
 enum BottomPanel: String, CaseIterable, Identifiable {
-  case log, timeline
+  case log, timeline, terminal
   var id: String { rawValue }
-  var title: String { self == .log ? "ログ" : "タイムライン" }
+  var title: String {
+    switch self {
+    case .log: return String(localized: "ログ")
+    case .timeline: return String(localized: "タイムライン")
+    case .terminal: return String(localized: "ターミナル")
+    }
+  }
+  var symbol: String {
+    switch self {
+    case .log: return "text.alignleft"
+    case .timeline: return "chart.bar.xaxis"
+    case .terminal: return "terminal"
+    }
+  }
 }
 
 /// State of one main window: which project is open, its tabs and panels.

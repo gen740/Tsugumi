@@ -67,12 +67,13 @@ struct StatusBar: View {
     .fixedSize(horizontal: true, vertical: false)
   }
 
-  /// Log and timeline icons: each opens its panel, a second click closes
+  /// Log, timeline and terminal icons: each opens its panel, a second click closes
   /// it, and only the open one is highlighted.
   private func panelPicker(icons: Bool) -> some View {
     HStack(spacing: 2) {
       panelButton(.log, symbol: "text.alignleft", shortcut: .toggleLog)
       panelButton(.timeline, symbol: "chart.bar.xaxis", shortcut: .toggleTimeline)
+      panelButton(.terminal, symbol: "terminal", shortcut: .toggleTerminal)
     }
   }
 

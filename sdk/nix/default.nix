@@ -181,6 +181,9 @@ rec {
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)
+  #   reuseWorker  true (default): the worker that loaded `run` serves every
+  #            invocation of the Card in a run (static state persists; preRun /
+  #            postRun still run each time); false: a new worker per invocation
   # preScript / postScript are the earlier names of preRun / postRun.
   manifest =
     card:
@@ -196,7 +199,7 @@ rec {
     assert lib.assertMsg (!(card ? preRun && card ? preScript)) "use preRun or preScript, not both";
     assert lib.assertMsg (!(card ? postRun && card ? postScript)) "use postRun or postScript, not both";
     pkgs.writeText "tsugumi-card.json" (builtins.toJSON (
-      { reuseWorker = card.reuseWorker or false; }
+      { reuseWorker = card.reuseWorker or true; }
       // lib.optionalAttrs (card ? package) { package = "${card.package}"; }
       // lib.optionalAttrs (card ? run) { run = "${card.run}"; }
       // lib.optionalAttrs (pre != null) { preScript = pre; }

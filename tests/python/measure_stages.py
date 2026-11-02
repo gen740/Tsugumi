@@ -3,7 +3,7 @@ Nix evaluate and build, execute, validate, save), the wait for a free lane
 after the inputs arrived, and how long a Card's completion takes to reach a
 client. A first run and a rerun are measured separately.
 
-    python measure_stages.py collatz            # demo, in the container (TSUGUMI_TEST_CONTAINER=1)
+    python measure_stages.py collatz            # demo, in the shared VM (TSUGUMI_TEST_ENV=container: Apple container)
     python measure_stages.py builtin-chain      # builtin Cards only, host tsugumid
     python measure_stages.py large-values       # 100 000-element values, Python -> C++ -> shell (container)
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from conftest import ROOT, ContainerEnv, Daemon  # noqa: E402
+from conftest import ROOT, Daemon, real_environment  # noqa: E402
 from projects import card, conn  # noqa: E402
 from test_regressions import write, put  # noqa: E402
 from tsugumi_client import new_id, path, text  # noqa: E402
@@ -171,7 +171,7 @@ def main():
                 import test_cards_container as T
                 start = "begin"
                 T.make(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
-            env = ContainerEnv(root, a.name).start()
+            env = real_environment(root, a.name)
             c = env.client()
             if a.scenario == "large-values":
                 import test_cards_container as T

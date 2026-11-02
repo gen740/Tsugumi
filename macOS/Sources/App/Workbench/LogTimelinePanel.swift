@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// Bottom panel: the whole run log, or the run's Cards on a time axis.
+/// Bottom panel: the whole run log, the run's Cards on a time axis, or a
+/// terminal in the project's environment.
 struct LogTimelinePanel: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -11,9 +12,17 @@ struct LogTimelinePanel: View {
   @State private var runId: String?
 
   var body: some View {
+    if workspace.bottomPanel == .terminal {
+      ProjectTerminalPanel(session: session, onClose: { workspace.showBottom = false })
+    } else {
+      runPanel
+    }
+  }
+
+  private var runPanel: some View {
     VStack(spacing: 0) {
       HStack(spacing: 10) {
-        Label(workspace.bottomPanel.title, systemImage: workspace.bottomPanel == .log ? "text.alignleft" : "chart.bar.xaxis")
+        Label(workspace.bottomPanel.title, systemImage: workspace.bottomPanel.symbol)
           .font(.callout.weight(.medium))
         Picker("実行", selection: $runId) {
           if runs.isEmpty { Text("実行履歴なし").tag(String?.none) }
@@ -52,6 +61,8 @@ struct LogTimelinePanel: View {
           tab.selection = [k]
           workspace.showLog(for: k)
         })
+      case .terminal:
+        EmptyView()
       }
     }
     .task(id: session.lastFinished) { await loadRuns() }

@@ -5,6 +5,7 @@
 #   macOS/Container/build-image.sh            # build and load
 #   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
 #   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
+#   macOS/Container/build-image.sh --vm       # the shared VM (vm.nix) into dist/tsugumi-vm/
 #
 # Pinned builder: docker.io/nixos/nix:2.31.2 (see versions.env). The builder's
 # Nix store lives in the volume tsugumi-builder-nix and is reused.
@@ -15,6 +16,7 @@ source "$here/versions.env"
 attr=image
 [ "${1:-}" = "--check" ] && attr=tsugumid
 [ "${1:-}" = "--kernel" ] && attr=kernel
+[ "${1:-}" = "--vm" ] && attr=vm
 # The builder VM runs on Tsugumi's guest kernel when it exists (the stock
 # kernel's SELinux oops leaves builder VMs stuck on shutdown; kernel.nix).
 kernel_args=()
@@ -44,6 +46,7 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
       # A failed build prints no store path: stop here instead of copying nothing.
       case "$img" in /nix/store/*) [ -e "/cache$img" ] ;; *) false ;; esac
       if [ "'"$attr"'" = kernel ]; then cp /cache$img/vmlinux /out/tsugumi-kernel; fi
+      if [ "'"$attr"'" = vm ]; then cp /cache$img/vmlinux /cache$img/rootfs.erofs /out/; basename "$img" > /out/vm-version; fi
       if [ "'"$attr"'" = image ]; then
         cp /cache$img /out/tsugumi-env.tar.gz
         # OCI layout for `container image load`, converted by skopeo run in the store namespace.
@@ -59,6 +62,14 @@ if [ "$attr" = kernel ]; then
   mkdir -p "$repo/dist"
   cp "$out/tsugumi-kernel" "$repo/dist/tsugumi-kernel"
   echo "kernel: $repo/dist/tsugumi-kernel ($(stat -f %z "$repo/dist/tsugumi-kernel") bytes)"
+  rm -rf "$out"
+  exit 0
+fi
+if [ "$attr" = vm ]; then
+  rm -rf "$repo/dist/tsugumi-vm"
+  mkdir -p "$repo/dist/tsugumi-vm"
+  cp "$out/vmlinux" "$out/rootfs.erofs" "$out/vm-version" "$repo/dist/tsugumi-vm/"
+  echo "vm: $repo/dist/tsugumi-vm ($(cat "$out/vm-version"), rootfs $(stat -f %z "$out/rootfs.erofs") bytes)"
   rm -rf "$out"
   exit 0
 fi

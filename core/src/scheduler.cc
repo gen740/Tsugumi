@@ -1103,8 +1103,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       stdfs::create_directories(d);
       if (::geteuid() == 0) ::chown(d.c_str(), kCardUid, kCardUid);
     }
+    // Cards run as nobody: switched to by root (container), or mapped in
+    // bubblewrap's user namespace when tsugumid is not root (shared VM).
     std::optional<uid_t> uid;
-    if (::geteuid() == 0) uid = kCardUid;
+    if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
     // A reused worker keeps exactly the binds it was started with; a call that
     // needs other input paths gets a new worker.
     std::vector<std::string> ro;
@@ -1132,6 +1134,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (rt.build->reuse_worker) sp.rw_paths = {(run_dir_ / "work" / path_key(node.path)).string()};
       else sp.rw_paths = {work.string(), tmp.string(), out.string()};
       sp.ro_paths = ro;
+      if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
+      sp.hidden_paths.push_back(svc_.store().state_dir().string());
       CardPath card = node.path;
       auto inv_ptr = std::make_shared<std::atomic<uint64_t>>(s.invocation);
       current_inv_[rt.idx] = inv_ptr;

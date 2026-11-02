@@ -1,0 +1,653 @@
+import Darwin
+import Foundation
+import Virtualization
+
+/// Kernel and root file system of the shared VM (macOS/Container/vm.nix):
+/// from the app bundle, or dist/tsugumi-vm when run from the source tree.
+public struct VMImage: Sendable, Equatable {
+  public let kernel: URL
+  public let rootfs: URL
+  public let version: String
+
+  public init?(directory: URL) {
+    let k = directory.appendingPathComponent("vmlinux"), r = directory.appendingPathComponent("rootfs.erofs")
+    guard FileManager.default.fileExists(atPath: k.path), FileManager.default.fileExists(atPath: r.path) else { return nil }
+    kernel = k
+    rootfs = r
+    version = (try? String(contentsOf: directory.appendingPathComponent("vm-version"), encoding: .utf8))?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
+  }
+
+  public static func find(bundle: Bundle = .main) -> VMImage? {
+    if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil), let image = VMImage(directory: dir) { return image }
+    var dir = URL(fileURLWithPath: #filePath)
+    for _ in 0..<4 { dir.deleteLastPathComponent() }
+    return VMImage(directory: dir.appendingPathComponent("dist/tsugumi-vm"))
+  }
+}
+
+/// Size of the shared VM (all projects share it).
+public struct VMResources: Sendable, Equatable {
+  public var cpus: Int
+  public var memoryGiB: Int
+  public var storeGiB: Int
+
+  /// Half the Mac's memory (4–16 GiB), all but two cores (2–8).
+  public static var `default`: VMResources {
+    let mem = Int(ProcessInfo.processInfo.physicalMemory >> 30)
+    let cores = ProcessInfo.processInfo.activeProcessorCount
+    return VMResources(cpus: min(8, max(2, cores - 2)), memoryGiB: min(16, max(4, mem / 2)), storeGiB: 64)
+  }
+}
+
+/// The VM console: the guest writes `console.log` in the VM folder (the
+/// previous boot's is `console.prev.log`); the app's own notes about the VM
+/// go to `launcher.log`. Both are kept in memory, in order, for the console view.
+public final class ConsoleLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var lines: [String] = []
+  private var partial = Data()
+  private var observers: [UUID: @Sendable (String) -> Void] = [:]
+  private var file: FileHandle?
+  private let limit = 5000
+
+  init() {}
+
+  /// Starts a new boot: the guest's console file and the app's note file.
+  func open(console url: URL) {
+    lock.lock()
+    defer { lock.unlock() }
+    let dir = url.deletingLastPathComponent()
+    let prev = dir.appendingPathComponent("console.prev.log")
+    try? FileManager.default.removeItem(at: prev)
+    try? FileManager.default.moveItem(at: url, to: prev)
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    let notes = dir.appendingPathComponent("launcher.log")
+    if !FileManager.default.fileExists(atPath: notes.path) { FileManager.default.createFile(atPath: notes.path, contents: nil) }
+    file = try? FileHandle(forWritingTo: notes)
+    _ = try? file?.seekToEnd()
+    lines.removeAll()
+    partial = Data()
+  }
+
+  /// Adds a line written by the app (not the guest), marked as such.
+  public func note(_ text: String) {
+    let line = "[tsugumi] " + text
+    lock.lock()
+    file?.write(Data((ISO8601DateFormatter().string(from: Date()) + " " + text + "\n").utf8))
+    lock.unlock()
+    append(line: line)
+  }
+
+  func feed(_ data: Data) -> [String] {
+    // Split on bytes: the guest ends lines with "\r\n", which a Swift String
+    // holds as one Character (searching it for "\n" finds nothing).
+    var complete: [String] = []
+    lock.lock()
+    partial.append(data)
+    while let nl = partial.firstIndex(of: 10) {
+      var line = partial[partial.startIndex..<nl]
+      if line.last == 13 { line = line.dropLast() }
+      complete.append(String(decoding: line, as: UTF8.self))
+      partial.removeSubrange(partial.startIndex...nl)
+    }
+    lock.unlock()
+    for l in complete { append(line: l) }
+    return complete
+  }
+
+  private func append(line: String) {
+    lock.lock()
+    lines.append(line)
+    if lines.count > limit { lines.removeFirst(lines.count - limit) }
+    let obs = Array(observers.values)
+    lock.unlock()
+    for o in obs { o(line) }
+  }
+
+  public var snapshot: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return lines
+  }
+
+  public func observe(_ handler: @escaping @Sendable (String) -> Void) -> UUID {
+    let id = UUID()
+    lock.lock()
+    observers[id] = handler
+    lock.unlock()
+    return id
+  }
+
+  public func stopObserving(_ id: UUID) {
+    lock.lock()
+    observers[id] = nil
+    lock.unlock()
+  }
+}
+
+/// The one Linux VM of the app (Virtualization.framework). It boots from the
+/// bundled kernel and read-only root file system, keeps the shared Nix store
+/// on a sparse disk image in the support folder, and runs one tsugumid per
+/// open project (tsugumi-vmd). Projects are added to and removed from its
+/// virtiofs share while it runs.
+public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
+  /// Steps of starting the VM; the guest reports the later ones on the console.
+  public enum Stage: String, Sendable, CaseIterable {
+    case image, disk, boot, store, nix, network, supervisor, ready
+  }
+
+  public enum State: Sendable, Equatable {
+    case stopped
+    case starting(Stage)
+    case running
+    case failed(String)
+  }
+
+  public static let controlPort: UInt32 = 1024
+  public static let rpcPort: UInt32 = 1025
+
+  public let directory: URL
+  public let console = ConsoleLog()
+  private let queue = DispatchQueue(label: "app.tsugumi.vm")
+  private let lock = NSLock()
+  private var vm: VZVirtualMachine?
+  private var fileSystem: VZVirtioFileSystemDevice?
+  private var socket: VZVirtioSocketDevice?
+  private var shares: [String: URL] = [:]
+  private var hostLock: HostLock?
+  private var _state: State = .stopped
+  private var stateObservers: [UUID: @Sendable (State) -> Void] = [:]
+  private var readyWaiters: [CheckedContinuation<Void, Error>] = []
+
+  public init(directory: URL) {
+    self.directory = directory
+  }
+
+  public var state: State {
+    lock.lock()
+    defer { lock.unlock() }
+    return _state
+  }
+
+  public func observe(_ handler: @escaping @Sendable (State) -> Void) -> UUID {
+    let id = UUID()
+    lock.lock()
+    stateObservers[id] = handler
+    let s = _state
+    lock.unlock()
+    handler(s)
+    return id
+  }
+
+  public func stopObserving(_ id: UUID) {
+    lock.lock()
+    stateObservers[id] = nil
+    lock.unlock()
+  }
+
+  private func setState(_ s: State) {
+    lock.lock()
+    _state = s
+    let obs = Array(stateObservers.values)
+    var waiters: [CheckedContinuation<Void, Error>] = []
+    if case .running = s { waiters = readyWaiters; readyWaiters = [] }
+    if case .failed = s { waiters = readyWaiters; readyWaiters = [] }
+    if case .stopped = s { waiters = readyWaiters; readyWaiters = [] }
+    lock.unlock()
+    for o in obs { o(s) }
+    for w in waiters {
+      switch s {
+      case .running: w.resume()
+      case .failed(let m): w.resume(throwing: LauncherError.startFailed(reason: m, log: console.snapshot.suffix(80).joined(separator: "\n")))
+      default: w.resume(throwing: LauncherError.startFailed(reason: "the VM stopped", log: console.snapshot.suffix(80).joined(separator: "\n")))
+      }
+    }
+  }
+
+  var storeImage: URL { directory.appendingPathComponent("store.img") }
+  var consoleURL: URL { directory.appendingPathComponent("console.log") }
+
+  // MARK: - Start and stop
+
+  /// Starts the VM (first start: copies the image and creates the store
+  /// disk) and returns once tsugumi-vmd is ready. Concurrent callers wait
+  /// for the same start.
+  public func start(image: VMImage, resources: VMResources) async throws {
+    let begin: Bool = {
+      lock.lock()
+      defer { lock.unlock() }
+      switch _state {
+      case .running, .starting: return false
+      default:
+        _state = .starting(.image)
+        return true
+      }
+    }()
+    if !begin {
+      if case .running = state { return }
+      try await waitReady()
+      return
+    }
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      console.open(console: consoleURL)
+      // One VM per support folder: a second app instance does not get it.
+      let hl = try HostLock(path: directory.appendingPathComponent("vm.lock"))
+      do { try hl.lock(wait: false) } catch {
+        throw LauncherError.startFailed(reason: "another Tsugumi is using the execution environment", log: "")
+      }
+      hostLock = hl
+      setState(.starting(.image))
+      let files = try installImage(image)
+      setState(.starting(.disk))
+      try ensureStore(gib: resources.storeGiB)
+      setState(.starting(.boot))
+      bootCount += 1
+      console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version))")
+      let config = try configuration(files: files, resources: resources)
+      try await boot(config)
+    } catch {
+      console.note("start failed: \(error)")
+      setState(.failed("\(error)"))
+      hostLock = nil
+      throw error
+    }
+    // A guest that never reports in (kernel or console trouble) fails the start.
+    let watchdog = Task { [weak self] in
+      try await Task.sleep(for: .seconds(240))
+      guard let self, case .starting = self.state else { return }
+      self.console.note("no ready report from the guest within 240 s")
+      self.setState(.failed("the VM did not report ready within 240 s"))
+    }
+    defer { watchdog.cancel() }
+    try await waitReady()
+  }
+
+  private func waitReady() async throws {
+    try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+      lock.lock()
+      switch _state {
+      case .running:
+        lock.unlock()
+        c.resume()
+      case .failed(let m):
+        lock.unlock()
+        c.resume(throwing: LauncherError.startFailed(reason: m, log: console.snapshot.suffix(80).joined(separator: "\n")))
+      case .stopped:
+        lock.unlock()
+        c.resume(throwing: LauncherError.startFailed(reason: "the VM is not running", log: ""))
+      case .starting:
+        readyWaiters.append(c)
+        lock.unlock()
+      }
+    }
+  }
+
+  /// The bundled files, copied (APFS clone) next to the store so an app
+  /// update never pulls them away from a running VM.
+  private func installImage(_ image: VMImage) throws -> VMImage {
+    let dest = directory.appendingPathComponent("image", isDirectory: true)
+    let stamp = dest.appendingPathComponent("vm-version")
+    if let have = try? String(contentsOf: stamp, encoding: .utf8), have == image.version,
+       let installed = VMImage(directory: dest), image.version != "dev" {
+      return installed
+    }
+    console.note("installing the VM image \(image.version)")
+    try? FileManager.default.removeItem(at: dest)
+    try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+    for (src, name) in [(image.kernel, "vmlinux"), (image.rootfs, "rootfs.erofs")] {
+      let to = dest.appendingPathComponent(name)
+      if copyfile(src.path, to.path, nil, copyfile_flags_t(COPYFILE_CLONE)) != 0 {
+        throw LauncherError.startFailed(reason: "cannot copy \(name) into \(dest.path)", log: String(cString: strerror(errno)))
+      }
+    }
+    try image.version.write(to: stamp, atomically: true, encoding: .utf8)
+    guard let installed = VMImage(directory: dest) else { throw LauncherError.imageMissing }
+    return installed
+  }
+
+  /// The store disk: a sparse file, formatted by the guest on first boot.
+  private func ensureStore(gib: Int) throws {
+    if FileManager.default.fileExists(atPath: storeImage.path) { return }
+    console.note("creating the store disk (\(gib) GiB, sparse)")
+    guard FileManager.default.createFile(atPath: storeImage.path, contents: nil) else {
+      throw LauncherError.startFailed(reason: "cannot create the store disk", log: storeImage.path)
+    }
+    let h = try FileHandle(forWritingTo: storeImage)
+    try h.truncate(atOffset: UInt64(gib) << 30)
+    try h.close()
+  }
+
+  private func configuration(files: VMImage, resources: VMResources) throws -> VZVirtualMachineConfiguration {
+    let c = VZVirtualMachineConfiguration()
+    let boot = VZLinuxBootLoader(kernelURL: files.kernel)
+    boot.commandLine = ProcessInfo.processInfo.environment["TSUGUMI_VM_CMDLINE"]
+      ?? "console=hvc0 root=/dev/vda rootfstype=erofs ro init=/init loglevel=4 panic=-1"
+    c.bootLoader = boot
+    c.platform = VZGenericPlatformConfiguration()
+    c.cpuCount = max(VZVirtualMachineConfiguration.minimumAllowedCPUCount,
+                     min(resources.cpus, VZVirtualMachineConfiguration.maximumAllowedCPUCount))
+    c.memorySize = max(VZVirtualMachineConfiguration.minimumAllowedMemorySize,
+                       min(UInt64(resources.memoryGiB) << 30, VZVirtualMachineConfiguration.maximumAllowedMemorySize))
+    let root = try VZDiskImageStorageDeviceAttachment(url: files.rootfs, readOnly: true)
+    let store = try VZDiskImageStorageDeviceAttachment(url: storeImage, readOnly: false,
+                                                       cachingMode: .automatic, synchronizationMode: .full)
+    c.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: root), VZVirtioBlockDeviceConfiguration(attachment: store)]
+    let net = VZVirtioNetworkDeviceConfiguration()
+    net.attachment = VZNATNetworkDeviceAttachment()
+    c.networkDevices = [net]
+    let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi")
+    fs.share = VZMultipleDirectoryShare(directories: sharedDirectories())
+    c.directorySharingDevices = [fs]
+    c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+    c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+    c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
+    // The guest console goes straight to console.log (a pipe attachment
+    // delivered nothing); a reader follows the file for stages and the view.
+    let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
+    serial.attachment = try VZFileSerialPortAttachment(url: consoleURL, append: false)
+    c.serialPorts = [serial]
+    followConsole(consoleURL, boot: bootCount)
+    try c.validate()
+    return c
+  }
+
+  private var bootCount = 0
+
+  /// Reads what the guest appends to the console file until the next boot.
+  private func followConsole(_ url: URL, boot: Int) {
+    Thread.detachNewThread { [weak self] in
+      // By path and offset: the attachment may replace the file when it opens it.
+      var offset: UInt64 = 0
+      while let self, self.bootCount == boot {
+        var data = Data()
+        if let h = try? FileHandle(forReadingFrom: url) {
+          let size = (try? h.seekToEnd()) ?? 0
+          if size < offset { offset = 0 }
+          if size > offset {
+            try? h.seek(toOffset: offset)
+            data = (try? h.read(upToCount: Int(size - offset))) ?? Data()
+            offset += UInt64(data.count)
+          }
+          try? h.close()
+        }
+        if data.isEmpty {
+          if case .stopped = self.state { return }
+          if case .failed = self.state { return }
+          Thread.sleep(forTimeInterval: 0.05)
+          continue
+        }
+        for line in self.console.feed(data) { self.consoleLine(line) }
+      }
+    }
+  }
+
+  private func consoleLine(_ line: String) {
+    if line.hasPrefix("TSUGUMI-STAGE ") {
+      let name = String(line.dropFirst("TSUGUMI-STAGE ".count)).trimmingCharacters(in: .whitespaces)
+      if name == "ready" { setState(.running) } else if let s = Stage(rawValue: name) { setState(.starting(s)) }
+    } else if line.hasPrefix("TSUGUMI-FAILED ") {
+      setState(.failed(String(line.dropFirst("TSUGUMI-FAILED ".count))))
+    }
+  }
+
+  private func boot(_ config: VZVirtualMachineConfiguration) async throws {
+    try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+      queue.async {
+        let vm = VZVirtualMachine(configuration: config, queue: self.queue)
+        vm.delegate = self
+        self.vm = vm
+        self.fileSystem = vm.directorySharingDevices.first as? VZVirtioFileSystemDevice
+        self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
+        vm.start { result in
+          switch result {
+          case .success:
+            self.console.note("the VM is running; waiting for the guest")
+            c.resume()
+          case .failure(let e): c.resume(throwing: LauncherError.startFailed(reason: "the VM did not start: \(e.localizedDescription)", log: ""))
+          }
+        }
+      }
+    }
+  }
+
+  /// Stops every project (tsugumid records interrupted runs) and powers the
+  /// VM off; forced after `timeout`.
+  public func shutdown(timeout: TimeInterval = 40) async {
+    guard case .running = state else {
+      await forceStop()
+      return
+    }
+    console.note("shutting down")
+    _ = try? await request("shutdown", timeout: 5)
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if case .stopped = state { return }
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    await forceStop()
+  }
+
+  private func forceStop() async {
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      queue.async {
+        guard let vm = self.vm, vm.canStop else { c.resume(); return }
+        vm.stop { _ in c.resume() }
+      }
+    }
+    stopped(nil)
+  }
+
+  private func stopped(_ error: Error?) {
+    queue.async {
+      self.vm = nil
+      self.fileSystem = nil
+      self.socket = nil
+    }
+    hostLock = nil
+    if let error {
+      console.note("the VM stopped with an error: \(error.localizedDescription)")
+      setState(.failed("the VM stopped: \(error.localizedDescription)"))
+    } else {
+      console.note("the VM stopped")
+      setState(.stopped)
+    }
+  }
+
+  public func guestDidStop(_ virtualMachine: VZVirtualMachine) { stopped(nil) }
+
+  public func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) { stopped(error) }
+
+  // MARK: - Shared folders
+
+  private func sharedDirectories() -> [String: VZSharedDirectory] {
+    lock.lock()
+    defer { lock.unlock() }
+    return shares.mapValues { VZSharedDirectory(url: $0, readOnly: false) }
+  }
+
+  /// Adds or replaces folders of the share (`/mnt/host/<name>` in the VM).
+  public func share(_ entries: [String: URL]) async {
+    lock.withLock { for (k, v) in entries { shares[k] = v } }
+    await applyShares()
+  }
+
+  public func unshare(_ names: [String]) async {
+    lock.withLock { for n in names { shares[n] = nil } }
+    await applyShares()
+  }
+
+  private func applyShares() async {
+    let dirs = sharedDirectories()
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      queue.async {
+        self.fileSystem?.share = VZMultipleDirectoryShare(directories: dirs)
+        c.resume()
+      }
+    }
+  }
+
+  // MARK: - vsock
+
+  /// A connected socket to a guest vsock port (the caller closes it).
+  public func connect(port: UInt32) async throws -> Int32 {
+    try await withCheckedThrowingContinuation { (c: CheckedContinuation<Int32, Error>) in
+      queue.async {
+        guard let socket = self.socket else {
+          c.resume(throwing: LauncherError.notReady("the VM is not running"))
+          return
+        }
+        socket.connect(toPort: port) { result in
+          switch result {
+          case .success(let conn):
+            let fd = dup(conn.fileDescriptor)
+            conn.close()
+            if fd < 0 { c.resume(throwing: LauncherError.notReady("vsock dup failed")) } else { c.resume(returning: fd) }
+          case .failure(let e):
+            c.resume(throwing: LauncherError.notReady("vsock port \(port): \(e.localizedDescription)"))
+          }
+        }
+      }
+    }
+  }
+
+  /// One request line to tsugumi-vmd; returns the reply after "ok" or throws
+  /// with the reason after "error".
+  @discardableResult
+  public func request(_ line: String, timeout: TimeInterval = 60) async throws -> String {
+    let fd = try await connect(port: Self.controlPort)
+    defer { close(fd) }
+    var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    try writeAll(fd, Data((line + "\n").utf8))
+    let reply = readLine(fd)
+    if reply == "ok" { return "" }
+    if reply.hasPrefix("ok ") { return String(reply.dropFirst(3)) }
+    throw LauncherError.startFailed(reason: reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "no reply from the VM", log: "")
+  }
+}
+
+func writeAll(_ fd: Int32, _ data: Data) throws {
+  try data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+    var off = 0
+    while off < buf.count {
+      let n = write(fd, buf.baseAddress! + off, buf.count - off)
+      if n <= 0 { throw LauncherError.notReady("write failed") }
+      off += n
+    }
+  }
+}
+
+func readLine(_ fd: Int32) -> String {
+  var bytes: [UInt8] = []
+  var c: UInt8 = 0
+  while bytes.count < 4096 {
+    let n = read(fd, &c, 1)
+    if n <= 0 || c == 10 { break }
+    bytes.append(c)
+  }
+  return String(decoding: bytes, as: UTF8.self)
+}
+
+/// Forwards connections to 127.0.0.1:<port> on the Mac to one project's
+/// tsugumid in the VM (vsock RPC port, first line = project id), so the
+/// RPC client keeps using a plain local WebSocket URL.
+public final class LoopbackBridge: @unchecked Sendable {
+  public let port: Int
+  private let listener: Int32
+  private let projectId: String
+  private weak var vm: SharedVM?
+  private let stopFlag = NSLock()
+  private var closed = false
+
+  public init(vm: SharedVM, projectId: String) throws {
+    self.vm = vm
+    self.projectId = projectId
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { throw LauncherError.startFailed(reason: "no local socket", log: "") }
+    var one: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    addr.sin_port = 0
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let ok = withUnsafeMutablePointer(to: &addr) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(fd, $0, len) == 0 && listen(fd, 64) == 0 && getsockname(fd, $0, &len) == 0
+      }
+    }
+    guard ok else {
+      Darwin.close(fd)
+      throw LauncherError.startFailed(reason: "no free local port", log: "")
+    }
+    listener = fd
+    port = Int(UInt16(bigEndian: addr.sin_port))
+    Thread.detachNewThread { [self] in acceptLoop() }
+  }
+
+  public func close() {
+    stopFlag.lock()
+    let was = closed
+    closed = true
+    stopFlag.unlock()
+    if !was {
+      shutdown(listener, SHUT_RDWR)
+      Darwin.close(listener)
+    }
+  }
+
+  deinit { close() }
+
+  private func acceptLoop() {
+    while true {
+      let c = accept(listener, nil, nil)
+      if c < 0 {
+        stopFlag.lock()
+        let done = closed
+        stopFlag.unlock()
+        if done { return }
+        continue
+      }
+      Task { [weak self] in await self?.forward(c) }
+    }
+  }
+
+  private func forward(_ client: Int32) async {
+    guard let vm, let up = try? await vm.connect(port: SharedVM.rpcPort) else {
+      Darwin.close(client)
+      return
+    }
+    guard (try? writeAll(up, Data((projectId + "\n").utf8))) != nil else {
+      Darwin.close(client)
+      Darwin.close(up)
+      return
+    }
+    let done = DispatchGroup()
+    for (from, to) in [(client, up), (up, client)] {
+      done.enter()
+      Thread.detachNewThread {
+        var buf = [UInt8](repeating: 0, count: 65536)
+        while true {
+          let n = read(from, &buf, buf.count)
+          if n <= 0 { break }
+          var off = 0
+          while off < n {
+            let m = buf.withUnsafeBytes { write(to, $0.baseAddress! + off, n - off) }
+            if m <= 0 { break }
+            off += m
+          }
+          if off < n { break }
+        }
+        shutdown(to, SHUT_WR)
+        shutdown(from, SHUT_RD)
+        done.leave()
+      }
+    }
+    done.notify(queue: .global()) {
+      Darwin.close(client)
+      Darwin.close(up)
+    }
+  }
+}

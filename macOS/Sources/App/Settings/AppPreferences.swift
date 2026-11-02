@@ -5,7 +5,7 @@ import TsugumiRPC
 
 /// Commands whose keys can be reassigned in Settings > Shortcuts.
 enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
-  case save, run, stop, find, toggleChat, toggleLog, toggleTimeline, showDetails, fitAll, actualSize, zoomIn, zoomOut, arrange, addNote, duplicate, openSettings
+  case save, run, stop, find, toggleChat, toggleLog, toggleTimeline, toggleTerminal, showDetails, fitAll, actualSize, zoomIn, zoomOut, arrange, addNote, duplicate, openSettings
   var id: String { rawValue }
 
   var title: String {
@@ -20,6 +20,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .zoomOut: return String(localized: "縮小")
     case .toggleLog: return String(localized: "ログの表示切替")
     case .toggleTimeline: return String(localized: "タイムラインの表示切替")
+    case .toggleTerminal: return String(localized: "ターミナルの表示切替")
     case .showDetails: return String(localized: "選択した Card の詳細")
     case .fitAll: return String(localized: "全体表示")
     case .arrange: return String(localized: "整列")
@@ -41,6 +42,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .toggleChat: return KeyBinding(key: "j", command: true, option: true)
     case .toggleLog: return KeyBinding(key: "l", command: true, option: true)
     case .toggleTimeline: return KeyBinding(key: "t", command: true, option: true)
+    case .toggleTerminal: return KeyBinding(key: "`", control: true)
     case .showDetails: return KeyBinding(key: "i", command: true, option: true)
     case .fitAll: return KeyBinding(key: "1", command: true, shift: true)
     case .arrange: return KeyBinding(key: "a", command: true, option: true, shift: true)

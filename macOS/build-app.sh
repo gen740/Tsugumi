@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the Dawn renderer, the bundled
-# demos and the environment image for the first start. Tools (flatc, cmake,
-# ninja) are taken from the flake's nixpkgs; compilers are Apple's.
+# demos and the shared VM (kernel + root file system, macOS/Container/vm.nix).
+# Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
+# are Apple's.
 #
 #   macOS/build-app.sh            # release build
 set -euo pipefail
@@ -11,8 +12,8 @@ app="$dist/Tsugumi.app"
 renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 
 [ -f "$renderer" ] || "$repo/ui/renderer/build.sh"
-image="$dist/tsugumi-env.tar"
-[ -f "$image" ] || TSUGUMI_IMAGE_OUT="$image" "$repo/macOS/Container/build-image.sh"
+vm="$dist/tsugumi-vm"
+[ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
@@ -29,11 +30,8 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
-cp "$image" "$app/Contents/Resources/tsugumi-env.tar"
-# Guest kernel without SELinux (macOS/Container/kernel.nix); built when missing.
-kernel="$dist/tsugumi-kernel"
-[ -f "$kernel" ] || "$repo/macOS/Container/build-image.sh" --kernel
-cp "$kernel" "$app/Contents/Resources/tsugumi-kernel"
+# The shared VM: copied to the support folder on first start (APFS clone).
+cp -R "$vm" "$app/Contents/Resources/tsugumi-vm"
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -57,6 +55,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Local use only: ad-hoc signature (no notarization).
-codesign --force --deep --sign - "$app" >/dev/null
+# Local use only: ad-hoc signature (no notarization), with the
+# virtualization entitlement the shared VM needs.
+codesign --force --deep --sign - --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 echo "$app"

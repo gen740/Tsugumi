@@ -24,7 +24,7 @@ struct CardBuild {
   std::optional<std::string> package;  // store path of the Card package
   std::optional<std::string> library;  // shared object to run (`run`; default package/lib/main.so)
   std::string pre_script, script, post_script;
-  bool reuse_worker = false;
+  bool reuse_worker = true;  // the default: one loaded worker serves a Card for the whole run
   std::string key;
   bool cached = false;
 };
@@ -84,6 +84,7 @@ class NixRunner {
 
  private:
   std::filesystem::path cache_dir() const;
+  std::filesystem::path gcroots_dir() const;
   void acquire_lane(const std::atomic<bool>* cancel);
   void release_lane();
   std::string nixpkgs_pin_json(const Document& doc) const;

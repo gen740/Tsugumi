@@ -57,3 +57,10 @@ target_compile_definitions(tsugumi_core PRIVATE
 add_executable(tsugumid src/main.cc)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
+
+# Supervisor of the shared VM (Linux guest only): one tsugumid per project.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(tsugumi-vmd src/vmd_main.cc)
+  target_link_libraries(tsugumi-vmd PRIVATE Threads::Threads)
+  install(TARGETS tsugumi-vmd RUNTIME DESTINATION bin)
+endif()

@@ -67,6 +67,10 @@ struct TsugumiApp: App {
     }
     .defaultSize(width: 900, height: 600)
 
+    Window("実行環境のコンソール", id: "console") {
+      VMConsoleView().environment(model).environment(prefs)
+    }
+    .defaultSize(width: 760, height: 460)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
         DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
@@ -82,7 +86,33 @@ struct TsugumiApp: App {
   }
 }
 
+/// Window menu: the shared VM's console.
+struct OpenConsoleButton: View {
+  @Environment(\.openWindow) private var openWindow
+  var body: some View {
+    Button("実行環境のコンソール") { openWindow(id: "console") }
+      .keyboardShortcut("k", modifiers: [.command, .option])
+  }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  private var shuttingDown = false
+
+  /// Quitting stops every project (runs are recorded as interrupted) and
+  /// powers the shared VM off before the app exits.
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard !shuttingDown else { return .terminateLater }
+    guard case .stopped = AppModel.shared.environments.vm.state else {
+      shuttingDown = true
+      Task { @MainActor in
+        await AppModel.shared.environments.shutdown()
+        sender.reply(toApplicationShouldTerminate: true)
+      }
+      return .terminateLater
+    }
+    return .terminateNow
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Launched with `swift run` there is no bundle: still behave as a regular app.
     NSApp.setActivationPolicy(.regular)
@@ -178,6 +208,11 @@ struct WorkbenchCommands: Commands {
         .shortcut(.toggleLog)
       Button("タイムラインの表示切替") { workspace?.togglePanel(.timeline) }
         .shortcut(.toggleTimeline)
+      Button("ターミナルの表示切替") { workspace?.togglePanel(.terminal) }
+        .shortcut(.toggleTerminal)
+    }
+    CommandGroup(after: .windowList) {
+      OpenConsoleButton()
     }
   }
 }

@@ -505,7 +505,7 @@ private struct EnvironmentStorageSettings: View {
   var body: some View {
     GroupBox("実行環境のデータ") {
       VStack(alignment: .leading, spacing: 8) {
-        Text("各プロジェクトの実行環境（Nix store のディスクイメージと control フォルダ）は次のフォルダにあります。プロジェクトの文書・履歴・成果物はプロジェクトのフォルダにあり、ここには含まれません。")
+        Text("実行環境（全プロジェクト共通の VM、その Nix store のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・履歴・成果物はプロジェクトのフォルダにあり、ここには含まれません。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Text(model.environments.support.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -527,7 +527,7 @@ private struct EnvironmentStorageSettings: View {
       Button("初期化", role: .destructive) { reset() }
       Button("キャンセル", role: .cancel) {}
     } message: {
-      Text("実行中の環境を止め、Tsugumi が作った container・Nix store・環境イメージを削除します。プロジェクトの文書・履歴・成果物、他のアプリの container・image・volume、ホストの /nix/store は削除しません。次に開いたときに作り直します。")
+      Text("開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。プロジェクトの文書・履歴・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。")
     }
   }
 
@@ -538,10 +538,9 @@ private struct EnvironmentStorageSettings: View {
       do {
         let r = try await model.environments.resetAll()
         failed = false
-        var parts = [String(localized: "container \(r.containers.count) 件・環境 \(r.environments) 件を削除しました")]
-        if !r.volumes.isEmpty { parts.append(String(localized: "旧 volume \(r.volumes.count) 件を削除")) }
-        if r.imageRemoved { parts.append(String(localized: "環境イメージを削除")) }
-        if let kept = r.imageKept { parts.append(String(localized: "環境イメージは使用中のため残しました（\(kept)）")) }
+        var parts = [String(localized: "プロジェクトの環境 \(r.environments) 件を削除しました")]
+        if r.vmRemoved { parts.append(String(localized: "VM と Nix store を削除")) }
+        if !r.legacyContainers.isEmpty { parts.append(String(localized: "以前の版の container \(r.legacyContainers.count) 件を削除")) }
         message = parts.joined(separator: "。") + "。"
       } catch {
         failed = true

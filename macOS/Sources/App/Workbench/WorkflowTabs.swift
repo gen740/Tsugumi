@@ -132,9 +132,11 @@ struct EnvironmentOverlay: View {
       return LoadingContent(title: String(localized: "再接続しています…"),
                             message: String(localized: "未保存の変更は保持しています。"), dirty: dirty)
     case .preparing(let s):
-      return LoadingContent(title: String(localized: "初回の準備をしています"), message: stageText(s), detail: s, dirty: dirty)
+      return LoadingContent(title: String(localized: "初回の準備をしています"), message: stageText(s), fraction: stageFraction(s),
+                            detail: s, dirty: dirty, showsConsole: true)
     case .starting(let s):
-      return LoadingContent(title: String(localized: "起動しています"), message: stageText(s), detail: s, dirty: dirty)
+      return LoadingContent(title: String(localized: "起動しています"), message: stageText(s), fraction: stageFraction(s),
+                            detail: s, dirty: dirty, showsConsole: true)
     case .ready:
       if session.connectionMessage != nil { return nil }
       return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), detail: "project snapshot", dirty: dirty)
@@ -144,14 +146,23 @@ struct EnvironmentOverlay: View {
   /// The step in words; the internal name stays in the details line.
   static func stageText(_ raw: String) -> String {
     switch EnvironmentStage(rawValue: raw) {
-    case .waitingForOthers?: return String(localized: "他のウインドウの起動が終わるのを待っています")
-    case .checkingService?: return String(localized: "container サービスを確認しています")
-    case .loadingImage?: return String(localized: "実行環境のイメージを読み込んでいます（初回のみ）")
-    case .creatingStore?: return String(localized: "Nix store の保存領域を作っています")
-    case .startingDaemon?: return String(localized: "実行環境を起動しています")
-    case .connecting?: return String(localized: "実行環境の応答を待っています")
+    case .vmImage?: return String(localized: "VM イメージを展開しています")
+    case .vmDisk?: return String(localized: "Nix store の保存領域を作っています")
+    case .vmBoot?: return String(localized: "VM を起動しています")
+    case .vmStore?: return String(localized: "Nix store の保存領域を開いています（初回は初期化）")
+    case .vmNix?: return String(localized: "Nix を準備しています")
+    case .vmNetwork?: return String(localized: "ネットワークを設定しています")
+    case .vmSupervisor?: return String(localized: "実行環境の管理プロセスを起動しています")
+    case .startingDaemon?: return String(localized: "このプロジェクトの tsugumid を起動しています")
+    case .connecting?: return String(localized: "tsugumid の応答を待っています")
     case nil: return raw
     }
+  }
+
+  /// How far along the start is: the steps are known, so the branch grows.
+  static func stageFraction(_ raw: String) -> Double? {
+    guard let s = EnvironmentStage(rawValue: raw), let i = EnvironmentStage.allCases.firstIndex(of: s) else { return nil }
+    return Double(i) / Double(EnvironmentStage.allCases.count)
   }
 
   var body: some View {
@@ -187,6 +198,7 @@ struct EnvironmentOverlay: View {
         HStack {
           Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
           Button("環境を停止") { session.stopEnvironment() }
+          OpenConsoleButton()
         }
       })
     case .stopped:

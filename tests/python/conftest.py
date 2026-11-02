@@ -168,6 +168,9 @@ class ContainerEnv:
         self._container("kill", "--signal", "KILL", self.name, check=False)
         time.sleep(1)
 
+    def exec(self, script: str) -> str:
+        return subprocess.run(["container", "exec", self.name, "bash", "-c", script], capture_output=True, text=True).stdout
+
     def stop(self):
         # TSUGUMI_TEST_LOGS=<dir> keeps the environment's log for diagnosis.
         if os.environ.get("TSUGUMI_TEST_LOGS"):
@@ -188,14 +191,114 @@ class ContainerEnv:
         shutil.rmtree(self.control, ignore_errors=True)
 
 
+class SharedVM:
+    """The app's shared VM driven through tsugumi-vmctl: one per test session,
+    with its Nix store kept in TSUGUMI_TEST_VM_SUPPORT (build/test-vm) so
+    downloads survive test runs. macOS/tools/build-vmctl.sh builds and signs it."""
+
+    _instance: "SharedVM | None" = None
+
+    def __init__(self):
+        import atexit
+        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "macOS" / ".build" / "debug" / "tsugumi-vmctl"))
+        support = Path(os.environ.get("TSUGUMI_TEST_VM_SUPPORT", BUILD / "test-vm"))
+        support.mkdir(parents=True, exist_ok=True)
+        self.console = support / "vmctl-console.log"
+        self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=open(self.console, "a"), text=True, bufsize=1)
+        atexit.register(self.quit)
+
+    @classmethod
+    def get(cls) -> "SharedVM":
+        if cls._instance is None or cls._instance.proc.poll() is not None:
+            cls._instance = SharedVM()
+        return cls._instance
+
+    def command(self, line: str, until=lambda l: True) -> list[str]:
+        self.proc.stdin.write(line + "\n")
+        self.proc.stdin.flush()
+        out = []
+        while True:
+            l = self.proc.stdout.readline()
+            if not l:
+                raise RuntimeError(f"tsugumi-vmctl exited; see {self.console}")
+            out.append(l.rstrip("\n"))
+            if until(out[-1]):
+                return out
+
+    def quit(self):
+        if self.proc.poll() is None:
+            try:
+                self.command("quit", until=lambda l: l == "bye")
+                self.proc.wait(timeout=60)
+            except Exception:
+                self.proc.kill()
+
+
+class VMEnv:
+    """Runs a project in the app's shared VM (the reference configuration)."""
+
+    def __init__(self, project: Path, name: str = ""):
+        self.project = project
+        self.name = name
+        self.vm = SharedVM.get()
+        self.port = None
+        self.ready: dict = {}
+        self.id = ""
+        self.control = None
+
+    def start(self) -> "VMEnv":
+        line = self.vm.command(f"start {self.project}")[-1]
+        if not line.startswith("ready "):
+            raise RuntimeError(line)
+        _, self.id, url, control = line.split(" ", 3)
+        self.port = int(url.split(":")[2].split("/")[0])
+        self.control = Path(control)
+        self.ready = json.loads((self.control / "server.ready").read_text())
+        return self
+
+    def client(self):
+        from tsugumi_client import Client
+        c = Client(ws=f"ws://127.0.0.1:{self.port}/rpc")
+        c.hello(token=self.ready["token"])
+        return c
+
+    def exec(self, script: str) -> str:
+        """Runs a one-line bash script in the project's terminal environment."""
+        import re
+        out = self.vm.command(f"sh {self.id} {script}", until=lambda l: l.startswith("exit ") or l.startswith("error"))
+        # Terminal control sequences (bracketed paste and the like) are not output.
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(out[:-1]))
+
+    def crash(self):
+        """Abnormal termination: the project's tsugumid is killed."""
+        self.exec("for f in /proc/[0-9]*/comm; do [ \"$(< $f)\" = tsugumid ] && p=${f#/proc/} && kill -9 ${p%/comm}; done; true")
+        time.sleep(1)
+
+    def stop(self):
+        if self.id:
+            self.vm.command(f"stop {self.project}")
+
+    def cleanup(self, keep_volume: bool = True):
+        self.stop()
+
+
+def real_environment(project: Path, name: str):
+    """The real execution environment: the shared VM, or with
+    TSUGUMI_TEST_ENV=container the Apple container of earlier versions."""
+    if os.environ.get("TSUGUMI_TEST_ENV") == "container":
+        return ContainerEnv(project, name).start()
+    return VMEnv(project, name).start()
+
+
 def demo_environment(tmp_path: Path, demo: str):
     """A fresh copy of a demo served by the container (TSUGUMI_TEST_CONTAINER=1)
     or by a host tsugumid with sandboxing disabled for development."""
     dst = tmp_path / demo
     shutil.copytree(ROOT / "demos" / demo, dst)
     if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":
-        # One store volume per demo keeps Nix downloads across test runs.
-        return ContainerEnv(dst, f"tsugumi-test-{demo}").start()
+        # One store per demo (container) or the one shared store (VM) keeps Nix downloads.
+        return real_environment(dst, f"tsugumi-test-{demo}")
     for d in (dst / "definitions").iterdir():
         card = json.loads((d / "_card.json").read_text())
         if card.get("language"):

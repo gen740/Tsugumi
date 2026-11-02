@@ -6,16 +6,19 @@
 
 Tsugumi は、Card をポートで接続したグラフを、Nix で固定した環境で実行・記録する macOS アプリです。
 条件分岐（branch）・合流（merge）・有限の feedback loop・入れ子のグラフを扱います。
-実行はプロジェクトごとの Apple `container`（軽量 Linux VM）の中の `tsugumid` が行い、
+実行はアプリ全体で 1 台の Linux VM（Virtualization.framework を直接使用）の中で、開いているプロジェクトごとの `tsugumid` が行います。
 macOS 側の SwiftUI アプリと Agent は同じ FlatBuffers RPC 契約を使う独立したクライアントです。
 
 ```text
-コンテナ（Apple container, プロジェクトごと）      macOS
- tsugumid (C++ core) ── WebSocket /rpc ──  SwiftUI UI（+ Dawn 描画）
-   ├ 文書・journal・receipt                    └ Agent（モデル接続・会話・tool）
-   ├ SQLite 履歴・ログ・成果物                ── 同じ RPC ──┘
+共通 VM（アプリに 1 台、Virtualization.framework）              macOS
+ tsugumi-vmd（vsock: 制御 1024 / RPC 1025）
+ nix-daemon ── 共通 /nix/store（store ディスク）
+ project A: tsugumid（uid・mount/PID 名前空間・cgroup を分離）── vsock ─ 127.0.0.1 中継 ── SwiftUI UI（+ Dawn 描画）
+   ├ 文書・journal・receipt（/project = virtiofs）                                     └ Agent（モデル接続・会話・tool）
+   ├ SQLite 履歴・ログ・成果物                                         ── 同じ RPC ──┘
    ├ スケジューラー・Nix レーン
    └ Card worker（bubblewrap で隔離）
+ project B: tsugumid（同上。A の停止は B に影響しない）
 ```
 
 ## 固定しているバージョン
@@ -23,9 +26,8 @@ macOS 側の SwiftUI アプリと Agent は同じ FlatBuffers RPC 契約を使�
 | 対象 | 版 |
 | --- | --- |
 | 対応環境 | Apple silicon Mac, macOS 26 以降（検証: macOS 27.2, M3 Max） |
-| Apple container | 0.6.0（`macOS/Container/versions.env`、起動管理が版を検査） |
-| 環境イメージ | `tsugumi-env:1.0.0`（`macOS/Container/image.nix` から Nix で生成） |
-| イメージ生成用ビルダー | `docker.io/nixos/nix:2.31.2` |
+| 共通 VM | カーネル 6.12.28（`macOS/Container/kernel.nix`、SELinux なし）+ 読み取り専用 rootfs（erofs、`macOS/Container/vm.nix`） |
+| VM イメージ生成用ビルダー | `docker.io/nixos/nix:2.31.2` を Apple container 0.6.0 で実行（開発時のビルドだけ。アプリの実行には使わない） |
 | nixpkgs | `1c89083e451e891152365b799595cf7790a43325`（`flake.lock`、Card の既定 `tsugumi:default` も同じ版） |
 | FlatBuffers | 25.12.19（C++/Python は nixpkgs、Swift は SwiftPM で同版を固定） |
 | hosq（C++ JSON） | `CLI20-dev/hosq@38c3c8e`（flake input） |
@@ -51,7 +53,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 
 ## ビルドと起動
 
-前提: Apple container 0.6.0（`container system start` 済み）、Nix（flakes 有効）、Xcode または Command Line Tools。
+前提: Nix（flakes 有効）、Xcode または Command Line Tools。VM イメージを作るときだけ Apple container 0.6.0（`container system start` 済み）を使います。
 
 ```bash
 nix develop
@@ -65,10 +67,10 @@ cmake -S . -B build -G Ninja && ninja -C build
 cd tests/python && python -m pytest -q test_contract.py
 ```
 
-環境イメージ（コンテナ内で Nix がビルドするので Linux ホストやリモートビルダーは不要）:
+共通 VM のイメージ（カーネルと rootfs を `dist/tsugumi-vm/` に。コンテナ内で Nix がビルドするので Linux ホストやリモートビルダーは不要）:
 
 ```bash
-macOS/Container/build-image.sh
+macOS/Container/build-image.sh --vm
 ```
 
 ビルダーは `TSUGUMI_BUILDER_CPUS`（既定 8）, `TSUGUMI_BUILDER_MEMORY`（既定 16G）, `TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ volume、既定 `tsugumi-builder-nix`）で調整できます。`TSUGUMI_IMAGE_OUT=dist/tsugumi-env.tar` を付けると、アプリ同梱用の OCI アーカイブも残します。
@@ -89,7 +91,7 @@ macOS/build-app.sh
 open dist/Tsugumi.app
 ```
 
-開発中は `cd macOS && swift run Tsugumi` でも起動できます（デモはソースツリーから読みます）。
+VM を使うには virtualization の entitlement 付きの署名が必要なので、開発中も `macOS/build-app.sh` で作った `dist/Tsugumi.app` を使います（`swift run` の実行ファイルは署名がなく VM を起動できません）。テストが VM を操作する `tsugumi-vmctl` は `macOS/tools/build-vmctl.sh` で作ります。
 
 アプリアイコン `macOS/Resources/AppIcon.icns` は `docs/assets/tsugumi-icon.svg` から生成してコミットしています。SVG を変えたら `swift macOS/Resources/tools/make_icon.swift` で作り直します。
 
@@ -97,7 +99,7 @@ open dist/Tsugumi.app
 
 画面構成と操作の仕様は [ui-view.md](ui-view.md) です。UI の文言は日本語が基準で、アプリ設定 > 一般 > 言語で English に切り替えられます（再起動後に反映。英語表は `macOS/Resources/tools/en_strings.py`）。
 
-1. **初期設定**: Apple container 未導入・サービス停止・イメージ未読込のときは、メインウインドウに準備画面（各項目の状態、サービス起動とイメージ読込のボタン）が出ます。
+1. **初期設定**: この Mac で仮想マシンを使えないか、アプリに VM イメージがないときだけ、メインウインドウに準備画面が出ます。それ以外の準備（VM イメージの展開、Nix store の保存領域の作成と初期化、VM の起動）は最初にプロジェクトを開いたときに行い、鳥の loading に段階を表示します。「コンソールで詳細を見る」（ウインドウ > 実行環境のコンソール、⌥⌘K）で VM の起動ログを追えます。
 2. **ホーム / デモ**: ホームで新規作成・既存フォルダ・最近のプロジェクトを開きます。デモは「コピーを開く」で `~/Documents/Tsugumi/<demo>` に編集可能なコピーを作って開きます（原本は変更しません）。起動・読込中は進捗を画面に重ね、失敗時は理由・復旧手順・環境ログと再試行を出します。
 3. **ワークベンチ**（左: 階層・Card 定義・表示中の Card、中央: Canvas、下: 状態バーとログ/タイムライン、右: チャット）。子 Workflow はダブルクリックで同じタブの階層を切り替え、階層一覧の右クリックで新しいタブ／別ウインドウに開けます（同じ階層のタブは再利用）。実行対象は常に文書の Workflow 全体です。
 4. **Canvas**: Card の追加（定義のダブルクリック／ドラッグ）・移動（グリッド吸着）・複製（⌘D）・削除・折りたたみ、出力ポートから入力ポートへのドラッグで接続（線をクリックして「切断」）、Shift ドラッグで範囲選択、パン・ピンチ/⌘スクロールのズーム、全体表示・整列。入力 Card は値を Card 上で直接編集できます。グループ（名前・所属・公開出力、見た目だけ）、Markdown の付箋（色・位置・サイズ）、出力表示の枠（移動・サイズ変更・拡大ウインドウ・枠の削除）を置けます。上中央に実行・停止・経過時間・進捗・結果・問題一覧、右上に Draft があるときの「Card を生成」。
@@ -123,9 +125,9 @@ open dist/Tsugumi.app
 - **実行中の保存**: 計算定義（execution fingerprint）を変える保存は run 中 `busy` で拒否し、配置などの変更は受け付けます（ドラッグを止めないため）。
 - **pkgsPath**: `tsugumi:default`（同梱 pin）または `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`。Card の Nix 評価は restricted eval・IFD 禁止・allowed-uris 限定です。
 - **組み込み Card のポート**: trigger `out` / input（`_outputs.fbs` の各メッセージを同名 params から構築、File は選んだプロジェクトファイルを run にコピー）/ fork `in`→params `branches` / branch `value`,`condition`(value:bool)→`a`,`b` / merge 宣言 inputs→`out`（入力ポート名付き union `tsugumi.merge.Merged`）/ logger `in` / subgraph は `boundary`。
-- **隔離**: ホストと共有するのはプロジェクトフォルダ・0700 の control フォルダ（server.ready と import grant）・その環境の Nix store ディスクイメージのフォルダだけです。RPC は 127.0.0.1 にのみ公開し、token は control ファイル（0600）にだけ置いて URL・ログに出しません。Card はコンテナ内で bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成）で実行し、`sandbox: false` でも同じ unprivileged uid のまま、ホスト実行や追加公開はしません。bubblewrap が使えない環境では `sandbox: true` の Card を拒否します。
-- **永続化と実行環境の置き場所**: 実行環境ごとのデータは `~/Library/Application Support/Tsugumi/environments/<id>/` にまとめています（`control/` と、Nix store の sparse なディスクイメージ `store/store.img`）。VM はこのイメージを loop mount して `/persist` にし、`/nix` はイメージ（下層）＋ `/persist`（上層）の overlay です。Card 用ツールチェーンはコンテナを作り直しても残ります。このフォルダを削除すると各環境の store と control が消え、次の起動で作り直されます。環境イメージ自体は Apple container の管理領域にあり（ブロックデバイスや別の保存場所を指定できないため）、`runtime/image.json` の記録がないときは次の起動で同梱イメージから読み込み直し、削除されたフォルダの container も起動時に片付けます。設定の「すべての実行環境を初期化」は、Tsugumi が作った container・store・旧 volume・環境イメージ（Tsugumi 以外の container が使っていなければ）を確認しながら削除し、プロジェクトの文書・履歴・成果物や他アプリの資源・ホストの `/nix/store` には触れません。停止と削除は同じ環境の lock を持ったまま行い、各段階の終了 status と残存を確認して、失敗時は管理情報を残して再試行できるようにしています。
-- **二重起動防止**: ホストではプロジェクト実体（device+inode）ごとの flock で起動・停止を直列化し、別名パスでも同じ環境に接続します。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
+- **隔離**: VM と共有するのは開いているプロジェクトのフォルダと、その 0700 の control フォルダ（server.ready と import grant）だけです（virtiofs、プロジェクトを閉じると共有から外す）。VM 内では tsugumi-vmd がプロジェクトごとに専用の uid・mount/PID/IPC/UTS 名前空間・cgroup で tsugumid を起動し、そのプロジェクトの `/project` と `/control` 以外（他のプロジェクト、共有の全体、store ディスク）は見えません。あるプロジェクトの停止はその cgroup だけを終わらせます。RPC は VM の vsock から Mac の 127.0.0.1 にだけ中継し、token は control ファイルにだけ置いて URL・ログに出しません。virtiofs は全ファイルを見る側の所有として見せるため、`sandbox: false` の Card からは control フォルダと `.tsugumi` を空の tmpfs で隠します（ファイルの mode に頼らない）。Card は bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成、nobody に対応づけた uid）で実行します。bubblewrap が使えない環境では `sandbox: true` の Card を拒否します。
+- **永続化と実行環境の置き場所**: 実行環境のデータは `~/Library/Application Support/Tsugumi/` にあります。`vm/` に VM イメージの展開先（`image/`、アプリ同梱から APFS clone）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（既定で最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）を置き、`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。VM は store ディスクを `/persist` にし、`/nix` は rootfs の store（下層）＋ `/persist`（上層）の overlay で、nix-daemon 1 つを全プロジェクトが使います。各プロジェクトのビルド結果の GC root は `/nix/var/nix/gcroots/tsugumi/projects/<id>` にあり、閉じているプロジェクトのビルドも CacheClear の GC で消えません。設定の「すべての実行環境を初期化」は VM を止めて `vm/` と `environments/` を削除し（以前の版が Apple container に作った環境もあれば削除）、プロジェクトの文書・履歴・成果物やホストの `/nix/store` には触れません。
+- **二重起動防止**: VM は `vm/vm.lock` の flock を持つアプリ 1 つだけが起動します（2 つ目のアプリは「別の Tsugumi が実行環境を使っています」で止まる）。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
 - **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（`nix-instantiate`）→ build（`nix-store --realise`）→ 実行（`preRun → run（.so）→ script → postRun`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preRun / postRun は worker を再利用しても invocation ごとに、その作業ディレクトリ・入出力の中で動きます。preRun の環境変数と `cd` は後段に引き継ぎ、postRun は失敗後も後始末として動きます（`TSUGUMI_FAILED=1`、前段の失敗は消さない）。停止・期限切れの後は postRun を含めて何も始めません（旧名 preScript / postScript も受け付けます）。
 - **Card SDK**: `default.nix` で契約から SDK を作り、言語ごとの package に渡します。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。
 
@@ -169,12 +171,13 @@ open dist/Tsugumi.app
 | `tests/python/test_scheduler.py`（6） | any の到着順消費・欠落/重複なし、all の 1 値ずつ消費と optional 出力の非発火、maxRuns、Card in Card の単体実行・伝播・同じ内部 ID の path 区別、保存入力なしの明示的失敗、Start→入力 Card と Draft 依存の blocked |
 | `tests/python/test_history.py`（7） | `recordIO × retainArtifact` 全組合せ×CacheClear×再起動、成果物の改ざん検出・パス逸脱、大容量のページング、UTF-8 境界、過去と最新の記録の分離 |
 | `tests/python/test_transport.py`（5） | WebSocket の Origin/subprotocol/token 拒否、fragment・ping 割り込み・連結、Unix の 1 byte ずつ・連結フレーム、実行元切断後も run 継続・別接続から状態取得 |
-| `tests/python/test_cards_container.py`（10） | 実コンテナ: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、明示した `run` の .so、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、shell 契約（preRun の cd/環境、300 KB 入力、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
+| `tests/python/test_cards_container.py`（11） | 実環境（共通 VM。`TSUGUMI_TEST_ENV=container` で以前の Apple container）: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、明示した `run` の .so、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、shell 契約（preRun の cd/環境、300 KB 入力、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
+| `tests/python/test_shared_vm.py`（2） | 共通 VM: 2 プロジェクトが 1 つの Nix store を共有しつつ uid・見えるファイル・プロセス（PID 名前空間）が分かれていること、片方を止めてももう片方の実行が成功し、止めた方も同じ VM で再開できること |
 | `tests/python/test_demos.py`（9） | 3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
 | `tests/cpp`（`tsugumi_core_tests`、15） | 型（catalog・構造的互換・merge union）、型の伝播、Nix 上流参照（直線・分岐+any・all と optional・同一ポート複数経路・feedback loop・入れ子・到達不能な循環・診断）、run plan（全体・単体・子 Workflow）、履歴の状態選択と障害注入、送信キュー（順序・seq・遅い peer の隔離） |
-| アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
+| アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
-| `macOS/Tests`（`swift test`、14） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
+| `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
 ## 計測（2026-11-02）

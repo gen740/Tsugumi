@@ -142,6 +142,11 @@ NixRunner::~NixRunner() {
 
 stdfs::path NixRunner::cache_dir() const { return svc_.store().state_dir() / "cache"; }
 
+stdfs::path NixRunner::gcroots_dir() const {
+  const auto& d = svc_.options().gcroots_dir;
+  return d.empty() ? cache_dir() / "gcroots" : d;
+}
+
 std::vector<std::string> NixRunner::nix_env() const {
   std::vector<std::string> env;
   for (const char* k : {"PATH", "HOME", "NIX_REMOTE", "NIX_CONF_DIR", "NIX_SSL_CERT_FILE", "SSL_CERT_FILE",
@@ -406,7 +411,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   std::optional<std::chrono::steady_clock::time_point> deadline;
   if (req.timeout_seconds)
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
-  auto root_link = cache_dir() / "gcroots" / k;
+  auto root_link = gcroots_dir() / k;
   stdfs::create_directories(root_link.parent_path());
   auto check = [&](const proc::Result& res, const char* what) {
     if (res.cancelled) throw Failed(FailureKind::cancelled, std::string("Nix ") + what + " cancelled");
@@ -562,6 +567,11 @@ CacheClearOutcome NixRunner::clear_cache() {
     else out.deleted.push_back(label);
   };
   remove(state / "cache", "build-cache");
+  // Roots kept outside the project (shared VM): only this project's.
+  if (const auto& roots = svc_.options().gcroots_dir; !roots.empty()) {
+    std::error_code rec;
+    for (const auto& e : stdfs::directory_iterator(roots, rec)) stdfs::remove(e.path(), rec);
+  }
   remove(state / "sdk", "sdk");
   std::error_code ec;
   if (stdfs::is_directory(state / "runs", ec)) {

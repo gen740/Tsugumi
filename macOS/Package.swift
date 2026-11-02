@@ -11,6 +11,7 @@ let package = Package(
   platforms: [.macOS("26.0")],
   products: [
     .executable(name: "Tsugumi", targets: ["TsugumiApp"]),
+    .executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"]),
     .library(name: "TsugumiRPC", targets: ["TsugumiRPC"]),
   ],
   dependencies: [
@@ -22,6 +23,9 @@ let package = Package(
     .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", exact: "0.23.4"),
     .package(url: "https://github.com/tree-sitter/tree-sitter-json", exact: "0.24.8"),
     .package(url: "https://github.com/tree-sitter/tree-sitter-bash", exact: "0.25.1"),
+    // Terminal emulator of the project terminal (UI only). 1.11.2: later
+    // versions need the Metal Toolchain (an Xcode download) for their shaders.
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.2"),
   ],
   targets: [
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
@@ -36,6 +40,12 @@ let package = Package(
       name: "TsugumiLauncher",
       dependencies: ["TsugumiRPC"],
       path: "Sources/Launcher",
+      swiftSettings: [.swiftLanguageMode(.v5)]),
+    // Drives the shared VM without the app (tests); needs the virtualization entitlement.
+    .executableTarget(
+      name: "TsugumiVMCtl",
+      dependencies: ["TsugumiLauncher"],
+      path: "Sources/VMCtl",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Dawn renderer: ui/renderer/build.sh produces build-renderer/ui/renderer/libtsugumi_renderer.dylib.
     .systemLibrary(name: "TsugumiRendererC", path: "Sources/RendererC"),
@@ -73,6 +83,7 @@ let package = Package(
         .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
         .product(name: "TreeSitterBash", package: "tree-sitter-bash"),
         "TreeSitterNix", "TreeSitterFBS", "TreeSitterPython",
+        .product(name: "SwiftTerm", package: "SwiftTerm"),
       ],
       path: "Sources/App",
       exclude: ["Resources/TreeSitter/SOURCES.md"],

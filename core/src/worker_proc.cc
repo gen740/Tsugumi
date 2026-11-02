@@ -140,6 +140,14 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
                  "--new-session", "--dev-bind", "/", "/", "--proc", "/proc"};
     if (sp.uid)
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
+    // Shared folders (virtiofs) show every file as owned by whoever looks, so
+    // file modes cannot keep the token from the Card: the folders are hidden.
+    if (!sp.hidden_paths.empty()) {
+      for (const auto& p : sp.hidden_paths) spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
+      for (const auto& p : sp.ro_paths) spec.argv.insert(spec.argv.end(), {"--ro-bind", p, p});
+      for (const auto& p : sp.rw_paths) spec.argv.insert(spec.argv.end(), {"--bind", p, p});
+      spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.script_dir, sp.script_dir});
+    }
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
   } else {
     // Development hosts without bubblewrap (never the container image).

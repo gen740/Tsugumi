@@ -38,7 +38,6 @@ struct MainWindow: View {
     .task {
       UIScript.shared.workspace = workspace
       if model.setup == nil { await model.refreshSetup() }
-      await model.prepareIfNeeded()
       // `Tsugumi <project folder>` opens that project in the first window.
       if workspace.session == nil, let url = model.takeLaunchProject() { open(url) }
     }
@@ -102,46 +101,34 @@ struct WorkflowWindow: View {
   }
 }
 
-/// Shown when the container runtime or the environment image still needs setting up.
+/// Shown when this Mac cannot run the shared VM yet: virtualization or the
+/// VM image is missing. Everything else is set up on the first project start.
 struct EnvironmentSetupView: View {
   @Environment(AppModel.self) private var model
-  @State private var working: String?
-  @State private var message: String?
 
   var body: some View {
     let s = model.setup ?? EnvironmentManager.SetupStatus()
     VStack(alignment: .leading, spacing: 18) {
       Label("Tsugumi の実行環境を準備します", systemImage: "shippingbox").font(.largeTitle.bold())
-      Text("Card は隔離された Linux 環境（Apple container）の中で実行されます。次の項目を確認してください。")
+      Text("Card は Tsugumi の Linux VM（Virtualization.framework、アプリ全体で 1 台）の中で、プロジェクトごとに隔離して実行されます。")
         .foregroundStyle(.secondary)
       GroupBox {
         VStack(alignment: .leading, spacing: 12) {
-          step("Apple container \(ContainerCLI.pinnedVersion) がインストールされている", ok: s.containerInstalled && s.versionSupported,
-               detail: s.containerInstalled
-                 ? (s.versionSupported ? "version \(s.version ?? "")" : "インストール済み: \(s.version ?? "不明")（検証済みは \(ContainerCLI.pinnedVersion)）")
-                 : "github.com/apple/container/releases からインストールしてください。") {
+          step("この Mac で仮想マシンを使える", ok: s.virtualizationSupported,
+               detail: "Apple silicon の Mac と macOS 26 以降が必要です。") { EmptyView() }
+          step("実行環境の VM イメージがある", ok: s.imageAvailable,
+               detail: s.imageAvailable ? "VM イメージ \(s.imageVersion ?? "")"
+                                        : "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。") {
             EmptyView()
-          }
-          step("container サービスが起動している", ok: s.serviceRunning, detail: "container system start を実行します。") {
-            Button("サービスを起動") { act("サービスを起動しています…") { try await model.environments.startService() } }
-              .disabled(!s.containerInstalled || s.serviceRunning || working != nil)
-          }
-          step("実行環境イメージが読み込まれている", ok: s.imageLoaded,
-               detail: s.bundledImageAvailable ? "アプリに同梱のイメージを読み込みます（初回のみ、数分かかります）。"
-                                               : "同梱イメージがありません。macOS/Container/build-image.sh で作成してください。") {
-            Button("イメージを読み込む") { act("イメージを読み込んでいます…") { try await model.environments.loadBundledImage() } }
-              .disabled(!s.serviceRunning || s.imageLoaded || !s.bundledImageAvailable || working != nil)
           }
         }
         .padding(8)
       }
+      Text("初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（最大 \(model.environments.resources.storeGiB) GiB、使った分だけ）を作ります。")
+        .font(.callout).foregroundStyle(.secondary)
       HStack {
-        if let working { ProgressView().controlSize(.small); Text(working) }
-        if let message = message ?? model.prepareError {
-          Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
-        }
         Spacer()
-        Button("再確認") { Task { await model.refreshSetup() } }.disabled(working != nil || model.checkingSetup)
+        Button("再確認") { Task { await model.refreshSetup() } }.disabled(model.checkingSetup)
       }
     }
     .padding(32)
@@ -164,13 +151,4 @@ struct EnvironmentSetupView: View {
     }
   }
 
-  private func act(_ label: String, _ op: @escaping () async throws -> Void) {
-    working = label
-    message = nil
-    Task {
-      do { try await op() } catch { message = "\(error)" }
-      working = nil
-      await model.refreshSetup()
-    }
-  }
 }

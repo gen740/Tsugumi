@@ -8,6 +8,8 @@ struct LoadingContent: Equatable {
   var detail: String?
   /// Unsaved edits exist and are being kept.
   var dirty = false
+  /// Offers the execution environment's console (its start log).
+  var showsConsole = false
 }
 
 /// The loading Card, drawn as one Card of a workflow inside the window: an
@@ -18,6 +20,7 @@ struct TsugumiLoadingCard: View {
   let content: LoadingContent
   var onCancel: (() -> Void)?
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     let f = content.fraction.map { min(1, max(0, $0)) }
@@ -56,6 +59,10 @@ struct TsugumiLoadingCard: View {
           if content.dirty {
             Label("未保存の変更があります（保持しています）", systemImage: "pencil.circle")
               .font(.callout).foregroundStyle(TsugumiPalette.rufous)
+          }
+          if content.showsConsole {
+            Button { openWindow(id: "console") } label: { Label("コンソールで詳細を見る", systemImage: "apple.terminal") }
+              .buttonStyle(.link).font(.callout)
           }
           if let onCancel {
             Button("キャンセル", action: onCancel).controlSize(.regular).padding(.top, 2)

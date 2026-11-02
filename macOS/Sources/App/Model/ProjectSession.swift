@@ -330,19 +330,38 @@ final class ProjectSession {
     }
   }
 
+  /// Notifications are taken in as they arrive (core never waits for the
+  /// UI) and applied in batches at most once per frame: a run with thousands
+  /// of short invocations causes one view update per batch, not per event.
   private func listen(_ c: RPCClient) {
+    let inbox = NotificationInbox()
+    let receiver = Task.detached {
+      for await event in c.notifications { inbox.put(event) }
+      inbox.finish()
+    }
     listenTask = Task { [weak self] in
-      for await event in c.notifications {
-        guard let self else { return }
-        await self.handle(event)
+      while !Task.isCancelled {
+        let (batch, finished) = await inbox.take()
+        guard let self else { receiver.cancel(); return }
+        if !batch.isEmpty { self.notificationBatches += 1 }
+        for event in batch { await self.handle(event) }
+        if finished { break }
+        // Let the frame that shows this batch happen before the next one.
+        try? await Task.sleep(for: .milliseconds(16))
       }
+      receiver.cancel()
       guard let self, !Task.isCancelled else { return }
       self.connected = false
       self.reconnect()
     }
   }
 
+  /// How many notifications the UI has taken in, and in how many batches (UI script `state`).
+  private(set) var notificationCount = 0
+  private(set) var notificationBatches = 0
+
   private func handle(_ e: NotificationEvent) async {
+    notificationCount += 1
     guard e.subscriptionId == subscription else { return }  // stale subscription
     if e.seq != lastSeq + 1 {
       // A gap means we cannot trust our state: open again.
@@ -881,5 +900,56 @@ final class ProjectSession {
     var cards = layout["cards"] ?? .object([])
     cards[k] = .object([("x", .real((pt.x * 10).rounded() / 10)), ("y", .real((pt.y * 10).rounded() / 10))])
     layout["cards"] = cards
+  }
+}
+
+/// Notifications waiting for the next UI batch (filled off the main actor).
+final class NotificationInbox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [NotificationEvent] = []
+  private var done = false
+  private var waiter: CheckedContinuation<Void, Never>?
+
+  func put(_ e: NotificationEvent) {
+    lock.lock()
+    items.append(e)
+    let w = waiter
+    waiter = nil
+    lock.unlock()
+    w?.resume()
+  }
+
+  func finish() {
+    lock.lock()
+    done = true
+    let w = waiter
+    waiter = nil
+    lock.unlock()
+    w?.resume()
+  }
+
+  /// Everything queued so far (waits until there is something or the stream ended).
+  func take() async -> ([NotificationEvent], Bool) {
+    while true {
+      lock.lock()
+      if !items.isEmpty || done {
+        let batch = items
+        items.removeAll(keepingCapacity: true)
+        let d = done
+        lock.unlock()
+        return (batch, d)
+      }
+      lock.unlock()
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        lock.lock()
+        if !items.isEmpty || done {
+          lock.unlock()
+          c.resume()
+        } else {
+          waiter = c
+          lock.unlock()
+        }
+      }
+    }
   }
 }

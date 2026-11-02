@@ -36,6 +36,10 @@ struct WorkerSpawn {
   bool sandbox = true;
   std::vector<std::string> ro_paths;  // extra read-only binds (input files)
   std::vector<std::string> rw_paths;  // work/tmp/out roots
+  // Covered with an empty tmpfs for sandbox: false Cards (the control folder
+  // with the RPC token, tsugumid's state); ro/rw paths and the script folder
+  // inside them are bound again on top.
+  std::vector<std::string> hidden_paths;
   std::optional<uid_t> uid;
   std::optional<gid_t> gid;
 };

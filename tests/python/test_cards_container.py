@@ -1,4 +1,5 @@
-"""Code Card behaviour in the real environment (TSUGUMI_TEST_CONTAINER=1):
+"""Code Card behaviour in the real environment (TSUGUMI_TEST_CONTAINER=1; the
+shared VM, or Apple container with TSUGUMI_TEST_ENV=container):
 backpressure stalls, the shell step contract, deadlines and cancellation,
 worker reuse, isolation, Nix upstream references, stages and caching, and
 the display variants of the Python SDK."""
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import ContainerEnv
+from conftest import real_environment
 from projects import card, conn
 from test_regressions import put, write
 from tsugumi_client import RpcFailure, new_id, path, text
@@ -64,7 +65,7 @@ def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
     root = tmp_path_factory.mktemp("cards") / "p"
     write(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
-    e = ContainerEnv(root, os.environ.get("TSUGUMI_TEST_CARDS_NAME", "tsugumi-test-cards")).start()
+    e = real_environment(root, os.environ.get("TSUGUMI_TEST_CARDS_NAME", "tsugumi-test-cards"))
     yield e
     e.cleanup()
 
@@ -177,8 +178,8 @@ def proc_count(env, pattern: str) -> int:
     glob = pattern[:-1] + "[" + pattern[-1] + "]"
     script = ("n=0; for f in /proc/[0-9]*/cmdline; do c=$(< \"$f\") 2>/dev/null; "
               f"case \"$c\" in *{glob}*) n=$((n+1));; esac; done; echo $n")
-    out = subprocess.run(["container", "exec", env.name, "bash", "-c", script], capture_output=True, text=True)
-    return int(out.stdout.strip() or "0")
+    out = env.exec(script).strip().splitlines()
+    return int(out[-1] if out else "0")
 
 
 @pytest.mark.parametrize("sandbox", [True, False])

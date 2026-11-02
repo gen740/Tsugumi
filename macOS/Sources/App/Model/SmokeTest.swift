@@ -38,9 +38,24 @@ enum SmokeTest {
           try await Task.sleep(for: .milliseconds(100))
           if Date().timeIntervalSince(t1) > 1800 { throw RPCError.timeout }
         }
+        // When the UI saw the end vs the core's own clock (accepted -> ended).
+        report["run_ui_s"] = Date().timeIntervalSince(t1)
+        if let r = s.runStatus, let a = r.acceptedAt, let e = r.endedAt { report["run_core_s"] = Double(e - a) / 1000 }
+        report["notifications"] = [s.notificationCount, s.notificationBatches]
         try await Task.sleep(for: .milliseconds(500))
         report["run_s"] = Date().timeIntervalSince(t1)
         report["run_state"] = String(describing: s.runStatus?.state ?? .idle)
+        // A second run: builds and workers are ready, so this is the steady state.
+        if env["TSUGUMI_SMOKE_RERUN"] == "1" {
+          let n0 = s.notificationCount, b0 = s.notificationBatches
+          let t2 = Date()
+          try await s.run(card: [trigger], propagate: true)
+          try await Task.sleep(for: .milliseconds(200))
+          while s.runActive { try await Task.sleep(for: .milliseconds(50)) }
+          report["rerun_ui_s"] = Date().timeIntervalSince(t2)
+          if let r = s.runStatus, let a = r.acceptedAt, let e = r.endedAt { report["rerun_core_s"] = Double(e - a) / 1000 }
+          report["rerun_notifications"] = [s.notificationCount - n0, s.notificationBatches - b0]
+        }
         report["card_states"] = s.cardStates.mapValues { String(describing: $0.state) }
         report["displays"] = s.displays.mapValues { d -> String in
           switch d.value {
