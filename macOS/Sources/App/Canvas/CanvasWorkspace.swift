@@ -56,12 +56,12 @@ struct CanvasWorkspace: View {
   private var viewControls: some View {
     let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
     return HStack(spacing: 2) {
-      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help("縮小")
-      Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42) }.help("100% に戻す")
-      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help("拡大")
+      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help(tip("縮小", .zoomOut))
+      Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42) }.help(tip("100% に戻す", .actualSize))
+      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help(tip("拡大", .zoomIn))
       Divider().frame(height: 16)
       Button { NotificationCenter.default.post(name: .canvasFitAll, object: tab.id) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-        .help("全体表示")
+        .help(tip("全体表示", .fitAll))
       Button { session.arrange(tab.scope) } label: { Image(systemName: "rectangle.grid.2x2") }
         .help("整列（配置だけを変更）")
       Button { NotificationCenter.default.post(name: .canvasAddNote, object: tab.id) } label: { Image(systemName: "note.text.badge.plus") }
@@ -113,12 +113,12 @@ struct CanvasRunControl: View {
         Button { Task { await session.cancelRun() } } label: { Label("停止", systemImage: "stop.fill") }
           .buttonStyle(.borderedProminent).tint(.red)
           .disabled(state == .cancelling)
-          .help("Workflow の実行を停止（チャットの回答停止とは別の操作です）")
+          .help(tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop))
       } else {
         Button { RunActions.runAll(session, scope: tab.scope) } label: { Label("実行", systemImage: "play.fill") }
           .buttonStyle(.borderedProminent)
           .disabled(!session.connected)
-          .help("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）")
+          .help(tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
         Menu {
           Button("選択した Card から下流を実行") { if let k = tab.selection.first { RunActions.run(session, card: k, propagate: true) } }
           Button("選択した Card だけ実行（最後の入力）") { if let k = tab.selection.first { RunActions.run(session, card: k, propagate: false) } }
@@ -205,4 +205,9 @@ struct CanvasDraftControls: View {
       .background(.regularMaterial, in: Capsule())
     }
   }
+}
+
+/// A tooltip that names the shortcut of its action.
+@MainActor func tip(_ text: String, _ action: ShortcutAction) -> String {
+  "\(text)（\(AppPreferences.shared.shortcut(action).label)）"
 }

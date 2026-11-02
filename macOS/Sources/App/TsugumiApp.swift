@@ -150,8 +150,17 @@ struct WorkbenchCommands: Commands {
         .shortcut(.stop)
         .disabled(!(session?.runActive ?? false))
       Divider()
+      Button("Card を検索…") { NotificationCenter.default.post(name: .canvasFind, object: tab?.id) }
+        .shortcut(.find)
+      Divider()
       Button("全体表示") { NotificationCenter.default.post(name: .canvasFitAll, object: tab?.id) }
         .shortcut(.fitAll)
+      Button("100% 表示") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 0.0]) }
+        .shortcut(.actualSize)
+      Button("拡大") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 1.2]) }
+        .shortcut(.zoomIn)
+      Button("縮小") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 1 / 1.2]) }
+        .shortcut(.zoomOut)
       Button("整列") { if let s = session, let t = tab { s.arrange(t.scope) } }
         .shortcut(.arrange)
         .disabled(!(session?.connected ?? false))
@@ -178,6 +187,10 @@ extension Notification.Name {
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
   static let canvasReveal = Notification.Name("tsugumi.canvas.reveal")
+  /// Zooms a canvas (object: tab id): userInfo "zoom" factor, 0 = 100 %.
+  static let canvasZoom = Notification.Name("tsugumi.canvas.zoom")
+  /// Opens the Card search of a canvas (object: tab id).
+  static let canvasFind = Notification.Name("tsugumi.canvas.find")
   /// Shows the details bubble of a Card (object: tab id, userInfo "card").
   static let canvasShowDetails = Notification.Name("tsugumi.canvas.showDetails")
 }

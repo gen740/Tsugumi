@@ -8,6 +8,7 @@ struct DemoEntry: Identifiable, Hashable {
   let title: String
   let description: String
   let url: URL
+  var tags: [String] = []
 }
 
 struct RecentProject: Codable, Identifiable, Hashable {
@@ -113,10 +114,11 @@ final class AppModel {
   private func loadDemos() {
     guard let root = demosRoot, let data = try? Data(contentsOf: root.appendingPathComponent("index.json")),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let list = obj["demos"] as? [[String: String]] else { return }
+          let list = obj["demos"] as? [[String: Any]] else { return }
     demos = list.compactMap { d in
-      guard let id = d["id"], let title = d["title"], let p = d["path"] else { return nil }
-      return DemoEntry(id: id, title: title, description: d["description"] ?? "", url: root.appendingPathComponent(p))
+      guard let id = d["id"] as? String, let title = d["title"] as? String, let p = d["path"] as? String else { return nil }
+      return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: root.appendingPathComponent(p),
+                       tags: d["tags"] as? [String] ?? [])
     }
   }
 

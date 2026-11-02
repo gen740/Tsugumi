@@ -43,7 +43,7 @@ struct ResolvedCard {
 }
 
 /// One stage of an invocation as the core recorded it (core clock, ms).
-struct StageRecord: Equatable {
+struct StageRecord: Equatable, Hashable {
   var stage: Stage
   var outcome: Tsugumi_Data_StageOutcome
   var start: Int64?
@@ -73,6 +73,12 @@ struct CardRunState {
 }
 
 /// One invocation on the run timeline (times in ms since 1970, from the core).
+extension TimelineEntry {
+  static func stages(_ list: [Tsugumi_RPC_StageTimeT?]) -> [StageRecord] {
+    list.compactMap { $0 }.compactMap { t in Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) } }
+  }
+}
+
 struct TimelineEntry: Identifiable, Hashable {
   var id: String { "\(card)#\(invocation)" }
   let card: CardKey
@@ -80,6 +86,8 @@ struct TimelineEntry: Identifiable, Hashable {
   var state: Tsugumi_Data_CardState
   var startedAt: Int64?
   var endedAt: Int64?
+  /// Stages of this invocation (core clock), for the timeline.
+  var stages: [StageRecord] = []
 }
 
 /// Draft of one Card definition (`_card.json` and `_meta.json`), or its removal.
@@ -518,12 +526,15 @@ final class ProjectSession {
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
     let n = inv.invocation ?? 0
+    let stages = TimelineEntry.stages(inv.stages)
     if let i = timeline.firstIndex(where: { $0.card == k && $0.invocation == n }) {
       timeline[i].state = inv.state
       timeline[i].startedAt = inv.startedAt ?? timeline[i].startedAt
       timeline[i].endedAt = inv.endedAt ?? timeline[i].endedAt
+      if !stages.isEmpty { timeline[i].stages = stages }
     } else {
-      timeline.append(TimelineEntry(card: k, invocation: n, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt))
+      timeline.append(TimelineEntry(card: k, invocation: n, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt,
+                                    stages: stages))
     }
   }
 

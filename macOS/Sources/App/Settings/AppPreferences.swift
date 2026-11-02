@@ -5,7 +5,7 @@ import TsugumiRPC
 
 /// Commands whose keys can be reassigned in Settings > Shortcuts.
 enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
-  case save, run, stop, toggleChat, toggleLog, toggleTimeline, showDetails, fitAll, arrange, addNote, duplicate, openSettings
+  case save, run, stop, find, toggleChat, toggleLog, toggleTimeline, showDetails, fitAll, actualSize, zoomIn, zoomOut, arrange, addNote, duplicate, openSettings
   var id: String { rawValue }
 
   var title: String {
@@ -14,6 +14,10 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .run: return String(localized: "実行")
     case .stop: return String(localized: "停止")
     case .toggleChat: return String(localized: "チャットの表示切替")
+    case .find: return String(localized: "Card を検索")
+    case .actualSize: return String(localized: "100% 表示")
+    case .zoomIn: return String(localized: "拡大")
+    case .zoomOut: return String(localized: "縮小")
     case .toggleLog: return String(localized: "ログの表示切替")
     case .toggleTimeline: return String(localized: "タイムラインの表示切替")
     case .showDetails: return String(localized: "選択した Card の詳細")
@@ -28,13 +32,17 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
   var defaultKey: KeyBinding {
     switch self {
     case .save: return KeyBinding(key: "s", command: true)
-    case .run: return KeyBinding(key: "r", command: true)
-    case .stop: return KeyBinding(key: ".", command: true)
+    case .run: return KeyBinding(key: "\r", command: true)
+    case .stop: return KeyBinding(key: "\r", command: true, shift: true)
+    case .find: return KeyBinding(key: "f", command: true)
+    case .actualSize: return KeyBinding(key: "0", command: true)
+    case .zoomIn: return KeyBinding(key: "=", command: true)
+    case .zoomOut: return KeyBinding(key: "-", command: true)
     case .toggleChat: return KeyBinding(key: "j", command: true, option: true)
     case .toggleLog: return KeyBinding(key: "l", command: true, option: true)
     case .toggleTimeline: return KeyBinding(key: "t", command: true, option: true)
     case .showDetails: return KeyBinding(key: "i", command: true, option: true)
-    case .fitAll: return KeyBinding(key: "0", command: true, option: true)
+    case .fitAll: return KeyBinding(key: "1", command: true, shift: true)
     case .arrange: return KeyBinding(key: "a", command: true, option: true, shift: true)
     case .addNote: return KeyBinding(key: "n", command: true, option: true)
     case .duplicate: return KeyBinding(key: "d", command: true)
@@ -59,10 +67,22 @@ struct KeyBinding: Codable, Hashable {
     return m
   }
 
-  var keyEquivalent: KeyEquivalent { KeyEquivalent(key.first ?? " ") }
+  var keyEquivalent: KeyEquivalent {
+    switch key {
+    case "\r": return .return
+    case "\u{1b}": return .escape
+    default: return KeyEquivalent(key.first ?? " ")
+    }
+  }
 
   var label: String {
-    (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + (command ? "⌘" : "") + key.uppercased()
+    let k: String
+    switch key {
+    case "\r": k = "↩"
+    case "\u{1b}": k = "⎋"
+    default: k = key.uppercased()
+    }
+    return (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + (command ? "⌘" : "") + k
   }
 }
 

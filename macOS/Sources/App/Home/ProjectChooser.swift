@@ -3,75 +3,66 @@ import SwiftUI
 import TsugumiRPC
 
 /// Home (new, existing and recent projects) and the demo list, entered
-/// from "デモを見る" with a way back.
+/// from "デモを見る" with a way back. Both follow the window's size: lists
+/// scroll, nothing is cut at the top.
 struct ProjectChooser: View {
   @Environment(AppModel.self) private var model
   let onOpen: (URL) -> Void
   @State private var showDemos = false
   @State private var newName = ""
   @State private var showNew = false
+  @State private var tag: String?
+  @State private var search = ""
 
   var body: some View {
-    VStack(spacing: 0) {
-      if showDemos { demos } else { home }
-      if let e = model.error {
-        HStack {
-          Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
-          Spacer()
-          Button("閉じる") { model.error = nil }
+    HStack(spacing: 0) {
+      HomeSidebar(showDemos: $showDemos, onNew: { showNew = true }, onOpen: openPanel)
+        .frame(width: 250)
+      VStack(spacing: 0) {
+        if showDemos { demos } else { recents }
+        if let e = model.error {
+          HStack {
+            Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
+            Spacer()
+            Button("閉じる") { model.error = nil }
+          }
+          .padding(10)
+          .background(.red.opacity(0.08))
         }
-        .padding(10)
-        .background(.red.opacity(0.08))
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(HomeBackground())
     }
-    .background(HomeBackground())
     .tint(TsugumiPalette.rufous)
     // The home window shows no title: the key visual and the name are in it.
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    .ignoresSafeArea(.container, edges: .top)
     .sheet(isPresented: $showNew) { newProjectSheet }
   }
 
-  private var home: some View {
-    HStack(alignment: .top, spacing: 28) {
-      VStack(alignment: .leading, spacing: 12) {
-        Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
-          .frame(width: 44, height: 44)
-          .accessibilityHidden(true)
-        Text("Tsugumi").font(.largeTitle.bold())
-        Button { showNew = true } label: { Label("新規プロジェクト…", systemImage: "plus.square") }
-          .controlSize(.large).buttonStyle(.borderedProminent)
-        Button { openPanel() } label: { Label("既存のプロジェクトを開く…", systemImage: "folder") }
-          .controlSize(.large)
-        Button { showDemos = true } label: { Label("デモを見る", systemImage: "sparkles") }
-          .buttonStyle(.link)
-          .padding(.top, 6)
-      }
-      .frame(width: 260, alignment: .leading)
-      VStack(alignment: .leading, spacing: 8) {
-        Text("最近のプロジェクト").font(.headline)
-        if model.recents.isEmpty {
-          ContentUnavailableView("最近開いたプロジェクトはありません", systemImage: "clock",
-                                 description: Text("新規作成するか、既存のフォルダを開いてください。"))
-            .frame(maxHeight: 220)
-        } else {
-          // Only the projects themselves: no empty striped rows below them.
-          SwiftUI.TimelineView(.periodic(from: .now, by: 60)) { t in
-            ScrollView {
-              VStack(spacing: 2) {
-                ForEach(model.recents) { p in recentRow(p, now: t.date) }
-              }
-              .padding(4)
+  private var recents: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("最近のプロジェクト").font(.headline).padding(.top, 44)
+      if model.recents.isEmpty {
+        ContentUnavailableView("最近開いたプロジェクトはありません", systemImage: "clock",
+                               description: Text("新規作成するか、既存のフォルダを開いてください。"))
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        // Only the projects themselves (no empty striped rows); scrolls when long.
+        SwiftUI.TimelineView(.periodic(from: .now, by: 60)) { t in
+          ScrollView {
+            LazyVStack(spacing: 2) {
+              ForEach(model.recents) { p in recentRow(p, now: t.date) }
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .padding(4)
             .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
-            .fixedSize(horizontal: false, vertical: true)
           }
+          .scrollBounceBehavior(.basedOnSize)
         }
-        Spacer(minLength: 0)
       }
     }
-    .padding(28)
+    .padding(.horizontal, 24).padding(.bottom, 20)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
@@ -80,7 +71,7 @@ struct ProjectChooser: View {
       HStack {
         Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary)
         VStack(alignment: .leading) {
-          Text(p.name).font(.headline)
+          Text(p.name).font(.headline).lineLimit(1)
           Text(p.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
         }
         Spacer()
@@ -95,40 +86,46 @@ struct ProjectChooser: View {
     }
   }
 
+  private var shownDemos: [DemoEntry] {
+    model.demos.filter { d in
+      (tag == nil || d.tags.contains(tag!)) &&
+        (search.isEmpty || d.title.localizedCaseInsensitiveContains(search) || d.description.localizedCaseInsensitiveContains(search)
+          || d.tags.contains { $0.localizedCaseInsensitiveContains(search) })
+    }
+  }
+
   private var demos: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 14) {
-        Button { showDemos = false } label: { Label("ホーム", systemImage: "chevron.backward") }
-          .buttonStyle(.link)
-        Text("デモ").font(.largeTitle.bold())
-        Text("デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。")
-          .foregroundStyle(.secondary)
-        if model.demos.isEmpty {
-          ContentUnavailableView("デモが見つかりません", systemImage: "questionmark.folder")
-        }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
-          ForEach(model.demos) { demo in
-            GroupBox {
-              VStack(alignment: .leading, spacing: 8) {
-                Text(demo.title).font(.title3.bold())
-                Text(demo.description).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                HStack {
-                  Spacer()
-                  Button("コピーを開く") {
-                    do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" }
-                  }
-                  .buttonStyle(.borderedProminent)
-                }
-              }
-              .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-              .padding(6)
-            }
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Text("デモ").font(.title2.bold())
+        Spacer()
+        TextField("探す", text: $search).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+      }
+      .padding(.top, 44)
+      Text("デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。")
+        .font(.callout).foregroundStyle(.secondary)
+      // Tags to narrow the list as demos grow.
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 6) {
+          TagChip(label: String(localized: "すべて"), selected: tag == nil) { tag = nil }
+          ForEach(Array(Set(model.demos.flatMap(\.tags))).sorted(), id: \.self) { t in
+            TagChip(label: t, selected: tag == t) { tag = tag == t ? nil : t }
           }
         }
       }
-      .padding(28)
+      ScrollView {
+        if shownDemos.isEmpty {
+          ContentUnavailableView(model.demos.isEmpty ? "デモが見つかりません" : "条件に合うデモはありません", systemImage: "questionmark.folder")
+            .padding(.top, 40)
+        }
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
+          ForEach(shownDemos) { demo in DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } } }
+        }
+        .padding(.bottom, 20)
+      }
     }
+    .padding(.horizontal, 24)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private var newProjectSheet: some View {
@@ -189,5 +186,142 @@ struct HomeBackground: View {
                      startPoint: .topLeading, endPoint: .bottomTrailing)
     }
     .ignoresSafeArea()
+  }
+}
+
+/// The left column of home: the bird on its branch in the key visual's
+/// colours, the name, and the ways in.
+private struct HomeSidebar: View {
+  @Binding var showDemos: Bool
+  let onNew: () -> Void
+  let onOpen: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      TsugumiIdleScene(birdScale: 0.19)
+        .frame(height: 150)
+        .padding(.top, 30)
+      Text("Tsugumi").font(.largeTitle.bold()).foregroundStyle(TsugumiPalette.cream)
+        .padding(.horizontal, 18)
+      VStack(alignment: .leading, spacing: 8) {
+        Button(action: onNew) { Label("新規プロジェクト…", systemImage: "plus.square").frame(maxWidth: .infinity, alignment: .leading) }
+          .controlSize(.large).buttonStyle(.borderedProminent)
+        Button(action: onOpen) { Label("既存のプロジェクトを開く…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
+          .controlSize(.large)
+        Button { showDemos.toggle() } label: {
+          Label(showDemos ? "最近のプロジェクト" : "デモを見る", systemImage: showDemos ? "clock" : "sparkles")
+        }
+        .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream).padding(.top, 4)
+      }
+      .padding(.horizontal, 18)
+      Spacer(minLength: 0)
+    }
+    .frame(maxHeight: .infinity, alignment: .top)
+    .background(LowPolyBackground().ignoresSafeArea())
+    .environment(\.colorScheme, .dark)
+  }
+}
+
+private struct TagChip: View {
+  let label: String
+  let selected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Text(label).font(.caption)
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .background(Capsule().fill(selected ? TsugumiPalette.rufous.opacity(0.85) : Color.secondary.opacity(0.15)))
+        .foregroundStyle(selected ? Color.white : Color.primary)
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+}
+
+/// A demo with a thumbnail drawn from its own Workflow (Cards and wires).
+private struct DemoCard: View {
+  let demo: DemoEntry
+  let open: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      DemoThumbnail(url: demo.url)
+        .frame(height: 130)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+      Text(demo.title).font(.headline)
+      Text(demo.description).font(.callout).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 4) {
+        ForEach(demo.tags, id: \.self) { t in
+          Text(t).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(TsugumiPalette.olive.opacity(0.25)))
+        }
+      }
+      HStack {
+        Spacer()
+        Button("コピーを開く", action: open).buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(12)
+    .background(.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.secondary.opacity(0.2)))
+  }
+}
+
+/// The top-level Workflow of a demo in miniature: Cards as tiles coloured by
+/// kind, routing Cards as small marks, wires as curves.
+struct DemoThumbnail: View {
+  let url: URL
+
+  private struct Mini { var cards: [(id: String, rect: CGRect, color: Color)]; var wires: [(CGPoint, CGPoint)] }
+
+  private var mini: Mini {
+    guard let p = try? JSONValue.parse(String(contentsOf: url.appendingPathComponent("tsugumi.json"), encoding: .utf8)),
+          let l = try? JSONValue.parse(String(contentsOf: url.appendingPathComponent("layout.json"), encoding: .utf8)) else {
+      return Mini(cards: [], wires: [])
+    }
+    var cards: [(String, CGRect, Color)] = []
+    for c in p["canvas"]?["cards"]?.array ?? [] {
+      guard let id = c["id"]?.string else { continue }
+      let pos = CGPoint(x: l["cards"]?[id]?["x"]?.double ?? 0, y: l["cards"]?[id]?["y"]?.double ?? 0)
+      let def = c["definition"]?.string ?? ""
+      let routing = ["fork", "branch", "merge", "split", "route", "loop", "both"].contains(where: def.contains)
+      let color: Color = c["canvas"] != nil ? TsugumiPalette.olive : routing ? TsugumiPalette.mist : def.contains("trigger") || def.contains("initial") ? TsugumiPalette.rufous : TsugumiPalette.cream
+      cards.append((id, CGRect(x: pos.x, y: pos.y, width: routing ? 70 : 220, height: routing ? 44 : 64), color))
+    }
+    var wires: [(CGPoint, CGPoint)] = []
+    for w in p["canvas"]?["connections"]?.array ?? [] {
+      guard let a = cards.first(where: { $0.0 == w["from"]?["card"]?.string })?.1,
+            let b = cards.first(where: { $0.0 == w["to"]?["card"]?.string })?.1 else { continue }
+      wires.append((CGPoint(x: a.midX, y: a.maxY), CGPoint(x: b.midX, y: b.minY)))
+    }
+    return Mini(cards: cards, wires: wires)
+  }
+
+  var body: some View {
+    let m = mini
+    Canvas { g, size in
+      g.fill(Path(CGRect(origin: .zero, size: size)),
+             with: .linearGradient(Gradient(colors: [TsugumiPalette.tealTop, TsugumiPalette.tealBottom]), startPoint: .zero,
+                                   endPoint: CGPoint(x: size.width, y: size.height)))
+      let box = m.cards.reduce(CGRect.null) { $0.union($1.rect) }
+      guard !box.isNull else { return }
+      let r = box.insetBy(dx: -30, dy: -30)
+      let z = min(size.width / r.width, size.height / r.height)
+      func t(_ p: CGPoint) -> CGPoint { CGPoint(x: (p.x - r.midX) * z + size.width / 2, y: (p.y - r.midY) * z + size.height / 2) }
+      for (a, b) in m.wires {
+        var path = Path()
+        let s = t(a), e = t(b), dy = max(8, abs(e.y - s.y) / 2)
+        path.move(to: s)
+        path.addCurve(to: e, control1: CGPoint(x: s.x, y: s.y + dy), control2: CGPoint(x: e.x, y: e.y - dy))
+        g.stroke(path, with: .color(TsugumiPalette.cream.opacity(0.55)), lineWidth: 1.2)
+      }
+      for c in m.cards {
+        let o = t(c.rect.origin)
+        let rect = CGRect(x: o.x, y: o.y, width: c.rect.width * z, height: c.rect.height * z)
+        g.fill(Path(roundedRect: rect, cornerRadius: max(2, 8 * z)), with: .color(c.color.opacity(0.9)))
+      }
+    }
+    .accessibilityHidden(true)
   }
 }

@@ -177,7 +177,10 @@ struct RunLogView: View {
   }
 }
 
-/// Invocations of one run on a shared time axis, one row per Card.
+/// Invocations of one run on a shared time axis, one row per Card, each bar
+/// split into its stages. Drag over a time range to zoom into it, scroll
+/// sideways to move along time, 「全体」 to see the whole run again. Hover a bar
+/// for its Card, invocation, stage and times; click it to show the Card.
 struct RunTimelineView: View {
   let session: ProjectSession
   let runId: String?
@@ -186,6 +189,14 @@ struct RunTimelineView: View {
   let onSelect: (CardKey) -> Void
   @State private var entries: [TimelineEntry] = []
   @State private var loading = false
+  /// Shown time range in ms from the start of the run (nil: the whole run).
+  @State private var window: ClosedRange<Double>?
+  @State private var dragFrom: CGFloat?
+  @State private var dragTo: CGFloat?
+  @State private var hoverPoint: CGPoint?
+
+  private static let labelWidth: CGFloat = 170
+  private static let rowHeight: CGFloat = 18
 
   var body: some View {
     let list = runId == session.currentRunId && !session.timeline.isEmpty ? session.timeline : entries
@@ -198,51 +209,147 @@ struct RunTimelineView: View {
     let start = status?.acceptedAt ?? list.compactMap(\.startedAt).min() ?? 0
     let lastEnd = list.map { $0.endedAt ?? (live ? now : ($0.startedAt ?? start)) }.max() ?? start
     let end = max(start + 1, status?.endedAt ?? (live ? now : lastEnd), lastEnd)
+    let total = Double(end - start)
+    let shown = window ?? 0...total
     Group {
       if list.isEmpty {
         if loading { ProgressView() } else {
           ContentUnavailableView("実行状況はありません", systemImage: "chart.bar.xaxis", description: Text("実行を選ぶか、実行してください。"))
         }
       } else {
-        ScrollView {
-          VStack(alignment: .leading, spacing: 3) {
-            HStack {
-              Text("").frame(width: 180)
-              Text("Run 受付").font(.caption2).foregroundStyle(.secondary)
-              Spacer()
-              Text(formatDuration(Double(end - start) / 1000) + (live ? String(localized: "（実行中）") : ""))
-                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                .help("Run の受付から終了まで（準備を含む）。実行中の経過と同じ基準です。")
-            }
-            ForEach(rows, id: \.self) { k in
-              HStack(spacing: 6) {
-                Text(session.displayName(k)).font(.caption).lineLimit(1).frame(width: 180, alignment: .leading).help(k)
-                GeometryReader { g in
-                  ZStack(alignment: .leading) {
-                    Rectangle().fill(.quaternary.opacity(0.4))
-                    ForEach(list.filter { $0.card == k }) { e in
-                      let s = e.startedAt ?? start
-                      let f = e.endedAt ?? (live ? now : s)
-                      let x = CGFloat(s - start) / CGFloat(end - start) * g.size.width
-                      let w = max(3, CGFloat(f - s) / CGFloat(end - start) * g.size.width)
-                      RoundedRectangle(cornerRadius: 2)
-                        .fill(e.state.color.opacity(0.8))
-                        .frame(width: w, height: g.size.height - 4)
-                        .offset(x: x)
-                        .help("#\(e.invocation) · \(e.state.label) · \(formatDuration(Double(f - s) / 1000))")
-                        .onTapGesture { onSelect(k) }
-                    }
+        VStack(spacing: 0) {
+          HStack(spacing: 8) {
+            Text(formatDuration(shown.lowerBound / 1000)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+              .frame(width: Self.labelWidth, alignment: .trailing)
+            Spacer()
+            Text("ドラッグで範囲を拡大・横スクロールで移動").font(.caption2).foregroundStyle(.tertiary)
+            Button("全体") { window = nil }.controlSize(.small).disabled(window == nil)
+              .help("Run 全体（受付から終了まで \(formatDuration(total / 1000))）を表示")
+            Text(formatDuration(shown.upperBound / 1000) + (live && window == nil ? String(localized: "（実行中）") : ""))
+              .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+          }
+          .padding(.horizontal, 8).padding(.vertical, 4)
+          ScrollView(.vertical) {
+            HStack(alignment: .top, spacing: 0) {
+              VStack(alignment: .leading, spacing: 0) {
+                ForEach(rows, id: \.self) { k in
+                  let n = list.filter { $0.card == k }.count
+                  HStack(spacing: 4) {
+                    Text(session.displayName(k)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    if n > 1 { Text("×\(n)").foregroundStyle(.secondary).monospacedDigit() }
                   }
+                  .font(.caption)
+                  .frame(width: Self.labelWidth - 12, height: Self.rowHeight, alignment: .leading)
+                  .padding(.leading, 8)
+                  .help(k)
+                  .onTapGesture { onSelect(k) }
                 }
-                .frame(height: 16)
               }
+              GeometryReader { g in
+                chart(list: list, rows: rows, start: start, live: live, now: now, shown: shown, total: total, width: g.size.width)
+              }
+              .frame(height: CGFloat(rows.count) * Self.rowHeight)
             }
           }
-          .padding(8)
         }
       }
     }
-    .task(id: runId) { await load() }
+    .task(id: runId) { window = nil; await load() }
+  }
+
+  private func chart(list: [TimelineEntry], rows: [CardKey], start: Int64, live: Bool, now: Int64,
+                     shown: ClosedRange<Double>, total: Double, width: CGFloat) -> some View {
+    let span = max(1, shown.upperBound - shown.lowerBound)
+    func x(_ t: Int64) -> CGFloat { CGFloat((Double(t - start) - shown.lowerBound) / span) * width }
+    let rowIndex = Dictionary(uniqueKeysWithValues: rows.enumerated().map { ($1, $0) })
+    let hovered = hoverPoint.flatMap { p in hit(list, rowIndex, p, x: x) }
+    return ZStack(alignment: .topLeading) {
+      Canvas { ctx, size in
+        for (i, _) in rows.enumerated() where i % 2 == 1 {
+          ctx.fill(Path(CGRect(x: 0, y: CGFloat(i) * Self.rowHeight, width: size.width, height: Self.rowHeight)),
+                   with: .color(.secondary.opacity(0.06)))
+        }
+        for e in list {
+          guard let row = rowIndex[e.card], let s = e.startedAt else { continue }
+          let f = e.endedAt ?? (live ? now : s)
+          let x0 = x(s), x1 = max(x0 + 2, x(f))
+          guard x1 >= 0, x0 <= size.width else { continue }
+          let y = CGFloat(row) * Self.rowHeight + 3, h = Self.rowHeight - 6
+          ctx.fill(Path(roundedRect: CGRect(x: x0, y: y, width: x1 - x0, height: h), cornerRadius: 2), with: .color(e.state.color.opacity(0.35)))
+          // Stages inside the invocation, each in its own colour.
+          for st in e.stages {
+            guard let a = st.start else { continue }
+            let b = st.end ?? (live ? now : a)
+            let sx0 = x(a), sx1 = max(sx0 + 1, x(b))
+            ctx.fill(Path(CGRect(x: sx0, y: y, width: sx1 - sx0, height: h)), with: .color(Self.color(st.stage).opacity(0.85)))
+          }
+        }
+        if let a = dragFrom, let b = dragTo {
+          ctx.fill(Path(CGRect(x: min(a, b), y: 0, width: abs(b - a), height: size.height)), with: .color(Color.accentColor.opacity(0.18)))
+        }
+      }
+      if let h = hovered, let p = hoverPoint {
+        Text(description(h)).font(.caption).padding(6)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+          .fixedSize()
+          .offset(x: min(p.x + 12, max(0, width - 260)), y: p.y + 12)
+          .allowsHitTesting(false)
+      }
+    }
+    .contentShape(Rectangle())
+    .onContinuousHover { phase in
+      if case .active(let p) = phase { hoverPoint = p } else { hoverPoint = nil }
+    }
+    .gesture(DragGesture(minimumDistance: 4)
+      .onChanged { v in dragFrom = v.startLocation.x; dragTo = v.location.x; hoverPoint = nil }
+      .onEnded { v in
+        let a = min(v.startLocation.x, v.location.x), b = max(v.startLocation.x, v.location.x)
+        if b - a > 6 {
+          let lo = shown.lowerBound + Double(a / width) * span, hi = shown.lowerBound + Double(b / width) * span
+          window = max(0, lo)...max(lo + 1, hi)
+        }
+        dragFrom = nil
+        dragTo = nil
+      })
+    .onTapGesture { if let h = hovered { onSelect(h.card) } }
+    .overlay(HorizontalScrollCatcher { dx in
+      // Sideways scroll moves along time (only when zoomed in).
+      guard let w = window else { return }
+      let shift = -Double(dx / max(width, 1)) * span
+      let lo = min(max(0, w.lowerBound + shift), max(0, total - span))
+      window = lo...(lo + span)
+    })
+  }
+
+  private func hit(_ list: [TimelineEntry], _ rows: [CardKey: Int], _ p: CGPoint, x: (Int64) -> CGFloat) -> TimelineEntry? {
+    let row = Int(p.y / Self.rowHeight)
+    return list.last { e in
+      guard rows[e.card] == row, let s = e.startedAt else { return false }
+      let x0 = x(s), x1 = max(x0 + 2, x(e.endedAt ?? s))
+      return p.x >= x0 - 2 && p.x <= x1 + 2
+    }
+  }
+
+  private func description(_ e: TimelineEntry) -> String {
+    var lines = ["\(session.displayName(e.card)) · 実行 #\(e.invocation) · \(e.state.label)"]
+    if let s = e.startedAt, let f = e.endedAt { lines.append(String(localized: "全体 ") + formatDuration(Double(f - s) / 1000)) }
+    for st in e.stages {
+      if let a = st.start, let b = st.end { lines.append("\(st.stage.label): " + formatDuration(Double(b - a) / 1000)) }
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  static func color(_ s: Stage) -> Color {
+    switch s {
+    case .prepare: return .indigo
+    case .evaluate: return .cyan
+    case .build: return .blue
+    case .execute: return .green
+    case .validate: return .mint
+    case .save: return .teal
+    default: return .gray
+    }
   }
 
   /// A past run's invocations, read per Card with RunInvocations.
@@ -255,9 +362,31 @@ struct RunTimelineView: View {
     for k in session.resolution.keys.sorted().prefix(300) {
       guard let page = try? await rpc.invocations(runId: runId, card: path(k)) else { continue }
       for r in page.records.compactMap({ $0 }) {
-        out.append(TimelineEntry(card: k, invocation: r.invocation ?? 0, state: r.state, startedAt: r.startedAt, endedAt: r.endedAt))
+        out.append(TimelineEntry(card: k, invocation: r.invocation ?? 0, state: r.state, startedAt: r.startedAt, endedAt: r.endedAt,
+                                 stages: TimelineEntry.stages(r.stages)))
       }
     }
     entries = out
+  }
+}
+
+/// Sideways two-finger (or shift + wheel) scroll, for the timeline.
+struct HorizontalScrollCatcher: NSViewRepresentable {
+  let onScroll: (CGFloat) -> Void
+  func makeNSView(context: Context) -> NSView { V(onScroll) }
+  func updateNSView(_ v: NSView, context: Context) { (v as? V)?.onScroll = onScroll }
+
+  final class V: NSView {
+    var onScroll: (CGFloat) -> Void
+    init(_ f: @escaping (CGFloat) -> Void) { onScroll = f; super.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+      // Only sideways scrolls; vertical ones scroll the rows, clicks pass through.
+      guard let e = NSApp.currentEvent, e.type == .scrollWheel else { return nil }
+      return abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) || e.modifierFlags.contains(.shift) ? self : nil
+    }
+    override func scrollWheel(with e: NSEvent) {
+      onScroll(e.modifierFlags.contains(.shift) && e.scrollingDeltaX == 0 ? e.scrollingDeltaY : e.scrollingDeltaX)
+    }
   }
 }

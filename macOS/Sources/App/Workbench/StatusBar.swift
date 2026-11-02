@@ -80,11 +80,10 @@ struct StatusBar: View {
     let open = workspace.showBottom && workspace.bottomPanel == p
     return Button { workspace.togglePanel(p) } label: {
       Image(systemName: symbol)
-        .frame(width: 26, height: 20)
-        .foregroundStyle(open ? Color.white : Color.secondary)
-        .background(RoundedRectangle(cornerRadius: 5).fill(open ? Color.accentColor : .clear))
+        .frame(width: 22, height: 16)
+        .foregroundStyle(open ? Color.white : Color.primary)
     }
-    .buttonStyle(.borderless)
+    .buttonStyle(StatusButtonStyle(selected: open))
     .help("\(p.title)（\(AppPreferences.shared.shortcut(shortcut).label)）")
     .accessibilityLabel(p.title)
     .accessibilityAddTraits(open ? .isSelected : [])
@@ -125,7 +124,8 @@ struct StatusBar: View {
         }
       }
     }
-    .buttonStyle(.borderless)
+    .buttonStyle(StatusButtonStyle())
+    .help("保存・同期の詳細")
     .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
   }
 
@@ -176,7 +176,7 @@ struct StatusBar: View {
             .foregroundStyle(warnings > 0 ? .yellow : .secondary)
         }
       }
-      .buttonStyle(.borderless)
+      .buttonStyle(StatusButtonStyle())
       .help("問題一覧")
       .popover(isPresented: $showIssues, arrowEdge: .top) {
         IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
@@ -241,5 +241,23 @@ struct IssueList: View {
     let scope = Array(card.dropLast())
     tab.enter(scope)
     tab.selection = [key(card)]
+  }
+}
+
+/// A status bar control that looks pressable: a light background, stronger
+/// on hover and when pressed (plain status texts have none).
+struct StatusButtonStyle: ButtonStyle {
+  var selected = false
+  @State private var hovering = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .padding(.horizontal, 6).padding(.vertical, 2)
+      .background(RoundedRectangle(cornerRadius: 5).fill(
+        selected ? Color.accentColor :
+          Color.primary.opacity(configuration.isPressed ? 0.18 : hovering ? 0.12 : 0.06)))
+      .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.primary.opacity(selected ? 0 : 0.1)))
+      .contentShape(Rectangle())
+      .onHover { hovering = $0 }
   }
 }

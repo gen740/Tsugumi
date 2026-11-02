@@ -24,6 +24,8 @@ struct GraphCanvas: View {
   @State private var hover: HoverTarget?
   @State private var hoverAt: CGPoint = .zero
   @State private var hoverTask: Task<Void, Never>?
+  @State private var findText: String?
+  @FocusState private var findFocused: Bool
 
   private var scopeKey: CardKey { key(tab.scope) }
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
@@ -72,6 +74,7 @@ struct GraphCanvas: View {
             .allowsHitTesting(false)
             .transition(.opacity)
         }
+        if findText != nil { findBox.padding(.top, 52).frame(maxWidth: .infinity, alignment: .top) }
         // ⌘I: details of the selected Card without the pointer.
         Button("") { showDetailsForSelection() }
           .shortcut(.showDetails)
@@ -97,7 +100,8 @@ struct GraphCanvas: View {
       })
       .gesture(MagnifyGesture().onChanged { v in
         if zoomStart == nil { zoomStart = camera.zoom }
-        setZoom((zoomStart ?? 1) * v.magnification, around: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2))
+        // Pinch zooms around where the fingers are.
+        setZoom((zoomStart ?? 1) * v.magnification, around: v.startLocation)
       }.onEnded { _ in
         zoomStart = nil
         saveView()
@@ -128,15 +132,7 @@ struct GraphCanvas: View {
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
       }
-      .onReceive(NotificationCenter.default.publisher(for: .canvasShowDetails)) { n in
-        if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.instance(k) != nil {
-          tab.selection = [k]
-          showDetailsForSelection()
-        }
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .canvasReveal)) { n in
-        if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey { reveal(k) }
-      }
+      .modifier(CommandHandlers(canvas: self))
       .sheet(item: Binding(get: { editingNote.map(IdBox.init) }, set: { editingNote = $0?.id })) { box in
         NoteEditor(session: session, noteId: box.id)
       }
@@ -433,6 +429,86 @@ struct GraphCanvas: View {
       }
   }
 
+  // MARK: - Commands
+
+  func handleZoom(_ n: Notification) {
+    guard (n.object as? UUID) == tab.id, let f = n.userInfo?["zoom"] as? Double else { return }
+    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+    if f == 0 { setZoom(1, around: center) } else { zoom(by: f, around: center) }
+    saveView()
+  }
+
+  func handleFind(_ n: Notification) {
+    if (n.object as? UUID) == tab.id { findText = findText ?? ""; findFocused = true }
+  }
+
+  /// Esc: cancel what is going on, then clear the selection.
+  func escape() {
+    if pending != nil { pending = nil }
+    else if findText != nil { findText = nil }
+    else if hover != nil { clearHover() }
+    else { tab.selection = []; tab.selectedConnection = nil }
+  }
+
+  func handleDetails(_ n: Notification) {
+    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.instance(k) != nil {
+      tab.selection = [k]
+      showDetailsForSelection()
+    }
+  }
+
+  func handleReveal(_ n: Notification) {
+    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey { reveal(k) }
+  }
+
+  // MARK: - Card search (⌘F)
+
+  private var findMatches: [CardKey] {
+    let q = (findText ?? "").trimmingCharacters(in: .whitespaces)
+    guard !q.isEmpty else { return [] }
+    return cardKeys.filter { k in
+      session.displayName(k).localizedCaseInsensitiveContains(q) || k.localizedCaseInsensitiveContains(q) ||
+        (session.cardDescription(k) ?? "").localizedCaseInsensitiveContains(q)
+    }
+  }
+
+  private var findBox: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) {
+        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+        TextField("Card を検索（名前・説明）", text: Binding(get: { findText ?? "" }, set: { findText = $0 }))
+          .textFieldStyle(.plain)
+          .focused($findFocused)
+          .onSubmit { if let k = findMatches.first { pick(k) } }
+          .onExitCommand { findText = nil }
+        Button { findText = nil } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
+      }
+      ForEach(findMatches.prefix(8), id: \.self) { k in
+        Button { pick(k) } label: {
+          HStack {
+            Image(systemName: session.kind(k).symbol).frame(width: 16)
+            Text(session.displayName(k))
+            Spacer()
+            Text(session.kind(k).label).font(.caption).foregroundStyle(.secondary)
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+      }
+      if !(findText ?? "").isEmpty && findMatches.isEmpty { Text("見つかりません").font(.caption).foregroundStyle(.secondary) }
+    }
+    .padding(8)
+    .frame(width: 320)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+  }
+
+  private func pick(_ k: CardKey) {
+    tab.selection = [k]
+    findText = nil
+    reveal(k)
+  }
+
   // MARK: - Hover details
 
   enum HoverTarget: Equatable {
@@ -707,6 +783,20 @@ struct GraphCanvas: View {
   }
 }
 
+/// Menu and keyboard commands of a canvas (zoom, search, Esc, details).
+private struct CommandHandlers: ViewModifier {
+  let canvas: GraphCanvas
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .canvasZoom)) { n in canvas.handleZoom(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasFind)) { n in canvas.handleFind(n) }
+      .onExitCommand { canvas.escape() }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasShowDetails)) { n in canvas.handleDetails(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasReveal)) { n in canvas.handleReveal(n) }
+  }
+}
+
 struct IdBox: Identifiable { let id: String }
 
 extension CGRect {
@@ -802,7 +892,12 @@ struct HoverBubble: View {
   }
 }
 
-/// Two-finger scroll pans the canvas; ⌘-scroll zooms around the pointer.
+/// Pointer input of a canvas that SwiftUI gestures do not give:
+/// - mouse wheel: zoom around the pointer; ⌘-scroll as well
+/// - trackpad two-finger scroll: pan (pinch is a SwiftUI gesture)
+/// - middle-button drag, or Space + drag: pan with a mouse
+/// Clicks, and everything while a text field or editor has focus, go on
+/// to SwiftUI and AppKit as usual.
 struct ScrollCatcher: NSViewRepresentable {
   let onScroll: (Double, Double, Double, CGPoint?) -> Void
 
@@ -811,20 +906,55 @@ struct ScrollCatcher: NSViewRepresentable {
 
   final class CatcherView: NSView {
     var onScroll: (Double, Double, Double, CGPoint?) -> Void
+    private var monitor: Any?
+    private var spaceHeld = false
+    private var panning = false
+
     init(onScroll: @escaping (Double, Double, Double, CGPoint?) -> Void) {
       self.onScroll = onScroll
       super.init(frame: .zero)
+      monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] e in
+        guard let self, e.keyCode == 49, self.window?.isKeyWindow == true else { return e }  // space
+        // Space is text in an editor or a field: leave it alone there.
+        if self.window?.firstResponder is NSText { return e }
+        if e.type == .keyDown {
+          if !self.spaceHeld { self.spaceHeld = true; NSCursor.openHand.push() }
+        } else if self.spaceHeld {
+          self.spaceHeld = false
+          NSCursor.pop()
+        }
+        return nil
+      }
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
-      // Only take scroll events; clicks fall through to SwiftUI.
-      NSApp.currentEvent?.type == .scrollWheel ? self : nil
+      switch NSApp.currentEvent?.type {
+      case .scrollWheel?, .otherMouseDown?, .otherMouseDragged?, .otherMouseUp?: return self
+      case .leftMouseDown?, .leftMouseDragged?, .leftMouseUp?: return spaceHeld || panning ? self : nil
+      default: return nil
+      }
     }
+
     override func scrollWheel(with e: NSEvent) {
       let p = convert(e.locationInWindow, from: nil)
-      if e.modifierFlags.contains(.command) { onScroll(0, 0, Double(e.scrollingDeltaY) * 0.01, p) }
-      else { onScroll(Double(e.scrollingDeltaX), Double(e.scrollingDeltaY), 0, nil) }
+      if e.modifierFlags.contains(.command) {
+        onScroll(0, 0, Double(e.scrollingDeltaY) * (e.hasPreciseScrollingDeltas ? 0.01 : 0.08), p)
+      } else if !e.hasPreciseScrollingDeltas {
+        // A mouse wheel (line steps): zoom around the pointer.
+        onScroll(0, 0, Double(e.scrollingDeltaY) * 0.08, p)
+      } else {
+        onScroll(Double(e.scrollingDeltaX), Double(e.scrollingDeltaY), 0, nil)
+      }
     }
+
+    override func otherMouseDown(with e: NSEvent) { panning = true; NSCursor.closedHand.push() }
+    override func otherMouseDragged(with e: NSEvent) { onScroll(Double(e.deltaX), Double(e.deltaY), 0, nil) }
+    override func otherMouseUp(with e: NSEvent) { panning = false; NSCursor.pop() }
+    override func mouseDown(with e: NSEvent) { panning = true }
+    override func mouseDragged(with e: NSEvent) { onScroll(Double(e.deltaX), Double(e.deltaY), 0, nil) }
+    override func mouseUp(with e: NSEvent) { panning = false }
   }
 }
