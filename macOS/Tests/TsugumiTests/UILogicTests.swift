@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SwiftUI
 import Testing
 @testable import TsugumiApp
@@ -165,4 +166,26 @@ import Testing
         insets: SwiftUI.EdgeInsets(top: 50, leading: 0, bottom: 50, trailing: 0), maxZoom: 1, margin: 0)
   let tl = c.screen(CGPoint(x: 0, y: 0)), br = c.screen(CGPoint(x: 400, y: 300))
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
+}
+
+@MainActor
+@Test func editorSelectionAlwaysFitsTheNewText() {
+  let tv = NSTextView()
+  tv.string = "table Outputs { out:Num (required); }\nroot_type Outputs;\n"
+  tv.setSelectedRange(NSRange(location: 40, length: 10))
+  // A shorter text: no old range fits; an empty list would raise in AppKit.
+  tv.string = "x"
+  CodeEditor.select([NSRange(location: 40, length: 10)], in: tv)
+  #expect(tv.selectedRange() == NSRange(location: 1, length: 0))
+  // A range that partly fits is cut at the end of the text.
+  tv.string = "hello world"
+  CodeEditor.select([NSRange(location: 6, length: 50)], in: tv)
+  #expect(tv.selectedRange() == NSRange(location: 6, length: 5))
+  // No ranges at all: a cursor at the start.
+  CodeEditor.select([], in: tv)
+  #expect(tv.selectedRange() == NSRange(location: 0, length: 0))
+  // UTF-16 lengths (an emoji is two units): never half a character.
+  tv.string = "日本😀"
+  CodeEditor.select([NSRange(location: 3, length: 9)], in: tv)
+  #expect(tv.selectedRange() == NSRange(location: 2, length: 2))
 }

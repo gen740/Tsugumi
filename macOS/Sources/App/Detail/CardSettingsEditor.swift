@@ -62,7 +62,11 @@ final class CardEditorModel {
     return Set(session.sourcePaths.filter { $0.hasPrefix(prefix) && !docs.contains($0) }).union(created).subtracting(removed).sorted()
   }
 
-  func reload() {
+  /// Takes the project's current state as the new base. After an apply
+  /// (`keepingSources`) the files stay open with the text just saved, which
+  /// is now their base; otherwise they are read again.
+  func reload(keepingSources: Bool = false) {
+    let keep = keepingSources ? texts.filter { !removed.contains($0.key) } : [:]
     instance = session.instance(cardKey) ?? .object([])
     definition = definitionId.flatMap { session.definitions[$0] }
     meta = definitionId.flatMap { session.definitionMeta[$0] }
@@ -73,6 +77,13 @@ final class CardEditorModel {
     baseTexts = [:]
     baseHashes = [:]
     loads = [:]
+    for (p, t) in keep {
+      texts[p] = t
+      baseTexts[p] = t
+      loads[p] = .loaded
+      if let h = session.sources[p]?.hash { baseHashes[p] = h }
+    }
+    generation += 1
     boundaryRenames = [:]
     boundaryRemoved = [:]
     removed = []
@@ -97,6 +108,8 @@ final class CardEditorModel {
   }
 
   private(set) var loads: [String: SourceLoad] = [:]
+  /// Bumped by every reload, so open editors read their file again if needed.
+  private(set) var generation = 0
 
   /// Reads a source file once (later calls return the working copy).
   /// Throws when it cannot be read; nothing is recorded as its content then.
@@ -233,7 +246,7 @@ final class CardEditorModel {
       return false
     }
     message = String(localized: "適用しました（revision \(session.rev)）。")
-    reload()
+    reload(keepingSources: true)
     return true
   }
 }
@@ -919,7 +932,7 @@ private struct SourceCategory: View {
         if let e = generatedError {
           Text(e).font(.callout).foregroundStyle(.red).padding()
         }
-        CodeEditor(text: .constant(generated[name] ?? ""), language: "fbs", editable: false)
+        CodeEditor(text: .constant(generated[name] ?? ""), language: "fbs", editable: false, documentID: selected)
           .task(id: selected) { await loadGenerated() }
       } else if let selected {
         let markers = coreMarkers(for: selected) + formatMarkers
@@ -936,7 +949,7 @@ private struct SourceCategory: View {
           if loaded {
             CodeEditor(text: Binding(get: { model.loadedText(selected) ?? "" },
                                      set: { model.texts[selected] = $0; formatMarkers = [] }),
-                       language: (selected as NSString).pathExtension, markers: markers)
+                       language: (selected as NSString).pathExtension, markers: markers, documentID: selected)
           } else if case .failed(let e)? = model.loads[selected] {
             // Never an editable empty file: the content is unknown.
             ContentUnavailableView {
@@ -950,7 +963,7 @@ private struct SourceCategory: View {
             ProgressView("読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
           }
         }
-        .task(id: selected) {
+        .task(id: "\(selected)#\(model.generation)") {
           formatMarkers = []
           formatMessage = nil
           _ = try? await model.text(selected)

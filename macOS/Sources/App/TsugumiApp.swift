@@ -29,7 +29,9 @@ struct TsugumiApp: App {
     }
 
     WindowGroup("Card 設定", id: "card", for: CardRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref) } }
+      // One editor per Card: a window shown for another Card never keeps the
+      // previous Card's working copy.
+      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref).id(ref.card) } }
     }
     .defaultSize(width: 860, height: 620)
     .windowToolbarStyle(.unifiedCompact(showsTitle: true))

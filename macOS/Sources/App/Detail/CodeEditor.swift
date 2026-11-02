@@ -88,6 +88,9 @@ struct CodeEditor: NSViewRepresentable {
   var language = ""
   var editable = true
   var markers: [EditorMarker] = []
+  /// Which document is shown (a file path). Selection and undo belong to a
+  /// document: switching documents never carries them over.
+  var documentID = ""
 
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -116,21 +119,54 @@ struct CodeEditor: NSViewRepresentable {
     let ruler = LineNumberRuler(textView: tv)
     scroll.verticalRulerView = ruler
     tv.string = text
+    tv.setSelectedRange(NSRange(location: 0, length: 0))
+    context.coordinator.document = documentID
     configure(tv)
     return scroll
   }
 
   func updateNSView(_ scroll: NSScrollView, context: Context) {
     guard let tv = scroll.documentView as? GuideTextView else { return }
-    context.coordinator.parent = self
-    if tv.string != text {
-      let sel = tv.selectedRanges
+    let c = context.coordinator
+    c.parent = self
+    if c.document != documentID {
+      // Another file: keep the old one's place, start the new one at its own.
+      c.selections[c.document] = tv.selectedRanges.map(\.rangeValue)
+      c.document = documentID
       tv.string = text
-      tv.selectedRanges = sel.filter { $0.rangeValue.upperBound <= (text as NSString).length }
+      tv.undoManager?.removeAllActions(withTarget: tv.textStorage as Any)
+      tv.undoManager?.removeAllActions(withTarget: tv)
+      Self.select(c.selections[documentID] ?? [NSRange(location: 0, length: 0)], in: tv)
+      tv.scrollRangeToVisible(tv.selectedRange())
+    } else if tv.string != text {
+      let sel = tv.selectedRanges.map(\.rangeValue)
+      tv.string = text
+      Self.select(sel, in: tv)
     }
     configure(tv)
     (scroll.verticalRulerView as? LineNumberRuler)?.problemLines = markerLines(tv.string)
     scroll.verticalRulerView?.needsDisplay = true
+  }
+
+  /// Sets a selection that fits the current text (UTF-16 ranges). With no
+  /// usable range left it places an empty cursor: NSTextView does not
+  /// accept an empty list of ranges.
+  static func select(_ ranges: [NSRange], in tv: NSTextView) {
+    let s = tv.string as NSString
+    let length = s.length
+    var fitted: [NSValue] = []
+    for r in ranges where r.location != NSNotFound {
+      let loc = min(r.location, length)
+      var range = NSRange(location: loc, length: min(r.length, length - loc))
+      // Never split a character (surrogate pairs, combined sequences).
+      if length > 0 { range = s.rangeOfComposedCharacterSequences(for: range) }
+      fitted.append(NSValue(range: range))
+    }
+    if fitted.isEmpty {
+      let loc = min(ranges.first.map { $0.location == NSNotFound ? 0 : $0.location } ?? 0, length)
+      fitted = [NSValue(range: NSRange(location: loc, length: 0))]
+    }
+    tv.selectedRanges = fitted
   }
 
   private func configure(_ tv: GuideTextView) {
@@ -173,6 +209,9 @@ struct CodeEditor: NSViewRepresentable {
 
   final class Coordinator: NSObject, NSTextViewDelegate {
     var parent: CodeEditor
+    var document = ""
+    /// Selection of each document seen in this editor.
+    var selections: [String: [NSRange]] = [:]
     init(_ p: CodeEditor) { parent = p }
 
     func textDidChange(_ n: Notification) {

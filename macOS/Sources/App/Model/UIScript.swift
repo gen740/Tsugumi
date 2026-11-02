@@ -124,10 +124,32 @@ final class UIScript {
         switch w[2] {
         case "set": m.instance[w[3]] = .string(w.dropFirst(4).joined(separator: " "))
         case "category": m.category = CardEditorCategory(rawValue: w[3]) ?? m.category
+        case "load":
+          do { let t = try await m.text(w[3]); say("loaded \(w[3]) \(t.count) chars") } catch { say("load failed \(w[3]): \(error)") }
+        case "tail":
+          say("text \(w[3]) loaded=\(m.loadedText(w[3]) != nil) last=\(m.loadedText(w[3])?.split(separator: "\n").last ?? "-")")
+        case "append":
+          // editor <card> append <file path> <text>: edit a loaded file
+          let p = w[3]
+          if let t = m.loadedText(p) { m.texts[p] = t + w.dropFirst(4).joined(separator: " ") + "\n" } else { say("not loaded \(p)") }
         case "apply":
           let ok = await m.apply()
           say("apply \(ok) conflict=\(m.conflict != nil) unapplied=\(m.unapplied) description=\(m.instance["description"]?.string ?? "")")
         default: break
+        }
+      case "state":
+        let s = workspace?.session
+        // (no endpoint details: the token stays out of logs)
+        let env: String
+        switch s?.environment {
+        case .ready?: env = "ready"
+        case .failed(let m, _, _)?: env = "failed: " + m
+        case let other?: env = other.label
+        case nil: env = "-"
+        }
+        say("state session=\(s != nil) env=\(env) connected=\(s?.connected ?? false) message=\(s?.connectionMessage ?? "-")")
+        if let m = editors.values.first {
+          say("editor card=\(m.cardKey) category=\(m.category) loads=\(m.loads) unapplied=\(m.unapplied)")
         }
       case "windows":
         for win in NSApp.windows where win.isVisible { say("window \(win.windowNumber) \(win.identifier?.rawValue ?? "-") \(win.title)") }
