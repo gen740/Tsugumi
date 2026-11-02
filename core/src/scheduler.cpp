@@ -410,8 +410,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (n.start && !n.start_fired) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
-      if (!n.queues.empty() || !n.node->inputs.empty()) {
-        // A start Card with inputs runs on its last saved inputs.
+      if (!n.queues.empty()) {
+        // A start Card with connected inputs runs on its last saved inputs.
         auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
         if (!last) {
           start_failure_ = FailureData::make(FailureKind::input_missing,
@@ -1114,6 +1114,20 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!n.in_targets || n.node->is_virtual) continue;
       final[n.idx] = n.invocations > 0 || n.halted ? n.last : CardState::skipped;
     }
+    // Never invoked because a Draft upstream is not implemented yet: blocked,
+    // with the Draft named as the reason (Drafts never run or succeed).
+    std::map<size_t, std::string> draft_reason;
+    for (auto& n : nodes_) {
+      if (!n.in_targets || n.node->is_virtual || n.invocations > 0 || n.halted) continue;
+      for (const auto& e : res.edges) {
+        if (e.to != n.idx || nodes_[e.from].in_targets || res.nodes[e.from].kind != Template::Draft) continue;
+        const auto* port = n.node->input(e.to_port);
+        if (port && !port->optional) {
+          final[n.idx] = cancel_ ? CardState::cancelled : CardState::blocked;
+          draft_reason[n.idx] = path_key(res.nodes[e.from].path);
+        }
+      }
+    }
     // Never invoked: blocked when an upstream failed/blocked, or partial inputs arrived.
     for (bool changed = true; changed;) {
       changed = false;
@@ -1147,9 +1161,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             if (e.to == n.idx && e.to_port == port) wi.upstream.push_back({res.nodes[e.from].path, e.from_port});
           waiting[n.idx].push_back(std::move(wi));
         }
-        if (!blocked_failure)
-          blocked_failure = FailureData::make(FailureKind::input_missing, path_key(n.node->path) + " is missing inputs",
-                                              {{"card", path_key(n.node->path)}});
+        if (!blocked_failure) {
+          auto d = draft_reason.find(n.idx);
+          blocked_failure =
+              d != draft_reason.end()
+                  ? FailureData::make(FailureKind::input_missing,
+                                      path_key(n.node->path) + " depends on Draft " + d->second + ", which is not implemented yet",
+                                      {{"card", path_key(n.node->path)}, {"draft", d->second}})
+                  : FailureData::make(FailureKind::input_missing, path_key(n.node->path) + " is missing inputs",
+                                      {{"card", path_key(n.node->path)}});
+        }
       }
       if (cancel_ && st == CardState::skipped) continue;  // never reached before the cancel
       InvocationRecordData rec;

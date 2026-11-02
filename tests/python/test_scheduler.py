@@ -148,3 +148,28 @@ def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
     _, st = run_and_wait(c, "s1", propagate=False)
     assert st.state == RunState.failed
     assert st.failure.kind == 18 and "saved" in text(st.failure.diagnostic)
+
+
+def test_start_wired_to_input_and_drafts_block_only_their_dependents(env):
+    defs = dict(BASE_DEFS)
+    defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
+    c = env([card("begin", "trigger"), card("src", "msg"), card("out", "log"), card("plan", "plan"), card("after", "log")],
+            [conn("begin", "out", "src", "start"), conn("src", "msg", "out", "in"), conn("src", "msg", "plan", "data"),
+             conn("plan", "summary", "after", "in")], defs)
+    # The Draft's ports come from _meta.json (names and purposes only).
+    import json as _json
+    snap = c.call("ProjectInspectRequest")
+    meta = {"description": "Summarize", "plan": "count words", "constraints": "fast", "done": "a summary exists",
+            "inputs": [{"name": "data", "description": "messages"}],
+            "outputs": [{"name": "summary", "description": "the word count"}]}
+    from tsugumi_client import change, new_id
+    res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=_json.dumps(defs["plan"]), metaJson=_json.dumps(meta))])
+    plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
+    assert [text(p.name) for p in plan.outputs] == ["summary"]
+    run_id, st = run_and_wait(c, "begin")
+    # The implemented part ran; the Draft did not; its dependent is blocked with the reason.
+    assert states(c, run_id, "src") == [CardState.succeeded]
+    assert states(c, run_id, "out") == [CardState.succeeded]
+    assert states(c, run_id, "after") == [CardState.blocked]
+    assert st.state == RunState.failed and "Draft plan" in text(st.failure.diagnostic)

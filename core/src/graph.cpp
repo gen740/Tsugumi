@@ -352,6 +352,10 @@ class Builder {
           load_catalog(n);
           break;
         case Template::Input:
+          // Optional start input: connected, the value is produced when the
+          // start signal arrives (e.g. from the trigger); unconnected, the
+          // Card is a source that fires once per run.
+          n.input_defs = {{"start", true}};
           load_catalog(n);
           break;
         case Template::Trigger:
@@ -384,8 +388,15 @@ class Builder {
           n.input_defs = {{"in", false}};
           break;
         case Template::Draft:
-          // Provisional outputs (optional) let a Draft be wired before it is implemented.
+          // Provisional outputs let a Draft be wired before it is implemented:
+          // typed ones from _outputs.fbs, otherwise the names (and purposes)
+          // in _meta.json, carrying an empty message until implemented.
           load_catalog(n);
+          if (n.outputs.empty() && def && def->meta)
+            if (const auto* outs = schema::get(def->meta->outputs))
+              for (const auto& o : *outs)
+                if (const auto* name = schema::get(o.name); name && valid_id(*name))
+                  n.outputs.push_back({*name, PortKind::FlatBuffer, true, types::empty_type()});
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;
         case Template::Subgraph:

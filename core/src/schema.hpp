@@ -128,10 +128,22 @@ struct CardDefinition {
   Opt<"canvasEnabled", v::Bool> canvas_enabled;
 };
 
-struct CardMeta {
+// Purpose of a port in words (Drafts have no types yet).
+struct PortNote {
+  Opt<"name", v::String> name;
   Opt<"description", v::String> description;
-  Opt<"plan", v::String> plan;
-  Opt<"context", v::String> context;  // extra intent/notes for the Agent and readers
+};
+
+// _meta.json: the intent of a definition, kept when a Draft is implemented.
+struct CardMeta {
+  Opt<"description", v::String> description;  // short summary
+  Opt<"plan", v::String> plan;                // what it does, in detail
+  Opt<"constraints", v::String> constraints;
+  Opt<"done", v::String> done;                // completion criteria
+  Opt<"context", v::String> context;          // extra intent/notes for the Agent and readers
+  Opt<"origin", v::String> origin;            // where an imported definition came from
+  Opt<"inputs", v::Array<Obj<PortNote>>> inputs;
+  Opt<"outputs", v::Array<Obj<PortNote>>> outputs;
 };
 
 // ---- layout.json -------------------------------------------------------------

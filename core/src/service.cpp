@@ -1205,6 +1205,20 @@ std::optional<D::FormatLanguage> language_of(const std::string& path) {
   return std::nullopt;
 }
 
+std::optional<std::string> find_tool(const std::string& name) {
+  const char* path = std::getenv("PATH");
+  if (!path) return std::nullopt;
+  std::string p(path);
+  for (size_t s = 0; s <= p.size();) {
+    size_t e = p.find(':', s);
+    auto cand = stdfs::path(p.substr(s, e == std::string::npos ? std::string::npos : e - s)) / name;
+    if (!cand.parent_path().empty() && ::access(cand.c_str(), X_OK) == 0) return cand.string();
+    if (e == std::string::npos) break;
+    s = e + 1;
+  }
+  return std::nullopt;
+}
+
 // Byte offset of 1-based line/column in text.
 uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
   uint64_t off = 0, l = 1;
@@ -1250,24 +1264,17 @@ void Service::file_format(RequestIn& req) {
     Tool tool;
     switch (*lang) {
       case D::FormatLanguage::cpp:
+        // clang-format when the environment has it, otherwise the much smaller astyle (the image).
         tool = {"clang-format", {"--style={BasedOnStyle: Google, ColumnLimit: 110}"}, false, ".cpp"};
+        if (!find_tool("clang-format"))
+          tool = {"astyle", {"--style=google", "--indent=spaces=2", "--max-code-length=110", "--suffix=none", "--quiet"}, true, ".cpp"};
         break;
       case D::FormatLanguage::python: tool = {"ruff", {"format", "--no-cache"}, true, ".py"}; break;
       case D::FormatLanguage::nix: tool = {"nixfmt", {}, true, ".nix"}; break;
       case D::FormatLanguage::bash: tool = {"shfmt", {"-i", "2"}, false, ".sh"}; break;
       default: throw Failed(FailureKind::unsupported, "no formatter is provided for this language");
     }
-    std::string exe;
-    if (const char* path = std::getenv("PATH")) {
-      std::string p(path);
-      for (size_t s = 0; s <= p.size();) {
-        size_t e = p.find(':', s);
-        auto cand = stdfs::path(p.substr(s, e == std::string::npos ? std::string::npos : e - s)) / tool.exe;
-        if (!cand.parent_path().empty() && ::access(cand.c_str(), X_OK) == 0) { exe = cand.string(); break; }
-        if (e == std::string::npos) break;
-        s = e + 1;
-      }
-    }
+    std::string exe = find_tool(tool.exe).value_or("");
     if (exe.empty())
       throw Failed(FailureKind::unsupported, std::string("the formatter ") + tool.exe + " is not installed in this environment",
                    {{"formatter", tool.exe}});

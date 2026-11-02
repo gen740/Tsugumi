@@ -6,12 +6,13 @@
 #   cacert         TLS for cache.nixos.org and the pinned nixpkgs archive
 #   bash/coreutils/util-linux  the entrypoint (overlay mount of the store)
 #   tini           PID 1: reaps orphaned processes (sandbox helpers) and forwards signals
-#   clang-format, ruff, nixfmt, shfmt  source formatting (ProjectFileFormat):
-#                  C++, Python, Nix and shell; clang-format is the largest (LLVM)
+#   astyle, ruff, nixfmt, shfmt  source formatting (ProjectFileFormat) of
+#                  C++, Python, Nix and shell (astyle instead of clang-format,
+#                  which would add the whole LLVM, about 500 MB)
 # Card compilers, Python and libraries are NOT in the image: they are fetched
 # as pinned Nix dependencies on first use into the persistent store volume.
-{ lib, dockerTools, writeShellScript, writeTextDir, closureInfo, buildEnv, runCommand, tsugumid, nix, cacert
-, bashInteractive, coreutils, util-linux, tini, clang-tools, ruff, nixfmt-rfc-style, shfmt }:
+{ lib, dockerTools, writeShellScript, writeTextDir, closureInfo, buildEnv, tsugumid, nix, cacert
+, bashInteractive, coreutils, util-linux, tini, astyle, ruff, nixfmt-rfc-style, shfmt }:
 let
   nixConf = writeTextDir "etc/nix/nix.conf" ''
     build-users-group =
@@ -31,12 +32,7 @@ let
       (writeTextDir "etc/group" "root:x:0:\nnobody:x:65534:\n")
     ];
   };
-  # Only the clang-format binary of clang-tools (its other tools stay out of PATH).
-  clangFormat = runCommand "clang-format" { } ''
-    mkdir -p $out/bin
-    ln -s ${clang-tools}/bin/clang-format $out/bin/clang-format
-  '';
-  formatters = [ clangFormat ruff nixfmt-rfc-style shfmt ];
+  formatters = [ astyle ruff nixfmt-rfc-style shfmt ];
   runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux tini etc ] ++ formatters;
   registration = closureInfo { rootPaths = runtime; };
   entrypoint = writeShellScript "tsugumi-entrypoint" ''

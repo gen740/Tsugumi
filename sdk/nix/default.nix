@@ -92,7 +92,9 @@ rec {
   manifest =
     card:
     let
-      known = [ "sdk" "package" "preScript" "script" "postScript" "reuseWorker" ];
+      # `exports` is free-form: values, functions and derivations that
+      # downstream Cards read through inputs.upstream."<path>".exports.
+      known = [ "sdk" "package" "preScript" "script" "postScript" "reuseWorker" "exports" ];
       unknown = lib.subtractLists known (builtins.attrNames card);
     in
     assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown}";
