@@ -1,0 +1,240 @@
+import Foundation
+import Security
+
+/// One content block of a chat message (Anthropic Messages wire shape).
+public enum ContentBlock: Codable, Equatable {
+  case text(String)
+  case toolUse(id: String, name: String, input: String)  // input: JSON text
+  case toolResult(toolUseId: String, content: String, isError: Bool)
+
+  enum CodingKeys: String, CodingKey { case type, text, id, name, input, tool_use_id, content, is_error }
+
+  public init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: CodingKeys.self)
+    switch try c.decode(String.self, forKey: .type) {
+    case "text": self = .text(try c.decode(String.self, forKey: .text))
+    case "tool_use": self = .toolUse(id: try c.decode(String.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
+                                     input: try c.decode(String.self, forKey: .input))
+    default: self = .toolResult(toolUseId: try c.decode(String.self, forKey: .tool_use_id),
+                                content: try c.decode(String.self, forKey: .content),
+                                isError: try c.decode(Bool.self, forKey: .is_error))
+    }
+  }
+
+  public func encode(to e: Encoder) throws {
+    var c = e.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .text(let t):
+      try c.encode("text", forKey: .type)
+      try c.encode(t, forKey: .text)
+    case .toolUse(let id, let name, let input):
+      try c.encode("tool_use", forKey: .type)
+      try c.encode(id, forKey: .id)
+      try c.encode(name, forKey: .name)
+      try c.encode(input, forKey: .input)
+    case .toolResult(let id, let content, let isError):
+      try c.encode("tool_result", forKey: .type)
+      try c.encode(id, forKey: .tool_use_id)
+      try c.encode(content, forKey: .content)
+      try c.encode(isError, forKey: .is_error)
+    }
+  }
+
+  /// Wire JSON for the Messages API.
+  var wire: [String: Any] {
+    switch self {
+    case .text(let t): return ["type": "text", "text": t]
+    case .toolUse(let id, let name, let input):
+      let obj = (try? JSONSerialization.jsonObject(with: Data(input.utf8))) ?? [String: Any]()
+      return ["type": "tool_use", "id": id, "name": name, "input": obj]
+    case .toolResult(let id, let content, let isError):
+      return ["type": "tool_result", "tool_use_id": id, "content": content, "is_error": isError]
+    }
+  }
+}
+
+public struct ChatMessage: Codable, Equatable {
+  public var role: String  // "user" | "assistant"
+  public var content: [ContentBlock]
+  public init(role: String, content: [ContentBlock]) {
+    self.role = role
+    self.content = content
+  }
+}
+
+public struct Usage: Codable, Equatable {
+  public var inputTokens = 0
+  public var outputTokens = 0
+}
+
+public enum StreamEvent {
+  case text(String)
+  case toolStart(index: Int, id: String, name: String)
+  case toolInput(index: Int, partialJSON: String)
+  case blockStop(index: Int)
+  case stop(reason: String, usage: Usage)
+}
+
+public struct ProviderConfig: Codable, Equatable, Sendable {
+  public var name: String
+  public var baseURL: URL
+  public var model: String
+  public var usesKeychain: Bool  // false for the local fixture
+  public var maxTokens = 4096
+  public var contextLimit = 180_000
+
+  public init(name: String, baseURL: URL, model: String, usesKeychain: Bool) {
+    self.name = name
+    self.baseURL = baseURL
+    self.model = model
+    self.usesKeychain = usesKeychain
+  }
+
+  public static let anthropic = ProviderConfig(name: "Anthropic", baseURL: URL(string: "https://api.anthropic.com")!,
+                                               model: "claude-sonnet-5-5", usesKeychain: true)
+  public static func localFixture(port: Int) -> ProviderConfig {
+    var c = ProviderConfig(name: "Local fixture", baseURL: URL(string: "http://127.0.0.1:\(port)")!, model: "fixture",
+                           usesKeychain: false)
+    c.contextLimit = 6000
+    return c
+  }
+}
+
+/// Model credentials stay in the macOS Keychain on the host; they are never
+/// sent to tsugumid or to Card workers.
+public enum Keychain {
+  static let service = "app.tsugumi.agent"
+
+  public static func save(_ secret: String, account: String) throws {
+    let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                               kSecAttrAccount as String: account]
+    SecItemDelete(base as CFDictionary)
+    var add = base
+    add[kSecValueData as String] = Data(secret.utf8)
+    add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    let s = SecItemAdd(add as CFDictionary, nil)
+    guard s == errSecSuccess else { throw AgentError.provider("Keychain error \(s)") }
+  }
+
+  public static func load(account: String) -> String? {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                            kSecAttrAccount as String: account, kSecReturnData as String: true]
+    var out: CFTypeRef?
+    guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+    return String(data: d, encoding: .utf8)
+  }
+}
+
+/// Messages API client with SSE streaming. The same code talks to the real
+/// provider and to the local fixture; only the endpoint and key differ.
+public struct MessagesProvider: Sendable {
+  public let config: ProviderConfig
+  let session: URLSession
+
+  public init(config: ProviderConfig) {
+    self.config = config
+    let c = URLSessionConfiguration.ephemeral
+    c.timeoutIntervalForRequest = 120
+    session = URLSession(configuration: c)
+  }
+
+  private func request(path: String) throws -> URLRequest {
+    var r = URLRequest(url: config.baseURL.appendingPathComponent(path))
+    r.setValue("application/json", forHTTPHeaderField: "content-type")
+    r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    if config.usesKeychain {
+      guard let key = Keychain.load(account: config.name) else {
+        throw AgentError.provider("no API key for \(config.name); add it in Settings")
+      }
+      r.setValue(key, forHTTPHeaderField: "x-api-key")
+    }
+    return r
+  }
+
+  /// Model capability discovery (available models).
+  public func models() async throws -> [String] {
+    let (data, resp) = try await session.data(for: try request(path: "v1/models"))
+    guard (resp as? HTTPURLResponse)?.statusCode == 200,
+          let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let list = obj["data"] as? [[String: Any]] else {
+      throw AgentError.provider("cannot list models")
+    }
+    return list.compactMap { $0["id"] as? String }
+  }
+
+  public struct HTTPStatusError: Error {
+    public let status: Int
+    public let body: String
+    public var retryable: Bool { status == 429 || status >= 500 }
+  }
+
+  public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
+    var r = try request(path: "v1/messages")
+    r.httpMethod = "POST"
+    let body: [String: Any] = [
+      "model": config.model,
+      "max_tokens": config.maxTokens,
+      "stream": true,
+      "system": system,
+      "messages": messages.map { ["role": $0.role, "content": $0.content.map(\.wire)] },
+      "tools": tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema] },
+    ]
+    r.httpBody = try JSONSerialization.data(withJSONObject: body)
+    let session = self.session
+    return AsyncThrowingStream { cont in
+      let task = Task {
+        do {
+          let (bytes, resp) = try await session.bytes(for: r)
+          let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+          if status != 200 {
+            var text = ""
+            for try await line in bytes.lines { text += line }
+            throw HTTPStatusError(status: status, body: text)
+          }
+          var usage = Usage()
+          var event = ""
+          for try await line in bytes.lines {
+            try Task.checkCancellation()
+            if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces); continue }
+            guard line.hasPrefix("data:") else { continue }
+            let payload = Data(line.dropFirst(5).utf8)
+            guard let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { continue }
+            let type = obj["type"] as? String ?? event
+            switch type {
+            case "message_start":
+              if let u = (obj["message"] as? [String: Any])?["usage"] as? [String: Any] {
+                usage.inputTokens = u["input_tokens"] as? Int ?? 0
+              }
+            case "content_block_start":
+              let idx = obj["index"] as? Int ?? 0
+              if let b = obj["content_block"] as? [String: Any], b["type"] as? String == "tool_use" {
+                cont.yield(.toolStart(index: idx, id: b["id"] as? String ?? UUID().uuidString, name: b["name"] as? String ?? ""))
+              }
+            case "content_block_delta":
+              let idx = obj["index"] as? Int ?? 0
+              if let d = obj["delta"] as? [String: Any] {
+                if let t = d["text"] as? String { cont.yield(.text(t)) }
+                if let pj = d["partial_json"] as? String { cont.yield(.toolInput(index: idx, partialJSON: pj)) }
+              }
+            case "content_block_stop":
+              cont.yield(.blockStop(index: obj["index"] as? Int ?? 0))
+            case "message_delta":
+              if let u = obj["usage"] as? [String: Any] { usage.outputTokens = u["output_tokens"] as? Int ?? usage.outputTokens }
+              if let d = obj["delta"] as? [String: Any], let reason = d["stop_reason"] as? String {
+                cont.yield(.stop(reason: reason, usage: usage))
+              }
+            case "error":
+              throw AgentError.provider((obj["error"] as? [String: Any])?["message"] as? String ?? "stream error")
+            default:
+              break
+            }
+          }
+          cont.finish()
+        } catch {
+          cont.finish(throwing: error)
+        }
+      }
+      cont.onTermination = { _ in task.cancel() }
+    }
+  }
+}

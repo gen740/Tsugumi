@@ -64,9 +64,9 @@ table ViewState {
   selected_cards:[Tsugumi.Data.CardPath] (id: 2, required);
 }
 
-// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,
-// cancelling while a cancel is in progress. Anything but idle carries run_id,
-// rev, execution_rev and accepted_at; terminal states carry ended_at.
+/// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,
+/// cancelling while a cancel is in progress. Anything but idle carries run_id,
+/// rev, execution_rev and accepted_at; terminal states carry ended_at.
 table RunStatus {
   run_id:string (id: 0);
   state:Tsugumi.Data.RunState (id: 1);
@@ -210,8 +210,8 @@ table OperationReceipt {
 
 // ---- Requests ----------------------------------------------------------------
 
-// -> HelloResult. token is required on WebSocket. Project mismatch is
-// permission_denied. Must be the first request, within 5 s of connecting.
+/// -> HelloResult. token is required on WebSocket. Project mismatch is
+/// permission_denied. Must be the first request, within 5 s of connecting.
 table SessionHelloRequest {
   protocol:uint32 = null (id: 0);
   client_id:string (id: 1, required);
@@ -219,16 +219,16 @@ table SessionHelloRequest {
   token:string (id: 3);
 }
 
-// -> OpenResult. Creates (or replaces) the connection's subscription.
+/// -> OpenResult. Creates (or replaces) the connection's subscription.
 table ProjectOpenRequest { view_id:string (id: 0); }
 
-// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
+/// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
 table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 
-// -> ProjectSnapshot. No subscription, build or reload.
+/// -> ProjectSnapshot. No subscription, build or reload.
 table ProjectInspectRequest {}
 
-// -> SaveResult. One project transaction.
+/// -> SaveResult. One project transaction.
 table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -236,21 +236,21 @@ table ProjectSaveRequest {
   changes:[DocumentChange] (id: 3, required);
 }
 
-// -> SaveResult. Takes external edits of the allowed area into the document.
+/// -> SaveResult. Takes external edits of the allowed area into the document.
 table ProjectReloadRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
 }
 
-// -> ValidationResult. targets = [] means everything; mode = executable.
+/// -> ValidationResult. targets = [] means everything; mode = executable.
 table ProjectValidateRequest {
   at_rev:uint64 = null (id: 0);
   targets:[Tsugumi.Data.CardPath] (id: 1);
   mode:Tsugumi.Data.ValidateMode (id: 2);
 }
 
-// -> ImportResult. definitions = [] imports every definition of the grant.
+/// -> ImportResult. definitions = [] imports every definition of the grant.
 table ProjectImportRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -259,13 +259,13 @@ table ProjectImportRequest {
   definitions:[string] (id: 4);
 }
 
-// -> CacheClearResult. Only while no run or SDK job is active.
+/// -> CacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
-// -> OperationResult.
+/// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); }
 
-// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
+/// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
 table ProjectFileListRequest {
   path:string (id: 0, required);
   at_rev:uint64 = null (id: 1);
@@ -275,13 +275,13 @@ table ProjectFileListRequest {
   limit:uint32 = null (id: 5);
 }
 
-// -> SourceInfo.
+/// -> SourceInfo.
 table ProjectFileStatRequest {
   path:string (id: 0, required);
   at_rev:uint64 = null (id: 1);
 }
 
-// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
+/// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
 table ProjectFileReadRequest {
   path:string (id: 0, required);
   at_rev:uint64 = null (id: 1);
@@ -290,32 +290,32 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-// -> FormatResult. Never changes the document.
+/// -> FormatResult. Never changes the document.
 table ProjectFileFormatRequest {
   path:string (id: 0, required);
   text:string (id: 1, required);
   language:Tsugumi.Data.FormatLanguage (id: 2);
 }
 
-// -> SDKPrepareResult. Accepted asynchronously.
+/// -> SDKPrepareResult. Accepted asynchronously.
 table CardSDKPrepareRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   at_rev:uint64 = null (id: 1);
   op_id:string (id: 2, required);
 }
 
-// -> SDKPrepareResult or Failure.
+/// -> SDKPrepareResult or Failure.
 table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
-// -> RunPlanResult. propagate = true.
+/// -> RunPlanResult. propagate = true.
 table RunPlanRequest {
   at_rev:uint64 = null (id: 0);
   card:Tsugumi.Data.CardPath (id: 1, required);
   propagate:bool = null (id: 2);
 }
 
-// -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),
-// nix_jobs = 1, nix_cores = 1.
+/// -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),
+/// nix_jobs = 1, nix_cores = 1.
 table RunRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -327,13 +327,13 @@ table RunRequest {
   nix_cores:uint32 = null (id: 7);
 }
 
-// -> RunStatus. Idempotent. Unknown id is not_found.
+/// -> RunStatus. Idempotent. Unknown id is not_found.
 table RunCancelRequest { run_id:string (id: 0, required); }
 
-// -> RunStatus. Omitted run_id: the active run, else the last one, else idle.
+/// -> RunStatus. Omitted run_id: the active run, else the last one, else idle.
 table RunStatusRequest { run_id:string (id: 0); }
 
-// -> RunPage, newest accepted first.
+/// -> RunPage, newest accepted first.
 table RunHistoryRequest {
   card:Tsugumi.Data.CardPath (id: 0);
   artifacts_only:bool = null (id: 1);
@@ -341,7 +341,7 @@ table RunHistoryRequest {
   limit:uint32 = null (id: 3);
 }
 
-// -> InvocationPage, ascending invocation number.
+/// -> InvocationPage, ascending invocation number.
 table RunInvocationsRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);
@@ -349,7 +349,7 @@ table RunInvocationsRequest {
   limit:uint32 = null (id: 3);
 }
 
-// -> RecordResult. invocation and follow_latest = true are exclusive.
+/// -> RecordResult. invocation and follow_latest = true are exclusive.
 table RunRecordRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);
@@ -357,7 +357,7 @@ table RunRecordRequest {
   follow_latest:bool = null (id: 3);
 }
 
-// -> FileContent. offset = 0, limit_bytes = 1048576.
+/// -> FileContent. offset = 0, limit_bytes = 1048576.
 table RunValueReadRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);
@@ -368,7 +368,7 @@ table RunValueReadRequest {
   limit_bytes:uint32 = null (id: 6);
 }
 
-// -> ArtifactPage. invocation requires card.
+/// -> ArtifactPage. invocation requires card.
 table ArtifactListRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -377,7 +377,7 @@ table ArtifactListRequest {
   limit:uint32 = null (id: 4);
 }
 
-// -> FileContent. member only for Directory artifacts.
+/// -> FileContent. member only for Directory artifacts.
 table ArtifactReadRequest {
   artifact_id:string (id: 0, required);
   member:string (id: 1);
@@ -385,8 +385,8 @@ table ArtifactReadRequest {
   limit_bytes:uint32 = null (id: 3);
 }
 
-// -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is
-// rejected. invocation requires card.
+/// -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is
+/// rejected. invocation requires card.
 table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -397,14 +397,14 @@ table LogRangeRequest {
   limit_bytes:uint32 = null (id: 6);
 }
 
-// -> Ack. Replaces the subscription's Display targets. enabled = true.
+/// -> Ack. Replaces the subscription's Display targets. enabled = true.
 table ViewSetVisibleRequest {
   subscription_id:string (id: 0, required);
   cards:[Tsugumi.Data.CardPath] (id: 1, required);
   enabled:bool = null (id: 2);
 }
 
-// -> ViewSaveResult. CAS on view_rev only.
+/// -> ViewSaveResult. CAS on view_rev only.
 table ViewSaveRequest {
   view_id:string (id: 0, required);
   base_view_rev:uint64 = null (id: 1);

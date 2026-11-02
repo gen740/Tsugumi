@@ -480,3 +480,113 @@ def test_validate_and_unsupported_format(client):
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectFileFormatRequest", path="x.cpp", text="int x;", language=1)
     assert e.value.kind == "unsupported"
+
+
+def test_sdk_prepare_status_and_read(tmp_path):
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        rev = c.call("ProjectInspectRequest").rev
+        op = new_id()
+        acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
+        assert text(acc.opId) == op
+        for _ in range(100):
+            st = c.call("CardSDKStatusRequest", opId=op)
+            if st.state == 2:  # ready
+                break
+            time.sleep(0.02)
+        names = {text(f.path).rsplit("/", 1)[1]: f for f in st.files}
+        assert {"_inputs.fbs", "_outputs.fbs", "_params.fbs"} <= set(names)
+        got = c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev)
+        assert b"table Outputs" in bytes(got.bytes)
+        # Replay returns the receipt; an unknown job is not_found.
+        again = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
+        assert text(again.opId) == op
+        with pytest.raises(RpcFailure) as e:
+            c.call("CardSDKStatusRequest", opId=new_id())
+        assert e.value.kind == "not_found"
+        # A later revision makes the prepared SDK stale for FileRead.
+        doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
+        doc["name"] = "changed"
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t", changes=[change("SetProject", json=json.dumps(doc))])
+        with pytest.raises(RpcFailure) as e:
+            c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev + 1)
+        assert e.value.kind == "revision_conflict"
+        # Operation receipts are visible through OperationGet.
+        got = c.call("OperationGetRequest", opId=op)
+        assert got.state == 3 and got.receipt is not None
+        # Cache clear never touches documents or history.
+        cleared = c.call("ProjectCacheClearRequest", opId=new_id())
+        assert "history" in [text(x) for x in cleared.retained]
+        assert c.call("ProjectInspectRequest").rev == rev + 1
+    finally:
+        d.cleanup()
+
+
+def test_import_through_launcher_grant(tmp_path):
+    root = tmp_path / "p"
+    builtin_project(root)
+    other = tmp_path / "other"
+    builtin_project(other)
+    d = Daemon(root).start()
+    try:
+        grant = new_id()
+        (d.control / "grants.json").write_text(json.dumps({"grants": {grant: str(other)}}))
+        c = d.client()
+        c.hello()
+        rev = c.call("ProjectInspectRequest").rev
+        res = c.call("ProjectImportRequest", baseRev=rev, opId=new_id(), origin="t", sourceGrant=grant,
+                     definitions=["source"])
+        mapping = {text(m.from_): text(m.to) for m in res.idMap} if hasattr(res.idMap[0], "from_") else \
+                  {text(getattr(m, "from")): text(m.to) for m in res.idMap}
+        assert mapping == {"source": "source-2"}
+        snap = c.call("ProjectInspectRequest")
+        assert any(text(dd.id) == "source-2" for dd in snap.definitions)
+        assert any(text(s.path) == "definitions/source-2/_outputs.fbs" for s in snap.sources)
+        with pytest.raises(RpcFailure) as e:
+            c.call("ProjectImportRequest", baseRev=snap.rev, opId=new_id(), origin="t", sourceGrant=new_id())
+        assert e.value.kind == "permission_denied"
+    finally:
+        d.cleanup()
+
+
+def test_slow_peer_is_dropped_without_stopping_others(tmp_path):
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = Daemon(root).start()
+    try:
+        import socket as _s
+        # A peer that subscribes and then never reads.
+        raw = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
+        raw.setsockopt(_s.SOL_SOCKET, _s.SO_RCVBUF, 4096)
+        raw.connect(d.unix)
+        for rid, name, obj in [(1, "SessionHelloRequest", make("SessionHelloRequest", protocol=1, clientId=new_id())),
+                               (2, "ProjectOpenRequest", make("ProjectOpenRequest"))]:
+            frame = encode_request(rid, name, obj)
+            raw.sendall(struct.pack("<I", len(frame)) + frame)
+        fast = d.client()
+        fast.hello()
+        fast.open()
+        snap = fast.call("ProjectInspectRequest")
+        rev, doc = snap.rev, json.loads(text(snap.projectJson))
+        big = "x" * 200000
+        t0 = time.time()
+        for i in range(300):  # ~60 MB of DocPatched for the stalled peer
+            doc["name"] = f"{big}{i}"
+            rev = fast.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
+                            changes=[change("SetProject", json=json.dumps(doc))]).rev
+        assert rev == 300 and time.time() - t0 < 60
+        # The stalled peer was disconnected: draining its socket ends in EOF.
+        raw.settimeout(10)
+        total = 0
+        while True:
+            chunk = raw.recv(1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+        assert total < 300 * 200000
+    finally:
+        d.cleanup()

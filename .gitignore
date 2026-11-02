@@ -10,3 +10,6 @@ __pycache__/
 /macOS/.swiftpm/
 /dist/
 .DS_Store
+/agent/.build/
+/agent/.swiftpm/
+/build-renderer/

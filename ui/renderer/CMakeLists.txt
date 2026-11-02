@@ -16,6 +16,9 @@ set(DAWN_ENABLE_NULL OFF CACHE BOOL "" FORCE)
 set(DAWN_USE_GLFW OFF CACHE BOOL "" FORCE)
 set(DAWN_USE_X11 OFF CACHE BOOL "" FORCE)
 set(DAWN_BUILD_MONOLITHIC_LIBRARY STATIC CACHE STRING "" FORCE)
+# The optional C++20 module interface needs dependency scanning, which the
+# project disables; the renderer uses the regular webgpu_cpp.h header.
+set(DAWN_SUPPORTS_CXX_MODULES FALSE CACHE INTERNAL "" FORCE)
 set(TINT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(TINT_BUILD_CMD_TOOLS OFF CACHE BOOL "" FORCE)
 set(TINT_BUILD_SPV_READER OFF CACHE BOOL "" FORCE)
@@ -27,6 +30,9 @@ FetchContent_Declare(dawn
   GIT_REPOSITORY https://github.com/google/dawn.git
   GIT_TAG ${TSUGUMI_DAWN_TAG}
   GIT_SHALLOW TRUE
+  # Dawn fetches the few dependencies it needs itself (DAWN_FETCH_DEPENDENCIES);
+  # recursive submodules would pull in unrelated Chromium projects.
+  GIT_SUBMODULES ""
   GIT_PROGRESS TRUE)
 FetchContent_MakeAvailable(dawn)
 

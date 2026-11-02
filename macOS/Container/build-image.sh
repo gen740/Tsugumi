@@ -34,6 +34,13 @@ container run --rm --name tsugumi-image-builder -c "${TSUGUMI_BUILDER_CPUS:-8}" 
     nixf shell nixpkgs#skopeo -c skopeo --insecure-policy copy       "docker-archive:/out/tsugumi-env.tar.gz" "oci-archive:/out/tsugumi-env.tar:tsugumi-env:'"$TSUGUMI_IMAGE_TAG"'"
   '
 [ "$attr" = image ] || exit 0
+# `image load` keeps an existing tag; replace it explicitly. Running containers keep their image.
+container image rm "$TSUGUMI_IMAGE:$TSUGUMI_IMAGE_TAG" >/dev/null 2>&1 || true
 container image load --input "$out/tsugumi-env.tar"
+# Keep the OCI archive when requested (the app bundle ships it for first start).
+if [ -n "${TSUGUMI_IMAGE_OUT:-}" ]; then
+  mkdir -p "$(dirname "$TSUGUMI_IMAGE_OUT")"
+  cp "$out/tsugumi-env.tar" "$TSUGUMI_IMAGE_OUT"
+fi
 echo "loaded tsugumi-env:$TSUGUMI_IMAGE_TAG; compressed image: $(stat -f %z "$out/tsugumi-env.tar.gz") bytes"
 rm -rf "$out"

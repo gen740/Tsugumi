@@ -12,8 +12,8 @@ public actor EnvironmentManager {
   public static let imageTag = "1.0.0"
   public static var image: String { "\(imageName):\(imageTag)" }
 
-  public let cli: ContainerCLI
-  public let support: URL
+  public nonisolated let cli: ContainerCLI
+  public nonisolated let support: URL
   private let bundledImage: URL?
   private var observers: [String: [UUID: (EnvironmentState) -> Void]] = [:]
   private var states: [String: EnvironmentState] = [:]

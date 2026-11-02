@@ -82,6 +82,11 @@ class Daemon:
         from tsugumi_client import Client
         return Client(unix=self.unix)
 
+    def crash(self):
+        """Abnormal termination of the owner process."""
+        self.proc.kill()
+        self.proc.wait()
+
     def cleanup(self) -> None:
         self.stop()
         shutil.rmtree(self.sock_dir, ignore_errors=True)
@@ -154,6 +159,11 @@ class ContainerEnv:
         c = Client(ws=f"ws://127.0.0.1:{self.port}/rpc")
         c.hello(token=self.ready["token"])
         return c
+
+    def crash(self):
+        """Abnormal termination: the VM's main process is killed."""
+        self._container("kill", "--signal", "KILL", self.name, check=False)
+        time.sleep(1)
 
     def stop(self):
         self._container("stop", "--time", "20", self.name, check=False)

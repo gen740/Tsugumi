@@ -1,6 +1,10 @@
 // swift-tools-version:6.0
 // Tsugumi macOS application (SwiftUI UI, RPC client, container launcher).
+import Foundation
 import PackageDescription
+
+let rendererLib = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+  .appendingPathComponent("../build-renderer/ui/renderer").standardizedFileURL.path
 
 let package = Package(
   name: "Tsugumi",
@@ -27,10 +31,17 @@ let package = Package(
       dependencies: ["TsugumiRPC"],
       path: "Sources/Launcher",
       swiftSettings: [.swiftLanguageMode(.v5)]),
+    // Dawn renderer: ui/renderer/build.sh produces build-renderer/ui/renderer/libtsugumi_renderer.dylib.
+    .systemLibrary(name: "TsugumiRendererC", path: "Sources/RendererC"),
     .target(
       name: "TsugumiRenderer",
+      dependencies: ["TsugumiRendererC"],
       path: "Sources/Renderer",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5)],
+      linkerSettings: [
+        .unsafeFlags(["-L", rendererLib, "-Xlinker", "-rpath", "-Xlinker", rendererLib,
+                      "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+      ]),
     .executableTarget(
       name: "TsugumiApp",
       dependencies: [

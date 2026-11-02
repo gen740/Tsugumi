@@ -21,7 +21,7 @@ struct Diagnostic: Identifiable, Hashable {
     error = d.severity != .warning
     code = d.code
     message = d.message
-    card = d.card?.segments
+    card = d.card?.path
     path = d.path
   }
 }
@@ -165,7 +165,7 @@ final class ProjectSession {
       let opened = try await c.open(viewId: viewId)
       client = c
       projectId = ep.projectId
-      apply(snapshot: opened.snapshot!, resetDraft: !dirty)
+      apply(snapshot: opened.snapshot, resetDraft: !dirty)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
       connected = true
@@ -255,11 +255,11 @@ final class ProjectSession {
     runStatus = s.run
     if let v = s.view {
       viewRev = s.viewRev ?? 0
-      scope = v.scope?.segments ?? []
+      scope = v.scope.path
       for cam in v.cameras.compactMap({ $0 }) {
-        cameras[key(cam.scope?.segments ?? [])] = (cam.x ?? 0, cam.y ?? 0, cam.zoom ?? 1)
+        cameras[key(cam.scope.path)] = (cam.x ?? 0, cam.y ?? 0, cam.zoom ?? 1)
       }
-      selection = Set(v.selectedCards.compactMap { $0.map { key($0.segments) } })
+      selection = Set(v.selectedCards.compactMap { $0.map { key($0.path) } })
     } else {
       viewRev = s.viewRev ?? 0
     }
@@ -277,8 +277,8 @@ final class ProjectSession {
     var r: [CardKey: ResolvedCard] = [:]
     var all = diags.map(Diagnostic.init)
     for rc in res {
-      let p = rc.card?.segments ?? []
-      let port = { (x: Tsugumi_Data_PortT) in PortInfo(name: x.name, kind: x.kind, optional: x.optional ?? false, rootType: x.rootType) }
+      let p = rc.card.path
+      let port = { (x: Tsugumi_Data_PortT) -> PortInfo in PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType) }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d)
@@ -303,9 +303,9 @@ final class ProjectSession {
       definitions[def.id] = try? JSONValue.parse(def.cardJson)
       definitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
     }
-    for id in d.definitionsRemoved { definitions[id] = nil; definitionMeta[id] = nil }
+    for id in d.definitionsRemoved.compactMap({ $0 }) { definitions[id] = nil; definitionMeta[id] = nil }
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
-    for p in d.sourcesRemoved { sources[p] = nil }
+    for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if wasClean {
       project = confirmedProject
@@ -328,8 +328,8 @@ final class ProjectSession {
         runStatus = s
       }
     case .runcardchanged:
-      if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation, let card = inv.card?.segments {
-        let k = key(card)
+      if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
+        let k = key(inv.card.path)
         let prev = cardStates[k]
         if prev == nil || prev!.invocation <= (inv.invocation ?? 0) {
           cardStates[k] = CardRunState(state: inv.state, invocation: inv.invocation ?? 0, phase: inv.phase,
@@ -337,7 +337,7 @@ final class ProjectSession {
         }
       }
     case .runfinished:
-      if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary?.status { runStatus = s }
+      if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
     default:
       break
@@ -345,7 +345,7 @@ final class ProjectSession {
   }
 
   private func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
-    let k = key(d.card?.segments ?? [])
+    let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
     let value: DisplayValue

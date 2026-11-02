@@ -151,7 +151,9 @@ def test_report_failure_rerun_and_artifacts(report):
     # Heading change is reflected.
     edit_project(c, lambda d: find_card(d, "settings").setdefault("params", {}).__setitem__("heading", "見出し変更"))
     rid3 = run(c, ["begin"])
-    assert wait_run(c, rid3).state == RunState.succeeded
+    st3 = wait_run(c, rid3)
+    assert st3.state == RunState.succeeded, (st3.failure and text(st3.failure.diagnostic),
+                                             [(text(a.key), text(a.value)) for a in st3.failure.args] if st3.failure else None)
     assert display_text(c, rid3, "render").startswith("# 見出し変更")
     # Intentional failure: stderr is recorded and downstream Cards stop.
     edit_project(c, lambda d: find_card(d, "aggregate").setdefault("params", {}).__setitem__("fail_on_purpose", True))
@@ -223,3 +225,46 @@ def test_live_stream_cancel_and_rerun(live):
     assert first.value.display.value.series[0].x[0] == 0.0
     c.call("RunCancelRequest", runId=rid2)
     wait_run(c, rid2, timeout=10)
+
+
+def test_crash_marks_run_interrupted_and_recovers(live):
+    c = connect(live)
+    opened = c.open()
+    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
+    rid = run(c, ["begin"])
+    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
+    c.close()
+    live.crash()
+    live.start()
+    c = connect(live)
+    st = c.call("RunStatusRequest", runId=rid)
+    assert st.state == RunState.failed and st.failure.kind == 21  # interrupted, not re-run
+    # The environment is usable again and nothing restarted on its own.
+    assert c.call("RunStatusRequest").runId in (rid.encode(), rid)
+    rid2 = run(c, ["begin"])
+    c.call("RunCancelRequest", runId=rid2)
+    assert wait_run(c, rid2, timeout=20).state == RunState.cancelled
+
+
+def test_status_and_cancel_during_nix_preparation(report):
+    c = connect(report)
+    # Clear the build cache so the first Card has to evaluate and build again.
+    c.call("ProjectCacheClearRequest", opId=new_id())
+    rid = run(c, ["begin"])
+    other = connect(report)
+    seen_preparing = False
+    for _ in range(600):
+        t0 = time.time()
+        st = other.call("RunStatusRequest", runId=rid)
+        assert time.time() - t0 < 0.5  # status never waits for the Nix lane
+        if st.state == RunState.preparing:
+            seen_preparing = True
+            break
+        if st.state in TERMINAL:
+            break
+        time.sleep(0.05)
+    t0 = time.time()
+    other.call("RunCancelRequest", runId=rid)
+    final = wait_run(other, rid, timeout=60)
+    print(f"cancel during preparation took {time.time() - t0:.2f}s (seen preparing: {seen_preparing})")
+    assert final.state in (RunState.cancelled, RunState.succeeded)

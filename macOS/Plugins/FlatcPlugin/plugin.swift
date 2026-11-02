@@ -10,7 +10,15 @@ struct FlatcPlugin: BuildToolPlugin {
     let flatc = try locateFlatc()
     let out = context.pluginWorkDirectoryURL.appending(path: "generated")
     let schemas = ["tsugumi_enums", "data", "worker", "tsugumi"]
-    return schemas.map { name in
+    // The binary schema (with doc comments) drives the Agent's tool definitions.
+    let bfbs = Command.buildCommand(
+      displayName: "flatc tsugumi.bfbs",
+      executable: flatc,
+      arguments: ["-b", "--schema", "--bfbs-comments", "--bfbs-builtins", "-I", protocolDir.path(), "-o", out.path(),
+                  protocolDir.appending(path: "tsugumi.fbs").path()],
+      inputFiles: schemas.map { protocolDir.appending(path: "\($0).fbs") },
+      outputFiles: [out.appending(path: "tsugumi.bfbs")])
+    return [bfbs] + schemas.map { name in
       let input = protocolDir.appending(path: "\(name).fbs")
       return .buildCommand(
         displayName: "flatc \(name).fbs",

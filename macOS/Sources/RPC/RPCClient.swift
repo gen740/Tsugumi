@@ -68,6 +68,7 @@ public actor RPCClient {
   private let session: URLSession
   private var nextId: UInt64 = 1
   private var waiting: [UInt64: CheckedContinuation<Tsugumi_RPC_ReplyT, Error>] = [:]
+  private var rawWaiting: [UInt64: CheckedContinuation<Data, Error>] = [:]
   private var closed = false
   public private(set) var hello: Tsugumi_RPC_HelloResultT?
 
@@ -145,6 +146,45 @@ public actor RPCClient {
     return reply
   }
 
+  /// Sends a request whose table is written by `build` (used by the Agent's
+  /// schema-driven tool adapter). Returns the reply union type and table.
+  public func callRaw(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset,
+                      timeout: Duration = .seconds(60)) async throws -> (UInt8, Table) {
+    if closed { throw RPCError.disconnected }
+    guard let type = Tsugumi_RPC_RequestPayload(rawValue: payloadType) else {
+      throw RPCError.protocolViolation("unknown request type \(payloadType)")
+    }
+    let id = nextId
+    nextId += 1
+    var builder = FlatBufferBuilder(initialSize: 4096)
+    let value = try build(&builder)
+    let req = Tsugumi_RPC_Request.createRequest(&builder, valueType: type, valueOffset: value)
+    let msg = Tsugumi_RPC_Message.createMessage(&builder, requestId: id, payloadType: .request, payloadOffset: req)
+    Tsugumi_RPC_Message.finish(&builder, end: msg)
+    let data = builder.data
+    let raw: Data = try await withCheckedThrowingContinuation { cont in
+      rawWaiting[id] = cont
+      task.send(.data(data)) { error in
+        if let error { Task { await self.resolveRaw(id, .failure(error)) } }
+      }
+      Task {
+        try? await Task.sleep(for: timeout)
+        await self.resolveRaw(id, .failure(RPCError.timeout))
+      }
+    }
+    var bb = ByteBuffer(data: raw)
+    let m: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &bb, fileId: "TSG1")
+    guard let reply = m.payload(type: Tsugumi_RPC_Reply.self), let t: Tsugumi_RPC_Failure_or_Table = reply.rawValue else {
+      throw RPCError.unexpectedReply("no reply value")
+    }
+    return (reply.valueType.rawValue, t.table)
+  }
+
+  private func resolveRaw(_ id: UInt64, _ result: Result<Data, Error>) {
+    guard let cont = rawWaiting.removeValue(forKey: id) else { return }
+    cont.resume(with: result)
+  }
+
   private func resolve(_ id: UInt64, _ result: Result<Tsugumi_RPC_ReplyT, Error>) {
     guard let cont = waiting.removeValue(forKey: id) else { return }
     cont.resume(with: result)
@@ -154,6 +194,9 @@ public actor RPCClient {
     let all = waiting
     waiting.removeAll()
     for (_, c) in all { c.resume(throwing: error) }
+    let raw = rawWaiting
+    rawWaiting.removeAll()
+    for (_, c) in raw { c.resume(throwing: error) }
   }
 
   private func receiveLoop() async {
@@ -186,6 +229,10 @@ public actor RPCClient {
           protocolError("reply without request_id")
           return
         }
+        if rawWaiting[id] != nil {
+          resolveRaw(id, .success(data))
+          continue
+        }
         if waiting[id] == nil {
           // A reply after our own timeout is dropped; an id we never sent is a violation.
           if id >= nextId { protocolError("reply to unknown request \(id)"); return }
@@ -215,6 +262,25 @@ public extension Tsugumi_Data_CardPathT {
     self.init()
     self.segments = segments
   }
+
+  var path: [String] { segments.compactMap { $0 } }
 }
 
 public func cardPath(_ segments: [String]) -> Tsugumi_Data_CardPathT { Tsugumi_Data_CardPathT(segments) }
+
+/// Reads the reply union's table without unpacking it.
+struct Tsugumi_RPC_Failure_or_Table: FlatbuffersInitializable {
+  let table: Table
+  init(_ bb: ByteBuffer, o: Int32) { table = Table(bb: bb, position: o) }
+}
+
+extension Tsugumi_RPC_Reply {
+  var rawValue: Tsugumi_RPC_Failure_or_Table? { value(type: Tsugumi_RPC_Failure_or_Table.self) }
+}
+
+/// The published RPC schema (doc comments included) for schema-driven clients.
+public enum RPCSchema {
+  public static func bfbs() -> Data? {
+    Bundle.module.url(forResource: "tsugumi", withExtension: "bfbs").flatMap { try? Data(contentsOf: $0) }
+  }
+}

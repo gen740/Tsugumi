@@ -898,7 +898,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       changed = false;
       for (auto& n : nodes_) {
         if (!n.in_targets || n.node->is_virtual || n.invocations > 0 || n.halted) continue;
-        if (final[n.idx] == CardState::blocked) continue;
+        if (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled) continue;
         bool partial = false;
         for (auto& [_, q] : n.queues) partial |= !q.empty();
         bool upstream_bad = false;
