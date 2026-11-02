@@ -181,7 +181,23 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
 | `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
-## 計測（2026-11-02）
+## 計測（2026-11-03、共通 VM）
+
+条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。
+`tests/python/measure_stages.py collatz`（VM、`--host` で Mac 上の tsugumid）と、アプリの smoke モード
+（`TSUGUMI_SMOKE_RERUN=1`）で計測。いずれも 2 回目（ビルド済み・worker 再利用）の値です。
+
+| 指標 | 共通 VM | Mac 上の tsugumid | 読み方 |
+| --- | --- | --- | --- |
+| Run の所要時間（core の記録） | 4.6〜4.8 s | 1.3 s | 差の大半は下の「保存」 |
+| 保存段階（履歴 SQLite・成果物の記録） | 合計 7.9〜8.1 s、中央値 6 ms | 合計 0.64 s、中央値 0 ms | VM ではプロジェクトフォルダが virtiofs 越し。同期書き込み自体は 1 回 0.14 ms（`dd oflag=dsync`）で、fsync が主因ではない。SQLite の WAL・ロックとファイル操作の往復が候補（未断定） |
+| 実行段階 | 合計 2.9〜3.2 s、中央値 1 ms | 合計 1.0 s、中央値 1 ms | worker は再利用（`build/reused`・`evaluate/reused` 662 回、0 ms） |
+| 評価・ビルド | キャッシュ（0 ms） | キャッシュ（0 ms） | 実行のたびに SDK 準備・build を繰り返していない |
+| 終了から通知まで | 中央値 8.3 ms、最大 22 ms | 中央値 3.8 ms、最大 6 ms | VM の時計は 30 秒ごとに Mac に合わせる（合わせる前は 0.38 s 進んでいた） |
+| core の終了 → アプリが終了を表示 | 20〜60 ms（Collatz 4.63 s → 4.68 s） | — | core は UI を待たない。アプリは 1.3 万件の通知を 262〜325 回にまとめて反映 |
+| アプリ起動 → 操作可能（VM 起動を含む） | 6.2〜9.8 s | — | VM の起動・store の mount・nix-daemon・DHCP・tsugumid |
+
+## 計測（2026-11-02、Apple container 時代）
 
 条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, Apple container 0.6.0, 環境 2 vCPU / 4 GiB / store volume 20 GiB,
 デモは各 1 回（Live Stream の継続利用は 10 回）。アプリの smoke モード（`TSUGUMI_SMOKE_DEMO`）と

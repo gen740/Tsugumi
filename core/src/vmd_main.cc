@@ -27,6 +27,8 @@
 //           shell <id> <rows> <cols>        -> ok <session>, then the
 //                                              connection is the terminal
 //           resize <session> <rows> <cols>  -> ok
+//           clock <unix ms>                 -> ok (the Mac's time; run times and
+//                                              the app's clock then agree)
 //           shutdown                        -> ok (then the VM powers off)
 //   1025  RPC: the first line names the project id, then the bytes go to
 //         and from that project's tsugumid (127.0.0.1:<port> in the VM).
@@ -60,6 +62,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -568,7 +571,11 @@ void control(int conn) {
     ::close(conn);
     return;
   } else if (w[0] == "resize" && w.size() == 4) r = resize(std::strtoull(w[1].c_str(), nullptr, 10), std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
-  else if (w[0] == "shutdown") {
+  else if (w[0] == "clock" && w.size() == 2) {
+    long long ms = std::atoll(w[1].c_str());
+    timespec ts{static_cast<time_t>(ms / 1000), static_cast<long>((ms % 1000) * 1000000)};
+    r = ms > 0 && ::clock_settime(CLOCK_REALTIME, &ts) == 0 ? "ok" : std::string("error clock: ") + std::strerror(errno);
+  } else if (w[0] == "shutdown") {
     reply(conn, "ok");
     ::close(conn);
     shutdown_vm();

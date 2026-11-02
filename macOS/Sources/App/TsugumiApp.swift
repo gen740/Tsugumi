@@ -104,9 +104,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     guard !shuttingDown else { return .terminateLater }
     guard case .stopped = AppModel.shared.environments.vm.state else {
       shuttingDown = true
-      Task { @MainActor in
-        await AppModel.shared.environments.shutdown()
-        sender.reply(toApplicationShouldTerminate: true)
+      // Off the main actor, and the reply through the run loop: terminate
+      // may have been called from a main-actor task, which keeps the main
+      // queue busy while AppKit waits in its own loop for the reply.
+      let environments = AppModel.shared.environments
+      Task.detached {
+        await environments.shutdown()
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+          sender.reply(toApplicationShouldTerminate: true)
+        }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
       }
       return .terminateLater
     }

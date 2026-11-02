@@ -151,6 +151,7 @@ def main():
     ap.add_argument("scenario", choices=["collatz", "builtin-chain", "large-values"])
     ap.add_argument("--out", default=None)
     ap.add_argument("--name", default="tsugumi-measure")
+    ap.add_argument("--host", action="store_true", help="collatz on a host tsugumid (no VM), for comparison")
     a = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="tsgm-"))
     root = tmp / "p"
@@ -171,8 +172,19 @@ def main():
                 import test_cards_container as T
                 start = "begin"
                 T.make(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
-            env = real_environment(root, a.name)
-            c = env.client()
+            if a.host:
+                # The host has no bubblewrap: Cards run unsandboxed, as in test_demos.
+                for d in (root / "definitions").iterdir():
+                    cj = json.loads((d / "_card.json").read_text())
+                    if cj.get("language"):
+                        cj["sandbox"] = False
+                        (d / "_card.json").write_text(json.dumps(cj))
+                env = Daemon(root).start()
+                c = env.client()
+                c.hello()
+            else:
+                env = real_environment(root, a.name)
+                c = env.client()
             if a.scenario == "large-values":
                 import test_cards_container as T
                 py_nix = "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"

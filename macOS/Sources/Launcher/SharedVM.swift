@@ -361,6 +361,19 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   private var bootCount = 0
 
+  /// The VM's clock follows the Mac's (it drifts, e.g. across sleep), so
+  /// times recorded by tsugumid agree with the app's clock.
+  private func keepClock() {
+    let boot = bootCount
+    Task.detached { [weak self] in
+      while let self, self.bootCount == boot, case .running = self.state {
+        let ms = Int64(Date().timeIntervalSince1970 * 1000)
+        _ = try? await self.request("clock \(ms)", timeout: 5)
+        try? await Task.sleep(for: .seconds(30))
+      }
+    }
+  }
+
   /// Reads what the guest appends to the console file until the next boot.
   private func followConsole(_ url: URL, boot: Int) {
     Thread.detachNewThread { [weak self] in
@@ -392,7 +405,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private func consoleLine(_ line: String) {
     if line.hasPrefix("TSUGUMI-STAGE ") {
       let name = String(line.dropFirst("TSUGUMI-STAGE ".count)).trimmingCharacters(in: .whitespaces)
-      if name == "ready" { setState(.running) } else if let s = Stage(rawValue: name) { setState(.starting(s)) }
+      if name == "ready" {
+        setState(.running)
+        keepClock()
+      } else if let s = Stage(rawValue: name) { setState(.starting(s)) }
     } else if line.hasPrefix("TSUGUMI-FAILED ") {
       setState(.failed(String(line.dropFirst("TSUGUMI-FAILED ".count))))
     }
