@@ -123,10 +123,39 @@ open dist/Tsugumi.app
 | `macOS/Tests`（`swift test`） | UI 側 JSON モデル、Agent × ローカル model fixture × 実 tsugumid（読取→設定変更→実行→説明、取消、切断後の再試行で重複実行なし） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
-## 計測
+## 計測（2026-11-02）
 
-（`tests/python/measure.py` の結果。下の「計測結果」節を参照）
+条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, Apple container 0.6.0, 環境 2 vCPU / 4 GiB / store volume 20 GiB,
+デモは各 1 回（Live Stream の継続利用は 10 回）。アプリの smoke モード（`TSUGUMI_SMOKE_DEMO`）と
+`tests/python` のスクリプトで、実コンテナ環境に対して計測しました。
+
+| 指標 | 実測 | 目標との比較 |
+| --- | --- | --- |
+| 基本イメージ | OCI 圧縮 93.5 MB / 展開後 `/nix/store` 272 MB | 大きい依存: glibc 47 MB, ICU 42 MB と Boost 18 MB（Nix 本体の依存）, util-linux 29 MB（overlay の mount だけに使用。静的 mount に置換可能）, bash 9.5 MB, OpenSSL 9 MB, SQLite 6 MB, tsugumid 一式 6 MB |
+| Nix 依存取得後の store（プロジェクトごとの volume 上層） | 約 816 MB | gcc 280 MB（C++ Card）, 固定 nixpkgs ソース 200 MB（Card の Nix 評価）, Python 146 MB, perl 59 MB・binutils 38 MB（stdenv）。10 回実行での増加 0 |
+| 履歴・成果物 | Live Stream 1 回で SQLite 約 5 MB（WAL 込み）、10 回で +8.8 MB。Report の成果物 29 KB | ログと I/O 記録量に比例 |
+| 起動（キャッシュ済みイメージ, 新規コピーのデモを開く→操作可能） | 1.5〜3.1 s（コンテナ起動・store volume 作成・Hello・Open を含む） | 目標 10 s 以内を達成 |
+| 初回準備（新しい store へのツールチェーン取得＋ビルド＋実行） | Collatz 22.5 s, Report 13.4 s, Live Stream 36.7 s（うち標本間隔の待機 20 s） | 回線速度に依存（cache.nixos.org） |
+| 応答（実行中の別接続からの RunStatus） | p50 2.2 ms / p99 14.3 ms | RPC は 100 ms 以内。SwiftUI の入力応答は画面での計測を行っていない（下の「未検証」） |
+| 取消 | RunCancel 応答 12.8 ms、Live Stream の worker 停止まで 0.13 s。Nix 準備中の取消 0.21 s（ホスト環境） | 目標（100 ms / 2 s）を達成 |
+| 継続利用（Live Stream 10 回） | tsugumid RSS 12.2→15.2 MB、store 増加 0。修正前は終了済み sandbox helper の zombie が 1 回あたり 2 個残っていた（PID 1 が reap しない問題）→ tini を PID 1 にして修正 | 修正後の再計測は下の「未検証」 |
 
 ## 実装状況
 
-「実装済み」は実装と自動テストで確認したもの、「未検証」は実装したが自動では確認していないもの、「未実装」は今回入れていないものです。
+「実装済み」は実装と自動テストまたは実機の自動操作で確認したもの、「未検証」は実装したが確認できていないもの、「未実装」は今回入れていないものです。
+
+| 領域 | 状況 |
+| --- | --- |
+| FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
+| tsugumid: Hello/Open/Close/Inspect/Save/Reload/Validate/Import/CacheClear/OperationGet/FileList/Stat/Read/Format(json)/SDKPrepare/Status/RunPlan/Run/Cancel/Status/History/Invocations/Record/ValueRead/ArtifactList/Read/LogRange/ViewSetVisible/ViewSave | 実装済み（契約テスト）。Format は json のみ、他言語は `unsupported` |
+| 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
+| スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |
+| 型導出（_outputs.fbs、merge union、File/Directory、構造的互換性） | 実装済み |
+| Nix レーン（restricted eval・IFD 禁止・キャッシュ・GC root・取消・期限）、C++/Python/shell Card | 実装済み |
+| bubblewrap による Card 隔離、環境変数の非継承、`sandbox:false` の扱い | 実装済み（実コンテナ） |
+| Apple container 環境（最小イメージ、永続 store overlay、停止とデータ削除の分離、ローカル限定公開） | 実装済み |
+| SwiftUI アプリ（Home/Demos、キャンバス、インスペクター、ソース編集、Undo/Redo、保存競合、実行・取消、履歴・ログ・成果物、Agent パネル、環境状態表示、複製） | 実装済み・アプリの実コード経路を smoke モードで 3 デモとも確認。**画面表示とマウス操作の目視確認は未検証**（この作業環境では画面収録・アクセシビリティ操作の権限がなく、スクリーンショットを取得できなかったため） |
+| Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。描画結果の目視確認は未検証 |
+| Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮） | 実装済み（fixture 経由の読取→変更→実行→説明、取消、切断再試行を自動テスト）。文脈圧縮は自動テストなし。実 provider（有料 API）での動作は未検証 |
+| 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
+| N-Queens・200 Card の大規模デモ、Web UI、3D・WASM 表示、Draft 変換 | 未実装（仕様上の次段階） |

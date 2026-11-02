@@ -5,10 +5,11 @@
 #   nix            builds Card packages from their default.nix
 #   cacert         TLS for cache.nixos.org and the pinned nixpkgs archive
 #   bash/coreutils/util-linux  the entrypoint (overlay mount of the store)
+#   tini           PID 1: reaps orphaned processes (sandbox helpers) and forwards signals
 # Card compilers, Python and libraries are NOT in the image: they are fetched
 # as pinned Nix dependencies on first use into the persistent store volume.
 { lib, dockerTools, writeShellScript, writeTextDir, closureInfo, buildEnv, tsugumid, nix, cacert
-, bashInteractive, coreutils, util-linux }:
+, bashInteractive, coreutils, util-linux, tini }:
 let
   nixConf = writeTextDir "etc/nix/nix.conf" ''
     build-users-group =
@@ -28,7 +29,7 @@ let
       (writeTextDir "etc/group" "root:x:0:\nnobody:x:65534:\n")
     ];
   };
-  runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux etc ];
+  runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux tini etc ];
   registration = closureInfo { rootPaths = runtime; };
   entrypoint = writeShellScript "tsugumi-entrypoint" ''
     set -euo pipefail
@@ -44,7 +45,8 @@ let
       mount -t overlay overlay -o lowerdir=/nix,upperdir=/persist/nix/upper,workdir=/persist/nix/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix
     fi
     nix-store --load-db < ${registration}/registration
-    exec ${tsugumid}/bin/tsugumid --project /project --listen 0.0.0.0:7700 \
+    # tini stays PID 1 so exited sandbox helpers never accumulate as zombies.
+    exec ${tini}/bin/tini -g -- ${tsugumid}/bin/tsugumid --project /project --listen 0.0.0.0:7700 \
       --unix /run/tsugumi/tsugumid.sock --control-dir /control \
       --cpus "''${TSUGUMI_CPUS:-2}" --own-nix-store --allow-missing-origin "$@"
   '';

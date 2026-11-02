@@ -511,7 +511,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.ended_at = now_ms();
     s.duration_ms = static_cast<uint64_t>(*s.ended_at - *s.started_at);
     bool was_cancel = out.failure && out.failure->kind == FailureKind::cancelled;
-    if (out.failure && !out.failure->args.empty() == false) out.failure->args.emplace_back("card", path_key(node.path));
+    if (out.failure && out.failure->args.empty()) out.failure->args.emplace_back("card", path_key(node.path));
     s.state = out.failure ? (was_cancel ? CardState::cancelled : CardState::failed) : CardState::succeeded;
     s.failure = out.failure;
     if (out.failure && out.failure->diagnostic)
@@ -1093,7 +1093,6 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].diags.begin(), res.nodes[i].diags.end());
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].exec_diags.begin(), res.nodes[i].exec_diags.end());
   }
-  // Inputs fed from outside a partial run are not missing for the plan's start Card.
   for (size_t s : starts) out.starts.push_back(res.nodes[s].path);
   return out;
 }
