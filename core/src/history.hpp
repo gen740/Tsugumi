@@ -53,7 +53,8 @@ struct LogRead {
 
 class History {
  public:
-  History(const std::filesystem::path& db_path, std::string cursor_secret);
+  // `fault` (tests only): "history_invocation" makes every invocation record write fail.
+  History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault = {});
   ~History();
 
   using Work = std::function<void(sql::Db&)>;
@@ -69,7 +70,9 @@ class History {
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);
-  static void complete_invocation(sql::Db& db, const InvocationRecordData& r);
+  void complete_invocation(sql::Db& db, const InvocationRecordData& r) const;
+  // Waits until every write submitted before this call has been committed or failed.
+  void flush();
   static void put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
                              uint64_t invocation, const std::vector<Value>& inputs);
   static void put_artifact(sql::Db& db, const ArtifactData& a);
@@ -147,6 +150,7 @@ class History {
 
   std::filesystem::path path_;
   std::string secret_;
+  std::string fault_;
   std::unique_ptr<sql::Db> writer_db_;
   std::mutex wmu_;
   std::condition_variable wcv_, wspace_;

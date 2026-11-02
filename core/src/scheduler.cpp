@@ -143,6 +143,20 @@ const char* phase_name(Phase p) {
   }
 }
 
+// Returns a copy of a File/Directory value whose `value` field is `p`.
+Value with_path(const Value& v, const std::string& p) {
+  Value out = v;
+  std::vector<uint8_t> buf(v.bytes.begin(), v.bytes.end());
+  const auto* root = v.type->root();
+  const auto* f = root->fields()->LookupByKey("value");
+  auto* t = flatbuffers::GetAnyRoot(buf.data());
+  const auto* s = flatbuffers::GetFieldS(*t, *f);
+  if (!s) throw Failed(FailureKind::output_invalid, "file value " + v.name + " has no path");
+  flatbuffers::SetString(*v.type->schema(), p, s, &buf, root);
+  out.bytes.assign(reinterpret_cast<const char*>(buf.data()), buf.size());
+  return out;
+}
+
 // Reads the string `value` field of a File/Directory message.
 std::optional<std::string> path_value(const Value& v) {
   const auto* root = v.type->root();
@@ -228,6 +242,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<FailureData> last_failure;
     std::optional<CardBuild> build;
     std::unique_ptr<WorkerProc> worker;
+    std::string worker_signature;
     uint64_t call_id = 0;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
@@ -236,14 +251,31 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     size_t node;
     uint64_t invocation;
     std::vector<Token> inputs;
+    bool from_saved = false;  // single-Card run on the saved inputs
   };
 
   // ---- persistence helpers -------------------------------------------------
 
+  // A history, log or artifact write that did not commit: the run cannot
+  // succeed, because its records would be incomplete.
+  void persistence_lost(const std::string& what) {
+    std::lock_guard<std::mutex> l(persist_mu_);
+    if (!persist_failure_)
+      persist_failure_ = FailureData::make(FailureKind::persistence_failed, "saving the run history failed: " + what);
+  }
+
+  std::optional<FailureData> persist_failure() {
+    std::lock_guard<std::mutex> l(persist_mu_);
+    return persist_failure_;
+  }
+
   void persist_status_locked() {
     auto s = summary_.status;
     svc_.history().submit([s](sql::Db& db) { History::update_run(db, s); },
-                          [this, s](bool) { svc_.server()->broadcast(status_note(s, false)); });
+                          [this, s](bool ok) {
+                            if (!ok) persistence_lost("run status");
+                            svc_.server()->broadcast(status_note(s, false));
+                          });
   }
 
   void set_state(RunState st) {
@@ -256,7 +288,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void card_status(const InvocationSummaryData& s) {
     svc_.history().submit([s](sql::Db& db) { History::put_status(db, s); },
-                          [this, s](bool) { svc_.server()->broadcast(card_note(s)); });
+                          [this, s](bool ok) {
+                            if (!ok) persistence_lost("progress of " + path_key(s.card));
+                            svc_.server()->broadcast(card_note(s));
+                          });
   }
 
   void journal(const char* phase, const char* event, const std::optional<CardPath>& card,
@@ -270,6 +305,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           *ends = card ? *ends : svc_.history().append_run_journal(db, run, line);
         },
         [this, ends](bool ok) {
+          if (!ok) persistence_lost("journal");
           if (ok)
             for (const auto& e : *ends) svc_.server()->broadcast(log_note(e));
         });
@@ -283,6 +319,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           *ends = svc_.history().append_log(db, run, card, inv, stream, text);
         },
         [this, ends](bool ok) {
+          if (!ok) persistence_lost("log");
           if (ok)
             for (const auto& e : *ends) svc_.server()->broadcast(log_note(e));
         });
@@ -335,7 +372,30 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           n.last_failure = start_failure_;
           return std::nullopt;
         }
+        auto fail_start = [&](FailureKind k, const std::string& msg, const std::string& port) {
+          start_failure_ = FailureData::make(k, msg, {{"card", path_key(n.node->path)}, {"port", port}});
+          n.halted = true;
+          n.last = CardState::failed;
+          n.last_failure = start_failure_;
+        };
+        for (const auto& port : n.node->inputs) {
+          bool have = false;
+          for (const auto& v : last->inputs) have |= v.name == port.name;
+          if (!have && !port.optional) {
+            fail_start(FailureKind::input_missing, "the saved inputs have no value for " + port.name, port.name);
+            return std::nullopt;
+          }
+        }
+        w.from_saved = true;
         for (auto& v : last->inputs) {
+          if (v.kind != PortKind::FlatBuffer) {
+            auto p = path_value(v);
+            std::error_code ec;
+            if (!p || !stdfs::exists(*p, ec)) {
+              fail_start(FailureKind::input_missing, "the saved file for input " + v.name + " no longer exists", v.name);
+              return std::nullopt;
+            }
+          }
           const auto* port = n.node->input(v.name);
           if (!port || !port->type || !types::compatible(*port->type, *v.type)) {
             start_failure_ = FailureData::make(FailureKind::type_mismatch,
@@ -382,6 +442,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     {
       std::unique_lock<std::mutex> l(mu_);
       while (true) {
+        bool dispatched = false;
         if (!cancel_) {
           bool progressed = true;
           while (progressed && running_ < p_.max_concurrency) {
@@ -396,10 +457,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               tasks_.push_back(std::move(*w));
               task_cv_.notify_one();
               progressed = true;
+              dispatched = true;
             }
           }
         }
         if (running_ == 0 && (cancel_ || !any_ready_locked())) break;
+        if (running_ == 0 && !dispatched) {
+          // Inputs are waiting but nothing runs and nothing can start: only a
+          // full downstream queue holds them back, and with no invocation in
+          // flight it can never drain. This is a stall, not a temporary wait.
+          stall_failure_ = stall_reason_locked();
+          break;
+        }
         cv_.wait_for(l, std::chrono::milliseconds(200));
       }
       pool_stop_ = true;
@@ -409,6 +478,24 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (auto& n : nodes_)
       if (n.worker) n.worker->terminate();
     finalize();
+  }
+
+  FailureData stall_reason_locked() {
+    for (auto& n : nodes_) {
+      if (!n.in_targets || n.running || n.halted || n.node->is_virtual) continue;
+      for (const auto& out : n.node->outputs) {
+        auto it = out_edges_.find({n.idx, out.name});
+        if (it == out_edges_.end()) continue;
+        for (const auto& [to, port] : it->second)
+          if (nodes_[to].in_targets && nodes_[to].queues[port].size() >= kQueueCapacity)
+            return FailureData::make(
+                FailureKind::execution_limit,
+                "the run cannot progress: " + path_key(nodes_[to].node->path) + "." + port + " holds " +
+                    std::to_string(kQueueCapacity) + " unconsumed values while its other inputs never arrive",
+                {{"card", path_key(nodes_[to].node->path)}, {"port", port}});
+      }
+    }
+    return FailureData::make(FailureKind::execution_limit, "the run cannot progress");
   }
 
   bool any_ready_locked() {
@@ -478,15 +565,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       s.state = CardState::running;
       s.phase = node.kind == Template::Code ? Phase::evaluate : Phase::execute;
       card_status(s);
-      if (node.kind == Template::Code || !inputs.empty()) {
-        auto inputs_copy = inputs;
-        auto card = node.path;
-        auto run = run_id_;
-        auto inv = w.invocation;
-        svc_.history().submit([card, run, inv, inputs_copy](sql::Db& db) {
-          History::put_last_input(db, card, run, inv, inputs_copy);
-        });
-      }
+      if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) save_last_inputs(node, w.invocation, inputs);
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       try {
         if (node.kind == Template::Code) out = run_code(rt, s, inputs, lane);
@@ -500,7 +579,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         s.phase = Phase::validate;
         int64_t vs = now_ms();
         try {
-          validate_outputs(rt, w.invocation, out.outputs);
+          validate_outputs(rt, w.invocation, out.outputs, inputs);
         } catch (const Failed& f) {
           out.failure = f.failure;
           out.outputs.clear();
@@ -544,8 +623,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         }
       if (rec.record_io) rec.outputs = out.outputs;
     }
-    svc_.history().submit([rec](sql::Db& db) { History::complete_invocation(db, rec); },
-                          [this, s](bool) { svc_.server()->broadcast(card_note(s)); });
+    // The completion is durable before it is announced or its outputs move on.
+    try {
+      History& h = svc_.history();
+      h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
+    } catch (const Failed&) {
+      persistence_lost("invocation " + std::to_string(w.invocation) + " of " + path_key(node.path));
+      s.state = CardState::failed;
+      s.failure = persist_failure();
+      out.failure = s.failure;
+      out.outputs.clear();
+    }
+    svc_.server()->broadcast(card_note(s));
     journal(phase_name(s.phase.value_or(Phase::execute)),
             s.state == CardState::succeeded ? "succeeded" : s.state == CardState::cancelled ? "cancelled" : "failed",
             node.path, w.invocation,
@@ -575,8 +664,63 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
   }
 
-  void validate_outputs(NodeRt& rt, uint64_t inv, std::vector<Value>& outputs) {
+  // The inputs of this invocation become the Card's saved inputs for a later
+  // single-Card run. File/Directory contents are copied out of the run's work
+  // area (which CacheClear removes) and the saved values point to the copy.
+  // Exactly one invocation's set is kept, never a mix of runs.
+  void save_last_inputs(const Node& node, uint64_t inv, const std::vector<Value>& inputs) {
+    auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
+    auto dir = base / (run_id_ + "-" + std::to_string(inv));
+    std::vector<Value> saved;
+    try {
+      for (const auto& v : inputs) {
+        if (v.kind == PortKind::FlatBuffer) {
+          saved.push_back(v);
+          continue;
+        }
+        auto src = path_value(v);
+        if (!src) throw Failed(FailureKind::output_invalid, "input " + v.name + " has no path");
+        auto dest = dir / v.name / stdfs::path(*src).filename();
+        stdfs::create_directories(dest.parent_path());
+        if (v.kind == PortKind::File) {
+          fs::write_atomic(dest, fs::read_file_or_throw(*src), 0644);
+        } else {
+          auto listing = fs::list_tree(*src);
+          stdfs::create_directories(dest);
+          for (const auto& f : listing.files)
+            fs::write_atomic(dest / f, fs::read_file_or_throw(stdfs::path(*src) / f), 0644);
+        }
+        saved.push_back(with_path(v, dest.string()));
+      }
+    } catch (const std::exception& e) {
+      persistence_lost(std::string("saved inputs of ") + path_key(node.path) + ": " + e.what());
+      return;
+    }
+    auto card = node.path;
+    auto run = run_id_;
+    svc_.history().submit([card, run, inv, saved](sql::Db& db) { History::put_last_input(db, card, run, inv, saved); },
+                          [this, base, dir, card](bool ok) {
+                            if (!ok) {
+                              persistence_lost("saved inputs of " + path_key(card));
+                              return;
+                            }
+                            // Older saved copies of this Card are no longer referenced.
+                            std::error_code ec;
+                            if (stdfs::is_directory(base, ec))
+                              for (const auto& e : stdfs::directory_iterator(base, ec))
+                                if (e.path() != dir) stdfs::remove_all(e.path(), ec);
+                          });
+  }
+
+  void validate_outputs(NodeRt& rt, uint64_t inv, std::vector<Value>& outputs, const std::vector<Value>& inputs) {
     const Node& node = *rt.node;
+    // Files received as inputs may be passed on unchanged (fork, branch, a
+    // Card forwarding its input); anything else must be newly produced in the
+    // invocation's own output directory.
+    std::set<std::string> forwarded;
+    for (const auto& in : inputs)
+      if (in.kind != PortKind::FlatBuffer)
+        if (auto p = path_value(in)) forwarded.insert(stdfs::path(*p).lexically_normal().string());
     std::set<std::string> seen;
     for (auto& v : outputs) {
       const auto* port = node.output(v.name);
@@ -593,8 +737,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         auto p = path_value(v);
         auto out_dir = invocation_dir(node, inv) / "out";
         std::error_code ec;
-        if (!p || !stdfs::path(*p).is_absolute() || !fs::resolves_inside(out_dir, *p))
-          throw Failed(FailureKind::output_invalid, "output " + v.name + " must point inside the output directory",
+        bool is_forward = p && forwarded.count(stdfs::path(*p).lexically_normal().string());
+        if (!p || !stdfs::path(*p).is_absolute() || (!is_forward && !fs::resolves_inside(out_dir, *p)))
+          throw Failed(FailureKind::output_invalid,
+                       "output " + v.name + " must point inside the output directory or forward an input",
                        {{"port", v.name}});
         auto st = stdfs::symlink_status(*p, ec);
         bool ok = v.kind == PortKind::File ? stdfs::is_regular_file(st) : stdfs::is_directory(st);
@@ -816,8 +962,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     std::optional<uid_t> uid;
     if (::geteuid() == 0) uid = kCardUid;
-    if (!rt.worker || !rt.worker->alive() || !rt.build->reuse_worker) {
+    // A reused worker keeps exactly the binds it was started with; a call that
+    // needs other input paths gets a new worker.
+    std::vector<std::string> ro;
+    for (const auto& v : in)
+      if (v.kind != PortKind::FlatBuffer)
+        if (auto p = path_value(v)) ro.push_back(*p);
+    std::sort(ro.begin(), ro.end());
+    ro.erase(std::unique(ro.begin(), ro.end()), ro.end());
+    std::string signature = std::string(rt.build->package.value_or("")) + "|" + (node.settings.sandbox ? "s" : "u");
+    for (const auto& p : ro) signature += "|" + p;
+    if (!rt.worker || !rt.worker->alive() || !rt.build->reuse_worker || rt.worker_signature != signature) {
       if (rt.worker) rt.worker->terminate();
+      rt.worker_signature = signature;
       WorkerSpawn sp;
       sp.worker_binary = svc_.options().worker_binary.string();
       sp.bash = TSUGUMI_BASH;
@@ -829,13 +986,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       // Reused workers keep the whole Card work tree; single calls get exactly their dirs.
       if (rt.build->reuse_worker) sp.rw_paths = {(run_dir_ / "work" / path_key(node.path)).string()};
       else sp.rw_paths = {work.string(), tmp.string(), out.string()};
-      for (const auto& v : in)
-        if (v.kind != PortKind::FlatBuffer)
-          if (auto p = path_value(v)) sp.ro_paths.push_back(*p);
+      sp.ro_paths = ro;
       CardPath card = node.path;
       auto inv_ptr = std::make_shared<std::atomic<uint64_t>>(s.invocation);
       current_inv_[rt.idx] = inv_ptr;
-      sp.ro_paths.erase(std::unique(sp.ro_paths.begin(), sp.ro_paths.end()), sp.ro_paths.end());
       rt.worker = std::make_unique<WorkerProc>(sp, [this, card, inv_ptr](LogStream stream, const std::string& text) {
         card_log(card, inv_ptr->load(), stream, text);
       });
@@ -867,7 +1021,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       on_display(rt, d);
     });
     svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::execute, lane, t0, now_ms()));
-    if (!rt.build->reuse_worker || !rt.worker->alive()) {
+    // Reuse only after a clean call: a failed, cancelled or timed out worker
+    // (and anything it started) is ended.
+    if (!rt.build->reuse_worker || !rt.worker->alive() || outcome.failure) {
       rt.worker->terminate();
       rt.worker.reset();
     }
@@ -937,11 +1093,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];
-      svc_.history().submit([rec](sql::Db& db) { History::complete_invocation(db, rec); },
-                            [this, s = rec.summary](bool) { svc_.server()->broadcast(card_note(s)); });
+      History& h = svc_.history();
+      h.submit([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); },
+               [this, s = rec.summary](bool ok) {
+                 if (!ok) persistence_lost("final state of " + path_key(s.card));
+                 svc_.server()->broadcast(card_note(s));
+               });
     }
     // The terminal state is computed here but becomes visible (RunStatus,
     // notifications) only after every record above is committed.
+    svc_.history().flush();
     RunSummaryData sum;
     {
       std::lock_guard<std::mutex> l(mu_);
@@ -954,9 +1115,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     } else if (cancel_) {
       st.state = RunState::cancelled;
       st.failure = FailureData::make(FailureKind::cancelled, "the run was cancelled");
-    } else if (start_failure_ || first_failure_ || blocked_failure) {
+    } else if (auto pf = persist_failure()) {
       st.state = RunState::failed;
-      st.failure = start_failure_ ? start_failure_ : first_failure_ ? first_failure_ : blocked_failure;
+      st.failure = pf;
+    } else if (start_failure_ || first_failure_ || stall_failure_ || blocked_failure) {
+      st.state = RunState::failed;
+      st.failure = start_failure_ ? start_failure_ : first_failure_ ? first_failure_ : stall_failure_ ? stall_failure_ : blocked_failure;
     } else {
       st.state = RunState::succeeded;
       st.failure.reset();
@@ -975,8 +1139,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         [sum, displays](sql::Db& db) {
           for (const auto& d : displays) History::put_display(db, d);
           History::update_run(db, sum.status);
+          // Progress rows never outlive their run (a lost completion leaves no "running" card).
+          db.prepare("DELETE FROM statuses WHERE run_id=?").bind(1, *sum.status.run_id).run();
         },
-        [self, sum](bool) {
+        [self, sum](bool ok) mutable {
+          if (!ok && sum.status.state == RunState::succeeded) {
+            // The success itself could not be recorded: never report it.
+            sum.status.state = RunState::failed;
+            sum.status.failure = FailureData::make(FailureKind::persistence_failed, "saving the run result failed");
+          }
           {
             std::lock_guard<std::mutex> l(self->mu_);
             self->summary_ = sum;
@@ -1006,7 +1177,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint64_t token_seq_ = 0;
   std::atomic<bool> cancel_{false};
   bool interrupted_ = false;
-  std::optional<FailureData> first_failure_, start_failure_;
+  std::optional<FailureData> first_failure_, start_failure_, stall_failure_;
+  std::mutex persist_mu_;
+  std::optional<FailureData> persist_failure_;
   std::map<size_t, std::shared_ptr<std::atomic<uint64_t>>> current_inv_;
 };
 
@@ -1049,7 +1222,7 @@ void Scheduler::recover_interrupted() {
         rec.summary.failure = r->status.failure;
         recs.push_back(std::move(rec));
       }
-      for (const auto& rec : recs) History::complete_invocation(db, rec);
+      for (const auto& rec : recs) svc_.history().complete_invocation(db, rec);
     });
     log::warn("run " + run_id + " was interrupted by a restart");
   }

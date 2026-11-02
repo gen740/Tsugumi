@@ -165,7 +165,7 @@ Service::~Service() { shutdown(); }
 void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
-  history_ = std::make_unique<History>(store_->state_dir() / "history.sqlite", cursor_secret_);
+  history_ = std::make_unique<History>(store_->state_dir() / "history.sqlite", cursor_secret_, opts_.fault);
   nix_ = std::make_unique<NixRunner>(*this);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();

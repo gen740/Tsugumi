@@ -120,8 +120,8 @@ bool char_start(unsigned char c) { return (c & 0xC0) != 0x80; }
 
 }  // namespace
 
-History::History(const std::filesystem::path& db_path, std::string cursor_secret)
-    : path_(db_path), secret_(std::move(cursor_secret)) {
+History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
+    : path_(db_path), secret_(std::move(cursor_secret)), fault_(std::move(fault)) {
   writer_db_ = std::make_unique<sql::Db>(path_.string());
   // Single process owns the database (guarded by the project lock).
   writer_db_->exec("PRAGMA journal_mode=WAL");
@@ -206,6 +206,13 @@ void History::submit(Work work, std::function<void(bool)> done) {
   wcv_.notify_one();
 }
 
+void History::flush() {
+  try {
+    write_sync([](sql::Db&) {});
+  } catch (const Failed&) {
+  }
+}
+
 void History::write_sync(const Work& work) {
   std::mutex m;
   std::condition_variable cv;
@@ -245,6 +252,8 @@ void History::writer_loop() {
       ok = false;
     }
     if (!ok) {
+      // Cached log offsets may include rolled back rows.
+      log_ends_.clear();
       // Retry one by one so a single bad write does not lose the others.
       for (auto& [work, done] : batch) {
         bool one = true;
@@ -300,7 +309,8 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
       .bind(1, s.run_id).bind(2, key(s.card)).run();
 }
 
-void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) {
+void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) const {
+  if (fault_ == "history_invocation") throw sql::Error("injected fault: invocation record write failed");
   const auto& s = r.summary;
   auto st = db.prepare(
       "INSERT OR REPLACE INTO invocations(run_id, card, invocation, state, phase, started_at, ended_at, "

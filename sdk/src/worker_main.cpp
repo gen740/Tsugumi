@@ -6,7 +6,15 @@
 //
 // Steps per call: preScript -> lib/main.so -> script -> postScript. The
 // environment and working directory produced by preScript carry over; an
-// earlier failure is never cleared by a later step's success.
+// earlier failure is never cleared by a later step's success. One deadline
+// covers all steps, and cancel/deadline are checked before each step starts.
+//
+// Shell steps get, per input port P:
+//   JSON_P  path of a JSON file with the message (any size)
+//   BIN_P   path of the raw FlatBuffer
+//   INPUT_P small values only: the `value` field of a single-scalar message,
+//           otherwise the JSON text when it is at most 4 KiB
+//   FILE_P / DIR_P  the path carried by File / Directory messages
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -94,6 +102,13 @@ void send_frame(flatbuffers::FlatBufferBuilder& b) {
   uint32_t len = b.GetSize();
   write_full(kData, &len, 4);
   write_full(kData, b.GetBufferPointer(), len);
+}
+
+std::string get_env(const std::vector<std::string>& env, const std::string& key) {
+  std::string prefix = key + "=";
+  for (const auto& e : env)
+    if (e.starts_with(prefix)) return e.substr(prefix.size());
+  return {};
 }
 
 std::string upper(std::string s) {
@@ -345,23 +360,39 @@ void execute(const Options& opt, Call& call) {
   for (const auto* in : *m->inputs()) {
     std::string port = in->name()->str();
     std::string up = upper(port);
-    std::string path = tmp + "/input-" + port + ".bin";
-    write_text(path, std::string(reinterpret_cast<const char*>(in->value()->bytes()->data()), in->value()->bytes()->size()));
-    set_env(env, "INPUT_" + up, path);
+    std::string bin = tmp + "/input-" + port + ".bin";
+    write_text(bin, std::string(reinterpret_cast<const char*>(in->value()->bytes()->data()), in->value()->bytes()->size()));
+    set_env(env, "BIN_" + up, bin);
     if (auto p = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str())) {
       std::string json;
       if (!flatbuffers::GenText(*p, in->value()->bytes()->data(), &json)) {
-        if (json.size() <= 128 * 1024) set_env(env, "JSON_" + up, json);
+        // Large values never go through the environment (its size is limited).
+        std::string json_path = tmp + "/input-" + port + ".json";
+        write_text(json_path, json);
+        set_env(env, "JSON_" + up, json_path);
+        namespace sc = tsugumi::schema;
+        sc::v::Mapping<sc::v::String, sc::Json> fields;
+        bool single_scalar = false;
+        if (!sc::decode(json, fields) && fields.value().entries().size() == 1) {
+          const auto& [k, value] = *fields.value().entries().begin();
+          std::string v = sc::text(value);
+          sc::v::String str;
+          if (k == "value" && !sc::decode(value, str)) {
+            set_env(env, "INPUT_" + up, str.value());
+            single_scalar = true;
+          } else if (k == "value" && !v.empty() && v.front() != '{' && v.front() != '[') {
+            set_env(env, "INPUT_" + up, v);
+            single_scalar = true;
+          }
+        }
+        if (!single_scalar && json.size() <= 4096) set_env(env, "INPUT_" + up, json);
         if (in->kind() == D::PortKind::File || in->kind() == D::PortKind::Directory) {
           // The message's string `value` is the path inside this environment.
-          namespace sc = tsugumi::schema;
-          sc::v::Mapping<sc::v::String, sc::Json> fields;
-          if (!sc::decode(json, fields))
-            for (const auto& [k, value] : fields.value().entries()) {
-              sc::v::String path;
-              if (k == "value" && !sc::decode(value, path))
-                set_env(env, (in->kind() == D::PortKind::File ? "FILE_" : "DIR_") + up, path.value());
-            }
+          for (const auto& [k, value] : fields.value().entries()) {
+            sc::v::String path;
+            if (k == "value" && !sc::decode(value, path))
+              set_env(env, (in->kind() == D::PortKind::File ? "FILE_" : "DIR_") + up, path.value());
+          }
         }
       }
     }
@@ -370,6 +401,19 @@ void execute(const Options& opt, Call& call) {
                       in->value()->bytes()->size()});
   }
   bool timed_out = false;
+  std::string cwd = work;
+  // Nothing starts after a cancel or once the single call deadline passed.
+  auto may_start = [&](const char* step) {
+    if (g_cancel.load()) {
+      record_failure(D::FailureKind::cancelled, std::string(step) + " not started: cancelled");
+      return false;
+    }
+    if (call.has_deadline && std::chrono::steady_clock::now() >= call.deadline) {
+      record_failure(D::FailureKind::timeout, std::string(step) + " not started: the deadline passed");
+      return false;
+    }
+    return true;
+  };
   auto step_failed = [&](const char* step, int status) {
     if (g_cancel.load()) record_failure(D::FailureKind::cancelled, std::string(step) + " cancelled");
     else if (timed_out) record_failure(D::FailureKind::timeout, std::string(step) + " exceeded the deadline");
@@ -379,19 +423,21 @@ void execute(const Options& opt, Call& call) {
                          (WIFEXITED(status) ? "exit status " + std::to_string(WEXITSTATUS(status))
                                             : "signal " + std::to_string(WTERMSIG(status))));
   };
-  if (!opt.pre.empty()) {
+  if (!opt.pre.empty() && may_start("preScript")) {
     std::string dump = tmp + "/pre-env";
     set_env(env, "TSUGUMI_ENV_DUMP", dump);
     std::string script = read_text(opt.pre) + "\n\"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"\n";
-    int st = run_shell(opt.bash, script, env, work, call, &timed_out);
+    int st = run_shell(opt.bash, script, env, cwd, call, &timed_out);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preScript", st);
     } else {
       auto next = parse_env_dump(read_text(dump));
       if (!next.empty()) env = next;
+      // A `cd` in preScript carries over (bash keeps PWD current).
+      if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
   }
-  if (!call.failure && !opt.package.empty()) {
+  if (!call.failure && !opt.package.empty() && may_start("main.so")) {
     if (!g_lib) {
       std::string lib = opt.package + "/lib/main.so";
       g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -414,7 +460,7 @@ void execute(const Options& opt, Call& call) {
         auto eq = e.find('=');
         ::setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1);
       }
-      if (::chdir(work.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory");
+      if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
       tsugumi_call c{};
       c.abi_version = TSUGUMI_ABI_VERSION;
       c.run_id = call.run_id.c_str();
@@ -444,11 +490,11 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
-  if (!call.failure && !opt.script.empty()) {
+  if (!call.failure && !opt.script.empty() && may_start("script")) {
     std::string out_json = tmp + "/output.json";
     ::unlink(out_json.c_str());
     set_env(env, "TSUGUMI_OUTPUT", out_json);
-    int st = run_shell(opt.bash, read_text(opt.script), env, work, call, &timed_out);
+    int st = run_shell(opt.bash, read_text(opt.script), env, cwd, call, &timed_out);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("script", st);
     } else if (::access(out_json.c_str(), R_OK) == 0) {
@@ -478,9 +524,13 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
-  if (!opt.post.empty()) {
+  // postScript also runs after a failed step (cleanup), but never after a
+  // cancel or the deadline; its success never clears an earlier failure.
+  bool stopped = call.failure && (call.failure->kind == D::FailureKind::cancelled || call.failure->kind == D::FailureKind::timeout);
+  if (!opt.post.empty() && !stopped && may_start("postScript")) {
     bool post_timeout = false;
-    int st = run_shell(opt.bash, read_text(opt.post), env, work, call, &post_timeout);
+    set_env(env, "TSUGUMI_FAILED", call.failure ? "1" : "0");
+    int st = run_shell(opt.bash, read_text(opt.post), env, cwd, call, &post_timeout);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       timed_out = post_timeout;
       step_failed("postScript", st);

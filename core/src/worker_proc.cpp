@@ -128,7 +128,17 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
     for (const auto& p : sp.ro_paths) spec.argv.insert(spec.argv.end(), {"--ro-bind", p, p});
     for (const auto& p : sp.rw_paths) spec.argv.insert(spec.argv.end(), {"--bind", p, p});
     spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.script_dir, sp.script_dir, "--", sp.worker_binary});
+  } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
+    // sandbox: false lifts the file access limits only. The worker still gets
+    // its own PID and network namespaces, so every descendant ends with it
+    // and the Card has no network.
+    spec.argv = {bwrap, "--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--die-with-parent",
+                 "--new-session", "--dev-bind", "/", "/", "--proc", "/proc"};
+    if (sp.uid)
+      spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
+    spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
   } else {
+    // Development hosts without bubblewrap (never the container image).
     spec.argv = {sp.worker_binary};
     spec.uid = sp.uid;
     spec.gid = sp.gid;
