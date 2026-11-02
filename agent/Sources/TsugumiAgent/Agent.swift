@@ -56,7 +56,7 @@ public enum AgentEvent: Sendable {
 /// The Agent loop: streaming model turns, tool argument validation, real RPC
 /// execution through ToolTransport, persistence and cancellation.
 public actor Agent {
-  public let catalog: ToolCatalog
+  public nonisolated let catalog: ToolCatalog
   let codec: FlatJSON
   let transport: ToolTransport
   let storage: URL
@@ -140,7 +140,7 @@ public actor Agent {
         try? conversation.save(storage)
       }
       events(.finished)
-    } catch is CancellationError {
+    } catch where error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
       // Tools that were not sent are recorded as skipped; nothing is re-sent later.
       for i in conversation.tools.indices where conversation.tools[i].state == .pending {
         conversation.tools[i].state = .skipped
@@ -180,6 +180,8 @@ public actor Agent {
             conversation.usage.outputTokens += usage.outputTokens
           }
         }
+        // A cancelled consumer sees the stream end normally; it is not an answer.
+        try Task.checkCancellation()
         var blocks: [ContentBlock] = []
         if !text.isEmpty { blocks.append(.text(text)) }
         for i in order {

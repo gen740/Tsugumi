@@ -193,6 +193,7 @@ public struct MessagesProvider: Sendable {
           }
           var usage = Usage()
           var event = ""
+          var stopped = false
           for try await line in bytes.lines {
             try Task.checkCancellation()
             if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces); continue }
@@ -218,6 +219,8 @@ public struct MessagesProvider: Sendable {
               }
             case "content_block_stop":
               cont.yield(.blockStop(index: obj["index"] as? Int ?? 0))
+            case "message_stop":
+              stopped = true
             case "message_delta":
               if let u = obj["usage"] as? [String: Any] { usage.outputTokens = u["output_tokens"] as? Int ?? usage.outputTokens }
               if let d = obj["delta"] as? [String: Any], let reason = d["stop_reason"] as? String {
@@ -229,6 +232,8 @@ public struct MessagesProvider: Sendable {
               break
             }
           }
+          // A stream cut before message_stop is a lost connection, not a short answer.
+          if !stopped { throw URLError(.networkConnectionLost) }
           cont.finish()
         } catch {
           cont.finish(throwing: error)

@@ -149,7 +149,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     try await Task.sleep(for: .milliseconds(400))
     await agent.cancel()
     await waitFinished(log, seconds: 10)
-    #expect(log.all.contains { if case .error(let s) = $0 { return s == "cancelled" }; return false })
+    #expect(log.all.contains { if case .error(let s) = $0 { return s == "cancelled" }; return false }, "\(log.all)")
     let runs = try await client.history()
     #expect(runs.runs.isEmpty)  // the run tool was never sent
     await client.close()
@@ -165,7 +165,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let log = EventLog()
     await agent.send("set src.text to retried and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
-    #expect(log.all.contains { if case .retrying = $0 { return true }; return false })
+    #expect(log.all.contains { if case .retrying = $0 { return true }; return false }, "\(log.all)")
     #expect(log.text.contains("succeeded"))
     // Exactly one save and one run despite the retry.
     let runs = try await client.history()

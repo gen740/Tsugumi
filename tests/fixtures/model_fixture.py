@@ -162,15 +162,18 @@ class Handler(BaseHTTPRequestHandler):
         with Handler.lock:
             drop = Handler.drop_once and not Handler.dropped
             Handler.dropped = Handler.dropped or drop
+        if drop:
+            # Cut the connection after the first block started.
+            self._event("content_block_start", {"type": "content_block_start", "index": 0,
+                                                 "content_block": {"type": "text", "text": ""}})
+            self.connection.shutdown(2)
+            return
         if decision[0] == "text":
             self._event("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
             words = decision[1].split(" ")
             for i, w in enumerate(words):
                 self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                     "delta": {"type": "text_delta", "text": w + (" " if i + 1 < len(words) else "")}})
-                if drop and i == 1:
-                    self.connection.shutdown(2)
-                    return
             self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
             stop = "end_turn"
         else:
@@ -181,9 +184,6 @@ class Handler(BaseHTTPRequestHandler):
             for i in range(0, len(text), 24):
                 self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                     "delta": {"type": "input_json_delta", "partial_json": text[i:i + 24]}})
-                if drop and i > 0:
-                    self.connection.shutdown(2)
-                    return
             self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
             stop = "tool_use"
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
