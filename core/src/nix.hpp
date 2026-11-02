@@ -89,6 +89,7 @@ class NixRunner {
 
   Service& svc_;
   std::string nix_build_, nix_store_;
+  std::string sdk_hash_;  // content hash of the installed SDK (part of every build key)
   std::mutex lane_mu_;
   std::condition_variable lane_cv_;
   bool lane_busy_ = false;

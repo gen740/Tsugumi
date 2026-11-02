@@ -1,5 +1,8 @@
 #include "util/text.hpp"
 
+#include <cstddef>
+#include <cstdint>
+
 namespace tsugumi::text {
 
 bool valid_utf8(std::string_view s) {

@@ -3,6 +3,7 @@
  * With reuseWorker the interpreter and module state persist between calls. */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <dlfcn.h>
 #include <wchar.h>
 
 #include "tsugumi/sdk/abi.h"
@@ -144,6 +145,11 @@ static PyObject* init_host(void) { return PyModule_Create(&host_module); }
 static int ensure_python(void) {
   static int ready = 0;
   if (ready) return 1;
+#ifdef TSUGUMI_LIBPYTHON
+  /* The worker loads main.so with RTLD_LOCAL; extension modules need the
+   * interpreter's symbols globally visible. */
+  if (!dlopen(TSUGUMI_LIBPYTHON, RTLD_NOW | RTLD_GLOBAL)) return 0;
+#endif
   if (PyImport_AppendInittab("_tsugumi_host", init_host) != 0) return 0;
   PyConfig config;
   PyConfig_InitIsolatedConfig(&config);

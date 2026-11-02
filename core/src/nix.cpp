@@ -64,6 +64,15 @@ NixRunner::NixRunner(Service& svc) : svc_(svc) {
   nix_build_ = find_in_path("nix-build");
   nix_store_ = find_in_path("nix-store");
   if (nix_build_.empty()) log::warn("nix-build not found in PATH; code Cards cannot be built");
+  {
+    crypto::Sha256 h;
+    const auto& sdk = svc_.options().sdk_dir;
+    for (const auto& f : fs::list_tree(sdk).files) {
+      h.update(f);
+      h.update(fs::read_file_or_throw(sdk / f));
+    }
+    sdk_hash_ = h.finish_hex();
+  }
   // SDK jobs left pending by a previous process were interrupted.
   auto dir = svc_.store().state_dir() / "sdk";
   std::error_code ec;
@@ -232,6 +241,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   std::string prefix = "definitions/" + node.definition + "/";
   crypto::Sha256 key;
   key.update(kSdkVersion);
+  key.update(sdk_hash_);
   {
     std::lock_guard<std::mutex> l(defs_mu_);
     bool copy = copied_defs_.insert(def_dir.string()).second;

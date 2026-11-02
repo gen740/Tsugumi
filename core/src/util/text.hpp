@@ -1,6 +1,7 @@
 // Text helpers shared by the core and the worker.
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 namespace tsugumi::text {

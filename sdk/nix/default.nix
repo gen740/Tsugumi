@@ -73,6 +73,7 @@ rec {
           -L${python}/lib -lpython${python.pythonVersion} \
           -Wl,-rpath,${python}/lib \
           -DTSUGUMI_PY_HOME='"${python}"' \
+          -DTSUGUMI_LIBPYTHON='"${python}/lib/libpython${python.pythonVersion}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
           -DTSUGUMI_PY_PATH='"'$out'/lib/python:${env}/${python.sitePackages}"'
         runHook postBuild
       '';
