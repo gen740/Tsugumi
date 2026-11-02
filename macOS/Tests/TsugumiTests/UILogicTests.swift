@@ -205,3 +205,13 @@ import Testing
   #expect(fbs.contains("comment:// note") && fbs.contains("keyword:table") && fbs.contains("type:Num") && fbs.contains("property:value"))
   #expect(TreeSitterHighlighter.spans("x", language: "txt") == nil)
 }
+
+@Test func copiedDefinitionsCarryConcreteSettings() {
+  let card = try! JSONValue.parse(#"{"language":"python","maxRuns":5}"#)
+  let c = concreteSettings(card)
+  #expect(c["maxRuns"] == .number("5"))  // kept
+  #expect(c["sandbox"] == .bool(true) && c["recordIO"] == .bool(false) && c["inputMode"] == .string("all"))
+  #expect(c["timeoutSeconds"] == .null && c["buildTimeoutSeconds"] == .null)
+  let builtin = concreteSettings(try! JSONValue.parse(#"{"template":"logger"}"#))
+  #expect(builtin["inputMode"] == nil && builtin["maxRuns"] == .number("1"))
+}

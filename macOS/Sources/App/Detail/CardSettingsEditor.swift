@@ -650,11 +650,12 @@ private struct PortsCategory: View {
           ForEach(inputs.indices, id: \.self) { i in
             let name = inputs[i]["name"]?.string ?? ""
             HStack {
+              // An editable field that looks like one (border, focus ring).
               TextField("名前", text: Binding(get: { name }, set: { v in editInputs { $0[i]["name"] = .string(v) } }))
+                .textFieldStyle(.roundedBorder).labelsHidden()
                 .frame(maxWidth: 140)
-              TextField("用途", text: note("inputs", name))
-              Toggle("省略可", isOn: Binding(get: { inputs[i]["optional"]?.bool ?? false },
-                                          set: { v in editInputs { $0[i]["optional"] = v ? .bool(true) : nil } }))
+                .help("入力ポートの名前")
+              TextField("用途", text: note("inputs", name)).textFieldStyle(.roundedBorder).labelsHidden()
               Text(r?.inputs.first { $0.name == name }?.rootType ?? "未解決").font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
@@ -671,8 +672,8 @@ private struct PortsCategory: View {
       Section {
         ForEach(r?.outputs ?? [], id: \.name) { p in
           HStack {
-            Text(p.name).frame(maxWidth: 140, alignment: .leading)
-            TextField("用途", text: note("outputs", p.name))
+            Text(p.name).font(.body.monospaced()).frame(maxWidth: 140, alignment: .leading)
+            TextField("用途", text: note("outputs", p.name)).textFieldStyle(.roundedBorder).labelsHidden()
             Text((p.rootType ?? String(localized: "未解決")) + (p.optional ? String(localized: "（省略可）") : ""))
               .font(.caption).foregroundStyle(.secondary)
           }
@@ -685,11 +686,22 @@ private struct PortsCategory: View {
         Section("記録と成果物") {
           tri("recordIO", label: "入出力を記録", def: def)
           tri("retainArtifact", label: "成果物を保持", def: def)
-          Picker("保持する出力", selection: Binding(
-            get: { model.instance["artifactOutput"]?.string ?? def?["artifactOutput"]?.string ?? "" },
-            set: { model.instance["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
-            Text("なし").tag("")
-            ForEach(r?.outputs ?? [], id: \.name) { Text($0.name).tag($0.name) }
+          // Only File / Directory outputs can be kept as artifacts.
+          let keepable = (r?.outputs ?? []).filter { $0.kind == .file || $0.kind == .directory }
+          if keepable.isEmpty {
+            LabeledContent("保持する出力") {
+              Text(r == nil ? "出力の型がまだ解決されていません" : "File / Directory の出力がないため、保持できる出力はありません")
+                .font(.callout).foregroundStyle(.secondary)
+            }
+          } else {
+            Picker("保持する出力", selection: Binding(
+              get: { model.instance["artifactOutput"]?.string ?? def?["artifactOutput"]?.string ?? "" },
+              set: { model.instance["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
+              Text("選んでください").tag("")
+              ForEach(keepable, id: \.name) { p in
+                Text("\(p.name)（\(p.kind == .file ? "File" : "Directory")）").tag(p.name)
+              }
+            }
           }
           Picker("ログを保存する DB 接続", selection: Binding(
             get: { model.instance["loggerDatabaseConnection"]?.string ?? "" },

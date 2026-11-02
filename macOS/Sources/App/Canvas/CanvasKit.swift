@@ -373,7 +373,7 @@ struct CardGeometry {
     if shape == .card && collapsed { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
     if shape == .fork || shape == .merge { return false }
-    if shape == .branch { return !input }
+    if shape == .branch { return true }
     return spacing(input: input) >= Self.minLabel
   }
 
@@ -656,7 +656,11 @@ struct CardNodeView: View {
     let pt = g.port(p.name, output: output)
     let w = g.spacing(input: !output)
     var text = p.name
-    if data.kind == .branch && output { text = p.name == "a" ? "T" : p.name == "b" ? "F" : p.name }
+    if data.kind == .branch {
+      // Which output is true / false, and which input is the boolean condition.
+      if output { text = p.name == "a" ? "a (T)" : p.name == "b" ? "b (F)" : p.name }
+      else if p.name == "condition" { text = "bool" }
+    }
     let label = Text(text).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
     if g.shape == .card {
       // Inside an ordinary Card: below its input, above its output.
@@ -666,7 +670,7 @@ struct CardNodeView: View {
     // Beside the port of a routing Card, so the wire (vertical at the port)
     // never runs through the name: right of it, or left on the left half.
     let left = pt.x < g.outlineRect.midX - 1 && (data.kind == .branch || g.spacing(input: !output) < 70)
-    let lw: CGFloat = data.kind == .branch ? 12 : max(CardGeometry.minLabel, min(w, 80))
+    let lw: CGFloat = data.kind == .branch ? 40 : max(CardGeometry.minLabel, min(w, 80))
     let dy: CGFloat = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
     let x = left ? pt.x - 6 - lw / 2 : pt.x + 6 + lw / 2
     return AnyView(label.frame(width: s(lw), alignment: left ? .trailing : .leading)
@@ -681,10 +685,13 @@ struct CardNodeView: View {
     return ZStack(alignment: .topLeading) {
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
+        // A branch's condition is a boolean: a small diamond instead of a square.
+        let condition = data.kind == .branch && p.name == "condition"
         RoundedRectangle(cornerRadius: max(1, s(1.5)))
-          .fill(Color(nsColor: .controlBackgroundColor))
-          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(Color.secondary, lineWidth: 1.4))
+          .fill(condition ? Color.green.opacity(0.35) : Color(nsColor: .controlBackgroundColor))
+          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(condition ? Color.green : Color.secondary, lineWidth: 1.4))
           .frame(width: mark, height: mark)
+          .rotationEffect(.degrees(condition ? 45 : 0))
           .frame(width: hit, height: hit)
           .contentShape(Rectangle())
           .position(x: s(pt.x), y: s(pt.y))
@@ -707,6 +714,11 @@ struct CardNodeView: View {
 
   private func portHelp(_ p: PortData, output: Bool) -> String {
     var s = (output ? String(localized: "出力 ") : String(localized: "入力 ")) + p.name
+    if data.kind == .branch {
+      if p.name == "condition" { s += String(localized: "（bool: true なら a、false なら b へ value を送る）") }
+      if p.name == "a" { s += String(localized: "（condition が true のとき）") }
+      if p.name == "b" { s += String(localized: "（condition が false のとき）") }
+    }
     if let t = p.typeName { s += " : \(t)" }
     s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }

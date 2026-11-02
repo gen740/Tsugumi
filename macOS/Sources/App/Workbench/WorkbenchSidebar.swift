@@ -411,7 +411,7 @@ struct ImportDefinitionsSheet: View {
         }
       }
       .frame(minHeight: 200)
-      Text("定義とソースをコピーし、ID が重なる場合は新しい ID を割り当てます。Canvas への配置は別に行います。")
+      Text("定義とソースをこのプロジェクトにコピーします（以後はこのプロジェクトの定義として編集でき、元とは連動しません）。設定はコピー時点の値を、既定値も含めて具体的な値として保存します。ID が重なる場合は新しい ID を割り当てます。Canvas への配置は別に行います。")
         .font(.caption).foregroundStyle(.secondary)
       if session.dirty { Label("コピーの前に未保存の変更を保存してください。", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
       if let message { Text(message).font(.callout).textSelection(.enabled) }
@@ -456,7 +456,7 @@ struct ImportDefinitionsSheet: View {
             guard let card = s.definitions[id] else { continue }
             var meta = s.definitionMeta[id] ?? .object([])
             meta["origin"] = .string(origin)
-            s.setDefinition(id, card: card, meta: meta)
+            s.setDefinition(id, card: concreteSettings(card), meta: meta)
           }
         }
         await session.save()
@@ -467,4 +467,18 @@ struct ImportDefinitionsSheet: View {
       working = false
     }
   }
+}
+
+/// A copied definition carries every setting as a value: what it had, and
+/// the core's default for what it left out (graph.hh: CardSettings).
+func concreteSettings(_ card: JSONValue) -> JSONValue {
+  var c = card
+  let code = c["language"] != nil && c["template"] == nil
+  let defaults: [(String, JSONValue)] = [
+    ("maxRuns", .number("1")), ("recordIO", .bool(false)), ("retainArtifact", .bool(false)),
+    ("filesystem", .bool(false)), ("sandbox", .bool(true)), ("canvasEnabled", .bool(false)),
+    ("timeoutSeconds", .null),
+  ] + (code ? [("buildTimeoutSeconds", .null), ("inputMode", .string("all"))] : [])
+  for (k, v) in defaults where c[k] == nil { c[k] = v }
+  return c
 }

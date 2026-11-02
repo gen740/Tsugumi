@@ -29,7 +29,26 @@ struct CardExecutionView: View {
     var title: String { self == .io ? "入出力" : (self == .log ? "ログ" : "情報") }
   }
 
+  /// Loading, failed and empty are said plainly, never as an empty split view.
   var body: some View {
+    Group {
+      if !loaded {
+        ProgressView("履歴を読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if runs.isEmpty, let error {
+        ContentUnavailableView {
+          Label("履歴を読み込めませんでした", systemImage: "exclamationmark.triangle")
+        } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
+      } else if runs.isEmpty {
+        ContentUnavailableView("まだ実行していません", systemImage: "clock",
+                               description: Text("この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。"))
+      } else {
+        content
+      }
+    }
+    .task(id: session.lastFinished) { await loadRuns() }
+  }
+
+  private var content: some View {
     HSplitView {
       VStack(spacing: 0) {
         Picker("", selection: $filter) { ForEach(Filter.allCases) { Text($0.title).tag($0) } }
@@ -81,7 +100,6 @@ struct CardExecutionView: View {
       }
       .frame(minWidth: 380)
     }
-    .task(id: session.lastFinished) { await loadRuns() }
     .task(id: runId) { await loadInvocations() }
     .task(id: "\(runId ?? "")#\(invocation ?? 0)") { await loadRecord() }
   }
@@ -165,7 +183,7 @@ struct CardExecutionView: View {
   }
 
   private func loadRuns() async {
-    guard let rpc = session.rpc else { return }
+    guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); loaded = true; return }
     do {
       runs = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
       if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
@@ -207,6 +225,26 @@ struct CardArtifactsView: View {
   }
 
   var body: some View {
+    Group {
+      if !loaded {
+        ProgressView("成果物を読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if runs.isEmpty, let error {
+        ContentUnavailableView {
+          Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
+        } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
+      } else if runs.isEmpty {
+        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool == true
+        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox",
+                               description: Text(retains ? "成果物を保持する設定です。実行すると、ここに残ります。"
+                                                         : "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。"))
+      } else {
+        content
+      }
+    }
+    .task(id: session.lastFinished) { await loadRuns() }
+  }
+
+  private var content: some View {
     VStack(spacing: 0) {
       HStack {
         Picker("実行", selection: $runId) {
@@ -267,7 +305,6 @@ struct CardArtifactsView: View {
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
     }
-    .task(id: session.lastFinished) { await loadRuns() }
     .task(id: runId) { await loadArtifacts() }
     .task(id: "\(artifactId ?? "")|\(member ?? "")") { await loadPreview() }
   }
@@ -279,10 +316,13 @@ struct CardArtifactsView: View {
   }
 
   private func loadRuns() async {
-    guard let rpc = session.rpc else { return }
-    runs = (try? await rpc.history(card: path(cardKey), artifactsOnly: true, limit: 100).runs.compactMap { $0 }) ?? []
-    if runId == nil { runId = runs.first?.status.runId }
-    loaded = true
+    defer { loaded = true }
+    guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
+    do {
+      runs = try await rpc.history(card: path(cardKey), artifactsOnly: true, limit: 100).runs.compactMap { $0 }
+      if runId == nil { runId = runs.first?.status.runId }
+      error = nil
+    } catch { self.error = String(localized: "成果物を読み込めません: ") + "\(error)" }
   }
 
   private func loadArtifacts() async {
