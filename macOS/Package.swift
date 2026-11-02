@@ -16,6 +16,12 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
     .package(path: "../agent"),
+    // Editor syntax colors (UI only; Cards and SDKs never use these).
+    .package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", exact: "0.25.0"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-c", exact: "0.23.6"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", exact: "0.23.4"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-json", exact: "0.24.8"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-bash", exact: "0.25.1"),
   ],
   targets: [
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
@@ -42,13 +48,35 @@ let package = Package(
         .unsafeFlags(["-L", rendererLib, "-Xlinker", "-rpath", "-Xlinker", rendererLib,
                       "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
       ]),
+    // Grammars with no Swift package of their own (Sources/Grammars/README.md).
+    .target(
+      name: "TreeSitterNix", path: "Sources/Grammars/TreeSitterNix",
+      exclude: ["LICENSE"], sources: ["src/parser.c", "src/scanner.c"],
+      publicHeadersPath: "include", cSettings: [.headerSearchPath("src")]),
+    // tree-sitter-python's manifest leaves out its scanner when used as a dependency.
+    .target(
+      name: "TreeSitterPython", path: "Sources/Grammars/TreeSitterPython",
+      exclude: ["LICENSE"], sources: ["src/parser.c", "src/scanner.c"],
+      publicHeadersPath: "include", cSettings: [.headerSearchPath("src")]),
+    .target(
+      name: "TreeSitterFBS", path: "Sources/Grammars/TreeSitterFBS",
+      exclude: ["grammar.js", "src/grammar.json", "src/node-types.json"], sources: ["src/parser.c"],
+      publicHeadersPath: "include", cSettings: [.headerSearchPath("src")]),
     .executableTarget(
       name: "TsugumiApp",
       dependencies: [
         "TsugumiRPC", "TsugumiLauncher", "TsugumiRenderer",
         .product(name: "TsugumiAgent", package: "agent"),
+        .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
+        .product(name: "TreeSitterC", package: "tree-sitter-c"),
+        .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
+        .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
+        .product(name: "TreeSitterBash", package: "tree-sitter-bash"),
+        "TreeSitterNix", "TreeSitterFBS", "TreeSitterPython",
       ],
       path: "Sources/App",
+      exclude: ["Resources/TreeSitter/SOURCES.md"],
+      resources: [.copy("Resources/TreeSitter")],
       swiftSettings: [.swiftLanguageMode(.v5)]),
     .testTarget(
       name: "TsugumiTests",

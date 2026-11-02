@@ -189,3 +189,19 @@ import Testing
   CodeEditor.select([NSRange(location: 3, length: 9)], in: tv)
   #expect(tv.selectedRange() == NSRange(location: 2, length: 2))
 }
+
+@Test func treeSitterColorsEveryEditorLanguage() {
+  func tokens(_ text: String, _ lang: String) -> Set<String> {
+    let spans = TreeSitterHighlighter.spans(text, language: lang) ?? []
+    return Set(spans.map { r, t in "\(t):" + (text as NSString).substring(with: r) })
+  }
+  let cc = tokens("// note\n#include <card.hh>\nstruct Out { int v; };\nauto run() -> int { return 1; }\n", "cc")
+  #expect(cc.contains("comment:// note") && cc.contains("keyword:struct") && cc.contains("keyword:return"))
+  let py = tokens("# note\ndef main(ctx):\n    return \"x\"\n", "py")
+  #expect(py.contains("comment:# note") && py.contains("keyword:def") && py.contains("string:\"x\""))
+  let nix = tokens("# note\n{ pkgs, ... }: let x = 1; in { a = \"s\"; }\n", "nix")
+  #expect(nix.contains("comment:# note") && nix.contains("keyword:let") && nix.contains("number:1"))
+  let fbs = tokens("// note\nnamespace t;\ntable Num { value:ulong (required); }\nroot_type Num;\n", "fbs")
+  #expect(fbs.contains("comment:// note") && fbs.contains("keyword:table") && fbs.contains("type:Num") && fbs.contains("property:value"))
+  #expect(TreeSitterHighlighter.spans("x", language: "txt") == nil)
+}

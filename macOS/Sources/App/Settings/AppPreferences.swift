@@ -206,6 +206,15 @@ enum EditorTheme: String, CaseIterable, Identifiable {
     case (.muted, .number): return .secondaryLabelColor
     case (.muted, .keyword): return .labelColor
     case (.muted, .function): return .secondaryLabelColor
+    case (.standard, .type): return .systemTeal
+    case (.standard, .constant): return .systemOrange
+    case (.standard, .property): return .systemCyan
+    case (.contrast, .type): return .systemGreen
+    case (.contrast, .constant): return .systemPink
+    case (.contrast, .property): return .systemBlue
+    case (.muted, .type): return .labelColor
+    case (.muted, .constant): return .systemBrown
+    case (.muted, .property): return .secondaryLabelColor
     }
   }
 }

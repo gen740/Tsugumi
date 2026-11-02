@@ -110,6 +110,21 @@ final class CardEditorModel {
   private(set) var loads: [String: SourceLoad] = [:]
   /// Bumped by every reload, so open editors read their file again if needed.
   private(set) var generation = 0
+  /// Files open as tabs and the one shown (kept across categories and applies).
+  private(set) var openFiles: [String] = []
+  private(set) var shownFile: String?
+  var collapsedFolders: Set<String> = []
+
+  func openFile(_ p: String) {
+    if !openFiles.contains(p) { openFiles.append(p) }
+    shownFile = p
+  }
+
+  func closeFile(_ p: String) {
+    guard let i = openFiles.firstIndex(of: p) else { return }
+    openFiles.remove(at: i)
+    if shownFile == p { shownFile = openFiles.isEmpty ? nil : openFiles[min(i, openFiles.count - 1)] }
+  }
 
   /// Reads a source file once (later calls return the working copy).
   /// Throws when it cannot be read; nothing is recorded as its content then.
@@ -301,9 +316,12 @@ struct CardSettingsEditor: View {
                       title: \.title, symbol: \.symbol, width: 160)
       Divider()
       VStack(spacing: 0) {
-        CardPreview(session: session, model: m)
-          .frame(height: 150)
-        Divider()
+        // The preview belongs to 一般; editors, ports and history use the whole height.
+        if m.category == .general {
+          CardPreview(session: session, model: m)
+            .frame(minHeight: 120, idealHeight: 170, maxHeight: 220)
+          Divider()
+        }
         Group {
           switch m.category {
           case .general: GeneralCategory(model: m)
@@ -331,6 +349,9 @@ struct CardSettingsEditor: View {
         footer(m)
       }
     }
+    // Resizable: wider windows give the editor and lists the room; smaller
+    // ones scroll (each category scrolls on its own).
+    .frame(minWidth: 620, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
     .confirmationDialog("未適用の変更を破棄して読み込み直しますか？", isPresented: $confirmReload) {
       Button("破棄して再読込", role: .destructive) { m.reload() }
       Button("キャンセル", role: .cancel) {}
@@ -836,12 +857,13 @@ private struct ContextCategory: View {
   }
 }
 
-/// File tree and editor for a definition's sources, `_outputs.fbs` and
+/// File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
 /// `default.nix`, with formatting, errors in place and the generated inputs.
+/// The open files, the shown one and the expanded folders live on the model,
+/// so switching categories or applying keeps them.
 private struct SourceCategory: View {
   @Bindable var model: CardEditorModel
   let only: String?
-  @State private var selected: String?
   @State private var newName = ""
   @State private var renaming: String?
   @State private var showNew = false
@@ -851,56 +873,61 @@ private struct SourceCategory: View {
   @State private var generated: [String: String] = [:]
   @State private var generatedError: String?
 
-  private static let generatedPrefix = "generated:"
+  static let generatedPrefix = "generated:"
+
+  private var prefix: String { model.definitionId.map { "definitions/\($0)/" } ?? "" }
 
   var body: some View {
     let files = model.files.filter { only == nil || $0.hasSuffix("/" + only!) }
-    let prefix = model.definitionId.map { "definitions/\($0)/" } ?? ""
     HSplitView {
       if only == nil {
         VStack(spacing: 0) {
-          List(selection: $selected) {
-            OutlineGroup(FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), children: \.children) { node in
-              Label(node.name, systemImage: node.children == nil ? icon(node.name) : "folder")
-                .tag(node.children == nil ? Optional(node.path) : nil)
-                .contextMenu {
-                  if node.children == nil {
-                    Button("名前を変更…") { renaming = node.path; newName = String(node.path.dropFirst(prefix.count)) }
-                    Button("削除", role: .destructive) {
-                      model.removeFile(node.path)
-                      if selected == node.path { selected = nil }
-                    }
-                  }
+          ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+              FileTreeRows(nodes: FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), depth: 0,
+                           model: model, open: open, contextMenu: menu)
+              if model.kind == .code {
+                Text("生成（読み取り専用）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                  .padding(.leading, 10).padding(.top, 12).padding(.bottom, 2)
+                ForEach(["_inputs.fbs", "_params.fbs"], id: \.self) { name in
+                  FileRow(name: name, icon: "lock.doc", depth: 0, folder: nil,
+                          selected: model.shownFile == Self.generatedPrefix + name) { open(Self.generatedPrefix + name) }
                 }
-            }
-            if model.kind == .code {
-              Section("生成（読み取り専用）") {
-                Label("_inputs.fbs", systemImage: "lock.doc").tag(Optional(Self.generatedPrefix + "_inputs.fbs"))
-                Label("_params.fbs", systemImage: "lock.doc").tag(Optional(Self.generatedPrefix + "_params.fbs"))
               }
             }
+            .padding(.vertical, 4)
           }
           Divider()
           HStack {
             Button { showNew = true; newName = "src/" } label: { Image(systemName: "plus") }.help("ファイルを作成")
             Button {
-              if let s = selected, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); selected = nil }
+              if let s = model.shownFile, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); model.closeFile(s) }
             } label: { Image(systemName: "minus") }
-              .disabled(selected == nil || selected!.hasPrefix(Self.generatedPrefix)).help("選択したファイルを削除")
+              .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.generatedPrefix)).help("表示中のファイルを削除")
             Spacer()
           }
           .buttonStyle(.borderless).padding(6)
         }
-        .frame(minWidth: 170, idealWidth: 210, maxWidth: 320)
+        .frame(minWidth: 170, idealWidth: 220, maxWidth: 360)
       }
-      editorPane(files: files, prefix: prefix)
+      VStack(spacing: 0) {
+        if only == nil && model.openFiles.count > 1 { tabs }
+        editorPane(files: files)
+      }
+      .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
-    .onAppear { if selected == nil { selected = files.first { only != nil || $0.hasSuffix(".py") || $0.hasSuffix(".cc") } ?? files.first } }
+    .onAppear {
+      if only != nil {
+        if let f = files.first { model.openFile(f) }
+      } else if model.shownFile == nil || (model.shownFile?.hasSuffix("/default.nix") ?? false) {
+        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") }) ?? files.first { model.openFile(f) }
+      }
+    }
     .alert("ファイルを作成", isPresented: $showNew) {
       TextField("パス（例: src/util.py）", text: $newName)
       Button("作成") {
         model.createFile(newName)
-        selected = prefix + newName
+        model.openFile(prefix + newName)
       }
       Button("キャンセル", role: .cancel) {}
     }
@@ -908,9 +935,12 @@ private struct SourceCategory: View {
       TextField("新しいパス", text: $newName)
       Button("変更") {
         if let r = renaming {
+          let target = prefix + newName
           Task {
-            await model.rename(r, to: newName)
-            selected = prefix + newName
+            if await model.rename(r, to: newName) {
+              model.closeFile(r)
+              model.openFile(target)
+            }
           }
         }
         renaming = nil
@@ -919,32 +949,92 @@ private struct SourceCategory: View {
     }
   }
 
-  @ViewBuilder private func editorPane(files: [String], prefix: String) -> some View {
-    VStack(spacing: 0) {
-      if let selected, selected.hasPrefix(Self.generatedPrefix) {
-        let name = String(selected.dropFirst(Self.generatedPrefix.count))
-        HStack {
-          Text(name).font(.caption.monospaced())
-          Text("接続から生成（編集しません）").font(.caption2).foregroundStyle(.secondary)
-          Spacer()
+  private func open(_ path: String) { model.openFile(path) }
+
+  @ViewBuilder private func menu(_ node: FileNode) -> some View {
+    if node.children == nil {
+      Button("開く") { open(node.path) }
+      Button("名前を変更…") { renaming = node.path; newName = String(node.path.dropFirst(prefix.count)) }
+      Button("削除", role: .destructive) {
+        model.removeFile(node.path)
+        model.closeFile(node.path)
+      }
+    }
+  }
+
+  /// Open files as tabs (a few at most; this is not an IDE).
+  private var tabs: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 0) {
+        ForEach(model.openFiles, id: \.self) { f in
+          let shown = model.shownFile == f
+          HStack(spacing: 5) {
+            Image(systemName: f.hasPrefix(Self.generatedPrefix) ? "lock.doc" : FileNode.icon(f)).font(.caption)
+            Text(displayName(f)).font(.caption).lineLimit(1)
+            if model.isEdited(f) { Circle().fill(Color.orange).frame(width: 6, height: 6).help("未適用の変更") }
+            Button { model.closeFile(f) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
+              .buttonStyle(.borderless).foregroundStyle(.secondary).help("タブを閉じる（内容は保持されます）")
+          }
+          .padding(.horizontal, 10).padding(.vertical, 6)
+          .background(shown ? Color(nsColor: .textBackgroundColor) : Color.clear)
+          .overlay(alignment: .bottom) { if shown { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+          .contentShape(Rectangle())
+          .onTapGesture { model.openFile(f) }
+          .help(f)
         }
-        .padding(6)
+      }
+    }
+    .background(Color(nsColor: .windowBackgroundColor))
+    .overlay(alignment: .bottom) { Divider() }
+  }
+
+  private func displayName(_ f: String) -> String {
+    f.hasPrefix(Self.generatedPrefix) ? String(f.dropFirst(Self.generatedPrefix.count)) : (f as NSString).lastPathComponent
+  }
+
+  /// Header: the file's name and where it is (definition › folders).
+  private func header(_ path: String, generatedFile: Bool) -> some View {
+    let rel = generatedFile ? String(path.dropFirst(Self.generatedPrefix.count)) : String(path.dropFirst(prefix.count))
+    let parts = rel.split(separator: "/").map(String.init)
+    return HStack(spacing: 6) {
+      Image(systemName: generatedFile ? "lock.doc" : FileNode.icon(path)).foregroundStyle(.secondary)
+      Text(parts.last ?? rel).font(.callout.weight(.semibold).monospaced())
+      HStack(spacing: 3) {
+        Text(model.definitionId ?? "")
+        ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { _, p in
+          Image(systemName: "chevron.right").font(.system(size: 8))
+          Text(p)
+        }
+      }
+      .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+      if generatedFile { Text("接続から生成（編集しません）").font(.caption2).foregroundStyle(.secondary) }
+      if model.created.contains(path) { Text("新規").font(.caption2).foregroundStyle(.orange) }
+      else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
+      Spacer()
+      if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+      if !generatedFile {
+        Button("整形") { format(path) }.disabled(formatting || model.loadedText(path) == nil).controlSize(.small)
+      }
+    }
+    .padding(.horizontal, 10).padding(.vertical, 6)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .overlay(alignment: .bottom) { Divider() }
+  }
+
+  @ViewBuilder private func editorPane(files: [String]) -> some View {
+    VStack(spacing: 0) {
+      if let selected = model.shownFile, selected.hasPrefix(Self.generatedPrefix) {
+        let name = String(selected.dropFirst(Self.generatedPrefix.count))
+        header(selected, generatedFile: true)
         if let e = generatedError {
           Text(e).font(.callout).foregroundStyle(.red).padding()
         }
         CodeEditor(text: .constant(generated[name] ?? ""), language: "fbs", editable: false, documentID: selected)
           .task(id: selected) { await loadGenerated() }
-      } else if let selected {
+      } else if let selected = model.shownFile, model.files.contains(selected) {
         let markers = coreMarkers(for: selected) + formatMarkers
         let loaded = model.loadedText(selected) != nil
-        HStack(spacing: 8) {
-          Text(String(selected.dropFirst(prefix.count))).font(.caption.monospaced())
-          if model.created.contains(selected) { Text("新規").font(.caption2).foregroundStyle(.orange) }
-          Spacer()
-          if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-          Button("整形") { format(selected) }.disabled(formatting || !loaded).controlSize(.small)
-        }
-        .padding(6)
+        header(selected, generatedFile: false)
         Group {
           if loaded {
             CodeEditor(text: Binding(get: { model.loadedText(selected) ?? "" },
@@ -984,22 +1074,11 @@ private struct SourceCategory: View {
                                description: Text("処理 Card の実行環境は default.nix で定義します。"))
         Button("default.nix を作成") {
           model.createFile("default.nix", text: "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n")
-          self.selected = prefix + "default.nix"
+          model.openFile(prefix + "default.nix")
         }
       } else {
         ContentUnavailableView("ファイルを選んでください", systemImage: "doc.text")
       }
-    }
-    .frame(minWidth: 320)
-  }
-
-  private func icon(_ name: String) -> String {
-    switch (name as NSString).pathExtension {
-    case "py": return "chevron.left.forwardslash.chevron.right"
-    case "cpp", "hpp", "h": return "curlybraces"
-    case "nix": return "snowflake"
-    case "fbs": return "tablecells"
-    default: return "doc.text"
     }
   }
 
@@ -1049,8 +1128,79 @@ private struct SourceCategory: View {
   }
 }
 
+/// Rows of a folder tree (VS Code style): indentation, a chevron and an
+/// open/closed folder per folder, the shown file highlighted.
+private struct FileTreeRows<Menu: View>: View {
+  let nodes: [FileNode]
+  let depth: Int
+  @Bindable var model: CardEditorModel
+  let open: (String) -> Void
+  @ViewBuilder let contextMenu: (FileNode) -> Menu
+
+  var body: some View {
+    ForEach(nodes) { node in
+      if let children = node.children {
+        let expanded = !model.collapsedFolders.contains(node.path)
+        FileRow(name: node.name, icon: expanded ? "folder.fill" : "folder", depth: depth, folder: expanded, selected: false) {
+          if expanded { model.collapsedFolders.insert(node.path) } else { model.collapsedFolders.remove(node.path) }
+        }
+        if expanded {
+          FileTreeRows(nodes: children, depth: depth + 1, model: model, open: open, contextMenu: contextMenu)
+        }
+      } else {
+        FileRow(name: node.name, icon: FileNode.icon(node.name), depth: depth, folder: nil,
+                selected: model.shownFile == node.path, edited: model.isEdited(node.path)) { open(node.path) }
+          .contextMenu { contextMenu(node) }
+          .help(node.path)
+      }
+    }
+  }
+}
+
+private struct FileRow: View {
+  let name: String
+  let icon: String
+  let depth: Int
+  /// nil for a file; for a folder whether it is expanded.
+  let folder: Bool?
+  let selected: Bool
+  var edited = false
+  let action: () -> Void
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Group {
+        if let folder { Image(systemName: folder ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)) }
+        else { Color.clear }
+      }
+      .frame(width: 10)
+      Image(systemName: icon).font(.callout).foregroundStyle(folder != nil ? Color.accentColor : .secondary).frame(width: 16)
+      Text(name).lineLimit(1).truncationMode(.middle)
+      Spacer(minLength: 0)
+      if edited { Circle().fill(Color.orange).frame(width: 6, height: 6) }
+    }
+    .padding(.leading, 8 + CGFloat(depth) * 14).padding(.trailing, 8).padding(.vertical, 3)
+    .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.accentColor.opacity(0.25) : .clear).padding(.horizontal, 4))
+    .contentShape(Rectangle())
+    .onTapGesture(perform: action)
+    .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+  }
+}
+
 struct FileNode: Identifiable, Hashable {
   var id: String { path }
+
+  static func icon(_ name: String) -> String {
+    switch (name as NSString).pathExtension {
+    case "py": return "chevron.left.forwardslash.chevron.right"
+    case "cc", "hh", "cpp", "hpp", "h": return "curlybraces"
+    case "nix": return "snowflake"
+    case "fbs": return "tablecells"
+    case "json": return "doc.badge.gearshape"
+    case "sh": return "terminal"
+    default: return "doc.text"
+    }
+  }
   let name: String
   let path: String
   var children: [FileNode]?

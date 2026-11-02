@@ -6,7 +6,7 @@ import TsugumiRPC
 
 /// Token classes the editor colors.
 enum SyntaxToken: CaseIterable {
-  case plain, comment, string, number, keyword, function
+  case plain, comment, string, number, keyword, function, type, constant, property
 }
 
 /// Regex based highlighting for the languages Cards use. It only colors text;
@@ -48,12 +48,17 @@ enum SyntaxHighlighter {
     }
   }
 
-  /// Applies colors to the whole text storage (texts here are Card sized).
+  /// Applies colors to the whole text storage (texts here are Card sized):
+  /// Tree-sitter for the languages it knows, the rules above otherwise.
   static func apply(_ storage: NSTextStorage, language: String, theme: EditorTheme, font: NSFont) {
     let full = NSRange(location: 0, length: storage.length)
     storage.beginEditing()
     storage.setAttributes([.font: font, .foregroundColor: theme.color(.plain)], range: full)
-    if let r = rules(for: language), storage.length < 400_000 {
+    if storage.length < 400_000, let spans = TreeSitterHighlighter.spans(storage.string, language: language) {
+      for (range, token) in spans where range.upperBound <= storage.length {
+        storage.addAttribute(.foregroundColor, value: theme.color(token), range: range)
+      }
+    } else if let r = rules(for: language), storage.length < 400_000 {
       let text = storage.string
       var claimed = IndexSet()
       func paint(_ pattern: String, _ token: SyntaxToken, group: Int = 0) {
@@ -293,14 +298,22 @@ final class LineNumberRuler: NSRulerView {
     NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView, queue: .main) { [weak self] _ in
       self?.needsDisplay = true
     }
+    NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main) { [weak self] _ in
+      self?.needsDisplay = true
+    }
   }
 
   required init(coder: NSCoder) { fatalError() }
 
   override func drawHashMarksAndLabels(in rect: NSRect) {
     guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
-    NSColor.textBackgroundColor.setFill()
+    // A gutter of its own: calmer background and a line between numbers and code.
+    (NSColor.textBackgroundColor.blended(withFraction: 0.06, of: .labelColor) ?? .windowBackgroundColor).setFill()
     bounds.fill()
+    NSColor.separatorColor.setFill()
+    NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+    let cursorLine = (tv.string as NSString).substring(to: min(tv.selectedRange().location, (tv.string as NSString).length))
+      .components(separatedBy: "\n").count
     let font = NSFont.monospacedDigitSystemFont(ofSize: max(9, (tv.font?.pointSize ?? 12) - 2), weight: .regular)
     let s = tv.string as NSString
     let visible = tv.visibleRect
@@ -315,7 +328,8 @@ final class LineNumberRuler: NSRulerView {
       let frag = lm.lineFragmentRect(forGlyphAt: min(g.location, max(0, lm.numberOfGlyphs - 1)), effectiveRange: nil)
       let y = frag.minY + tv.textContainerInset.height + origin.y
       let marked = problemLines[line] != nil
-      let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: marked ? NSColor.systemRed : NSColor.tertiaryLabelColor]
+      let color: NSColor = marked ? .systemRed : (line == cursorLine ? .secondaryLabelColor : .tertiaryLabelColor)
+      let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
       let label = "\(line)" as NSString
       let size = label.size(withAttributes: attrs)
       if marked {
