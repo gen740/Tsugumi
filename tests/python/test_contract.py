@@ -489,7 +489,7 @@ def test_format_is_separate_from_saving(client):
     assert text(r.text) == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {}\n}\n'
     bad = client.call("ProjectFileFormatRequest", path="definitions/a/x.json", text='{"a":')
     assert [text(d.code) for d in bad.diagnostics] == ["syntax_error"] and text(bad.text) == '{"a":'
-    tools = {"cpp": ("clang-format", "x.cpp", "int  main( ){return 0;}", None),
+    tools = {"cpp": ("clang-format", "x.cc", "int  main( ){return 0;}", None),
              "python": ("ruff", "x.py", "def f(:\n  pass\n", (1, 7)),
              "nix": ("nixfmt", "x.nix", "{ a = 1; b = [ 1 2 ]; }", None)}
     for lang, (tool, name, src, err_pos) in tools.items():

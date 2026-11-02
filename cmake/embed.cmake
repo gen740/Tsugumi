@@ -1,4 +1,4 @@
-# Usage: cmake -DINPUT=file -DOUTPUT=file.cpp -DSYMBOL=name -P embed.cmake
+# Usage: cmake -DINPUT=file -DOUTPUT=file.cc -DSYMBOL=name -P embed.cmake
 file(READ ${INPUT} _hex HEX)
 string(LENGTH "${_hex}" _len)
 math(EXPR _size "${_len} / 2")

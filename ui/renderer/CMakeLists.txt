@@ -36,7 +36,7 @@ FetchContent_Declare(dawn
   GIT_PROGRESS TRUE)
 FetchContent_MakeAvailable(dawn)
 
-add_library(tsugumi_renderer SHARED src/renderer.cpp src/metal_layer.mm)
+add_library(tsugumi_renderer SHARED src/renderer.cc src/metal_layer.mm)
 target_include_directories(tsugumi_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(tsugumi_renderer PRIVATE webgpu_dawn
   "-framework Metal" "-framework QuartzCore" "-framework IOSurface" "-framework Foundation")

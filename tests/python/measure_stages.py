@@ -187,7 +187,7 @@ def main():
                            [card("begin", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell")],
                            [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in")])
                 put(root / "definitions" / "make" / "src" / "main.py", T.PY_MAKE)
-                put(root / "definitions" / "check" / "src" / "card.cpp", T.CPP_CHECK)
+                put(root / "definitions" / "check" / "src" / "card.cc", T.CPP_CHECK)
                 T.reload(c)
         if a.scenario != "builtin-chain":
             c.open()

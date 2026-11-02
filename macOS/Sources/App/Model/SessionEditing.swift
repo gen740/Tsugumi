@@ -547,8 +547,8 @@ extension ProjectSession {
         ]), meta: nil)
         s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.cppCard { src = ./src; };\n}\n")
         s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-        s.putSource(dir + "src/card.cpp", """
-        #include <tsugumi/sdk/card.hpp>
+        s.putSource(dir + "src/card.cc", """
+        #include <tsugumi/sdk/card.hh>
 
         #include "_outputs_generated.h"
 

@@ -1,39 +1,39 @@
 # Typed JSON support shared by the core and the Card worker.
-add_library(tsugumi_json STATIC src/schema.cpp src/util/text.cpp)
+add_library(tsugumi_json STATIC src/schema.cc src/util/text.cc)
 target_include_directories(tsugumi_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumi_json PUBLIC hosq)
 
 # The RPC schema is embedded for reflection based copies and request digests.
 add_custom_command(
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cpp
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
   COMMAND ${CMAKE_COMMAND} -DINPUT=${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs
-          -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cpp -DSYMBOL=tsugumi_rpc_bfbs
+          -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc -DSYMBOL=tsugumi_rpc_bfbs
           -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   VERBATIM)
 
 add_library(tsugumi_core STATIC
-  src/util/crypto.cpp
-  src/util/fs.cpp
-  src/util/log.cpp
-  src/util/process.cpp
-  src/util/sqlite.cpp
-  src/types.cpp
-  src/document.cpp
-  src/graph.cpp
-  src/model.cpp
-  src/wire.cpp
-  src/store.cpp
-  src/history.cpp
-  src/lanes.cpp
-  src/server.cpp
-  src/nix.cpp
-  src/worker_proc.cpp
-  src/scheduler.cpp
-  src/service.cpp
-  src/service_run.cpp
-  src/daemon.cpp
-  ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cpp
+  src/util/crypto.cc
+  src/util/fs.cc
+  src/util/log.cc
+  src/util/process.cc
+  src/util/sqlite.cc
+  src/types.cc
+  src/document.cc
+  src/graph.cc
+  src/model.cc
+  src/wire.cc
+  src/store.cc
+  src/history.cc
+  src/lanes.cc
+  src/server.cc
+  src/nix.cc
+  src/worker_proc.cc
+  src/scheduler.cc
+  src/service.cc
+  src/service_run.cc
+  src/daemon.cc
+  ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
 )
 target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -54,6 +54,6 @@ target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_BASH="${TSUGUMI_BASH}"
   TSUGUMI_CARD_PATH="${TSUGUMI_CARD_PATH}")
 
-add_executable(tsugumid src/main.cpp)
+add_executable(tsugumid src/main.cc)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)

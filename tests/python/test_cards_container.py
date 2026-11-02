@@ -371,7 +371,7 @@ def main(ctx):
 '''
 
 CPP_CHECK = r'''
-#include <tsugumi/sdk/card.hpp>
+#include <tsugumi/sdk/card.hh>
 #include <fstream>
 #include <string>
 #include "_inputs_generated.h"
@@ -446,7 +446,7 @@ def main(ctx):
              [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in"),
               conn("bad", "rich", "after_bad", "in"), conn("missing", "rich", "after_missing", "in")])
     put(root / "definitions" / "make" / "src" / "main.py", PY_MAKE)
-    put(root / "definitions" / "check" / "src" / "card.cpp", CPP_CHECK)
+    put(root / "definitions" / "check" / "src" / "card.cc", CPP_CHECK)
     put(root / "definitions" / "bad" / "src" / "main.py", bad)
     put(root / "definitions" / "missing" / "src" / "main.py", missing)
     reload(c)

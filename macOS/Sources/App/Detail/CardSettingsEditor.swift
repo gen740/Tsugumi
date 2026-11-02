@@ -882,7 +882,7 @@ private struct SourceCategory: View {
       }
       editorPane(files: files, prefix: prefix)
     }
-    .onAppear { if selected == nil { selected = files.first { only != nil || $0.hasSuffix(".py") || $0.hasSuffix(".cpp") } ?? files.first } }
+    .onAppear { if selected == nil { selected = files.first { only != nil || $0.hasSuffix(".py") || $0.hasSuffix(".cc") } ?? files.first } }
     .alert("ファイルを作成", isPresented: $showNew) {
       TextField("パス（例: src/util.py）", text: $newName)
       Button("作成") {

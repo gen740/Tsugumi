@@ -34,7 +34,7 @@ rec {
   inherit (pkgs) flatbuffers;
   headers = cppHeaders;
 
-  # A C++ Card: every *.cpp below `src` is compiled into lib/main.so.
+  # A C++ Card: every *.cc below `src` is compiled into lib/main.so.
   cppCard =
     { src, name ? "tsugumi-cpp-card", buildInputs ? [ ], cxxflags ? [ ] }:
     pkgs.stdenv.mkDerivation {
@@ -43,8 +43,8 @@ rec {
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
-        sources=$(find . -name '*.cpp' | sort)
-        if [ -z "$sources" ]; then echo "no .cpp sources in src" >&2; exit 1; fi
+        sources=$(find . -name '*.cc' | sort)
+        if [ -z "$sources" ]; then echo "no .cc sources in src" >&2; exit 1; fi
         $CXX -std=c++20 -O2 -fPIC -shared -Wall \
           -I${cppHeaders}/include -I${sdk}/include ${lib.escapeShellArgs cxxflags} \
           $sources -o main.so
