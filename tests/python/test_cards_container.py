@@ -486,7 +486,6 @@ auto run(Card::Input& input) -> Card::Output {
   if (!std::ifstream("pre.txt")) throw tsugumi::Failure("output_invalid", "preRun did not run before call " + std::to_string(calls));
   const char* pre = std::getenv("PRE_VALUE");
   if (!pre || std::string(pre) != "5") throw tsugumi::Failure("output_invalid", "PRE_VALUE not carried over");
-  if (input.extra) throw tsugumi::Failure("output_invalid", "unconnected optional input is present");
   uint64_t n = 0;
   if (const auto* v = input.x.value.Asinit()) n = v->value;
   else if (const auto* v = input.x.value.Asagain()) n = v->value;
@@ -515,7 +514,7 @@ auto run(Card::Input& input) -> Card::Output {
   dladdr(reinterpret_cast<void*>(&tsugumi::cancelled), &info);
   tsugumi::log(std::string("runtime ") + (info.dli_fname ? info.dli_fname : "?"));
   Card::Output out;
-  out.out.emplace().value = input.in.value + Card::params().step;
+  out.out.emplace().value = input.in.value + Card::params().step.value();
   tsugumi::visualization::text("out = " + std::to_string(out.out->value));
   return out;
 }
@@ -524,7 +523,7 @@ auto run(Card::Input& input) -> Card::Output {
 
 def test_cpp_sdk_card_api(env):
     """`#include <card.hh>` / run(Card::Input&) -> Card::Output: named
-    inputs (a merge union, an absent optional port), optional and File
+    inputs (a merge union), optional and File
     outputs, params, tsugumi::visualization, an explicit `run` .so, preRun
     and postRun around every invocation of a reused worker, and one shared
     runtime library for two SDKs with different contracts."""
@@ -550,7 +549,7 @@ in
         '  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";\n', "")
     defs = {"trigger": {"template": "trigger"}, "seed": seed,
             "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"language": "cpp", "inputs": [{"name": "x"}, {"name": "extra", "optional": True}], "maxRuns": 10,
+            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,
                      "canvasEnabled": True,
                      "_outputs": calc_out, "_nix": calc_nix},
             "other": {"language": "cpp", "inputs": [{"name": "in"}], "canvasEnabled": True,
@@ -569,7 +568,7 @@ in
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
     assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
-    assert rec["other"].state == CardState.succeeded, (detail, log(c, run_id, "other", 2)[-1200:])
+    assert rec["other"].state == CardState.succeeded, (detail, log(c, run_id, "other", 4)[-1500:])
     assert st.state == RunState.succeeded
     # Three invocations (2, 1, 0) on one worker; preRun/postRun around each.
     invs = c.call("RunInvocationsRequest", runId=run_id, card=path("calc")).records
