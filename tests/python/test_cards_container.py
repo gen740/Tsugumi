@@ -463,6 +463,125 @@ def main(ctx):
     assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
 
 
+SDK_CALC = r"""
+#include <card.hh>
+
+#include <dlfcn.h>
+
+#include <cstdlib>
+#include <fstream>
+#include <string>
+
+static int calls = 0;  // reuseWorker: one worker serves every invocation
+
+static std::string runtime_path() {
+  Dl_info info{};
+  dladdr(reinterpret_cast<void*>(&tsugumi::cancelled), &info);
+  return info.dli_fname ? info.dli_fname : "?";
+}
+
+auto run(Card::Input& input) -> Card::Output {
+  ++calls;
+  // preRun ran for this invocation (postRun removes the file again).
+  if (!std::ifstream("pre.txt")) throw tsugumi::Failure("output_invalid", "preRun did not run before call " + std::to_string(calls));
+  const char* pre = std::getenv("PRE_VALUE");
+  if (!pre || std::string(pre) != "5") throw tsugumi::Failure("output_invalid", "PRE_VALUE not carried over");
+  if (input.extra) throw tsugumi::Failure("output_invalid", "unconnected optional input is present");
+  uint64_t n = 0;
+  if (const auto* v = input.x.value.Asinit()) n = v->value;
+  else if (const auto* v = input.x.value.Asagain()) n = v->value;
+  tsugumi::log("runtime " + runtime_path());
+  tsugumi::visualization::text("n = " + std::to_string(n));
+  Card::Output out;
+  if (n > 0) {
+    out.again.emplace().value = n - 1;
+    return out;
+  }
+  std::string file = tsugumi::context().output_directory + "/calls.txt";
+  std::ofstream(file) << calls;
+  out.calls.emplace().value = calls;
+  out.report.emplace().value = file;
+  return out;
+}
+"""
+
+SDK_OTHER = r"""
+#include <card.hh>
+
+#include <dlfcn.h>
+
+auto run(Card::Input& input) -> Card::Output {
+  Dl_info info{};
+  dladdr(reinterpret_cast<void*>(&tsugumi::cancelled), &info);
+  tsugumi::log(std::string("runtime ") + (info.dli_fname ? info.dli_fname : "?"));
+  Card::Output out;
+  out.out.emplace().value = input.in.value + Card::params().step;
+  tsugumi::visualization::text("out = " + std::to_string(out.out->value));
+  return out;
+}
+"""
+
+
+def test_cpp_sdk_card_api(env):
+    """`#include <card.hh>` / run(Card::Input&) -> Card::Output: named
+    inputs (a merge union, an absent optional port), optional and File
+    outputs, params, tsugumi::visualization, an explicit `run` .so, preRun
+    and postRun around every invocation of a reused worker, and one shared
+    runtime library for two SDKs with different contracts."""
+    seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
+    calc_out = ("namespace t; table Num { value:ulong; } table Doc { value:string; }\n"
+                "table Outputs { again:Num; calls:Num; report:Doc (tsugumi: \"file\"); }\n"
+                "root_type Outputs;\nattribute \"tsugumi\";\n")
+    calc_nix = """{ pkgs, inputs, params }:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+  package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+in
+{
+  inherit package;
+  run = "${package}/lib/main.so";
+  reuseWorker = true;
+  preRun = "echo pre > pre.txt && export PRE_VALUE=5";
+  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
+}
+"""
+    other_nix = calc_nix.replace("  reuseWorker = true;\n", "").replace(
+        '  preRun = "echo pre > pre.txt && export PRE_VALUE=5";\n', "").replace(
+        '  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";\n', "")
+    defs = {"trigger": {"template": "trigger"}, "seed": seed,
+            "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
+            "calc": {"language": "cpp", "inputs": [{"name": "x"}, {"name": "extra", "optional": True}], "maxRuns": 10,
+                     "canvasEnabled": True,
+                     "_outputs": calc_out, "_nix": calc_nix},
+            "other": {"language": "cpp", "inputs": [{"name": "in"}], "canvasEnabled": True,
+                      "params": [{"name": "step", "type": "uint64", "data": 10}],
+                      "_outputs": NUM, "_nix": other_nix}}
+    root = env.project
+    c = load(env, defs,
+             [card("begin", "trigger"), card("seed", "seed"), card("loop", "loop"), card("calc", "calc"),
+              card("other", "other")],
+             [conn("seed", "out", "loop", "init"), conn("loop", "out", "calc", "x"),
+              conn("calc", "again", "loop", "again"), conn("calc", "calls", "other", "in")])
+    put(root / "definitions" / "calc" / "src" / "card.cc", SDK_CALC)
+    put(root / "definitions" / "other" / "src" / "card.cc", SDK_OTHER)
+    reload(c)
+    run_id, st = run(c, "begin", timeout=2400)
+    rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
+    detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
+    assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
+    assert rec["other"].state == CardState.succeeded, (detail, log(c, run_id, "other", 2)[-1200:])
+    assert st.state == RunState.succeeded
+    # Three invocations (2, 1, 0) on one worker; preRun/postRun around each.
+    invs = c.call("RunInvocationsRequest", runId=run_id, card=path("calc")).records
+    assert len(invs) == 3
+    runtimes = {line.split(" ", 1)[1] for k, inv in (("calc", 3), ("other", 1))
+                for line in log(c, run_id, k, 2, inv).splitlines() if line.startswith("runtime ")}
+    assert len(runtimes) == 1 and next(iter(runtimes)).endswith("/lib/libtsugumi_card.so"), runtimes
+    # calls = 3 from the reused worker, plus the param step 10.
+    shown = c.call("RunRecordRequest", runId=run_id, card=path("other")).record.display
+    assert shown is not None and shown.valueType == 1 and text(shown.value.text) == "out = 13"
+
+
 def test_parallel_limit_serial_card_and_unselected_branch(env):
     """Four independent 1 s Cards with max concurrency 2 take about 2 s; a
     branch side that is never selected is never evaluated (its default.nix

@@ -333,6 +333,7 @@ struct BuildCache {
 // The manifest written by the SDK's tsugumi.manifest (read only).
 struct CardManifest {
   Opt<"package", v::String> package;
+  Opt<"run", v::String> run;  // the shared object to load (in `package`)
   Opt<"preScript", v::String> pre_script;
   Opt<"script", v::String> script;
   Opt<"postScript", v::String> post_script;

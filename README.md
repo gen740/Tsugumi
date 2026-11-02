@@ -37,7 +37,7 @@ macOS 側の SwiftUI アプリと Agent は同じ FlatBuffers RPC 契約を使�
 CMakeLists.txt, flake.nix/flake.lock  C++ ビルド（CMake/Ninja）と依存固定（Nix）
 protocol/          tsugumi.fbs（外部 RPC）/ worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid（include/tsugumi/core 公開 API, src 実装）
-sdk/               Card ABI（main.so）, C++ SDK, Python SDK と埋め込み shim, Nix SDK, tsugumi-worker
+sdk/               Card ABI, 共通 runtime（libtsugumi_card）, C++ codegen（card.hh）, Python SDK と埋め込み shim, Nix SDK, tsugumi-worker
 macOS/             SwiftPM: Sources/App（SwiftUI）, Sources/RPC, Sources/Launcher, Sources/Renderer*,
                    Container/（イメージ定義・ビルド・版）, Tests/
 ui/renderer/       Dawn 描画層（C API, dylib）
@@ -126,7 +126,34 @@ open dist/Tsugumi.app
 - **隔離**: ホストと共有するのはプロジェクトフォルダ・0700 の control フォルダ（server.ready と import grant）・その環境の Nix store ディスクイメージのフォルダだけです。RPC は 127.0.0.1 にのみ公開し、token は control ファイル（0600）にだけ置いて URL・ログに出しません。Card はコンテナ内で bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成）で実行し、`sandbox: false` でも同じ unprivileged uid のまま、ホスト実行や追加公開はしません。bubblewrap が使えない環境では `sandbox: true` の Card を拒否します。
 - **永続化と実行環境の置き場所**: 実行環境ごとのデータは `~/Library/Application Support/Tsugumi/environments/<id>/` にまとめています（`control/` と、Nix store の sparse なディスクイメージ `store/store.img`）。VM はこのイメージを loop mount して `/persist` にし、`/nix` はイメージ（下層）＋ `/persist`（上層）の overlay です。Card 用ツールチェーンはコンテナを作り直しても残ります。このフォルダを削除すると各環境の store と control が消え、次の起動で作り直されます。環境イメージ自体は Apple container の管理領域にあり（ブロックデバイスや別の保存場所を指定できないため）、`runtime/image.json` の記録がないときは次の起動で同梱イメージから読み込み直し、削除されたフォルダの container も起動時に片付けます。設定の「すべての実行環境を初期化」は、Tsugumi が作った container・store・旧 volume・環境イメージ（Tsugumi 以外の container が使っていなければ）を確認しながら削除し、プロジェクトの文書・履歴・成果物や他アプリの資源・ホストの `/nix/store` には触れません。停止と削除は同じ環境の lock を持ったまま行い、各段階の終了 status と残存を確認して、失敗時は管理情報を残して再試行できるようにしています。
 - **二重起動防止**: ホストではプロジェクト実体（device+inode）ごとの flock で起動・停止を直列化し、別名パスでも同じ環境に接続します。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
-- **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（`nix-instantiate`）→ build（`nix-store --realise`）→ 実行（`preScript → main.so → script → postScript`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preScript の環境変数と `cd` は後段に引き継ぎ、postScript は失敗後も後始末として動きますが、前段の失敗を消しません。
+- **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（`nix-instantiate`）→ build（`nix-store --realise`）→ 実行（`preRun → run（.so）→ script → postRun`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preRun / postRun は worker を再利用しても invocation ごとに、その作業ディレクトリ・入出力の中で動きます。preRun の環境変数と `cd` は後段に引き継ぎ、postRun は失敗後も後始末として動きます（`TSUGUMI_FAILED=1`、前段の失敗は消さない）。停止・期限切れの後は postRun を含めて何も始めません（旧名 preScript / postScript も受け付けます）。
+- **Card SDK**: `default.nix` で契約から SDK を作り、言語ごとの package に渡します。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。
+
+  ```nix
+  { pkgs, inputs, params }:
+  let
+    sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };   # inputs / outputs / params を明示して渡すこともできる
+    package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+  in
+  {
+    inherit package;
+    run = "${package}/lib/main.so";   # worker が読み込む shared object
+    preRun = "mkdir -p scratch";      # 任意。postRun も同様
+  }
+  ```
+
+  ```cpp
+  #include <card.hh>
+
+  auto run(Card::Input& input) -> Card::Output {
+    Card::Output out;
+    out.next.emplace().value = input.number.value / 2;   // ポート名がそのまま member
+    tsugumi::visualization::text("halved");
+    return out;
+  }
+  ```
+
+  `Card::Input` は入力ポートごとの member（任意入力は `std::optional`、merge は入力ポート名付き union）、`Card::Output` は出力ポートごとの `std::optional`（設定したものだけ送る）、`Card::params()` が params です。File / Directory は `.value` のパスで、出力先は `tsugumi::context().output_directory`。失敗は `throw tsugumi::Failure(kind, message)`、停止の確認は `tsugumi::cancelled()`。生成ヘッダー（`_inputs_generated.h` など）を Card が include する必要はありません。`sdk` を使わない旧形式（`#include <tsugumi/sdk/card.hh>` と `TSUGUMI_CARD`）も当面は動きます。
 - **shell の入力**: ポート `P` ごとに `JSON_P`（JSON ファイルのパス、大きさの制限なし）、`BIN_P`（FlatBuffer のパス）、`INPUT_P`（4 KiB 以下の値だけ: 単一の `value` ならその値、他は JSON 文字列）、File/Directory は `FILE_P`/`DIR_P`。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します。スクリプトはファイル経由で実行するので大きさの制限を受けません。
 - **Nix の上流参照**: `default.nix` は `inputs.upstream."<Card path>"`（`inputs.local.<id>` は同じ階層）で、**どの経路で発火しても必ず先に実行される**コード Card の属性集合（`package`・スクリプト・`exports` の関数や値・store context）を参照できます。同じポートへの複数経路は共通部分、`all` は必須入力の和、`any` は全入力の共通部分、ループは最大不動点で求め、分岐の片側だけの Card や下流・自分自身は渡しません（静的診断 `nix_reference_*`）。参照されたものだけが遅延評価され、非選択分岐は build しません。ビルドの鍵はソース・入力型・Nix 用 params・参照する上流定義で決まり、実行時だけの params は含みません。
 - **Card in Card**: 子 Workflow は `boundary.inputs/outputs` で外側のポートを内部 Card のポートに対応づけ、外からは通常の Card として接続・実行できます（Run の対象にでき、単体実行では境界入力に保存済みの値を使う）。状態と履歴は完全な Card path で区別します。見た目だけのグループ（layout.json）とは別物です。

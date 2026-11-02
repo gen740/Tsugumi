@@ -4,8 +4,9 @@
 // fd 4: control socket (WorkerCancel)
 // stdout/stderr: captured by the core as the invocation's logs.
 //
-// Steps per call: preScript -> lib/main.so -> script -> postScript. The
-// environment and working directory produced by preScript carry over; an
+// Steps per call: preRun -> the `run` shared object -> script -> postRun
+// (preRun / postRun arrive as --pre / --post). The environment and working
+// directory produced by preRun carry over; an
 // earlier failure is never cleared by a later step's success. One deadline
 // covers all steps, and cancel/deadline are checked before each step starts.
 //
@@ -143,6 +144,7 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 struct Options {
   std::string bash;
   std::string package;
+  std::string library;  // shared object to load (default package/lib/main.so)
   std::string pre, script, post;  // file paths with script text
 };
 
@@ -474,23 +476,24 @@ void execute(const Options& opt, Call& call) {
                          (WIFEXITED(status) ? "exit status " + std::to_string(WEXITSTATUS(status))
                                             : "signal " + std::to_string(WTERMSIG(status))));
   };
-  if (!opt.pre.empty() && may_start("preScript")) {
+  if (!opt.pre.empty() && may_start("preRun")) {
     std::string dump = tmp + "/pre-env";
     set_env(env, "TSUGUMI_ENV_DUMP", dump);
     std::string script = read_text(opt.pre) + "\n\"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"\n";
     int st = run_shell(opt.bash, script, env, cwd, call, &timed_out);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
-      step_failed("preScript", st);
+      step_failed("preRun", st);
     } else {
       auto next = parse_env_dump(read_text(dump));
       if (!next.empty()) env = next;
-      // A `cd` in preScript carries over (bash keeps PWD current).
+      // A `cd` in preRun carries over (bash keeps PWD current).
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
   }
-  if (!call.failure && !opt.package.empty() && may_start("main.so")) {
+  if (!call.failure && (!opt.package.empty() || !opt.library.empty()) && may_start("main.so")) {
     if (!g_lib) {
-      std::string lib = opt.package + "/lib/main.so";
+      // The Nix definition names the shared object (`run`); older ones use package/lib/main.so.
+      std::string lib = !opt.library.empty() ? opt.library : opt.package + "/lib/main.so";
       g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
       if (!g_lib) {
         record_failure(D::FailureKind::worker_failed, std::string("cannot load main.so: ") + ::dlerror());
@@ -579,16 +582,16 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
-  // postScript also runs after a failed step (cleanup), but never after a
+  // postRun also runs after a failed step (cleanup), but never after a
   // cancel or the deadline; its success never clears an earlier failure.
   bool stopped = call.failure && (call.failure->kind == D::FailureKind::cancelled || call.failure->kind == D::FailureKind::timeout);
-  if (!opt.post.empty() && !stopped && may_start("postScript")) {
+  if (!opt.post.empty() && !stopped && may_start("postRun")) {
     bool post_timeout = false;
     set_env(env, "TSUGUMI_FAILED", call.failure ? "1" : "0");
     int st = run_shell(opt.bash, read_text(opt.post), env, cwd, call, &post_timeout);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       timed_out = post_timeout;
-      step_failed("postScript", st);
+      step_failed("postRun", st);
     }
   }
 }
@@ -642,7 +645,7 @@ void control_loop() {
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
   if (argc == 3 && std::string(argv[1]) == "--dump-env") {
-    // Used after preScript to carry its environment into the next steps.
+    // Used after preRun to carry its environment into the next steps.
     std::string out;
     for (char** e = environ; *e; ++e) {
       out += *e;
@@ -656,6 +659,7 @@ int main(int argc, char** argv) {
     std::string k = argv[i];
     if (k == "--bash") opt.bash = argv[i + 1];
     else if (k == "--package") opt.package = argv[i + 1];
+    else if (k == "--library") opt.library = argv[i + 1];
     else if (k == "--pre") opt.pre = argv[i + 1];
     else if (k == "--script") opt.script = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];

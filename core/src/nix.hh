@@ -21,7 +21,8 @@ namespace tsugumi {
 class Service;
 
 struct CardBuild {
-  std::optional<std::string> package;  // store path containing lib/main.so
+  std::optional<std::string> package;  // store path of the Card package
+  std::optional<std::string> library;  // shared object to run (`run`; default package/lib/main.so)
   std::string pre_script, script, post_script;
   bool reuse_worker = false;
   std::string key;

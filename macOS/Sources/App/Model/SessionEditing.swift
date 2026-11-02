@@ -527,7 +527,7 @@ extension ProjectSession {
         s.setDefinition(id, card: .object([
           ("name", .string(name)), ("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])])),
         ]), meta: nil)
-        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n")
+        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\n  package = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\nin\n{\n  inherit package;\n  run = \"${package}/lib/main.so\";\n}\n")
         s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
         s.putSource(dir + "src/main.py", """
         import outputs.out.\(ns).Text as out
@@ -545,19 +545,16 @@ extension ProjectSession {
         s.setDefinition(id, card: .object([
           ("name", .string(name)), ("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])])),
         ]), meta: nil)
-        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.cppCard { src = ./src; };\n}\n")
+        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\n  package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\nin\n{\n  inherit package;\n  run = \"${package}/lib/main.so\";\n}\n")
         s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
         s.putSource(dir + "src/card.cc", """
-        #include <tsugumi/sdk/card.hh>
+        #include <card.hh>
 
-        #include "_outputs_generated.h"
-
-        void run(tsugumi::sdk::Context& ctx) {
-          flatbuffers::FlatBufferBuilder b;
-          b.Finish(outputs::out::\(ns)::CreateTextDirect(b, "hello"));
-          ctx.output("out", b);
+        auto run(Card::Input& input) -> Card::Output {
+          Card::Output out;
+          out.out.emplace().value = "hello";
+          return out;
         }
-        TSUGUMI_CARD(run)
 
         """)
       }

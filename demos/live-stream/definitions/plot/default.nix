@@ -1,5 +1,10 @@
 { pkgs, inputs, params }:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+  package = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
+in
 {
-  package = inputs.tsugumi.pythonCard { src = ./src; };
+  inherit package;
+  run = "${package}/lib/main.so";
   reuseWorker = true;
 }

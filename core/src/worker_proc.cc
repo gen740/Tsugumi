@@ -110,6 +110,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
     args.push_back("--package");
     args.push_back(*sp.build.package);
   }
+  if (sp.build.library) {
+    args.push_back("--library");
+    args.push_back(*sp.build.library);
+  }
   args.push_back("--bash");
   args.push_back(sp.bash);
 

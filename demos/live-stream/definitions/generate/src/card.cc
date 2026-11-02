@@ -1,14 +1,8 @@
-#include <tsugumi/sdk/card.hh>
+#include <card.hh>
 
 #include <chrono>
 #include <cstdint>
 #include <thread>
-
-#include "_inputs_generated.h"
-#include "_outputs_generated.h"
-
-using Merged = inputs::state::tsugumi::merge::Merged;
-using Arrival = inputs::state::tsugumi::merge::Arrival;
 
 // Deterministic step from (seed, index): splitmix64 -> uniform in [-1, 1).
 static double noise(uint64_t seed, uint64_t index) {
@@ -20,31 +14,32 @@ static double noise(uint64_t seed, uint64_t index) {
 }
 
 template <class S>
-static void step(tsugumi::sdk::Context& ctx, const S* s) {
+static Card::Output step(const S& s) {
   // The sampling interval is the purpose of this wait, not a progress effect.
-  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s->interval_ms());
+  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);
   while (std::chrono::steady_clock::now() < until) {
-    if (ctx.cancelled()) throw tsugumi::sdk::Failure("cancelled", "cancelled while waiting for the next sample");
+    if (tsugumi::cancelled()) throw tsugumi::Failure("cancelled", "cancelled while waiting for the next sample");
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  double value = s->value() + noise(s->seed(), s->index());
-  {
-    flatbuffers::FlatBufferBuilder b;
-    b.Finish(outputs::sample::live::CreateSample(b, s->index(), value));
-    ctx.output("sample", b);
-  }
-  if (s->index() + 1 >= s->samples()) return;  // no feedback: the stream ends
-  flatbuffers::FlatBufferBuilder b;
-  b.Finish(outputs::next::live::CreateState(b, s->index() + 1, s->samples(), s->interval_ms(), s->seed(), value));
-  ctx.output("next", b);
+  double value = s.value + noise(s.seed, s.index);
+  Card::Output out;
+  auto& sample = out.sample.emplace();
+  sample.index = s.index;
+  sample.value = value;
+  if (s.index + 1 >= s.samples) return out;  // no feedback: the stream ends
+  auto& next = out.next.emplace();
+  next.index = s.index + 1;
+  next.samples = s.samples;
+  next.interval_ms = s.interval_ms;
+  next.seed = s.seed;
+  next.value = value;
+  return out;
 }
 
-void run(tsugumi::sdk::Context& ctx) {
-  const auto* m = ctx.input<Merged>("state");
-  switch (m->value_type()) {
-    case Arrival::init: return step(ctx, m->value_as_init());
-    case Arrival::next: return step(ctx, m->value_as_next());
-    default: throw tsugumi::sdk::Failure("output_invalid", "unexpected arrival");
-  }
+// The loop delivers a merge union tagged with the arrival port.
+auto run(Card::Input& input) -> Card::Output {
+  const auto& u = input.state.value;
+  if (const auto* s = u.Asinit()) return step(*s);
+  if (const auto* s = u.Asnext()) return step(*s);
+  throw tsugumi::Failure("output_invalid", "unexpected arrival");
 }
-TSUGUMI_CARD(run)

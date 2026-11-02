@@ -1,5 +1,10 @@
 { pkgs, inputs, params }:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+  package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+in
 {
-  package = inputs.tsugumi.cppCard { src = ./src; };
+  inherit package;
+  run = "${package}/lib/main.so";
   reuseWorker = true;
 }

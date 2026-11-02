@@ -233,6 +233,39 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   }
   ocat += "}\nroot_type Outputs;\n";
   files["_outputs.fbs"] = outputs + ocat;
+  // The ports in plain form for SDK code generation (typed Card::Input /
+  // Card::Output): name, root type, kind, required.
+  {
+    auto json_quote = [](const std::string& v) {
+      std::string q = "\"";
+      for (char c : v) {
+        if (c == '"' || c == '\\') q += '\\';
+        if (static_cast<unsigned char>(c) < 0x20) { q += ' '; continue; }
+        q += c;
+      }
+      return q + "\"";
+    };
+    auto kind_name = [](PortKind k) { return k == PortKind::File ? "file" : k == PortKind::Directory ? "directory" : "flatbuffer"; };
+    auto list = [&](const std::vector<types::PortType>& ports, const std::string& side) {
+      std::string out = "[";
+      bool first = true;
+      for (const auto& p : ports) {
+        if (!p.type) continue;
+        std::string scratch;
+        std::string root = types::render_closure(*p.type, side + "." + p.name, scratch);
+        out += std::string(first ? "" : ",") + "{\"name\":" + json_quote(p.name) +
+               ",\"type\":" + json_quote(root) + ",\"kind\":\"" + kind_name(p.kind) +
+               "\",\"required\":" + (p.optional ? "false" : "true") + "}";
+        first = false;
+      }
+      return out + "]";
+    };
+    std::string params = "[";
+    for (size_t i = 0; i < node.settings.params.size(); ++i)
+      params += std::string(i ? "," : "") + "{\"name\":" + json_quote(node.settings.params[i].name) + "}";
+    files["_contract.json"] = "{\"inputs\":" + list(node.inputs, "inputs") + ",\"outputs\":" + list(node.outputs, "outputs") +
+                              ",\"params\":" + params + "]}\n";
+  }
   // Binary schemas for reflection based tools.
   for (const char* name : {"_inputs", "_outputs", "_params"}) {
     std::string err;
@@ -342,6 +375,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
       throw Failed(FailureKind::nix_failed, "the Card manifest is invalid: " + err->message);
     CardBuild b;
     if (const auto* p = schema::get(m.package)) b.package = *p;
+    if (const auto* p = schema::get(m.run)) b.library = *p;
     if (const auto* p = schema::get(m.pre_script)) b.pre_script = *p;
     if (const auto* p = schema::get(m.script)) b.script = *p;
     if (const auto* p = schema::get(m.post_script)) b.post_script = *p;

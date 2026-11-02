@@ -1113,7 +1113,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (auto p = path_value(v)) ro.push_back(*p);
     std::sort(ro.begin(), ro.end());
     ro.erase(std::unique(ro.begin(), ro.end()), ro.end());
-    std::string signature = std::string(rt.build->package.value_or("")) + "|" + (node.settings.sandbox ? "s" : "u");
+    std::string signature = std::string(rt.build->package.value_or("")) + "|" + rt.build->library.value_or("") + "|" +
+                            (node.settings.sandbox ? "s" : "u");
     for (const auto& p : ro) signature += "|" + p;
     s.worker_reused = rt.worker && rt.worker->alive() && rt.build->reuse_worker && rt.worker_signature == signature;
     if (!*s.worker_reused) {
