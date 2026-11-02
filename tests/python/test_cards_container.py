@@ -461,3 +461,61 @@ def main(ctx):
     assert rec["bad"].state == CardState.failed and rec["bad"].failure.kind == 24, detail
     assert rec["missing"].state == CardState.failed and "missing" in text(rec["missing"].failure.diagnostic), detail
     assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
+
+
+def test_parallel_limit_serial_card_and_unselected_branch(env):
+    """Four independent 1 s Cards with max concurrency 2 take about 2 s; a
+    branch side that is never selected is never evaluated (its default.nix
+    would not even evaluate)."""
+    sleepy = bash('sleep 1; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
+    broken = {"language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
+              "_nix": "{ pkgs, inputs, params }:\n{ script = builtins.throw \"must never be evaluated\"; }\n"}
+    defs = {"trigger": {"template": "trigger"}, "sleepy": sleepy,
+            "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+            "branch": {"template": "branch"}, "broken": broken}
+    c = load(env, defs,
+             [card("begin", "trigger"), *[card(f"s{i}", "sleepy") for i in range(4)],
+              card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
+             [conn("cond", "flag", "gate", "value"), conn("cond", "flag", "gate", "condition"),
+              conn("gate", "a", "never", "in")])
+    snap = c.call("ProjectInspectRequest")
+    t0 = time.time()
+    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"), maxConcurrency=2)
+    run_id = text(acc.run.runId)
+    while c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed, RunState.cancelled):
+        time.sleep(0.1)
+    st = c.call("RunStatusRequest", runId=run_id)
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    spans = []
+    for i in range(4):
+        inv = c.call("RunInvocationsRequest", runId=run_id, card=path(f"s{i}")).records[0]
+        spans.append((inv.startedAt, inv.endedAt))
+    # Never more than two at once.
+    events = sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans])
+    running = peak = 0
+    for _, d in events:
+        running += d
+        peak = max(peak, running)
+    assert peak <= 2
+    assert c.call("RunRecordRequest", runId=run_id, card=path("never")).status.state == CardState.skipped
+    del t0
+
+
+def test_worker_crash_then_edit_and_rerun(env):
+    crash = {"language": "python", "_outputs": NUM,
+             "_nix": "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}
+    defs = {"trigger": {"template": "trigger"}, "crash": crash}
+    root = env.project
+    c = load(env, defs, [card("begin", "trigger"), card("crash", "crash")], [])
+    put(root / "definitions" / "crash" / "src" / "main.py", "import os, signal\n\ndef main(ctx):\n    os.kill(os.getpid(), signal.SIGKILL)\n")
+    reload(c)
+    run_id, st = run(c, "begin", timeout=1800)
+    rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
+    assert st.state == RunState.failed and rec.state == CardState.failed
+    assert rec.failure.kind == 23  # worker_failed
+    # After the crash the environment keeps working: fix the source and run again.
+    put(root / "definitions" / "crash" / "src" / "main.py",
+        "import outputs.out.t.Num as Num\n\ndef main(ctx):\n    b = ctx.builder()\n    Num.Start(b)\n    Num.AddValue(b, 1)\n    ctx.output('out', b, Num.End(b))\n")
+    reload(c)
+    _, st2 = run(c, "begin", timeout=1800)
+    assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
