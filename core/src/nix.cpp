@@ -137,7 +137,7 @@ types::TypeRef NixRunner::params_type(const Node& node) {
   std::vector<std::pair<std::string, std::string>> fields;
   for (const auto& p : node.settings.params) fields.emplace_back(p.name, param_fbs_type(p.type));
   std::string err;
-  auto t = types::compile(types::params_schema(fields), "tsugumi.params.Params", &err);
+  auto t = types::compile(types::params_schema(fields), "params.Params", &err);
   if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
   return *t;
 }
@@ -195,7 +195,7 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
     std::string err;
     std::string text = files[std::string(name) + ".fbs"];
     std::string root = std::string(name) == "_inputs" ? "inputs.Inputs"
-                       : std::string(name) == "_outputs" ? "outputs.Outputs" : "tsugumi.params.Params";
+                       : std::string(name) == "_outputs" ? "outputs.Outputs" : "params.Params";
     if (auto t = types::compile(text, root, &err)) files[std::string(name) + ".bfbs"] = (*t)->bfbs;
     else throw Failed(FailureKind::validation_failed, std::string(name) + ".fbs: " + err);
   }

@@ -112,6 +112,7 @@ class Server {
   void parse_ws(Conn& c);
   void enqueue_raw(Conn& c, std::string bytes, bool is_reply);
   void enqueue_note(Conn& c, const Note& n);
+  void enforce_outbox(Conn& c);
   bool fill_write(Conn& c);
   void drop(Conn& c, const char* why);
   void wake();

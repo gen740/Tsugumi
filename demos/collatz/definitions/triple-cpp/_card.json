@@ -1,0 +1,10 @@
+{
+  "name": "3n + 1 (C++)",
+  "language": "cpp",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "maxRuns": 100000
+}

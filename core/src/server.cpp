@@ -289,6 +289,15 @@ void Server::apply(Command& cmd) {
   }
 }
 
+void Server::enforce_outbox(Conn& c) {
+  if (c.outq.size() <= opts_.limits.outbox_messages && c.out_bytes <= opts_.limits.outbox_bytes) return;
+  // Hand what the socket accepts to the kernel first; only a peer that does
+  // not read is disconnected.
+  on_writable(c);
+  if (c.outq.size() > opts_.limits.outbox_messages || c.out_bytes > opts_.limits.outbox_bytes)
+    drop(c, "outbox limit exceeded (slow peer)");
+}
+
 void Server::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   if (c.closing) return;
   if (is_reply && bytes.size() >= 4) {
@@ -301,8 +310,7 @@ void Server::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   o.raw = std::move(bytes);
   o.is_reply = is_reply;
   c.outq.push_back(std::move(o));
-  if (c.outq.size() > opts_.limits.outbox_messages || c.out_bytes > opts_.limits.outbox_bytes)
-    drop(c, "outbox limit exceeded (slow peer)");
+  enforce_outbox(c);
 }
 
 void Server::enqueue_note(Conn& c, const Note& n) {
@@ -322,8 +330,7 @@ void Server::enqueue_note(Conn& c, const Note& n) {
   o.sub_id = c.sub_id;
   c.out_bytes += n.approx_bytes;
   c.outq.push_back(std::move(o));
-  if (c.outq.size() > opts_.limits.outbox_messages || c.out_bytes > opts_.limits.outbox_bytes)
-    drop(c, "outbox limit exceeded (slow peer)");
+  enforce_outbox(c);
 }
 
 // Moves the next queued item into the write buffer. Returns false when empty.

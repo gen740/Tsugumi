@@ -1,0 +1,10 @@
+{
+  "name": "Done or parity (C++)",
+  "language": "cpp",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 200
+}

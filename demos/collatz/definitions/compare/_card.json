@@ -1,0 +1,14 @@
+{
+  "name": "Compare C++ and Python",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "cpp"
+    },
+    {
+      "name": "python"
+    }
+  ],
+  "maxRuns": 1,
+  "canvasEnabled": true
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Done or parity (Python)",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 200
+}

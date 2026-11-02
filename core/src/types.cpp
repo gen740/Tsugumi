@@ -476,7 +476,7 @@ bool flatbuffer_to_json(const Type& t, const std::string& bytes, std::string* ou
 }
 
 std::string params_schema(const std::vector<std::pair<std::string, std::string>>& fields) {
-  std::string text = "namespace tsugumi.params;\ntable Params {\n";
+  std::string text = "namespace params;\ntable Params {\n";
   int id = 0;
   for (const auto& [name, type] : fields) {
     bool scalar = type == "bool" || type == "long" || type == "ulong" || type == "double";

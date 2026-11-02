@@ -1,0 +1,364 @@
+{
+  "name": "Collatz (C++ / Python)",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "begin",
+        "definition": "trigger"
+      },
+      {
+        "id": "initial",
+        "definition": "initial",
+        "params": {
+          "value": 27
+        }
+      },
+      {
+        "id": "both",
+        "definition": "both"
+      },
+      {
+        "id": "cpp",
+        "name": "Collatz in C++",
+        "canvas": {
+          "cards": [
+            {
+              "id": "loop",
+              "definition": "loop"
+            },
+            {
+              "id": "split",
+              "definition": "split"
+            },
+            {
+              "id": "check",
+              "definition": "check-cpp"
+            },
+            {
+              "id": "route",
+              "definition": "route"
+            },
+            {
+              "id": "halve",
+              "definition": "halve-cpp"
+            },
+            {
+              "id": "triple",
+              "definition": "triple-cpp"
+            },
+            {
+              "id": "collect",
+              "definition": "collect-cpp"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "card": "loop",
+                "port": "out"
+              },
+              "to": {
+                "card": "split",
+                "port": "in"
+              }
+            },
+            {
+              "from": {
+                "card": "split",
+                "port": "check"
+              },
+              "to": {
+                "card": "check",
+                "port": "arrival"
+              }
+            },
+            {
+              "from": {
+                "card": "split",
+                "port": "collect"
+              },
+              "to": {
+                "card": "collect",
+                "port": "arrival"
+              }
+            },
+            {
+              "from": {
+                "card": "check",
+                "port": "value"
+              },
+              "to": {
+                "card": "route",
+                "port": "value"
+              }
+            },
+            {
+              "from": {
+                "card": "check",
+                "port": "even"
+              },
+              "to": {
+                "card": "route",
+                "port": "condition"
+              }
+            },
+            {
+              "from": {
+                "card": "route",
+                "port": "a"
+              },
+              "to": {
+                "card": "halve",
+                "port": "number"
+              }
+            },
+            {
+              "from": {
+                "card": "route",
+                "port": "b"
+              },
+              "to": {
+                "card": "triple",
+                "port": "number"
+              }
+            },
+            {
+              "from": {
+                "card": "halve",
+                "port": "next"
+              },
+              "to": {
+                "card": "loop",
+                "port": "half"
+              }
+            },
+            {
+              "from": {
+                "card": "triple",
+                "port": "next"
+              },
+              "to": {
+                "card": "loop",
+                "port": "triple"
+              }
+            }
+          ]
+        },
+        "boundary": {
+          "inputs": {
+            "n": {
+              "card": "loop",
+              "port": "init"
+            }
+          },
+          "outputs": {
+            "sequence": {
+              "card": "collect",
+              "port": "sequence"
+            }
+          }
+        }
+      },
+      {
+        "id": "python",
+        "name": "Collatz in Python",
+        "canvas": {
+          "cards": [
+            {
+              "id": "loop",
+              "definition": "loop"
+            },
+            {
+              "id": "split",
+              "definition": "split"
+            },
+            {
+              "id": "check",
+              "definition": "check-py"
+            },
+            {
+              "id": "route",
+              "definition": "route"
+            },
+            {
+              "id": "halve",
+              "definition": "halve-py"
+            },
+            {
+              "id": "triple",
+              "definition": "triple-py"
+            },
+            {
+              "id": "collect",
+              "definition": "collect-py"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "card": "loop",
+                "port": "out"
+              },
+              "to": {
+                "card": "split",
+                "port": "in"
+              }
+            },
+            {
+              "from": {
+                "card": "split",
+                "port": "check"
+              },
+              "to": {
+                "card": "check",
+                "port": "arrival"
+              }
+            },
+            {
+              "from": {
+                "card": "split",
+                "port": "collect"
+              },
+              "to": {
+                "card": "collect",
+                "port": "arrival"
+              }
+            },
+            {
+              "from": {
+                "card": "check",
+                "port": "value"
+              },
+              "to": {
+                "card": "route",
+                "port": "value"
+              }
+            },
+            {
+              "from": {
+                "card": "check",
+                "port": "even"
+              },
+              "to": {
+                "card": "route",
+                "port": "condition"
+              }
+            },
+            {
+              "from": {
+                "card": "route",
+                "port": "a"
+              },
+              "to": {
+                "card": "halve",
+                "port": "number"
+              }
+            },
+            {
+              "from": {
+                "card": "route",
+                "port": "b"
+              },
+              "to": {
+                "card": "triple",
+                "port": "number"
+              }
+            },
+            {
+              "from": {
+                "card": "halve",
+                "port": "next"
+              },
+              "to": {
+                "card": "loop",
+                "port": "half"
+              }
+            },
+            {
+              "from": {
+                "card": "triple",
+                "port": "next"
+              },
+              "to": {
+                "card": "loop",
+                "port": "triple"
+              }
+            }
+          ]
+        },
+        "boundary": {
+          "inputs": {
+            "n": {
+              "card": "loop",
+              "port": "init"
+            }
+          },
+          "outputs": {
+            "sequence": {
+              "card": "collect",
+              "port": "sequence"
+            }
+          }
+        }
+      },
+      {
+        "id": "compare",
+        "definition": "compare"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "initial",
+          "port": "value"
+        },
+        "to": {
+          "card": "both",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "both",
+          "port": "cpp"
+        },
+        "to": {
+          "card": "cpp",
+          "port": "n"
+        }
+      },
+      {
+        "from": {
+          "card": "both",
+          "port": "python"
+        },
+        "to": {
+          "card": "python",
+          "port": "n"
+        }
+      },
+      {
+        "from": {
+          "card": "cpp",
+          "port": "sequence"
+        },
+        "to": {
+          "card": "compare",
+          "port": "cpp"
+        }
+      },
+      {
+        "from": {
+          "card": "python",
+          "port": "sequence"
+        },
+        "to": {
+          "card": "compare",
+          "port": "python"
+        }
+      }
+    ]
+  }
+}

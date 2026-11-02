@@ -41,7 +41,7 @@ typedef struct tsugumi_call {
   uint64_t invocation;
   const tsugumi_value* inputs;
   size_t input_count;
-  const uint8_t* params; /* FlatBuffer of tsugumi.params.Params (_params.fbs) */
+  const uint8_t* params; /* FlatBuffer of params.Params (_params.fbs) */
   size_t params_size;
   const char* working_directory;
   const char* temporary_directory;

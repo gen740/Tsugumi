@@ -1,0 +1,10 @@
+{
+  "name": "3n + 1 (Python)",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "maxRuns": 100000
+}

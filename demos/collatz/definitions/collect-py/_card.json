@@ -1,0 +1,11 @@
+{
+  "name": "Sequence (Python)",
+  "language": "python",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 100000,
+  "canvasEnabled": true
+}

@@ -58,15 +58,20 @@ Note status_note(const RunStatusData& s, bool accepted) {
 }
 
 Note card_note(const InvocationSummaryData& s) {
-  return run_event_note(s.run_id, [s](FBB& b) {
+  bool final = s.state == CardState::succeeded || s.state == CardState::failed || s.state == CardState::cancelled ||
+               s.state == CardState::skipped || s.state == CardState::blocked;
+  Note n = run_event_note(s.run_id, [s](FBB& b) {
     auto inv = wire::invocation(b, s);
     return std::make_pair(R::RunEventValue::RunCardChanged, R::CreateRunCardChanged(b, inv).Union());
   });
+  // Progress of one invocation may be collapsed to its latest state; final states never are.
+  if (!final) n.coalesce_key = "card|" + s.run_id + "|" + path_key(s.card) + "|" + std::to_string(s.invocation);
+  return n;
 }
 
 Note timeline_note(const std::string& run_id, const CardPath& card, uint64_t inv, Phase phase, uint32_t lane,
                    int64_t start, std::optional<int64_t> end) {
-  return run_event_note(run_id, [=](FBB& b) {
+  Note n = run_event_note(run_id, [=](FBB& b) {
     auto cp = wire::path(b, card);
     R::RunTimelineBuilder tb(b);
     tb.add_card(cp);
@@ -77,6 +82,8 @@ Note timeline_note(const std::string& run_id, const CardPath& card, uint64_t inv
     if (end) tb.add_end(*end);
     return std::make_pair(R::RunEventValue::RunTimeline, tb.Finish().Union());
   });
+  n.coalesce_key = "timeline|" + run_id + "|" + path_key(card) + "|" + std::to_string(int(phase));
+  return n;
 }
 
 Note finished_note(const RunSummaryData& s) {
