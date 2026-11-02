@@ -110,6 +110,10 @@ def test_collatz_27(collatz):
     for lang in ("cpp", "python"):
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))
+    # The C++ Card in Card runs alone from its boundary input (saved value).
+    rid2 = run(c, ["cpp"], propagate=False)
+    assert wait_run(c, rid2).state == RunState.succeeded
+    assert display_text(c, rid2, "cpp", "collect") == "112 values: " + " ".join(map(str, expected))
 
 
 def test_collatz_limit_overflow_and_skipped(collatz):

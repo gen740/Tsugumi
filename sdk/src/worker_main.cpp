@@ -427,11 +427,12 @@ void execute(const Options& opt, Call& call) {
           const auto& [k, value] = *fields.value().entries().begin();
           std::string v = sc::text(value);
           sc::v::String str;
+          // Small values only: the environment as a whole is size limited.
           if (k == "value" && !sc::decode(value, str)) {
-            set_env(env, "INPUT_" + up, str.value());
+            if (str.value().size() <= 4096) set_env(env, "INPUT_" + up, str.value());
             single_scalar = true;
           } else if (k == "value" && !v.empty() && v.front() != '{' && v.front() != '[') {
-            set_env(env, "INPUT_" + up, v);
+            if (v.size() <= 4096) set_env(env, "INPUT_" + up, v);
             single_scalar = true;
           }
         }

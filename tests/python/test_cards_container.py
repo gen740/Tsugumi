@@ -31,12 +31,17 @@ TXT = "namespace t; table Txt { value:string; } table Outputs { out:Txt (require
 FLAG = "namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;"
 
 
+def nix_string(s: str) -> str:
+    """A Nix string literal; `${` stays literal shell text (not antiquotation)."""
+    return json.dumps(s).replace("${", "\\${")
+
+
 def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **settings) -> dict:
-    attrs = [f"script = {json.dumps(script)};"]
+    attrs = [f"script = {nix_string(script)};"]
     if pre:
-        attrs.append(f"preScript = {json.dumps(pre)};")
+        attrs.append(f"preScript = {nix_string(pre)};")
     if post:
-        attrs.append(f"postScript = {json.dumps(post)};")
+        attrs.append(f"postScript = {nix_string(post)};")
     body = {"language": "bash", "inputs": [{"name": i} for i in inputs], **settings}
     body["_outputs"] = outputs
     body["_nix"] = "{ pkgs, inputs, params }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
@@ -168,8 +173,10 @@ def test_shell_step_contract(env):
 def proc_count(env, pattern: str) -> int:
     """Processes in the environment whose command line contains `pattern`
     (NUL separators removed). Bash builtins only: the image has no grep."""
+    # The pattern is written with a bracket so this probe never matches itself.
+    glob = pattern[:-1] + "[" + pattern[-1] + "]"
     script = ("n=0; for f in /proc/[0-9]*/cmdline; do c=$(< \"$f\") 2>/dev/null; "
-              f"case \"$c\" in *{pattern}*) n=$((n+1));; esac; done; echo $n")
+              f"case \"$c\" in *{glob}*) n=$((n+1));; esac; done; echo $n")
     out = subprocess.run(["container", "exec", env.name, "bash", "-c", script], capture_output=True, text=True)
     return int(out.stdout.strip() or "0")
 
@@ -246,20 +253,33 @@ def test_stages_and_cache(env):
     c = load(env, defs, [card("begin", "trigger"), card("one", "one")], [])
     c.open()
     phases = []
+    trace = []
+
+    counted = set()
 
     def collect(n):
+        # The client may offer the same notification again: count each seq once.
+        if n.seq in counted:
+            return n.valueType == NotificationPayload.RunEvent and n.value.valueType == 5
+        counted.add(n.seq)
         if n.valueType == NotificationPayload.RunEvent and n.value.valueType == 3:
             inv = n.value.value.invocation
             if [text(s) for s in inv.card.segments] == ["one"]:
                 phases.append((inv.phase, inv.buildCached))
+                trace.append((inv.invocation, inv.state, inv.phase, inv.buildCached))
         return n.valueType == NotificationPayload.RunEvent and n.value.valueType == 5
 
     snap = c.call("ProjectInspectRequest")
     c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
     c.wait_notification(collect, timeout=900)
-    seen = [p for p, _ in phases]
-    order = [Phase.prepare, Phase.evaluate, Phase.build, Phase.execute, Phase.save]
-    assert [p for p in seen if p in order] == [p for p in order if p in seen]
+    seen = []
+    for p, _ in phases:
+        if not seen or seen[-1] != p:
+            seen.append(p)
+    order = [Phase.prepare, Phase.evaluate, Phase.build, Phase.execute, Phase.validate, Phase.save]
+    ranks = [order.index(p) for p in seen if p in order]
+    assert ranks == sorted(ranks), trace[:30]  # stages only move forward
+    assert Phase.execute in seen and Phase.save in seen, seen
     phases.clear()
     snap = c.call("ProjectInspectRequest")
     c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
@@ -298,3 +318,146 @@ def main(ctx):
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
     assert text(rec.record.display.value.name) == "histogram"
+
+
+RICH = """
+namespace {ns};
+enum Color : ubyte {{ red = 0, green = 1, blue = 2 }}
+struct Point {{ x:int; y:int; }}
+table Circle {{ r:double; }}
+table Square {{ side:double; }}
+union Shape {{ Circle, Square }}
+table Rich {{
+  id:ulong; neg:long; ratio:double; name:string; values:[ulong];
+  color:Color; point:Point; shape:Shape;
+}}
+"""
+
+PY_MAKE = '''
+import os
+import outputs.rich.a.Rich as Rich
+import outputs.rich.a.Point as Point
+import outputs.rich.a.Circle as Circle
+import outputs.rich.a.Shape as Shape
+import outputs.doc.a.Doc as Doc
+
+def main(ctx):
+    n = 100_000
+    b = ctx.builder(1 << 20)
+    name = b.CreateString("名前 ✓")
+    Circle.Start(b); Circle.AddR(b, 1.5); circle = Circle.End(b)
+    Rich.StartValuesVector(b, n)
+    for i in reversed(range(n)):
+        b.PrependUint64(i * 3)
+    values = b.EndVector()
+    Rich.Start(b)
+    Rich.AddId(b, 18446744073709551615)
+    Rich.AddNeg(b, -9223372036854775808)
+    Rich.AddRatio(b, 0.1)
+    Rich.AddName(b, name)
+    Rich.AddValues(b, values)
+    Rich.AddColor(b, 2)
+    Rich.AddPoint(b, Point.CreatePoint(b, -7, 8))
+    Rich.AddShapeType(b, Shape.Shape.Circle)
+    Rich.AddShape(b, circle)
+    ctx.output("rich", b, Rich.End(b))
+    path = os.path.join(ctx.output_directory, "table.csv")
+    with open(path, "w") as f:
+        f.write("a,b\\n" * 1000)
+    b = ctx.builder()
+    p = b.CreateString(path)
+    Doc.Start(b); Doc.AddValue(b, p)
+    ctx.output("doc", b, Doc.End(b))
+'''
+
+CPP_CHECK = r'''
+#include <tsugumi/sdk/card.hpp>
+#include <fstream>
+#include <string>
+#include "_inputs_generated.h"
+#include "_outputs_generated.h"
+
+void run(tsugumi::sdk::Context& ctx) {
+  const auto* r = ctx.input<inputs::rich::a::Rich>("rich");
+  if (r->id() != 18446744073709551615ull) throw tsugumi::sdk::Failure("output_invalid", "id");
+  if (r->neg() != INT64_MIN) throw tsugumi::sdk::Failure("output_invalid", "neg");
+  if (!r->values() || r->values()->size() != 100000 || r->values()->Get(99999) != 299997)
+    throw tsugumi::sdk::Failure("output_invalid", "values");
+  if (r->color() != inputs::rich::a::Color::blue) throw tsugumi::sdk::Failure("output_invalid", "color");
+  if (!r->point() || r->point()->x() != -7 || r->point()->y() != 8) throw tsugumi::sdk::Failure("output_invalid", "point");
+  if (r->shape_type() != inputs::rich::a::Shape::Circle || r->shape_as_Circle()->r() != 1.5)
+    throw tsugumi::sdk::Failure("output_invalid", "shape");
+  if (r->name()->str() != "名前 ✓") throw tsugumi::sdk::Failure("output_invalid", "name");
+  const auto* doc = ctx.input<inputs::doc::a::Doc>("doc");
+  std::ifstream f(doc->value()->str());
+  std::string all((std::istreambuf_iterator<char>(f)), {});
+  if (all.size() != 4000) throw tsugumi::sdk::Failure("output_invalid", "file size " + std::to_string(all.size()));
+  // Same structure, another namespace: structurally compatible downstream.
+  flatbuffers::FlatBufferBuilder b;
+  std::vector<uint64_t> v(r->values()->begin(), r->values()->end());
+  auto vv = b.CreateVector(v);
+  auto nm = b.CreateString(r->name()->str());
+  auto circle = outputs::checked::b::CreateCircle(b, 1.5);
+  outputs::checked::b::Point pt(-7, 8);
+  outputs::checked::b::RichBuilder rb(b);
+  rb.add_id(r->id());
+  rb.add_neg(r->neg());
+  rb.add_ratio(r->ratio());
+  rb.add_name(nm);
+  rb.add_values(vv);
+  rb.add_color(outputs::checked::b::Color::blue);
+  rb.add_point(&pt);
+  rb.add_shape_type(outputs::checked::b::Shape::Circle);
+  rb.add_shape(circle.Union());
+  b.Finish(rb.Finish());
+  ctx.output("checked", b);
+}
+TSUGUMI_CARD(run)
+'''
+
+
+def test_values_cross_python_cpp_and_shell(env):
+    py_nix = "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"
+    cpp_nix = "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.cppCard { src = ./src; }; }\n"
+    a_out = RICH.format(ns="a") + "table Doc { value:string; }\ntable Outputs { rich:Rich (required); doc:Doc (required, tsugumi: \"file\"); }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
+    b_out = RICH.format(ns="b") + "table Outputs { checked:Rich (required); }\nroot_type Outputs;\n"
+    bad = '''
+def main(ctx):
+    ctx.output_bytes("rich", b"not a flatbuffer")
+'''
+    missing = '''
+def main(ctx):
+    pass
+'''
+    shell = bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && read -r -n 300 head < "$JSON_IN" && '
+                 'case "$(cat "$JSON_IN")" in *18446744073709551615*) ;; *) exit 9;; esac && '
+                 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])
+    defs = {"trigger": {"template": "trigger"},
+            "make": {"language": "python", "_outputs": a_out, "_nix": py_nix},
+            "check": {"language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
+            "shell": shell,
+            "bad": {"language": "python", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
+            "missing": {"language": "python", "_outputs": a_out, "_nix": py_nix},
+            "after": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
+    root = env.project
+    c = load(env, defs,
+             [card("begin", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell"),
+              card("bad", "bad"), card("missing", "missing"), card("after_bad", "after"), card("after_missing", "after")],
+             [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in"),
+              conn("bad", "rich", "after_bad", "in"), conn("missing", "rich", "after_missing", "in")])
+    put(root / "definitions" / "make" / "src" / "main.py", PY_MAKE)
+    put(root / "definitions" / "check" / "src" / "card.cpp", CPP_CHECK)
+    put(root / "definitions" / "bad" / "src" / "main.py", bad)
+    put(root / "definitions" / "missing" / "src" / "main.py", missing)
+    reload(c)
+    run_id, st = run(c, "begin", timeout=2400)
+    rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in
+           ("make", "check", "shell", "bad", "missing", "after_bad", "after_missing")}
+    detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
+    assert rec["make"].state == CardState.succeeded, (detail, log(c, run_id, "make", 2)[-800:])
+    assert rec["check"].state == CardState.succeeded, (detail, log(c, run_id, "check", 2)[-800:])
+    assert rec["shell"].state == CardState.succeeded, (detail, log(c, run_id, "shell", 2)[-800:])
+    # Invalid output never flows on; a missing required output fails the Card.
+    assert rec["bad"].state == CardState.failed and rec["bad"].failure.kind == 24, detail
+    assert rec["missing"].state == CardState.failed and "missing" in text(rec["missing"].failure.diagnostic), detail
+    assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
