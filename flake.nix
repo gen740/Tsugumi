@@ -27,6 +27,7 @@
           tsugumid = core;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           image = pkgs.callPackage ./macOS/Container/image.nix { tsugumid = core; };
+          kernel = pkgs.callPackage ./macOS/Container/kernel.nix { };
         });
 
       devShells = forAll (pkgs: {

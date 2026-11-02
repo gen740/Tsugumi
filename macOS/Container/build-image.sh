@@ -4,6 +4,7 @@
 #
 #   macOS/Container/build-image.sh            # build and load
 #   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
+#   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
 #
 # Pinned builder: docker.io/nixos/nix:2.31.2 (see versions.env). The builder's
 # Nix store lives in the volume tsugumi-builder-nix and is reused.
@@ -13,6 +14,12 @@ repo="$(cd "$here/../.." && pwd)"
 source "$here/versions.env"
 attr=image
 [ "${1:-}" = "--check" ] && attr=tsugumid
+[ "${1:-}" = "--kernel" ] && attr=kernel
+# The builder VM runs on Tsugumi's guest kernel when it exists (the stock
+# kernel's SELinux oops leaves builder VMs stuck on shutdown; kernel.nix).
+kernel_args=()
+kernel="${TSUGUMI_KERNEL:-$repo/dist/tsugumi-kernel}"
+[ -f "$kernel" ] && kernel_args=(--kernel "$kernel")
 
 stage="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-src.XXXXXX")"
 out="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-image.XXXXXX")"
@@ -26,7 +33,7 @@ container volume inspect "$volume" >/dev/null 2>&1 || container volume create -s
 # The builder runs detached and signals completion through /out, so the build
 # never depends on how quickly the VM is torn down afterwards.
 builder="tsugumi-image-builder-$(date +%s)"
-container run -d --rm --name "$builder" -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TSUGUMI_BUILDER_MEMORY:-16G}" \
+container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TSUGUMI_BUILDER_MEMORY:-16G}" \
   -v "$volume:/cache" -v "$stage:/src:ro" -v "$out:/out" \
   "$TSUGUMI_BUILDER_IMAGE" sh -uc '
     {
@@ -34,6 +41,9 @@ container run -d --rm --name "$builder" -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TS
       # Chroot store under /cache: persistent across builds, separate from the image store.
       nixf() { nix --extra-experimental-features "nix-command flakes" --store /cache "$@"; }
       img=$(nixf build --no-link --print-out-paths -L "git+file:///src#packages.aarch64-linux.'"$attr"'" 2>&1 | grep -v "^copying path" | tail -40 | tee /out/build.log | tail -1)
+      # A failed build prints no store path: stop here instead of copying nothing.
+      case "$img" in /nix/store/*) [ -e "/cache$img" ] ;; *) false ;; esac
+      if [ "'"$attr"'" = kernel ]; then cp /cache$img/vmlinux /out/tsugumi-kernel; fi
       if [ "'"$attr"'" = image ]; then
         cp /cache$img /out/tsugumi-env.tar.gz
         # OCI layout for `container image load`, converted by skopeo run in the store namespace.
@@ -45,6 +55,13 @@ container run -d --rm --name "$builder" -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TS
 while [ ! -e "$out/done" ] && [ ! -e "$out/failed" ]; do sleep 2; done
 cat "$out/build.log" 2>/dev/null | tail -5
 if [ -e "$out/failed" ]; then tail -40 "$out/log"; exit 1; fi
+if [ "$attr" = kernel ]; then
+  mkdir -p "$repo/dist"
+  cp "$out/tsugumi-kernel" "$repo/dist/tsugumi-kernel"
+  echo "kernel: $repo/dist/tsugumi-kernel ($(stat -f %z "$repo/dist/tsugumi-kernel") bytes)"
+  rm -rf "$out"
+  exit 0
+fi
 [ "$attr" = image ] || exit 0
 # `image load` keeps an existing tag; replace it explicitly. Running containers keep their image.
 container image rm "$TSUGUMI_IMAGE:$TSUGUMI_IMAGE_TAG" >/dev/null 2>&1 || true

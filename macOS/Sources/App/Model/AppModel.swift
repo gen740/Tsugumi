@@ -95,7 +95,8 @@ final class AppModel {
   init() {
     let bundle = Bundle.main
     let image = bundle.url(forResource: "tsugumi-env", withExtension: "tar")
-    environments = EnvironmentManager(bundledImage: image)
+    environments = EnvironmentManager(bundledImage: image,
+                                      bundledKernel: bundle.url(forResource: "tsugumi-kernel", withExtension: nil))
     demosRoot = bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos()
     loadDemos()
     loadRecents()

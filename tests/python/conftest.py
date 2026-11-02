@@ -142,7 +142,10 @@ class ContainerEnv:
         ready = self.control / "server.ready"
         if ready.exists():
             ready.unlink()
-        self._container("run", "-d", "--name", self.name, "-c", "2", "-m", "4G",
+        # The environment's guest kernel (macOS/Container/kernel.nix) when built.
+        kernel = os.environ.get("TSUGUMI_KERNEL", str(ROOT / "dist" / "tsugumi-kernel"))
+        kernel_args = ["--kernel", kernel] if os.path.exists(kernel) else []
+        self._container("run", "-d", "--name", self.name, *kernel_args, "-c", "2", "-m", "4G",
                         "-v", f"{self.project}:/project", "-v", f"{self.control}:/control",
                         "-v", f"{self.volume}:/persist", "-p", f"127.0.0.1:{self.port}:7700",
                         "-e", "TSUGUMI_CPUS=2", self.image)

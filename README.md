@@ -190,8 +190,7 @@ open dist/Tsugumi.app
 
 ## 既知の問題
 
-- 開発中、Apple container 0.6.0 で一部の VM が `stop`/`rm` に応答しなくなる状態が発生しました（`container ls` では running のまま、`container system stop` でも残る）。原因の一つは、tsugumid 自身が PID 1 だったため sandbox helper（bubblewrap の中間プロセス）の zombie が回収されず VM の終了処理が進まなかったことと考えられ、イメージでは tini を PID 1 にしました。すでに固まった VM は CLI からは止められないため、macOS の再起動などで container の実行状態を初期化してください。固まった VM がキャッシュ volume を掴んでいる間は、`TSUGUMI_BUILDER_VOLUME` で別の volume を指定するとイメージをビルドできます。
-- 同じ VM の不具合で、**イメージをビルドするたびにビルダー VM が終了処理で固まり、その Nix キャッシュ volume を掴んだままになります**（今回の作業で `tsugumi-image-builder-*` が複数残っています）。ビルドごとに `TSUGUMI_BUILDER_VOLUME` に新しい volume を指定して回避しました（キャッシュがないため 1 回 15〜20 分）。macOS を再起動すると解放されます。
+- **VM が終了できず残る問題（原因と対策）**: Apple container 0.6.0 の推奨カーネル（6.12.28）では、マウント名前空間が片付けられるとき（Nix のビルド sandbox・bubblewrap・コンテナの終了）に SELinux の inode 解放処理 `selinux_inode_free_security` が NULL を参照して kernel oops になり、そのプロセスが終わらず VM が終了処理に進めませんでした（`container logs --boot` に `Internal error: Oops` が出ます）。このため `stop`/`rm` が固まり、`tsugumi-image-builder-*` やテスト環境が残っていました。Tsugumi は SELinux を使わない（Card の隔離は bubblewrap の名前空間）ので、同じ設定から SELinux だけを外した専用カーネル（`macOS/Container/kernel.nix`、`macOS/Container/build-image.sh --kernel` で `dist/tsugumi-kernel`）を作り、アプリ・テスト・イメージのビルダーが自分の container にだけ `--kernel` で渡します（システムの既定カーネルは変えません）。この変更後、container テスト 20 件と、起動→Collatz 実行→停止→削除の 8 回の繰り返し（`tests/python/stress_shutdown.py`）で oops 0 件・残存 0 でした。変更前に固まった VM は CLI からは止められないことがあるため、macOS の再起動で解放してください。
 - CacheClear の Nix GC が環境自身の実行時パスまで回収し、次の起動で entrypoint が壊れる問題がありました。イメージの実行時 closure を GC root にし、起動時に上層の whiteout を取り除くよう修正済みです（既存の volume も自動で回復します）。
 - UI の確認は `TSUGUMI_UI_SCRIPT` による実ウインドウ操作とウインドウ単位のスクリーンショットです。この環境ではアクセシビリティ権限がなく、**マウスでのクリック・ドラッグ（Canvas/プレビューのドラッグ、ポートの接続）は自動確認していません**。
 - 環境はプロジェクトごとに独立した Nix store（ディスクイメージ）を持つため、ツールチェーン（約 0.8 GB）はプロジェクトごとに取得されます（隔離を優先した設計）。以前の版が作った named volume（`tsugumi-<id>-store`）は、その環境のデータ削除または「すべての実行環境を初期化」で削除されます。

@@ -35,14 +35,19 @@ public actor EnvironmentManager {
   public nonisolated let cli: ContainerCLI
   public nonisolated let support: URL
   private let bundledImage: URL?
+  /// Guest kernel for Tsugumi's VMs (kernel.nix: the recommended kernel
+  /// without SELinux, whose oops leaves VMs unable to stop). Passed with
+  /// `--kernel` to Tsugumi's containers only; nil uses the system default.
+  private let bundledKernel: URL?
   private var observers: [String: [UUID: (EnvironmentState) -> Void]] = [:]
   private var states: [String: EnvironmentState] = [:]
 
-  public init(cli: ContainerCLI = ContainerCLI(), support: URL? = nil, bundledImage: URL? = nil) {
+  public init(cli: ContainerCLI = ContainerCLI(), support: URL? = nil, bundledImage: URL? = nil, bundledKernel: URL? = nil) {
     self.cli = cli
     self.support = support ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Tsugumi", isDirectory: true)
     self.bundledImage = bundledImage
+    self.bundledKernel = bundledKernel.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
   }
 
   // MARK: - Paths and names
@@ -131,7 +136,7 @@ public actor EnvironmentManager {
     let port = try freePort()
     set(p, .starting(EnvironmentStage.startingDaemon.rawValue))
     let run = try await cli.run([
-      "run", "-d", "--name", name,
+      "run", "-d", "--name", name] + (bundledKernel.map { ["--kernel", $0.path] } ?? []) + [
       "-c", String(limits.cpus), "-m", "\(limits.memoryGiB)G",
       "-v", "\(p.url.path):/project",
       "-v", "\(control.path):/control",

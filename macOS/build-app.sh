@@ -30,6 +30,10 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
 cp "$image" "$app/Contents/Resources/tsugumi-env.tar"
+# Guest kernel without SELinux (macOS/Container/kernel.nix); built when missing.
+kernel="$dist/tsugumi-kernel"
+[ -f "$kernel" ] || "$repo/macOS/Container/build-image.sh" --kernel
+cp "$kernel" "$app/Contents/Resources/tsugumi-kernel"
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
