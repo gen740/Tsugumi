@@ -13,7 +13,7 @@
 .cv-crumb .link { font-size: 12px; max-width: 140px; }
 .cv-run { gap: 8px; padding: 4px 8px !important; }
 .cv-run-button { min-width: 72px; justify-content: center; }
-.cv-run-state { display: inline-flex; align-items: center; gap: 4px; width: 104px; overflow: hidden; }
+.cv-run-state { display: inline-flex; align-items: center; gap: 4px; width: 172px; overflow: hidden; white-space: nowrap; }
 .cv-drafts { gap: 8px; }
 .cv-actions { gap: 4px; padding: 4px 8px !important; }
 .cv-view-controls { gap: 2px; padding: 3px 8px; }

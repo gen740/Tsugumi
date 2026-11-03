@@ -124,18 +124,10 @@ struct CanvasWorkspace: View {
       Divider().frame(height: 16)
       Button { NotificationCenter.default.post(name: .canvasFitAll, object: tab.id) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
         .help(tip("全体表示", .fitAll))
+      // Notes, groups and folding are in the canvas's context menu and the
+      // menu bar, where they are named; small icons for them read as nothing.
       Button { session.arrange(tab.scope) } label: { Image(systemName: "rectangle.grid.2x2") }
         .help("整列（配置だけを変更）")
-      Button { NotificationCenter.default.post(name: .canvasAddNote, object: tab.id) } label: { Image(systemName: "note.text.badge.plus") }
-        .help("付箋を追加")
-      Button { _ = session.addGroup(tab.selection, in: tab.scope) } label: { Image(systemName: "rectangle.3.group") }
-        .disabled(tab.selection.isEmpty)
-        .help("選択した Card をグループ化")
-      Button { session.setCollapsed(Set(tab.selection), !(tab.selection.allSatisfy { session.collapsed($0) })) } label: {
-        Image(systemName: "rectangle.compress.vertical")
-      }
-      .disabled(tab.selection.isEmpty)
-      .help("選択した Card を折りたたむ／展開（実行には影響しません）")
       Divider().frame(height: 16)
       Toggle(isOn: Binding(get: { prefs.showGrid }, set: { prefs.showGrid = $0 })) { Image(systemName: "grid") }
         .toggleStyle(.button)
@@ -187,16 +179,17 @@ struct CanvasRunControl: View {
       .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
       .help(shownActive ? tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop)
                         : tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
-      // State and time in a fixed width (what runs now is in the tooltip).
+      // State and time on one line in a fixed width (what runs now is in the
+      // tooltip); the clock ticks in hundredths while the run is active.
       HStack(spacing: 4) {
         Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
           .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
         Text(shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label).lineLimit(1)
-        SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-          Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
+        SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
+          Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
         }
       }
-      .frame(width: 104, alignment: .leading)
+      .frame(width: 172, alignment: .leading)
       .help(shownActive ? (activity ?? state.label) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
                         : String(localized: "Run の状態と経過時間"))
       .accessibilityElement(children: .combine)

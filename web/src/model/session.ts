@@ -2786,10 +2786,11 @@ export function formatMillis(ms: bigint | number | null | undefined): string {
   return new Date(Number(ms)).toLocaleString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+/** One form everywhere (run, stages, timeline, history): hh:mm:ss.xx. */
 export function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)} 秒`
-  const m = Math.floor(seconds / 60), sec = Math.floor(seconds) % 60
-  return m < 60 ? `${m} 分 ${sec} 秒` : `${Math.floor(m / 60)} 時間 ${m % 60} 分`
+  const cs = Math.floor(Math.max(0, seconds) * 100)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(Math.floor(cs / 360_000))}:${two(Math.floor(cs / 6000) % 60)}:${two(Math.floor(cs / 100) % 60)}.${two(cs % 100)}`
 }
 
 export function formatBytes(n: number | bigint | null | undefined): string {

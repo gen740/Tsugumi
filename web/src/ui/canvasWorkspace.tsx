@@ -109,7 +109,8 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
   }, [session.runActive])
   useEffect(() => {
     if (!shownActive) return
-    const t = setInterval(() => tick((x) => x + 1), 500)
+    // The clock ticks in hundredths while the run is shown active.
+    const t = setInterval(() => tick((x) => x + 1), 30)
     return () => clearInterval(t)
   }, [shownActive])
 
@@ -146,7 +147,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
         onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>
         {shownActive ? '停止' : '実行'}
       </Button>
-      {/* State and time in a fixed width (what runs now is in the tooltip). */}
+      {/* State and time on one line in a fixed width (what runs now is in the tooltip). */}
       <span className="cv-run-state"
         title={shownActive ? (activity ?? runState(st).label) + '（経過時間は Run の受付から、実行環境の時計で計ります）' : 'Run の状態と経過時間'}>
         <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
@@ -201,7 +202,6 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
   const cv = canvasFor(session, tab)
   useObserve(cv, prefs, tab)
   const zoom = cv.camera.zoom
-  const sel = tab.selection
   return (
     <div className="capsule material cv-view-controls">
       <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={tip('縮小', 'zoomOut')} onClick={() => cv.zoomFromControls(zoom / 1.2)} />
@@ -211,12 +211,8 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
       <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={tip('拡大', 'zoomIn')} onClick={() => cv.zoomFromControls(zoom * 1.2)} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={tip('全体表示', 'fitAll')} onClick={() => cv.fitAll()} />
+      {/* Notes, groups and folding are in the canvas's context menu and the menu, where they are named. */}
       <Button kind="borderless" small iconOnly icon="rectangle.grid.2x2" help="整列（配置だけを変更）" onClick={() => session.arrange(tab.scope)} />
-      <Button kind="borderless" small iconOnly icon="note.text.badge.plus" help="付箋を追加" onClick={() => cv.addNote()} />
-      <Button kind="borderless" small iconOnly icon="rectangle.3.group" disabled={!sel.size} help="選択した Card をグループ化"
-        onClick={() => session.addGroup(sel, tab.scope)} />
-      <Button kind="borderless" small iconOnly icon="rectangle.compress.vertical" disabled={!sel.size} help="選択した Card を折りたたむ／展開（実行には影響しません）"
-        onClick={() => cv.toggleCollapse()} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help="グリッド" onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
     </div>

@@ -369,8 +369,6 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         </Popover>
         <span className="vdivider sb-full" />
         <span className="row center gap8 sb-full nowrap">
-          <span title="この階層の Card">Card {session.cards(tab.scope).length}</span>
-          <span title="この階層の接続">接続 {session.connections(tab.scope).length}</span>
           <StatusButton buttonRef={issueRef} help="問題一覧" onClick={() => setShowIssues(!showIssues)}>
             <span className="label" style={{ color: errors ? 'var(--red)' : 'var(--secondary)' }}><Icon name="xmark.octagon" />{errors}</span>
             <span className="label" style={{ color: warnings ? 'var(--yellow)' : 'var(--secondary)' }}><Icon name="exclamationmark.triangle" />{warnings}</span>

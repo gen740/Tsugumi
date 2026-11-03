@@ -427,7 +427,7 @@ func formatMillis(_ ms: Int64?) -> String {
 }
 
 func formatDuration(_ seconds: Double) -> String {
-  if seconds < 60 { return String(format: "%.1f 秒", seconds) }
-  let m = Int(seconds) / 60, s = Int(seconds) % 60
-  return m < 60 ? "\(m) 分 \(s) 秒" : "\(m / 60) 時間 \(m % 60) 分"
+  // One form everywhere (run, stages, timeline, history): hh:mm:ss.xx.
+  let cs = Int((max(0, seconds) * 100).rounded(.down))
+  return String(format: "%02d:%02d:%02d.%02d", cs / 360_000, cs / 6000 % 60, cs / 100 % 60, cs % 100)
 }

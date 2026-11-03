@@ -1064,11 +1064,19 @@ struct WireLayer: View {
   var animate = false
   var zoom: Double = 1
 
+  /// The active wires' dashes, and how fast they flow (points per second).
+  static let dash: [CGFloat] = [8, 6]
+  static let flow: Double = 30
+
   var body: some View {
     let anyActive = animate && wires.contains { $0.style == .active }
-    SwiftUI.TimelineView(.animation(minimumInterval: 1 / 30, paused: !anyActive)) { t in
+    // At the display's frame rate, the phase wrapping at exactly one dash
+    // period, so the dashes flow without a jump.
+    SwiftUI.TimelineView(.animation(paused: !anyActive)) { t in
       Canvas { ctx, _ in
-        let phase = anyActive ? -CGFloat(t.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 20) : 0
+        let period = Self.dash.reduce(0, +)
+        let phase = anyActive
+          ? -CGFloat((t.date.timeIntervalSinceReferenceDate * Self.flow).truncatingRemainder(dividingBy: Double(period))) : 0
         let w = max(1, 1.6 * min(1.4, zoom))
         for wire in wires {
           let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
@@ -1079,7 +1087,7 @@ struct WireLayer: View {
             ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: w + 0.4, lineCap: .round, lineJoin: .round))
           case .active:
             ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: w + 0.6, lineCap: .round, lineJoin: .round,
-                                                                             dash: anyActive ? [8, 6] : [], dashPhase: phase))
+                                                                             dash: anyActive ? Self.dash : [], dashPhase: phase))
           case .selected:
             ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: w + 1.4, lineCap: .round, lineJoin: .round))
           case .display:

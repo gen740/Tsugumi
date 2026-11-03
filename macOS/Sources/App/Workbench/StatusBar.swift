@@ -3,7 +3,7 @@ import SwiftUI
 import TsugumiRPC
 
 /// Floating bar at the canvas's bottom right: run state and save/sync state
-/// shown separately, counts, and the toggles of the log/timeline panels.
+/// shown separately, the problems, and the toggles of the log/timeline panels.
 struct StatusBar: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -143,13 +143,9 @@ struct StatusBar: View {
   }
 
   private var counts: some View {
-    let cards = session.cards(in: tab.scope).count
-    let conns = session.connections(in: tab.scope).count
     let errors = session.diagnostics.filter(\.error).count
     let warnings = session.diagnostics.count - errors
     return HStack(spacing: 10) {
-      Text("Card \(cards)").help("この階層の Card")
-      Text("接続 \(conns)").help("この階層の接続")
       Button { showIssues.toggle() } label: {
         HStack(spacing: 6) {
           HStack(spacing: 2) { Image(systemName: "xmark.octagon"); Text("\(errors)") }
