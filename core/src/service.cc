@@ -1008,6 +1008,7 @@ void Service::history_delete(RequestIn& req) {
     auto ids = history_->delete_runs(runs_copy(), r->ended_before());
     // The runs' own files: outputs, copied work folders.
     for (const auto& id : ids) {
+      if (!crypto::is_uuid(id)) continue;  // a run id from a copy names no folder of ours
       auto dir = store_->state_dir() / "runs" / id;
       std::error_code ec;
       if (!stdfs::is_directory(dir, ec)) continue;

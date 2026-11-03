@@ -80,6 +80,10 @@ Db::Db(const std::string& path, bool readonly) {
     throw Error("open " + path + ": " + msg);
   }
   sqlite3_busy_timeout(db_, 10000);
+  // A database may come from a copied project: no schema-defined code runs
+  // and its schema cannot be written around SQLite.
+  sqlite3_db_config(db_, SQLITE_DBCONFIG_DEFENSIVE, 1, nullptr);
+  sqlite3_db_config(db_, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, nullptr);
 }
 
 Db::~Db() {

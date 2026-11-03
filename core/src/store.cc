@@ -10,6 +10,7 @@
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
+#include "util/log.hh"
 #include "util/text.hh"
 
 namespace tsugumi {
@@ -27,6 +28,13 @@ bool utf8_boundary(const std::string& s, uint64_t off) {
 }
 
 std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
+
+// What a save may write: the documents and the source areas, never
+// .tsugumi/ or a path leaving the project.
+bool writable(const stdfs::path& root, const std::string& rel) {
+  return fs::valid_relative_path(rel) && (Document::is_document_file(rel) || Document::is_source_area(rel)) &&
+         fs::resolves_inside(root, root / rel);
+}
 
 std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, const std::string& op,
                             const std::string& kind, const std::string& digest, const std::string& receipt,
@@ -187,6 +195,15 @@ void Store::recover_journal() {
   }
   for (auto& tx : txns) {
     const auto& rec = tx.rec;
+    // The journal is a file in the project: a record that writes outside
+    // what a save may write was not made here, and is not applied.
+    bool foreign = false;
+    for (const auto& f : *rec.files) foreign |= !writable(opts_.root, *f.path);
+    if (foreign) {
+      log::warn("journal: a record of revision " + std::to_string(*rec.rev) +
+                " writes outside the project's documents and sources; ignored");
+      continue;
+    }
     if (!tx.committed) {
       // Redo: the txn record holds every file's final content.
       std::vector<FileOp> ops;
@@ -243,6 +260,8 @@ void Store::append_record(const std::string& payload) {
 void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
   bool first = true;
   for (const auto& op : ops) {
+    if (!writable(opts_.root, op.path))
+      throw Failed(FailureKind::invalid_path, op.path + " is not a document or source path", {{"path", op.path}});
     auto target = opts_.root / op.path;
     if (op.content) {
       fs::write_atomic(target, *op.content);

@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "util/crypto.hh"
+#include "util/fs.hh"
 #include "schema.hh"
 #include "util/log.hh"
 #include "wire.hh"
@@ -751,7 +752,9 @@ ArtifactData artifact_row(const sql::Stmt& st) {
   a.name = st.text(6);
   schema::MemberList list;
   if (!schema::decode(st.text(7), list))
-    for (const auto& m : *list.items) a.members.push_back({*m.path, *m.size, *m.hash});
+    for (const auto& m : *list.items)
+      // A copied history may be another's: a member is a path inside its artifact.
+      if (fs::valid_relative_path(*m.path)) a.members.push_back({*m.path, *m.size, *m.hash});
   return a;
 }
 }  // namespace
@@ -1054,10 +1057,20 @@ class Txn {
 };
 
 // Copies the finished runs `from` has and `to` lacks; inside a transaction.
+// A run or artifact id names a folder: only UUIDs are taken from a copy.
+const std::string kUuidGlob = [] {
+  std::string h = "[0-9a-fA-F]", g;
+  for (int n : {8, 4, 4, 4, 12}) {
+    if (!g.empty()) g += "-";
+    for (int i = 0; i < n; ++i) g += h;
+  }
+  return "'" + g + "'";
+}();
+
 size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   db.exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
   db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from + ".runs WHERE state IN (" + finished_states() +
-          ") AND run_id NOT IN (SELECT run_id FROM " + to + ".runs) ORDER BY seq");
+          ") AND run_id GLOB " + kUuidGlob + " AND run_id NOT IN (SELECT run_id FROM " + to + ".runs) ORDER BY seq");
   size_t n = static_cast<size_t>(db.changes());
   if (n == 0) return 0;
   for (const auto& c : kCopied)
@@ -1066,6 +1079,8 @@ size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   db.exec("INSERT OR IGNORE INTO " + to + ".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM " + from +
           ".schemas WHERE hash IN (SELECT schema_hash FROM " + from +
           ".ivalues WHERE run_id IN (SELECT run_id FROM temp.moving))");
+  db.exec("DELETE FROM " + to + ".artifacts WHERE run_id IN (SELECT run_id FROM temp.moving) AND NOT artifact_id GLOB " +
+          kUuidGlob);
   return n;
 }
 

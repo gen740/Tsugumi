@@ -497,7 +497,9 @@ void Service::artifact_read(RequestIn& req) {
   const auto* r = req.request()->value_as_ArtifactReadRequest();
   require_uuid(r->artifact_id(), "artifact_id");
   auto a = history_->read([&](sql::Db& db) { return History::artifact(db, r->artifact_id()->str()); });
-  if (!a) throw Failed(FailureKind::not_found, "unknown artifact");
+  // Rows may come from a copied history: they name folders only as UUIDs.
+  if (!a || !crypto::is_uuid(a->run_id) || !crypto::is_uuid(a->artifact_id) || a->members.empty())
+    throw Failed(FailureKind::not_found, "unknown artifact");
   const ArtifactMemberData* member = nullptr;
   if (a->kind == PortKind::File) {
     if (r->member()) throw Failed(FailureKind::invalid_request, "File artifacts have no members");
