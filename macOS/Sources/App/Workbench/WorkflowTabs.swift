@@ -8,6 +8,7 @@ import TsugumiRPC
 struct WorkflowTabs: View {
   @Environment(AppModel.self) private var model
   @Bindable var workspace: Workspace
+  @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
 
@@ -20,6 +21,10 @@ struct WorkflowTabs: View {
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
       }
     } detail: {
+      if EnvironmentOverlay.hasProblem(session) {
+        // Nothing of the canvas stays behind the problem: it replaces the content.
+        EnvironmentProblemView(session: session, onSwitchProject: onSwitchProject)
+      } else {
       VStack(spacing: 0) {
         if workspace.tabs.count > 1 { tabBar }
         if let tab = workspace.active {
@@ -31,11 +36,15 @@ struct WorkflowTabs: View {
         }
       }
       .inspector(isPresented: $workspace.showChat) {
+        // Wider by default; the width the user gives it is kept (per Mac).
         ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
-          .inspectorColumnWidth(min: 280, ideal: 360, max: 560)
+          .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+            if w >= 320 { chatWidth = Double(w.rounded()) }
+          }
+          .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
+      }
       }
     }
-    .overlay { EnvironmentOverlay(session: session) }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
@@ -103,11 +112,11 @@ struct Workbench: View {
   }
 }
 
-/// Covers the workbench when the environment is stopped or failed, with the
-/// reason and a retry. Starting and connecting are shown by the loading card
-/// (`loading(_:)`). Unsaved edits stay in the draft.
-struct EnvironmentOverlay: View {
-  let session: ProjectSession
+/// What the window shows instead of the workbench while the environment is
+/// not usable: the loading card while it starts and connects (`loading(_:)`),
+/// the problem page when it stopped or failed (`hasProblem(_:)`).
+@MainActor
+enum EnvironmentOverlay {
 
   /// What the loading card says while the environment starts or the project
   /// opens; nil once connected or when there is a problem to show instead.
@@ -154,59 +163,149 @@ struct EnvironmentOverlay: View {
     return Double(i) / Double(EnvironmentStage.allCases.count)
   }
 
-  var body: some View {
-    if !session.connected, let problem {
-      ZStack {
-        Rectangle().fill(.ultraThinMaterial)
-        VStack(spacing: 12) {
-          problem
-          if session.dirty {
-            Label("未保存の変更があります（保持しています）", systemImage: "pencil.circle").font(.callout).foregroundStyle(.orange)
-          }
-        }
-        .padding(28)
-        .frame(maxWidth: 620)
+  /// Whether the environment or the project cannot be used now (a problem
+  /// is shown instead of the canvas).
+  static func hasProblem(_ s: ProjectSession) -> Bool {
+    guard !s.connected else { return false }
+    switch s.environment {
+    case .failed, .stopped: return true
+    case .ready: return s.connectionMessage != nil
+    case .reconnecting, .preparing, .starting: return false
+    }
+  }
+}
+
+/// The page shown when the environment did not start (or stopped, or the
+/// project could not be read): what happened, what to do, the actions, and
+/// the log for the details. It replaces the canvas, on the window background.
+struct EnvironmentProblemView: View {
+  let session: ProjectSession
+  var onSwitchProject: (() -> Void)?
+  @State private var showLog = false
+  @State private var copied = false
+
+  private struct Problem {
+    var symbol: String
+    var color: Color
+    var title: String
+    var message: String
+    var recovery: String?
+    var log: String
+    var canStop = true
+    /// The line of the log that says why (tsugumid's last error).
+    var cause: String?
+  }
+
+  /// The last error line of tsugumid's log, without its time and level.
+  static func cause(in log: String) -> String? {
+    guard let line = log.split(separator: "\n").last(where: { $0.contains(" error ") }) else { return nil }
+    if let r = line.range(of: " error ") { return String(line[r.upperBound...]).trimmingCharacters(in: .whitespaces) }
+    return String(line)
+  }
+
+  private var problem: Problem {
+    switch session.environment {
+    case .failed(let m, let recovery, let log):
+      var p = Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
+                      message: m, recovery: recovery.isEmpty ? nil : recovery, log: log)
+      p.cause = Self.cause(in: log)
+      if let c = p.cause, c.contains("cannot open the project") {
+        p.recovery = String(localized: "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。")
       }
-      .transition(.opacity)
+      return p
+    case .stopped:
+      return Problem(symbol: "pause.circle.fill", color: .secondary, title: String(localized: "実行環境は停止しています"),
+                     message: String(localized: "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。"),
+                     recovery: nil, log: "", canStop: false)
+    default:
+      return Problem(symbol: "exclamationmark.triangle.fill", color: .orange, title: String(localized: "プロジェクトを読み込めませんでした"),
+                     message: session.connectionMessage ?? "",
+                     recovery: String(localized: "tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。"), log: "")
     }
   }
 
-  private var problem: AnyView? {
-    switch session.environment {
-    case .failed(let m, let recovery, let log):
-      return AnyView(VStack(spacing: 12) {
-        Image(systemName: "xmark.octagon.fill").font(.largeTitle).foregroundStyle(.red)
-        Text("実行環境を起動できませんでした").font(.title2.bold())
-        Text(m).multilineTextAlignment(.center)
-        Text(recovery).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        if !log.isEmpty {
-          ScrollView { Text(log.suffix(4000)).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-            .frame(maxWidth: 560, maxHeight: 160)
-            .padding(6).background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+  var body: some View {
+    let p = problem
+    ScrollView {
+      VStack(alignment: .leading, spacing: 18) {
+        HStack(alignment: .center, spacing: 14) {
+          Image(systemName: p.symbol).font(.system(size: 34)).foregroundStyle(p.color)
+          VStack(alignment: .leading, spacing: 3) {
+            Text(p.title).font(.title2.bold())
+            Text(session.scopeName([]) + " · " + session.identity.url.path)
+              .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+          }
         }
-        HStack {
-          Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
-          Button("環境を停止") { session.stopEnvironment() }
+        if !p.message.isEmpty {
+          section("何が起きたか") {
+            VStack(alignment: .leading, spacing: 8) {
+              Text(p.message).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+              if let c = p.cause {
+                VStack(alignment: .leading, spacing: 3) {
+                  Text("原因（ログより）").font(.caption).foregroundStyle(.secondary)
+                  Text(c).font(.callout.monospaced()).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+              }
+            }
+          }
+        }
+        if let r = p.recovery {
+          section("どうすればよいか") {
+            Text(r).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        if session.dirty {
+          Label("保存できていない変更は保持しています（起動すると保存します）", systemImage: "pencil.circle")
+            .font(.callout).foregroundStyle(.orange)
+        }
+        HStack(spacing: 10) {
+          Button(p.canStop ? "再試行" : "起動") { session.start() }
+            .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+          if p.canStop { Button("環境を停止") { session.stopEnvironment() } }
           OpenConsoleButton()
+          Spacer()
+          if let onSwitchProject { Button("別のプロジェクトを開く…", action: onSwitchProject) }
         }
-      })
-    case .stopped:
-      return AnyView(VStack(spacing: 12) {
-        Image(systemName: "pause.circle").font(.largeTitle).foregroundStyle(.secondary)
-        Text("実行環境は停止しています").font(.title2.bold())
-        Button("起動") { session.start() }.buttonStyle(.borderedProminent)
-      })
-    case .ready:
-      guard let m = session.connectionMessage else { return nil }
-      return AnyView(VStack(spacing: 12) {
-        Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(.orange)
-        Text("プロジェクトを読み込めませんでした").font(.title2.bold())
-        Text(m).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).textSelection(.enabled)
-        Button("再試行") { session.start() }.buttonStyle(.borderedProminent)
-      })
-    case .reconnecting, .preparing, .starting:
-      return nil
+        if !p.log.isEmpty {
+          DisclosureGroup(isExpanded: $showLog) {
+            VStack(alignment: .trailing, spacing: 6) {
+              ScrollView {
+                Text(String(p.log.suffix(20000))).font(.caption.monospaced()).textSelection(.enabled)
+                  .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+              }
+              .frame(height: 220)
+              .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+              .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.secondary.opacity(0.3)))
+              Button(copied ? "コピーしました" : "ログをコピー") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(p.log, forType: .string)
+                copied = true
+              }
+              .font(.caption)
+            }
+            .padding(.top, 6)
+          } label: {
+            Text("詳しいログ").font(.callout.weight(.semibold))
+          }
+        }
+      }
+      .padding(32)
+      .frame(maxWidth: 680, alignment: .leading)
+      .frame(maxWidth: .infinity)
     }
+    .background(Color(nsColor: .windowBackgroundColor))
+    .ignoresSafeArea(.container, edges: .top)
+    .safeAreaPadding(.top, 30)
+  }
+
+  private func section(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> some View) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+      content()
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
   }
 }
 

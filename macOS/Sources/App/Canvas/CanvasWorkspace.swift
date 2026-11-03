@@ -14,8 +14,14 @@ struct CanvasWorkspace: View {
   var onSwitchProject: (() -> Void)? = nil
 
   var body: some View {
-    ZStack {
+    ZStack(alignment: .top) {
       GraphCanvas(workspace: workspace, session: session, tab: tab)
+        .ignoresSafeArea(.container, edges: .top)
+      // The band along the top of the window moves the window (as a title
+      // bar does; a double click zooms it). The canvas starts below it, so
+      // the two never compete for a drag.
+      WindowDragBand()
+        .frame(height: 34)
         .ignoresSafeArea(.container, edges: .top)
     }
     .overlay(alignment: .top) {
@@ -44,9 +50,11 @@ struct CanvasWorkspace: View {
           .accessibilityLabel("開く")
       }
       Button { workspace.showChat.toggle() } label: {
-        Label("チャット", systemImage: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
+        Image(systemName: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
       }
-      .help("チャットの表示切替")
+      .help(workspace.showChat ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
+                               : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
+      .accessibilityLabel("チャット")
     }
     .buttonStyle(.borderless)
     .font(.callout)
@@ -149,7 +157,7 @@ struct CanvasRunControl: View {
   var body: some View {
     let state = session.runStatus?.state ?? .idle
     let problems = session.diagnostics.filter(\.error).count + session.cardStates.values.filter { $0.state == .failed }.count
-    HStack(spacing: 10) {
+    HStack(spacing: 8) {
       // One button of a fixed size: its title and color change, nothing moves.
       Button {
         if session.runActive { Task { await session.cancelRun() } } else { RunActions.runAll(session, scope: tab.scope) }
@@ -162,37 +170,42 @@ struct CanvasRunControl: View {
       .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
       .help(shownActive ? tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop)
                         : tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
+      // State and time in a fixed width (what runs now is in the tooltip).
       HStack(spacing: 4) {
         Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
           .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
-        Text(shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
-        if shownActive, let now = activity { Text("· " + now).foregroundStyle(.secondary).lineLimit(1) }
+        Text(shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label).lineLimit(1)
+        SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+          Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
+        }
       }
-      .frame(width: 210, alignment: .leading)
+      .frame(width: 104, alignment: .leading)
+      .help(shownActive ? (activity ?? state.label) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
+                        : String(localized: "Run の状態と経過時間"))
       .accessibilityElement(children: .combine)
-      SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-        Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
-          .help("Run の受付から（準備を含む）の経過時間。実行環境の時計で計ります。")
-      }
-      .frame(width: 52, alignment: .trailing)
       Button { showIssues.toggle() } label: {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
           Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")
-          Text("問題 \(problems) 件")
+          Text("\(problems)").monospacedDigit()
         }
         .foregroundStyle(problems > 0 ? .orange : .secondary)
       }
       .buttonStyle(.borderless)
-      .help("問題一覧（対象の Card やログへ移動できます）")
+      .help(String(localized: "問題 \(problems) 件（一覧から対象の Card やログへ移動できます）"))
       .popover(isPresented: $showIssues) {
         IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
       }
-      Image(systemName: "lock.fill").foregroundStyle(.secondary)
-        .opacity(shownActive ? 1 : 0)
-        .help(shownActive ? "実行中は Card を変更できません" : "")
+      Divider().frame(height: 14)
+      Menu {
+        BuiltinCardItems { t in NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id, userInfo: ["template": t.rawValue]) }
+      } label: { Image(systemName: "plus") }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .disabled(!session.isEditable)
+        .help("組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）")
+        .accessibilityLabel("Card を追加")
     }
     .font(.callout)
-    .padding(.horizontal, 10).padding(.vertical, 6)
+    .padding(.horizontal, 8).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
     .onChange(of: session.runActive, initial: true) { _, active in
       if active {
@@ -259,4 +272,24 @@ struct CanvasDraftControls: View {
 /// A tooltip that names the shortcut of its action.
 @MainActor func tip(_ text: String, _ action: ShortcutAction) -> String {
   "\(text)（\(AppPreferences.shared.shortcut(action).label)）"
+}
+
+/// Moves the window when dragged and zooms it on a double click, like a
+/// title bar (the canvas reaches the top of the window under it).
+struct WindowDragBand: View {
+  var body: some View {
+    Color.clear
+      .contentShape(Rectangle())
+      .gesture(WindowDragGesture())
+      .onTapGesture(count: 2) {
+        guard let w = NSApp.keyWindow else { return }
+        // The system setting for a title bar double click.
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": w.miniaturize(nil)
+        case "None": break
+        default: w.zoom(nil)
+        }
+      }
+      .accessibilityHidden(true)
+  }
 }

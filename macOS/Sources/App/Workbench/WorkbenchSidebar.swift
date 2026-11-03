@@ -6,6 +6,7 @@ import TsugumiRPC
 /// of its own) and the Cards shown in the current scope.
 struct WorkbenchSidebar: View {
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
@@ -39,14 +40,14 @@ struct WorkbenchSidebar: View {
       }
       .listStyle(.sidebar)
       .safeAreaInset(edge: .bottom, spacing: 0) {
-        // Workflow settings (this project), apart from the app settings (⌘,).
+        // The settings window (⌘,) at this project's settings.
         HStack {
           Button {
-            openWindow(id: "workflow-settings", value: ProjectRef(path: session.identity.url.path))
+            ProjectSettingsPane.open(session, with: openSettings)
           } label: { Image(systemName: "gearshape").font(.system(size: 13)).frame(width: 26, height: 22) }
             .buttonStyle(.borderless)
-            .help("Workflow 設定")
-            .accessibilityLabel("Workflow 設定")
+            .help("このプロジェクトの設定（設定ウインドウの「このプロジェクト」）")
+            .accessibilityLabel("プロジェクトの設定")
           Spacer()
         }
         .padding(.horizontal, 8).padding(.vertical, 5)

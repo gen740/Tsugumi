@@ -514,6 +514,10 @@ private struct GeneralCategory: View {
           }
           numberField("maxRuns", label: "最大実行回数", fallback: "1")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
+          if model.kind == .logger {
+            toggle("markdown", label: "Markdown として表示", fallback: false)
+              .help("オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。")
+          }
           if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
             toggle("reuseWorker", label: "worker の状態を残す", fallback: true)
@@ -525,7 +529,7 @@ private struct GeneralCategory: View {
         if model.kind == .code {
           Section {
             toggle("network", label: "ネットワークへのアクセスを許可する", fallback: false)
-              .help("オフ（既定）: preRun・run・postRun のどれからも外へ通信できません。")
+              .help("オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。")
             HostFoldersEditor(model: model)
           } header: {
             Label("Experimental", systemImage: "flask")
@@ -558,7 +562,8 @@ private struct GeneralCategory: View {
         try await model.session.renameCard(model.cardKey, to: new)
         // The editor follows the Card under its new name.
         NotificationCenter.default.post(name: .cardRenamed, object: nil,
-                                        userInfo: ["from": model.cardKey, "to": key([new]), "project": model.session.identity.url.path])
+                                        userInfo: ["from": model.cardKey, "to": key(Array(path(model.cardKey).dropLast()) + [new]),
+                                                   "project": model.session.identity.url.path])
       } catch {
         renameError = "\(error)"
         name = model.session.displayName(model.cardKey)
@@ -627,7 +632,7 @@ private struct HostFoldersEditor: View {
             edit { $0[i]["write"] = v ? .bool(true) : nil }
           }))
           .toggleStyle(.checkbox)
-          .help("オフ（既定）: 読み取り専用")
+          .help("オフ（デフォルト）: 読み取り専用")
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
         }
       }

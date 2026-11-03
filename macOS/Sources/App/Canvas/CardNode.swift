@@ -183,6 +183,10 @@ extension DisplaySnapshot {
   var summary: String {
     switch value {
     case .text(let t): return t.split(separator: "\n").first.map(String.init) ?? ""
+    case .markdown(let t):
+      // The first line with text, without Markdown marks.
+      let line = t.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+      return line.trimmingCharacters(in: CharacterSet(charactersIn: "#>*-` ")).replacingOccurrences(of: "**", with: "")
     case .scalar(let v, let l): return "\(l) = \(v.formatted(.number.precision(.significantDigits(6))))"
     case .lineChart(let s): return String(localized: "折れ線 \(s.count) 系列 · \(s.map(\.x.count).max() ?? 0) 点")
     case .table(let cols, let rows): return String(localized: "表 \(cols.count) 列 × \(rows.count) 行")

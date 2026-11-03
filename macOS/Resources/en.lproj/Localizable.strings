@@ -10,7 +10,9 @@
 "%lld 件" = "%lld items";
 "0 秒" = "0 s";
 "100% に戻す" = "Reset to 100%";
+"90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API キー" = "API key";
+"Apple container がインストールされていません（/usr/local/bin/container）。" = "Apple container is not installed (/usr/local/bin/container).";
 "C++ の処理" = "C++ step";
 "Canvas でこの Card を表示" = "Show this Card on the canvas";
 "Canvas で展開" = "Expand on the canvas";
@@ -48,6 +50,7 @@
 "Skill を再読込" = "Reload Skills";
 "Skill を検索" = "Search Skills";
 "Tsugumi の外で編集されたファイルを取り込みます（未保存の変更は保持）" = "Takes in files edited outside Tsugumi (unsaved edits are kept)";
+"Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
 "Workflow には反映しましたが保存できませんでした: " = "Applied to the workflow but could not save: ";
 "Workflow の実行を停止（チャットの回答停止とは別の操作です）" = "Stop the workflow run (separate from stopping a chat answer)";
@@ -55,17 +58,21 @@
 "Workflow 設定" = "Workflow Settings";
 "Workflow 設定 · %@" = "Workflow Settings · %@";
 "Workflow 階層" = "Workflow Hierarchy";
-"_card.json（既定値・params・入力）" = "_card.json (defaults, params, inputs)";
+"_card.json（デフォルト値・params・入力）" = "_card.json (defaults, params, inputs)";
 "_meta.json（説明・計画・追加コンテキスト、任意）" = "_meta.json (description, plan, extra context; optional)";
 "_outputs.fbs を編集（出力ポートと型の正本）" = "Edit _outputs.fbs (source of truth for output ports and types)";
 "container system start を実行します。" = "Runs container system start.";
+"container のサービスが動いていません。" = "The container service is not running.";
 "default.nix がありません" = "No default.nix";
 "default.nix を作成" = "Create default.nix";
 "fixture のポート" = "Fixture port";
 "github.com/apple/container/releases からインストールしてください。" = "Install it from github.com/apple/container/releases.";
+"macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
+"tsugumi.json のあるフォルダを選んでください。" = "Choose a folder that contains tsugumi.json.";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
 "「%@」と重複しています" = "Conflicts with “%@”";
+"「container のサービスを開始」（container system start）を押してから、再試行してください。" = "Click “Start container service” (runs `container system start`) and retry.";
 "「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
 "ここから下流を実行" = "Run from Here Downstream";
 "ここまでの会話は要約してモデルに渡しています（全文は残っています）。" = "The conversation up to here is summarized for the model (the full text is kept).";
@@ -76,6 +83,7 @@
 "このタブで開く" = "Open in This Tab";
 "このプロジェクト" = "This project";
 "このプロジェクトで作った定義" = "Definitions made in this project";
+"このプロジェクトの tsugumid が起動中に終了しました" = "tsugumid exited during startup";
 "この定義を使う %lld 枚の Card に変更が反映されます。" = "Changes apply to the %lld Cards using this definition.";
 "この定義を使う Card の設定画面で開きます" = "Opens in the settings of a Card that uses this definition";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -83,11 +91,14 @@
 "この階層の Card" = "Cards in this level";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "この階層の接続" = "Connections in this level";
+"これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "すべて" = "All";
 "すべて揃ってから（all）" = "When all have arrived (all)";
+"どうすればよいか" = "What to do";
 "なし" = "None";
 "なし（core の履歴のみ）" = "None (core history only)";
 "まだ結果がありません" = "No result yet";
+"もう一方の処理が終わるのを待ってから、再試行してください。" = "Wait for the other operation to finish, then retry.";
 "やり直す" = "Redo";
 "アプリに同梱のイメージを読み込みます（初回のみ、数分かかります）。" = "Loads the image bundled with the app (first time only; takes a few minutes).";
 "イメージを読み込む" = "Load Image";
@@ -137,6 +148,7 @@
 "チャットの送信キー" = "Chat send key";
 "チャットは任意機能です。通常の操作はすべて UI から行えます。" = "The chat is optional; everything can be done from the UI.";
 "テーマ" = "Theme";
+"デフォルト" = "Default";
 "デモ" = "Demos";
 "デモが見つかりません" = "No demos found";
 "デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。" = "Demos open as editable copies in Documents/Tsugumi. The bundled originals are never changed.";
@@ -167,6 +179,7 @@
 "プレビューできません" = "Cannot preview";
 "プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）" = "Preview (select, drag, collapse and zoom; the project is not changed)";
 "プロジェクト" = "Project";
+"プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトを切り替えられません" = "Cannot switch projects";
 "プロジェクトを読み込めませんでした" = "Could not load the project";
 "プロジェクトを読み込んでいます…" = "Loading the project…";
@@ -184,6 +197,7 @@
 "ログ" = "Log";
 "ログの表示切替" = "Toggle Log";
 "ログはありません" = "No log output";
+"ログをコピー" = "Copy log";
 "ログを保存する DB 接続" = "Database for logs";
 "ログを表示" = "Show Log";
 "ローカル fixture（テスト用・通信なし）" = "Local fixture (tests, no network)";
@@ -194,8 +208,9 @@
 "一覧から選択" = "Choose from list";
 "上から下" = "Top to bottom";
 "上書き" = "Override";
+"上書きを消してデフォルト値に戻す" = "Remove the override and use the default";
 "上書きを消して定義に従う" = "Remove the override and inherit the definition";
-"上書きを消して既定値に戻す" = "Remove the override and use the default";
+"下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
 "不明" = "Unknown";
 "並列実行数: %lld" = "Parallel runs: %lld";
 "他のプロジェクトからコピー…" = "Copy from Another Project…";
@@ -213,6 +228,7 @@
 "会話の一覧と検索" = "Conversations and search";
 "会話はまだありません" = "No conversations yet";
 "会話を圧縮" = "Compact Conversation";
+"何が起きたか" = "What happened";
 "作成" = "Create";
 "作成場所を選ぶ…" = "Choose Location…";
 "作業・出力領域を使う" = "Use work and output area";
@@ -274,10 +290,13 @@
 "初回の準備をしています" = "Preparing for the first time";
 "初期値" = "Initial value";
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
+"別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
+"別のプロジェクトを開く…" = "Open Another Project…";
 "別のプロジェクトを開く（必要な保存の後に切り替えます）" = "Open another project (switches after the needed save)";
 "別ウインドウで開く" = "Open in New Window";
 "制約" = "Constraints";
 "削除" = "Delete";
+"原因（ログより）" = "Cause (from the log)";
 "取り消す" = "Undo";
 "合流" = "Merge";
 "同期できません" = "Cannot sync";
@@ -316,8 +335,8 @@
 "定義とソースをコピーし、ID が重なる場合は新しい ID を割り当てます。Canvas への配置は別に行います。" = "Copies definitions and sources, assigning new ids on collisions. Placing them on the canvas is a separate step.";
 "定義とソースを削除" = "Delete the definition and its sources";
 "定義に従う（%@）" = "Inherit (%@)";
+"定義のデフォルト値" = "Definition default";
 "定義の変更は、この定義を使う %lld 枚の Card すべてに反映されます" = "Definition changes apply to all %lld Cards using this definition";
-"定義の既定値" = "Definition default";
 "定義はありません" = "No definitions";
 "定義を持たない Card には追加コンテキストを置けません。" = "A Card without a definition cannot hold extra context.";
 "定義を検索" = "Search definitions";
@@ -349,6 +368,7 @@
 "実行条件" = "Execution";
 "実行状況はありません" = "No run activity";
 "実行環境は停止しています" = "The environment is stopped";
+"実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。" = "Stop the environment and retry. If it keeps failing, delete the environment data (documents are kept).";
 "実行環境を起動できませんでした" = "The environment could not start";
 "実行環境イメージを読み込んでいます" = "Loading the environment image";
 "実行環境（Nixpkgs）" = "Environment (Nixpkgs)";
@@ -401,7 +421,6 @@
 "新規プロジェクト…" = "New Project…";
 "新規作成するか、既存のフォルダを開いてください。" = "Create a new project or open an existing folder.";
 "既存のプロジェクトを開く…" = "Open Existing Project…";
-"既定" = "Default";
 "日本語" = "日本語";
 "明示的な null: 定義に期限があっても期限なし" = "Explicit null: no deadline even if the definition sets one";
 "書き出す…" = "Export…";
@@ -460,7 +479,7 @@
 "破棄して再読込" = "Discard and Reload";
 "確定 revision" = "Confirmed revision";
 "種類" = "Kind";
-"空欄の項目は定義の既定値を使います。「オフ」「0」は明示的な値で、定義より優先されます。「無期限」は明示的な null です。" = "Empty fields use the definition's default. “Off” and “0” are explicit values that override it. “No Limit” is an explicit null.";
+"空欄の項目は定義のデフォルト値を使います。「オフ」「0」は明示的な値で、定義より優先されます。「無期限」は明示的な null です。" = "Empty fields use the definition's default. “Off” and “0” are explicit values that override it. “No Limit” is an explicit null.";
 "終了" = "Ended";
 "終了した Card %lld / %lld" = "Finished Cards %lld / %lld";
 "結果" = "Result";
@@ -486,6 +505,7 @@
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "診断" = "Diagnostics";
+"詳しいログ" = "Detailed log";
 "詳しい処理内容" = "What it does in detail";
 "読み込み中…" = "Loading…";
 "起動" = "Start";

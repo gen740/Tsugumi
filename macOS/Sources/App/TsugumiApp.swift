@@ -56,12 +56,6 @@ struct TsugumiApp: App {
     }
     .defaultSize(width: 900, height: 560)
 
-    WindowGroup("Workflow 設定", id: "workflow-settings", for: ProjectRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { WorkflowSettingsView(session: $0) } }
-    }
-    .defaultSize(width: 680, height: 480)
-    .windowToolbarStyle(.unifiedCompact(showsTitle: true))
-
     WindowGroup("可視化", id: "visual", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { VisualizationWindow(session: $0, cardKey: ref.card) } }
     }
@@ -294,6 +288,7 @@ extension Notification.Name {
   static let canvasAddDraft = Notification.Name("tsugumi.canvas.addDraft")
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
+  static let canvasAddBuiltin = Notification.Name("tsugumi.canvas.addBuiltin")
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
   static let canvasReveal = Notification.Name("tsugumi.canvas.reveal")
   /// A Card was renamed (userInfo: from, to, project): views showing it follow.

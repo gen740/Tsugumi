@@ -486,6 +486,11 @@ struct CanvasCamera: Equatable {
   }
 }
 
+extension EnvironmentValues {
+  /// The canvas zoom a view inside the canvas draws itself at (1 elsewhere).
+  @Entry var canvasZoom: CGFloat = 1
+}
+
 extension View {
   /// Places a view drawn at screen scale (`size` × `zoom`) with its top-left
   /// corner at `topLeft` (screen units), on whole device pixels.
@@ -495,12 +500,13 @@ extension View {
     return frame(width: w, height: h).position(x: x + w / 2, y: y + h / 2)
   }
 
-  /// Places a view laid out in world units and scaled by `zoom` (frames,
-  /// notes, groups): its visual top-left lands exactly at `topLeft`.
+  /// Places a view of `size` world units (frames, notes, groups) laid out at
+  /// screen size: the view draws itself at `canvasZoom` (fonts and spacing
+  /// times the zoom), so text stays sharp at any zoom (nothing is scaled up
+  /// as a bitmap).
   func place(at topLeft: CGPoint, size: CGSize, zoom: Double) -> some View {
-    frame(width: size.width, height: size.height, alignment: .topLeading)
-      .scaleEffect(zoom, anchor: .topLeading)
-      .frame(width: size.width * zoom, height: size.height * zoom, alignment: .topLeading)
+    frame(width: size.width * zoom, height: size.height * zoom, alignment: .topLeading)
+      .environment(\.canvasZoom, CGFloat(zoom))
       .position(x: topLeft.x + size.width * zoom / 2, y: topLeft.y + size.height * zoom / 2)
   }
 }
@@ -518,6 +524,9 @@ struct CardNodeView: View {
   var paramsEditable = true
   var onPortDrag: ((String, CGPoint) -> Void)?
   var onPortDrop: ((String, CGPoint) -> Void)?
+  /// Dragging from an input port (a wire drawn back to an output).
+  var onInputDrag: ((String, CGPoint) -> Void)?
+  var onInputDrop: ((String, CGPoint) -> Void)?
   var onStageTap: ((Stage) -> Void)?
   var onToggleCollapse: (() -> Void)?
 
@@ -542,9 +551,23 @@ struct CardNodeView: View {
       portMarks(g)
     }
     .frame(width: size.width, height: size.height, alignment: .topLeading)
-    .contentShape(path)
+    // The outline and the ports: a port sits on the edge, and the half of it
+    // outside the outline must still start a wire.
+    .contentShape(hitShape(g, outline: path))
     .accessibilityElement(children: .contain)
     .accessibilityLabel(accessibilityText)
+  }
+
+  private func hitShape(_ g: CardGeometry, outline: Path) -> Path {
+    var p = outline
+    let hit = max(16, s(18))
+    for (list, output) in [(data.inputs, false), (data.outputs, true)] {
+      for port in list {
+        let pt = g.port(port.name, output: output)
+        p.addRect(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit))
+      }
+    }
+    return p
   }
 
   private var accessibilityText: String {
@@ -700,8 +723,9 @@ struct CardNodeView: View {
       .position(x: s(x), y: s(pt.y + dy)).allowsHitTesting(false))
   }
 
-  /// Inputs are small squares, outputs small circles; outputs can be dragged
-  /// to an input to connect. The hit area is larger than the mark.
+  /// Inputs are small squares, outputs small circles; dragging from either
+  /// draws a wire to connect (it takes priority over moving the Card). The
+  /// hit area is larger than the mark.
   private func portMarks(_ g: CardGeometry) -> some View {
     let mark = max(6, s(8))
     let hit = max(16, s(18))
@@ -718,7 +742,10 @@ struct CardNodeView: View {
           .frame(width: hit, height: hit)
           .contentShape(Rectangle())
           .position(x: s(pt.x), y: s(pt.y))
-          .help(portHelp(p, output: false))
+          .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
+            .onChanged { onInputDrag?(p.name, $0.location) }
+            .onEnded { onInputDrop?(p.name, $0.location) })
+          .help(portHelp(p, output: false) + (onInputDrag != nil ? String(localized: "（ドラッグして出力ポートへ接続）") : ""))
       }
       ForEach(data.outputs, id: \.name) { p in
         let pt = g.port(p.name, output: true)
@@ -727,7 +754,7 @@ struct CardNodeView: View {
           .frame(width: hit, height: hit)
           .contentShape(Circle())
           .position(x: s(pt.x), y: s(pt.y))
-          .gesture(DragGesture(coordinateSpace: .named("canvas"))
+          .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
             .onChanged { onPortDrag?(p.name, $0.location) }
             .onEnded { onPortDrop?(p.name, $0.location) })
           .help(portHelp(p, output: true) + (onPortDrag != nil ? String(localized: "（ドラッグして入力ポートへ接続）") : ""))
@@ -850,6 +877,7 @@ struct ParamFieldView: View {
   var zoom: Double = 1
   let commit: (String) -> Void
   @State private var text = ""
+  @State private var editing = false
   @FocusState private var focused: Bool
 
   var body: some View {
@@ -861,22 +889,42 @@ struct ParamFieldView: View {
           .toggleStyle(.switch).controlSize(.mini).labelsHidden()
           .disabled(!editable)
       } else {
-        TextField("", text: $text)
-          .textFieldStyle(.plain)
-          .font(.system(size: max(6, 11 * z), design: .monospaced))
-          .padding(.horizontal, 4 * z)
-          .frame(height: 19 * z)
-          .background(RoundedRectangle(cornerRadius: 4 * z).fill(Color(nsColor: .textBackgroundColor)))
-          .overlay(RoundedRectangle(cornerRadius: 4 * z).strokeBorder(focused ? Color.accentColor : .secondary.opacity(0.35)))
-          .focused($focused)
-          .onSubmit { if text != param.value { commit(text) } }
-          .onChange(of: focused) { if !focused && text != param.value { commit(text) } }
-          .disabled(!editable)
-          .help(editable ? "\(param.type)・Return で反映" : String(localized: "実行中は変更できません"))
+        // The value is drawn as text at the zoom; the field (an AppKit text
+        // field, which keeps its own layout) exists only while editing, so a
+        // zoom never leaves the text out of place.
+        Group {
+          if editing {
+            TextField("", text: $text)
+              .textFieldStyle(.plain)
+              .font(.system(size: max(6, 11 * z), design: .monospaced))
+              .focused($focused)
+              .onSubmit { finish() }
+              .onChange(of: focused) { if !focused { finish() } }
+              .onAppear { focused = true }
+          } else {
+            Text(text.isEmpty ? " " : text)
+              .font(.system(size: max(6, 11 * z), design: .monospaced))
+              .lineLimit(1)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
+              .onTapGesture { if editable { editing = true } }
+          }
+        }
+        .padding(.horizontal, 4 * z)
+        .frame(height: 19 * z)
+        .background(RoundedRectangle(cornerRadius: 4 * z).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 4 * z).strokeBorder(focused ? Color.accentColor : .secondary.opacity(0.35)))
+        .help(editable ? "\(param.type)・クリックして編集、Return で反映" : String(localized: "実行中は変更できません"))
       }
     }
     .onAppear { text = param.value }
-    .onChange(of: param.value) { if !focused { text = param.value } }
+    .onChange(of: param.value) { if !editing { text = param.value } }
+  }
+
+  private func finish() {
+    guard editing else { return }
+    editing = false
+    if text != param.value { commit(text) }
   }
 }
 

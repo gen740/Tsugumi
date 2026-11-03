@@ -144,6 +144,8 @@ enum SyncState: Equatable {
 
 enum DisplayValue {
   case text(String)
+  /// Markdown with TeX math (the SDK's markdown display, a logger in Markdown mode).
+  case markdown(String)
   case scalar(Double, String)
   case lineChart([(id: String, label: String, x: [Double], y: [Double])])
   case table(columns: [String], rows: [[String]])
@@ -643,7 +645,9 @@ final class ProjectSession {
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
     let value: DisplayValue
     switch d.value?.type {
-    case .displaytext: value = .text((d.value?.value as? Tsugumi_Data_DisplayTextT)?.text ?? "")
+    case .displaytext:
+      let t = d.value?.value as? Tsugumi_Data_DisplayTextT
+      value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
     case .displayscalar:
       let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
       value = .scalar(s?.value ?? 0, s?.label ?? "")
@@ -1383,6 +1387,8 @@ final class ProjectSession {
       self.externalHashes = read
       self.normalizeExternalEdits()
       self.settleDraftBase()
+      // Cards inside Cards in Card are known now: their displays are wanted too.
+      await self.refreshVisibleDisplays()
     }
   }
 

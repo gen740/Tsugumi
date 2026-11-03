@@ -30,40 +30,145 @@ struct ApplicationSettings: View {
       case .connections: return "network"
       }
     }
+    /// Where each pane's values are kept, said on the pane.
+    var storage: String {
+      switch self {
+      case .api: return String(localized: "このアプリ（この Mac。API キーは macOS のキーチェーン）")
+      case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
+      default: return String(localized: "このアプリ（この Mac のユーザー設定）")
+      }
+    }
   }
 
+  /// "<category>" for the app's panes, "project.<pane>" for the project's.
   @AppStorage("settings.category") private var stored = Category.general.rawValue
+  /// The open project whose settings are shown (several may be open).
+  @AppStorage("settings.project") private var projectPath = ""
+  @Environment(AppModel.self) private var model
 
+  private var projects: [ProjectSession] { model.sessions.values.sorted { $0.scopeName([]) < $1.scopeName([]) } }
+  private var project: ProjectSession? { projects.first { $0.identity.url.path == projectPath } ?? projects.first }
+  private var projectPane: ProjectSettingsPane? {
+    guard stored.hasPrefix("project."), project != nil else { return nil }
+    return ProjectSettingsPane(rawValue: String(stored.dropFirst("project.".count)))
+  }
   private var category: Category { Category(rawValue: stored) ?? .general }
 
   var body: some View {
     // A plain list + content (no split view): switching categories, going back
     // and reopening the window always work, whatever a category is doing.
     HStack(spacing: 0) {
-      SettingsSidebar(items: Category.allCases, selection: Binding(get: { category }, set: { stored = $0.rawValue }),
-                      title: \.title, symbol: \.symbol, width: 180)
-      Divider()
-      VStack(alignment: .leading, spacing: 0) {
-        Group {
-          switch category {
-          case .general: GeneralSettings()
-          case .appearance: AppearanceSettings()
-          case .editor: EditorSettings()
-          case .shortcuts: ShortcutSettings()
-          case .skills: SkillSettings()
-          case .api: APISettings()
-          case .connections: ConnectionSettings()
+      List(selection: Binding<String?>(get: { projectPane.map { "project." + $0.rawValue } ?? category.rawValue },
+                                       set: { if let v = $0 { stored = v } })) {
+        // The project's settings, while a project is open.
+        if let project {
+          Section {
+            ForEach(ProjectSettingsPane.allCases) { p in
+              Label(p.title, systemImage: p.symbol).tag(Optional("project." + p.rawValue))
+            }
+          } header: {
+            if projects.count > 1 {
+              Picker("プロジェクト", selection: Binding(get: { project.identity.url.path }, set: { projectPath = $0 })) {
+                ForEach(projects, id: \.identity.id) { s in Text(s.scopeName([])).tag(s.identity.url.path) }
+              }
+              .labelsHidden().pickerStyle(.menu).controlSize(.small)
+              .help("設定を表示するプロジェクト（開いているプロジェクトから選びます）")
+            } else {
+              VStack(alignment: .leading, spacing: 1) {
+                Text("このプロジェクト")
+                Text(project.scopeName([])).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+              }
+            }
           }
         }
-        .id(category)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        Section("アプリ") {
+          ForEach(Category.allCases) { c in
+            Label(c.title, systemImage: c.symbol).tag(Optional(c.rawValue))
+              .accessibilityIdentifier("settings.category.\(c.title)")
+          }
+        }
+      }
+      .listStyle(.sidebar)
+      .scrollContentBackground(.hidden)
+      .frame(width: 210)
+      Divider()
+      VStack(alignment: .leading, spacing: 0) {
+        if let pane = projectPane, let project {
+          StorageNote(text: pane.storage(project))
+          ProjectSettingsContent(pane: pane, session: project)
+            .id("\(project.identity.id).\(pane.rawValue)")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+          StorageNote(text: category.storage)
+          Group {
+            switch category {
+            case .general: GeneralSettings()
+            case .appearance: AppearanceSettings()
+            case .editor: EditorSettings()
+            case .shortcuts: ShortcutSettings()
+            case .skills: SkillSettings()
+            case .api: APISettings()
+            case .connections: ConnectionSettings()
+            }
+          }
+          .id(category)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
       }
     }
-    // The category is the window's title, on the window's own background,
-    // like the Card and Workflow settings windows.
-    .navigationTitle(category.title)
+    // The pane is the window's title (with the project for its panes), on the
+    // window's own background, like the Card settings windows.
+    .navigationTitle(projectPane.map { "\($0.title) — \(project?.scopeName([]) ?? "")" } ?? category.title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .containerBackground(Color(nsColor: .windowBackgroundColor), for: .window)
+  }
+}
+
+/// Where the values of a settings pane are kept.
+private struct StorageNote: View {
+  let text: String
+
+  var body: some View {
+    Label("保存先: " + text, systemImage: "externaldrive")
+      .font(.caption).foregroundStyle(.secondary)
+      .padding(.horizontal, 20).padding(.top, 10)
+  }
+}
+
+/// The settings of one project: kept in the project (or its environment).
+enum ProjectSettingsPane: String, CaseIterable, Identifiable {
+  case general, databases, history, cache
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .general: return String(localized: "一般")
+    case .databases: return String(localized: "データベース接続先")
+    case .history: return String(localized: "実行履歴")
+    case .cache: return String(localized: "ビルドキャッシュ")
+    }
+  }
+  var symbol: String {
+    switch self {
+    case .general: return "folder.badge.gearshape"
+    case .databases: return "cylinder.split.1x2"
+    case .history: return "clock.arrow.circlepath"
+    case .cache: return "shippingbox"
+    }
+  }
+  func storage(_ s: ProjectSession) -> String {
+    let name = s.identity.url.lastPathComponent
+    switch self {
+    case .general, .databases: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
+    case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
+    case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
+    }
+  }
+
+  /// Opens the settings window at a project's pane.
+  @MainActor static func open(_ s: ProjectSession, _ pane: ProjectSettingsPane = .general, with openSettings: OpenSettingsAction) {
+    UserDefaults.standard.set("project." + pane.rawValue, forKey: "settings.category")
+    UserDefaults.standard.set(s.identity.url.path, forKey: "settings.project")
+    openSettings()
   }
 }
 
@@ -86,7 +191,7 @@ private struct GeneralSettings: View {
       Picker("Tsugumi のアニメーション", selection: $prefs.tsugumiMotion) {
         ForEach(AppPreferences.Motion.allCases) { Text($0.label).tag($0) }
       }
-      .help("Home と読み込み中の Tsugumi を動かすかどうか。既定は macOS の「視差効果を減らす」に合わせます。")
+      .help("Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。")
     }
     .formStyle(.grouped)
   }
@@ -241,7 +346,7 @@ private struct ShortcutSettings: View {
         TableColumn("") { a in
           HStack {
             Button(recording == a ? "キャンセル" : "変更") { recording = recording == a ? nil : a }
-            Button("既定") { prefs.shortcuts[a] = nil }.disabled(prefs.shortcuts[a] == nil)
+            Button("デフォルト") { prefs.shortcuts[a] = nil }.disabled(prefs.shortcuts[a] == nil)
           }
         }
       }

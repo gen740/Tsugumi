@@ -15,7 +15,9 @@ struct GraphCanvas: View {
   @Bindable var tab: WorkflowTab
   @State private var drag: (key: CardKey, offset: CGSize)?
   @State private var boundaryDrag: (input: Bool, offset: CGSize)?
-  @State private var pending: (from: (CardKey, String), point: CGPoint)?
+  /// A wire being drawn from a port: from an output (to an input), or from
+  /// an input back to an output (`toInput` false).
+  @State private var pending: (from: (CardKey, String), point: CGPoint, fromOutput: Bool)?
   @State private var panStart: (x: Double, y: Double)?
   @State private var marquee: (start: CGPoint, end: CGPoint)?
   @State private var zoomStart: Double?
@@ -24,6 +26,8 @@ struct GraphCanvas: View {
   @State private var editingGroup: String?
   @State private var hover: HoverTarget?
   @State private var hoverAt: CGPoint = .zero
+  /// Where the pointer last was over the canvas (a menu adds there).
+  @State private var pointer: CGPoint = .zero
   @State private var bubbleSize = CGSize(width: 300, height: 120)
   @State private var hoverTask: Task<Void, Never>?
   @State private var findText: String?
@@ -63,7 +67,7 @@ struct GraphCanvas: View {
         ForEach(noteIds, id: \.self) { id in noteView(id) }
         if let p = pending {
           Path { path in
-            path.move(to: screen(portWorld(p.from.0, p.from.1, output: true)))
+            path.move(to: screen(portWorld(p.from.0, p.from.1, output: p.fromOutput)))
             path.addLine(to: p.point)
           }
           .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
@@ -101,7 +105,9 @@ struct GraphCanvas: View {
       .clipped()
       .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
         switch phase {
-        case .active(let p): trackHover(p, routed: routed)
+        case .active(let p):
+          pointer = p
+          trackHover(p, routed: routed)
         case .ended: clearHover()
         }
       }
@@ -131,7 +137,8 @@ struct GraphCanvas: View {
       .focused($canvasFocused)
       .focusedSceneValue(\.canvasFocused, canvasFocused)
       .simultaneousGesture(TapGesture().onEnded { canvasFocused = true })
-      .onKeyPress(.deleteForward) {
+      .onChange(of: canvasFocused, initial: true) { _, f in UIScript.shared.canvasFocused = f }
+      .onKeyPress(keys: [.delete, .deleteForward]) { _ in
         deleteSelection()
         return .handled
       }
@@ -173,6 +180,10 @@ struct GraphCanvas: View {
       }
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin)) { n in
+        guard (n.object as? UUID) == tab.id, let raw = n.userInfo?["template"] as? String, let t = DefinitionTemplate(rawValue: raw) else { return }
+        addBuiltin(t, at: world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60)))
       }
       .modifier(CommandHandlers(canvas: self))
       .sheet(item: Binding(get: { editingNote.map(IdBox.init) }, set: { editingNote = $0?.id })) { box in
@@ -413,7 +424,12 @@ struct GraphCanvas: View {
     .onTapGesture(count: 2, coordinateSpace: .named("canvas")) { _ in fitAll() }
     .onTapGesture(coordinateSpace: .named("canvas")) { loc in backgroundTap(loc) }
     .contextMenu {
-      Button("付箋を追加") { addNote() }
+      Menu("Card を追加") {
+        BuiltinCardItems { t in addBuiltin(t, at: world(pointer)) }
+      }
+      .disabled(!session.isEditable)
+      Button("付箋を追加") { addNote(at: world(pointer)) }
+      Divider()
       Button("全体表示") { fitAll() }
       Button("整列") { session.arrange(tab.scope) }
       if !tab.selection.isEmpty { Button("選択をグループ化") { groupSelection() }.disabled(!session.connected) }
@@ -426,8 +442,10 @@ struct GraphCanvas: View {
     return CardNodeView(data: data, flow: session.flow, zoom: camera.zoom, selected: tab.selection.contains(k),
                         onParamCommit: data.kind == .input ? { name, text in commitParam(k, name, text) } : nil,
                         paramsEditable: session.isEditable,
-                        onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt) } },
+                        onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, true) } },
                         onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) },
+                        onInputDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, false) } },
+                        onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: pt) },
                         onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) })
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
@@ -480,9 +498,23 @@ struct GraphCanvas: View {
       Menu("色") {
         ForEach(NoteColor.all, id: \.id) { c in Button(c.label) { session.updateNote(id) { $0["color"] = .string(c.id) } } }
       }
+      Menu("文字の大きさ") {
+        let current = StickyNoteView.fontSize(n)
+        Button("大きく") { setNoteFont(id, current + 2) }
+        Button("小さく") { setNoteFont(id, current - 2) }
+        Divider()
+        ForEach([11.0, 13, 16, 20, 28], id: \.self) { v in
+          Button("\(Int(v))\(v == 13 ? "（デフォルト）" : "")") { setNoteFont(id, v) }
+        }
+      }
       Divider()
       Button("付箋を削除", role: .destructive) { session.removeNote(id) }
     }
+  }
+
+  private func setNoteFont(_ id: String, _ size: CGFloat) {
+    let v = max(8, min(48, size))
+    session.updateNote(id) { $0["fontSize"] = v == 13 ? nil : .real(Double(v)) }
   }
 
   private func outputFrame(_ k: CardKey) -> some View {
@@ -640,7 +672,8 @@ struct GraphCanvas: View {
     if let k = cardKeys.reversed().first(where: { cardRect($0).contains(w) }) {
       target = .card(k)
     } else {
-      let tolerance = max(5, 7 / camera.zoom)
+      // About 8 points on screen either side of the line, at any zoom.
+    let tolerance = 8 / camera.zoom
       target = routed.first { r in
         r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
       }?.connection.map(HoverTarget.wire)
@@ -805,17 +838,29 @@ struct GraphCanvas: View {
 
   private func finishConnect(from: (CardKey, String), at pt: CGPoint) {
     pending = nil
-    guard session.isEditable else { return }
+    guard session.isEditable, let to = nearestPort(at: pt, output: false, except: from.0) else { return }
+    session.connect(from: from, to: to, in: tab.scope)
+  }
+
+  private func finishConnect(toInput to: (CardKey, String), at pt: CGPoint) {
+    pending = nil
+    guard session.isEditable, let from = nearestPort(at: pt, output: true, except: to.0) else { return }
+    session.connect(from: from, to: to, in: tab.scope)
+  }
+
+  /// The port under a point (screen), within a finger's width.
+  private func nearestPort(at pt: CGPoint, output: Bool, except: CardKey) -> (CardKey, String)? {
     let w = world(pt)
-    for k in cardKeys where k != from.0 {
-      for port in session.geometry(k).inputs {
-        let p = portWorld(k, port, output: false)
-        if hypot(p.x - w.x, p.y - w.y) < 16 / camera.zoom + 6 {
-          session.connect(from: from, to: (k, port), in: tab.scope)
-          return
-        }
+    var best: ((CardKey, String), Double)?
+    for k in cardKeys where k != except {
+      let g = session.geometry(k)
+      for port in output ? g.outputs : g.inputs {
+        let p = portWorld(k, port, output: output)
+        let d = hypot(p.x - w.x, p.y - w.y)
+        if d < 18 / camera.zoom + 6, d < (best?.1 ?? .infinity) { best = ((k, port), d) }
       }
     }
+    return best?.0
   }
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String) {
@@ -843,8 +888,17 @@ struct GraphCanvas: View {
     editingGroup = session.addGroup(tab.selection, in: tab.scope)
   }
 
-  private func addNote() {
-    let center = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
+  /// A built-in Card (from the + button or the canvas menu), its editor
+  /// opened for a Draft.
+  func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
+    guard session.isEditable else { return }
+    let k = session.addCard(template: t, in: tab.scope, at: w)
+    tab.selection = [k]
+    if t == .draft { openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k)) }
+  }
+
+  private func addNote(at w: CGPoint? = nil) {
+    let center = w ?? world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
     editingNote = session.addNote(in: tab.scope, at: center)
   }
 
@@ -1081,5 +1135,20 @@ struct ScrollCatcher: NSViewRepresentable {
     override func mouseDown(with e: NSEvent) { panning = true }
     override func mouseDragged(with e: NSEvent) { onScroll(Double(e.deltaX), Double(e.deltaY), 0, nil) }
     override func mouseUp(with e: NSEvent) { panning = false }
+  }
+}
+
+/// The built-in Cards, for the canvas menu and the + button.
+struct BuiltinCardItems: View {
+  let add: (DefinitionTemplate) -> Void
+
+  var body: some View {
+    ForEach([DefinitionTemplate.python, .cpp, .draft], id: \.self) { t in
+      Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+    }
+    Divider()
+    ForEach([DefinitionTemplate.trigger, .input, .fork, .branch, .merge, .logger], id: \.self) { t in
+      Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+    }
   }
 }

@@ -212,3 +212,37 @@ import Testing
   #expect(TreeSitterHighlighter.spans("x", language: "txt") == nil)
 }
 
+
+@Test @MainActor func markdownTakesMathOutBeforeParsing() {
+  let d = MarkdownDocument.make("""
+  # Collatz
+  $T(n) = n/2$ when *n* is even, and $3n+1$ otherwise; it costs $5 and $6.
+
+  $$
+  T(n) = \\begin{cases} n/2 & n \\equiv 0 \\\\ 3n+1 & n \\equiv 1 \\end{cases}
+  $$
+
+  `$x$` stays code.
+  ```
+  $not math$
+  ```
+  """)
+  guard d.blocks.count == 5 else { Issue.record("blocks: \(d.blocks)"); return }
+  #expect(d.blocks[0] == .heading(1, [.text("Collatz", [])]))
+  if case .paragraph(let inl) = d.blocks[1] {
+    #expect(inl.first == .math("T(n) = n/2"))
+    #expect(inl.contains(.math("3n+1")))
+    #expect(inl.contains(.text("n", [.emphasis])))
+    #expect(!inl.contains { if case .math(let t) = $0 { return t.contains("5") } else { return false } })
+  } else { Issue.record("paragraph expected") }
+  if case .math(let tex) = d.blocks[2] { #expect(tex.hasPrefix("T(n) = \\begin{cases}")) } else { Issue.record("display math expected") }
+  #expect(d.blocks[3] == .paragraph([.code("$x$"), .text(" stays code.", [])]))
+  #expect(d.blocks[4] == .code("$not math$\n", nil))
+  // TeX that cannot be typeset is shown as written.
+  #expect(MathImages.image("\\frac{1}{2}", size: 13, display: false) != nil)
+  #expect(MathImages.image("\\frac{1}{", size: 13, display: false) == nil)
+  // Commands the typesetter lacks are written with ones it has.
+  #expect(MathImages.image("T(n) = \\begin{cases} n/2 & n \\equiv 0 \\pmod 2 \\\\ 3n+1 & n \\equiv 1 \\pmod{2} \\end{cases}",
+                           size: 13, display: true) != nil)
+  #expect(MathImages.image("a \\quad b \\bmod 2", size: 13, display: false) != nil)
+}

@@ -77,6 +77,7 @@ struct GroupFrameView: View {
   let session: ProjectSession
   let group: JSONValue
   let scope: [String]
+  @Environment(\.canvasZoom) private var z
 
   var body: some View {
     let color = noteColor(group["color"]?.string)
@@ -85,25 +86,25 @@ struct GroupFrameView: View {
       return "\(session.displayName(key(scope + [c]))).\(p)"
     }
     ZStack(alignment: .topLeading) {
-      RoundedRectangle(cornerRadius: 12).fill(color.opacity(0.07))
-      RoundedRectangle(cornerRadius: 12).strokeBorder(color.opacity(0.5), style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
-      HStack(spacing: 6) {
-        Image(systemName: "rectangle.3.group").font(.caption)
-        Text(group["name"]?.string ?? "グループ").font(.system(size: 12, weight: .semibold))
+      RoundedRectangle(cornerRadius: 12 * z).fill(color.opacity(0.07))
+      RoundedRectangle(cornerRadius: 12 * z).strokeBorder(color.opacity(0.5), style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
+      HStack(spacing: 6 * z) {
+        Image(systemName: "rectangle.3.group").font(.system(size: 10 * z))
+        Text(group["name"]?.string ?? "グループ").font(.system(size: 12 * z, weight: .semibold))
         Spacer()
       }
       .foregroundStyle(color)
-      .padding(.horizontal, 10).padding(.top, 5)
+      .padding(.horizontal, 10 * z).padding(.top, 5 * z)
       if !outputs.isEmpty {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .trailing, spacing: 2 * z) {
           ForEach(outputs, id: \.self) { o in
-            Label(o, systemImage: "arrow.right.circle").font(.system(size: 10))
-              .padding(.horizontal, 6).padding(.vertical, 2)
+            Label(o, systemImage: "arrow.right.circle").font(.system(size: 10 * z))
+              .padding(.horizontal, 6 * z).padding(.vertical, 2 * z)
               .background(color.opacity(0.15), in: Capsule())
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(6)
+        .padding(6 * z)
         .help("グループの公開出力")
       }
     }
@@ -111,20 +112,24 @@ struct GroupFrameView: View {
   }
 }
 
-/// Markdown sticky note; it does not take part in runs.
+/// Markdown sticky note (with TeX math); it does not take part in runs. Its
+/// text size is its own (`fontSize` in layout.json).
 struct StickyNoteView: View {
   let note: JSONValue
   let onResize: (CGSize) -> Void
+  @Environment(\.canvasZoom) private var z
+
+  static func fontSize(_ note: JSONValue) -> CGFloat { CGFloat(note["fontSize"]?.double ?? 13) }
 
   var body: some View {
-    let text = note["text"]?.string ?? ""
-    let md = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
     ScrollView {
-      Text(md).font(.callout).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+      MarkdownView(text: note["text"]?.string ?? "", fontSize: Self.fontSize(note) * z)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(10)
-    .background(noteColor(note["color"]?.string).opacity(0.28), in: RoundedRectangle(cornerRadius: 6))
-    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(noteColor(note["color"]?.string).opacity(0.5)))
+    .scrollIndicators(.hidden)
+    .padding(10 * z)
+    .background(noteColor(note["color"]?.string).opacity(0.28), in: RoundedRectangle(cornerRadius: 6 * z))
+    .overlay(RoundedRectangle(cornerRadius: 6 * z).strokeBorder(noteColor(note["color"]?.string).opacity(0.5)))
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
     .help("ダブルクリックで編集")
   }
@@ -156,77 +161,88 @@ struct OutputFrameView: View {
   let onExpand: () -> Void
   let onClose: () -> Void
   let onResize: (CGSize) -> Void
+  @Environment(\.canvasZoom) private var z
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
-        Image(systemName: "chart.xyaxis.line").font(.caption).foregroundStyle(.purple)
-        Text(session.displayName(cardKey)).font(.caption.bold()).lineLimit(1)
+    VStack(alignment: .leading, spacing: 4 * z) {
+      HStack(spacing: 6 * z) {
+        Image(systemName: "chart.xyaxis.line").font(.system(size: 10 * z)).foregroundStyle(.purple)
+        Text(session.displayName(cardKey)).font(.system(size: 10 * z, weight: .bold)).lineLimit(1)
         if let d = session.displays[cardKey] {
-          Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+          Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.system(size: 9 * z).monospacedDigit()).foregroundStyle(.secondary)
             .help("Run \(d.runId) の中で、この Card の \(d.invocation) 回目の実行の結果")
         }
         Spacer()
-        Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+        Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 11 * z)) }
           .buttonStyle(.borderless).help("拡大して表示")
-        Button(action: onClose) { Image(systemName: "xmark") }
+        Button(action: onClose) { Image(systemName: "xmark").font(.system(size: 11 * z)) }
           .buttonStyle(.borderless).help("枠を削除（Card は残ります）")
       }
       .foregroundStyle(.secondary)
-      DisplayContent(display: session.displays[cardKey])
+      // On the canvas the wheel pans the canvas: no scroll bars over results.
+      DisplayContent(display: session.displays[cardKey], zoom: z)
+        .scrollIndicators(.hidden)
     }
-    .padding(8)
-    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.purple.opacity(0.45)))
+    .padding(8 * z)
+    .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 8 * z).strokeBorder(Color.purple.opacity(0.45)))
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
   }
 }
 
-/// Renders a Display value (text, scalar, Dawn line chart).
+/// Renders a Display value (text, Markdown, scalar, line chart, table, …) at
+/// `zoom` (on the canvas) or larger (`large`, the expanded viewer).
 struct DisplayContent: View {
   let display: DisplaySnapshot?
   var large = false
+  var zoom: CGFloat = 1
+
+  private func size(_ small: CGFloat, _ big: CGFloat) -> CGFloat { (large ? big : small) * zoom }
 
   var body: some View {
     switch display?.value {
     case .text(let t)?:
       ScrollView {
-        Text(t).font(.system(size: large ? 13 : 11, design: .monospaced)).textSelection(.enabled)
+        Text(t).font(.system(size: size(11, 13), design: .monospaced)).textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    case .markdown(let t)?:
+      ScrollView {
+        MarkdownView(text: t, fontSize: size(12, 14)).frame(maxWidth: .infinity, alignment: .leading)
       }
     case .scalar(let v, let label)?:
       VStack {
-        Text(label).font(large ? .title3 : .caption)
-        Text(v, format: .number.precision(.significantDigits(8))).font(large ? .system(size: 64).monospacedDigit() : .title.monospacedDigit())
+        Text(label).font(.system(size: size(10, 17)))
+        Text(v, format: .number.precision(.significantDigits(8))).font(.system(size: size(26, 64)).monospacedDigit())
           .textSelection(.enabled)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     case .lineChart(let series)?:
-      VStack(spacing: 4) {
+      VStack(spacing: 4 * zoom) {
         DawnLineChart(series: series.map { ChartSeries(id: $0.id, label: $0.label, x: $0.x, y: $0.y) })
-          .clipShape(RoundedRectangle(cornerRadius: 4))
+          .clipShape(RoundedRectangle(cornerRadius: 4 * zoom))
         HStack {
           ForEach(Array(series.enumerated()), id: \.offset) { _, s in
-            Label("\(s.label) (\(s.x.count))", systemImage: "line.diagonal").font(.caption2)
+            Label("\(s.label) (\(s.x.count))", systemImage: "line.diagonal").font(.system(size: size(9, 11)))
           }
         }
       }
     case .table(let columns, let rows)?:
       ScrollView([.horizontal, .vertical]) {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+        Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
           GridRow {
-            ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.caption.bold()) }
+            ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
           }
           Divider()
           ForEach(Array(rows.prefix(2000).enumerated()), id: \.offset) { _, r in
             GridRow {
               ForEach(Array(r.enumerated()), id: \.offset) { _, cell in
-                Text(cell).font(.system(size: large ? 12 : 10, design: .monospaced)).textSelection(.enabled)
+                Text(cell).font(.system(size: size(10, 12), design: .monospaced)).textSelection(.enabled)
               }
             }
           }
         }
-        .padding(4)
+        .padding(4 * zoom)
       }
     case .image(_, let data, let alt)?:
       if let img = NSImage(data: data) {
@@ -234,15 +250,18 @@ struct DisplayContent: View {
           .accessibilityLabel(alt)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        Text("画像を表示できません").font(.caption).foregroundStyle(.secondary)
+        Text("画像を表示できません").font(.system(size: size(10, 12))).foregroundStyle(.secondary)
       }
     case .points(let x, let y, let z, let colors)?:
       PointCloudView(x: x, y: y, z: z, colors: colors)
     case .module(let name, let json)?:
-      ModuleDisplayView(name: name, json: json, large: large)
-    case nil:
+      ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
+    case nil where large:
       ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text("実行すると表示されます。"))
-        .font(.caption)
+    case nil:
+      Text("まだ結果がありません（実行すると表示されます）")
+        .font(.system(size: size(10, 13))).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 }
@@ -356,6 +375,7 @@ struct ModuleDisplayView: View {
   let name: String
   let json: String
   var large = false
+  var zoom: CGFloat = 1
 
   var body: some View {
     let value = try? JSONValue.parse(json)
@@ -373,9 +393,9 @@ struct ModuleDisplayView: View {
           .frame(maxHeight: .infinity, alignment: .bottom)
         }
       } else {
-        Text("モジュール \(name)").font(.caption.bold()).foregroundStyle(.secondary)
+        Text("モジュール \(name)").font(.system(size: 10 * zoom, weight: .bold)).foregroundStyle(.secondary)
         ScrollView {
-          Text(value?.serialized() ?? json).font(.system(size: large ? 12 : 10, design: .monospaced)).textSelection(.enabled)
+          Text(value?.serialized() ?? json).font(.system(size: (large ? 12 : 10) * zoom, design: .monospaced)).textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
@@ -392,6 +412,7 @@ struct NoteEditor: View {
   @State private var color = "yellow"
   @State private var width = 240.0
   @State private var height = 120.0
+  @State private var fontSize = 13.0
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -399,14 +420,15 @@ struct NoteEditor: View {
       HSplitView {
         TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).frame(minWidth: 220)
         ScrollView {
-          Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
+          MarkdownView(text: text, fontSize: fontSize)
             .frame(maxWidth: .infinity, alignment: .leading).padding(8)
         }
         .background(noteColor(color).opacity(0.2))
         .frame(minWidth: 200)
       }
       .frame(height: 220)
-      Text("Markdown（太字・斜体・リンク・コード）を使えます。付箋は実行には参加しません。").font(.caption).foregroundStyle(.secondary)
+      Text("Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。").font(.caption).foregroundStyle(.secondary)
+      Stepper("文字の大きさ \(Int(fontSize))", value: $fontSize, in: 8...48, step: 1)
       Picker("色", selection: $color) {
         ForEach(NoteColor.all, id: \.id) { c in Text(c.label).tag(c.id) }
       }
@@ -430,6 +452,7 @@ struct NoteEditor: View {
       color = n?["color"]?.string ?? "yellow"
       width = n?["width"]?.double ?? 240
       height = n?["height"]?.double ?? 120
+      fontSize = n?["fontSize"]?.double ?? 13
     }
   }
 
@@ -439,6 +462,7 @@ struct NoteEditor: View {
       n["color"] = .string(color)
       n["width"] = .real(width)
       n["height"] = .real(height)
+      n["fontSize"] = fontSize == 13 ? nil : .real(fontSize)
     }
   }
 }

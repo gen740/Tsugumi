@@ -62,7 +62,7 @@ struct SymbolPicker: View {
       .popover(isPresented: $open, arrowEdge: .trailing) { grid(current) }
       .accessibilityLabel("アイコンを選ぶ")
       if symbol != nil {
-        Button("既定に戻す") { symbol = nil }.buttonStyle(.link)
+        Button("デフォルトに戻す") { symbol = nil }.buttonStyle(.link)
           .help("Card の種類のアイコンを使います")
       }
     }
@@ -92,10 +92,10 @@ struct SymbolPicker: View {
       .frame(width: 9 * 34 + 8 * 4 + 16, height: 220)
       if shown.isEmpty { Text("一致するアイコンはありません").font(.caption).foregroundStyle(.secondary) }
       HStack {
-        Button("既定に戻す") { symbol = nil; open = false }.disabled(symbol == nil)
+        Button("デフォルトに戻す") { symbol = nil; open = false }.disabled(symbol == nil)
         Spacer()
         Image(systemName: inherited).foregroundStyle(.secondary)
-        Text("既定").font(.caption).foregroundStyle(.secondary)
+        Text("デフォルト").font(.caption).foregroundStyle(.secondary)
       }
     }
     .padding(12)

@@ -13,22 +13,44 @@ struct DraftPort: Identifiable, Equatable {
   static func == (a: DraftPort, b: DraftPort) -> Bool { a.name == b.name && a.purpose == b.purpose }
 }
 
-/// A Draft states what a Card will do before any code exists: name, summary,
-/// detailed processing, constraints, completion criteria and its planned
-/// ports. It can be wired, saved and reloaded; "Card を生成" turns it into an
+/// A Draft states what a Card will do before any code exists: its name, a
+/// summary and its content (what it takes, what it gives, how), with its
+/// planned ports. It can be wired and saved; "Card を生成" turns it into an
 /// implementation through the Agent.
 struct DraftEditor: View {
   @Environment(\.dismiss) private var dismiss
   let session: ProjectSession
-  let cardKey: CardKey
+  @State var cardKey: CardKey
   @State private var model: CardEditorModel?
+  @State private var name = ""
   @State private var inputs: [DraftPort] = []
   @State private var outputs: [DraftPort] = []
   @State private var base: ([DraftPort], [DraftPort]) = ([], [])
 
+  /// Shown in the empty content field: headings to write under.
+  static let template = String(localized: """
+  ## 受け取るもの（入力）
+  - 例: 数値の列（仮の入力 numbers）
+
+  ## 出すもの（出力）
+  - 例: 平均と最大値（仮の出力 summary）
+
+  ## 処理の内容
+  - 例: 空の列ならエラーにする
+  - 例: 平均は小数第 2 位まで
+
+  ## できたと言える条件
+  - 例: [1, 2, 3] から 平均 2、最大 3 が出る
+  """)
+
+  init(session: ProjectSession, cardKey: CardKey) {
+    self.session = session
+    _cardKey = State(initialValue: cardKey)
+  }
+
   var body: some View {
     Group {
-      if let m = model, m.exists, m.definitionId != nil, m.kind == .draft {
+      if let m = model, m.exists, m.kind == .draft {
         form(m)
       } else if let m = model, m.exists, m.kind != .draft {
         ContentUnavailableView("Draft ではありません", systemImage: "info.circle",
@@ -45,12 +67,14 @@ struct DraftEditor: View {
       model = m
       load(m)
     }
+    .onChange(of: model?.followToken) { model?.follow() }
     .navigationTitle("Draft · \(session.displayName(cardKey))")
   }
 
   private var changed: Bool { inputs != base.0 || outputs != base.1 }
 
   private func load(_ m: CardEditorModel) {
+    name = session.displayName(cardKey)
     func ports(_ list: String, names: [String]) -> [DraftPort] {
       let notes = m.meta?[list]?.array ?? []
       var out = names.map { n in DraftPort(name: n, purpose: notes.first { $0["name"]?.string == n }?["description"]?.string ?? "") }
@@ -70,27 +94,40 @@ struct DraftEditor: View {
     VStack(spacing: 0) {
       CardPreview(session: session, model: m).frame(height: 130)
       Divider()
-      Form {
-        Section {
-          LabeledContent("名前", value: session.displayName(cardKey)).help("名前（Card の ID）は Card 設定の「一般」で変更します")
-          TextField("短い概要", text: meta(m, "description"))
-          LabeledContent("詳しい処理内容") {
-            TextEditor(text: meta(m, "plan")).frame(minHeight: 80).border(.secondary.opacity(0.3))
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          field("名前") {
+            BoxedTextField(placeholder: String(localized: "英数字と - _ .（Card の ID とフォルダ名）"), text: $name, monospaced: true) {
+              Task { await rename(m) }
+            }
+            .help("Return で名前を変えます（定義のフォルダ・接続・配置が新しい名前に移ります）")
           }
-          LabeledContent("制約") {
-            TextEditor(text: meta(m, "constraints")).frame(minHeight: 44).border(.secondary.opacity(0.3))
+          field("概要") {
+            BoxedTextField(placeholder: String(localized: "例: 数値の列から平均と最大値を求める"), text: meta(m, "description"))
           }
-          LabeledContent("完了条件") {
-            TextEditor(text: meta(m, "done")).frame(minHeight: 44).border(.secondary.opacity(0.3))
+          field("内容") {
+            VStack(alignment: .leading, spacing: 4) {
+              TextArea(text: meta(m, "content"), placeholder: Self.template, minHeight: 230)
+              HStack {
+                Text("何を受け取り、何を出し、どう処理するかを自由に書きます。型やコードはまだ要りません。")
+                  .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if (m.meta?["content"]?.string ?? "").isEmpty {
+                  Button("見出しを入れる") { meta(m, "content").wrappedValue = Self.template.replacingOccurrences(of: "- 例: ", with: "- ") }
+                    .buttonStyle(.link).font(.caption)
+                }
+              }
+            }
           }
-        } footer: {
-          Text("型やコードはまだ要りません。仮の入出力で先に配線し、適用した後に Canvas の「Card を生成」で実装を依頼します。")
+          portSection("仮の入力", ports: $inputs, add: "in",
+                      example: (String(localized: "例: numbers"), String(localized: "例: 集計する数値の列")))
+          portSection("仮の出力", ports: $outputs, add: "out",
+                      example: (String(localized: "例: summary"), String(localized: "例: 平均と最大値")))
+          Text("仮の入出力で先に配線できます。適用した後に Canvas の「Card を生成」で実装を依頼します。")
             .font(.caption).foregroundStyle(.secondary)
         }
-        portSection("仮の入力", ports: $inputs, add: "in")
-        portSection("仮の出力", ports: $outputs, add: "out")
+        .padding(20)
       }
-      .formStyle(.grouped)
       Divider()
       HStack {
         Label("未実装（実行されません）", systemImage: "pencil.and.outline").foregroundStyle(.secondary)
@@ -100,6 +137,7 @@ struct DraftEditor: View {
         Button("再読込") { m.reload(); load(m) }
         Button("適用") { Task { await apply(m) } }
           .disabled(!(m.unapplied || changed) || !session.isEditable)
+          .keyboardShortcut("s", modifiers: .command)
         Button("閉じる") {
           Task {
             if m.unapplied || changed { guard await apply(m) else { return } }
@@ -112,20 +150,32 @@ struct DraftEditor: View {
     }
   }
 
-  private func portSection(_ title: LocalizedStringKey, ports: Binding<[DraftPort]>, add prefix: String) -> some View {
-    Section(title) {
-      ForEach(ports) { $p in
-        HStack {
-          TextField("名前", text: $p.name).frame(maxWidth: 140)
-          TextField("用途・説明", text: $p.purpose)
-          Button { ports.wrappedValue.removeAll { $0.id == p.id } } label: { Image(systemName: "minus.circle") }
-            .buttonStyle(.borderless)
+  private func field(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> some View) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(title).font(.callout.weight(.semibold))
+      content()
+    }
+  }
+
+  private func portSection(_ title: LocalizedStringKey, ports: Binding<[DraftPort]>, add prefix: String,
+                           example: (String, String)) -> some View {
+    field(title) {
+      VStack(alignment: .leading, spacing: 6) {
+        ForEach(Array(ports.wrappedValue.enumerated()), id: \.element.id) { i, p in
+          let binding = ports[i]
+          HStack(spacing: 8) {
+            BoxedTextField(placeholder: i == 0 ? example.0 : "\(prefix)\(i + 1)", text: binding.name, monospaced: true)
+              .frame(width: 160)
+            BoxedTextField(placeholder: i == 0 ? example.1 : String(localized: "用途の説明"), text: binding.purpose)
+            Button { ports.wrappedValue.removeAll { $0.id == p.id } } label: { Image(systemName: "minus.circle") }
+              .buttonStyle(.borderless)
+              .help("この仮の入出力を削除")
+          }
         }
-      }
-      Button("追加") {
-        var n = ports.wrappedValue.count + 1
-        while ports.wrappedValue.contains(where: { $0.name == "\(prefix)\(n)" }) { n += 1 }
-        ports.wrappedValue.append(DraftPort(name: "\(prefix)\(n)", purpose: ""))
+        Button { ports.wrappedValue.append(DraftPort(name: "", purpose: "")) } label: {
+          Label("追加", systemImage: "plus.circle")
+        }
+        .buttonStyle(.borderless)
       }
     }
   }
@@ -138,9 +188,31 @@ struct DraftEditor: View {
     })
   }
 
+  private func rename(_ m: CardEditorModel) async {
+    let new = name.trimmingCharacters(in: .whitespaces)
+    guard new != session.displayName(cardKey) else { return }
+    do {
+      if m.unapplied || changed { guard await apply(m) else { return } }
+      try await session.renameCard(cardKey, to: new)
+      let to = key(Array(path(cardKey).dropLast()) + [new])
+      NotificationCenter.default.post(name: .cardRenamed, object: nil,
+                                      userInfo: ["from": cardKey, "to": to, "project": session.identity.url.path])
+      cardKey = to
+      let fresh = CardEditorModel(session: session, cardKey: to)
+      model = fresh
+      load(fresh)
+    } catch {
+      m.message = (error as? RPCFailure)?.diagnostic ?? "\(error)"
+      name = session.displayName(cardKey)
+    }
+  }
+
   @discardableResult
   private func apply(_ m: CardEditorModel) async -> Bool {
-    let valid = (inputs + outputs).allSatisfy { !$0.name.isEmpty && $0.name.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil }
+    // A port left without a name takes the one its placeholder suggests.
+    for (i, p) in inputs.enumerated() where p.name.isEmpty { inputs[i].name = uniquePort("in", inputs) }
+    for (i, p) in outputs.enumerated() where p.name.isEmpty { outputs[i].name = uniquePort("out", outputs) }
+    let valid = (inputs + outputs).allSatisfy { $0.name.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil }
     guard valid else {
       m.message = String(localized: "ポート名は英字・数字・_ で、英字か _ で始めてください。")
       return false
@@ -161,6 +233,12 @@ struct DraftEditor: View {
     let ok = await m.apply()
     if ok { load(m) }
     return ok
+  }
+
+  private func uniquePort(_ prefix: String, _ list: [DraftPort]) -> String {
+    var n = 1
+    while list.contains(where: { $0.name == "\(prefix)\(n)" }) { n += 1 }
+    return "\(prefix)\(n)"
   }
 }
 
@@ -294,39 +372,18 @@ struct CardDatabaseView: View {
 
 // MARK: - Workflow settings
 
-/// Project settings shared in the project: general, database connections, run history, build cache.
-struct WorkflowSettingsView: View {
+/// A project's settings pane (in the settings window, ⌘,).
+struct ProjectSettingsContent: View {
+  let pane: ProjectSettingsPane
   let session: ProjectSession
-  @State private var tab = Tab.general
-
-  enum Tab: String, CaseIterable, Identifiable {
-    case general, databases, history, cache
-    var id: String { rawValue }
-    var title: String {
-      switch self {
-      case .general: return String(localized: "一般")
-      case .databases: return String(localized: "データベース接続先")
-      case .history: return String(localized: "実行履歴")
-      case .cache: return String(localized: "ビルドキャッシュ")
-      }
-    }
-  }
 
   var body: some View {
-    VStack(spacing: 0) {
-      Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.title).tag($0) } }
-        .pickerStyle(.segmented).labelsHidden().padding(12)
-      Divider()
-      switch tab {
-      case .general: GeneralProjectSettings(session: session)
-      case .databases: DatabaseSettings(session: session)
-      case .history: RunHistorySettings(session: session)
-      case .cache: CacheSettings(session: session)
-      }
+    switch pane {
+    case .general: GeneralProjectSettings(session: session)
+    case .databases: DatabaseSettings(session: session)
+    case .history: RunHistorySettings(session: session)
+    case .cache: CacheSettings(session: session)
     }
-    .navigationTitle("Workflow 設定")
-    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-    .containerBackground(Color(nsColor: .windowBackgroundColor), for: .window)
   }
 }
 

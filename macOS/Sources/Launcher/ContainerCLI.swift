@@ -86,26 +86,36 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
   case invalidProject(String)
   case deleteFailed(what: String, log: String)
 
+  /// Shown in the app: Japanese source strings, English from the app's
+  /// string table (macOS/Resources/tools/en_strings.py).
   public var description: String {
     switch self {
     case .containerMissing:
-      return "Apple container is not installed (/usr/local/bin/container)."
+      return String(localized: "Apple container がインストールされていません（/usr/local/bin/container）。", bundle: .main)
     case .unsupportedVersion(let v):
-      return "Apple container \(v) is installed; Tsugumi is validated with \(ContainerCLI.pinnedVersion)."
+      return String(localized: "Apple container \(v) が入っています。Tsugumi は \(ContainerCLI.pinnedVersion) で確かめています。", bundle: .main)
     case .serviceStopped:
-      return "The container service is not running."
+      return String(localized: "container のサービスが動いていません。", bundle: .main)
     case .imageMissing:
-      return "The Tsugumi environment image is not available."
+      return String(localized: "Tsugumi の実行環境のイメージが見つかりません。", bundle: .main)
     case .startFailed(let reason, _):
-      return "The environment failed to start: \(reason)"
+      return String(localized: "実行環境が起動の途中で止まりました: \(Self.reasonText(reason))", bundle: .main)
     case .notReady(let s):
-      return "The environment did not become ready: \(s)"
+      return String(localized: "実行環境の準備ができませんでした: \(s)", bundle: .main)
     case .locked:
-      return "Another Tsugumi process is starting or stopping this environment."
+      return String(localized: "別の Tsugumi の処理がこの実行環境を起動または停止しています。", bundle: .main)
     case .invalidProject(let s):
-      return "Not a Tsugumi project: \(s)"
+      return String(localized: "Tsugumi のプロジェクトではありません: \(s)", bundle: .main)
     case .deleteFailed(let what, let log):
-      return "Could not remove \(what): \(log.trimmingCharacters(in: .whitespacesAndNewlines))"
+      return String(localized: "\(what) を削除できませんでした: \(log.trimmingCharacters(in: .whitespacesAndNewlines))", bundle: .main)
+    }
+  }
+
+  private static func reasonText(_ r: String) -> String {
+    switch r {
+    case "tsugumid exited during startup": return String(localized: "このプロジェクトの tsugumid が起動中に終了しました", bundle: .main)
+    case "no readiness signal within 90 s": return String(localized: "90 秒たっても準備ができませんでした", bundle: .main)
+    default: return r
     }
   }
 
@@ -113,23 +123,23 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
   public var recovery: String {
     switch self {
     case .containerMissing:
-      return "Install Apple container \(ContainerCLI.pinnedVersion) from github.com/apple/container/releases, then retry."
+      return String(localized: "github.com/apple/container/releases から Apple container \(ContainerCLI.pinnedVersion) を入れてから、再試行してください。", bundle: .main)
     case .unsupportedVersion:
-      return "Install container \(ContainerCLI.pinnedVersion), or continue at your own risk."
+      return String(localized: "container \(ContainerCLI.pinnedVersion) を入れてください（このまま使うこともできますが、動作は確かめていません）。", bundle: .main)
     case .serviceStopped:
-      return "Click “Start container service” (runs `container system start`) and retry."
+      return String(localized: "「container のサービスを開始」（container system start）を押してから、再試行してください。", bundle: .main)
     case .imageMissing:
-      return "Rebuild it with macOS/Container/build-image.sh, or reinstall the app."
+      return String(localized: "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。", bundle: .main)
     case .startFailed:
-      return "Check the environment log below. Stop the environment and start it again; your documents and history are kept."
+      return String(localized: "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。", bundle: .main)
     case .notReady:
-      return "Stop and start the environment. If it keeps failing, delete the environment data (documents are kept)."
+      return String(localized: "実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。", bundle: .main)
     case .locked:
-      return "Wait for the other operation to finish, then retry."
+      return String(localized: "もう一方の処理が終わるのを待ってから、再試行してください。", bundle: .main)
     case .invalidProject:
-      return "Choose a folder that contains tsugumi.json."
+      return String(localized: "tsugumi.json のあるフォルダを選んでください。", bundle: .main)
     case .deleteFailed:
-      return "Nothing else was removed after this step; the environment's files are kept. Retry the deletion."
+      return String(localized: "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。", bundle: .main)
     }
   }
 }

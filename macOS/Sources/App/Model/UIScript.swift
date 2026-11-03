@@ -20,7 +20,8 @@ import TsugumiRPC
 ///   panel log|timeline              details <card path>
 ///   click <x> <y> [window title]    move <x> <y> [window title]
 ///   drag <x1> <y1> <x2> <y2> [window title]
-///   save
+///   save                            key delete|forwarddelete|escape
+///   add <template> <x> <y>          wire <index>   chatsample
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -33,6 +34,8 @@ final class UIScript {
   }
 
   var request: Request?
+  /// Whether a canvas has the keyboard focus (reported by `state`).
+  @ObservationIgnored var canvasFocused = false
   @ObservationIgnored weak var workspace: Workspace?
   /// Card settings windows that are open (scripts edit their working copies).
   @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
@@ -111,6 +114,37 @@ final class UIScript {
                                   changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
         }
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "add":
+        // add <template> <x> <y>: a built-in Card at a canvas (world) point
+        if let s = session, let t = workspace?.active, let tmpl = DefinitionTemplate(rawValue: w[1]) {
+          let k = s.addCard(template: tmpl, in: t.scope, at: CGPoint(x: Double(w[2]) ?? 0, y: Double(w[3]) ?? 0))
+          t.selection = [k]
+          say("added \(k)")
+        }
+      case "wire":
+        // wire <index>: selects a connection of the shown scope
+        workspace?.active?.selectedConnection = Int(w[1])
+      case "chatsample":
+        if let s = session {
+          AppModel.shared.chat(for: s).showSample(question: "コラッツの漸化式を説明して", answer: """
+          ## コラッツの漸化式
+          $a_0 = n$ から始めて、次の規則で数列を作ります。
+
+          $$
+          a_{k+1} = \\begin{cases} a_k / 2 & a_k \\equiv 0 \\pmod 2 \\\\ 3a_k + 1 & a_k \\equiv 1 \\pmod 2 \\end{cases}
+          $$
+
+          - $n = 27$ では **111 手**で $1$ に着きます
+          - 途中の最大値は $9232$ です
+
+          | $n$ | 停止時間 |
+          | ---: | ---: |
+          | 6 | 8 |
+          | 27 | 111 |
+
+          `compare` Card の出力 `sequence` を `record` が CSV に書きます。
+          """)
+        }
       case "focus":
         // Gives the canvas the keyboard focus (as a click on it does).
         if let win = mainWindow { win.makeFirstResponder(win.contentView) }
@@ -209,6 +243,17 @@ final class UIScript {
           if let e = event(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f) { win.sendEvent(e) }
         }
         if let u = event(.leftMouseUp, x2, y2) { win.sendEvent(u) }
+      case "key":
+        // key delete | forwarddelete | escape: a key press to this app
+        let codes: [String: CGKeyCode] = ["delete": 51, "forwarddelete": 117, "escape": 53]
+        if let code = codes[w[1]] {
+          say("key \(w[1]): canvas focused \(canvasFocused), selected wire \(workspace?.active?.selectedConnection.map(String.init) ?? "-")")
+          // Through the window server to this process, as a real key press.
+          for down in [true, false] {
+            CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.postToPid(getpid())
+            try? await Task.sleep(for: .milliseconds(40))
+          }
+        }
       case "save": if let s = session { await s.save() }
       case "quit": NSApp.terminate(nil)
       default: say("unknown " + line)
