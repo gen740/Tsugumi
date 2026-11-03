@@ -283,7 +283,7 @@ def main(ctx):
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
+                     "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
@@ -315,7 +315,7 @@ def main(ctx):
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
+                     "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
@@ -378,54 +378,46 @@ def main(ctx):
 '''
 
 CPP_CHECK = r'''
-#include <tsugumi/sdk/card.hh>
+#include <card.hh>
+
+#include <climits>
 #include <fstream>
 #include <string>
-#include "_inputs_generated.h"
-#include "_outputs_generated.h"
 
-void run(tsugumi::sdk::Context& ctx) {
-  const auto* r = ctx.input<inputs::rich::a::Rich>("rich");
-  if (r->id() != 18446744073709551615ull) throw tsugumi::sdk::Failure("output_invalid", "id");
-  if (r->neg() != INT64_MIN) throw tsugumi::sdk::Failure("output_invalid", "neg");
-  if (!r->values() || r->values()->size() != 100000 || r->values()->Get(99999) != 299997)
-    throw tsugumi::sdk::Failure("output_invalid", "values");
-  if (r->color() != inputs::rich::a::Color::blue) throw tsugumi::sdk::Failure("output_invalid", "color");
-  if (!r->point() || r->point()->x() != -7 || r->point()->y() != 8) throw tsugumi::sdk::Failure("output_invalid", "point");
-  if (r->shape_type() != inputs::rich::a::Shape::Circle || r->shape_as_Circle()->r() != 1.5)
-    throw tsugumi::sdk::Failure("output_invalid", "shape");
-  if (r->name()->str() != "名前 ✓") throw tsugumi::sdk::Failure("output_invalid", "name");
-  const auto* doc = ctx.input<inputs::doc::a::Doc>("doc");
-  std::ifstream f(doc->value()->str());
+auto run(Card::Input& input) -> Card::Output {
+  const auto& r = input.rich;
+  if (r.id != 18446744073709551615ull) throw tsugumi::Failure("output_invalid", "id");
+  if (r.neg != INT64_MIN) throw tsugumi::Failure("output_invalid", "neg");
+  if (r.values.size() != 100000 || r.values[99999] != 299997) throw tsugumi::Failure("output_invalid", "values");
+  if (r.color != inputs::rich::a::Color::blue) throw tsugumi::Failure("output_invalid", "color");
+  if (!r.point || r.point->x() != -7 || r.point->y() != 8) throw tsugumi::Failure("output_invalid", "point");
+  if (r.shape.type != inputs::rich::a::Shape::Circle || r.shape.AsCircle()->r != 1.5)
+    throw tsugumi::Failure("output_invalid", "shape");
+  if (r.name != "名前 ✓") throw tsugumi::Failure("output_invalid", "name");
+  std::ifstream f(input.doc.value);
   std::string all((std::istreambuf_iterator<char>(f)), {});
-  if (all.size() != 4000) throw tsugumi::sdk::Failure("output_invalid", "file size " + std::to_string(all.size()));
+  if (all.size() != 4000) throw tsugumi::Failure("output_invalid", "file size " + std::to_string(all.size()));
   // Same structure, another namespace: structurally compatible downstream.
-  flatbuffers::FlatBufferBuilder b;
-  std::vector<uint64_t> v(r->values()->begin(), r->values()->end());
-  auto vv = b.CreateVector(v);
-  auto nm = b.CreateString(r->name()->str());
-  auto circle = outputs::checked::b::CreateCircle(b, 1.5);
-  outputs::checked::b::Point pt(-7, 8);
-  outputs::checked::b::RichBuilder rb(b);
-  rb.add_id(r->id());
-  rb.add_neg(r->neg());
-  rb.add_ratio(r->ratio());
-  rb.add_name(nm);
-  rb.add_values(vv);
-  rb.add_color(outputs::checked::b::Color::blue);
-  rb.add_point(&pt);
-  rb.add_shape_type(outputs::checked::b::Shape::Circle);
-  rb.add_shape(circle.Union());
-  b.Finish(rb.Finish());
-  ctx.output("checked", b);
+  Card::Output out;
+  auto& c = out.checked.emplace();
+  c.id = r.id;
+  c.neg = r.neg;
+  c.ratio = r.ratio;
+  c.name = r.name;
+  c.values = r.values;
+  c.color = outputs::checked::b::Color::blue;
+  c.point = std::make_unique<outputs::checked::b::Point>(-7, 8);
+  outputs::checked::b::CircleT circle;
+  circle.r = 1.5;
+  c.shape.Set(std::move(circle));
+  return out;
 }
-TSUGUMI_CARD(run)
 '''
 
 
 def test_values_cross_python_cpp_and_shell(env):
-    py_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"
-    cpp_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.cppCard { src = ./src; }; }\n"
+    py_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"
+    cpp_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; }; in\n{ run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }\n"
     a_out = RICH.format(ns="a") + "table Doc { value:string; }\ntable Outputs { rich:Rich (required); doc:Doc (required, tsugumi: \"file\"); }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
     b_out = RICH.format(ns="b") + "table Outputs { checked:Rich (required); }\nroot_type Outputs;\n"
     bad = '''
@@ -624,7 +616,7 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
 
 def test_worker_crash_then_edit_and_rerun(env):
     crash = {"language": "python", "_outputs": NUM,
-             "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}
+             "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}
     defs = {"trigger": {"template": "trigger"}, "crash": crash}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])

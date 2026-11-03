@@ -186,8 +186,8 @@ def main():
                 c = env.client()
             if a.scenario == "large-values":
                 import test_cards_container as T
-                py_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"
-                cpp_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.cppCard { src = ./src; }; }\n"
+                py_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"
+                cpp_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; }; in\n{ run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }\n"
                 a_out = T.RICH.format(ns="a") + "table Doc { value:string; }\ntable Outputs { rich:Rich (required); doc:Doc (required, tsugumi: \"file\"); }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
                 b_out = T.RICH.format(ns="b") + "table Outputs { checked:Rich (required); }\nroot_type Outputs;\n"
                 shell = T.bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])

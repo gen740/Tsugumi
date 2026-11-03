@@ -46,15 +46,6 @@ let
     '';
   };
 
-  # Legacy (contract headers without card.hh) for definitions written before
-  # `sdk`: `#include <tsugumi/sdk/card.hh>` plus the generated headers.
-  legacyHeaders = pkgs.runCommand "tsugumi-card-cpp-headers" { } ''
-    mkdir -p $out/include
-    for f in ${lib.concatStringsSep " " schemas}; do
-      ${flatc} --cpp --scoped-enums -o $out/include ${generated}/$f.fbs
-    done
-  '';
-
   # The contract files under their fixed names (flatc names its output after them).
   contractDir = { inputs, outputs, params, contract }:
     pkgs.runCommand "tsugumi-card-contract" { } ''
@@ -85,7 +76,6 @@ in
 rec {
   inherit generated runtime;
   inherit (pkgs) flatbuffers;
-  headers = legacyHeaders;
 
   # The SDK of this Card: its contract compiled for the requested languages
   # only (nothing is generated or built for languages left out).
@@ -113,8 +103,8 @@ rec {
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.
   cppCard =
-    { src, sdk ? null, name ? "tsugumi-cpp-card", buildInputs ? [ ], cxxflags ? [ ] }:
-    assert lib.assertMsg (sdk == null || sdk.cpp != null) "cppCard: the SDK was made without \"cpp\" in languages";
+    { src, sdk, name ? "tsugumi-cpp-card", buildInputs ? [ ], cxxflags ? [ ] }:
+    assert lib.assertMsg (sdk.cpp != null) "cppCard: the SDK was made without \"cpp\" in languages";
     pkgs.stdenv.mkDerivation {
       inherit name src;
       buildInputs = [ pkgs.flatbuffers ] ++ buildInputs;
@@ -123,16 +113,10 @@ rec {
         runHook preBuild
         sources=$(find . -name '*.cc' | sort)
         if [ -z "$sources" ]; then echo "no .cc sources in src" >&2; exit 1; fi
-      '' + (if sdk == null then ''
-        $CXX -std=c++20 -O2 -fPIC -shared -Wall \
-          -I${legacyHeaders}/include -I${sdkRoot}/include ${lib.escapeShellArgs cxxflags} \
-          $sources -o main.so
-      '' else ''
         $CXX -std=c++20 -O2 -fPIC -shared -Wall \
           -I${sdk.cpp}/include -I${runtime}/include ${lib.escapeShellArgs cxxflags} \
           $sources ${sdk.cpp}/src/card_adapter.cc \
           -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib -o main.so
-      '') + ''
         runHook postBuild
       '';
       installPhase = ''
@@ -144,11 +128,11 @@ rec {
   # A Python Card: `src/main.py` defines `main(ctx)`. The package contains the
   # interpreter, the requested packages and a main.so that embeds Python.
   pythonCard =
-    { src, sdk ? null, name ? "tsugumi-python-card", python ? pkgs.python3, packages ? (ps: [ ]) }:
-    assert lib.assertMsg (sdk == null || sdk.python != null) "pythonCard: the SDK was made without \"python\" in languages";
+    { src, sdk, name ? "tsugumi-python-card", python ? pkgs.python3, packages ? (ps: [ ]) }:
+    assert lib.assertMsg (sdk.python != null) "pythonCard: the SDK was made without \"python\" in languages";
     let
       env = python.withPackages (ps: [ ps.flatbuffers ] ++ packages ps);
-      bindings = if sdk == null then pythonFace generated else sdk.python;
+      bindings = sdk.python;
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
