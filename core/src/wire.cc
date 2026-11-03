@@ -378,6 +378,29 @@ std::string reply(FBB& b, uint64_t request_id, R::ReplyPayload type, Off<void> v
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
 }
 
+std::string file_page(uint64_t request_id, const std::string& name, std::string_view slice, uint64_t offset,
+                      uint64_t total, const std::string& hash) {
+  FBB b(slice.size() + 1024);
+  auto nm = b.CreateString(name);
+  auto h = b.CreateString(hash);
+  auto bytes = b.CreateVector(reinterpret_cast<const uint8_t*>(slice.data()), slice.size());
+  R::FileContentBuilder fb(b);
+  fb.add_name(nm);
+  fb.add_hash(h);
+  fb.add_size_bytes(total);
+  fb.add_offset(offset);
+  fb.add_next_offset(offset + slice.size());
+  fb.add_bytes(bytes);
+  fb.add_eof(offset + slice.size() == total);
+  auto off = fb.Finish();
+  return reply(b, request_id, R::ReplyPayload::FileContent, off.Union());
+}
+
+std::string_view page_of(std::string_view data, uint64_t offset, uint64_t limit) {
+  if (offset > data.size()) throw Failed(FailureKind::invalid_range, "offset is past the end");
+  return data.substr(offset, std::min<uint64_t>(limit, data.size() - offset));
+}
+
 std::string failure_reply(uint64_t request_id, const FailureData& f) {
   FBB b;
   auto off = failure(b, f);

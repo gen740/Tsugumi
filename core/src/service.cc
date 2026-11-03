@@ -1164,26 +1164,6 @@ uint32_t chunk_limit(std::optional<uint32_t> v, uint32_t def, uint32_t lo, uint3
   return x;
 }
 
-std::string file_content_reply(uint64_t rid, const std::string& name, const std::string& data,
-                               uint64_t offset, uint32_t limit) {
-  if (offset > data.size()) throw Failed(FailureKind::invalid_range, "offset is past the end");
-  uint64_t n = std::min<uint64_t>(limit, data.size() - offset);
-  FBB b(n + 1024);
-  auto nm = b.CreateString(name);
-  auto h = b.CreateString(crypto::sha256_hex(data));
-  auto bytes = b.CreateVector(reinterpret_cast<const uint8_t*>(data.data() + offset), n);
-  R::FileContentBuilder fb(b);
-  fb.add_name(nm);
-  fb.add_hash(h);
-  fb.add_size_bytes(data.size());
-  fb.add_offset(offset);
-  fb.add_next_offset(offset + n);
-  fb.add_bytes(bytes);
-  fb.add_eof(offset + n == data.size());
-  auto off = fb.Finish();
-  return wire::reply(b, rid, R::ReplyPayload::FileContent, off.Union());
-}
-
 }  // namespace
 
 void Service::file_list(RequestIn& req) {
@@ -1333,11 +1313,13 @@ void Service::file_read(RequestIn& req) {
   std::optional<std::string> bytes = confirmed_bytes(*doc, *store_, path);
   if (!bytes) bytes = nix_->sdk_file(path, doc->rev);  // throws when the SDK rev is stale
   if (!bytes) throw Failed(FailureKind::not_found, path + " does not exist", {{"path", path}});
-  if (r->if_hash() && r->if_hash()->str() != crypto::sha256_hex(*bytes))
+  std::string hash = crypto::sha256_hex(*bytes);
+  if (r->if_hash() && r->if_hash()->str() != hash)
     throw Failed(FailureKind::hash_conflict, path + " does not match if_hash",
-                 {{"path", path}, {"expected_hash", r->if_hash()->str()}, {"actual_hash", crypto::sha256_hex(*bytes)}});
-  reply(req, file_content_reply(req.request_id, path.substr(path.rfind('/') + 1), *bytes,
-                                r->offset().value_or(0), limit));
+                 {{"path", path}, {"expected_hash", r->if_hash()->str()}, {"actual_hash", hash}});
+  uint64_t offset = r->offset().value_or(0);
+  reply(req, wire::file_page(req.request_id, path.substr(path.rfind('/') + 1), wire::page_of(*bytes, offset, limit), offset,
+                             bytes->size(), hash));
 }
 
 namespace {
@@ -1443,7 +1425,9 @@ void Service::attached_folder_read(RequestIn& req) {
     if (!data) throw Failed(FailureKind::not_found, rel + " cannot be read", {{"path", rel}});
     bytes = std::move(*data);
   }
-  reply(req, file_content_reply(req.request_id, target.filename().string(), bytes, r->offset().value_or(0), limit));
+  uint64_t offset = r->offset().value_or(0);
+  reply(req, wire::file_page(req.request_id, target.filename().string(), wire::page_of(bytes, offset, limit), offset,
+                             bytes.size(), crypto::sha256_hex(bytes)));
 }
 
 void Service::output_types(RequestIn& req) {

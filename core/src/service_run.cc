@@ -1,4 +1,6 @@
 // Run, SDK, history, value, artifact and log handlers.
+#include <sys/stat.h>
+
 #include <algorithm>
 
 #include "nix.hh"
@@ -25,26 +27,11 @@ uint32_t page_limit(std::optional<uint32_t> v) {
   return x;
 }
 
-std::string content_reply(uint64_t rid, const std::string& name, const std::string& data, uint64_t offset,
-                          std::optional<uint32_t> limit_arg) {
+// The size of a page of file or value content.
+uint64_t content_limit(std::optional<uint32_t> limit_arg) {
   uint32_t limit = limit_arg.value_or(1u << 20);
   if (limit < 1 || limit > (1u << 20)) throw Failed(FailureKind::invalid_request, "limit_bytes must be 1..1048576");
-  if (offset > data.size()) throw Failed(FailureKind::invalid_range, "offset is past the end");
-  uint64_t n = std::min<uint64_t>(limit, data.size() - offset);
-  FBB b(n + 1024);
-  auto nm = b.CreateString(name);
-  auto h = b.CreateString(crypto::sha256_hex(data));
-  auto bytes = b.CreateVector(reinterpret_cast<const uint8_t*>(data.data() + offset), n);
-  R::FileContentBuilder fb(b);
-  fb.add_name(nm);
-  fb.add_hash(h);
-  fb.add_size_bytes(data.size());
-  fb.add_offset(offset);
-  fb.add_next_offset(offset + n);
-  fb.add_bytes(bytes);
-  fb.add_eof(offset + n == data.size());
-  auto off = fb.Finish();
-  return wire::reply(b, rid, R::ReplyPayload::FileContent, off.Union());
+  return limit;
 }
 
 std::string sdk_result(FBB& b, const SDKJob& job, flatbuffers::Offset<R::SDKPrepareResult>* out) {
@@ -445,16 +432,18 @@ void Service::run_value_read(RequestIn& req) {
     throw Failed(FailureKind::invalid_request, "side must be input or output");
   bool input = r->side() == D::ValueSide::input;
   std::string port = r->port()->str();
-  auto data = history_->read([&](sql::Db& db) -> std::string {
+  uint64_t offset = r->offset().value_or(0), limit = content_limit(r->limit_bytes());
+  auto page = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     auto rec = History::invocation(db, run_id, card, *r->invocation());
     if (!rec) throw Failed(FailureKind::not_found, "unknown invocation");
     if (!rec->record_io) throw Failed(FailureKind::recording_disabled, "recordIO was disabled for this invocation");
-    auto bytes = History::value_bytes(db, run_id, card, *r->invocation(), input, port);
-    if (!bytes) throw Failed(FailureKind::not_found, "no stored value for port " + port, {{"port", port}});
-    return *bytes;
+    auto p = History::value_page(db, run_id, card, *r->invocation(), input, port, offset, limit);
+    if (!p) throw Failed(FailureKind::not_found, "no stored value for port " + port, {{"port", port}});
+    return *p;
   });
-  reply(req, content_reply(req.request_id, port, data, r->offset().value_or(0), r->limit_bytes()));
+  if (offset > page.size) throw Failed(FailureKind::invalid_range, "offset is past the end");
+  reply(req, wire::file_page(req.request_id, port, page.bytes, offset, page.size, page.hash));
 }
 
 void Service::artifact_list(RequestIn& req) {
@@ -522,11 +511,34 @@ void Service::artifact_read(RequestIn& req) {
     if (!member) throw Failed(FailureKind::not_found, "no member " + m);
   }
   auto file = store_->state_dir() / "runs" / a->run_id / "artifacts" / a->artifact_id / member->path;
-  auto data = fs::read_file(file);
-  if (!data) throw Failed(FailureKind::not_found, "the artifact content is missing");
-  if (crypto::sha256_hex(*data) != member->hash) throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
-  reply(req, content_reply(req.request_id, stdfs::path(member->path).filename().string(), *data,
-                           r->offset().value_or(0), r->limit_bytes()));
+  uint64_t offset = r->offset().value_or(0), limit = content_limit(r->limit_bytes());
+  struct stat st{};
+  if (::stat(file.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) throw Failed(FailureKind::not_found, "the artifact content is missing");
+  auto size = static_cast<uint64_t>(st.st_size);
+  int64_t mtime = static_cast<int64_t>(st.st_mtime) * 1000000000 +
+#ifdef __APPLE__
+                  st.st_mtimespec.tv_nsec;
+#else
+                  st.st_mtim.tv_nsec;
+#endif
+  // The whole content is checked against its hash once (streamed); while the
+  // file keeps that size and time, later pages read their range only.
+  bool checked;
+  {
+    std::lock_guard<std::mutex> l(verified_mu_);
+    auto v = verified_.find(file.string());
+    checked = v != verified_.end() && v->second == std::make_pair(size, mtime);
+  }
+  if (!checked) {
+    if (fs::sha256_file(file) != member->hash) throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
+    std::lock_guard<std::mutex> l(verified_mu_);
+    verified_[file.string()] = {size, mtime};
+  }
+  if (offset > size) throw Failed(FailureKind::invalid_range, "offset is past the end");
+  auto slice = fs::read_range(file, offset, std::min<uint64_t>(limit, size - offset));
+  if (!slice) throw Failed(FailureKind::not_found, "the artifact content is missing");
+  reply(req, wire::file_page(req.request_id, stdfs::path(member->path).filename().string(), *slice, offset, size,
+                             member->hash));
 }
 
 void Service::log_range(RequestIn& req) {

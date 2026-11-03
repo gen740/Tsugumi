@@ -43,6 +43,12 @@ DisplayData display(const D::Display* d);
 // Finishes a reply Message.
 std::string reply(FBB& b, uint64_t request_id, R::ReplyPayload type, Off<void> value);
 std::string failure_reply(uint64_t request_id, const FailureData& f);
+// One page of a file or value: `slice` is the bytes from `offset` of
+// `total`, and `hash` the SHA-256 of all of it (computed once by the caller).
+std::string file_page(uint64_t request_id, const std::string& name, std::string_view slice, uint64_t offset,
+                      uint64_t total, const std::string& hash);
+// The page [offset, offset + limit) of `data` held in memory.
+std::string_view page_of(std::string_view data, uint64_t offset, uint64_t limit);
 
 // Standalone buffers (root = table) for persistence.
 std::string standalone_display(const DisplayData& d);

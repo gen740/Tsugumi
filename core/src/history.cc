@@ -154,10 +154,65 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, in
 
 bool char_start(unsigned char c) { return (c & 0xC0) != 0x80; }
 
+// The tables a run lives in, the same in the history and in its copy
+// (.tsugumi/runs.sqlite); `p` is the schema prefix ("" or "ex.").
+std::string run_tables(const std::string& p) {
+  return "CREATE TABLE IF NOT EXISTS " + p + R"SQL(runs(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL UNIQUE, op_id TEXT NOT NULL,
+  state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
+  accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
+  source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
+  has_artifacts INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
+  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
+  duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
+  input_sources TEXT, display BLOB, build_cached INTEGER, detail TEXT,
+  PRIMARY KEY(run_id, card, invocation));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(ivalues(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
+  port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
+  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT,
+  PRIMARY KEY(run_id, card, invocation, side, port));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
+  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(logs_run ON logs(run_id, stream, run_off);
+CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(logs_inv ON logs(run_id, card, invocation, stream, inv_off);
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(artifacts(
+  artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
+  members TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
+  PRIMARY KEY(run_id, card));
+)SQL";
+}
+
+// Version of the history's tables. A history of another version is started
+// over (there is no migration of earlier layouts).
+constexpr int kHistoryVersion = 2;
+
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
     : path_(db_path), secret_(std::move(cursor_secret)), fault_(std::move(fault)) {
+  bool other = false;
+  if (std::filesystem::exists(path_)) {
+    sql::Db probe(path_.string());
+    auto v = probe.prepare("PRAGMA user_version");
+    auto t = probe.prepare("SELECT count(*) FROM sqlite_master");
+    other = v.step() && v.i64(0) != kHistoryVersion && t.step() && t.i64(0) > 0;
+  }
+  if (other) {
+    log::warn("history " + path_.string() + " has another layout; starting a new one");
+    for (const char* suffix : {"", "-wal", "-shm", "-journal"}) std::filesystem::remove(path_.string() + suffix);
+  }
   writer_db_ = std::make_unique<sql::Db>(path_.string());
   // Single process owns the database (guarded by the project lock).
   writer_db_->exec("PRAGMA journal_mode=WAL");
@@ -177,63 +232,19 @@ History::~History() {
 }
 
 void History::init_schema(sql::Db& db) {
-  db.exec(R"SQL(
-CREATE TABLE IF NOT EXISTS runs(
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL UNIQUE, op_id TEXT NOT NULL UNIQUE,
-  state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
-  accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
-  source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
-  has_artifacts INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
-CREATE TABLE IF NOT EXISTS invocations(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
-  duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
-  input_sources TEXT, display BLOB,
-  PRIMARY KEY(run_id, card, invocation));
+  db.exec(run_tables("") + R"SQL(
+CREATE INDEX IF NOT EXISTS logs_card ON logs(run_id, card, stream, card_off);
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
-CREATE TABLE IF NOT EXISTS schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS ivalues(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
-  port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
-  size INTEGER NOT NULL, bytes BLOB, artifact_id TEXT,
-  PRIMARY KEY(run_id, card, invocation, side, port));
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS logs(
-  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
-  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
-CREATE INDEX IF NOT EXISTS logs_run ON logs(run_id, stream, run_off);
-CREATE INDEX IF NOT EXISTS logs_card ON logs(run_id, card, stream, card_off);
-CREATE INDEX IF NOT EXISTS logs_inv ON logs(run_id, card, invocation, stream, inv_off);
-CREATE TABLE IF NOT EXISTS artifacts(
-  artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
-  members TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS artifacts_run ON artifacts(run_id, card, invocation);
-CREATE TABLE IF NOT EXISTS displays(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
-  PRIMARY KEY(run_id, card));
 CREATE TABLE IF NOT EXISTS receipts(
   op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL);
 )SQL");
-  // Columns added after the first release (older databases are migrated in place).
-  bool has_cached = false, has_detail = false;
-  {
-    auto st = db.prepare("SELECT name FROM pragma_table_info('invocations')");
-    while (st.step()) {
-      has_cached |= st.text(0) == "build_cached";
-      has_detail |= st.text(0) == "detail";
-    }
-  }
-  if (!has_cached) db.exec("ALTER TABLE invocations ADD COLUMN build_cached INTEGER");
-  if (!has_detail) db.exec("ALTER TABLE invocations ADD COLUMN detail TEXT");
+  db.exec("PRAGMA user_version=" + std::to_string(kHistoryVersion));
 }
 
 sql::Db& History::reader() {
@@ -385,10 +396,11 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
       std::string h = put_schema(db, *v.type);
       auto ins = db.prepare(
           "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, side, port, kind, schema_hash, "
-          "root_type, size, bytes, artifact_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+          "root_type, size, bytes, hash, artifact_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
       ins.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, side).bind(5, v.name)
           .bind(6, static_cast<int>(v.kind)).bind(7, h).bind(8, v.type->root_type)
-          .bind(9, static_cast<uint64_t>(v.bytes.size())).bind_blob(10, v.bytes).bind(11, v.artifact_id)
+          .bind(9, static_cast<uint64_t>(v.bytes.size())).bind_blob(10, v.bytes)
+          .bind(11, crypto::sha256_hex(v.bytes)).bind(12, v.artifact_id)
           .run();
     };
     for (const auto& v : r.inputs) put(v, 0);
@@ -632,6 +644,20 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string
     out.push_back(std::move(m));
   }
   return out;
+}
+
+std::optional<History::ValuePage> History::value_page(sql::Db& db, const std::string& run_id, const CardPath& card,
+                                                      uint64_t n, bool input, const std::string& port, uint64_t offset,
+                                                      uint64_t limit) {
+  auto st = db.prepare("SELECT substr(bytes, ?, ?), size, hash FROM ivalues "
+                       "WHERE run_id=? AND card=? AND invocation=? AND side=? AND port=?");
+  st.bind(1, offset + 1).bind(2, limit).bind(3, run_id).bind(4, key(card)).bind(5, n).bind(6, input ? 0 : 1).bind(7, port);
+  if (!st.step()) return std::nullopt;
+  ValuePage p;
+  if (!st.is_null(0)) p.bytes = st.blob(0);
+  p.size = static_cast<uint64_t>(st.i64(1));
+  p.hash = st.text(2);
+  return p;
 }
 
 std::optional<std::string> History::value_bytes(sql::Db& db, const std::string& run_id,
@@ -894,47 +920,13 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 namespace {
 
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "1";
+constexpr const char* kCopyVersion = "2";
 
-// Version 1 of the copy. Columns keep the names used here, so runs move
-// between the two with the same column lists (kCopied).
-constexpr const char* kCopySchema = R"SQL(
-CREATE TABLE IF NOT EXISTS ex.meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ex.runs(
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL UNIQUE, op_id TEXT NOT NULL,
-  state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
-  accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
-  source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
-  has_artifacts INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS ex.run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
-CREATE TABLE IF NOT EXISTS ex.invocations(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
-  duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
-  input_sources TEXT, display BLOB, build_cached INTEGER, detail TEXT,
-  PRIMARY KEY(run_id, card, invocation));
-CREATE TABLE IF NOT EXISTS ex.schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS ex.ivalues(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
-  port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
-  size INTEGER NOT NULL, bytes BLOB, artifact_id TEXT,
-  PRIMARY KEY(run_id, card, invocation, side, port));
-CREATE TABLE IF NOT EXISTS ex.logs(
-  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
-  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
-CREATE INDEX IF NOT EXISTS ex.logs_run ON logs(run_id, stream, run_off);
-CREATE INDEX IF NOT EXISTS ex.logs_inv ON logs(run_id, card, invocation, stream, inv_off);
-CREATE TABLE IF NOT EXISTS ex.artifacts(
-  artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
-  members TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS ex.artifacts_run ON artifacts(run_id, card, invocation);
-CREATE TABLE IF NOT EXISTS ex.displays(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
-  PRIMARY KEY(run_id, card));
-)SQL";
+// The copy: the run tables (same names and columns as the history, so runs
+// move between the two with the same column lists, kCopied) and its format.
+std::string copy_schema() {
+  return "CREATE TABLE IF NOT EXISTS ex.meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\n" + run_tables("ex.");
+}
 
 struct Copied {
   const char* table;
@@ -948,7 +940,7 @@ constexpr Copied kCopied[] = {
     {"run_cards", "run_id, card", "rowid"},
     {"invocations", "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
                     "record_io, input_sources, display, build_cached, detail", "rowid"},
-    {"ivalues", "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, artifact_id", "rowid"},
+    {"ivalues", "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id", "rowid"},
     {"logs", "run_id, card, invocation, stream, run_off, card_off, inv_off, data", "id"},
     {"artifacts", "artifact_id, run_id, card, invocation, output, kind, name, members", "rowid"},
     {"displays", "run_id, card, revision, data", "rowid"},
@@ -983,7 +975,7 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
     sql::Db f(":memory:");
     f.prepare("ATTACH DATABASE ? AS ex").bind(1, fresh.string()).run();
     f.exec("PRAGMA ex.journal_mode=DELETE");
-    f.exec(kCopySchema);
+    f.exec(copy_schema());
     f.prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
         .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
   }
@@ -1004,7 +996,7 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
   // other programs (and the Mac) may read it.
   db->exec("PRAGMA ex.journal_mode=DELETE");
   db->exec("PRAGMA ex.synchronous=FULL");
-  db->exec(kCopySchema);
+  db->exec(copy_schema());
   db->prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
       .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
   return db;

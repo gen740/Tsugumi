@@ -49,6 +49,50 @@ bool valid_relative_path(std::string_view p, bool allow_root) {
   return true;
 }
 
+std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset, uint64_t size) {
+  int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
+    throw Error("open " + p.string() + ": " + std::strerror(errno));
+  }
+  std::string out(size, '\0');
+  size_t got = 0;
+  while (got < size) {
+    ssize_t r = ::pread(fd, out.data() + got, size - got, static_cast<off_t>(offset + got));
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      int e = errno;
+      ::close(fd);
+      throw Error("read " + p.string() + ": " + std::strerror(e));
+    }
+    if (r == 0) break;
+    got += static_cast<size_t>(r);
+  }
+  ::close(fd);
+  out.resize(got);
+  return out;
+}
+
+std::string sha256_file(const stdfs::path& p) {
+  int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) throw Error("open " + p.string() + ": " + std::strerror(errno));
+  crypto::Sha256 h;
+  std::string buf(1u << 20, '\0');
+  while (true) {
+    ssize_t r = ::read(fd, buf.data(), buf.size());
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      int e = errno;
+      ::close(fd);
+      throw Error("read " + p.string() + ": " + std::strerror(e));
+    }
+    if (r == 0) break;
+    h.update(buf.data(), static_cast<size_t>(r));
+  }
+  ::close(fd);
+  return h.finish_hex();
+}
+
 std::optional<std::string> read_file(const stdfs::path& p) {
   int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {

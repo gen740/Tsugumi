@@ -6,6 +6,8 @@ used to live in the project moves out on the first start."""
 
 from __future__ import annotations
 
+import hashlib
+
 import json
 import shutil
 import sqlite3
@@ -60,10 +62,10 @@ def test_copy_is_written_and_read_back_by_a_copied_project(tmp_path):
     assert (tmp_path / "h1" / "history.sqlite").exists()
     assert not (root / ".tsugumi" / "history.sqlite").exists()
     with sqlite3.connect(root / ".tsugumi" / "runs.sqlite") as db:
-        assert dict(db.execute("SELECT key, value FROM meta")) == {"format": "tsugumi-runs", "version": "1"}
-        # Values stay FlatBuffers bytes, typed by their schema's bfbs.
-        rows = db.execute("SELECT v.bytes, s.bfbs, s.root_type FROM ivalues v JOIN schemas s ON s.hash = v.schema_hash").fetchall()
-        assert rows and all(b and bfbs for b, bfbs, _ in rows)
+        assert dict(db.execute("SELECT key, value FROM meta")) == {"format": "tsugumi-runs", "version": "2"}
+        # Values stay FlatBuffers bytes, typed by their schema's bfbs, with their SHA-256.
+        rows = db.execute("SELECT v.bytes, v.hash, s.bfbs FROM ivalues v JOIN schemas s ON s.hash = v.schema_hash").fetchall()
+        assert rows and all(b and bfbs and h == hashlib.sha256(b).hexdigest() for b, h, bfbs in rows)
         assert db.execute("SELECT count(*) FROM logs").fetchone()[0] > 0
         assert db.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 2
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
@@ -182,3 +184,25 @@ def test_history_in_the_project_moves_out(tmp_path):
         d.cleanup()
     assert not any((root / ".tsugumi").glob("history.sqlite*"))
     assert (tmp_path / "h" / "history.sqlite").exists()
+
+
+def test_a_history_of_another_layout_is_started_over(tmp_path):
+    root = tmp_path / "p"
+    project(root, True, True)
+    hist = tmp_path / "h"
+    hist.mkdir()
+    # An earlier layout (no version, an older ivalues without hash).
+    with sqlite3.connect(hist / "history.sqlite") as db:
+        db.execute("CREATE TABLE ivalues(run_id TEXT, bytes BLOB)")
+        db.execute("INSERT INTO ivalues VALUES('old', x'00')")
+    d = start(root, hist)
+    try:
+        c = d.client()
+        c.hello()
+        rid, _ = run_and_wait(c, "src")
+        assert listed(c) == [rid]
+    finally:
+        d.cleanup()
+    with sqlite3.connect(hist / "history.sqlite") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert "hash" in [r[1] for r in db.execute("PRAGMA table_info(ivalues)")]

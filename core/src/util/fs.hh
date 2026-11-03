@@ -24,6 +24,11 @@ bool valid_relative_path(std::string_view p, bool allow_root = false);
 
 std::optional<std::string> read_file(const stdfs::path& p);
 std::string read_file_or_throw(const stdfs::path& p);
+// `size` bytes from `offset` (fewer at the end of the file); nullopt when
+// the file does not exist.
+std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset, uint64_t size);
+// SHA-256 (hex) of a file's content, read in parts.
+std::string sha256_file(const stdfs::path& p);
 void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
 void remove_file_durable(const stdfs::path& p);

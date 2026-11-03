@@ -112,6 +112,15 @@ class History {
   static std::optional<std::string> value_bytes(sql::Db& db, const std::string& run_id,
                                                 const CardPath& card, uint64_t n, bool input,
                                                 const std::string& port);
+  // A page of a stored value: its bytes from `offset` (at most `limit`), with
+  // the value's size and SHA-256 (stored with it, so nothing else is read).
+  struct ValuePage {
+    std::string bytes;
+    uint64_t size = 0;
+    std::string hash;
+  };
+  static std::optional<ValuePage> value_page(sql::Db& db, const std::string& run_id, const CardPath& card, uint64_t n,
+                                             bool input, const std::string& port, uint64_t offset, uint64_t limit);
   struct LastInput {
     std::string run_id;
     uint64_t invocation;

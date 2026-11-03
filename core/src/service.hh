@@ -153,6 +153,10 @@ class Service : public RequestSink {
   ServiceOptions opts_;
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
+  // Artifact files whose content was checked against their hash, by path:
+  // (size, modification time) when checked. Later pages read their range only.
+  std::mutex verified_mu_;
+  std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
   std::unique_ptr<NixRunner> nix_;
   std::unique_ptr<WorkerPool> workers_;
   std::unique_ptr<Scheduler> scheduler_;
