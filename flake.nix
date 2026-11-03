@@ -61,6 +61,8 @@
             ruff
             nixfmt-rfc-style
             shfmt
+            # The web UI (web/) and its contract test with the Swift Agent.
+            nodejs
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap openssl ];
           MACOSX_DEPLOYMENT_TARGET = "26.0";
           HOSQ_INCLUDE_DIR = "${hosq}/include";

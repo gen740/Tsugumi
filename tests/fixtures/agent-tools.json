@@ -1,0 +1,967 @@
+[
+ {
+  "name": "project_inspect",
+  "payloadType": 4,
+  "description": "ProjectInspect: -> ProjectSnapshot. No subscription, build or reload.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "mutating": false
+ },
+ {
+  "name": "project_validate",
+  "payloadType": 7,
+  "description": "ProjectValidate: -> ValidationResult. targets = [] means everything; mode = executable.  With `changes` (the same as project_save's), the document as it would be  after them is checked and nothing is saved: try definitions, _outputs.fbs  and default.nix text here instead of saving trial versions.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "at_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": " Omitted: the latest revision."
+    },
+    "targets": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "segments": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "additionalProperties": false,
+      "required": [
+       "segments"
+      ]
+     }
+    },
+    "mode": {
+     "type": "string",
+     "enum": [
+      "unspecified",
+      "structure",
+      "executable"
+     ]
+    },
+    "changes": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "value_type": {
+        "type": "string",
+        "enum": [
+         "SetProject",
+         "SetLayout",
+         "PutDefinition",
+         "RemoveDefinition",
+         "PutSource",
+         "PatchSource",
+         "RemoveSource",
+         "RenameDefinition"
+        ],
+        "description": "variant of value"
+       },
+       "value": {
+        "anyOf": [
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "card_json": {
+            "type": "string"
+           },
+           "meta_json": {
+            "type": "string",
+            "description": " The new _meta.json; omitted removes it unless keep_meta."
+           },
+           "link_json": {
+            "type": "string"
+           },
+           "keep_meta": {
+            "type": "boolean",
+            "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id",
+           "card_json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "bytes": {
+            "type": "string",
+            "description": "UTF-8 text (or {\"base64\": ...})"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "bytes"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           },
+           "patches": {
+            "type": "array",
+            "items": {
+             "type": "object",
+             "properties": {
+              "offset": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "remove": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "text": {
+               "type": "string"
+              }
+             },
+             "additionalProperties": false,
+             "required": [
+              "text"
+             ]
+            }
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash",
+           "patches"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "to": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id",
+           "to"
+          ]
+         }
+        ]
+       }
+      },
+      "additionalProperties": false
+     },
+     "description": " Proposed changes (as in project_save): checked, never saved."
+    }
+   },
+   "additionalProperties": false
+  },
+  "mutating": false
+ },
+ {
+  "name": "project_save",
+  "payloadType": 5,
+  "description": "ProjectSave: ",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "base_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "changes": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "value_type": {
+        "type": "string",
+        "enum": [
+         "SetProject",
+         "SetLayout",
+         "PutDefinition",
+         "RemoveDefinition",
+         "PutSource",
+         "PatchSource",
+         "RemoveSource",
+         "RenameDefinition"
+        ],
+        "description": "variant of value"
+       },
+       "value": {
+        "anyOf": [
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "card_json": {
+            "type": "string"
+           },
+           "meta_json": {
+            "type": "string",
+            "description": " The new _meta.json; omitted removes it unless keep_meta."
+           },
+           "link_json": {
+            "type": "string"
+           },
+           "keep_meta": {
+            "type": "boolean",
+            "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id",
+           "card_json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "bytes": {
+            "type": "string",
+            "description": "UTF-8 text (or {\"base64\": ...})"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "bytes"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           },
+           "patches": {
+            "type": "array",
+            "items": {
+             "type": "object",
+             "properties": {
+              "offset": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "remove": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "text": {
+               "type": "string"
+              }
+             },
+             "additionalProperties": false,
+             "required": [
+              "text"
+             ]
+            }
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash",
+           "patches"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "to": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id",
+           "to"
+          ]
+         }
+        ]
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    "renamed_cards": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "from": {
+        "type": "object",
+        "properties": {
+         "segments": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "additionalProperties": false,
+        "required": [
+         "segments"
+        ]
+       },
+       "to": {
+        "type": "object",
+        "properties": {
+         "segments": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "additionalProperties": false,
+        "required": [
+         "segments"
+        ]
+       }
+      },
+      "additionalProperties": false,
+      "required": [
+       "from",
+       "to"
+      ]
+     }
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "changes"
+   ]
+  },
+  "mutating": true
+ },
+ {
+  "name": "project_file_list",
+  "payloadType": 11,
+  "description": "ProjectFileList: -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": " Relative to the project; \"\" or \".\" is the project folder."
+    },
+    "at_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": " Omitted: the latest revision."
+    },
+    "depth": {
+     "type": "integer"
+    },
+    "include_directories": {
+     "type": "boolean"
+    },
+    "cursor": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "path"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "project_file_read",
+  "payloadType": 13,
+  "description": "ProjectFileRead: -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string"
+    },
+    "at_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": " Omitted: the latest revision."
+    },
+    "if_hash": {
+     "type": "string"
+    },
+    "offset": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "limit_bytes": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "path"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "run_plan",
+  "payloadType": 17,
+  "description": "RunPlan: -> RunPlanResult. propagate = true.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "at_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "propagate": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "card"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "run",
+  "payloadType": 18,
+  "description": "Run: -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),  nix_jobs = 1, nix_cores = 1.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "base_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "propagate": {
+     "type": "boolean"
+    },
+    "max_concurrency": {
+     "type": "integer"
+    },
+    "nix_jobs": {
+     "type": "integer"
+    },
+    "nix_cores": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "card"
+   ]
+  },
+  "mutating": true
+ },
+ {
+  "name": "run_cancel",
+  "payloadType": 19,
+  "description": "RunCancel: -> RunStatus. Idempotent. Unknown id is not_found.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "run_id"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "run_status",
+  "payloadType": 20,
+  "description": "RunStatus: -> RunStatus. Omitted run_id: the active run, else the last one, else idle.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "mutating": false
+ },
+ {
+  "name": "run_history",
+  "payloadType": 21,
+  "description": "RunHistory: -> RunPage, newest accepted first.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "artifacts_only": {
+     "type": "boolean"
+    },
+    "cursor": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false
+  },
+  "mutating": false
+ },
+ {
+  "name": "run_invocations",
+  "payloadType": 22,
+  "description": "RunInvocations: -> InvocationPage, ascending invocation number.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "cursor": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "run_id",
+    "card"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "run_record",
+  "payloadType": 23,
+  "description": "RunRecord: -> RecordResult. invocation and follow_latest = true are exclusive.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "invocation": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "follow_latest": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "run_id",
+    "card"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "log_range",
+  "payloadType": 27,
+  "description": "LogRange: -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is  rejected. invocation requires card.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "invocation": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "stream": {
+     "type": "string",
+     "enum": [
+      "unspecified",
+      "stdout",
+      "stderr",
+      "journal",
+      "build"
+     ]
+    },
+    "offset": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "tail": {
+     "type": "boolean"
+    },
+    "limit_bytes": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "run_id"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "artifact_list",
+  "payloadType": 25,
+  "description": "ArtifactList: -> ArtifactPage. invocation requires card.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string"
+    },
+    "card": {
+     "type": "object",
+     "properties": {
+      "segments": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "additionalProperties": false,
+     "required": [
+      "segments"
+     ]
+    },
+    "invocation": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "cursor": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "run_id"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "artifact_read",
+  "payloadType": 26,
+  "description": "ArtifactRead: -> FileContent. member only for Directory artifacts.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "artifact_id": {
+     "type": "string"
+    },
+    "member": {
+     "type": "string"
+    },
+    "offset": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "limit_bytes": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "artifact_id"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "operation_get",
+  "payloadType": 10,
+  "description": "OperationGet: -> OperationResult.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "mutating": true
+ },
+ {
+  "name": "attached_folder_read",
+  "payloadType": 32,
+  "description": "AttachedFolderRead: -> FileContent. Reads a folder of the Mac attached to a chat (read-only,  shared with this project only): a file's bytes, or for a folder its  entries as text, one per line (folders end with \"/\"). `folder` is the  attached folder's path on the Mac; `path` is relative to it (\"\" = itself).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "folder": {
+     "type": "string"
+    },
+    "path": {
+     "type": "string"
+    },
+    "offset": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "limit_bytes": {
+     "type": "integer"
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "folder",
+    "path"
+   ]
+  },
+  "mutating": false
+ }
+]

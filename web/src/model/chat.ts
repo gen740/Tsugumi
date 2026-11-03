@@ -1,6 +1,7 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
+import { draftRequest } from '../shared/agentShared'
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
@@ -288,23 +289,13 @@ export class ChatController extends Observable {
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
   generateDrafts(scope: string[], cards: CardKey[]) {
     const s = this.session
-    const list = cards.map((k) => {
+    const items = cards.map((k) => {
       // A Card's definition folder is named by its id.
-      const def = path(k).pop() ?? '-'
       const meta = s.cardMeta(k)
-      return `- ${k} (definition ${def}): ${str(get(meta, 'description')) ?? ''}\n  content: ${str(get(meta, 'content')) ?? ''}`
-    }).join('\n')
-    const where = scope.length === 0 ? 'the root workflow' : `the child workflow ${scope.join('/')}`
+      return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '' }
+    })
     const names = cards.map((k) => path(k).pop() ?? k).join('、')
-    this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`,
-      `Implement these Draft Cards in ${where}, matching each one's description, content, provisional ports and the ` +
-      `existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in ` +
-      `the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, ` +
-      `default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write ` +
-      `something, and check planned changes with project_validate {"changes": [...]} instead of saving trials.\n` +
-      `Work one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and ` +
-      `confirm the Card's result with run_record before going on to the next. At the end, report what each Card does ` +
-      `and what the run produced.\n${list}`)
+    this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))
   }
 
   cancel() {

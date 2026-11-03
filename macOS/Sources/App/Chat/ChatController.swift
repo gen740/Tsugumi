@@ -365,25 +365,15 @@ final class ChatController {
 
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
-    let list = cards.map { k -> String in
+    let items = cards.map { k in
       // A Card's definition folder is named by its id.
-      let def = path(k).last ?? "-"
       let meta = session.cardMeta(k)
-      return "- \(k) (definition \(def)): \(meta?["description"]?.string ?? "")\n  content: \(meta?["content"]?.string ?? "")"
-    }.joined(separator: "\n")
-    let where_ = scope.isEmpty ? "the root workflow" : "the child workflow \(scope.joined(separator: "/"))"
+      return (key: k, definition: path(k).last ?? "-", description: meta?["description"]?.string ?? "",
+              content: meta?["content"]?.string ?? "")
+    }
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
-    sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"), prompt: """
-    Implement these Draft Cards in \(where_), matching each one's description, content, provisional ports and the \
-    existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in \
-    the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, \
-    default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write \
-    something, and check planned changes with project_validate {"changes": [...]} instead of saving trials.
-    Work one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and \
-    confirm the Card's result with run_record before going on to the next. At the end, report what each Card does \
-    and what the run produced.
-    \(list)
-    """)
+    sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
+                prompt: Agent.draftRequest(scope: scope, cards: items))
   }
 
   func cancel() {

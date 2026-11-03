@@ -23,7 +23,7 @@ copy()
 const server = {
   entryPoints: [path.join(root, 'server', 'main.ts')],
   outfile: path.join(out, 'server.js'),
-  bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true,
+  bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
   logLevel: 'info',
 }
 const client = {

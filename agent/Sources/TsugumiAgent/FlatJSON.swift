@@ -87,6 +87,9 @@ public struct FlatJSON {
 
   private func integer(_ v: Any, _ where_: String) throws -> (Int64?, UInt64?) {
     if let s = v as? String {
+      // Digits with an optional minus only (as the web Agent: no "+", no spaces).
+      let digits = s.hasPrefix("-") ? s.dropFirst() : Substring(s)
+      guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { throw AgentError.invalidArguments("\(where_) must be a decimal integer") }
       if let u = UInt64(s) { return (Int64(exactly: u), u) }
       if let i = Int64(s) { return (i, nil) }
       throw AgentError.invalidArguments("\(where_) must be a decimal integer")

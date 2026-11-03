@@ -1,0 +1,246 @@
+{
+ "_comment": "Cases both Agents (Swift: macOS/CoreTests, web: web/scripts/contract.mjs) must pass: JSON <-> FlatBuffers at the edges of the types (64 bit values beyond JSON's exact range are decimal strings), and the Draft request.",
+ "flatjson": [
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "-9223372036854775808"
+   },
+   "expect": {
+    "accepted_at": "-9223372036854775808"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "-9223372036854775807"
+   },
+   "expect": {
+    "accepted_at": "-9223372036854775807"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "-9007199254740992"
+   },
+   "expect": {
+    "accepted_at": "-9007199254740992"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "-9007199254740991"
+   },
+   "expect": {
+    "accepted_at": -9007199254740991
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "0"
+   },
+   "expect": {
+    "accepted_at": 0
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "9007199254740991"
+   },
+   "expect": {
+    "accepted_at": 9007199254740991
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "9223372036854775807"
+   },
+   "expect": {
+    "accepted_at": "9223372036854775807"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": -9007199254740991
+   },
+   "expect": {
+    "accepted_at": -9007199254740991
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "rev": "18446744073709551615"
+   },
+   "expect": {
+    "rev": "18446744073709551615"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": "9223372036854775808"
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "rev": "-1"
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "rev": "+5"
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": 9007199254740993
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": 1.5
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.RunStatus",
+   "json": {
+    "run_id": "r",
+    "accepted_at": true
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.Data.DisplayPointCloud",
+   "json": {
+    "x": [
+     0.5
+    ],
+    "y": [
+     -1.25
+    ],
+    "z": [
+     0
+    ],
+    "colors": [
+     0,
+     4294967295
+    ]
+   },
+   "expect": {
+    "x": [
+     0.5
+    ],
+    "y": [
+     -1.25
+    ],
+    "z": [
+     0
+    ],
+    "colors": [
+     0,
+     4294967295
+    ]
+   }
+  },
+  {
+   "type": "Tsugumi.Data.DisplayPointCloud",
+   "json": {
+    "x": [],
+    "y": [],
+    "z": [],
+    "colors": [
+     4294967296
+    ]
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.Data.DisplayPointCloud",
+   "json": {
+    "x": [],
+    "y": [],
+    "z": [],
+    "colors": [
+     -1
+    ]
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.Data.DisplayPointCloud",
+   "json": {
+    "x": [
+     "one"
+    ],
+    "y": [],
+    "z": []
+   },
+   "error": true
+  }
+ ],
+ "draftRequest": [
+  {
+   "scope": [],
+   "cards": [
+    {
+     "key": "load",
+     "definition": "load",
+     "description": "Loads the events",
+     "content": "reads x.fits"
+    },
+    {
+     "key": "outer/plot",
+     "definition": "plot",
+     "description": "Plots {content} as is",
+     "content": "a $ sign and {where}"
+    }
+   ],
+   "expect": "Implement these Draft Cards in the root workflow, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n- outer/plot (definition plot): Plots {content} as is\n  content: a $ sign and {where}"
+  },
+  {
+   "scope": [
+    "outer",
+    "inner"
+   ],
+   "cards": [
+    {
+     "key": "load",
+     "definition": "load",
+     "description": "Loads the events",
+     "content": "reads x.fits"
+    }
+   ],
+   "expect": "Implement these Draft Cards in the child workflow outer/inner, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits"
+  }
+ ]
+}

@@ -16,14 +16,9 @@ public struct ToolSpec {
 
 /// Tool definitions generated from the published RPC schema (tsugumi.bfbs).
 public struct ToolCatalog {
-  public static let defaultRequests = [
-    "ProjectInspectRequest", "ProjectValidateRequest", "ProjectSaveRequest", "ProjectFileListRequest",
-    "ProjectFileReadRequest", "RunPlanRequest", "RunRequest", "RunCancelRequest", "RunStatusRequest",
-    "RunHistoryRequest", "RunInvocationsRequest", "RunRecordRequest", "LogRangeRequest", "ArtifactListRequest",
-    "ArtifactReadRequest", "OperationGetRequest", "AttachedFolderReadRequest",
-  ]
+  public static let defaultRequests = Shared.data.requests
   /// Filled by the Agent, never by the model.
-  static let agentFields: Set<String> = ["op_id", "origin"]
+  static let agentFields = Shared.data.agentFields
 
   public let schema: BFBS
   public let tools: [ToolSpec]
@@ -61,6 +56,33 @@ public struct ToolCatalog {
       out += c.lowercased()
     }
     return out
+  }
+}
+
+/// agent/Shared/agent.json, which the web Agent reads too.
+extension Shared {
+  struct Data {
+    struct Tool { let name: String, description: String, inputSchema: [String: Any] }
+    struct Draft { let root: String, child: String, card: String, text: String }
+    let requests: [String]
+    let agentFields: Set<String>
+    let referenceTool: Tool
+    let draft: Draft
+  }
+
+  static let data: Data = {
+    let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
+    let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
+    return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
+                referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
+                                     inputSchema: t["inputSchema"] as! [String: Any]),
+                draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!))
+  }()
+
+  /// `{name}` in a text replaced by its value, in one pass (values are not read again).
+  static func fill(_ text: String, _ values: [String: String]) -> String {
+    let re = try! Regex(#"\{(\w+)\}"#)
+    return text.replacing(re) { m in values[String(m.output[1].substring ?? "")] ?? String(m.output[0].substring ?? "") }
   }
 }
 

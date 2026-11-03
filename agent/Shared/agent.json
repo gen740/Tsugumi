@@ -1,0 +1,25 @@
+{
+  "requests": [
+    "ProjectInspectRequest", "ProjectValidateRequest", "ProjectSaveRequest", "ProjectFileListRequest",
+    "ProjectFileReadRequest", "RunPlanRequest", "RunRequest", "RunCancelRequest", "RunStatusRequest",
+    "RunHistoryRequest", "RunInvocationsRequest", "RunRecordRequest", "LogRangeRequest", "ArtifactListRequest",
+    "ArtifactReadRequest", "OperationGetRequest", "AttachedFolderReadRequest"
+  ],
+  "agentFields": ["op_id", "origin"],
+  "referenceTool": {
+    "name": "reference_read",
+    "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A folder lists its entries.",
+    "inputSchema": {
+      "type": "object", "additionalProperties": false, "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "description": "e.g. \"\" for the list, \"demos/report/definitions/generate/src/main.py\"" }
+      }
+    }
+  },
+  "draftRequest": {
+    "root": "the root workflow",
+    "child": "the child workflow {scope}",
+    "card": "- {key} (definition {definition}): {description}\n  content: {content}",
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n{list}"
+  }
+}

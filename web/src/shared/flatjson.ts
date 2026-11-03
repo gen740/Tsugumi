@@ -10,6 +10,11 @@ type Json = unknown
 type JsonObject = Record<string, Json>
 
 const MAX_SAFE = 9007199254740991n
+/** Element sizes of the scalar vectors built from JSON arrays. */
+const SIZES: Partial<Record<BaseType, number>> = {
+  [BaseType.bool]: 1, [BaseType.short]: 2, [BaseType.ushort]: 2, [BaseType.int]: 4, [BaseType.uint]: 4,
+  [BaseType.float]: 4, [BaseType.long]: 8, [BaseType.ulong]: 8, [BaseType.double]: 8,
+}
 const isObject = (v: Json): v is JsonObject => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const RANGES: Partial<Record<BaseType, [bigint, bigint]>> = {
@@ -174,19 +179,24 @@ export class FlatJSON {
       })
       return offsetVector(b, offs)
     }
-    const size = el === BaseType.double || el === BaseType.long || el === BaseType.ulong ? 8 : el === BaseType.bool ? 1 : 0
+    const size = SIZES[el]
     if (!size) throw new InvalidArguments(`${where} has an unsupported element type`)
     b.startVector(size, v.length, size)
+    const plain = { ...f, type: { ...f.type, index: -1 } }
     for (let i = v.length - 1; i >= 0; i--) {
       const x = v[i]
-      if (el === BaseType.double) {
+      if (el === BaseType.double || el === BaseType.float) {
         if (typeof x !== 'number' || !Number.isFinite(x)) throw new InvalidArguments(`${where} must be numbers`)
-        b.addFloat64(x)
+        if (el === BaseType.double) b.addFloat64(x)
+        else b.addFloat32(x)
       } else if (el === BaseType.bool) {
-        if (typeof x !== 'boolean') throw new InvalidArguments(where)
+        if (typeof x !== 'boolean') throw new InvalidArguments(`${where} must be true or false`)
         b.addInt8(x ? 1 : 0)
       } else {
-        b.addInt64(BigInt.asIntN(64, this.integer({ ...f, type: { ...f.type, index: -1 } }, el, x, where)))
+        const n = this.integer(plain, el, x, where)
+        if (size === 8) b.addInt64(BigInt.asIntN(64, n))
+        else if (size === 4) b.addInt32(Number(BigInt.asIntN(32, n)))
+        else b.addInt16(Number(BigInt.asIntN(16, n)))
       }
     }
     return b.endVector()
@@ -263,6 +273,8 @@ export class FlatJSON {
       case BaseType.long: return Array.from({ length: n }, (_, i) => big(bb.readInt64(start + i * 8)))
       case BaseType.int: return Array.from({ length: n }, (_, i) => bb.readInt32(start + i * 4))
       case BaseType.uint: return Array.from({ length: n }, (_, i) => bb.readUint32(start + i * 4))
+      case BaseType.short: return Array.from({ length: n }, (_, i) => bb.readInt16(start + i * 2))
+      case BaseType.ushort: return Array.from({ length: n }, (_, i) => bb.readUint16(start + i * 2))
       case BaseType.bool: return Array.from({ length: n }, (_, i) => !!bb.readInt8(start + i))
       default: return { elements: n }
     }
