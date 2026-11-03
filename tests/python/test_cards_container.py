@@ -293,6 +293,34 @@ def test_stages_and_cache(env):
     assert any(cached for _, cached in phases)
 
 
+def test_python_card_has_a_home_while_it_loads(env):
+    """Libraries that keep settings under the home folder (astropy,
+    matplotlib) work while the Card's module is loaded, before any call."""
+    main = '''
+import os
+from pathlib import Path
+HOME = Path.home()                  # read when the module is loaded
+(HOME / ".config").mkdir(parents=True, exist_ok=True)
+(HOME / ".config" / "probe").write_text("ok")
+
+def main(ctx):
+    ctx.display_text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
+'''
+    defs = {"trigger": {"template": "trigger"},
+            "show": {"language": "python",
+                     "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
+                     "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
+    root = env.project
+    c = load(env, defs, [card("begin", "trigger"), card("show", "show")], [])
+    put(root / "definitions" / "show" / "src" / "main.py", main)
+    reload(c)
+    run_id, st = run(c, "begin", timeout=1800)
+    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
+    rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
+    shown = text(rec.record.display.value.text)
+    assert shown.split()[0].endswith("/home"), shown
+
+
 def test_python_displays(env):
     main = '''
 import struct, zlib

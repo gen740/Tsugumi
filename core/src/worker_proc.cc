@@ -100,9 +100,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
-  for (const char* d : {"work", "tmp", "scripts"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
+  for (const char* d : {"work", "tmp", "scripts", "home"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid)
-    for (const char* d : {"work", "tmp"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
+    for (const char* d : {"work", "tmp", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {
     if (text.empty()) return;
@@ -171,7 +171,12 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.gid = sp.gid;
   }
   spec.argv.insert(spec.argv.end(), args.begin(), args.end());
-  spec.env = {"PATH=/var/empty", "LANG=C.UTF-8"};
+  // A home of the worker's own (for its life): libraries that keep settings
+  // or caches there (astropy, matplotlib, ...) work already while the Card's
+  // code is loaded, before any call sets the call's environment.
+  std::string home = scratch_ + "/home";
+  spec.env = {"PATH=/var/empty", "LANG=C.UTF-8", "HOME=" + home, "XDG_CONFIG_HOME=" + home + "/.config",
+              "XDG_CACHE_HOME=" + home + "/.cache", "MPLCONFIGDIR=" + home + "/.matplotlib"};
   if (sp.network)
     for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
       if (const char* x = std::getenv(v)) spec.env.push_back(std::string(v) + "=" + x);
