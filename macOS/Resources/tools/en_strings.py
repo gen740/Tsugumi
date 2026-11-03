@@ -521,6 +521,7 @@ EN = {
 '：完了': ': done',
 '：進行中': ': in progress',
 '問題 %lld 件': '%lld issues',
+'直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld': 'Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it',
 '折れ線 %lld 系列 · %lld 点': 'Line chart, %lld series · %lld points',
 '表 %lld 列 × %lld 行': 'Table %lld columns × %lld rows',
 '点群 %lld 点': 'Point cloud, %lld points',

@@ -70,6 +70,38 @@ def tool_results(messages):
     return out
 
 
+def system_text(body):
+    """The system prompt as text (a string, or text blocks with cache_control)."""
+    s = body.get("system", "")
+    return s if isinstance(s, str) else "".join(b.get("text", "") for b in s)
+
+
+def unanswered_tool_uses(messages):
+    """tool_use ids not answered by tool_result blocks at the start of the next
+    message: the Messages API rejects such a request, and so does the fixture."""
+    for i, m in enumerate(messages):
+        if m["role"] != "assistant":
+            continue
+        ids = [b["id"] for b in blocks(m) if b.get("type") == "tool_use"]
+        if not ids:
+            continue
+        lead = []
+        if i + 1 < len(messages) and messages[i + 1]["role"] == "user":
+            for b in blocks(messages[i + 1]):
+                if b.get("type") != "tool_result":
+                    break
+                lead.append(b["tool_use_id"])
+        missing = [x for x in ids if x not in lead]
+        if missing:
+            return missing
+    return []
+
+
+def cache_marked(body):
+    """Whether the request asks for prompt caching (system, tools or messages)."""
+    return "cache_control" in json.dumps({k: body.get(k) for k in ("system", "tools")})
+
+
 def trigger_of(inspect_value):
     """The Card whose own definition is the trigger template."""
     for d in inspect_value.get("definitions", []):
@@ -214,6 +246,7 @@ class Handler(BaseHTTPRequestHandler):
     dropped = False
     cut_once = False
     cut = False
+    cached = False
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -233,7 +266,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
-        if body.get("system", "").startswith("You summarize"):
+        missing = unanswered_tool_uses(body["messages"])
+        if missing:
+            self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
+            return
+        if system_text(body).startswith("You summarize"):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
         else:
             decision = decide(body["messages"])
@@ -241,7 +278,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
         usage_in = len(json.dumps(body["messages"])) // 4
-        self._event("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": usage_in}}})
+        usage = {"input_tokens": usage_in}
+        if cache_marked(body):
+            # The system prompt and tools are cached by the first request and read by the next ones.
+            with Handler.lock:
+                first, Handler.cached = not Handler.cached, True
+            usage["cache_creation_input_tokens" if first else "cache_read_input_tokens"] = 400
+        self._event("message_start", {"type": "message_start", "message": {"usage": usage}})
         with Handler.lock:
             drop = Handler.drop_once and not Handler.dropped
             Handler.dropped = Handler.dropped or drop
@@ -333,6 +376,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
         if Handler.slow:
             time.sleep(Handler.slow)
+
+    def _error(self, status, message):
+        data = json.dumps({"type": "error", "error": {"type": "invalid_request_error", "message": message}}).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _json(self, obj):
         data = json.dumps(obj).encode()

@@ -292,7 +292,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
             <Icon name="chevron.down" size={8} />
           </button>
           <span className="spacer" />
-          <span className="caption2 tertiary" title="直近の入力トークン数（上限に近づくと自動で圧縮）">{Math.floor(chat.usage.inputTokens / 1000)}k</span>
+          <span className="caption2 tertiary" title={`直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 ${chat.usage.cacheReadTokens ?? 0}、キャッシュに書いた量 ${chat.usage.cacheWriteTokens ?? 0}`}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
             ? <button type="button" className="send-button" onClick={() => chat.cancel()} title="回答を停止（Workflow の実行は止まりません）" aria-label="回答を停止"><Icon name="stop.circle.fill" size={22} /></button>
             : <button type="button" className="send-button" disabled={!input.trim() || !session.connected || !chat.available} onClick={send}

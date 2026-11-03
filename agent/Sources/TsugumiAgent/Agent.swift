@@ -19,6 +19,17 @@ public struct ToolRecord: Codable, Equatable {
   public var state: State
   public var result: String?
   public var isError = false
+
+  public init(id: String, name: String, arguments: String, opId: String? = nil, state: State,
+              result: String? = nil, isError: Bool = false) {
+    self.id = id
+    self.name = name
+    self.arguments = arguments
+    self.opId = opId
+    self.state = state
+    self.result = result
+    self.isError = isError
+  }
 }
 
 /// Conversation persisted per project on the host (messages, tool trace, usage).
@@ -328,6 +339,7 @@ public actor Agent {
   private func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
     do {
       try await reconcilePending(events)
+      closeDanglingToolUses()
       cutReplies = 0
       var done = false
       for _ in 0..<maxSteps {
@@ -408,6 +420,8 @@ public actor Agent {
             stopReason = reason
             conversation.usage.inputTokens = usage.inputTokens
             conversation.usage.outputTokens += usage.outputTokens
+            conversation.usage.cacheReadTokens += usage.cacheReadTokens
+            conversation.usage.cacheWriteTokens += usage.cacheWriteTokens
           }
         }
         // A cancelled consumer sees the stream end normally; it is not an answer.
@@ -421,7 +435,11 @@ public actor Agent {
         return (blocks, stopReason)
       } catch let e as MessagesProvider.HTTPStatusError where e.retryable && attempt < 3 {
         attempt += 1
-        events(.retrying("provider returned \(e.status); retry \(attempt)"))
+        // The provider's retry-after when it gave one (rate limits), else backoff.
+        let wait = min(120, max(e.retryAfter ?? 0, 0.5 * Double(1 << attempt)))
+        events(.retrying("provider returned \(e.status); retry \(attempt) in \(Int(wait.rounded(.up))) s"))
+        try await Task.sleep(for: .seconds(wait))
+        continue
       } catch let e as URLError where attempt < 3 && e.code != .cancelled {
         attempt += 1
         events(.retrying("connection to the model failed (\(e.code.rawValue)); retry \(attempt)"))
@@ -516,7 +534,7 @@ public actor Agent {
       // of the model spending a reply on each look.
       if name == "run_status" {
         let deadline = Date().addingTimeInterval(statusWait)
-        while replyType == "RunStatus", ["\"queued\"", "\"preparing\"", "\"running\"", "\"cancelling\""].contains(where: json.contains),
+        while replyType == "RunStatus", let state = Self.runReply(json).state, Self.activeStates.contains(state),
               Date() < deadline {
           try await Task.sleep(for: .seconds(1))
           (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
@@ -537,15 +555,84 @@ public actor Agent {
     }
   }
 
+  static let activeStates: Set<String> = ["queued", "preparing", "running", "cancelling"]
+  static let endedStates: Set<String> = ["succeeded", "failed", "cancelled"]
+
+  /// The run id and state in a rendered RunAccepted / RunStatus reply
+  /// (RunAccepted nests them in "run").
+  static func runReply(_ json: String) -> (runId: String?, state: String?) {
+    guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+          let value = obj["value"] as? [String: Any] else { return (nil, nil) }
+    let run = value["run"] as? [String: Any] ?? value
+    return (run["run_id"] as? String, run["state"] as? String)
+  }
+
   /// Remembers a run the model started until it sees the run end.
   private func noteRun(tool: String, reply: String, json: String) {
-    if tool == "run", reply != "Failure",
-       let r = json.range(of: #""run_id":"([0-9a-f-]+)""#, options: .regularExpression) {
-      unconfirmedRun = String(json[r]).components(separatedBy: "\"").dropLast().last
-    } else if let run = unconfirmedRun, json.contains(run),
-              ["\"succeeded\"", "\"failed\"", "\"cancelled\""].contains(where: json.contains) {
+    let (runId, state) = Self.runReply(json)
+    if tool == "run", reply == "RunAccepted", let runId {
+      unconfirmedRun = runId
+    } else if reply == "RunStatus", let run = unconfirmedRun, runId == run, let state, Self.endedStates.contains(state) {
       unconfirmedRun = nil
     }
+  }
+
+  /// Every tool_use needs its tool_result at the start of the next message. A
+  /// turn stopped between them (cancelled during a tool, a crash) gets the
+  /// results recorded so far and "not run" for the rest, so the next request
+  /// (a retry, a new message) is valid.
+  func closeDanglingToolUses() {
+    var i = 0
+    var changed = false
+    while i < conversation.messages.count {
+      let m = conversation.messages[i]
+      let ids = m.role == "assistant" ? m.content.compactMap { b -> String? in
+        if case .toolUse(let id, _, _) = b { return id }
+        return nil
+      } : []
+      let next = i + 1 < conversation.messages.count ? conversation.messages[i + 1] : nil
+      let answered = Set(next?.role == "user" ? next!.content.compactMap { b -> String? in
+        if case .toolResult(let id, _, _) = b { return id }
+        return nil
+      } : [])
+      let missing = ids.filter { !answered.contains($0) }
+      if !missing.isEmpty {
+        let results = missing.map { id -> ContentBlock in
+          let r = conversation.tools.first { $0.id == id }
+          switch r?.state {
+          case .completed?:
+            return .toolResult(toolUseId: id, content: Self.clip(r?.result ?? ""), isError: r?.isError ?? false)
+          case .sent?:
+            return .toolResult(toolUseId: id, content: "sent, but the turn was stopped before the answer; check the outcome "
+                                 + "with operation_get (op_id \(r?.opId ?? ""))", isError: true)
+          default:
+            return .toolResult(toolUseId: id, content: "not run: the turn was stopped before this call", isError: true)
+          }
+        }
+        if next?.role == "user" {
+          // Tool results come first in their message.
+          conversation.messages[i + 1].content = results + conversation.messages[i + 1].content
+        } else {
+          conversation.messages.insert(ChatMessage(role: "user", content: results), at: i + 1)
+        }
+        for id in missing {
+          if let j = conversation.tools.firstIndex(where: { $0.id == id }), conversation.tools[j].state == .pending {
+            conversation.tools[j].state = .skipped
+          }
+        }
+        changed = true
+      }
+      i += 1
+    }
+    if changed { try? conversation.save(storage) }
+  }
+
+  /// How much of a tool's result the model gets; a longer one says it was cut.
+  public static let resultLimit = 60_000
+  public static func clip(_ s: String) -> String {
+    guard s.count > resultLimit else { return s }
+    return String(s.prefix(resultLimit)) + "\n[cut: showing the first \(resultLimit) of \(s.count) characters; "
+      + "read the rest with a narrower request (an offset, a range or one file)]"
   }
 
   private func finish(_ record: inout ToolRecord, _ result: String, isError: Bool,
@@ -557,7 +644,7 @@ public actor Agent {
     conversation.tools.append(record)
     try? conversation.save(storage)
     events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: String(result.prefix(400))))
-    return .toolResult(toolUseId: record.id, content: String(result.prefix(60_000)), isError: isError)
+    return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
   }
 
   private func renderReply(_ type: String, _ table: Table) -> String {

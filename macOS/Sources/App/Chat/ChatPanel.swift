@@ -317,7 +317,7 @@ struct ChatPanel: View {
           thoughtsToggle
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
-            .help("直近の入力トークン数（上限に近づくと自動で圧縮）")
+            .help(String(localized: "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 \(chat.usage.cacheReadTokens)、キャッシュに書いた量 \(chat.usage.cacheWriteTokens)"))
           if chat.busy {
             Button(action: chat.cancel) { Image(systemName: "stop.circle.fill").font(.title2) }
               .buttonStyle(.borderless)

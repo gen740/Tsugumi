@@ -473,6 +473,7 @@
 "画像" = "Image";
 "画像を表示できません" = "Cannot show the image";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
+"直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "省略可" = "Optional";
 "短い概要" = "Summary";
 "破棄した変更は取り消せません。必要なら先に「変更をコピー」してください。" = "Discarded changes cannot be restored. Use “Copy Changes” first if needed.";

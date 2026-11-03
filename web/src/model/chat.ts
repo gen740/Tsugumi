@@ -67,7 +67,7 @@ interface Message {
 interface Conversation {
   messages: Message[]
   archive: Message[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   summary?: string
 }
 
@@ -80,7 +80,7 @@ export class ChatController extends Observable {
   stoppedAtLimit = false
   sessions: SessionInfo[] = []
   currentId = ''
-  usage = { inputTokens: 0, outputTokens: 0 }
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number } = { inputTokens: 0, outputTokens: 0 }
   skills: Skill[] = []
   references: Reference[] = []
   /** Folders of this host attached to this chat: read by the Agent

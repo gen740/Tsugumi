@@ -147,7 +147,9 @@ export interface Conversation {
   /** Messages replaced by the summary when the context was compacted. */
   archive: ChatMessage[]
   tools: ToolRecord[]
-  usage: { inputTokens: number; outputTokens: number }
+  /** inputTokens: context of the last request (uncached, cache read and cache
+   *  written); the cache counts add up over the conversation. */
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   summary?: string
 }
 
@@ -208,8 +210,13 @@ export interface ProviderConfig {
 }
 
 class HTTPStatusError extends Error {
-  constructor(readonly status: number, readonly body: string) {
+  /** retryAfter: the provider's retry-after in seconds, when it sent one. */
+  constructor(readonly status: number, readonly body: string, readonly retryAfter?: number) {
     super(`provider returned ${status}: ${body.slice(0, 400)}`)
+  }
+  static async from(r: Response) {
+    const ms = Number(r.headers.get('retry-after-ms')), s = Number(r.headers.get('retry-after'))
+    return new HTTPStatusError(r.status, await r.text(), ms > 0 ? ms / 1000 : s > 0 ? s : undefined)
   }
   get retryable() {
     return this.status === 429 || this.status >= 500
@@ -233,7 +240,7 @@ type StreamEvent =
   | { t: 'text'; text: string }
   | { t: 'toolStart'; index: number; id: string; name: string }
   | { t: 'toolInput'; index: number; json: string }
-  | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number }
+  | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
 function headers(c: ProviderConfig): Record<string, string> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
@@ -280,15 +287,26 @@ function stream(c: ProviderConfig, system: string, messages: ChatMessage[], tool
 
 /** Anthropic Messages API with SSE streaming. */
 async function* messagesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  // Prompt caching: the system prompt and the tools are the same in every
+  // step, and each step repeats the conversation before it, so all three end
+  // with a cache breakpoint (at most 4 are allowed).
+  const cache = { type: 'ephemeral' }
+  const wired: any[] = messages.map((m) => ({ role: m.role, content: m.content.map(wire) }))
+  const last = wired[wired.length - 1]
+  if (last?.content.length) last.content[last.content.length - 1] = { ...last.content[last.content.length - 1], cache_control: cache }
   const body: Record<string, unknown> = {
-    model: c.model, max_tokens: c.maxTokens, stream: true, system,
-    messages: messages.map((m) => ({ role: m.role, content: m.content.map(wire) })),
+    model: c.model, max_tokens: c.maxTokens, stream: true,
+    system: [{ type: 'text', text: system, cache_control: cache }], messages: wired,
   }
-  if (tools.length) body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }))
+  if (tools.length) {
+    body.tools = tools.map((t, i) => ({
+      name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
+    }))
+  }
   const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
-  if (r.status !== 200) throw new HTTPStatusError(r.status, await r.text())
+  if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
-  let inputTokens = 0, outputTokens = 0
+  let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
   let stopped = false
   for await (const line of sseLines(r)) {
     if (line.startsWith('event:')) { event = line.slice(6).trim(); continue }
@@ -296,7 +314,13 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
     let obj: any
     try { obj = JSON.parse(line.slice(5)) } catch { continue }
     switch (obj.type ?? event) {
-      case 'message_start': inputTokens = obj.message?.usage?.input_tokens ?? 0; break
+      case 'message_start': {
+        const u = obj.message?.usage
+        cacheRead = u?.cache_read_input_tokens ?? 0
+        cacheWrite = u?.cache_creation_input_tokens ?? 0
+        inputTokens = (u?.input_tokens ?? 0) + cacheRead + cacheWrite
+        break
+      }
       case 'content_block_start':
         if (obj.content_block?.type === 'tool_use') yield { t: 'toolStart', index: obj.index ?? 0, id: obj.content_block.id ?? randomUUID(), name: obj.content_block.name ?? '' }
         break
@@ -306,7 +330,7 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
         break
       case 'message_delta':
         outputTokens = obj.usage?.output_tokens ?? outputTokens
-        if (obj.delta?.stop_reason) yield { t: 'stop', reason: obj.delta.stop_reason, inputTokens, outputTokens }
+        if (obj.delta?.stop_reason) yield { t: 'stop', reason: obj.delta.stop_reason, inputTokens, outputTokens, cacheRead, cacheWrite }
         break
       case 'message_stop': stopped = true; break
       case 'error': throw new Error(obj.error?.message ?? 'stream error')
@@ -348,7 +372,7 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
   }
   if (tools.length) body.tools = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
   const r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
-  if (r.status !== 200) throw new HTTPStatusError(r.status, await r.text())
+  if (r.status !== 200) throw await HTTPStatusError.from(r)
   let usedTools = false
   let finished = false
   for await (const line of sseLines(r)) {
@@ -372,7 +396,9 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       case 'response.completed': case 'response.incomplete': {
         const u = obj.response?.usage
         const reason = obj.type === 'response.incomplete' ? 'max_tokens' : usedTools ? 'tool_use' : 'end_turn'
-        yield { t: 'stop', reason, inputTokens: u?.input_tokens ?? 0, outputTokens: u?.output_tokens ?? 0 }
+        // OpenAI caches long prefixes by itself and reports what it read.
+        yield { t: 'stop', reason, inputTokens: u?.input_tokens ?? 0, outputTokens: u?.output_tokens ?? 0,
+          cacheRead: u?.input_tokens_details?.cached_tokens ?? 0, cacheWrite: 0 }
         finished = true
         break
       }
@@ -430,7 +456,8 @@ export const SYSTEM_PROMPT = `You operate Tsugumi, a Card graph tool, through it
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) only works on the inputs saved by an earlier whole run. Poll run_status with the
   run_id until succeeded/failed/cancelled; read what each Card produced with run_record and its stderr with
-  log_range (stream 2). run_status waits up to 30 s for a run to end, so call it again only when it still runs.
+  log_range (stream 2). run_status waits up to 5 minutes for a run to end (a long download or computation is one
+  call, not many), so call it again only when it still runs.
   Cancelling runs requires an explicit run_cancel.
 - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
   content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
@@ -532,8 +559,28 @@ const REFERENCE_TOOL: ToolSpec = {
   mutating: false,
 }
 
-const RUN_ACTIVE = ['"queued"', '"preparing"', '"running"', '"cancelling"']
-const RUN_ENDED = ['"succeeded"', '"failed"', '"cancelled"']
+const RUN_ACTIVE = new Set(['queued', 'preparing', 'running', 'cancelling'])
+const RUN_ENDED = new Set(['succeeded', 'failed', 'cancelled'])
+
+/** The run id and state in a rendered RunAccepted / RunStatus reply
+ *  (RunAccepted nests them in "run"). */
+export function runReply(json: string): { runId?: string; state?: string } {
+  try {
+    const v = JSON.parse(json)?.value
+    const run = v?.run ?? v
+    return { runId: run?.run_id, state: run?.state }
+  } catch {
+    return {}
+  }
+}
+
+/** How much of a tool's result the model gets; a longer one says it was cut. */
+export const RESULT_LIMIT = 60_000
+export function clip(s: string): string {
+  if (s.length <= RESULT_LIMIT) return s
+  return s.slice(0, RESULT_LIMIT) + `\n[cut: showing the first ${RESULT_LIMIT} of ${s.length} characters; `
+    + 'read the rest with a narrower request (an offset, a range or one file)]'
+}
 
 export class Agent {
   conversation: Conversation
@@ -541,7 +588,7 @@ export class Agent {
    *  continue (Draft generation takes many: write, check, save, run, read). */
   maxSteps = 60
   /** How long run_status waits for a run to end before it answers (ms). */
-  statusWait = 30_000
+  statusWait = 300_000
   /** Folders of this host attached to the chat: the only ones
    *  attached_folder_read may read (tsugumid on the host reads any path). */
   folders: string[] = []
@@ -655,6 +702,7 @@ export class Agent {
   private async loop(events: (e: AgentEvent) => void, signal: AbortSignal) {
     try {
       await this.reconcilePending(events)
+      this.closeDanglingToolUses()
       let cutReplies = 0
       let done = false
       for (let i = 0; i < this.maxSteps; i++) {
@@ -728,8 +776,11 @@ export class Agent {
             if (t) t.json += e.json
           } else {
             stop = e.reason
-            this.conversation.usage.inputTokens = e.inputTokens
-            this.conversation.usage.outputTokens += e.outputTokens
+            const u = this.conversation.usage
+            u.inputTokens = e.inputTokens
+            u.outputTokens += e.outputTokens
+            u.cacheReadTokens = (u.cacheReadTokens ?? 0) + e.cacheRead
+            u.cacheWriteTokens = (u.cacheWriteTokens ?? 0) + e.cacheWrite
           }
         }
         if (signal.aborted) throw new Cancelled()
@@ -744,9 +795,13 @@ export class Agent {
         if (signal.aborted) throw new Cancelled()
         const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost
         if (!retryable || attempt >= 3) throw e
-        events({ kind: 'retrying', message: e instanceof HTTPStatusError ? `provider returned ${e.status}; retry ${attempt + 1}` : `connection to the model failed; retry ${attempt + 1}` })
+        // The provider's retry-after when it gave one (rate limits), else backoff.
+        const wait = Math.min(120, Math.max(e instanceof HTTPStatusError ? e.retryAfter ?? 0 : 0, 0.5 * (1 << (attempt + 1))))
+        events({ kind: 'retrying', message: e instanceof HTTPStatusError
+          ? `provider returned ${e.status}; retry ${attempt + 1} in ${Math.ceil(wait)} s` : `connection to the model failed; retry ${attempt + 1}` })
+        await new Promise((r) => setTimeout(r, wait * 1000))
+        continue
       }
-      await new Promise((r) => setTimeout(r, 500 * (1 << (attempt + 1))))
     }
   }
 
@@ -789,9 +844,41 @@ export class Agent {
 
   /** Remembers a run the model started until it sees the run end. */
   private noteRun(tool: string, reply: string, json: string) {
-    const m = tool === 'run' && reply !== 'Failure' ? /"run_id":"([0-9a-f-]+)"/.exec(json) : null
-    if (m) this.unconfirmedRun = m[1]
-    else if (this.unconfirmedRun && json.includes(this.unconfirmedRun) && RUN_ENDED.some((x) => json.includes(x))) this.unconfirmedRun = undefined
+    const { runId, state } = runReply(json)
+    if (tool === 'run' && reply === 'RunAccepted' && runId) this.unconfirmedRun = runId
+    else if (reply === 'RunStatus' && runId && runId === this.unconfirmedRun && state && RUN_ENDED.has(state)) this.unconfirmedRun = undefined
+  }
+
+  /** Every tool_use needs its tool_result at the start of the next message. A
+   *  turn stopped between them (cancelled during a tool, a crash) gets the
+   *  results recorded so far and "not run" for the rest, so the next request
+   *  (a retry, a new message) is valid. */
+  closeDanglingToolUses() {
+    const ms = this.conversation.messages
+    let changed = false
+    for (let i = 0; i < ms.length; i++) {
+      const ids = ms[i].role === 'assistant' ? ms[i].content.flatMap((b) => (b.type === 'tool_use' ? [b.id] : [])) : []
+      const next = ms[i + 1]
+      const answered = new Set(next?.role === 'user' ? next.content.flatMap((b) => (b.type === 'tool_result' ? [b.tool_use_id] : [])) : [])
+      const missing = ids.filter((id) => !answered.has(id))
+      if (!missing.length) continue
+      const results: ContentBlock[] = missing.map((id) => {
+        const r = this.conversation.tools.find((t) => t.id === id)
+        if (r?.state === 'completed') return { type: 'tool_result', tool_use_id: id, content: clip(r.result ?? ''), is_error: r.isError }
+        if (r?.state === 'pending') r.state = 'skipped'
+        return {
+          type: 'tool_result', tool_use_id: id, is_error: true,
+          content: r?.state === 'sent'
+            ? `sent, but the turn was stopped before the answer; check the outcome with operation_get (op_id ${r.opId ?? ''})`
+            : 'not run: the turn was stopped before this call',
+        }
+      })
+      // Tool results come first in their message.
+      if (next?.role === 'user') next.content = [...results, ...next.content]
+      else ms.splice(i + 1, 0, { role: 'user', content: results })
+      changed = true
+    }
+    if (changed) this.save()
   }
 
   /** Validates arguments, executes the RPC and records the result. */
@@ -848,11 +935,11 @@ export class Agent {
         return { type, json: this.renderReply(type, r.bb, r.table) }
       }
       let { type: replyType, json } = await call()
-      // A run still building or running: wait here (up to 30 s) instead of
-      // the model spending a reply on each look.
+      // A run still building or running: wait here (up to statusWait) instead
+      // of the model spending a reply on each look.
       if (name === 'run_status') {
         const deadline = Date.now() + this.statusWait
-        while (replyType === 'RunStatus' && RUN_ACTIVE.some((x) => json.includes(x)) && Date.now() < deadline) {
+        while (replyType === 'RunStatus' && RUN_ACTIVE.has(runReply(json).state ?? '') && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 1000))
           if (this.abort?.signal.aborted) break
           ;({ type: replyType, json } = await call())
@@ -877,7 +964,7 @@ export class Agent {
     this.conversation.tools.push(record)
     this.save()
     events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: result.slice(0, 400) })
-    return { type: 'tool_result', tool_use_id: record.id, content: result.slice(0, 60_000), is_error: isError }
+    return { type: 'tool_result', tool_use_id: record.id, content: clip(result), is_error: isError }
   }
 
   private renderReply(type: string, bb: import('flatbuffers').ByteBuffer, table: number): string {

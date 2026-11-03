@@ -67,9 +67,23 @@ public struct ChatMessage: Codable, Equatable {
 }
 
 public struct Usage: Codable, Equatable {
+  /// Context of the last request (uncached, cache read and cache written).
   public var inputTokens = 0
   public var outputTokens = 0
+  /// Input served from the provider's prompt cache, and written to it.
+  public var cacheReadTokens = 0
+  public var cacheWriteTokens = 0
   public init() {}
+
+  enum CodingKeys: String, CodingKey { case inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
+  public init(from d: Decoder) throws {
+    // Conversations saved before the cache counts are read as they are.
+    let c = try d.container(keyedBy: CodingKeys.self)
+    inputTokens = try c.decodeIfPresent(Int.self, forKey: .inputTokens) ?? 0
+    outputTokens = try c.decodeIfPresent(Int.self, forKey: .outputTokens) ?? 0
+    cacheReadTokens = try c.decodeIfPresent(Int.self, forKey: .cacheReadTokens) ?? 0
+    cacheWriteTokens = try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0
+  }
 }
 
 public enum StreamEvent {
@@ -191,20 +205,45 @@ public struct MessagesProvider: Sendable {
   public struct HTTPStatusError: Error {
     public let status: Int
     public let body: String
+    /// The provider's retry-after (seconds), when it sent one.
+    public var retryAfter: TimeInterval? = nil
     public var retryable: Bool { status == 429 || status >= 500 }
+  }
+
+  static func retryAfter(_ resp: URLResponse) -> TimeInterval? {
+    guard let h = resp as? HTTPURLResponse else { return nil }
+    if let ms = h.value(forHTTPHeaderField: "retry-after-ms").flatMap(Double.init) { return ms / 1000 }
+    return h.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
+  }
+
+  /// Prompt caching: the system prompt and the tools are the same in every
+  /// step, and each step repeats the conversation before it, so all three end
+  /// with a cache breakpoint (at most 4 are allowed).
+  static func cachedBody(system: String, messages: [ChatMessage], tools: [ToolSpec]) -> (system: Any, messages: Any, tools: Any) {
+    let cache: [String: Any] = ["type": "ephemeral"]
+    var wireTools: [[String: Any]] = tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema] }
+    if !wireTools.isEmpty { wireTools[wireTools.count - 1]["cache_control"] = cache }
+    var wire: [[String: Any]] = messages.map { ["role": $0.role, "content": $0.content.map(\.wire)] }
+    if var last = wire.last, var content = last["content"] as? [[String: Any]], !content.isEmpty {
+      content[content.count - 1]["cache_control"] = cache
+      last["content"] = content
+      wire[wire.count - 1] = last
+    }
+    return ([["type": "text", "text": system, "cache_control": cache]], wire, wireTools)
   }
 
   public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
     if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
     var r = try request(path: "v1/messages")
     r.httpMethod = "POST"
+    let cached = Self.cachedBody(system: system, messages: messages, tools: tools)
     let body: [String: Any] = [
       "model": config.model,
       "max_tokens": config.maxTokens,
       "stream": true,
-      "system": system,
-      "messages": messages.map { ["role": $0.role, "content": $0.content.map(\.wire)] },
-      "tools": tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema] },
+      "system": cached.system,
+      "messages": cached.messages,
+      "tools": cached.tools,
     ]
     r.httpBody = try JSONSerialization.data(withJSONObject: body)
     let session = self.session
@@ -216,7 +255,7 @@ public struct MessagesProvider: Sendable {
           if status != 200 {
             var text = ""
             for try await line in bytes.lines { text += line }
-            throw HTTPStatusError(status: status, body: text)
+            throw HTTPStatusError(status: status, body: text, retryAfter: Self.retryAfter(resp))
           }
           var usage = Usage()
           var event = ""
@@ -231,7 +270,9 @@ public struct MessagesProvider: Sendable {
             switch type {
             case "message_start":
               if let u = (obj["message"] as? [String: Any])?["usage"] as? [String: Any] {
-                usage.inputTokens = u["input_tokens"] as? Int ?? 0
+                usage.cacheReadTokens = u["cache_read_input_tokens"] as? Int ?? 0
+                usage.cacheWriteTokens = u["cache_creation_input_tokens"] as? Int ?? 0
+                usage.inputTokens = (u["input_tokens"] as? Int ?? 0) + usage.cacheReadTokens + usage.cacheWriteTokens
               }
             case "content_block_start":
               let idx = obj["index"] as? Int ?? 0
@@ -323,7 +364,7 @@ extension MessagesProvider {
           if status != 200 {
             var text = ""
             for try await line in bytes.lines { text += line }
-            throw HTTPStatusError(status: status, body: text)
+            throw HTTPStatusError(status: status, body: text, retryAfter: Self.retryAfter(resp))
           }
           var usedTools = false
           var finished = false
@@ -349,6 +390,8 @@ extension MessagesProvider {
               let u = (obj["response"] as? [String: Any])?["usage"] as? [String: Any]
               usage.inputTokens = u?["input_tokens"] as? Int ?? 0
               usage.outputTokens = u?["output_tokens"] as? Int ?? 0
+              // OpenAI caches long prefixes by itself and reports what it read.
+              usage.cacheReadTokens = (u?["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int ?? 0
               let incomplete = obj["type"] as? String == "response.incomplete"
               cont.yield(.stop(reason: incomplete ? "max_tokens" : usedTools ? "tool_use" : "end_turn", usage: usage))
               finished = true

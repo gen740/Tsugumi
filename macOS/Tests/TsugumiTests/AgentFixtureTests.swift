@@ -238,6 +238,113 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// A turn stopped while a tool ran leaves a tool_use without its result;
+  /// a retry sends the recorded result (or "not run") first, so the request is
+  /// valid (the fixture answers 400 otherwise, as the Messages API does).
+  @Test func retryAfterAStoppedToolSendsItsResult() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    var stopped = Conversation()
+    stopped.messages = [
+      ChatMessage(role: "user", content: [.text("set src.text to resumed and run")]),
+      ChatMessage(role: "assistant", content: [.toolUse(id: "toolu_done", name: "project_inspect", input: "{}"),
+                                               .toolUse(id: "toolu_never", name: "project_inspect", input: "{}")]),
+    ]
+    stopped.tools = [ToolRecord(id: "toolu_done", name: "project_inspect", arguments: "{}", state: .completed,
+                                result: "{\"reply\":\"Snapshot\"}")]
+    try stopped.save(h.dir.appendingPathComponent("conversation.json"))
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.retry { log.add($0) }
+    await waitFinished(log)
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
+    let conv = await agent.conversation
+    let answered = conv.messages[2].content.compactMap { b -> (String, Bool)? in
+      if case .toolResult(let id, _, let e) = b { return (id, e) }
+      return nil
+    }
+    #expect(answered.map(\.0) == ["toolu_done", "toolu_never"] && answered.map(\.1) == [false, true], "\(conv.messages[2])")
+    #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("resumed") == true)
+    await client.close()
+  }
+
+  /// System prompt, tools and the conversation so far are marked for prompt
+  /// caching; what the provider read from and wrote to its cache is counted.
+  @Test func promptCacheIsAskedForAndCounted() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("set src.text to cached and run", context: []) { log.add($0) }
+    await waitFinished(log)
+    let usage = await agent.conversation.usage
+    #expect(usage.cacheWriteTokens == 400 && usage.cacheReadTokens >= 400, "\(usage)")
+    await client.close()
+  }
+
+  /// Compaction replaces the earlier turns by a summary (they stay in the
+  /// archive) and the conversation goes on: the next task runs to the end.
+  @Test func compactionKeepsTheConversationGoing() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let first = EventLog()
+    await agent.send("set src.text to first and run", context: []) { first.add($0) }
+    await waitFinished(first)
+    let compacted = EventLog()
+    await agent.compact { compacted.add($0) }
+    await waitFinished(compacted)
+    #expect(compacted.all.contains { if case .compacted = $0 { return true }; return false }, "\(compacted.all)")
+    let conv = await agent.conversation
+    #expect(conv.summary?.isEmpty == false && !conv.archive.isEmpty)
+    let second = EventLog()
+    await agent.send("set src.text to second and run", context: []) { second.add($0) }
+    await waitFinished(second)
+    #expect(second.text.contains("succeeded"), "\(second.all)")
+    #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("second") == true)
+    await client.close()
+  }
+
+  /// The real model (opt in: TSUGUMI_LIVE_API=1, the Anthropic key from the
+  /// Keychain as the app stores it; this costs a few cents): a setting is
+  /// changed, the graph runs and the result is reported, with no tool error.
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["TSUGUMI_LIVE_API"] == "1"))
+  func liveModelChangesRunsAndReports() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client, provider: .anthropic)
+    let log = EventLog()
+    await agent.send("Set the text param of the src Card to \"live check\", run the workflow from its trigger and tell me "
+                     + "what the out Card logged.", context: []) { log.add($0) }
+    await waitFinished(log, seconds: 600)
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
+    let conv = await agent.conversation
+    #expect(!conv.tools.contains { $0.isError }, "\(conv.tools.filter(\.isError).map { ($0.name, $0.result ?? "") })")
+    #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("live check") == true)
+    #expect(try await client.history().runs.first??.status.state == .succeeded)
+    print("live: \(conv.messages.filter { $0.role == "assistant" }.count) replies, \(conv.tools.count) tool calls, usage \(conv.usage)")
+    await client.close()
+  }
+
+  @Test func longToolResultsSayTheyWereCut() {
+    let long = String(repeating: "x", count: Agent.resultLimit + 10)
+    #expect(Agent.clip("short") == "short")
+    #expect(Agent.clip(long).hasPrefix(String(repeating: "x", count: Agent.resultLimit)))
+    #expect(Agent.clip(long).contains("[cut: showing the first \(Agent.resultLimit) of \(Agent.resultLimit + 10) characters"))
+  }
+
   @Test func retriesAfterDroppedModelConnection() async throws {
     var h = AgentHarness()
     try h.start(fixtureArgs: ["--drop-once"])
