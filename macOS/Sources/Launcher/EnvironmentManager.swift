@@ -283,8 +283,10 @@ public actor EnvironmentManager {
   public func resetAll() async throws -> ResetReport {
     var report = ResetReport()
     await shutdown()
-    if FileManager.default.fileExists(atPath: vm.directory.path) {
-      try removeFolder(vm.directory)
+    // The run history disk stays: projects keep their runs across a reset.
+    let items = (try? FileManager.default.contentsOfDirectory(atPath: vm.directory.path)) ?? []
+    for item in items where item != vm.historyImage.lastPathComponent {
+      try removeFolder(vm.directory.appendingPathComponent(item))
       report.vmRemoved = true
     }
     let envs = (try? FileManager.default.contentsOfDirectory(atPath: environmentsDir.path)) ?? []

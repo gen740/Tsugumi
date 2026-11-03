@@ -12,7 +12,7 @@
 //                  other projects are not); a private /tmp
 //   cgroup         /sys/fs/cgroup/tsugumi/<id>: stopping a project ends
 //                  exactly its processes and never another project's
-//   run history    its database on the store disk (/persist/tsugumi/history/<id>,
+//   run history    its database on the run history disk (/history-disk/<id>,
 //                  seen by the project as /history); the project keeps a copy
 //                  of finished runs in .tsugumi/runs.sqlite
 //   Nix            the shared store through the one nix-daemon; build roots
@@ -246,7 +246,8 @@ std::vector<std::string> project_env(const std::string& id) {
           "TSUGUMI_PROJECT_ID=" + id};
 }
 
-std::string history_dir(const std::string& id) { return opt.state + "/history/" + id; }
+const std::string kHistory = "/history-disk";
+std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, its run history at /history, nothing of the share, the store
@@ -261,6 +262,7 @@ void enter_project_view(int slot, const std::string& id) {
   // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
   if (::umount2(fs::path(opt.host).parent_path().c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
+  ::umount2(kHistory.c_str(), MNT_DETACH);  // every project's history but this one
   if (::mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777") != 0) die("private /tmp");
   ::mkdir("/tmp/home", 0700);
   if (::mount("tmpfs", "/run/tsugumi", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755") != 0) die("private /run/tsugumi");
@@ -403,12 +405,11 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   ::lchown(roots.c_str(), pr.uid, pr.uid);
   ::chmod(roots.c_str(), 0755);
   ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last start: for the 30-day cleanup
-  // Run history on the store disk, readable by this project only; kept
-  // until the project's data is deleted (never by age).
-  std::string hist_parent = opt.state + "/history", hist = history_dir(id);
-  ::mkdir(hist_parent.c_str(), 0700);
-  ::chown(hist_parent.c_str(), 0, 0);
-  ::chmod(hist_parent.c_str(), 0700);
+  // Run history on its own disk, readable by this project only; kept until
+  // the project's data is deleted (never by age).
+  std::string hist = history_dir(id);
+  ::chown(kHistory.c_str(), 0, 0);
+  ::chmod(kHistory.c_str(), 0700);
   if (::lstat(hist.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
     std::error_code ec;
     fs::remove(hist, ec);
@@ -509,7 +510,7 @@ std::string histories() {
   }
   std::string out = "ok";
   std::error_code ec;
-  for (const auto& e : fs::directory_iterator(opt.state + "/history", ec)) {
+  for (const auto& e : fs::directory_iterator(kHistory, ec)) {
     std::string id = e.path().filename().string();
     if (!valid_id(id) || !e.is_directory(ec)) continue;
     uintmax_t bytes = 0;

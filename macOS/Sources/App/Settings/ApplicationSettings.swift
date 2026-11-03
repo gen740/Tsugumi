@@ -539,7 +539,7 @@ private struct EnvironmentStorageSettings: View {
       Button("初期化", role: .destructive) { reset() }
       Button("キャンセル", role: .cancel) {}
     } message: {
-      Text("開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store と VM 内の実行履歴・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。プロジェクトの文書・成果物・プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）、ホストの /nix/store は削除しません。次に開いたときに作り直し、実行履歴は .tsugumi/runs.sqlite から読み込みます。")
+      Text("開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。")
     }
   }
 

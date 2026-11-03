@@ -8,6 +8,9 @@
 #   /dev/vdb    the Nix store disk (sparse file in the app's support folder),
 #               formatted on first boot and mounted as /persist; /nix is the
 #               image's store (lower) + /persist/nix (upper) as an overlay
+#   /dev/vdc    the run history disk (its own sparse file, synchronized with
+#               fsync), formatted on first boot and mounted as /history-disk:
+#               one folder per project (tsugumi-vmd)
 #   virtiofs "tsugumi-<n>" (16 slots): one per open project, with its
 #               `project` and `control` folders, at /mnt/slots/<n> (tsugumi-vmd)
 #   hvc0        console: everything here and in tsugumi-vmd is logged to it,
@@ -110,6 +113,13 @@ let
     e2fsck -p /dev/vdb >/dev/null 2>&1 || true
     mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
     df -h /persist | tail -1
+    if ! blkid -p /dev/vdc >/dev/null 2>&1; then
+      echo "formatting the run history disk ($(($(blockdev --getsize64 /dev/vdc) >> 30)) GiB)"
+      mkfs.ext4 -q -F -L tsugumi-history /dev/vdc || fail "cannot format the run history disk"
+    fi
+    e2fsck -p /dev/vdc >/dev/null 2>&1 || true
+    mount -t ext4 -o noatime,nosuid,nodev /dev/vdc /history-disk || fail "cannot mount the run history disk"
+    chmod 0700 /history-disk
 
     # The image's store is the lower layer; builds land on the store disk.
     stage nix
@@ -151,7 +161,7 @@ let
 in
 runCommand "tsugumi-vm-${tsugumid.version}" { nativeBuildInputs = [ erofs-utils ]; } ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,history,var/empty,bin,mnt}
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,var/empty,bin,mnt}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

@@ -128,7 +128,8 @@ public final class ConsoleLog: @unchecked Sendable {
 
 /// The one Linux VM of the app (Virtualization.framework). It boots from the
 /// bundled kernel and read-only root file system, keeps the shared Nix store
-/// on a sparse disk image in the support folder, and runs one tsugumid per
+/// and the projects' run history on two sparse disk images in the support
+/// folder, and runs one tsugumid per
 /// open project (tsugumi-vmd). Each open project gets one of `slotCount`
 /// virtiofs devices for its folders: replacing one device's share while the
 /// VM runs leaves the others alone (replacing a share that other projects
@@ -209,6 +210,11 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   }
 
   var storeImage: URL { directory.appendingPathComponent("store.img") }
+  /// The run history disk: its own image, so that the store and the history
+  /// can be reset apart, and synchronized with fsync (an SQLite commit is not
+  /// a full flush of the Mac's drive, as on the project share).
+  var historyImage: URL { directory.appendingPathComponent("history.img") }
+  static let historyGiB = 32
   var consoleURL: URL { directory.appendingPathComponent("console.log") }
 
   // MARK: - Start and stop
@@ -244,7 +250,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       setState(.starting(.image))
       let files = try installImage(image)
       setState(.starting(.disk))
-      try ensureStore(gib: resources.storeGiB)
+      try ensureDisk(storeImage, gib: resources.storeGiB, what: "store")
+      try ensureDisk(historyImage, gib: Self.historyGiB, what: "run history")
       setState(.starting(.boot))
       bootCount += 1
       console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version))")
@@ -310,14 +317,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     return installed
   }
 
-  /// The store disk: a sparse file, formatted by the guest on first boot.
-  private func ensureStore(gib: Int) throws {
-    if FileManager.default.fileExists(atPath: storeImage.path) { return }
-    console.note("creating the store disk (\(gib) GiB, sparse)")
-    guard FileManager.default.createFile(atPath: storeImage.path, contents: nil) else {
-      throw LauncherError.startFailed(reason: "cannot create the store disk", log: storeImage.path)
+  /// A disk: a sparse file, formatted by the guest on first boot.
+  private func ensureDisk(_ url: URL, gib: Int, what: String) throws {
+    if FileManager.default.fileExists(atPath: url.path) { return }
+    console.note("creating the \(what) disk (\(gib) GiB, sparse)")
+    guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+      throw LauncherError.startFailed(reason: "cannot create the \(what) disk", log: url.path)
     }
-    let h = try FileHandle(forWritingTo: storeImage)
+    let h = try FileHandle(forWritingTo: url)
     try h.truncate(atOffset: UInt64(gib) << 30)
     try h.close()
   }
@@ -336,7 +343,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     let root = try VZDiskImageStorageDeviceAttachment(url: files.rootfs, readOnly: true)
     let store = try VZDiskImageStorageDeviceAttachment(url: storeImage, readOnly: false,
                                                        cachingMode: .automatic, synchronizationMode: .full)
-    c.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: root), VZVirtioBlockDeviceConfiguration(attachment: store)]
+    let history = try VZDiskImageStorageDeviceAttachment(url: historyImage, readOnly: false,
+                                                         cachingMode: .automatic, synchronizationMode: .fsync)
+    c.storageDevices = [root, store, history].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
     let net = VZVirtioNetworkDeviceConfiguration()
     net.attachment = VZNATNetworkDeviceAttachment()
     c.networkDevices = [net]
