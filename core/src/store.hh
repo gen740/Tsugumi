@@ -115,7 +115,10 @@ class Store {
   void apply_ops(const std::vector<FileOp>& ops, bool inject);
   // Resolves the document. `pending` holds the transaction's file writes,
   // which are read instead of the disk (they are applied after resolution).
-  std::shared_ptr<Document> finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending = nullptr) const;
+  // Resolves the document (fingerprint, graph and types), reusing `base`'s
+  // resolution when nothing it follows changed.
+  std::shared_ptr<Document> finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending = nullptr,
+                                     const Document* base = nullptr) const;
   void check_disk_unchanged(const Document& base, const std::vector<FileOp>& ops) const;
   void fault(const char* point) const;
 

@@ -825,7 +825,7 @@ void Service::save(RequestIn& req) {
       throw Failed(f);
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
-    if (staged.effective && execution_fingerprint(*staged.doc) != base->execution_fingerprint) {
+    if (staged.effective && staged.doc->execution_fingerprint != base->execution_fingerprint) {
       if (auto active = scheduler_->active_status())
         throw Failed(FailureKind::busy, "a run is in progress; computational changes are rejected until it ends",
                      {{"run_id", *active->run_id}});

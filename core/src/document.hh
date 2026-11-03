@@ -64,6 +64,10 @@ struct Document {
   // Hash of the bytes on disk for every document file we wrote or read.
   std::map<std::string, std::string> disk_hashes;
   std::shared_ptr<const Resolution> resolution;
+  // What the resolution follows: the execution fingerprint and every
+  // definition's _meta.json (a Draft's planned ports). Equal keys, equal
+  // resolutions (a layout-only change keeps the previous one).
+  std::string resolution_key;
 
   static bool is_document_file(const std::string& rel);
   static bool is_source_area(const std::string& rel);

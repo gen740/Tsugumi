@@ -101,11 +101,25 @@ void Store::open() {
 
 DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
   auto st = stage(changes, "preview", "preview");
-  return finalize(st.doc, &st.ops);
+  return finalize(st.doc, &st.ops, current().get());
 }
 
-std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending) const {
-  doc->execution_fingerprint = execution_fingerprint(*doc);
+std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending,
+                                          const Document* base) const {
+  // Staged documents carry their fingerprint already; a loaded one does not.
+  if (doc->execution_fingerprint.empty()) doc->execution_fingerprint = execution_fingerprint(*doc);
+  crypto::Sha256 key;
+  key.update(doc->execution_fingerprint);
+  for (const auto& [id, def] : doc->definitions) {
+    key.update("\0meta\0", 6);
+    key.update(id);
+    if (def.meta_json) key.update(*def.meta_json);
+  }
+  doc->resolution_key = key.finish_hex();
+  if (base && base->resolution && base->resolution_key == doc->resolution_key) {
+    doc->resolution = base->resolution;
+    return doc;
+  }
   auto root = opts_.root;
   Document* raw = doc.get();
   doc->resolution = resolve(*doc, [root, raw, pending](const std::string& rel) -> std::optional<std::string> {
@@ -564,6 +578,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
     if (op.content) doc->disk_hashes[op.path] = crypto::sha256_hex(*op.content);
     else doc->disk_hashes.erase(op.path);
   }
+  doc->execution_fingerprint = execution_fingerprint(*doc);
   st.doc = doc;
   return st;
 }
@@ -612,6 +627,7 @@ Store::Staged Store::stage_reload(const std::string& op_id, const std::string& o
   // Disk hashes always follow what is on disk now, even without effective changes.
   doc->rev = base->rev;
   doc->execution_rev = base->execution_rev;
+  doc->execution_fingerprint = execution_fingerprint(*doc);
   st.doc = doc;
   return st;
 }
@@ -639,10 +655,9 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   check_disk_unchanged(*base, st.ops);
   auto doc = st.doc;
   doc->rev = base->rev + 1;
-  doc->execution_fingerprint = execution_fingerprint(*doc);
+  finalize(doc, &st.ops, base.get());
   doc->execution_rev =
       doc->execution_fingerprint != base->execution_fingerprint ? base->execution_rev + 1 : base->execution_rev;
-  finalize(doc, &st.ops);
   st.delta.rev = doc->rev;
   st.delta.execution_rev = doc->execution_rev;
   st.delta.doc = doc;

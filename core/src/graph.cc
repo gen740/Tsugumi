@@ -1,5 +1,8 @@
 #include "graph.hh"
 
+#include <map>
+#include <mutex>
+
 #include <deque>
 #include <limits>
 #include <regex>
@@ -304,14 +307,29 @@ class Builder {
         n.exec_diags.push_back(diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
     }
-    auto text = read_(rel);
-    if (!text) {
-      n.diags.push_back(diag(n.path, "external_change", rel + " could not be read", true, rel));
-      return;
+    // Parsed catalogs by content (the source's hash): an unchanged
+    // _outputs.fbs is neither read nor parsed again.
+    std::string key = rel + '\0' + doc_.sources.at(rel).hash;
+    static std::mutex mu;
+    static std::map<std::string, types::CatalogResult> parsed;
+    std::optional<types::CatalogResult> cat;
+    {
+      std::lock_guard<std::mutex> l(mu);
+      if (auto it = parsed.find(key); it != parsed.end()) cat = it->second;
     }
-    auto cat = types::parse_catalog(*text, rel);
-    for (const auto& e : cat.errors) n.diags.push_back(diag(n.path, "invalid_outputs", e, true, rel));
-    n.outputs = std::move(cat.ports);
+    if (!cat) {
+      auto text = read_(rel);
+      if (!text) {
+        n.diags.push_back(diag(n.path, "external_change", rel + " could not be read", true, rel));
+        return;
+      }
+      cat = types::parse_catalog(*text, rel);
+      std::lock_guard<std::mutex> l(mu);
+      if (parsed.size() >= 2048) parsed.clear();
+      parsed[key] = *cat;
+    }
+    for (const auto& e : cat->errors) n.diags.push_back(diag(n.path, "invalid_outputs", e, true, rel));
+    n.outputs = cat->ports;
   }
 
   // The definition of a Card written in an external project (read as sources).

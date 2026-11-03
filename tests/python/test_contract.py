@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 import threading
@@ -650,6 +651,37 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert json.loads(text(meta.metaJson))["context"] == "why"
     v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
     assert "draft" in [text(d.code) for d in v.diagnostics]
+
+
+def test_resolution_follows_meta_and_outputs_not_layout(client):
+    """The resolution is kept across layout-only saves and redone when a
+    Draft's planned outputs (_meta.json) or an _outputs.fbs change."""
+    def ports(res, card):
+        r = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == [card])
+        return [(text(p.name), text(p.rootType) if p.rootType else "") for p in r.outputs]
+    snap = client.call("ProjectInspectRequest")
+    doc = project_json(snap)
+    doc["canvas"]["cards"].append({"id": "plan"})
+    draft = json.dumps({"template": "draft", "inputs": [{"name": "in"}]})
+    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "first"}]})),
+        change("SetProject", json=json.dumps(doc))])
+    assert [n for n, _ in ports(res, "plan")] == ["first"]
+    res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
+                      changes=[change("SetLayout", json=json.dumps({"cards": {"plan": {"x": 5, "y": 5}}}))])
+    assert [n for n, _ in ports(res, "plan")] == ["first"]
+    res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "second"}]}))])
+    assert [n for n, _ in ports(res, "plan")] == ["second"]
+    fbs = "namespace d;\ntable {t} {{ value:string; }}\ntable Outputs {{ summary:{t}; }}\nroot_type Outputs;\n"
+    prev = None
+    for t in ("One", "Two"):
+        body = fbs.format(t=t).encode()
+        extra = {"baseHash": hashlib.sha256(prev).hexdigest()} if prev else {}
+        res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
+                          changes=[change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(body), **extra)])
+        assert ports(res, "plan") == [("summary", "d." + t)]
+        prev = body
 
 
 def test_layout_keeps_flow_note_size_and_boundary_bars(client):
