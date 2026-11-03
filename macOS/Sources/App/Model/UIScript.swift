@@ -126,6 +126,25 @@ final class UIScript {
                                   changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
         }
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "generate":
+        // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
+        if let s = session, let t = workspace?.active {
+          let drafts = s.cards(in: t.scope).compactMap { $0["id"]?.string }.map { key(t.scope + [$0]) }.filter { s.kind($0) == .draft }
+          workspace?.showChat = true
+          AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: drafts)
+          say("generate \(drafts)")
+        }
+      case "waitchat":
+        // waitchat <minutes>: until the Agent's turn ends
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          let deadline = Date().addingTimeInterval((Double(w.count > 1 ? w[1] : "30") ?? 30) * 60)
+          try? await Task.sleep(for: .seconds(2))
+          while chat.busy && Date() < deadline { try? await Task.sleep(for: .seconds(2)) }
+          say("chat busy=\(chat.busy) limit=\(chat.stoppedAtLimit) status=\(chat.status ?? "-")")
+        }
+      case "continue":
+        if let s = session { AppModel.shared.chat(for: s).continueWork() }
       case "add":
         // add <template> <x> <y>: a built-in Card at a canvas (world) point
         if let s = session, let t = workspace?.active, let tmpl = DefinitionTemplate(rawValue: w[1]) {

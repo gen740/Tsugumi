@@ -10,7 +10,8 @@ log="$out/ui.log"; : > "$log"
 TSUGUMI_UI_SCRIPT="$script" TSUGUMI_UI_LOG="$log" "$app/Contents/MacOS/Tsugumi" $project > "$out/app.out" 2>&1 &
 pid=$!
 seen=0
-for _ in $(seq 1 3000); do
+# TSUGUMI_UI_SECONDS: how long the script may run (default 600).
+for _ in $(seq 1 $(( ${TSUGUMI_UI_SECONDS:-600} * 5 ))); do
   kill -0 $pid 2>/dev/null || break
   n=$(wc -l < "$log")
   if [ "$n" -gt "$seen" ]; then
