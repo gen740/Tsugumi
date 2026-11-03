@@ -14,55 +14,9 @@ import time
 from pathlib import Path
 
 from conftest import Daemon
-from materialize import convert_in_place
-from projects import card, conn
+from projects import FILE_FBS, card, conn, put, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
-
-FILE_FBS = """
-namespace files;
-table Doc { value:string; }
-table Outputs { doc:Doc (required, tsugumi: "file"); }
-root_type Outputs;
-attribute "tsugumi";
-"""
-
-
-def put(p: Path, text: str) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text)
-
-
-def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    for d, body in defs.items():
-        (root / "definitions" / d).mkdir(parents=True, exist_ok=True)
-        card_json = {k: v for k, v in body.items() if k != "_outputs"}
-        put(root / "definitions" / d / "_card.json", json.dumps(card_json))
-        if "_outputs" in body:
-            put(root / "definitions" / d / "_outputs.fbs", body["_outputs"])
-    for rel, data in (files or {}).items():
-        put(root / rel, data)
-    put(root / "tsugumi.json", json.dumps({
-        "name": "regression", "pkgsPath": "tsugumi:default", "databaseConnections": [],
-        "canvas": {"cards": cards, "connections": conns}}))
-    put(root / "layout.json", "{}")
-    # Described with shared definitions; written one definition per Card.
-    convert_in_place(root)
-
-
-def run_and_wait(c, card_id: str, propagate: bool = True, timeout: float = 30.0):
-    snap = c.call("ProjectInspectRequest")
-    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path(card_id), propagate=propagate)
-    run_id = text(acc.run.runId)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        st = c.call("RunStatusRequest", runId=run_id)
-        if st.state in (RunState.succeeded, RunState.failed, RunState.cancelled):
-            return run_id, st
-        time.sleep(0.05)
-    raise TimeoutError(f"run {run_id} did not finish within {timeout}s")
-
 
 def file_fork_project(root: Path) -> None:
     write(root,

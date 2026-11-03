@@ -13,8 +13,8 @@ import pytest
 
 from conftest import real_environment
 from projects import card, conn
-from test_cards_container import NUM, bash, load, log, run
-from test_regressions import put, write
+from projects import put, run_and_wait, write
+from test_cards_container import NUM, bash, load, log
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
@@ -48,7 +48,7 @@ auto onRunStart() -> void {
   calls = 0;
 }
 
-auto run(Card::Input&) -> Card::Output {
+auto run_and_wait(Card::Input&) -> Card::Output {
   ++calls;
   tsugumi::visualization::text("worker " + std::to_string(worker) + " runs " + std::to_string(runs) + " calls " +
                                std::to_string(calls));
@@ -69,7 +69,7 @@ READ = r"""
 
 static std::vector<std::string> lines;
 
-auto run(Card::Input& input) -> Card::Output {
+auto run_and_wait(Card::Input& input) -> Card::Output {
   // No folder descriptor of this or an earlier call is left (this Card has no File outputs).
   if (std::ifstream("/proc/self/fd/900")) throw tsugumi::Failure("worker_failed", "a passed descriptor was left open");
   std::ifstream in(input.doc.value);
@@ -95,7 +95,7 @@ FRESH = r"""
 static const unsigned worker = std::random_device{}();
 static int calls = 0;
 
-auto run(Card::Input& input) -> Card::Output {
+auto run_and_wait(Card::Input& input) -> Card::Output {
   ++calls;
   uint64_t n = 0;
   if (const auto* v = input.x.value.Asinit()) n = v->value;
@@ -133,9 +133,9 @@ def test_resident_worker_serves_later_runs(env):
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
     reload(c)
-    first, st = run(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start", timeout=2400)
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
-    second, st = run(c, "start")
+    second, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "count", 2)
     a, b = display(c, first, "count"), display(c, second, "count")
     pa, pb = re.search(r"worker (\d+)", a).group(1), re.search(r"worker (\d+)", b).group(1)
@@ -158,11 +158,11 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
     from test_cards_container import reload
     reload(c)
-    first, st = run(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start", timeout=2400)
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
     assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
                                             log(c, first, "make", 2), log(c, first, "read", 2))
-    second, st = run(c, "start")
+    second, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "read", 2)
     # Another input path (another run's output) and the same worker: the stream goes on.
     assert display(c, second, "read") == "2 lines"
@@ -185,7 +185,7 @@ def test_fresh_worker_per_call(env):
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
     from test_cards_container import reload
     reload(c)
-    run_id, st = run(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start", timeout=2400)
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)
     recs = invocations(c, run_id, "fresh")
     assert len(recs) == 4
@@ -212,7 +212,7 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
                    "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
              [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
     t0 = time.time()
-    run_id, st = run(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start", timeout=600)
     took = time.time() - t0
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}
     assert rec["loop"].state == CardState.failed
@@ -223,7 +223,7 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     assert rec["ok"].state == CardState.succeeded
     # tsugumid and its evaluator still work.
     c.call("ProjectInspectRequest")
-    run_id, st = run(c, "ok")
+    run_id, st = run_and_wait(c, "ok")
     assert c.call("RunRecordRequest", runId=run_id, card=path("ok")).status.state == CardState.succeeded
 
 
@@ -249,7 +249,7 @@ def test_network_is_off_unless_the_card_allows_it(env):
     names = [n for n in cards if n != "trigger"]
     c = load(env, cards, [card("start", "trigger")] + [card(n, n) for n in names],
              [conn("start", "out", n, "go") for n in names])
-    run_id, st = run(c, "start", timeout=900)
+    run_id, st = run_and_wait(c, "start", timeout=900)
     for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
         out = number(c, run_id, name)
         want = "reach=1" if name.startswith("open") else "reach=0"
@@ -278,7 +278,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     env.stop()
     env.start()
     c = env.client()
-    run_id, st = run(c, "start", timeout=900)
+    run_id, st = run_and_wait(c, "start", timeout=900)
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from conftest import Daemon
-from test_regressions import put, run_and_wait
+from projects import put, run_and_wait
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 

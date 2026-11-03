@@ -16,7 +16,7 @@ from pathlib import Path
 
 from conftest import Daemon
 from test_history import BIG, project, read_all
-from test_regressions import run_and_wait
+from projects import run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 

@@ -14,8 +14,7 @@ from pathlib import Path
 import pytest
 
 from conftest import Daemon
-from projects import MSG_FBS, builtin_project, conn
-from test_regressions import put, run_and_wait
+from projects import MSG_FBS, builtin_project, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 

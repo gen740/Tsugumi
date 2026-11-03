@@ -24,8 +24,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from conftest import ROOT, Daemon, real_environment  # noqa: E402
-from projects import card, conn  # noqa: E402
-from test_regressions import write, put  # noqa: E402
+from projects import card, conn, put, write  # noqa: E402
 from tsugumi_client import new_id, path, text  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.RPC.NotificationPayload import NotificationPayload  # noqa: E402

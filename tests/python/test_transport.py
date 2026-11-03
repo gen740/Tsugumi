@@ -182,7 +182,7 @@ def test_unix_frames_split_and_joined(tmp_path):
 
 
 def test_run_continues_after_its_client_disconnects(tmp_path):
-    from test_regressions import FILE_FBS, write
+    from projects import FILE_FBS, write
     from projects import card, conn
     root = tmp_path / "p"
     # A long loop of builtin Cards keeps the run busy for a while.

@@ -10,8 +10,7 @@ from pathlib import Path
 import pytest
 
 from conftest import Daemon
-from projects import card, conn
-from test_regressions import run_and_wait, write
+from projects import card, card_in_card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.Phase import Phase
@@ -124,9 +123,9 @@ def test_max_runs_is_enforced(env):
 
 
 def subgraph(id_, inner_text_id="inner"):
-    return card(id_, None, canvas={"cards": [card(inner_text_id, "fork")], "connections": []},
-                boundary={"inputs": {"in": {"card": inner_text_id, "port": "in"}},
-                          "outputs": {"out": {"card": inner_text_id, "port": "out1"}}})
+    return card_in_card(id_, [card(inner_text_id, "fork")], [],
+                        {"inputs": {"in": {"card": inner_text_id, "port": "in"}},
+                         "outputs": {"out": {"card": inner_text_id, "port": "out1"}}})
 
 
 def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):

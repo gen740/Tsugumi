@@ -12,8 +12,7 @@ from pathlib import Path
 import pytest
 
 from conftest import Daemon
-from projects import card, conn
-from test_regressions import FILE_FBS, run_and_wait, write
+from projects import FILE_FBS, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 

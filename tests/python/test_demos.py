@@ -12,36 +12,17 @@ import time
 import pytest
 
 from conftest import demo_environment
+from projects import start_run, wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
-
-TERMINAL = (RunState.succeeded, RunState.failed, RunState.cancelled)
-
 
 def connect(env):
     c = env.client()
     if getattr(env, "client_hello", False):
         c.hello()
     return c
-
-
-def wait_run(c, run_id: str, timeout: float = 1800):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        st = c.call("RunStatusRequest", runId=run_id)
-        if st.state in TERMINAL:
-            return st
-        time.sleep(0.1)
-    raise TimeoutError(run_id)
-
-
-def run(c, card, propagate=True, concurrency=4):
-    rev = c.call("ProjectInspectRequest").rev
-    acc = c.call("RunRequest", baseRev=rev, opId=new_id(), origin="test", card=path(*card),
-                 propagate=propagate, maxConcurrency=concurrency)
-    return text(acc.run.runId)
 
 
 def edit_card(env, c, card: str, fn, raw=lambda s: s):
@@ -112,7 +93,7 @@ def collatz_reference(n):
 
 def test_collatz_27(collatz):
     c = connect(collatz)
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     expected = collatz_reference(27)
@@ -129,7 +110,7 @@ def test_collatz_27(collatz):
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))
     # The C++ Card in Card runs alone from its boundary input (saved value).
-    rid2 = run(c, ["collatz-cpp"], propagate=False)
+    rid2 = start_run(c, ["collatz-cpp"], propagate=False)
     assert wait_run(c, rid2).state == RunState.succeeded
     assert display_text(c, rid2, "collatz-cpp", "collect") == "112 values: " + " ".join(map(str, expected))
 
@@ -141,7 +122,7 @@ def test_collatz_limit_overflow_and_skipped(collatz):
     for lang in ("collatz-cpp", "collatz-py"):
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: (original.__setitem__(lang, b.get("maxRuns")),
                                                                             b.__setitem__("maxRuns", 50)))
-    st = wait_run(c, run(c, ["start"]))
+    st = wait_run(c, start_run(c, ["start"]))
     assert st.state == RunState.failed
     assert st.failure.kind == 19  # execution_limit
     # Overflow: 3n+1 exceeds uint64 for this odd value.
@@ -150,13 +131,13 @@ def test_collatz_limit_overflow_and_skipped(collatz):
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: b.__setitem__("maxRuns", original[lang]))
     edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0),
               raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.failed
     assert "integer overflow" in stderr(c, rid, "collatz-cpp", "triple")
     # n = 2: the odd branch is never selected, so triple is skipped.
     edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 2))
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     rec = c.call("RunRecordRequest", runId=rid, card=path("collatz-cpp", "triple"))
@@ -165,31 +146,31 @@ def test_collatz_limit_overflow_and_skipped(collatz):
 
 def test_report_failure_rerun_and_artifacts(report):
     c = connect(report)
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     assert wait_run(c, rid).state == RunState.succeeded
     first = display_text(c, rid, "render")
     assert first.startswith("# Quarterly sales")
     # Same seed, same aggregate.
-    rid2 = run(c, ["start"])
+    rid2 = start_run(c, ["start"])
     assert wait_run(c, rid2).state == RunState.succeeded
     assert display_text(c, rid2, "render") == first
     # Heading change is reflected.
     edit_card(report, c, "settings", lambda b: set_param(b, "heading", "見出し変更"))
-    rid3 = run(c, ["start"])
+    rid3 = start_run(c, ["start"])
     st3 = wait_run(c, rid3)
     assert st3.state == RunState.succeeded, (st3.failure and text(st3.failure.diagnostic),
                                              [(text(a.key), text(a.value)) for a in st3.failure.args] if st3.failure else None)
     assert display_text(c, rid3, "render").startswith("# 見出し変更")
     # Intentional failure: stderr is recorded and downstream Cards stop.
     edit_card(report, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", True))
-    rid4 = run(c, ["start"])
+    rid4 = start_run(c, ["start"])
     st = wait_run(c, rid4)
     assert st.state == RunState.failed
     assert "failing on purpose" in stderr(c, rid4, "aggregate")
     assert c.call("RunRecordRequest", runId=rid4, card=path("render")).status.state == CardState.blocked
     # Fix the setting and re-run only Aggregate with its last saved input.
     edit_card(report, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", False))
-    rid5 = run(c, ["aggregate"], propagate=False)
+    rid5 = start_run(c, ["aggregate"], propagate=False)
     assert wait_run(c, rid5).state == RunState.succeeded
     rec = c.call("RunRecordRequest", runId=rid5, card=path("aggregate"))
     assert rec.record.recordIo is True and rec.record.inputs[0].name in (b"csv", "csv")
@@ -199,7 +180,7 @@ def test_report_failure_rerun_and_artifacts(report):
 
 def test_report_artifacts_survive_restart(report):
     c = connect(report)
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     assert wait_run(c, rid).state == RunState.succeeded
     art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "report")
     c.close()
@@ -221,7 +202,7 @@ def test_live_stream_complete_and_ordered(live, concurrency):
     # Count and order only: no interval between samples (the pace is its own test).
     c = connect(live)
     edit_card(live, c, "settings", lambda b: set_param(b, "interval_ms", 0))
-    rid = run(c, ["start"], concurrency=concurrency)
+    rid = start_run(c, ["start"], concurrency=concurrency)
     assert wait_run(c, rid).state == RunState.succeeded
     xs, calls = live_points(c, rid)
     assert calls == 200
@@ -232,7 +213,7 @@ def test_live_stream_keeps_its_pace(live):
     # A few samples at the demo's 100 ms: the loop waits between them.
     c = connect(live)
     edit_card(live, c, "settings", lambda b: set_param(b, "samples", 5))
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded
     xs, calls = live_points(c, rid)
@@ -245,7 +226,7 @@ def test_live_stream_cancel_and_rerun(live):
     c = connect(live)
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
     time.sleep(1.0)
     t0 = time.time()
@@ -257,7 +238,7 @@ def test_live_stream_cancel_and_rerun(live):
     xs, calls = live_points(c, rid)
     assert 0 < calls < 200 and xs  # the last chart is kept
     # A new run starts the series from the beginning.
-    rid2 = run(c, ["start"])
+    rid2 = start_run(c, ["start"])
     c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
                         text(n.value.display.runId) == rid2, timeout=60)
     first = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
@@ -271,7 +252,7 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     c = connect(live)
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
     c.close()
     live.crash()
@@ -281,7 +262,7 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     assert st.state == RunState.failed and st.failure.kind == 21  # interrupted, not re-run
     # The environment is usable again and nothing restarted on its own.
     assert c.call("RunStatusRequest").runId in (rid.encode(), rid)
-    rid2 = run(c, ["start"])
+    rid2 = start_run(c, ["start"])
     c.call("RunCancelRequest", runId=rid2)
     assert wait_run(c, rid2, timeout=20).state == RunState.cancelled
 
@@ -290,7 +271,7 @@ def test_status_and_cancel_during_nix_preparation(report):
     c = connect(report)
     # Clear the build cache so the first Card has to evaluate and build again.
     c.call("ProjectCacheClearRequest", opId=new_id())
-    rid = run(c, ["start"])
+    rid = start_run(c, ["start"])
     other = connect(report)
     seen_preparing = False
     for _ in range(600):

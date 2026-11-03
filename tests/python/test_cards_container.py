@@ -16,8 +16,7 @@ from pathlib import Path
 import pytest
 
 from conftest import real_environment
-from projects import card, conn
-from test_regressions import put, write
+from projects import card, conn, put, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.Phase import Phase
@@ -49,17 +48,6 @@ def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **s
     return body
 
 
-def make(root: Path, defs: dict, cards, conns) -> None:
-    plain = {}
-    for d, body in defs.items():
-        body = dict(body)
-        nix = body.pop("_nix", None)
-        plain[d] = body
-        if nix:
-            put(root / "definitions" / d / "default.nix", nix)
-    write(root, plain, cards, conns)
-
-
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
@@ -86,24 +74,10 @@ def load(env, defs, cards, conns):
     """Replaces the project's documents and takes them in with Reload."""
     root = env.project
     shutil.rmtree(root / "definitions", ignore_errors=True)
-    make(root, defs, cards, conns)
+    write(root, defs, cards, conns)
     c = env.client()
     reload(c)
     return c
-
-
-def run(c, card_id, propagate=True, timeout=900):
-    snap = c.call("ProjectInspectRequest")
-    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path(*card_id.split("/")),
-                 propagate=propagate)
-    run_id = text(acc.run.runId)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        st = c.call("RunStatusRequest", runId=run_id)
-        if st.state in (RunState.succeeded, RunState.failed, RunState.cancelled):
-            return run_id, st
-        time.sleep(0.2)
-    raise TimeoutError(run_id)
 
 
 def log(c, run_id, card_id, stream=1, inv=1):
@@ -129,7 +103,7 @@ def test_backpressure_stall_ends_the_run(env):
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "loop", "again"),
               conn("step", "out", "wait", "value"), conn("never", "flag", "gate", "value"),
               conn("never", "flag", "gate", "condition"), conn("gate", "a", "wait", "condition")])
-    run_id, st = run(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start", timeout=600)
     assert st.state == RunState.failed
     assert "cannot progress" in text(st.failure.diagnostic)
 
@@ -158,7 +132,7 @@ def test_shell_step_contract(env):
              [card("start", "trigger"), card("make", "make"), card("use", "use"), card("small", "small"),
               card("postfail", "postfail"), card("runfail", "runfail"), card("slow", "slow")],
              [conn("make", "out", "use", "in"), conn("use", "out", "small", "in")])
-    run_id, st = run(c, "start")
+    run_id, st = run_and_wait(c, "start")
     states = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)) for k in
               ("make", "use", "small", "postfail", "runfail", "slow")}
     detail = {k: (r.status.state, r.status.failure and text(r.status.failure.diagnostic)) for k, r in states.items()}
@@ -228,7 +202,7 @@ def test_isolation(env):
                "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
     defs = {"trigger": {"template": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
-    run_id, st = run(c, "start")
+    run_id, st = run_and_wait(c, "start")
     detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
               for k in ("probe", "open")}
     assert st.state == RunState.succeeded, detail
@@ -242,7 +216,7 @@ def test_nix_upstream_references(env):
     defs = {"trigger": {"template": "trigger"}, "a": a,
             "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
-    run_id, st = run(c, "start")
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
     # A downstream reference is reported before any build.
     bad = a.copy()
@@ -314,7 +288,7 @@ def main(ctx):
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start", timeout=1800)
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     shown = text(rec.record.display.value.text)
@@ -346,7 +320,7 @@ def main(ctx):
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start", timeout=1800)
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
@@ -483,7 +457,7 @@ def main(ctx):
     put(root / "definitions" / "bad" / "src" / "main.py", bad)
     put(root / "definitions" / "missing" / "src" / "main.py", missing)
     reload(c)
-    run_id, st = run(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start", timeout=2400)
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in
            ("make", "check", "shell", "bad", "missing", "after_bad", "after_missing")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
@@ -593,7 +567,7 @@ in
     put(root / "definitions" / "calc" / "src" / "card.cc", SDK_CALC)
     put(root / "definitions" / "other" / "src" / "card.cc", SDK_OTHER)
     reload(c)
-    run_id, st = run(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start", timeout=2400)
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
     assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
@@ -656,7 +630,7 @@ def test_worker_crash_then_edit_and_rerun(env):
     c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
     put(root / "definitions" / "crash" / "src" / "main.py", "import os, signal\n\ndef main(ctx):\n    os.kill(os.getpid(), signal.SIGKILL)\n")
     reload(c)
-    run_id, st = run(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start", timeout=1800)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
     assert st.state == RunState.failed and rec.state == CardState.failed
     assert rec.failure.kind == 23  # worker_failed
@@ -664,5 +638,5 @@ def test_worker_crash_then_edit_and_rerun(env):
     put(root / "definitions" / "crash" / "src" / "main.py",
         "import outputs.out.t.Num as Num\n\ndef main(ctx):\n    b = ctx.builder()\n    Num.Start(b)\n    Num.AddValue(b, 1)\n    ctx.output('out', b, Num.End(b))\n")
     reload(c)
-    _, st2 = run(c, "start", timeout=1800)
+    _, st2 = run_and_wait(c, "start", timeout=1800)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
