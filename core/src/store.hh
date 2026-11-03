@@ -94,6 +94,8 @@ class Store {
   Staged stage_reload(const std::string& op_id, const std::string& origin) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
+  // Resolves a staged document now (commit then reuses it).
+  void resolve_staged(Staged& staged) const;
 
   // Persists a staged transaction atomically with its receipt. The
   // `make_receipt` callback receives the delta (with final revision numbers)

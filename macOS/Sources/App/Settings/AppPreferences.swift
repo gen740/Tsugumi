@@ -193,6 +193,9 @@ final class AppPreferences {
     case .off: return true
     }
   }
+  /// What the Agent may give Cards without asking (CardPermission raw
+  /// values); everything else waits for the user. Nothing by default.
+  var allowedPermissions: Set<String> { didSet { d.set(Array(allowedPermissions).sorted(), forKey: "agent.permissions.allowed") } }
   var shortcuts: [ShortcutAction: KeyBinding] { didSet { saveShortcuts() } }
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
@@ -211,6 +214,7 @@ final class AppPreferences {
     editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
     flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
     tsugumiMotion = Motion(rawValue: d.string(forKey: "app.tsugumiMotion") ?? "") ?? .system
+    allowedPermissions = Set(d.stringArray(forKey: "agent.permissions.allowed") ?? [])
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })
     } else {

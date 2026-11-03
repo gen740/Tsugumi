@@ -190,7 +190,7 @@ extension ProjectSession {
       invocation: state?.invocation ?? 0, runContinues: runActive,
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
-      collapsed: collapsed ?? self.collapsed(k), hasDisplay: display)
+      collapsed: collapsed ?? self.collapsed(k), hasDisplay: display, permissions: CardPermission.of(def))
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

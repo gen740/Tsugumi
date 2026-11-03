@@ -399,6 +399,8 @@ public actor Agent {
       return finish(&record, "the arguments are not a complete JSON object", isError: true, events)
     }
     var full = args
+    // Fields the Agent fills itself: never the model's.
+    for f in ToolCatalog.agentFields { full.removeValue(forKey: f) }
     if spec.mutating {
       record.opId = record.opId ?? UUID().uuidString.lowercased()
       full["op_id"] = record.opId
@@ -420,6 +422,23 @@ public actor Agent {
         try codec.build(spec.object, full, into: &b)
       }
       var json = renderReply(replyType, table)
+      // A save that widens what Cards may do: the user approves it (the app
+      // applies their defaults or asks), then it is sent again as a new
+      // operation with the approvals; declined, nothing is saved.
+      if replyType == "Failure", let asked = Self.approvalRequired(json) {
+        let approved = await approver?(asked) ?? []
+        guard Set(asked).isSubset(of: approved) else {
+          let declined = asked.filter { !approved.contains($0) }.joined(separator: ", ")
+          return finish(&record, Shared.fill(Shared.data.permissionDeclined, ["permissions": declined]), isError: true, events)
+        }
+        record.opId = UUID().uuidString.lowercased()
+        full["op_id"] = record.opId
+        full["approved_permissions"] = asked
+        (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+          try codec.build(spec.object, full, into: &b)
+        }
+        json = renderReply(replyType, table)
+      }
       // A run still building or running: wait here (up to statusWait) instead
       // of the model spending a reply on each look.
       if name == "run_status" {
@@ -444,6 +463,21 @@ public actor Agent {
       return finish(&record, "\(error)", isError: true, events)
     }
   }
+
+  /// The permissions an approval_required Failure names.
+  public static func approvalRequired(_ json: String) -> [String]? {
+    guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+          let value = obj["value"] as? [String: Any], value["kind"] as? String == "approval_required" else { return nil }
+    let args = value["args"] as? [[String: Any]] ?? []
+    let asked = args.filter { $0["key"] as? String == "permission" }.compactMap { $0["value"] as? String }
+    return asked.isEmpty ? nil : asked
+  }
+
+  /// Decides on the permissions a save would give Cards: returns those the
+  /// user approves (by their defaults or when asked). Without one, nothing is.
+  public typealias Approver = @Sendable ([String]) async -> Set<String>
+  private var approver: Approver?
+  public func setApprover(_ a: Approver?) { approver = a }
 
   static let activeStates: Set<String> = ["queued", "preparing", "running", "cancelling"]
   static let endedStates: Set<String> = ["succeeded", "failed", "cancelled"]

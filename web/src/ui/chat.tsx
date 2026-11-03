@@ -6,10 +6,11 @@ import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { ChatController, ChatItem, refLabel, SearchHit, Skill } from '../model/chat'
 import { useObserve } from '../model/observable'
+import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, errorText, key, path, ProjectSession } from '../model/session'
 import { WorkflowTab } from '../model/workspace'
-import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField } from './controls'
+import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { FolderPicker } from './sidebar'
@@ -35,7 +36,44 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
         ]} />
       </div>
       {showList ? <SessionList chat={chat} onPick={() => setShowList(false)} /> : <Conversation session={session} chat={chat} tab={tab} />}
+      {chat.permission && <PermissionPrompt key={chat.permission.id} asked={chat.permission.asked} onAnswer={(allow, always) => chat.answerPermission(allow, always)} />}
     </div>
+  )
+}
+
+/** Asks whether the Agent may give Cards what its save needs; each kind can
+ *  be allowed without asking from now on (as in the settings). */
+function PermissionPrompt({ asked, onAnswer }: { asked: string[]; onAnswer: (allow: boolean, always: string[]) => void }) {
+  const [always, setAlways] = useState<string[]>([])
+  const requests = asked.map(parsePermission).filter((r) => r !== undefined)
+  const kinds = PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
+  return (
+    <Sheet width={460} onClose={() => onAnswer(false, [])}>
+      <div className="sheet-body permission-prompt">
+        <div className="title2"><Icon name="hand.raised" /> Agent が Card の権限を広げようとしています</div>
+        <p className="secondary">許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。</p>
+        <ul className="permission-list">
+          {requests.map((r) => (
+            <li key={r.raw}>
+              <Icon name={permissionInfo(r.kind).icon} />
+              <div>
+                <div>{r.card}: {permissionInfo(r.kind).label}</div>
+                {r.folder && <code className="secondary">{r.folder}</code>}
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="secondary small">今後は確認しない（設定の「API」でいつでも変えられます）</div>
+        {kinds.map((k) => (
+          <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
+            onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />
+        ))}
+        <div className="row end gap8">
+          <Button onClick={() => onAnswer(false, [])}>許可しない</Button>
+          <Button kind="prominent" onClick={() => onAnswer(true, always)}>許可する</Button>
+        </div>
+      </div>
+    </Sheet>
   )
 }
 

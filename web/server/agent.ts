@@ -9,7 +9,7 @@ import { Builder } from 'flatbuffers'
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
 import { FlatJSON } from '../src/shared/flatjson'
 import { RPCClient } from '../src/shared/rpc'
-import { AGENT } from '../src/shared/agentShared'
+import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 
 // ---- Tool catalog --------------------------------------------------------------
@@ -26,6 +26,14 @@ export interface ToolSpec {
 export const DEFAULT_REQUESTS = AGENT.requests
 /** Filled by the Agent, never by the model. */
 const AGENT_FIELDS = new Set(AGENT.agentFields)
+
+/** The permissions an approval_required Failure names. */
+export function approvalRequired(json: string): string[] | undefined {
+  const value = (JSON.parse(json) as { value?: { kind?: string; args?: { key?: string; value?: string }[] } }).value
+  if (value?.kind !== 'approval_required') return undefined
+  const asked = (value.args ?? []).filter((a) => a.key === 'permission').map((a) => String(a.value))
+  return asked.length ? asked : undefined
+}
 
 export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
 
@@ -458,6 +466,9 @@ export class Agent {
   /** Folders of this host attached to the chat: the only ones
    *  attached_folder_read may read (tsugumid on the host reads any path). */
   folders: string[] = []
+  /** Decides on the permissions a save would give Cards: those the user
+   *  approves (by their defaults or when the page asks). Without one, none. */
+  approver?: (asked: string[]) => Promise<Set<string>>
   private codec: FlatJSON
   private abort?: AbortController
   private turn?: Promise<void>
@@ -779,6 +790,8 @@ export class Agent {
       }
     }
     const full = { ...args }
+    // Fields the Agent fills itself: never the model's.
+    for (const f of AGENT_FIELDS) delete full[f]
     if (spec.mutating) {
       record.opId = record.opId ?? randomUUID()
       full.op_id = record.opId
@@ -801,6 +814,19 @@ export class Agent {
         return { type, json: this.renderReply(type, r.bb, r.table) }
       }
       let { type: replyType, json } = await call()
+      // A save that widens what Cards may do: the user approves it (the server
+      // applies their defaults or asks the page), then it is sent again as a
+      // new operation with the approvals; declined, nothing is saved.
+      const asked = replyType === 'Failure' ? approvalRequired(json) : undefined
+      if (asked) {
+        const approved = (await this.approver?.(asked)) ?? new Set<string>()
+        const declined = asked.filter((p) => !approved.has(p))
+        if (declined.length) return this.finish(record, fill(AGENT.permissionDeclined, { permissions: declined.join(', ') }), true, events)
+        record.opId = randomUUID()
+        full.op_id = record.opId
+        full.approved_permissions = asked
+        ;({ type: replyType, json } = await call())
+      }
       // A run still building or running: wait here (up to statusWait) instead
       // of the model spending a reply on each look.
       if (name === 'run_status') {

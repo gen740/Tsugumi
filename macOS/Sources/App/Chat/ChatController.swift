@@ -220,6 +220,7 @@ final class ChatController {
     self.agent = agent
     items = []
     Task {
+      await agent.setApprover { [weak self] asked in await self?.approve(asked) ?? [] }
       let conv = await agent.conversation
       usage = conv.usage
       load(conv)
@@ -376,7 +377,44 @@ final class ChatController {
                 prompt: Agent.draftRequest(scope: scope, cards: items))
   }
 
+  // MARK: - Card permissions
+
+  /// A save of the Agent waiting for the user: what it would give Cards.
+  struct PermissionPrompt: Identifiable {
+    let id = UUID()
+    let requests: [CardPermission.Request]
+    let answer: (Set<String>) -> Void
+  }
+  var permissionPrompt: PermissionPrompt?
+
+  /// The widenings the user approves: those of the kinds allowed without
+  /// asking at once, the others when asked (nothing when declined).
+  func approve(_ asked: [String]) async -> Set<String> {
+    let allowed = AppPreferences.shared.allowedPermissions
+    let requests = asked.compactMap(CardPermission.Request.init)
+    let approved = Set(requests.filter { allowed.contains($0.kind.rawValue) }.map(\.raw))
+    let ask = requests.filter { !approved.contains($0.raw) }
+    if ask.isEmpty { return approved }
+    permissionPrompt?.answer([])
+    let answer: Set<String> = await withCheckedContinuation { c in
+      permissionPrompt = PermissionPrompt(requests: ask) { c.resume(returning: $0) }
+    }
+    return approved.union(answer)
+  }
+
+  /// The user's answer; `always` are kinds allowed without asking from now on.
+  func answerPermissions(allow: Bool, always: Set<CardPermission>) {
+    guard let p = permissionPrompt else { return }
+    permissionPrompt = nil
+    if allow { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
+    p.answer(allow ? Set(p.requests.map(\.raw)) : [])
+  }
+
   func cancel() {
+    if let p = permissionPrompt {
+      permissionPrompt = nil
+      p.answer([])
+    }
     Task { await agent?.cancel() }
     busy = false
     session.presence.turnEnded()

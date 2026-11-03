@@ -515,6 +515,9 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   const [name, setName] = useState(() => session.displayName(model.cardKey))
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string>()
+  // This tsugumid runs on this host: without the sandbox a Card is a process
+  // of the user's, so turning it off is the user's knowing choice.
+  const [confirmSandboxOff, setConfirmSandboxOff] = useState(false)
   useEffect(() => setName(session.displayName(model.cardKey)), [model.cardKey])
 
   const rename = async () => {
@@ -613,7 +616,15 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
               {toggle('reuseWorker', 'worker の状態を残す', true,
                 'オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。')}
               {toggle('filesystem', '作業・出力領域を使う', false)}
-              {toggle('sandbox', 'ファイルアクセスを制限', true)}
+              <Row label="ファイルアクセスを制限">
+                <Toggle checked={bool(get(def, 'sandbox')) ?? true}
+                  onChange={(v) => (v ? model.setSetting('sandbox', undefined) : setConfirmSandboxOff(true))} />
+              </Row>
+              {confirmSandboxOff && (
+                <Confirm title="この Card を隔離なしで実行しますか？" confirm="隔離なしで実行する"
+                  message="Web UI の tsugumid はこのマシンで直接動いています。隔離をやめると、この Card はあなたの権限でこのマシンのファイル・ネットワーク・プロセスに触れられます。Linux で他人の Card を動かすときは、tsugumid を隔離されたコンテナの中で動かしてください。"
+                  onConfirm={() => { setConfirmSandboxOff(false); model.setSetting('sandbox', false) }} onCancel={() => setConfirmSandboxOff(false)} />
+              )}
             </>
           )}
         </Section>

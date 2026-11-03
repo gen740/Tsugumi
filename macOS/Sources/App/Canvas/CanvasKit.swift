@@ -207,6 +207,8 @@ struct CardNodeData: Equatable {
   var collapsed = false
   /// The Card's result has a frame on the canvas (display anchor).
   var hasDisplay = false
+  /// What it may do beyond computing (network, no sandbox, Mac folders).
+  var permissions: [CardPermission] = []
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
@@ -635,6 +637,9 @@ struct CardNodeView: View {
           .background(Color.orange.opacity(0.2), in: Capsule())
       }
       Spacer(minLength: s(2))
+      ForEach(data.permissions) { p in
+        Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
+      }
       if !data.errors.isEmpty {
         Image(systemName: "xmark.octagon.fill").font(font(11)).foregroundStyle(.red)
       } else if !data.warnings.isEmpty {

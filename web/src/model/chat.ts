@@ -75,6 +75,8 @@ interface Conversation {
 export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
+  /** A save of the Agent waiting for the user: what it would give Cards. */
+  permission?: { id: string; asked: string[] }
   status?: string
   failed = false
   /** The last turn stopped at the step limit and can go on. */
@@ -130,9 +132,10 @@ export class ChatController extends Observable {
     this.changed()
     if (!this.available) return
     // Resume work left unfinished by a disconnect or restart.
-    void api<{ conversation: Conversation; busy: boolean; provider: ProviderInfo }>('/api/chat/conversation', { ...this.base, resume: true, folders: this.folders })
+    void api<{ conversation: Conversation; busy: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, resume: true, folders: this.folders })
       .then((r) => {
         if (this.currentId !== id) return
+        this.permission = r.permission ?? undefined
         this.usage = r.conversation.usage
         this.provider = r.provider
         this.busy = r.busy
@@ -340,8 +343,23 @@ export class ChatController extends Observable {
     this.changed()
   }
 
+  /** The user's answer; `always` are kinds allowed without asking from now on. */
+  answerPermission(allow: boolean, always: string[]) {
+    const p = this.permission
+    if (!p) return
+    this.permission = undefined
+    this.changed()
+    void api('/api/chat/permission', { id: p.id, allow, always }).catch((e) => this.fail(e))
+  }
+
   private handle(e: any) {
     switch (e.kind) {
+      case 'permission':
+        this.permission = { id: e.id, asked: e.asked }
+        break
+      case 'permissionAnswered':
+        if (this.permission?.id === e.id) this.permission = undefined
+        break
       case 'text': {
         const last = this.items[this.items.length - 1]
         if (last && last.role === 'assistant' && !last.tool) {

@@ -14,6 +14,7 @@ import { cardState, formatDuration, KIND_ICON, KIND_LABEL } from '../model/sessi
 import { D } from '../shared/rpc'
 import { Button } from './controls'
 import { Icon } from './icons'
+import { permissionInfo } from '../model/permissions'
 
 // ---- Texts ------------------------------------------------------------------------
 
@@ -129,6 +130,10 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
         <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
         {data.kind === 'draft' && <span className="cv-draft-badge" style={{ fontSize: font(9), padding: `0 ${s(4)}px` }}>未実装</span>}
         <span style={{ flex: 1, minWidth: s(2) }} />
+        {data.permissions?.map((p) => (
+          <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
+            style={{ color: p === 'sandbox_off' ? 'var(--orange)' : 'var(--secondary)' }} />
+        ))}
         {data.errors.length ? <Icon name="xmark.octagon.fill" size={font(11)} style={{ color: 'var(--red)' }} title={data.errors.join('\n')} />
           : data.warnings.length ? <Icon name="exclamationmark.triangle.fill" size={font(11)} style={{ color: 'var(--yellow)' }} title={data.warnings.join('\n')} /> : null}
         {data.state !== undefined && data.state !== D.CardState.not_started && (

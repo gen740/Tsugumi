@@ -242,5 +242,22 @@
    ],
    "expect": "Implement these Draft Cards in the child workflow outer/inner, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits"
   }
+ ],
+ "approvalRequired": [
+  {
+   "json": "{\"reply\": \"Failure\", \"value\": {\"kind\": \"approval_required\", \"args\": [{\"key\": \"permission\", \"value\": \"network a\"}, {\"key\": \"other\", \"value\": \"x\"}, {\"key\": \"permission\", \"value\": \"host_folder_read inner/b /data/my files\"}]}}",
+   "expect": [
+    "network a",
+    "host_folder_read inner/b /data/my files"
+   ]
+  },
+  {
+   "json": "{\"reply\": \"Failure\", \"value\": {\"kind\": \"revision_conflict\", \"args\": []}}",
+   "expect": null
+  },
+  {
+   "json": "{\"reply\": \"SaveResult\", \"value\": {\"rev\": \"3\"}}",
+   "expect": null
+  }
  ]
 }

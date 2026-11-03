@@ -36,6 +36,9 @@ struct ChatPanel: View {
       if showList { sessionList } else { conversation }
     }
     .background(Color(nsColor: .windowBackgroundColor))
+    .sheet(item: Binding(get: { chat.permissionPrompt }, set: { _ in })) { p in
+      PermissionPromptView(prompt: p) { allow, always in chat.answerPermissions(allow: allow, always: always) }
+    }
   }
 
   // MARK: - Header

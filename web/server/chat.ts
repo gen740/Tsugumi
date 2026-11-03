@@ -1,6 +1,7 @@
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
@@ -42,10 +43,15 @@ interface Settings {
   fixturePort: number
   /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
   models: string[]
+  /** What the Agent may give Cards without asking (network, sandbox_off,
+   *  host_folder_read, host_folder_write); the rest waits for the user. */
+  allowedPermissions: string[]
 }
+
+export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
-  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', fixturePort: 8765, models: [],
+  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', fixturePort: 8765, models: [], allowedPermissions: [],
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
 
@@ -60,6 +66,8 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
   if (Array.isArray(b.models)) out.models = b.models.filter((m): m is string => typeof m === 'string')
+  const allowed = b.allowedPermissions
+  if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
   return out
 }
 
@@ -256,6 +264,44 @@ function unixTransport(sock: string): Promise<Transport> {
   })
 }
 
+/** A save of an Agent waiting for the user: what it would give Cards. */
+interface PermissionWait {
+  project: string
+  session: string
+  asked: string[]
+  resolve: (approved: Set<string>) => void
+}
+const permissionWaits = new Map<string, PermissionWait>()
+
+/** The widenings the user approves: the kinds allowed without asking at
+ *  once, the others when the page asks (nothing when declined or cancelled). */
+function approve(project: string, session: string, asked: string[]): Promise<Set<string>> {
+  const allowed = new Set(settings().allowedPermissions)
+  const approved = new Set(asked.filter((p) => allowed.has(p.split(' ')[0])))
+  const ask = asked.filter((p) => !approved.has(p))
+  if (!ask.length) return Promise.resolve(approved)
+  return new Promise((resolve) => {
+    const id = randomUUID()
+    permissionWaits.set(id, { project, session, asked: ask, resolve: (a) => resolve(new Set([...approved, ...a])) })
+    ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked: ask } })
+  })
+}
+
+function answerPermission(id: string, allow: boolean, always: string[] = []) {
+  const w = permissionWaits.get(id)
+  if (!w) return
+  permissionWaits.delete(id)
+  if (allow && always.length) {
+    const s = settings()
+    ctx.writeJSON(settingsFile(), { ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
+  }
+  w.resolve(allow ? new Set(w.asked) : new Set())
+  ctx.broadcast({ type: 'chat', project: w.project, session: w.session, event: { kind: 'permissionAnswered', id } })
+}
+
+const waitingFor = (project: string, session: string) =>
+  [...permissionWaits.entries()].filter(([, w]) => w.project === project && w.session === session)
+
 class ChatHost {
   private agents = new Map<string, Agent>()
   private client?: RPCClient
@@ -284,6 +330,7 @@ class ChatHost {
     let a = this.agents.get(id)
     if (!a) {
       a = new Agent(catalog!, () => this.rpc(), await provider(), this.file(id), id, references())
+      a.approver = (asked) => approve(this.project, id, asked)
       this.agents.set(id, a)
     }
     return a
@@ -399,7 +446,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
       a.setProvider(await provider())
       a.resume(host.events(a.id))
     }
-    return { conversation: a.conversation, busy: a.busy, provider: await providerInfo() }
+    const [wait] = waitingFor(host.project, a.id)
+    return { conversation: a.conversation, busy: a.busy, provider: await providerInfo(),
+             permission: wait ? { id: wait[0], asked: wait[1].asked } : null }
   },
   'POST /api/chat/send': async (b) => {
     const { host, a } = await turnAgent(b)
@@ -421,8 +470,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     a.compact(host.events(a.id))
     return { ok: true }
   },
+  'POST /api/chat/permission': (b) => {
+    answerPermission(String(b.id), b.allow === true, Array.isArray(b.always) ? b.always.map(String) : [])
+    return { ok: true }
+  },
   'POST /api/chat/cancel': async (b) => {
-    ;(await chatFor(projectDir(b.path)).agent(String(b.session))).cancel()
+    const host = chatFor(projectDir(b.path))
+    for (const [id] of waitingFor(host.project, String(b.session))) answerPermission(id, false)
+    ;(await host.agent(String(b.session))).cancel()
     return { ok: true }
   },
   'POST /api/chat/delete': (b) => {

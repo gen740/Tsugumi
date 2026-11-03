@@ -9,12 +9,13 @@ import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { draftRequest } from '../src/shared/agentShared'
-import { ToolCatalog } from './agent'
+import { approvalRequired, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
   flatjson: { type: string; json: { [k: string]: Json }; expect?: { [k: string]: Json }; error?: boolean }[]
   draftRequest: { scope: string[]; cards: { key: string; definition: string; description: string; content: string }[]; expect: string }[]
+  approvalRequired: { json: string; expect: string[] | null }[]
 }
 
 const [root, mode] = process.argv.slice(2)
@@ -48,4 +49,5 @@ for (const c of fixture.flatjson) {
   for (const [k, v] of Object.entries(c.expect ?? {})) assert.deepEqual(out[k], v, `${label}: ${k} is ${JSON.stringify(out[k])}`)
 }
 for (const c of fixture.draftRequest) assert.equal(draftRequest(c.scope, c.cards), c.expect)
+for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.json) ?? null, c.expect, c.json)
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

@@ -491,6 +491,7 @@ private struct SkillSettings: View {
 /// Model connections. API keys go to the Keychain only (one item per
 /// provider); they are never written to project files, settings or logs.
 private struct APISettings: View {
+  @Environment(AppPreferences.self) private var prefs
   @AppStorage("agent.provider") private var provider = "anthropic"
   @AppStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
   @AppStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
@@ -550,6 +551,19 @@ private struct APISettings: View {
       } else {
         TextField("fixture のポート", value: $port, format: .number)
         Text("起動: python3 tests/fixtures/model_fixture.py --port \(port)").font(.caption.monospaced())
+      }
+      Section {
+        ForEach(CardPermission.allCases) { k in
+          Toggle(isOn: Binding(get: { prefs.allowedPermissions.contains(k.rawValue) },
+                               set: { on in if on { prefs.allowedPermissions.insert(k.rawValue) } else { prefs.allowedPermissions.remove(k.rawValue) } })) {
+            Label(k.label, systemImage: k.symbol)
+          }
+        }
+      } header: {
+        Text("Agent が確認なしに Card に与えてよい権限")
+      } footer: {
+        Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
+          .font(.caption).foregroundStyle(.secondary)
       }
       Section("ChatGPT アカウントでの接続") {
         Text("未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。")

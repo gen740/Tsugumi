@@ -264,6 +264,11 @@ table ProjectSaveRequest {
   origin:string (id: 2, required);
   changes:[DocumentChange] (id: 3, required);
   renamed_cards:[CardRename] (id: 4);
+  /// The Card permissions this save widens that the user approved, each as
+  /// an `approval_required` failure names it. Set by the client after asking
+  /// the user, never by a model; a save from a model (origin "agent") is
+  /// rejected unless every widening is listed.
+  approved_permissions:[string] (id: 5);
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.

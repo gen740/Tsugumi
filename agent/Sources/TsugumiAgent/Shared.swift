@@ -17,9 +17,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
-  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, network, hostFolders, ...). Change a
-  setting with PutDefinition of that Card. A new Card needs both its {"id"} in SetProject and its definition;
-  never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
+  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, ...). Change a
+  setting with PutDefinition of that Card. What a Card may do beyond computing (network, sandbox, hostFolders)
+  is the user's: a save that widens it waits for the user's approval, so do it only when the task needs it, say
+  why, and if it is declined do not try another way around it. A new Card needs both its {"id"} in SetProject and
+  its definition; never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
   SetProject (connections) in the same save.
 - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
   own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
@@ -133,7 +135,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     "RunHistoryRequest", "RunInvocationsRequest", "RunRecordRequest", "LogRangeRequest", "ArtifactListRequest",
     "ArtifactReadRequest", "OperationGetRequest", "AttachedFolderReadRequest"
   ],
-  "agentFields": ["op_id", "origin"],
+  "agentFields": ["op_id", "origin", "approved_permissions"],
   "referenceTool": {
     "name": "reference_read",
     "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A folder lists its entries.",
@@ -149,7 +151,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}",
     "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n{list}"
-  }
+  },
+  "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
 }
 """#
 }

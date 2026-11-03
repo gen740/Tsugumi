@@ -85,3 +85,8 @@
 .shortcut-table .table-row.three, .shortcut-table .table-head.three { grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) auto; }
 .shortcut-scope { font-size: 10px; color: var(--secondary); margin-left: 6px; }
 .skill-folder-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+/* The Agent asking for Card permissions. */
+.permission-list { list-style: none; margin: 0; padding: 10px; border-radius: 8px; background: var(--fill-quaternary, rgba(127, 127, 127, 0.1)); display: grid; gap: 6px; }
+.permission-list li { display: flex; gap: 8px; align-items: baseline; }
+.permission-list code { font-size: 11px; }

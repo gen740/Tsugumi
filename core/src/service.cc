@@ -9,6 +9,7 @@
 
 #include "nix.hh"
 #include "scheduler.hh"
+#include "permissions.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/log.hh"
@@ -449,8 +450,9 @@ std::string failure_receipt(const std::string& op_id, const FailureData& f) {
 
 void Service::store_failure_receipt(const std::string& op_id, const std::string& kind,
                                     const std::string& digest, const FailureData& f) {
-  // busy/timeout/persistence failures leave the operation retryable under the same id.
-  if (f.kind == FailureKind::busy || f.kind == FailureKind::timeout ||
+  // busy/timeout/persistence failures (and a save waiting for the user's
+  // approval) leave the operation retryable under the same id.
+  if (f.kind == FailureKind::busy || f.kind == FailureKind::timeout || f.kind == FailureKind::approval_required ||
       f.kind == FailureKind::persistence_failed || f.kind == FailureKind::internal_error) {
     finish_op(op_id, failure_receipt(op_id, f));
     return;
@@ -800,6 +802,20 @@ void Service::save(RequestIn& req) {
       throw Failed(f);
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
+    // A model may not widen what Cards may do on its own: the user approves
+    // each widening (the client asks, then lists them).
+    if (r->origin()->str() == "agent" && staged.effective) {
+      store_->resolve_staged(staged);
+      std::set<std::string> approved;
+      if (r->approved_permissions())
+        for (const auto* p : *r->approved_permissions()) approved.insert(p->str());
+      std::vector<std::pair<std::string, std::string>> missing;
+      for (const auto& w : permissions::widenings(base->resolution.get(), *staged.doc->resolution))
+        if (!approved.count(w)) missing.emplace_back("permission", w);
+      if (!missing.empty())
+        throw Failed(FailureKind::approval_required,
+                     "this save widens what Cards may do; the user approves it first", std::move(missing));
+    }
     if (staged.effective && staged.doc->execution_fingerprint != base->execution_fingerprint) {
       if (auto active = scheduler_->active_status())
         throw Failed(FailureKind::busy, "a run is in progress; computational changes are rejected until it ends",

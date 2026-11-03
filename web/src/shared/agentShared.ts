@@ -6,7 +6,7 @@ import shared from '../../../agent/Shared/agent.json'
 export const AGENT = shared
 
 /** `{name}` in a text replaced by its value, in one pass (values are not read again). */
-function fill(text: string, values: Record<string, string>): string {
+export function fill(text: string, values: Record<string, string>): string {
   return text.replace(/\{(\w+)\}/g, (m, k: string) => values[k] ?? m)
 }
 

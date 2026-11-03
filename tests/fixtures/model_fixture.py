@@ -11,6 +11,10 @@ Steps: project_inspect -> project_save (SetProject with the param changed)
 -> run (from the root trigger) -> run_status until terminal -> run_record of
 the reported card -> a final explanation.
 
+A permission task ("give <card> network access"): project_inspect ->
+project_save turning the Card's network on -> a final line saying whether it
+was saved or declined (the client asks the user for the approval).
+
 A second scripted task implements Drafts ("Implement these Draft Cards ...
 - <path> (definition <id>)"): project_inspect -> one project_save with
 PutDefinition/PutSource per Draft -> project_validate -> run -> report.
@@ -32,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TASK = re.compile(r"set (\S+?)\.(\S+) to (.+?) and run(?:, then report (\S+))?", re.I)
 TERMINAL = {"succeeded", "failed", "cancelled"}
+PERMISSION = re.compile(r"give (\S+) network access", re.I)
 
 
 def blocks(msg):
@@ -179,10 +184,38 @@ def decide_drafts(messages, text, start):
     return ("text", "Done.")
 
 
+def last_permission_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            for b in blocks(messages[i]):
+                if b.get("type") == "text" and (t := PERMISSION.search(b["text"])):
+                    return t.group(1), i
+    return None, -1
+
+
+def decide_permission(messages, card, start):
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "project_inspect", {})
+    name, res, is_error = results[-1]
+    value = res.get("value", {}) if isinstance(res, dict) else {}
+    if name == "project_inspect":
+        d = next(x for x in value["definitions"] if x["id"] == card)
+        body = dict(json.loads(d["card_json"]), network=True)
+        return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
+            {"value_type": "PutDefinition", "value": {"id": card, "card_json": json.dumps(body), "keep_meta": True}}]})
+    if name == "project_save":
+        return ("text", "Network access was declined; nothing was saved." if is_error else f"Saved: {card} may reach the network.")
+    return ("text", "Done.")
+
+
 def decide(messages):
     """Returns ("tool", name, input) or ("text", message)."""
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
+    perm, perm_start = last_permission_task(messages)
+    if perm is not None and perm_start > max(start, draft_start):
+        return decide_permission(messages, perm, perm_start)
     if draft_text is not None and draft_start > start:
         return decide_drafts(messages, draft_text, draft_start)
     if not task:

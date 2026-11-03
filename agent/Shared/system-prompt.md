@@ -13,9 +13,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
-  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, network, hostFolders, ...). Change a
-  setting with PutDefinition of that Card. A new Card needs both its {"id"} in SetProject and its definition;
-  never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
+  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, ...). Change a
+  setting with PutDefinition of that Card. What a Card may do beyond computing (network, sandbox, hostFolders)
+  is the user's: a save that widens it waits for the user's approval, so do it only when the task needs it, say
+  why, and if it is declined do not try another way around it. A new Card needs both its {"id"} in SetProject and
+  its definition; never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
   SetProject (connections) in the same save.
 - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
   own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this

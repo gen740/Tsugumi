@@ -37,6 +37,9 @@ enum FailureKind : ushort {
   unsupported = 28,
   internal_error = 29,
   type_mismatch = 30,
+  /// A save from a model widens Card permissions (network, sandbox off, host
+  /// folders) the user has not approved: one `permission` argument each.
+  approval_required = 31,
 }
 
 enum Severity : ubyte { unspecified = 0, error = 1, warning = 2 }

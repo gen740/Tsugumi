@@ -4,6 +4,7 @@
 import { D } from '../shared/rpc'
 import type { FlowDirection } from './prefs'
 import type { CardKind } from './session'
+import type { PermissionKind } from './permissions'
 
 export type Pt = { x: number; y: number }
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -113,6 +114,8 @@ export interface CardNodeData {
   collapsed: boolean
   /** The Card's result has a frame on the canvas (display anchor). */
   hasDisplay: boolean
+  /** What it may do beyond computing (network, no sandbox, host folders). */
+  permissions?: PermissionKind[]
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'

@@ -68,6 +68,7 @@ extension Shared {
     let agentFields: Set<String>
     let referenceTool: Tool
     let draft: Draft
+    let permissionDeclined: String
   }
 
   static let data: Data = {
@@ -76,7 +77,8 @@ extension Shared {
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
-                draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!))
+                draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
+                permissionDeclined: o["permissionDeclined"] as! String)
   }()
 
   /// `{name}` in a text replaced by its value, in one pass (values are not read again).

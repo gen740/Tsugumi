@@ -57,6 +57,12 @@ struct ContractTests {
     }
   }
 
+  @Test func approvalRequests() throws {
+    for c in try #require(fixture["approvalRequired"] as? [[String: Any]]) {
+      #expect(Agent.approvalRequired(try #require(c["json"] as? String)) == c["expect"] as? [String], "\(c)")
+    }
+  }
+
   @Test func draftRequests() throws {
     for c in try #require(fixture["draftRequest"] as? [[String: Any]]) {
       let cards = try #require(c["cards"] as? [[String: String]]).map {

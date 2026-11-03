@@ -119,6 +119,13 @@ func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig?
                references: references)
 }
 
+final class Asked: @unchecked Sendable {
+  private let lock = NSLock()
+  private var asked: [[String]] = []
+  func add(_ a: [String]) { lock.lock(); asked.append(a); lock.unlock() }
+  var all: [[String]] { lock.lock(); defer { lock.unlock() }; return asked }
+}
+
 func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   let deadline = Date().addingTimeInterval(seconds)
   while !log.finished && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
@@ -150,6 +157,35 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(conv.tools.contains { $0.name == "project_save" && $0.opId != nil && $0.state == .completed })
     // run_status waited for the run to end: the model looked at most once.
     #expect(conv.tools.filter { $0.name == "run_status" }.count <= 1, "\(conv.tools.map(\.name))")
+    await client.close()
+  }
+
+  /// A save widening what a Card may do waits for the user: approved, it is
+  /// saved; declined, nothing is, and the model is told so.
+  @Test func cardPermissionsWaitForTheUser() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let asked = Asked()
+    func network() async throws -> Bool {
+      let json = try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson ?? "{}"
+      return (try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["network"] as? Bool == true
+    }
+    await agent.setApprover { a in asked.add(a); return [] }
+    let declined = EventLog()
+    await agent.send("give src network access", context: []) { declined.add($0) }
+    await waitFinished(declined)
+    #expect(asked.all == [["network src"]], "\(asked.all)")
+    #expect(try await network() == false)
+    #expect(declined.text.contains("declined"), "\(declined.all)")
+    await agent.setApprover { a in asked.add(a); return Set(a) }
+    let approved = EventLog()
+    await agent.send("give src network access", context: []) { approved.add($0) }
+    await waitFinished(approved)
+    #expect(try await network() == true, "\(approved.all)")
     await client.close()
   }
 

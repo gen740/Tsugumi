@@ -12,6 +12,7 @@ import {
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
+import { cardPermissions } from './permissions'
 
 export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
@@ -2694,7 +2695,7 @@ auto run(Card::Input& input) -> Card::Output {
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
-      collapsed: opts.collapsed ?? this.collapsed(k), hasDisplay: display,
+      collapsed: opts.collapsed ?? this.collapsed(k), hasDisplay: display, permissions: cardPermissions(def),
     }
   }
 

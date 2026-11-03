@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
 import { Skill } from '../model/chat'
+import { PERMISSIONS } from '../model/permissions'
 import { useObserve } from '../model/observable'
 import {
   bindingLabel, CANVAS_ONLY, EDITOR_THEME_LABELS, EditorTheme, eventBinding, FLOW_LABELS, FlowDirection, Motion, MOTION_LABELS, prefs,
@@ -449,6 +450,7 @@ interface APIState {
   models: string[]
   keys: { Anthropic: KeySource; OpenAI: KeySource }
   keyEnv: { Anthropic: string; OpenAI: string }
+  allowedPermissions: string[]
 }
 
 /** Re-reads the connection of every open chat (after it changed here). */
@@ -540,6 +542,15 @@ function APISettings() {
           )}
         </Section>
       )}
+      <Section title="Agent が確認なしに Card に与えてよい権限">
+        {PERMISSIONS.map((p) => (
+          <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
+            <Toggle checked={s.allowedPermissions.includes(p.kind)}
+              onChange={(on) => update({ allowedPermissions: on ? [...s.allowedPermissions, p.kind] : s.allowedPermissions.filter((k) => k !== p.kind) })} />
+          </Row>
+        ))}
+        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。</span></Row>
+      </Section>
       <Section title="ChatGPT アカウントでの接続">
         <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。</span></Row>
       </Section>

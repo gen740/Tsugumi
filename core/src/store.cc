@@ -107,6 +107,8 @@ void Store::open() {
   doc_ = doc;
 }
 
+void Store::resolve_staged(Staged& st) const { finalize(st.doc, &st.ops, current().get()); }
+
 DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
   auto st = stage(changes, "preview", "preview");
   return finalize(st.doc, &st.ops, current().get());
@@ -123,7 +125,9 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const s
     key.update(id);
     if (def.meta_json) key.update(*def.meta_json);
   }
-  doc->resolution_key = key.finish_hex();
+  auto resolution_key = key.finish_hex();
+  if (doc->resolution && doc->resolution_key == resolution_key) return doc;  // resolved before commit
+  doc->resolution_key = resolution_key;
   if (base && base->resolution && base->resolution_key == doc->resolution_key) {
     doc->resolution = base->resolution;
     return doc;
