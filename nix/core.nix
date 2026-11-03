@@ -28,6 +28,6 @@ clangStdenv.mkDerivation {
   meta = {
     description = "Tsugumi core daemon and Card worker";
     mainProgram = "tsugumid";
-    platforms = [ "aarch64-linux" "aarch64-darwin" ];
+    platforms = [ "aarch64-linux" "x86_64-linux" "aarch64-darwin" ];
   };
 }

@@ -10,7 +10,7 @@
 
   outputs = { self, nixpkgs, hosq }:
     let
-      systems = [ "aarch64-darwin" "aarch64-linux" ];
+      systems = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       # The nixpkgs revision Cards build against unless a project pins another.
       # Recorded so that the core can fetch it in pure evaluation mode.
@@ -40,7 +40,8 @@
         });
 
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell {
+        # clang as for the package (GCC 16 takes very long on the core's sources).
+        default = (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
           packages = with pkgs; [
             cmake
             ninja
@@ -54,6 +55,8 @@
             nix.libs.nix-util
             git
             (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ]))
+            # Card shell steps use jq (the package gives them the same tools).
+            jq
             # Source formatters used by ProjectFileFormat (also in the image).
             ruff
             nixfmt-rfc-style
