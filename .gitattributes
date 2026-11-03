@@ -1,0 +1,6 @@
+# Tree-sitter grammars copied from upstream (macOS/Sources/Grammars/README.md):
+# keep them out of GitHub's language stats and collapse them in diffs.
+macOS/Sources/Grammars/TreeSitterNix/** linguist-vendored
+macOS/Sources/Grammars/TreeSitterPython/** linguist-vendored
+# Our FlatBuffers grammar is grammar.js; src/ is generated from it.
+macOS/Sources/Grammars/TreeSitterFBS/src/** linguist-generated

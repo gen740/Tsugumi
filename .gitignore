@@ -13,3 +13,5 @@ __pycache__/
 /agent/.build/
 /agent/.swiftpm/
 /build-renderer/
+/.cache/
+/.build/
