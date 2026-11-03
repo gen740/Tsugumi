@@ -124,9 +124,12 @@ struct TsugumiLoadingCard: View {
 
 /// Indeterminate: the bird hops and pecks on a short perch, holding the
 /// thread that catches on the lower edge at `catchX` (nil: only the loose
-/// end, as on home where nothing is below).
+/// end, as on home where nothing is below). With `temari` the ball rests on
+/// the perch under the bill and the thread runs up from it, as in the key
+/// visual.
 struct TsugumiIdleScene: View {
   var catchX: CGFloat? = nil
+  var temari = false
   var birdScale: CGFloat = 0.22
   @Environment(\.tsugumiClock) private var clock
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -145,11 +148,17 @@ struct TsugumiIdleScene: View {
         g.fill(Path(ellipseIn: CGRect(x: fx - 30 * s, y: y - 6, width: 60 * s, height: 6)), with: .color(.black.opacity(0.2)))
         let feet = CGPoint(x: fx, y: y - 3)
         let bill = TsugumiBird.point(TsugumiBird.gape, at: feet, scale: birdScale, pose: pose)
+        // the key visual's ball: under the bill, on the perch; it rocks a
+        // little with each hop
+        let r = 70 * birdScale
+        let ball = CGPoint(x: fx + 199 * birdScale, y: y - 3 - r)
         // over the lower edge and away into the picture, in front of the bird
         TsugumiBird.draw(g, at: feet, scale: birdScale, pose: pose) { g in
           if let catchX { TsugumiThread.receding(g, x: catchX, edge: size.height, to: bill) }
+          if temari { TsugumiThread.up(g, from: TsugumiTemari.lead(center: ball, radius: r), to: bill) }
           TsugumiThread.loose(g, from: bill, time: t)
         }
+        if temari { TsugumiTemari.draw(g, center: ball, radius: r, spin: 0.25 * sin(t * 2 * .pi / 3.2)) }
       }
     }
     .accessibilityHidden(true)

@@ -355,6 +355,16 @@ enum TsugumiThread {
     g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
   }
 
+  /// From the ball's top `a` up to the bill `b`, bowing out a little toward
+  /// the beak's side (the key visual's thread).
+  static func up(_ g: GraphicsContext, from a: CGPoint, to b: CGPoint) {
+    var p = Path()
+    p.move(to: a)
+    p.addCurve(to: b, control1: CGPoint(x: a.x + 3, y: a.y + (b.y - a.y) * 0.3),
+               control2: CGPoint(x: b.x + 1, y: a.y + (b.y - a.y) * 0.7))
+    g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+  }
+
   /// A short loose end out of the bill `s`, swaying lightly.
   static func loose(_ g: GraphicsContext, from s: CGPoint, time: Double) {
     let w = CGFloat(sin(time * 1.3)) * 3

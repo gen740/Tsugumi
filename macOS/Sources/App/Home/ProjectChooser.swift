@@ -238,7 +238,7 @@ private struct HomeSidebar: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      TsugumiIdleScene(birdScale: 0.19)
+      TsugumiIdleScene(temari: true, birdScale: 0.19)
         .frame(height: 150)
         .padding(.top, 30)
       Text("Tsugumi").font(.largeTitle.bold()).foregroundStyle(TsugumiPalette.cream)
