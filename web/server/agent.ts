@@ -1,0 +1,932 @@
+// The Agent of the web UI, run by the host server: streaming model turns,
+// tool definitions and argument conversion generated from tsugumi.bfbs, real
+// RPC execution against the project's tsugumid, persistence per project and
+// cancellation. It edits documents only through core RPC, never UI state.
+import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { Builder } from 'flatbuffers'
+import { BaseType, BFBS, Field } from '../src/shared/bfbs'
+import { FlatJSON } from '../src/shared/flatjson'
+import { RPCClient } from '../src/shared/rpc'
+
+// ---- Tool catalog --------------------------------------------------------------
+
+export interface ToolSpec {
+  name: string
+  payloadType: number
+  object: number
+  description: string
+  inputSchema: Record<string, unknown>
+  mutating: boolean
+}
+
+export const DEFAULT_REQUESTS = [
+  'ProjectInspectRequest', 'ProjectValidateRequest', 'ProjectSaveRequest', 'ProjectFileListRequest',
+  'ProjectFileReadRequest', 'RunPlanRequest', 'RunRequest', 'RunCancelRequest', 'RunStatusRequest',
+  'RunHistoryRequest', 'RunInvocationsRequest', 'RunRecordRequest', 'LogRangeRequest', 'ArtifactListRequest',
+  'ArtifactReadRequest', 'OperationGetRequest', 'AttachedFolderReadRequest',
+]
+/** Requests an older schema may not have yet (left out instead of failing). */
+const OPTIONAL_REQUESTS = new Set(['AttachedFolderReadRequest'])
+const AGENT_FIELDS = new Set(['op_id', 'origin'])
+
+/** "ProjectSaveRequest" -> "project_save" */
+export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
+
+export class ToolCatalog {
+  readonly tools: ToolSpec[]
+  readonly replyNames = new Map<number, string>()
+
+  constructor(readonly schema: BFBS, requests = DEFAULT_REQUESTS) {
+    const union = schema.enums.find((e) => e.name === 'Tsugumi.RPC.RequestPayload')
+    if (!union) throw new Error('RequestPayload union not found')
+    const reply = schema.enums.find((e) => e.name === 'Tsugumi.RPC.ReplyPayload')
+    for (const v of reply?.values ?? []) this.replyNames.set(v.value, v.name)
+    this.tools = requests.filter((r) => !OPTIONAL_REQUESTS.has(r) || schema.object(`Tsugumi.RPC.${r}`) >= 0).map((r) => {
+      const index = schema.object(`Tsugumi.RPC.${r}`)
+      const v = union.values.find((x) => x.unionType?.index === index)
+      if (index < 0 || !v) throw new Error(`request ${r} not found`)
+      const obj = schema.objects[index]
+      const doc = obj.documentation.join(' ').trim()
+      return {
+        name: toolName(r), payloadType: v.value, object: index,
+        description: `${r.replace('Request', '')}: ${doc}`,
+        inputSchema: this.objectSchema(index, 0, AGENT_FIELDS),
+        mutating: obj.fields.some((f) => f.name === 'op_id'),
+      }
+    })
+  }
+
+  tool(name: string) {
+    return this.tools.find((t) => t.name === name)
+  }
+
+  private objectSchema(index: number, depth: number, skip = new Set<string>()): Record<string, unknown> {
+    if (depth >= 8) return { type: 'object' }
+    const obj = this.schema.objects[index]
+    const props: Record<string, unknown> = {}
+    const required: string[] = []
+    for (const f of obj.fields) {
+      if (skip.has(f.name) || f.type.base === BaseType.utype) continue
+      const p = this.typeSchema(f, depth)
+      if (f.documentation.length) p.description = f.documentation.join(' ')
+      if (f.type.base === BaseType.union) {
+        const e = this.schema.enums[f.type.index]
+        props[`${f.name}_type`] = { type: 'string', enum: e.values.filter((x) => x.value !== 0).map((x) => x.name), description: `variant of ${f.name}` }
+      }
+      props[f.name] = p
+      if (f.required) required.push(f.name)
+    }
+    const out: Record<string, unknown> = { type: 'object', properties: props, additionalProperties: false }
+    if (required.length) out.required = required
+    return out
+  }
+
+  private typeSchema(f: Field, depth: number): Record<string, unknown> {
+    const t = f.type
+    switch (t.base) {
+      case BaseType.bool: return { type: 'boolean' }
+      case BaseType.byte: case BaseType.ubyte: case BaseType.short: case BaseType.ushort: case BaseType.int: case BaseType.uint:
+        if (t.index >= 0) return { type: 'string', enum: this.schema.enums[t.index].values.map((v) => v.name) }
+        return { type: 'integer' }
+      case BaseType.long: case BaseType.ulong:
+        return { type: 'string', pattern: '^-?[0-9]+$', description: '64 bit integer as a decimal string' }
+      case BaseType.float: case BaseType.double: return { type: 'number' }
+      case BaseType.string: return { type: 'string' }
+      case BaseType.obj: return this.objectSchema(t.index, depth + 1)
+      case BaseType.union: {
+        const e = this.schema.enums[t.index]
+        return { anyOf: e.values.filter((v) => v.unionType && v.unionType.index >= 0).map((v) => this.objectSchema(v.unionType!.index, depth + 1)) }
+      }
+      case BaseType.vector:
+        switch (t.element) {
+          case BaseType.ubyte: case BaseType.byte: return { type: 'string', description: 'UTF-8 text (or {"base64": ...})' }
+          case BaseType.string: return { type: 'array', items: { type: 'string' } }
+          case BaseType.obj: return { type: 'array', items: this.objectSchema(t.index, depth + 1) }
+          case BaseType.long: case BaseType.ulong: return { type: 'array', items: { type: 'string' } }
+          case BaseType.double: case BaseType.float: return { type: 'array', items: { type: 'number' } }
+          case BaseType.bool: return { type: 'array', items: { type: 'boolean' } }
+          default: return { type: 'array' }
+        }
+      default: return {}
+    }
+  }
+}
+
+// ---- Conversation ------------------------------------------------------------
+
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: string }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: ContentBlock[]
+  /** What the chat shows for a request the app wrote for the model (the
+   *  model gets `content`; this is never sent). */
+  display?: string
+}
+
+export interface ToolRecord {
+  id: string
+  name: string
+  arguments: string
+  opId?: string
+  state: 'pending' | 'sent' | 'completed' | 'skipped'
+  result?: string
+  isError: boolean
+}
+
+export interface Conversation {
+  id: string
+  title?: string
+  updatedAt: number
+  messages: ChatMessage[]
+  /** Messages replaced by the summary when the context was compacted. */
+  archive: ChatMessage[]
+  tools: ToolRecord[]
+  usage: { inputTokens: number; outputTokens: number }
+  summary?: string
+}
+
+export const newConversation = (id: string): Conversation => ({
+  id, updatedAt: Date.now(), messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 },
+})
+
+export function loadConversation(file: string, id: string): Conversation {
+  try {
+    return { ...newConversation(id), ...JSON.parse(fs.readFileSync(file, 'utf8')) }
+  } catch {
+    return newConversation(id)
+  }
+}
+
+const isDir = (p: string) => {
+  try {
+    return fs.statSync(p).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function saveConversation(file: string, c: Conversation) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file + '.tmp', JSON.stringify(c, null, 2))
+  fs.renameSync(file + '.tmp', file)
+}
+
+export type AgentEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'toolStarted'; id: string; name: string; arguments: string }
+  | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
+  | { kind: 'compacted' }
+  | { kind: 'retrying'; message: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'finished' }
+  /** The turn used its steps (model replies with tool calls) without
+   *  finishing; `unconfirmedRun` is a run it started and never saw end. */
+  | { kind: 'stepLimit'; steps: number; unconfirmedRun?: string }
+
+// ---- Provider ------------------------------------------------------------------
+
+export interface ProviderConfig {
+  name: string
+  baseURL: string
+  model: string
+  /** Wire protocol of the endpoint. */
+  api: 'anthropicMessages' | 'openAIResponses'
+  /** Read on this host only (Keychain, 0600 file or environment); never sent
+   *  to the page, tsugumid or Card workers. */
+  apiKey?: string
+  /** A real provider needs a key; the local fixture does not. */
+  needsKey: boolean
+  /** Output limit of one model reply: a Card's sources fit in one save. */
+  maxTokens: number
+  contextLimit: number
+}
+
+class HTTPStatusError extends Error {
+  constructor(readonly status: number, readonly body: string) {
+    super(`provider returned ${status}: ${body.slice(0, 400)}`)
+  }
+  get retryable() {
+    return this.status === 429 || this.status >= 500
+  }
+}
+
+class Cancelled extends Error {
+  constructor() {
+    super('cancelled')
+  }
+}
+
+/** A stream cut before its end: retried like a failed connection. */
+class ConnectionLost extends Error {
+  constructor() {
+    super('the connection to the model was lost')
+  }
+}
+
+type StreamEvent =
+  | { t: 'text'; text: string }
+  | { t: 'toolStart'; index: number; id: string; name: string }
+  | { t: 'toolInput'; index: number; json: string }
+  | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number }
+
+function headers(c: ProviderConfig): Record<string, string> {
+  const h: Record<string, string> = { 'content-type': 'application/json' }
+  if (c.api === 'anthropicMessages') h['anthropic-version'] = '2023-06-01'
+  if (c.needsKey) {
+    if (!c.apiKey) throw new Error(`no API key for ${c.name}; add it in Settings > API`)
+    if (c.api === 'anthropicMessages') h['x-api-key'] = c.apiKey
+    else h.authorization = 'Bearer ' + c.apiKey
+  }
+  return h
+}
+
+const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith('/') ? c.baseURL : c.baseURL + '/')
+
+export async function listModels(c: ProviderConfig): Promise<string[]> {
+  const r = await fetch(endpoint(c, 'v1/models'), { headers: headers(c) })
+  if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
+  const obj = (await r.json()) as { data?: { id: string }[] }
+  return (obj.data ?? []).map((m) => m.id)
+}
+
+/** Lines of a server-sent event stream. */
+async function* sseLines(r: Response): AsyncGenerator<string> {
+  const reader = r.body!.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      yield buf.slice(0, nl).replace(/\r$/, '')
+      buf = buf.slice(nl + 1)
+    }
+  }
+  if (buf) yield buf
+}
+
+/** One model reply, streamed; the same code talks to the real provider and the local fixture. */
+function stream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  return c.api === 'openAIResponses' ? responsesStream(c, system, messages, tools, signal) : messagesStream(c, system, messages, tools, signal)
+}
+
+/** Anthropic Messages API with SSE streaming. */
+async function* messagesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const body: Record<string, unknown> = {
+    model: c.model, max_tokens: c.maxTokens, stream: true, system,
+    messages: messages.map((m) => ({ role: m.role, content: m.content.map(wire) })),
+  }
+  if (tools.length) body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }))
+  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
+  if (r.status !== 200) throw new HTTPStatusError(r.status, await r.text())
+  let event = ''
+  let inputTokens = 0, outputTokens = 0
+  let stopped = false
+  for await (const line of sseLines(r)) {
+    if (line.startsWith('event:')) { event = line.slice(6).trim(); continue }
+    if (!line.startsWith('data:')) continue
+    let obj: any
+    try { obj = JSON.parse(line.slice(5)) } catch { continue }
+    switch (obj.type ?? event) {
+      case 'message_start': inputTokens = obj.message?.usage?.input_tokens ?? 0; break
+      case 'content_block_start':
+        if (obj.content_block?.type === 'tool_use') yield { t: 'toolStart', index: obj.index ?? 0, id: obj.content_block.id ?? randomUUID(), name: obj.content_block.name ?? '' }
+        break
+      case 'content_block_delta':
+        if (typeof obj.delta?.text === 'string') yield { t: 'text', text: obj.delta.text }
+        if (typeof obj.delta?.partial_json === 'string') yield { t: 'toolInput', index: obj.index ?? 0, json: obj.delta.partial_json }
+        break
+      case 'message_delta':
+        outputTokens = obj.usage?.output_tokens ?? outputTokens
+        if (obj.delta?.stop_reason) yield { t: 'stop', reason: obj.delta.stop_reason, inputTokens, outputTokens }
+        break
+      case 'message_stop': stopped = true; break
+      case 'error': throw new Error(obj.error?.message ?? 'stream error')
+    }
+  }
+  // A stream cut before message_stop is a lost connection, not a short answer.
+  if (!stopped) throw new ConnectionLost()
+}
+
+/** The conversation as Responses API input items: messages, function calls
+ *  (the model's tool uses) and their outputs. */
+function responsesInput(messages: ChatMessage[]): unknown[] {
+  const out: unknown[] = []
+  for (const m of messages) {
+    let texts: unknown[] = []
+    const flush = () => {
+      if (texts.length) out.push({ role: m.role, content: texts })
+      texts = []
+    }
+    for (const b of m.content) {
+      if (b.type === 'text') texts.push({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: b.text })
+      else if (b.type === 'tool_use') {
+        flush()
+        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input })
+      } else {
+        flush()
+        out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
+      }
+    }
+    flush()
+  }
+  return out
+}
+
+/** OpenAI Responses API with an API key (not a ChatGPT account sign-in). */
+async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const body: Record<string, unknown> = {
+    model: c.model, instructions: system, input: responsesInput(messages), max_output_tokens: c.maxTokens, stream: true, store: false,
+  }
+  if (tools.length) body.tools = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+  const r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
+  if (r.status !== 200) throw new HTTPStatusError(r.status, await r.text())
+  let usedTools = false
+  let finished = false
+  for await (const line of sseLines(r)) {
+    if (!line.startsWith('data:')) continue
+    let obj: any
+    try { obj = JSON.parse(line.slice(5)) } catch { continue }
+    const index = typeof obj.output_index === 'number' ? obj.output_index : 0
+    switch (obj.type) {
+      case 'response.output_text.delta':
+        if (typeof obj.delta === 'string') yield { t: 'text', text: obj.delta }
+        break
+      case 'response.output_item.added':
+        if (obj.item?.type === 'function_call') {
+          usedTools = true
+          yield { t: 'toolStart', index, id: obj.item.call_id ?? randomUUID(), name: obj.item.name ?? '' }
+        }
+        break
+      case 'response.function_call_arguments.delta':
+        if (typeof obj.delta === 'string') yield { t: 'toolInput', index, json: obj.delta }
+        break
+      case 'response.completed': case 'response.incomplete': {
+        const u = obj.response?.usage
+        const reason = obj.type === 'response.incomplete' ? 'max_tokens' : usedTools ? 'tool_use' : 'end_turn'
+        yield { t: 'stop', reason, inputTokens: u?.input_tokens ?? 0, outputTokens: u?.output_tokens ?? 0 }
+        finished = true
+        break
+      }
+      case 'response.failed': case 'error': {
+        const e = obj.response?.error ?? obj.error
+        throw new Error(e?.message ?? e?.code ?? 'stream error')
+      }
+    }
+  }
+  if (!finished) throw new ConnectionLost()
+}
+
+function wire(b: ContentBlock): unknown {
+  if (b.type === 'tool_use') {
+    let input: unknown = {}
+    try { input = JSON.parse(b.input) } catch {}
+    return { type: 'tool_use', id: b.id, name: b.name, input }
+  }
+  return b
+}
+
+// ---- Agent -------------------------------------------------------------------
+
+/** The rules and working examples the model gets (the same text as the macOS
+ *  app's Agent; its default.nix and _outputs.fbs examples are the bundled
+ *  demos' own files). */
+export const SYSTEM_PROMPT = `You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
+- Call project_inspect first. Reads (project_file_list, project_file_read, project_validate, run_plan) use the latest
+  revision when at_rev is omitted; saves need base_rev = the rev you inspected. Revisions change after every save.
+  The project folder itself is the path "" (or ".").
+- project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
+  SetProject replaces the whole document, so start from the project_json you inspected and change only what is needed.
+- Never save edits the user did not ask for, and never save trial content (probes, placeholders, guesses) into the
+  user's project. Check a planned change with project_validate {"changes": [<the same changes as project_save>]}:
+  it resolves the project as it would be after them (types, ports, settings, _outputs.fbs) and saves nothing. Save
+  only what you mean to keep. If a save returns revision_conflict, inspect again and re-apply.
+- When unsure how something is written, read the bundled references with reference_read (path "" lists them):
+  demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++ and
+  Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
+- Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
+  definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
+  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, network, hostFolders, ...). Change a
+  setting with PutDefinition of that Card. A new Card needs both its {"id"} in SetProject and its definition;
+  never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
+  SetProject (connections) in the same save.
+- A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
+  own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
+  project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
+  under externals/<name>/ (base_hash of the file you read).
+- Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
+  "card_json": "<_card.json>", "keep_meta": true}} keeps _meta.json as it is (never write the user's intent text
+  again; send "meta_json" only to change it, e.g. port descriptions), {"value_type": "PutSource", "value": {"path":
+  "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
+  One save is one transaction: either everything is stored or nothing is.
+- Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
+  Card alone (propagate false) only works on the inputs saved by an earlier whole run. Poll run_status with the
+  run_id until succeeded/failed/cancelled; read what each Card produced with run_record and its stderr with
+  log_range (stream 2). run_status waits up to 30 s for a run to end, so call it again only when it still runs.
+  Cancelling runs requires an explicit run_cancel.
+- Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
+  content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
+  Card ids, the wiring and the intent in _meta.json (PutDefinition with "keep_meta": true). Decide for each Draft
+  what it becomes:
+  * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
+    _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
+    relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the
+    trigger), and _outputs.fbs with a File port (one table whose only field is value:string):
+        attribute "tsugumi";
+        namespace data;
+        table EventsFile { value:string; }
+        table Outputs { events:EventsFile (required, tsugumi: "file"); }
+        root_type Outputs;
+    When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
+    the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
+    branch, merge, logger (card-guide.md).
+  * Otherwise a code Card: set "language" ("python", "cpp" or "bash") and remove "template" in _card.json, write
+    _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
+    default.nix is a function of { pkgs, inputs, params }. Python (demos/report/definitions/generate/default.nix):
+      { pkgs, inputs, params }:
+      let
+        sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+      in
+      {
+        run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
+      }
+    Python packages from nixpkgs go in the same call: inputs.tsugumi.pythonCard { inherit sdk; src = ./src;
+    packages = ps: [ ps.numpy ps.astropy ps.pillow ]; }. C++ (demos/collatz/externals/collatz-cpp/definitions/
+    halve/default.nix; libraries: cppCard { ...; buildInputs = [ pkgs.cfitsio ]; }):
+      { pkgs, inputs, params }:
+      let
+        sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+      in
+      {
+        run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+      }
+    bash (demos/report/externals/archive/definitions/copy/default.nix): run is the script text; inputs are
+    $JSON_<PORT> files (jq is available) and $FILE_<PORT> / $DIR_<PORT> paths; outputs are {"port": {...}} JSON
+    written to $TSUGUMI_OUTPUT; files go to $TSUGUMI_OUTPUT_DIR:
+      { pkgs, inputs, params }:
+      {
+        # A bash Card: $DIR_REPORT is the input directory and the output port
+        # values are written as JSON to $TSUGUMI_OUTPUT.
+        run = ''
+          dest="$TSUGUMI_OUTPUT_DIR/archive"
+          mkdir -p "$dest"
+          cp -R "$DIR_REPORT/." "$dest/"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/ARCHIVED_AT"
+          echo "archived $(ls "$dest" | wc -l) files"
+          printf '{"archive": {"value": "%s"}}' "$dest" > "$TSUGUMI_OUTPUT"
+        '';
+      }
+  * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
+    "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
+    "filesystem": true in _card.json and write under ctx.output_directory. demos/report/definitions/generate:
+      attribute "tsugumi";
+      namespace report;
+      table CsvFile { value:string; }
+      table Outputs { csv:CsvFile (required, tsugumi: "file"); }
+      root_type Outputs;
+  * Python: src/main.py defines main(ctx). Input classes are generated from the types of the connected outputs,
+    output classes from _outputs.fbs, params from _card.json:
+        from inputs.events.data.EventsFile import EventsFile    # inputs.<port>.<namespace>.<Table>
+        import outputs.images.bands.ImagesDir as images_out      # outputs.<port>.<namespace>.<Table>
+        path = ctx.input("events", EventsFile).Value().decode()  # a File input is a path
+        low = ctx.params().Low()                                 # param "low" ({"name": "low", "type": "double", "data": 600})
+        out_dir = ctx.output_directory                           # with "filesystem": true
+        b = ctx.builder(); p = b.CreateString(out_dir)
+        images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
+        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
+    raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
+    HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
+    matplotlib need nothing more).
+  * C++: sources are \`#include <card.hh>\` and \`auto run(Card::Input& input) -> Card::Output\` with one member per
+    port (input.<port>, Output's ports are std::optional); visualization is
+    tsugumi::visualization::text/markdown/scalar/line_chart/table/image/points/module.
+  * The worker stays across runs, so reset static state in \`auto onRunStart() -> void\` (Python:
+    on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs. Optional preRun /
+    postRun are bash without the Card inputs.
+  Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
+  Work one Draft at a time, upstream first: write it, check it with project_validate {"changes": [...]}, save,
+  run from the trigger, check its run_record (and log_range when it failed), then go on to the next. You may split
+  one Draft into several Cards (each with its own definition; rewire them in SetProject). If something fails,
+  report it; never leave a half-written save.
+- Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
+  "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
+- 64 bit integers are decimal strings. Explain results briefly in the user's language.`
+
+/** reference_read: Tsugumi's bundled references, read only. */
+const REFERENCE_TOOL: ToolSpec = {
+  name: 'reference_read', payloadType: -1, object: -1,
+  description: "Reads Tsugumi's bundled references (read only): demos/ (working example projects), "
+    + 'sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A folder lists its entries.',
+  inputSchema: {
+    type: 'object', additionalProperties: false, required: ['path'],
+    properties: { path: { type: 'string', description: 'e.g. "" for the list, "demos/report/definitions/generate/src/main.py"' } },
+  },
+  mutating: false,
+}
+
+const RUN_ACTIVE = ['"queued"', '"preparing"', '"running"', '"cancelling"']
+const RUN_ENDED = ['"succeeded"', '"failed"', '"cancelled"']
+
+export class Agent {
+  conversation: Conversation
+  /** Model replies with tool calls in one turn before it stops and asks to
+   *  continue (Draft generation takes many: write, check, save, run, read). */
+  maxSteps = 60
+  /** How long run_status waits for a run to end before it answers (ms). */
+  statusWait = 30_000
+  /** Folders of this host attached to the chat: the only ones
+   *  attached_folder_read may read (tsugumid on the host reads any path). */
+  folders: string[] = []
+  private codec: FlatJSON
+  private abort?: AbortController
+  private turn?: Promise<void>
+  /** A run started by a tool call whose end was not seen yet. */
+  private unconfirmedRun?: string
+
+  constructor(
+    readonly catalog: ToolCatalog,
+    private readonly rpc: () => Promise<RPCClient>,
+    private provider: ProviderConfig,
+    readonly storage: string,
+    readonly id: string,
+    /** Bundled references for reference_read: a top-level name ("demos",
+     *  "sdk/python/tsugumi/__init__.py", "card-guide.md") -> where it is. */
+    private readonly references: Record<string, string> = {},
+  ) {
+    this.codec = new FlatJSON(catalog.schema)
+    this.conversation = loadConversation(storage, id)
+  }
+
+  /** The RPC tools and the Agent's own (reference_read, when references exist). */
+  get tools(): ToolSpec[] {
+    return Object.keys(this.references).length ? [...this.catalog.tools, REFERENCE_TOOL] : this.catalog.tools
+  }
+
+  get busy() {
+    return this.turn !== undefined
+  }
+
+  setProvider(p: ProviderConfig) {
+    this.provider = p
+  }
+
+  private save() {
+    saveConversation(this.storage, this.conversation)
+  }
+
+  /** Stops model streaming and tools not yet sent. Runs already accepted by the
+   *  core keep running; cancelling them needs an explicit run_cancel. */
+  cancel() {
+    this.abort?.abort()
+  }
+
+  private start(fn: (signal: AbortSignal) => Promise<void>) {
+    this.abort?.abort()
+    const ac = new AbortController()
+    this.abort = ac
+    const t = fn(ac.signal).finally(() => {
+      if (this.turn === t) this.turn = undefined
+    })
+    this.turn = t
+  }
+
+  /** Sends a prepared prompt (references and skills already attached);
+   *  `display` is what the chat shows for a request the app wrote. */
+  send(prompt: string, title: string, events: (e: AgentEvent) => void, display?: string) {
+    if (!this.conversation.title) this.conversation.title = title.slice(0, 60)
+    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: prompt }], ...(display ? { display } : {}) })
+    this.conversation.updatedAt = Date.now()
+    this.save()
+    this.start((s) => this.loop(events, s))
+  }
+
+  /** Goes on after the step limit stopped a turn. */
+  continueAfterLimit(events: (e: AgentEvent) => void) {
+    let note = 'Continue from where you stopped (the step limit ended the previous turn). Check the current state first'
+    if (this.unconfirmedRun) note += ` and the outcome of run ${this.unconfirmedRun} (run_status), which was started and never checked`
+    note += ', then finish the remaining work.'
+    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: note }], display: '（止まったところから続けます）' })
+    this.conversation.updatedAt = Date.now()
+    this.save()
+    this.start((s) => this.loop(events, s))
+  }
+
+  /** A turn whose model reply never arrived is continued; otherwise the last
+   *  request is asked again. Confirmed tool calls are reconciled, never re-sent. */
+  retry(events: (e: AgentEvent) => void) {
+    const last = this.conversation.messages[this.conversation.messages.length - 1]
+    if (!(last && last.role === 'user')) {
+      const lastText = [...this.conversation.messages].reverse().find((m) => m.role === 'user' && m.content.some((b) => b.type === 'text'))
+      if (!lastText) return
+      this.conversation.messages.push(lastText)
+      this.conversation.updatedAt = Date.now()
+      this.save()
+    }
+    this.start((s) => this.loop(events, s))
+  }
+
+  compact(events: (e: AgentEvent) => void) {
+    this.start(async (s) => {
+      try {
+        await this.compactIfNeeded(events, s, true)
+        events({ kind: 'finished' })
+      } catch (e) {
+        events({ kind: 'error', message: s.aborted ? 'cancelled' : String((e as Error).message ?? e) })
+      }
+    })
+  }
+
+  /** Resumes after a restart or disconnect: tool calls that were sent but never
+   *  answered are reconciled with OperationGet instead of being re-sent. */
+  resume(events: (e: AgentEvent) => void) {
+    const last = this.conversation.messages[this.conversation.messages.length - 1]
+    if (!this.conversation.tools.some((t) => t.state === 'sent' || t.state === 'pending') && last?.role !== 'user') return
+    this.start((s) => this.loop(events, s))
+  }
+
+  private async loop(events: (e: AgentEvent) => void, signal: AbortSignal) {
+    try {
+      await this.reconcilePending(events)
+      let cutReplies = 0
+      let done = false
+      for (let i = 0; i < this.maxSteps; i++) {
+        if (signal.aborted) throw new Cancelled()
+        await this.compactIfNeeded(events, signal)
+        let { blocks, stop } = await this.modelTurn(events, signal)
+        if (stop === 'max_tokens') {
+          // The reply was cut at the output limit, maybe inside a tool call:
+          // nothing of it is executed; the model is asked for smaller steps.
+          if (++cutReplies > 3) throw new Error("the model's replies were cut at the output limit three times")
+          blocks = blocks.filter((b) => b.type !== 'tool_use')
+          if (!blocks.length) blocks = [{ type: 'text', text: '[cut at the output limit]' }]
+          this.conversation.messages.push({ role: 'assistant', content: blocks })
+          this.conversation.messages.push({
+            role: 'user',
+            content: [{ type: 'text', text: 'Your last reply was cut at the output limit, so its tool call was not run and nothing was saved. Make the '
+              + 'change in smaller steps: one Card per project_save, and long source files in saves of their own.' }],
+            display: '（応答が長すぎて途中で切れたため、小さく分けてやり直します）',
+          })
+          events({ kind: 'retrying', message: 'the reply was cut at the output limit; asking for smaller steps' })
+          this.save()
+          continue
+        }
+        this.conversation.messages.push({ role: 'assistant', content: blocks })
+        this.save()
+        const uses = blocks.filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+        if (!uses.length || stop !== 'tool_use') {
+          done = true
+          break
+        }
+        const results: ContentBlock[] = []
+        for (const u of uses) {
+          if (signal.aborted) throw new Cancelled()
+          results.push(await this.runTool(u.id, u.name, u.input, events))
+        }
+        this.conversation.messages.push({ role: 'user', content: results })
+        this.save()
+      }
+      // Never a silent stop: the limit is its own outcome, and it can go on.
+      events(done ? { kind: 'finished' } : { kind: 'stepLimit', steps: this.maxSteps, unconfirmedRun: this.unconfirmedRun })
+    } catch (e) {
+      if (signal.aborted || e instanceof Cancelled) {
+        // Tools that were not sent are recorded as skipped; nothing is re-sent later.
+        for (const t of this.conversation.tools) if (t.state === 'pending') t.state = 'skipped'
+        this.save()
+        events({ kind: 'error', message: 'cancelled' })
+      } else {
+        events({ kind: 'error', message: String((e as Error).message ?? e) })
+      }
+    }
+  }
+
+  /** One streamed model response; transient provider errors are retried with
+   *  backoff before any of its tool calls has been executed. */
+  private async modelTurn(events: (e: AgentEvent) => void, signal: AbortSignal) {
+    for (let attempt = 0; ; attempt++) {
+      let text = ''
+      const tools = new Map<number, { id: string; name: string; json: string }>()
+      const order: number[] = []
+      let stop = 'end_turn'
+      try {
+        for await (const e of stream(this.provider, SYSTEM_PROMPT, this.wireMessages(), this.tools, signal)) {
+          if (e.t === 'text') {
+            text += e.text
+            events({ kind: 'text', text: e.text })
+          } else if (e.t === 'toolStart') {
+            tools.set(e.index, { id: e.id, name: e.name, json: '' })
+            order.push(e.index)
+          } else if (e.t === 'toolInput') {
+            const t = tools.get(e.index)
+            if (t) t.json += e.json
+          } else {
+            stop = e.reason
+            this.conversation.usage.inputTokens = e.inputTokens
+            this.conversation.usage.outputTokens += e.outputTokens
+          }
+        }
+        if (signal.aborted) throw new Cancelled()
+        const blocks: ContentBlock[] = []
+        if (text) blocks.push({ type: 'text', text })
+        for (const i of order) {
+          const t = tools.get(i)!
+          blocks.push({ type: 'tool_use', id: t.id, name: t.name, input: t.json || '{}' })
+        }
+        return { blocks, stop }
+      } catch (e) {
+        if (signal.aborted) throw new Cancelled()
+        const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost
+        if (!retryable || attempt >= 3) throw e
+        events({ kind: 'retrying', message: e instanceof HTTPStatusError ? `provider returned ${e.status}; retry ${attempt + 1}` : `connection to the model failed; retry ${attempt + 1}` })
+      }
+      await new Promise((r) => setTimeout(r, 500 * (1 << (attempt + 1))))
+    }
+  }
+
+  private wireMessages(): ChatMessage[] {
+    const s = this.conversation.summary
+    if (!s) return this.conversation.messages
+    return [{ role: 'user', content: [{ type: 'text', text: `Summary of the earlier conversation:\n${s}` }] }, ...this.conversation.messages]
+  }
+
+  /** Reads a bundled reference file or lists a folder. */
+  readReference(raw: string): [string, boolean] {
+    const rel = raw.replace(/^[/ ]+|[/ ]+$/g, '').replaceAll('./', '')
+    const names = Object.keys(this.references).sort()
+    if (!rel || rel === '.') return [names.map((n) => (isDir(this.references[n]) ? n + '/' : n)).join('\n'), false]
+    const top = names.find((n) => rel === n || rel.startsWith(n + '/'))
+    if (rel.split('/').includes('..') || !top) return [`not found: ${rel} (reference_read "" lists what there is)`, true]
+    const base = this.references[top]
+    const target = rel === top ? base : path.join(base, rel.slice(top.length + 1))
+    // Never outside the reference (symbolic links included).
+    let real: string, realBase: string
+    try {
+      real = fs.realpathSync(target)
+      realBase = fs.realpathSync(base)
+    } catch {
+      return [`not found: ${rel}`, true]
+    }
+    if (real !== realBase && !real.startsWith(realBase + '/')) return [`not found: ${rel}`, true]
+    if (isDir(real)) {
+      const entries = fs.readdirSync(real, { withFileTypes: true }).filter((d) => !d.name.startsWith('.'))
+      return [entries.map((d) => (d.isDirectory() ? d.name + '/' : d.name)).sort().join('\n'), false]
+    }
+    try {
+      const data = fs.readFileSync(real)
+      if (data.length > 200_000) return [data.subarray(0, 200_000).toString('utf8') + '\n[cut at 200000 bytes]', false]
+      return [data.toString('utf8'), false]
+    } catch {
+      return [`cannot read ${rel}`, true]
+    }
+  }
+
+  /** Remembers a run the model started until it sees the run end. */
+  private noteRun(tool: string, reply: string, json: string) {
+    const m = tool === 'run' && reply !== 'Failure' ? /"run_id":"([0-9a-f-]+)"/.exec(json) : null
+    if (m) this.unconfirmedRun = m[1]
+    else if (this.unconfirmedRun && json.includes(this.unconfirmedRun) && RUN_ENDED.some((x) => json.includes(x))) this.unconfirmedRun = undefined
+  }
+
+  /** Validates arguments, executes the RPC and records the result. */
+  private async runTool(id: string, name: string, input: string, events: (e: AgentEvent) => void): Promise<ContentBlock> {
+    events({ kind: 'toolStarted', id, name, arguments: input })
+    const record: ToolRecord = this.conversation.tools.find((t) => t.id === id) ?? { id, name, arguments: input, state: 'pending', isError: false }
+    this.conversation.tools = this.conversation.tools.filter((t) => t.id !== id)
+    if (name === REFERENCE_TOOL.name && Object.keys(this.references).length) {
+      let p = ''
+      try {
+        p = String(JSON.parse(input)?.path ?? '')
+      } catch {}
+      const [text, isError] = this.readReference(p)
+      return this.finish(record, text, isError, events)
+    }
+    const spec = this.catalog.tool(name)
+    if (!spec) return this.finish(record, `unknown tool ${name}`, true, events)
+    // Incomplete or invalid arguments are never executed.
+    let args: Record<string, unknown>
+    try {
+      const v = JSON.parse(input)
+      if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error()
+      args = v
+    } catch {
+      return this.finish(record, 'the arguments are not a complete JSON object', true, events)
+    }
+    // tsugumid on this host reads any absolute folder: only the attached ones are offered.
+    if (name === 'attached_folder_read') {
+      const folder = typeof args.folder === 'string' ? args.folder.replace(/\/+$/, '') : ''
+      if (!this.folders.includes(folder)) {
+        return this.finish(record, JSON.stringify({ reply: 'Failure', value: { kind: 'not_found', message: `the folder ${folder} is not attached here (attach it in the chat)` } }), true, events)
+      }
+    }
+    const full = { ...args }
+    if (spec.mutating) {
+      record.opId = record.opId ?? randomUUID()
+      full.op_id = record.opId
+      full.origin = 'agent'
+    }
+    // Validate by building once before sending anything.
+    try {
+      this.codec.build(spec.object, full, new Builder(1024))
+    } catch (e) {
+      return this.finish(record, String((e as Error).message), true, events)
+    }
+    record.state = 'sent'
+    this.conversation.tools.push(record)
+    this.save()
+    try {
+      const rpc = await this.rpc()
+      const call = async () => {
+        const r = await rpc.callRaw(spec.payloadType, (b) => this.codec.build(spec.object, full, b))
+        const type = this.catalog.replyNames.get(r.type) ?? 'Unknown'
+        return { type, json: this.renderReply(type, r.bb, r.table) }
+      }
+      let { type: replyType, json } = await call()
+      // A run still building or running: wait here (up to 30 s) instead of
+      // the model spending a reply on each look.
+      if (name === 'run_status') {
+        const deadline = Date.now() + this.statusWait
+        while (replyType === 'RunStatus' && RUN_ACTIVE.some((x) => json.includes(x)) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 1000))
+          if (this.abort?.signal.aborted) break
+          ;({ type: replyType, json } = await call())
+        }
+      }
+      this.noteRun(name, replyType, json)
+      return this.finish(record, json, replyType === 'Failure', events)
+    } catch (e) {
+      // Unknown outcome: keep the record as sent so a resume asks OperationGet.
+      if (spec.mutating) {
+        return this.finish(record, `the connection failed after sending; outcome unknown (op_id ${record.opId}). Use operation_get.`, true, events, true)
+      }
+      return this.finish(record, String((e as Error).message ?? e), true, events)
+    }
+  }
+
+  private finish(record: ToolRecord, result: string, isError: boolean, events: (e: AgentEvent) => void, keepSent = false): ContentBlock {
+    record.state = keepSent ? 'sent' : 'completed'
+    record.result = result
+    record.isError = isError
+    this.conversation.tools = this.conversation.tools.filter((t) => t.id !== record.id)
+    this.conversation.tools.push(record)
+    this.save()
+    events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: result.slice(0, 400) })
+    return { type: 'tool_result', tool_use_id: record.id, content: result.slice(0, 60_000), is_error: isError }
+  }
+
+  private renderReply(type: string, bb: import('flatbuffers').ByteBuffer, table: number): string {
+    const i = this.catalog.schema.object(type === 'Failure' ? 'Tsugumi.Data.Failure' : `Tsugumi.RPC.${type}`)
+    if (i < 0) return JSON.stringify({ reply: type })
+    return JSON.stringify({ reply: type, value: this.codec.json(i, bb, table) })
+  }
+
+  private async reconcilePending(events: (e: AgentEvent) => void) {
+    const op = this.catalog.tool('operation_get')
+    if (!op) return
+    for (const t of this.conversation.tools) {
+      if (t.state !== 'sent' || !t.opId) continue
+      try {
+        const rpc = await this.rpc()
+        const r = await rpc.callRaw(op.payloadType, (b) => this.codec.build(op.object, { op_id: t.opId }, b))
+        t.state = 'completed'
+        t.result = this.renderReply(this.catalog.replyNames.get(r.type) ?? 'Unknown', r.bb, r.table)
+        events({ kind: 'toolFinished', id: t.id, name: t.name, ok: true, summary: 'reconciled with operation_get' })
+      } catch {}
+    }
+    this.save()
+  }
+
+  /** Older turns are replaced by a model-written summary when the last request
+   *  approached the provider's context limit (the full history stays archived). */
+  private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false) {
+    const c = this.conversation
+    if (!(force || c.usage.inputTokens > (this.provider.contextLimit * 3) / 4) || c.messages.length <= (force ? 4 : 6)) return
+    const keep = 4
+    let transcript = ''
+    for (const m of c.messages.slice(0, -keep)) {
+      for (const b of m.content) {
+        if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
+        else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
+        else transcript += `tool result${b.is_error ? ' (error)' : ''}: ${b.content.slice(0, 800)}\n`
+      }
+    }
+    const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
+    let summary = ''
+    for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
+    // The kept tail must start with a user message that is not a tool result.
+    let tail = c.messages.slice(-keep)
+    while (tail.length && (tail[0].role !== 'user' || tail[0].content.some((b) => b.type === 'tool_result'))) tail = tail.slice(1)
+    c.summary = [c.summary, summary].filter(Boolean).join('\n')
+    c.archive = [...c.archive, ...c.messages.slice(0, c.messages.length - tail.length)]
+    c.messages = tail
+    c.usage.inputTokens = 0
+    this.save()
+    events({ kind: 'compacted' })
+  }
+}
