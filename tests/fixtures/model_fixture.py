@@ -102,7 +102,7 @@ def implement(definition, meta):
     fbs = "namespace generated;\ntable Text { value:string; }\ntable Outputs { " + \
         " ".join(f"{o}:Text;" for o in outs) + " }\nroot_type Outputs;\n"
     payload = json.dumps({o: {"value": "done"} for o in outs})
-    nix = "{ pkgs, inputs, params }:\n{\n  script = ''\n    echo '" + payload + "' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n"
+    nix = "{ pkgs, inputs, params }:\n{\n  run = ''\n    echo '" + payload + "' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n"
     return card, fbs, nix
 
 

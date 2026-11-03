@@ -38,11 +38,11 @@ def nix_string(s: str) -> str:
 
 
 def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **settings) -> dict:
-    attrs = [f"script = {nix_string(script)};"]
+    attrs = [f"run = {nix_string(script)};"]
     if pre:
-        attrs.append(f"preScript = {nix_string(pre)};")
+        attrs.append(f"preRun = {nix_string(pre)};")
     if post:
-        attrs.append(f"postScript = {nix_string(post)};")
+        attrs.append(f"postRun = {nix_string(post)};")
     body = {"language": "bash", "inputs": [{"name": i} for i in inputs], **settings}
     body["_outputs"] = outputs
     body["_nix"] = "{ pkgs, inputs, params }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
@@ -140,31 +140,35 @@ def test_shell_step_contract(env):
         "trigger": {"template": "trigger"},
         "make": bash(f'printf \'{{"out":{{"value":"{big}"}}}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT),
         "use": bash(
-            # preScript's cd and exports carry over; JSON_ is a file; INPUT_ is absent for big values.
+            # preRun's cd and exports carry over; the input is a JSON file only (no .bin, no INPUT_).
             'test "$(basename "$PWD")" = sub && test "$FROM_PRE" = yes && test -f "$JSON_IN" && '
-            'test "$(wc -c < "$JSON_IN")" -gt 300000 && test -z "${INPUT_IN+x}" && test -f "$BIN_IN" && '
+            'test "$(wc -c < "$JSON_IN")" -gt 300000 && test -z "${INPUT_IN+x}" && test -z "${BIN_IN+x}" && '
+            'test -z "$(ls "$TSUGUMI_TMP_DIR" | grep -v -e "^input-in.json$" -e "^pre-env$")" && '
             'echo \'{"out":{"value":7}}\' > "$TSUGUMI_OUTPUT"',
-            inputs=["in"], pre='mkdir -p sub && cd sub && export FROM_PRE=yes', filesystem=True),
-        "small": bash('test "$INPUT_IN" = 7 && echo \'{"out":{"value":8}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"]),
+            # preRun and postRun never see the Card inputs.
+            inputs=["in"], pre='test -z "${JSON_IN+x}" && mkdir -p sub && cd sub && export FROM_PRE=yes',
+            post='test -z "${JSON_IN+x}" && test "$TSUGUMI_FAILED" = 0 && test "$TSUGUMI_OUTPUTS" = out',
+            filesystem=True),
+        "small": bash('test "$(jq .value "$JSON_IN")" = 7 && echo \'{"out":{"value":8}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"]),
         "postfail": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', post="exit 3"),
-        "scriptfail": bash("exit 4", post='test "$TSUGUMI_FAILED" = 1'),
+        "runfail": bash("exit 4", post='test "$TSUGUMI_FAILED" = 1'),
         "slow": bash("sleep 1.5; echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"", pre="sleep 1.5", timeoutSeconds=2),
     }
     c = load(env, defs,
              [card("begin", "trigger"), card("make", "make"), card("use", "use"), card("small", "small"),
-              card("postfail", "postfail"), card("scriptfail", "scriptfail"), card("slow", "slow")],
+              card("postfail", "postfail"), card("runfail", "runfail"), card("slow", "slow")],
              [conn("make", "out", "use", "in"), conn("use", "out", "small", "in")])
     run_id, st = run(c, "begin")
     states = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)) for k in
-              ("make", "use", "small", "postfail", "scriptfail", "slow")}
+              ("make", "use", "small", "postfail", "runfail", "slow")}
     detail = {k: (r.status.state, r.status.failure and text(r.status.failure.diagnostic)) for k, r in states.items()}
     assert states["make"].status.state == CardState.succeeded, (detail, log(c, run_id, "make", 2)[-800:])
     assert states["use"].status.state == CardState.succeeded, (detail, log(c, run_id, "use", 2)[-800:])
     assert states["small"].status.state == CardState.succeeded, log(c, run_id, "small", 2)
     # A later successful step never clears an earlier failure; post failure fails the Card.
     assert states["postfail"].status.state == CardState.failed
-    assert states["scriptfail"].status.state == CardState.failed
-    assert "script failed" in text(states["scriptfail"].status.failure.diagnostic)
+    assert states["runfail"].status.state == CardState.failed
+    assert "run failed" in text(states["runfail"].status.failure.diagnostic)
     # One deadline for all steps: 1.5 s + 1.5 s exceeds 2 s.
     assert states["slow"].status.state == CardState.failed
     assert states["slow"].status.failure.kind == 14  # timeout
@@ -233,8 +237,8 @@ def test_isolation(env):
 def test_nix_upstream_references(env):
     a = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
              extra='  exports = { greet = name: "hello ${name}"; };\n')
-    b_nix = ("{ pkgs, inputs, params }:\n{\n  script = ''\n    test \"${inputs.upstream.\"a\".exports.greet \"b\"}\" = \"hello b\"\n"
-             "    test -n \"${inputs.local.a.script}\"\n    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
+    b_nix = ("{ pkgs, inputs, params }:\n{\n  run = ''\n    test \"${inputs.upstream.\"a\".exports.greet \"b\"}\" = \"hello b\"\n"
+             "    test -n \"${inputs.local.a.run}\"\n    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
     defs = {"trigger": {"template": "trigger"}, "a": a,
             "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("begin", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
@@ -242,7 +246,7 @@ def test_nix_upstream_references(env):
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
     # A downstream reference is reported before any build.
     bad = a.copy()
-    bad["_nix"] = "{ pkgs, inputs, params }:\n{ script = \"${inputs.upstream.\"b\".script}\"; }\n"
+    bad["_nix"] = "{ pkgs, inputs, params }:\n{ run = \"${inputs.upstream.\"b\".run}\"; }\n"
     c = load(env, {**defs, "a": bad}, [card("begin", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     snap = c.call("ProjectInspectRequest")
     codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
@@ -309,7 +313,7 @@ def main(ctx):
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python", "canvasEnabled": True,
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
+                     "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
     root = env.project
     c = load(env, defs, [card("begin", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
@@ -418,8 +422,8 @@ TSUGUMI_CARD(run)
 
 
 def test_values_cross_python_cpp_and_shell(env):
-    py_nix = "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"
-    cpp_nix = "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.cppCard { src = ./src; }; }\n"
+    py_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"
+    cpp_nix = "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.cppCard { src = ./src; }; }\n"
     a_out = RICH.format(ns="a") + "table Doc { value:string; }\ntable Outputs { rich:Rich (required); doc:Doc (required, tsugumi: \"file\"); }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
     b_out = RICH.format(ns="b") + "table Outputs { checked:Rich (required); }\nroot_type Outputs;\n"
     bad = '''
@@ -525,7 +529,7 @@ auto run(Card::Input& input) -> Card::Output {
 def test_cpp_sdk_card_api(env):
     """`#include <card.hh>` / run(Card::Input&) -> Card::Output: named
     inputs (a merge union), optional and File
-    outputs, params, tsugumi::visualization, an explicit `run` .so, preRun
+    outputs, params, tsugumi::visualization, `run` as a package, preRun
     and postRun around every invocation of a reused worker, and one shared
     runtime library for two SDKs with different contracts."""
     seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
@@ -535,11 +539,9 @@ def test_cpp_sdk_card_api(env):
     calc_nix = """{ pkgs, inputs, params }:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
-  package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
 in
 {
-  inherit package;
-  run = "${package}/lib/main.so";
+  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
   reuseWorker = true;
   preRun = "echo pre > pre.txt && export PRE_VALUE=5";
   postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
@@ -588,7 +590,7 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
     would not even evaluate)."""
     sleepy = bash('sleep 1; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
     broken = {"language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
-              "_nix": "{ pkgs, inputs, params }:\n{ script = builtins.throw \"must never be evaluated\"; }\n"}
+              "_nix": "{ pkgs, inputs, params }:\n{ run = builtins.throw \"must never be evaluated\"; }\n"}
     defs = {"trigger": {"template": "trigger"}, "sleepy": sleepy,
             "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
             "branch": {"template": "branch"}, "broken": broken}
@@ -622,7 +624,7 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
 
 def test_worker_crash_then_edit_and_rerun(env):
     crash = {"language": "python", "_outputs": NUM,
-             "_nix": "{ pkgs, inputs, params }:\n{ package = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}
+             "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}
     defs = {"trigger": {"template": "trigger"}, "crash": crash}
     root = env.project
     c = load(env, defs, [card("begin", "trigger"), card("crash", "crash")], [])

@@ -288,6 +288,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t call_id = 0;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
+    // Inputs of the latest invocation; saved for single-Card runs at the end of the run.
+    std::optional<std::pair<uint64_t, std::vector<Value>>> last_inputs;
+    std::map<std::string, std::pair<uint64_t, Value>> last_port_inputs;  // latest value per port
   };
   struct Work {
     size_t node;
@@ -329,10 +332,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     persist_status_locked();
   }
 
-  void card_status(const InvocationSummaryData& s) {
-    svc_.history().submit([s](sql::Db& db) { History::put_status(db, s); },
-                          [this, s](bool ok) {
-                            if (!ok) persistence_lost("progress of " + path_key(s.card));
+  // The start of an invocation is persisted (it becomes an interrupted
+  // failure after a crash); later stage changes are kept in memory for
+  // queries and announced in the same order as the start.
+  void card_status(const InvocationSummaryData& s, bool persist = false) {
+    svc_.history().set_live(s);
+    svc_.history().submit([s, persist](sql::Db& db) { if (persist) History::put_status(db, s); },
+                          [this, s, persist](bool ok) {
+                            if (!ok && persist) persistence_lost("progress of " + path_key(s.card));
                             svc_.server()->broadcast(card_note(s));
                           });
   }
@@ -659,8 +666,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     } else {
       s.state = CardState::running;
       stage_begin(s, node.kind == Template::Code ? Phase::prepare : Phase::execute);
-      card_status(s);
-      if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) save_last_inputs(node, w.invocation, inputs);
+      card_status(s, true);
+      // The Card's saved inputs are written once at the end of the run.
+      if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) {
+        std::lock_guard<std::mutex> l(mu_);
+        rt.last_inputs = std::make_pair(w.invocation, inputs);
+        for (const auto& v : inputs) rt.last_port_inputs[v.name] = std::make_pair(w.invocation, v);
+      }
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       try {
         if (node.kind == Template::Code) out = run_code(rt, s, inputs, lane);
@@ -738,14 +750,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       try {
         History& h = svc_.history();
         h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
-        // The save stage includes that write; its end is recorded afterwards.
+        // The record holds the save stage as closed just before its commit.
         s.stages = done.stages;
-        if (!s.stages.empty() && s.stages.back().phase == Phase::save) {
-          s.stages.back().end = now_ms();
-          auto final = s;
-          h.submit([final](sql::Db& db) { History::update_detail(db, final); }, [](bool) {});
-        }
+        h.clear_live(s);
       } catch (const Failed&) {
+        svc_.history().clear_live(s);
         persistence_lost("invocation " + std::to_string(w.invocation) + " of " + path_key(node.path));
         stage_close(s, StageOutcome::failed);
         s.state = CardState::failed;
@@ -785,18 +794,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
   }
 
-  // The inputs of this invocation become the Card's saved inputs for a later
-  // single-Card run. File/Directory contents are copied out of the run's work
-  // area (which CacheClear removes) and the saved values point to the copy.
-  // Exactly one invocation's set is kept, never a mix of runs.
-  void save_last_inputs(const Node& node, uint64_t inv, const std::vector<Value>& inputs) {
+  // The inputs of the Card's latest invocation become its saved inputs for a
+  // later single-Card run (and each port keeps its latest value). Written
+  // once per Card at the end of the run. File/Directory contents are copied
+  // out of the run's work area (which CacheClear removes) and the saved values
+  // point to the copy. Exactly one invocation's set is kept, never a mix of runs.
+  void save_last_inputs(const Node& node, uint64_t inv, const std::vector<Value>& inputs,
+                        const std::map<std::string, std::pair<uint64_t, Value>>& ports) {
     auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
     auto dir = base / (run_id_ + "-" + std::to_string(inv));
-    std::vector<Value> saved, per_port;
+    std::vector<Value> saved;
+    std::vector<std::pair<uint64_t, Value>> per_port;
+    bool copied = false;
     auto copy_into = [&](const Value& v, const stdfs::path& where) -> Value {
       if (v.kind == PortKind::FlatBuffer) return v;
       auto src = path_value(v);
       if (!src) throw Failed(FailureKind::output_invalid, "input " + v.name + " has no path");
+      copied = true;
       auto dest = where / stdfs::path(*src).filename();
       std::error_code ec;
       stdfs::remove_all(where, ec);
@@ -812,10 +826,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return with_path(v, dest.string());
     };
     try {
-      for (const auto& v : inputs) {
-        saved.push_back(copy_into(v, dir / v.name));
-        per_port.push_back(copy_into(v, base / ("port-" + v.name)));
-      }
+      for (const auto& v : inputs) saved.push_back(copy_into(v, dir / v.name));
+      for (const auto& [name, p] : ports) per_port.emplace_back(p.first, copy_into(p.second, base / ("port-" + name)));
     } catch (const std::exception& e) {
       persistence_lost(std::string("saved inputs of ") + path_key(node.path) + ": " + e.what());
       return;
@@ -824,13 +836,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto run = run_id_;
     svc_.history().submit([card, run, inv, saved, per_port](sql::Db& db) {
                             History::put_last_input(db, card, run, inv, saved);
-                            for (const auto& v : per_port) History::put_last_port_input(db, card, run, inv, v);
+                            for (const auto& [i, v] : per_port) History::put_last_port_input(db, card, run, i, v);
                           },
-                          [this, base, dir, card](bool ok) {
+                          [this, base, dir, card, copied](bool ok) {
                             if (!ok) {
                               persistence_lost("saved inputs of " + path_key(card));
                               return;
                             }
+                            if (!copied) return;
                             // Older saved copies of this Card are no longer referenced.
                             std::error_code ec;
                             if (stdfs::is_directory(base, ec))
@@ -1115,7 +1128,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (auto p = path_value(v)) ro.push_back(*p);
     std::sort(ro.begin(), ro.end());
     ro.erase(std::unique(ro.begin(), ro.end()), ro.end());
-    std::string signature = std::string(rt.build->package.value_or("")) + "|" + rt.build->library.value_or("") + "|" +
+    std::string signature = std::string(rt.build->package.value_or("")) + "|" + rt.build->bash.value_or("") + "|" +
                             (node.settings.sandbox ? "s" : "u");
     for (const auto& p : ro) signature += "|" + p;
     s.worker_reused = rt.worker && rt.worker->alive() && rt.build->reuse_worker && rt.worker_signature == signature;
@@ -1270,6 +1283,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                  svc_.server()->broadcast(card_note(s));
                });
     }
+    for (auto& n : nodes_)
+      if (n.last_inputs) save_last_inputs(*n.node, n.last_inputs->first, n.last_inputs->second, n.last_port_inputs);
     // The terminal state is computed here but becomes visible (RunStatus,
     // notifications) only after every record above is committed.
     svc_.history().flush();

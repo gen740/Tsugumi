@@ -1,9 +1,9 @@
 # tsugumid, tsugumi-worker and the installed Card SDK.
 { lib, stdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, bash, coreutils, findutils, gnugrep
-, gnused, gawk, gnutar, gzip, bubblewrap, self, cardNixpkgs, hosq }:
+, gnused, gawk, gnutar, gzip, jq, bubblewrap, self, cardNixpkgs, hosq }:
 let
-  # Tools on PATH for Card shell steps (preScript/script/postScript).
-  cardTools = [ bash coreutils findutils gnugrep gnused gawk gnutar gzip ];
+  # Tools on PATH for Card bash steps (preRun, a bash run, postRun).
+  cardTools = [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ];
 in
 stdenv.mkDerivation {
   pname = "tsugumid";

@@ -138,22 +138,41 @@ class Context:
 _card_module = None
 
 
-def _invoke() -> bool:
-    global _card_module
+def _guard(body, report: bool = True) -> bool:
     try:
-        if _card_module is None:
-            _card_module = importlib.import_module("card.main")
-        _card_module.main(Context())
+        body()
         sys.stdout.flush()
         sys.stderr.flush()
         return True
     except Failure as f:
-        _host.fail(f.kind, f.message)
+        if report:
+            _host.fail(f.kind, f.message)
+        else:
+            print(f"{f.kind}: {f.message}", file=sys.stderr)
         return False
     except Exception as e:  # noqa: BLE001 - every error becomes a structured failure
         import traceback
 
         traceback.print_exc()
         sys.stderr.flush()
-        _host.fail("worker_failed", f"{type(e).__name__}: {e}")
+        if report:  # while loading there is no invocation to fail
+            _host.fail("worker_failed", f"{type(e).__name__}: {e}")
         return False
+
+
+def _load() -> bool:
+    """Imports card.main when the worker starts (before any invocation)."""
+    def body():
+        global _card_module
+        _card_module = importlib.import_module("card.main")
+    return _guard(body, report=False)
+
+
+def _run_start() -> bool:
+    """Before the first invocation of each run: card.main.on_run_start(ctx), if defined."""
+    hook = getattr(_card_module, "on_run_start", None)
+    return _guard(lambda: hook(Context())) if hook else True
+
+
+def _invoke() -> bool:
+    return _guard(lambda: _card_module.main(Context()))

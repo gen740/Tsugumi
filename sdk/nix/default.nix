@@ -3,11 +3,13 @@
 #   { pkgs, inputs, params }:
 #   let
 #     sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
-#     package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
 #   in {
-#     inherit package;
-#     run = "${package}/lib/main.so";   # the shared object the worker loads
+#     run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };   # a package
 #   }
+#
+#   { pkgs, inputs, params }: { run = ''
+#     jq '{out: {value: .value}}' "$JSON_IN" > "$TSUGUMI_OUTPUT"
+#   ''; }                                                            # bash
 #
 # `generated` holds the core-generated contract of the Card being built
 # (_inputs.fbs, _outputs.fbs, _params.fbs and _contract.json).
@@ -172,38 +174,39 @@ rec {
       '';
     };
 
-  # Serializes the Card attribute set for tsugumid. Store paths in the scripts
-  # keep their closures alive through string context.
-  #   run      the shared object to load (default: ${package}/lib/main.so)
-  #   preRun   bash before it, every invocation (also with a reused worker);
-  #            its environment and `cd` carry over
-  #   script   bash after it
+  # Serializes the Card attribute set for tsugumid. Store paths in the
+  # strings keep their closures alive through string context.
+  #   run      the body: a package (derivation; the worker loads its
+  #            lib/main.so and calls it in memory) or a bash script (string;
+  #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
+  #            paths, outputs as JSON written to $TSUGUMI_OUTPUT)
+  #   preRun   bash before the body, every invocation (also with a resident
+  #            worker); no Card inputs; its environment and `cd` carry over
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)
-  #   reuseWorker  true (default): the worker that loaded `run` serves every
-  #            invocation of the Card in a run (static state persists; preRun /
-  #            postRun still run each time); false: a new worker per invocation
-  # preScript / postScript are the earlier names of preRun / postRun.
+  #   reuseWorker  true (default): the worker that loaded the package stays
+  #            and serves later invocations, also of later runs of the project
+  #            (static state persists; onRunStart / on_run_start is called
+  #            before the first invocation of each run); false: a fresh
+  #            worker per invocation
+  #   exports  free-form values, functions and derivations that downstream
+  #            Cards read through inputs.upstream."<path>".exports
   manifest =
     card:
     let
-      # `exports` is free-form: values, functions and derivations that
-      # downstream Cards read through inputs.upstream."<path>".exports.
-      known = [ "sdk" "package" "run" "preRun" "postRun" "preScript" "script" "postScript" "reuseWorker" "exports" ];
+      known = [ "sdk" "run" "preRun" "postRun" "reuseWorker" "exports" ];
       unknown = lib.subtractLists known (builtins.attrNames card);
-      pre = card.preRun or card.preScript or null;
-      post = card.postRun or card.postScript or null;
+      body =
+        if !(card ? run) then throw "a Card needs `run`: a package (derivation) or a bash script (string)"
+        else if lib.isDerivation card.run then { package = "${card.run}"; }
+        else if builtins.isString card.run then { bash = card.run; }
+        else throw "run must be a package (derivation) or a bash script (string)";
     in
-    assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown}";
-    assert lib.assertMsg (!(card ? preRun && card ? preScript)) "use preRun or preScript, not both";
-    assert lib.assertMsg (!(card ? postRun && card ? postScript)) "use postRun or postScript, not both";
+    assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown} (known: ${toString known})";
     pkgs.writeText "tsugumi-card.json" (builtins.toJSON (
-      { reuseWorker = card.reuseWorker or true; }
-      // lib.optionalAttrs (card ? package) { package = "${card.package}"; }
-      // lib.optionalAttrs (card ? run) { run = "${card.run}"; }
-      // lib.optionalAttrs (pre != null) { preScript = pre; }
-      // lib.optionalAttrs (card ? script) { inherit (card) script; }
-      // lib.optionalAttrs (post != null) { postScript = post; }
+      { reuseWorker = card.reuseWorker or true; run = body; }
+      // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
+      // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
     ));
 }

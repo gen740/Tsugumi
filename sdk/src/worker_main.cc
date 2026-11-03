@@ -4,18 +4,19 @@
 // fd 4: control socket (WorkerCancel)
 // stdout/stderr: captured by the core as the invocation's logs.
 //
-// Steps per call: preRun -> the `run` shared object -> script -> postRun
-// (preRun / postRun arrive as --pre / --post). The environment and working
-// directory produced by preRun carry over; an
-// earlier failure is never cleared by a later step's success. One deadline
-// covers all steps, and cancel/deadline are checked before each step starts.
+// Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
+// package (--package: lib/main.so, loaded once when the worker starts and
+// called in memory) or a bash script (--run). preRun / postRun (--pre /
+// --post) are bash and get no Card inputs; the environment and working
+// directory produced by preRun carry over. An earlier failure is never
+// cleared by a later step's success. One deadline covers all steps, and
+// cancel/deadline are checked before each step starts.
 //
-// Shell steps get, per input port P:
-//   JSON_P  path of a JSON file with the message (any size)
-//   BIN_P   path of the raw FlatBuffer
-//   INPUT_P small values only: the `value` field of a single-scalar message,
-//           otherwise the JSON text when it is at most 4 KiB
+// A bash body gets, per input port P:
+//   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
+// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT.
+// postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -143,9 +144,8 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string package;
-  std::string library;  // shared object to load (default package/lib/main.so)
-  std::string pre, script, post;  // file paths with script text
+  std::string package;          // a package body: <package>/lib/main.so
+  std::string pre, run, post;   // files with bash text (run: a bash body)
 };
 
 struct Call {
@@ -306,20 +306,16 @@ void fail_impl(void*, const char* kind, const char* message) {
   record_failure(k, message ? message : "");
 }
 
-// Runs a bash script; returns exit status. Kills the process group on cancel
-// or deadline.
-int run_shell(const std::string& bash, const std::string& script, const std::vector<std::string>& env,
+// Runs bash (argv after the interpreter); returns exit status. Kills the
+// process group on cancel or deadline.
+int run_shell(const std::string& bash, const std::vector<std::string>& args, const std::vector<std::string>& env,
               const std::string& cwd, Call& call, bool* timed_out) {
   std::vector<char*> envp;
   for (const auto& e : env) envp.push_back(const_cast<char*>(e.c_str()));
   envp.push_back(nullptr);
-  // The script goes through a file: a single argv string is limited to
-  // 128 KiB on Linux, and Card scripts (or values inlined by Nix) can be larger.
-  std::string file;
-  for (const auto& e : env)
-    if (e.starts_with("TSUGUMI_TMP_DIR=")) file = e.substr(16);
-  file = (file.empty() ? std::string("/tmp") : file) + "/step-" + std::to_string(++g_step) + ".sh";
-  write_text(file, script);
+  std::vector<const char*> argv = {bash.c_str(), "-e", "-o", "pipefail"};
+  for (const auto& a : args) argv.push_back(a.c_str());
+  argv.push_back(nullptr);
   pid_t pid = ::fork();
   if (pid == 0) {
     ::setpgid(0, 0);
@@ -327,8 +323,7 @@ int run_shell(const std::string& bash, const std::string& script, const std::vec
     if (::chdir(cwd.c_str()) != 0) ::_exit(126);
     ::close(kData);
     ::close(kControl);
-    const char* argv[] = {bash.c_str(), "-e", "-o", "pipefail", file.c_str(), nullptr};
-    ::execve(bash.c_str(), const_cast<char**>(argv), envp.data());
+    ::execve(bash.c_str(), const_cast<char**>(argv.data()), envp.data());
     ::_exit(127);
   }
   ::setpgid(pid, pid);
@@ -348,7 +343,7 @@ int run_shell(const std::string& bash, const std::string& script, const std::vec
     } else if (term && now >= kill_at) {
       ::kill(-pid, SIGKILL);
     }
-    ::usleep(5000);
+    ::usleep(2000);
   }
   ::kill(-pid, SIGKILL);  // no stray children after the step
   g_child = 0;
@@ -380,7 +375,11 @@ void set_env(std::vector<std::string>& env, const std::string& key, const std::s
   env.push_back(prefix + value);
 }
 
-std::unique_ptr<flatbuffers::Parser> parser_for(const flatbuffers::Vector<uint8_t>* bfbs, const std::string& root) {
+// Parsers by schema and root type; built only for bash bodies.
+flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs, const std::string& root) {
+  static std::map<std::string, std::unique_ptr<flatbuffers::Parser>> cache;
+  std::string key = root + '\0' + std::string(reinterpret_cast<const char*>(bfbs->data()), bfbs->size());
+  if (auto it = cache.find(key); it != cache.end()) return it->second.get();
   flatbuffers::IDLOptions o;
   o.strict_json = true;
   o.natural_utf8 = true;
@@ -388,71 +387,148 @@ std::unique_ptr<flatbuffers::Parser> parser_for(const flatbuffers::Vector<uint8_
   auto p = std::make_unique<flatbuffers::Parser>(o);
   p->known_attributes_["tsugumi"] = true;
   if (!p->Deserialize(bfbs->data(), bfbs->size()) || !p->SetRootType(root.c_str())) return nullptr;
-  return p;
+  return (cache[key] = std::move(p)).get();
 }
 
+// The package body, loaded when the worker starts (a standby worker is ready
+// before its first call). tsugumi_load / tsugumi_run_start are optional.
+using load_fn = int (*)();
 void* g_lib = nullptr;
 tsugumi_main_fn g_main = nullptr;
+tsugumi_main_fn g_run_start = nullptr;
+std::string g_load_error;
+std::string g_last_run;
+
+void load_package(const Options& opt) {
+  std::string lib = opt.package + "/lib/main.so";
+  g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!g_lib) {
+    g_load_error = std::string("cannot load ") + lib + ": " + ::dlerror();
+    return;
+  }
+  g_main = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_main"));
+  if (!g_main) {
+    g_load_error = lib + " does not export tsugumi_main";
+    return;
+  }
+  g_run_start = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_run_start"));
+  if (auto load = reinterpret_cast<load_fn>(::dlsym(g_lib, "tsugumi_load")); load && load() != 0)
+    g_load_error = lib + ": tsugumi_load failed (see stderr)";
+  std::fflush(stdout);
+  std::fflush(stderr);
+}
+
+tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, const std::string& work,
+                       const std::string& tmp, const std::string& out_dir) {
+  const auto* m = call.msg;
+  tsugumi_call c{};
+  c.abi_version = TSUGUMI_ABI_VERSION;
+  c.run_id = call.run_id.c_str();
+  c.card = call.card.c_str();
+  c.invocation = m->invocation().value_or(0);
+  c.inputs = values.data();
+  c.input_count = values.size();
+  c.params = m->params()->bytes()->data();
+  c.params_size = m->params()->bytes()->size();
+  c.working_directory = work.c_str();
+  c.temporary_directory = tmp.c_str();
+  c.output_directory = out_dir.c_str();
+  c.emit_output = emit_output_impl;
+  c.display_text = display_text_impl;
+  c.display_scalar = display_scalar_impl;
+  c.display_line_chart = display_line_chart_impl;
+  c.log = log_impl;
+  c.cancelled = cancelled_impl;
+  c.remaining_ms = remaining_ms_impl;
+  c.fail = fail_impl;
+  c.display_table = display_table_impl;
+  c.display_image = display_image_impl;
+  c.display_points = display_points_impl;
+  c.display_module = display_module_impl;
+  return c;
+}
+
+// Replaces the process environment with the step environment.
+void apply_env(const std::vector<std::string>& env) {
+  std::vector<std::string> names;
+  for (char** e = environ; *e; ++e) {
+    std::string kv = *e;
+    names.push_back(kv.substr(0, kv.find('=')));
+  }
+  for (const auto& n : names) ::unsetenv(n.c_str());
+  for (const auto& e : env) {
+    auto eq = e.find('=');
+    ::setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1);
+  }
+}
+
+// Inputs of a bash body: JSON files and File / Directory paths.
+void bash_inputs(const W::WorkerCall* m, const std::string& tmp, std::vector<std::string>& env) {
+  namespace sc = tsugumi::schema;
+  for (const auto* in : *m->inputs()) {
+    std::string port = in->name()->str();
+    std::string up = upper(port);
+    auto* p = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
+    std::string json;
+    if (!p || flatbuffers::GenText(*p, in->value()->bytes()->data(), &json)) {
+      record_failure(D::FailureKind::worker_failed, "cannot convert input " + port + " to JSON");
+      return;
+    }
+    std::string json_path = tmp + "/input-" + port + ".json";
+    write_text(json_path, json);
+    set_env(env, "JSON_" + up, json_path);
+    if (in->kind() == D::PortKind::File || in->kind() == D::PortKind::Directory) {
+      // The message's string `value` is the path inside this environment.
+      sc::v::Mapping<sc::v::String, sc::Json> fields;
+      if (!sc::decode(json, fields))
+        for (const auto& [k, value] : fields.value().entries()) {
+          sc::v::String path;
+          if (k == "value" && !sc::decode(value, path))
+            set_env(env, (in->kind() == D::PortKind::File ? "FILE_" : "DIR_") + up, path.value());
+        }
+    }
+  }
+}
+
+// {"port": {...message JSON...}, ...} written by a bash body -> one FlatBuffer per port.
+void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
+  namespace sc = tsugumi::schema;
+  if (::access(out_json.c_str(), R_OK) != 0) return;
+  sc::v::Mapping<sc::v::String, sc::Json> doc;
+  if (auto err = sc::decode(read_text(out_json), doc)) {
+    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_OUTPUT is not a JSON object of ports: " + err->message);
+    return;
+  }
+  for (const auto& [name, value] : doc.value().entries()) {
+    const D::Port* port = nullptr;
+    for (const auto* p : *m->outputs())
+      if (p->name()->str() == name) port = p;
+    if (!port) {
+      record_failure(D::FailureKind::output_invalid, "unknown output port " + name + " in $TSUGUMI_OUTPUT");
+      return;
+    }
+    auto* p = parser_for(port->schema_bfbs(), port->root_type()->str());
+    std::string obj = sc::text(value);
+    if (!p || !p->ParseJson(obj.c_str())) {
+      record_failure(D::FailureKind::output_invalid,
+                     "output " + name + " JSON does not match its type" + (p ? ": " + p->error_ : ""));
+      return;
+    }
+    emit_output_impl(nullptr, name.c_str(), p->builder_.GetBufferPointer(), p->builder_.GetSize());
+  }
+}
 
 void execute(const Options& opt, Call& call) {
   const auto* m = call.msg;
   std::string work = m->working_directory()->str();
   std::string tmp = m->temporary_directory()->str();
-  std::string out_dir = m->output_directory()->str();
+  std::string out_dir = m->output_directory() ? m->output_directory()->str() : "";
   std::vector<std::string> env;
   for (const auto* e : *m->environment()) env.push_back(e->name()->str() + "=" + e->value()->str());
   set_env(env, "TSUGUMI_WORK_DIR", work);
   set_env(env, "TSUGUMI_TMP_DIR", tmp);
-  set_env(env, "TSUGUMI_OUTPUT_DIR", out_dir);
+  if (!out_dir.empty()) set_env(env, "TSUGUMI_OUTPUT_DIR", out_dir);
   set_env(env, "TMPDIR", tmp);
-  // Inputs for shell steps.
-  std::vector<tsugumi_value> values;
-  std::vector<std::string> names;
-  names.reserve(m->inputs()->size());
-  for (const auto* in : *m->inputs()) {
-    std::string port = in->name()->str();
-    std::string up = upper(port);
-    std::string bin = tmp + "/input-" + port + ".bin";
-    write_text(bin, std::string(reinterpret_cast<const char*>(in->value()->bytes()->data()), in->value()->bytes()->size()));
-    set_env(env, "BIN_" + up, bin);
-    if (auto p = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str())) {
-      std::string json;
-      if (!flatbuffers::GenText(*p, in->value()->bytes()->data(), &json)) {
-        // Large values never go through the environment (its size is limited).
-        std::string json_path = tmp + "/input-" + port + ".json";
-        write_text(json_path, json);
-        set_env(env, "JSON_" + up, json_path);
-        namespace sc = tsugumi::schema;
-        sc::v::Mapping<sc::v::String, sc::Json> fields;
-        bool single_scalar = false;
-        if (!sc::decode(json, fields) && fields.value().entries().size() == 1) {
-          const auto& [k, value] = *fields.value().entries().begin();
-          std::string v = sc::text(value);
-          sc::v::String str;
-          // Small values only: the environment as a whole is size limited.
-          if (k == "value" && !sc::decode(value, str)) {
-            if (str.value().size() <= 4096) set_env(env, "INPUT_" + up, str.value());
-            single_scalar = true;
-          } else if (k == "value" && !v.empty() && v.front() != '{' && v.front() != '[') {
-            if (v.size() <= 4096) set_env(env, "INPUT_" + up, v);
-            single_scalar = true;
-          }
-        }
-        if (!single_scalar && json.size() <= 4096) set_env(env, "INPUT_" + up, json);
-        if (in->kind() == D::PortKind::File || in->kind() == D::PortKind::Directory) {
-          // The message's string `value` is the path inside this environment.
-          for (const auto& [k, value] : fields.value().entries()) {
-            sc::v::String path;
-            if (k == "value" && !sc::decode(value, path))
-              set_env(env, (in->kind() == D::PortKind::File ? "FILE_" : "DIR_") + up, path.value());
-          }
-        }
-      }
-    }
-    names.push_back(port);
-    values.push_back({names.back().c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
-                      in->value()->bytes()->size()});
-  }
   bool timed_out = false;
   std::string cwd = work;
   // Nothing starts after a cancel or once the single call deadline passed.
@@ -478,9 +554,11 @@ void execute(const Options& opt, Call& call) {
   };
   if (!opt.pre.empty() && may_start("preRun")) {
     std::string dump = tmp + "/pre-env";
-    set_env(env, "TSUGUMI_ENV_DUMP", dump);
-    std::string script = read_text(opt.pre) + "\n\"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"\n";
-    int st = run_shell(opt.bash, script, env, cwd, call, &timed_out);
+    auto pre_env = env;
+    set_env(pre_env, "TSUGUMI_ENV_DUMP", dump);
+    // Sourced, so that its exports and `cd` can be read back afterwards.
+    int st = run_shell(opt.bash, {"-c", ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"", opt.pre},
+                       pre_env, cwd, call, &timed_out);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preRun", st);
     } else {
@@ -490,55 +568,23 @@ void execute(const Options& opt, Call& call) {
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
   }
-  if (!call.failure && (!opt.package.empty() || !opt.library.empty()) && may_start("main.so")) {
-    if (!g_lib) {
-      // The Nix definition names the shared object (`run`); older ones use package/lib/main.so.
-      std::string lib = !opt.library.empty() ? opt.library : opt.package + "/lib/main.so";
-      g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
-      if (!g_lib) {
-        record_failure(D::FailureKind::worker_failed, std::string("cannot load main.so: ") + ::dlerror());
-      } else {
-        g_main = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_main"));
-        if (!g_main) record_failure(D::FailureKind::worker_failed, "main.so does not export tsugumi_main");
-      }
-    }
-    if (g_main) {
-      // Replace the process environment with the step environment.
-      std::vector<std::string> names;
-      for (char** e = environ; *e; ++e) {
-        std::string kv = *e;
-        names.push_back(kv.substr(0, kv.find('=')));
-      }
-      for (const auto& n : names) ::unsetenv(n.c_str());
-      for (const auto& e : env) {
-        auto eq = e.find('=');
-        ::setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1);
-      }
+  if (!call.failure && !opt.package.empty() && may_start("run")) {
+    if (!g_load_error.empty()) {
+      record_failure(D::FailureKind::worker_failed, g_load_error);
+    } else {
+      std::vector<tsugumi_value> values;
+      for (const auto* in : *m->inputs())
+        values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
+                          in->value()->bytes()->size()});
+      apply_env(env);
       if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
-      tsugumi_call c{};
-      c.abi_version = TSUGUMI_ABI_VERSION;
-      c.run_id = call.run_id.c_str();
-      c.card = call.card.c_str();
-      c.invocation = m->invocation().value_or(0);
-      c.inputs = values.data();
-      c.input_count = values.size();
-      c.params = m->params()->bytes()->data();
-      c.params_size = m->params()->bytes()->size();
-      c.working_directory = work.c_str();
-      c.temporary_directory = tmp.c_str();
-      c.output_directory = out_dir.c_str();
-      c.emit_output = emit_output_impl;
-      c.display_text = display_text_impl;
-      c.display_scalar = display_scalar_impl;
-      c.display_line_chart = display_line_chart_impl;
-      c.log = log_impl;
-      c.cancelled = cancelled_impl;
-      c.remaining_ms = remaining_ms_impl;
-      c.fail = fail_impl;
-      c.display_table = display_table_impl;
-      c.display_image = display_image_impl;
-      c.display_points = display_points_impl;
-      c.display_module = display_module_impl;
+      tsugumi_call c = make_call(call, values, work, tmp, out_dir);
+      // The first invocation of each run starts it (onRunStart / on_run_start).
+      if (!call.failure && g_run_start && call.run_id != g_last_run) {
+        g_last_run = call.run_id;
+        if (g_run_start(&c) != 0) record_failure(D::FailureKind::worker_failed, "onRunStart failed");
+      }
+      g_last_run = call.run_id;
       if (!call.failure) {
         int rc = g_main(&c);
         std::fflush(stdout);
@@ -548,38 +594,16 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
-  if (!call.failure && !opt.script.empty() && may_start("script")) {
+  if (!call.failure && !opt.run.empty() && may_start("run")) {
+    auto run_env = env;
+    bash_inputs(m, tmp, run_env);
     std::string out_json = tmp + "/output.json";
     ::unlink(out_json.c_str());
-    set_env(env, "TSUGUMI_OUTPUT", out_json);
-    int st = run_shell(opt.bash, read_text(opt.script), env, cwd, call, &timed_out);
-    if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
-      step_failed("script", st);
-    } else if (::access(out_json.c_str(), R_OK) == 0) {
-      // {"port": {...message JSON...}, ...} -> one FlatBuffer per port.
-      namespace sc = tsugumi::schema;
-      sc::v::Mapping<sc::v::String, sc::Json> doc;
-      if (auto err = sc::decode(read_text(out_json), doc))
-        record_failure(D::FailureKind::output_invalid, "$TSUGUMI_OUTPUT is not a JSON object of ports: " + err->message);
-      if (!call.failure) {
-        for (const auto& [name, value] : doc.value().entries()) {
-          const D::Port* port = nullptr;
-          for (const auto* p : *m->outputs())
-            if (p->name()->str() == name) port = p;
-          if (!port) {
-            record_failure(D::FailureKind::output_invalid, "unknown output port " + name + " in $TSUGUMI_OUTPUT");
-            break;
-          }
-          auto p = parser_for(port->schema_bfbs(), port->root_type()->str());
-          std::string obj = sc::text(value);
-          if (!p || !p->ParseJson(obj.c_str())) {
-            record_failure(D::FailureKind::output_invalid,
-                           "output " + name + " JSON does not match its type" + (p ? ": " + p->error_ : ""));
-            break;
-          }
-          emit_output_impl(nullptr, name.c_str(), p->builder_.GetBufferPointer(), p->builder_.GetSize());
-        }
-      }
+    set_env(run_env, "TSUGUMI_OUTPUT", out_json);
+    if (!call.failure) {
+      int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
+      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) step_failed("run", st);
+      else bash_outputs(m, out_json);
     }
   }
   // postRun also runs after a failed step (cleanup), but never after a
@@ -587,8 +611,12 @@ void execute(const Options& opt, Call& call) {
   bool stopped = call.failure && (call.failure->kind == D::FailureKind::cancelled || call.failure->kind == D::FailureKind::timeout);
   if (!opt.post.empty() && !stopped && may_start("postRun")) {
     bool post_timeout = false;
-    set_env(env, "TSUGUMI_FAILED", call.failure ? "1" : "0");
-    int st = run_shell(opt.bash, read_text(opt.post), env, cwd, call, &post_timeout);
+    auto post_env = env;
+    set_env(post_env, "TSUGUMI_FAILED", call.failure ? "1" : "0");
+    std::string sent;
+    for (const auto& [name, _] : call.outputs) sent += (sent.empty() ? "" : " ") + name;
+    set_env(post_env, "TSUGUMI_OUTPUTS", sent);
+    int st = run_shell(opt.bash, {opt.post}, post_env, cwd, call, &post_timeout);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       timed_out = post_timeout;
       step_failed("postRun", st);
@@ -659,11 +687,11 @@ int main(int argc, char** argv) {
     std::string k = argv[i];
     if (k == "--bash") opt.bash = argv[i + 1];
     else if (k == "--package") opt.package = argv[i + 1];
-    else if (k == "--library") opt.library = argv[i + 1];
     else if (k == "--pre") opt.pre = argv[i + 1];
-    else if (k == "--script") opt.script = argv[i + 1];
+    else if (k == "--run") opt.run = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];
   }
+  if (!opt.package.empty()) load_package(opt);
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
   while (true) {

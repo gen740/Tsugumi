@@ -169,6 +169,16 @@ class History {
   std::map<std::thread::id, std::unique_ptr<sql::Db>> readers_;
   // Log offsets per scope key, maintained by the writer thread.
   std::map<std::string, uint64_t> log_ends_;
+  // Progress of running invocations after their persisted start (stage
+  // changes are not written; queries see them through overlay()).
+  std::mutex live_mu_;
+  std::map<std::string, InvocationSummaryData> live_;
+
+ public:
+  void set_live(const InvocationSummaryData& s);
+  void clear_live(const InvocationSummaryData& s);
+  // Replaces a persisted in-progress status with its current progress.
+  void overlay(InvocationSummaryData& s);
 };
 
 template <class F>

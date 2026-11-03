@@ -85,7 +85,7 @@ struct Project {
   }
   // Code Card with the given inputs ("name" or "name?" for optional); `nix`
   // is the default.nix body expression.
-  void code(const std::string& id, std::vector<std::string> inputs, const std::string& nix = "{ script = \"true\"; }",
+  void code(const std::string& id, std::vector<std::string> inputs, const std::string& nix = "{ run = \"true\"; }",
             const std::string& mode = "all") {
     std::string ins;
     for (auto& i : inputs) {
@@ -204,7 +204,7 @@ TEST(upstream_linear_chain) {
   Project p;
   p.code("a", {});
   p.code("b", {"x"});
-  p.code("c", {"x"}, "{ script = \"${inputs.upstream.\"a\".script}\"; }");
+  p.code("c", {"x"}, "{ run = \"${inputs.upstream.\"a\".run}\"; }");
   auto r = p.resolve(c("a", "a") + "," + c("b", "b") + "," + c("c", "c"), e("a", "out", "b", "x") + "," + e("b", "out", "c", "x"));
   CHECK_EQ(guaranteed(*r, "c"), (std::set<std::string>{"a", "b"}));
   CHECK_EQ(nix_refs(*r, "c"), (std::set<std::string>{"a", "b"}));
@@ -219,7 +219,7 @@ TEST(upstream_branch_sides_do_not_survive_any_merge) {
   p.builtin("branch", R"({"template":"branch"})");
   p.code("b", {"x"});
   p.code("c", {"x"});
-  p.code("d", {"l?", "r?"}, "{ script = \"${inputs.upstream.\"b\".script}\"; }", "any");
+  p.code("d", {"l?", "r?"}, "{ run = \"${inputs.upstream.\"b\".run}\"; }", "any");
   auto r = p.resolve(c("a", "a") + "," + c("cond", "cond") + "," + c("br", "branch") + "," + c("b", "b") + "," + c("c", "c") + "," + c("d", "d"),
                      e("a", "out", "br", "value") + "," + e("cond", "flag", "br", "condition") + "," + e("br", "a", "b", "x") + "," +
                          e("br", "b", "c", "x") + "," + e("b", "out", "d", "l") + "," + e("c", "out", "d", "r"));
@@ -260,8 +260,8 @@ TEST(upstream_feedback_loop_converges_without_self) {
   // a -> loop(any: init, again) -> body -> loop.again
   Project p;
   p.code("a", {});
-  p.code("loop", {"init?", "again?"}, "{ script = \"true\"; }", "any");
-  p.code("body", {"x"}, "{ script = \"${inputs.upstream.\"body\".script}\"; }");
+  p.code("loop", {"init?", "again?"}, "{ run = \"true\"; }", "any");
+  p.code("body", {"x"}, "{ run = \"${inputs.upstream.\"body\".run}\"; }");
   auto r = p.resolve(c("a", "a") + "," + c("loop", "loop") + "," + c("body", "body"),
                      e("a", "out", "loop", "init") + "," + e("loop", "out", "body", "x") + "," + e("body", "out", "loop", "again"));
   CHECK_EQ(guaranteed(*r, "loop"), (std::set<std::string>{"a"}));
@@ -273,7 +273,7 @@ TEST(upstream_through_nested_subgraph) {
   Project p;
   p.code("a", {});
   p.code("inner", {"x"});
-  p.code("d", {"x"}, "{ script = \"${inputs.upstream.\"s/inner\".script}\"; }");
+  p.code("d", {"x"}, "{ run = \"${inputs.upstream.\"s/inner\".run}\"; }");
   auto r = p.resolve(
       c("a", "a") + R"(,{"id":"s","canvas":{"cards":[)" + c("inner", "inner") +
           R"(],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"x"}},"outputs":{"out":{"card":"inner","port":"out"}}}},)" +

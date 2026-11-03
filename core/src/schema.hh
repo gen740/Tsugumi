@@ -330,13 +330,18 @@ struct BuildCache {
   t::String<"out"> out;
 };
 
-// The manifest written by the SDK's tsugumi.manifest (read only).
-struct CardManifest {
+// The manifest written by the SDK's tsugumi.manifest (read only). `run` is the
+// Card body: a package (store path; the worker loads lib/main.so in it) or a
+// bash script, never both.
+struct ManifestRun {
   Opt<"package", v::String> package;
-  Opt<"run", v::String> run;  // the shared object to load (in `package`)
-  Opt<"preScript", v::String> pre_script;
-  Opt<"script", v::String> script;
-  Opt<"postScript", v::String> post_script;
+  Opt<"bash", v::String> bash;
+};
+
+struct CardManifest {
+  Opt<"run", Obj<ManifestRun>> run;
+  Opt<"preRun", v::String> pre_run;
+  Opt<"postRun", v::String> post_run;
   Opt<"reuseWorker", v::Bool> reuse_worker;
 };
 

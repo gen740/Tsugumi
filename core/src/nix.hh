@@ -21,10 +21,11 @@ namespace tsugumi {
 class Service;
 
 struct CardBuild {
-  std::optional<std::string> package;  // store path of the Card package
-  std::optional<std::string> library;  // shared object to run (`run`; default package/lib/main.so)
-  std::string pre_script, script, post_script;
-  bool reuse_worker = true;  // the default: one loaded worker serves a Card for the whole run
+  // The body (`run`): a package whose lib/main.so the worker loads, or a bash script.
+  std::optional<std::string> package;
+  std::optional<std::string> bash;
+  std::string pre_run, post_run;
+  bool reuse_worker = true;  // the default: the loaded worker stays and serves later invocations
   std::string key;
   bool cached = false;
 };

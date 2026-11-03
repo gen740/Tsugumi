@@ -1,8 +1,8 @@
 { pkgs, inputs, params }:
 {
-  # A shell-only Card: no package. $DIR_REPORT is the input directory and the
-  # output port values are written as JSON to $TSUGUMI_OUTPUT.
-  script = ''
+  # A bash Card: $DIR_REPORT is the input directory and the output port
+  # values are written as JSON to $TSUGUMI_OUTPUT.
+  run = ''
     dest="$TSUGUMI_OUTPUT_DIR/archive"
     mkdir -p "$dest"
     cp -R "$DIR_REPORT/." "$dest/"

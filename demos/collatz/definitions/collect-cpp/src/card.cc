@@ -12,8 +12,10 @@ static uint64_t arrival_value(const Card::Input& input) {
   throw tsugumi::Failure("output_invalid", "unexpected arrival");
 }
 
-// reuseWorker keeps this state for the whole run; a new run starts empty.
+// The worker stays across runs (reuseWorker); each run starts empty.
 static std::vector<uint64_t> values;
+
+auto onRunStart() -> void { values.clear(); }
 
 auto run(Card::Input& input) -> Card::Output {
   if (input.arrival.value.Asinit()) values.clear();

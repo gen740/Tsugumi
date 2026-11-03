@@ -103,16 +103,12 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
     args.push_back(path.string());
   };
   std::filesystem::create_directories(sp.script_dir);
-  script("--pre", sp.build.pre_script, "pre.sh");
-  script("--script", sp.build.script, "script.sh");
-  script("--post", sp.build.post_script, "post.sh");
+  script("--pre", sp.build.pre_run, "pre.sh");
+  if (sp.build.bash) script("--run", *sp.build.bash, "run.sh");
+  script("--post", sp.build.post_run, "post.sh");
   if (sp.build.package) {
     args.push_back("--package");
     args.push_back(*sp.build.package);
-  }
-  if (sp.build.library) {
-    args.push_back("--library");
-    args.push_back(*sp.build.library);
   }
   args.push_back("--bash");
   args.push_back(sp.bash);

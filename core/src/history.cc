@@ -657,6 +657,28 @@ std::optional<History::LastInput> History::last_port_input(sql::Db& db, const Ca
   return last_input(db, k);
 }
 
+namespace {
+std::string live_key(const InvocationSummaryData& s) {
+  return s.run_id + "|" + key(s.card) + "|" + std::to_string(s.invocation);
+}
+}  // namespace
+
+void History::set_live(const InvocationSummaryData& s) {
+  std::lock_guard<std::mutex> l(live_mu_);
+  live_[live_key(s)] = s;
+}
+
+void History::clear_live(const InvocationSummaryData& s) {
+  std::lock_guard<std::mutex> l(live_mu_);
+  live_.erase(live_key(s));
+}
+
+void History::overlay(InvocationSummaryData& s) {
+  if (s.state != CardState::running && s.state != CardState::preparing) return;
+  std::lock_guard<std::mutex> l(live_mu_);
+  if (auto it = live_.find(live_key(s)); it != live_.end()) s = it->second;
+}
+
 void History::update_detail(sql::Db& db, const InvocationSummaryData& s) {
   db.prepare("UPDATE invocations SET detail=? WHERE run_id=? AND card=? AND invocation=?")
       .bind(1, detail_json(s)).bind(2, s.run_id).bind(3, key(s.card)).bind(4, s.invocation).run();

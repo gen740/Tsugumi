@@ -262,19 +262,21 @@ static int ensure_python(void) {
   return 1;
 }
 
-int tsugumi_main(const tsugumi_call* call) {
+/* Calls tsugumi.<fn>() with g_call set; returns 0 on success. */
+static int call_python(const tsugumi_call* call, const char* fn) {
   g_call = call;
   if (!ensure_python()) {
-    call->fail(call->host, "worker_failed", "cannot initialize the embedded Python interpreter");
+    if (call) call->fail(call->host, "worker_failed", "cannot initialize the embedded Python interpreter");
+    else fprintf(stderr, "cannot initialize the embedded Python interpreter\n");
     return 1;
   }
   PyObject* mod = PyImport_ImportModule("tsugumi");
-  PyObject* result = mod ? PyObject_CallMethod(mod, "_invoke", NULL) : NULL;
+  PyObject* result = mod ? PyObject_CallMethod(mod, fn, NULL) : NULL;
   int rc = 0;
   if (!result) {
-    /* tsugumi._invoke reports structured failures itself; print the traceback. */
+    /* tsugumi reports structured failures itself; print the traceback. */
     PyErr_Print();
-    call->fail(call->host, "worker_failed", "the Python Card raised an exception (see stderr)");
+    if (call) call->fail(call->host, "worker_failed", "the Python Card raised an exception (see stderr)");
     rc = 1;
   } else if (result == Py_False) {
     rc = 1;
@@ -287,3 +289,10 @@ int tsugumi_main(const tsugumi_call* call) {
   g_call = NULL;
   return rc;
 }
+
+/* The interpreter starts and card.main is imported when the worker loads us. */
+int tsugumi_load(void) { return call_python(NULL, "_load"); }
+
+int tsugumi_run_start(const tsugumi_call* call) { return call_python(call, "_run_start"); }
+
+int tsugumi_main(const tsugumi_call* call) { return call_python(call, "_invoke"); }

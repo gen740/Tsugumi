@@ -379,11 +379,14 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     if (auto err = schema::decode(text, m))
       throw Failed(FailureKind::nix_failed, "the Card manifest is invalid: " + err->message);
     CardBuild b;
-    if (const auto* p = schema::get(m.package)) b.package = *p;
-    if (const auto* p = schema::get(m.run)) b.library = *p;
-    if (const auto* p = schema::get(m.pre_script)) b.pre_script = *p;
-    if (const auto* p = schema::get(m.script)) b.script = *p;
-    if (const auto* p = schema::get(m.post_script)) b.post_script = *p;
+    if (const auto* r = schema::get(m.run)) {
+      if (const auto* p = schema::get(r->package)) b.package = *p;
+      if (const auto* p = schema::get(r->bash)) b.bash = *p;
+    }
+    if (b.package.has_value() == b.bash.has_value())
+      throw Failed(FailureKind::nix_failed, "the Card manifest needs exactly one body: run.package or run.bash");
+    if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
+    if (const auto* p = schema::get(m.post_run)) b.post_run = *p;
     if (const auto* p = schema::get(m.reuse_worker)) b.reuse_worker = *p;
     b.key = k;
     return b;

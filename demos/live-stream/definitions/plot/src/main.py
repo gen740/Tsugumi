@@ -1,4 +1,5 @@
-"""Shows the most recent `window` samples. State lives for one run (reuseWorker)."""
+"""Shows the most recent `window` samples. The worker stays across runs
+(reuseWorker); each run starts with an empty window."""
 from collections import deque
 
 from inputs.sample.live.Sample import Sample
@@ -6,12 +7,13 @@ from inputs.sample.live.Sample import Sample
 points = None
 
 
-def main(ctx):
+def on_run_start(ctx):
     global points
-    window = ctx.params().Window()
+    points = deque(maxlen=ctx.params().Window())
+
+
+def main(ctx):
     s = ctx.input("sample", Sample)
-    if points is None or s.Index() == 0:
-        points = deque(maxlen=window)
     points.append((s.Index(), s.Value()))
     xs = [float(i) for i, _ in points]
     ys = [v for _, v in points]

@@ -101,11 +101,15 @@ public actor Agent {
   - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description, plan,
     constraints, done, inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or
     bash) and remove "template" in _card.json, write _outputs.fbs (one table per output port, root table Outputs),
-    default.nix (let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; package = inputs.tsugumi.pythonCard
-    { inherit sdk; src = ./src; }; in { inherit package; run = "${package}/lib/main.so"; }, the same with "cpp" and
-    cppCard, or script for bash) and the sources. C++ sources are `#include <card.hh>` and
-    `auto run(Card::Input& input) -> Card::Output` with one member per port (input.<port>, Output's ports are
-    std::optional); visualization is tsugumi::visualization::text/scalar/line_chart/table/image/points/module. Input types come from the connected outputs; never write _inputs.fbs.
+    default.nix (let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in { run = inputs.tsugumi.pythonCard
+    { inherit sdk; src = ./src; }; }, the same with "cpp" and cppCard; for bash, run is the script text: inputs are
+    $JSON_<PORT> files (jq is available) and $FILE_<PORT> / $DIR_<PORT> paths, outputs are {"port": {...}} JSON
+    written to $TSUGUMI_OUTPUT) and the sources. Optional preRun / postRun are bash without the Card inputs. C++
+    sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per port
+    (input.<port>, Output's ports are std::optional); visualization is
+    tsugumi::visualization::text/scalar/line_chart/table/image/points/module. The worker stays across runs, so
+    reset static state in `auto onRunStart() -> void` (Python: on_run_start(ctx)). Input types come from the
+    connected outputs; never write _inputs.fbs.
     Keep the instance ids and wiring; you may split one Draft into several Cards (rewire them in SetProject).
     Keep the intent and the port descriptions in _meta.json. Then project_validate, fix what it reports, run the
     workflow and check the result. If something fails, report it; never leave a half-written save.

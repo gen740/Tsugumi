@@ -263,6 +263,7 @@ void Service::run_invocations(RequestIn& req) {
       throw Failed(FailureKind::not_found, "the run has no record of " + path_key(card), {{"card", path_key(card)}});
     return History::invocations(db, run_id, card, after, limit + 1);
   });
+  for (auto& s : rows) history_->overlay(s);
   FBB b;
   std::vector<flatbuffers::Offset<R::InvocationSummary>> out;
   bool more = rows.size() > limit;
@@ -310,6 +311,7 @@ void Service::run_record(RequestIn& req) {
     if (o.selected) {
       o.record = History::invocation(db, run_id, card, *o.selected);
       o.status = History::status(db, run_id, card, *o.selected);
+      if (o.status) history_->overlay(*o.status);
       if (o.record && o.record->record_io) {
         o.in_meta = History::value_metas(db, run_id, card, *o.selected, true);
         o.out_meta = History::value_metas(db, run_id, card, *o.selected, false);
