@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace gw;
+table GwFiles { value:string; }
+table Outputs { data:GwFiles (required, tsugumi: "directory"); }
+root_type Outputs;

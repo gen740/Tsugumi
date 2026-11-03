@@ -1,0 +1,7 @@
+# Home のデモ一覧（プロジェクトを開かずに起動して撮る）
+nowait
+wait 2
+size 1440 900
+demos
+wait 2
+capture demos

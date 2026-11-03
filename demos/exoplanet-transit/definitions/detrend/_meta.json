@@ -1,0 +1,10 @@
+{
+  "description": "トレンド除去と周期探索",
+  "content": "PDCSAP_FLUX を品質フラグ 0 の点だけ使って規格化し、window_days 日の移動中央値で割ってトレンドを除く。Box Least Squares で周期を探し、トレンドを除いた光度曲線を折れ線で表示する。",
+  "outputs": [
+    {
+      "name": "detrended",
+      "description": "トレンド除去と周期探索の結果"
+    }
+  ]
+}

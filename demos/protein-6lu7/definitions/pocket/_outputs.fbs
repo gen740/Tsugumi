@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace protein;
+table PocketDir { value:string; }
+table Outputs { pocket:PocketDir (required, tsugumi: "directory"); }
+root_type Outputs;

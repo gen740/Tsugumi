@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from conftest import demo_environment
+from conftest import ROOT, demo_environment
 from projects import start_run, wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
@@ -60,6 +60,26 @@ def display_text(c, run_id, *card):
 
 def stderr(c, run_id, *card):
     return text(c.call("LogRangeRequest", runId=run_id, card=path(*card), stream=2, limitBytes=262144).text)
+
+
+DEMOS = json.loads((ROOT / "demos" / "index.json").read_text())["demos"]
+
+
+@pytest.mark.parametrize("demo", [d["path"] for d in DEMOS])
+def test_every_listed_demo_resolves(tmp_path, demo):
+    """Each demo on the list opens and resolves: implemented ones without a
+    diagnostic, a Draft-only plan with nothing but its Drafts."""
+    env = demo_environment(tmp_path, demo)
+    try:
+        c = connect(env)
+        snap = c.call("ProjectInspectRequest")
+        codes = {(text(r.card.segments[-1]), text(d.code)) for r in snap.resolution for d in r.diagnostics}
+        if demo.endswith("-draft"):
+            assert codes and {code for _, code in codes} == {"draft"}, codes
+        else:
+            assert not codes, codes
+    finally:
+        env.cleanup()
 
 
 @pytest.fixture

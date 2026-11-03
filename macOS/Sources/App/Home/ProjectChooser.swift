@@ -36,6 +36,7 @@ struct ProjectChooser: View {
       .background(HomeBackground())
     }
     .tint(TsugumiPalette.rufous)
+    .onReceive(NotificationCenter.default.publisher(for: .appShowDemos)) { _ in showDemos = true }
     // The home window shows no title: the key visual and the name are in it.
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)

@@ -1,0 +1,53 @@
+{
+  "name": "GW150914 · 重力波",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "whiten"
+      },
+      {
+        "id": "chirp"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "data"
+        },
+        "to": {
+          "card": "whiten",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "whiten",
+          "port": "whitened"
+        },
+        "to": {
+          "card": "chirp",
+          "port": "whitened"
+        }
+      }
+    ]
+  }
+}

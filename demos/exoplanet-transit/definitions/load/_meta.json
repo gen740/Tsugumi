@@ -1,0 +1,10 @@
+{
+  "description": "ライトカーブを取る",
+  "content": "MAST の Kepler アーカイブから Kepler-6（KIC 10874614）の第 3 四半期の長時間露光ライトカーブ（FITS）を取得し、フォルダとして次へ渡す。取得したファイルの大きさと SHA-256 を表示する。",
+  "outputs": [
+    {
+      "name": "data",
+      "description": "ライトカーブを取るの結果"
+    }
+  ]
+}

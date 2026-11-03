@@ -1,0 +1,53 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 200,
+      "y": 0
+    },
+    "structure": {
+      "x": 520,
+      "y": 0
+    },
+    "pocket": {
+      "x": 900,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 6LU7：メインプロテアーゼと阻害剤 N3\n\n新型コロナウイルスのメインプロテアーゼ（Mpro）に、阻害剤 N3 が共有結合した結晶構造です（Jin et al., 2020）。\n\n接触残基は、タンパク質の原子 $a$ と阻害剤の原子 $l$ の距離\n\n$$d_{al} = \\lVert \\mathbf{r}_a - \\mathbf{r}_l \\rVert$$\n\nが $d_{al} \\le d_c$（**pocket** の cutoff、デフォルト 4 Å）となる残基です。触媒の His41 と Cys145 が入ることを確かめられます。",
+      "x": -40,
+      "y": -420,
+      "width": 560,
+      "height": 380
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 160,
+      "y": 200,
+      "width": 320,
+      "height": 170
+    },
+    "structure": {
+      "x": 500,
+      "y": 200,
+      "width": 360,
+      "height": 300
+    },
+    "pocket": {
+      "x": 880,
+      "y": 200,
+      "width": 420,
+      "height": 360
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "日本海溝 · 震源断面と b 値",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "section"
+      },
+      {
+        "id": "b_value"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "data"
+        },
+        "to": {
+          "card": "section",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "section",
+          "port": "section"
+        },
+        "to": {
+          "card": "b_value",
+          "port": "section"
+        }
+      }
+    ]
+  }
+}

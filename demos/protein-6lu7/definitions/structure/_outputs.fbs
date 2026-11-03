@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace protein;
+table AtomsDir { value:string; }
+table Outputs { atoms:AtomsDir (required, tsugumi: "directory"); }
+root_type Outputs;

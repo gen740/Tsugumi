@@ -1,0 +1,16 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "whitened"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "nperseg",
+      "type": "int64",
+      "data": 256
+    }
+  ]
+}

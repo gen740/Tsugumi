@@ -1,0 +1,53 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 200,
+      "y": 0
+    },
+    "detrend": {
+      "x": 520,
+      "y": 0
+    },
+    "fold": {
+      "x": 900,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## トランジット法\n\n惑星が恒星の前を横切ると、明るさが惑星の断面積の割合だけ下がります。\n\n$$\\delta \\approx \\left(\\frac{R_p}{R_\\star}\\right)^2$$\n\nKepler-6 b は周期約 3.23 日のホットジュピターで、深さはおよそ 1% です。\n\n**detrend** の window_days や周期の探索範囲を変えて、その Card だけを実行し直せます。",
+      "x": -40,
+      "y": -420,
+      "width": 560,
+      "height": 380
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 160,
+      "y": 200,
+      "width": 320,
+      "height": 170
+    },
+    "detrend": {
+      "x": 500,
+      "y": 200,
+      "width": 360,
+      "height": 300
+    },
+    "fold": {
+      "x": 880,
+      "y": 200,
+      "width": 420,
+      "height": 360
+    }
+  }
+}

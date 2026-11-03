@@ -1,0 +1,53 @@
+{
+  "name": "Kepler-6 b · 系外惑星トランジット",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "detrend"
+      },
+      {
+        "id": "fold"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "data"
+        },
+        "to": {
+          "card": "detrend",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "detrend",
+          "port": "detrended"
+        },
+        "to": {
+          "card": "fold",
+          "port": "detrended"
+        }
+      }
+    ]
+  }
+}

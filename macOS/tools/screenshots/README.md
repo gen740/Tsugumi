@@ -10,3 +10,9 @@ cp -R demos/collatz /tmp/shot-collatz && macOS/tools/run-ui.sh dist/Tsugumi.app 
 ```bash
 cp -R demos/live-stream /tmp/shot-live && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live
 ```
+
+Home のデモ一覧（`demos.ui`、プロジェクトは開きません）:
+
+```bash
+macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/demos.ui /tmp/shots
+```

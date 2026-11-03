@@ -1,0 +1,10 @@
+{
+  "description": "白色化とバンドパス",
+  "content": "H1 と L1 を、4 秒区間の Welch 法で求めた PSD で白色化し、f_low〜f_high Hz のバンドパスを掛ける（通過帯域はパラメータ）。イベント時刻の前後の波形を折れ線で表示し、白色化した系列を次へ渡す。",
+  "outputs": [
+    {
+      "name": "whitened",
+      "description": "白色化とバンドパスの結果"
+    }
+  ]
+}

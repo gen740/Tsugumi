@@ -1,0 +1,10 @@
+{
+  "description": "観測データを Nix で固定する",
+  "content": "Cas A の Chandra 観測の一次処理済みイベントファイルを Nix で固定して取得し、展開した FITS を次の Card に渡す。ファイルは HEASARC のミラー ftp://heasarc.gsfc.nasa.gov/chandra/data/byobsid/<ObsID の末尾の数字>/<ObsID>/primary/<ファイル> から explicit FTPS（ftp:// に --ssl-reqd）で取り、内容を hash で固定する。取得と展開は Card の default.nix で Nix がやり、ダウンロードは最初の 1 回だけで、以後の実行はストアのファイルをそのまま使う（実行中にネットワークは使わない）。ObsID・ファイル名・hash は default.nix から読むパラメータにし、デフォルトは ObsID 25628。使える観測：ObsID 25628（acisf25628N002_evt2.fits.gz、sha256-MYAMIQXv/cwAV6L30N5+XODCrCSYk6NTqpMV+VSDwp4=、2.1 ks, 13 MB）、ObsID 114（acisf00114N006_evt2.fits.gz、sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y=、50 ks, 520 MB）。次の Card にはストアのファイルのパスと ObsID・hash を渡す。取得元の URL、hash、展開後の大きさをログに出す。",
+  "outputs": [
+    {
+      "name": "events",
+      "description": "観測データを Nix で固定するの結果"
+    }
+  ]
+}

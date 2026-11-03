@@ -37,6 +37,131 @@
         "ループ",
         "停止"
       ]
+    },
+    {
+      "id": "casa",
+      "title": "Cas A · Chandra RGB",
+      "description": "Chandra X-ray events of the supernova remnant Cassiopeia A, fixed by Nix (fetched once by hash from the HEASARC archive), split into three energy bands on a sky grid centred on Cas A and composed into an RGB image. ObsID 25628 (13 MB) by default; 114 is the deep 50 ks observation.",
+      "path": "casa",
+      "tags": [
+        "Python",
+        "Nix で固定",
+        "天文",
+        "画像"
+      ]
+    },
+    {
+      "id": "casa-draft",
+      "title": "Cas A · Chandra RGB（Draft）",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "path": "casa-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Nix で固定",
+        "天文",
+        "画像"
+      ]
+    },
+    {
+      "id": "gw150914",
+      "title": "GW150914 · 重力波",
+      "description": "The first binary black hole merger seen by LIGO: the public H1 and L1 strain data are fetched, whitened and shown as a chirp in a spectrogram. The pass band can be changed and that step rerun alone.",
+      "path": "gw150914",
+      "tags": [
+        "Python",
+        "ネットワーク",
+        "物理",
+        "画像"
+      ]
+    },
+    {
+      "id": "gw150914-draft",
+      "title": "GW150914 · 重力波（Draft）",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "path": "gw150914-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "ネットワーク",
+        "物理",
+        "画像"
+      ]
+    },
+    {
+      "id": "protein-6lu7",
+      "title": "6LU7 · タンパク質と結合ポケット",
+      "description": "The SARS-CoV-2 main protease with its inhibitor (PDB 6LU7): the structure is fetched from the PDB, drawn, and the residues within a distance of the ligand are listed.",
+      "path": "protein-6lu7",
+      "tags": [
+        "Python",
+        "ネットワーク",
+        "生物",
+        "画像"
+      ]
+    },
+    {
+      "id": "protein-6lu7-draft",
+      "title": "6LU7 · タンパク質と結合ポケット（Draft）",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "path": "protein-6lu7-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "ネットワーク",
+        "生物",
+        "画像"
+      ]
+    },
+    {
+      "id": "exoplanet-transit",
+      "title": "Kepler-6 b · 系外惑星トランジット",
+      "description": "Kepler light curves of Kepler-6 are detrended and folded at the planet's period; the transit depth gives the planet's size relative to its star.",
+      "path": "exoplanet-transit",
+      "tags": [
+        "Python",
+        "ネットワーク",
+        "天文",
+        "画像"
+      ]
+    },
+    {
+      "id": "exoplanet-transit-draft",
+      "title": "Kepler-6 b · 系外惑星トランジット（Draft）",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "path": "exoplanet-transit-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "ネットワーク",
+        "天文",
+        "画像"
+      ]
+    },
+    {
+      "id": "seismic-trench",
+      "title": "日本海溝 · 震源断面と b 値",
+      "description": "USGS earthquakes along the Japan Trench: a depth section across the trench shows the subducting slab, and the Gutenberg–Richter b value is fitted.",
+      "path": "seismic-trench",
+      "tags": [
+        "Python",
+        "ネットワーク",
+        "地球科学",
+        "画像"
+      ]
+    },
+    {
+      "id": "seismic-trench-draft",
+      "title": "日本海溝 · 震源断面と b 値（Draft）",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "path": "seismic-trench-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "ネットワーク",
+        "地球科学",
+        "画像"
+      ]
     }
   ]
 }

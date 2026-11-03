@@ -1,0 +1,53 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 200,
+      "y": 0
+    },
+    "section": {
+      "x": 520,
+      "y": 0
+    },
+    "b_value": {
+      "x": 900,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Gutenberg–Richter 則\n\nマグニチュード $M$ 以上の地震の数 $N$ は\n\n$$\\log_{10} N(\\ge M) = a - bM$$\n\nに従い、$b$ はおよそ 1 です。最尤推定（Aki 1965、宇津 1966）では\n\n$$b = \\frac{\\log_{10} e}{\\bar M - (M_c - \\Delta M/2)}$$\n\n**section** の緯度帯や **b_value** の $M_c$ を変えて、その Card だけを実行し直せます。",
+      "x": -40,
+      "y": -420,
+      "width": 560,
+      "height": 380
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 160,
+      "y": 200,
+      "width": 320,
+      "height": 170
+    },
+    "section": {
+      "x": 500,
+      "y": 200,
+      "width": 360,
+      "height": 300
+    },
+    "b_value": {
+      "x": 880,
+      "y": 200,
+      "width": 420,
+      "height": 360
+    }
+  }
+}

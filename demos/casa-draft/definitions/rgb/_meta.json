@@ -1,0 +1,10 @@
+{
+  "description": "RGB画像にする",
+  "content": "3つの帯域画像を同じ座標と大きさのまま R・G・B に割り当て、asinh で伸長した PNG を作る（伸長の percentile 99.5 と q=10 はパラメータ）。露光補正はしない。表示条件と入力のハッシュを記録し、PNG を表示する。",
+  "outputs": [
+    {
+      "name": "rgb",
+      "description": "RGB画像にするの結果"
+    }
+  ]
+}

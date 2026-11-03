@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace gw;
+table ChirpPlots { value:string; }
+table Outputs { plots:ChirpPlots (required, tsugumi: "directory"); }
+root_type Outputs;

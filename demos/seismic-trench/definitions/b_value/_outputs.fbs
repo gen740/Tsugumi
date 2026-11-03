@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace quake;
+table FmdDir { value:string; }
+table Outputs { fmd:FmdDir (required, tsugumi: "directory"); }
+root_type Outputs;

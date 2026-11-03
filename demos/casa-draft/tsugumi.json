@@ -1,0 +1,53 @@
+{
+  "name": "Cas A · Chandra RGB",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "bands"
+      },
+      {
+        "id": "rgb"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "events"
+        },
+        "to": {
+          "card": "bands",
+          "port": "input"
+        }
+      },
+      {
+        "from": {
+          "card": "bands",
+          "port": "images"
+        },
+        "to": {
+          "card": "rgb",
+          "port": "input"
+        }
+      }
+    ]
+  }
+}

@@ -286,6 +286,8 @@ extension Notification.Name {
   static let appNewProject = Notification.Name("tsugumi.app.newProject")
   static let appOpenProject = Notification.Name("tsugumi.app.openProject")
   static let appHome = Notification.Name("tsugumi.app.home")
+  /// The demo list on Home (UI scripts).
+  static let appShowDemos = Notification.Name("tsugumi.app.showDemos")
   static let appDuplicateProject = Notification.Name("tsugumi.app.duplicateProject")
   /// Canvas commands (object: tab id).
   static let canvasDelete = Notification.Name("tsugumi.canvas.delete")

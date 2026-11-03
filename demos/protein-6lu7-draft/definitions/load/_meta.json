@@ -1,0 +1,10 @@
+{
+  "description": "立体構造を取る",
+  "content": "RCSB PDB から 6LU7（SARS-CoV-2 メインプロテアーゼと阻害剤 N3）の PDB ファイルを取得し、フォルダとして次へ渡す。取得したファイルの大きさと SHA-256 を表示する。",
+  "outputs": [
+    {
+      "name": "data",
+      "description": "立体構造を取るの結果"
+    }
+  ]
+}

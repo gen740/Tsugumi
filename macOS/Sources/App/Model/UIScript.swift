@@ -21,7 +21,7 @@ import TsugumiRPC
 ///   click <x> <y> [window title]    move <x> <y> [window title]
 ///   drag <x1> <y1> <x2> <y2> [window title]
 ///   save                            key delete|forwarddelete|escape
-///   winsize <w> <h> <window title>
+///   winsize <w> <h> <window title>  home | demos (Home's demo list)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
 ///   (points from the window's top-left; sent to the window like a real
@@ -126,6 +126,7 @@ final class UIScript {
                                   changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
         }
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
         // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
         if let s = session, let t = workspace?.active {
