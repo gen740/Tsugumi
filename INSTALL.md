@@ -3,23 +3,23 @@
 ## 配布用アプリを使う
 
 対応環境は **Apple silicon Mac / macOS 26 以降**です。
-配布用の `Tsugumi.app` には、計算の実行環境とデモを同梱します。利用者が Nix、コンパイラ、Apple container を個別にセットアップする必要はありません。
+配布用の `Tsugumi.app` には計算の実行環境とデモが同梱されており、Nix・コンパイラ・コンテナ環境などを個別にセットアップする必要はありません。
 
 1. 入手した `Tsugumi.app` を「アプリケーション」フォルダに置いて開きます。
-2. ホームの「デモを見る」から、試したいデモの「コピーを開く」を選びます。
-3. 初回の実行環境の準備が終わったら、画面上部の「実行」を押します。
+2. ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選びます。
+3. 初回の実行環境の準備が完了したら、画面上部の「実行」を押します。
 
-初回の準備はアプリが行い、画面に進捗を表示します。Card の依存パッケージを取得する際はインターネット接続が必要です。
-Agent を使う場合は、アプリ設定の「API」で利用するモデルの接続先と API キーを設定します。
+初回の環境準備はアプリが自動で行い、画面に進行状況を表示します。Card の依存パッケージを初回取得する際にはインターネット接続が必要です。
+Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定します。
 
-操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、モデルに送られる情報は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
+基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
 
 ## ソースからビルドする（開発者向け）
 
-以下は、アプリを開発・変更する場合の手順です。コマンドは、特記のない限りリポジトリのルートで実行します。
-依存の固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
+以下は、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
+依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
 
-前提: Nix（flakes 有効）、Xcode または Command Line Tools。VM イメージを作るときだけ Apple container 0.6.0（`container system start` 済み）を使います。
+前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM イメージをビルドするときのみ Apple container 0.6.0（`container system start` 済み）を使用します。
 
 ```bash
 nix develop
@@ -29,21 +29,21 @@ nix develop
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
-共通 VM のイメージ（カーネルと rootfs を `dist/tsugumi-vm/` に。コンテナ内で Nix がビルドするので Linux ホストやリモートビルダーは不要）:
+共通 VM のイメージ生成（カーネルと rootfs を `dist/tsugumi-vm/` に出力。コンテナ内の Nix がビルドするため、別途の Linux ホストやリモートビルダーは不要）：
 
 ```bash
 macOS/Container/build-image.sh --vm
 ```
 
-ビルダーは `TSUGUMI_BUILDER_CPUS`（既定 8）, `TSUGUMI_BUILDER_MEMORY`（既定 16G）, `TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ volume、既定 `tsugumi-builder-nix`）で調整できます。`TSUGUMI_IMAGE_OUT=dist/tsugumi-env.tar` を付けると、アプリ同梱用の OCI アーカイブも残します。
+ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（デフォルト `8`）、`TSUGUMI_BUILDER_MEMORY`（デフォルト `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、デフォルト `tsugumi-builder-nix`）で調整できます。`TSUGUMI_IMAGE_OUT=dist/tsugumi-env.tar` を指定すると、アプリ同梱用の OCI アーカイブも出力します。
 
-Dawn 描画層（初回は Dawn と依存の取得・ビルドで数分）:
+Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）：
 
 ```bash
 ui/renderer/build.sh
 ```
 
-アプリ本体（`dist/Tsugumi.app`。描画 dylib・デモ・初回用イメージを同梱、ローカル用 ad-hoc 署名）:
+アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・初回用 VM イメージを同梱し、ローカル実行用の ad-hoc 署名を付与）：
 
 ```bash
 macOS/build-app.sh
@@ -53,9 +53,9 @@ macOS/build-app.sh
 open dist/Tsugumi.app
 ```
 
-VM を使うには virtualization の entitlement 付きの署名が必要なので、開発中も `macOS/build-app.sh` で作った `dist/Tsugumi.app` を使います（`swift run` の実行ファイルは署名がなく VM を起動できません）。テストが VM を操作する `tsugumi-vmctl` は `macOS/tools/build-vmctl.sh` で作ります。
+VM の起動には virtualization entitlement 付きのコード署名が必要なため、開発中も `macOS/build-app.sh` で生成した `dist/Tsugumi.app` を使用します（`swift run` で直接起動したバイナリには署名がなく、VM を起動できません）。テストスクリプトが VM を操作するための `tsugumi-vmctl` は `macOS/tools/build-vmctl.sh` でビルドします。
 
-アプリアイコン `macOS/Resources/AppIcon.icns` は `docs/assets/tsugumi-icon.svg` から生成してコミットしています。SVG を変えたら `swift macOS/Resources/tools/make_icon.swift` で作り直します。
+アプリアイコン `macOS/Resources/AppIcon.icns` は `docs/assets/tsugumi-icon.svg` から生成してコミットしています。SVG を更新した場合は `swift macOS/Resources/tools/make_icon.swift` で再生成します。
 
 ## ビルド後の確認
 
@@ -63,4 +63,4 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
 (cd tests/python && python -m pytest -q test_contract.py)
 ```
 
-テストの種類、計測結果、開発時の既知の問題は[開発資料](docs/Development.md)を参照してください。
+テストスイートの詳細、パフォーマンス計測結果、開発時の既知の問題については[開発資料](docs/Development.md)を参照してください。

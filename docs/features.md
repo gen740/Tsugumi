@@ -1,8 +1,8 @@
 # Tsugumi の主要機能
 
-Tsugumi は、Card をポートで接続したグラフ（Workflow）を、Nix で固定した環境で実行し、その結果をすべて記録する macOS アプリです。
-この文書では、アプリの中心になる機能を「何ができるか」と「どう実現しているか」の両面からまとめます。
-ビルド手順は [INSTALL.md](../INSTALL.md)、テスト一覧・計測値は [Development.md](Development.md)、隔離と秘密情報の扱いは [security.md](security.md)、他ツールとの違いは [novelty.md](novelty.md) を参照してください。
+Tsugumi は、Card をポートで接続したグラフ（Workflow）を Nix で固定した環境で実行し、そのすべての過程と結果を記録する macOS アプリです。
+この文書では、Tsugumi の中核機能を「何ができるか」と「どう実現しているか」の両面から解説します。
+導入・ビルド手順は [INSTALL.md](../INSTALL.md)、テスト一覧や計測値は [Development.md](Development.md)、隔離境界と秘密情報の扱いは [security.md](security.md)、他ツールとの比較は [novelty.md](novelty.md) を参照してください。
 
 ## 1. 全体構成
 
@@ -14,9 +14,9 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
                                                    nix-daemon ─ 共通 /nix/store
 ```
 
-- **tsugumid（core）**: プロジェクトごとに 1 プロセス。文書の管理・保存、RPC、スケジューラー、Nix 評価、worker 管理、実行履歴をすべて持ちます。UI がなくても RPC だけで保存・実行・履歴取得ができます。
-- **UI と Agent は対等なクライアント**: どちらも `protocol/tsugumi.fbs` の同じ RPC 契約で core に話します。Agent は UI を操作するのではなく、core に直接 RPC を送ります。Agent を無効にしても通常の操作はすべて成立します。
-- **共通 VM**: Virtualization.framework で 1 台の Linux VM を起動し、その中でプロジェクトごとに分離した tsugumid を動かします（詳細は [security.md](security.md)）。
+- **tsugumid（core）**：プロジェクトごとに 1 プロセスが立ち上がります。文書の管理・保存、RPC、スケジューラー、Nix 評価、worker 管理、実行履歴の記録を一手に担い、UI がなくても RPC だけで保存・実行・履歴取得が完結します。
+- **UI と Agent は対等なクライアント**：どちらも `protocol/tsugumi.fbs` で定義された同一の RPC 契約で core と通信します。Agent は画面の操作を模倣するのではなく、core に直接 RPC リクエストを送ります。Agent を無効にしても通常の操作はすべて機能します。
+- **共通 VM**：macOS の `Virtualization.framework` で 1 台の Linux VM を起動し、その内部でプロジェクトごとに名前空間・uid・cgroup を分離した `tsugumid` を動かします（詳細は [security.md](security.md)）。
 
 ## 2. Card と Workflow
 
@@ -24,27 +24,27 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 
 | 種類 | 役割 |
 | --- | --- |
-| コード Card | `default.nix` で環境を、`src/` で処理を定義する。C++ / Python / bash |
-| trigger | Workflow の起点（`out`） |
-| input | `_outputs.fbs` の型に沿った値を Canvas 上で直接編集して流す。File は選んだファイルを run にコピー |
-| fork / branch / merge | 分配・条件分岐（`condition` で `a` / `b` の片側だけ発火）・合流（入力ポート名付き union） |
-| loop | 有限の feedback loop（ループ上の Card の `maxRuns` で反復上限） |
-| logger | 値を外部 DB に記録（現在は `sqlite:<name>` のみ、`.tsugumi/logger/`） |
-| subgraph（Card in Card） | 子 Workflow を 1 つの Card として扱う。`boundary` で外側のポートを内部に対応づける |
-| Draft | 型のない仮ポートで先に配線できる「未実装の Card」。Agent が実装を生成する |
+| コード Card | `default.nix` で実行環境を、`src/` で処理を定義する（C++ / Python / bash） |
+| trigger | Workflow の実行起点（出力ポート `out`） |
+| input | `_outputs.fbs` の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー） |
+| fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型） |
+| loop | 有限のフィードバックループ（ループ上の Card の `maxRuns` で反復上限を指定） |
+| logger | 受け取った値を外部 DB に記録する（現在は `.tsugumi/logger/` 配下の `sqlite:<name>` に対応） |
+| subgraph（Card in Card） | 子 Workflow を 1 つの Card として扱う。`boundary` で外側のポートを内部の Card に対応づける |
+| Draft | 型のない仮ポートで先に配線できる「未実装の Card」。後から Agent に実装を生成させられる |
 
 ### 型付きのポート
 
-- ポートの型は FlatBuffers スキーマ（`_outputs.fbs`）で宣言し、入力型は上流から導出されます。接続は構造的互換性で検査し、merge は自動で union 型になります。
-- 値は FlatBuffers のバイト列のまま Card 間を流れます。C++ / Python / bash 間で 64 bit 整数・enum・struct・union・File / Directory が欠落なく受け渡せることをテストで確認しています。
+- 出力ポートの型は FlatBuffers スキーマ（`_outputs.fbs`）で宣言し、下流の入力ポートの型は上流から自動的に導出されます。配線時に構造的互換性を検査し、merge では自動的に union 型が構成されます。
+- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
 
 ### 実行の意味論（スケジューラー）
 
-- 入力の待ち方は `all`（全入力が揃ったら 1 値ずつ消費）と `any`（到着順に消費）。
-- 有界 queue と背圧、並列度 1〜64、取消、期限（呼び出し全体で 1 つ）、`maxRuns`。
-- 非選択分岐の下流は `skipped`、Draft や失敗に依存する Card は理由付きで `blocked`。独立した部分はそのまま進みます。
-- 再起動時に途中だった実行は `interrupted` として記録されます。
-- 「ここから実行」「選択 Card のみ」の単体再実行では、前回保存した入力（File の実体を含む）を使います。
+- 入力の待ち合わせ方には `all`（すべての必須入力が揃ったら 1 値ずつ消費）と `any`（到着順に消費）があります。
+- 有界キューと背圧（バックプレッシャー）、並列度 1〜64、キャンセル、タイムアウト期限（呼び出し全体で 1 つ）、反復上限（`maxRuns`）を備えています。
+- 条件分岐で選ばれなかった経路の下流は `skipped`、Draft や失敗した上流に依存する Card は理由付きの `blocked` となり、それらと独立した経路は止まらずに実行されます。
+- 異常終了や再起動で途中だった実行は `interrupted` として記録されます。
+- 「ここから実行」や「選択 Card のみ」による単体再実行では、前回保存された入力（File の実体を含む）をそのまま再利用します。
 
 ## 3. Nix による再現可能な実行環境
 
@@ -61,25 +61,25 @@ in
 }
 ```
 
-- `pkgs` は既定で同梱の固定 nixpkgs（`tsugumi:default`）。任意の nixpkgs を `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…` で固定できます。
-- 評価は restricted eval・IFD（import from derivation）禁止・取得先 URL を nixpkgs アーカイブに限定。
-- Tsugumi 独自のビルドキャッシュはありません。評価した derivation の出力が store にあればビルドしない、という Nix 本来の仕組みだけで判定します。
+- `pkgs` はデフォルトで同梱の固定 nixpkgs（`tsugumi:default`）を指します。任意の nixpkgs を `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…` の形式でリビジョンとハッシュ付きで固定することもできます。
+- Nix の評価には restricted eval・IFD（Import From Derivation）禁止を適用し、取得先 URL を nixpkgs アーカイブのみに制限しています。
+- Tsugumi 独自のビルドキャッシュ管理は持たず、「評価した derivation の出力パスが `/nix/store` に存在すればビルドしない」という Nix 本来の仕組みだけで一貫して判定します。
 
 ### 上流定義の参照（`inputs.upstream`）
 
-- `default.nix` から、**どの経路で発火しても必ず先に実行される**上流 Card の定義（`run`・`preRun`・`exports` の関数や値）を参照できます。
-- 「必ず先に実行される」の判定は、`all` / `any`・複数経路・ループ（最大不動点）・入れ子を考慮した静的解析です。分岐の片側だけにある Card や下流・自分自身は参照できず、静的診断（`nix_reference_*`）になります。
-- 参照されたものだけが遅延評価され、選ばれなかった分岐はビルドしません。
+- `default.nix` から、**どの経路を通って発火しても必ず先に実行される**上流 Card の定義（`run`・`preRun`・`exports` の関数や値）を参照できます。
+- 「必ず先に実行されるか」の判定は、`all` / `any`・複数経路・ループ（最大不動点）・入れ子構造を考慮した静的解析で行います。分岐の片側にしか存在しない Card や下流、自分自身は参照できず、静的な診断エラー（`nix_reference_*`）となります。
+- 実際に参照された定義だけが遅延評価され、実行時に選ばれなかった分岐はビルドされません。
 
 ### 評価器の組み込み
 
-- tsugumid は libnixexpr / libnixstore をプロセス内に組み込み、nixpkgs の読み込み・評価状態・daemon 接続を Card と実行をまたいで使い回します。2 回目以降の準備段階は 9 Card 合計で約 20 ms です（[開発資料の計測](Development.md)）。
-- 取消・`buildTimeoutSeconds` は評価器のスレッドだけを止めます。
+- `tsugumid` は `libnixexpr` / `libnixstore` をプロセス内に組み込んでおり、nixpkgs の読み込み・評価状態・daemon 接続を Card 間および複数回の実行をまたいで再利用します。これにより、2 回目以降の準備段階は 9 Card 合計で約 20 ms に収まります（[開発資料の計測](Development.md)）。
+- キャンセルや `buildTimeoutSeconds` が発生した際は、評価器のスレッドだけを安全に停止します。
 
 ### ビルド結果の保持
 
-- 全プロジェクトで 1 つの `/nix/store` を共有し、プロジェクトごとの GC root で結果を保持します（Card ごとに直近 2 つ、30 日未使用で回収）。
-- 「ビルドキャッシュを削除」はそのプロジェクトの root を外すだけ。共有 store の実際の掃除はアプリ設定の「共有 store を掃除」でだけ行います。`keep-outputs = true` なので、コンパイラや nixpkgs のソースは掃除後も残り、Card を編集しても再ダウンロードしません。
+- すべてのプロジェクトで 1 つの `/nix/store` を共有し、プロジェクトごとの GC root でビルド結果を保持します（Card ごとに直近 2 世代、30 日間未使用のものは自動回収）。
+- プロジェクトの「ビルドキャッシュを削除」はそのプロジェクトの GC root を外すだけです。共有 store 自体のガベージコレクションは設定の「共有 store を掃除」からのみ実行されます。`keep-outputs = true` を設定しているため、コンパイラや nixpkgs のソースは掃除後も保持され、Card を編集するたびに再ダウンロードすることはありません。
 
 ## 4. Card SDK と worker
 
@@ -89,12 +89,12 @@ in
 入力待ち → SDK 準備 → Nix 評価 → build → preRun → run → postRun → 出力検証 → 保存 → 完了
 ```
 
-- 各段階の開始・終了時刻と結果（完了・キャッシュ利用・再利用・失敗・停止）を `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。UI はこの記録だけから段階表示・配線の強調を描き、最終状態から推測しません。
-- `preRun` は準備、`postRun` は成果物と後始末（失敗後も `TSUGUMI_FAILED=1` で動く）。停止・期限切れの後は何も始めません。
+- 各段階の開始・終了時刻と結果（完了・キャッシュ利用・再利用・失敗・停止）を `InvocationSummary.stages` に記録し、リアルタイム通知と履歴の両方で返します。UI はこの記録だけから段階表示や配線のハイライトを描画し、最終状態からの推測は行いません。
+- `preRun` は実行前の準備、`postRun` は成果物の回収や後始末を担います（`run` が失敗した後も `TSUGUMI_FAILED=1` として実行されます）。キャンセルや期限切れの後は `postRun` を含め後続の処理を開始しません。
 
 ### 言語 SDK
 
-- **C++**: 生成ヘッダー `card.hh` により、ポート名がそのまま member になります。
+- **C++**：生成ヘッダー `card.hh` により、ポート名がそのまま型付きのメンバになります。
   ```cpp
   auto run(Card::Input& input) -> Card::Output {
     Card::Output out;
@@ -102,70 +102,69 @@ in
     return out;
   }
   ```
-  共有ライブラリ `lib/main.so` を worker が読み込み、メモリ経由で呼び出します（プロセス起動のコストなし）。
-- **Python**: `main(ctx)` と任意の `on_run_start(ctx)`。
-- **bash**: 入力はポートごとの `JSON_P`（JSON ファイル）/ `FILE_P` / `DIR_P`。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します。
-- 契約に依存しない部分（可視化・ログ・context）は共通の `libtsugumi_card.so` に入れ、Card ごとに作るのは型と薄い adapter だけです。
+  ビルドされた共有ライブラリ `lib/main.so` を worker がメモリに読み込み、直接呼び出します（呼び出しごとのプロセス起動コストはゼロです）。
+- **Python**：`main(ctx)` と、任意の初期化フック `on_run_start(ctx)` を実装します。
+- **bash**：入力はポートごとの `JSON_P`（JSON ファイルのパス）/ `FILE_P` / `DIR_P` で受け取り、出力は `$TSUGUMI_OUTPUT` に書き出した JSON をポートごとに型検証します。
+- ポート契約に依存しない機能（可視化・ログ・実行コンテキスト）は共通ランタイム `libtsugumi_card.so` に集約し、Card ごとにビルドするのは型定義と薄いアダプタだけに抑えています。
 
 ### 常駐 worker
 
-- `reuseWorker`（既定 true）の worker は実行をまたいで常駐し、static な状態も保ちます（各実行の最初に `onRunStart`）。
-- ビルド条件の変更・失敗・取消・10 分未使用・2 GiB 超過・常駐数 32 超過で終了。
-- `reuseWorker = false` の Card には、次に使う worker を先に起動しておきます（sandbox 起動・`.so` 読み込み・Python の import まで）。
+- `reuseWorker`（デフォルト `true`）の worker は実行をまたいで常駐し、static 変数などの状態も保持します（各実行の最初の呼び出し前に `onRunStart` / `on_run_start` が呼ばれます）。
+- ビルド条件の変更、失敗・キャンセル、10 分間の未使用、メモリ 2 GiB 超過、または常駐数 32 超過で自動的に終了します。
+- `reuseWorker = false` の Card に対しては、次回使う新しい worker を裏で先行起動（サンドボックス起動・`.so` 読み込み・Python の import まで完了）させて待機させます。
 
 ### 外部へのアクセス（Experimental）
 
-- Card は既定でネットワークを持たず、Mac のファイルも見えません（[security.md](security.md)）。
-- Card 設定の Experimental で、Card ごとに「ネットワークへのアクセスを許可する」（`network`）と「ホストのフォルダへのアクセスを許可する」（`hostFolders`。worker から `/host/<name>` に見え、既定は読み取り専用）を指定できます。
+- Card はデフォルトでネットワークを持たず、Mac 側のファイルシステムも見えません（[security.md](security.md)）。
+- Card 設定の Experimental セクションで、Card ごとに「ネットワークへのアクセスを許可する」（`network`）および「ホストのフォルダへのアクセスを許可する」（`hostFolders`。worker からは `/host/<name>` として見え、デフォルトは読み取り専用）を個別に指定できます。
 
 ## 5. 文書と保存
 
-- プロジェクトはフォルダです。`tsugumi.json`、`definitions/<Card>/`（`_card.json`・`default.nix`・`src/`・`_outputs.fbs`）、配置の `layout.json` から成り、Git で管理できます。
-- JSON は typed schema で全体検証（UTF-8・重複キー・非有限数・未知キー拒否）してから扱います。core は文書を再エンコードしないので、64 bit 整数の表記もそのまま残ります。
-- **保存トランザクション**: 仮適用して検証 → journal（全ファイル内容と receipt）を fsync → ファイルを原子的に置換 → commit。途中で落ちても起動時に journal から再適用し、全件成功か全件未適用のどちらかになります（障害注入テストあり）。
-- **競合検出**: 保存は編集を始めた revision を基準に行います。他のウインドウや Agent が先に保存していたら競合として返り、上書きしません。同じ `op_id` の再送は 1 回だけ適用されます（応答を失っても `OperationGet` で照合）。
-- **実行中の保存**: 計算定義（execution fingerprint）を変える保存は `busy` で拒否し、配置などは受け付けます。
+- プロジェクトは通常のフォルダです。`tsugumi.json`、`definitions/<Card>/`（`_card.json`・`default.nix`・`src/`・`_outputs.fbs`）、および配置情報の `layout.json` から構成され、そのまま Git でバージョン管理できます。
+- JSON はすべて型付きスキーマで厳密に検証（UTF-8・重複キー・非有限数・未知キーの拒否）してから扱います。core は受け取った文書テキストを再エンコードしないため、64 bit 整数の表記などもそのまま保たれます。
+- **保存トランザクション**：メモリ上で仮適用して検証 → ジャーナル（全ファイル内容と receipt）を `fsync` → 対象ファイルを原子的に置換 → コミット。万一途中でクラッシュしても、次回起動時にジャーナルから再適用されるため、「全件成功」か「全件未適用」のどちらかにしかなりません（障害注入テスト済み）。
+- **競合検出**：保存は編集開始時のリビジョンを基準に行われ、他のウインドウや Agent が先に保存していた場合は競合として検出し、無断で上書きしません。また、同一 `op_id` の再送は 1 回だけ適用されます（通信断で応答を失っても `OperationGet` で結果を照合できます）。
+- **実行中の保存**：Workflow の実行中は、計算定義（execution fingerprint）を変える保存を `busy` で拒否し、配置変更などのみを安全に受け付けます。
 
 ## 6. 実行履歴と成果物
 
-- 実行・呼び出し・状態・値・ログ・表示・受領記録を SQLite に記録します。置き場所は VM の実行履歴ディスク（`vm/history.img`。共有フォルダを通らないので速く、「すべての実行環境を初期化」でも残る）。
-- `recordIO` と `retainArtifact` で何を残すかを Card ごとに選べます。成果物は改ざん・パス逸脱を検出します。
-- `saveRunHistory`（既定 true）なら、終わった実行をプロジェクト内の `.tsugumi/runs.sqlite` にも書き出します。値は FlatBuffers のバイト列のまま、型（bfbs）を hash で引ける形で保存するため、実行ごとに型が変わっても後から解釈できます。
-- プロジェクトをコピーしたり別の Mac に移したりしても、開いたときに `run_id` で照合して履歴を取り込みます。
-- 「実行履歴を削除」は VM・`.tsugumi/runs.sqlite`・実行ごとのファイルの 3 か所から消します。
+- 実行・呼び出し・段階・入出力値・ログ・可視化データ・受領記録をすべて SQLite に記録します。正本は VM の実行履歴専用ディスク（`vm/history.img`）に置かれるため、ホストとの共有フォルダを経由せず高速に書き込め、「すべての実行環境を初期化」しても失われません。
+- `recordIO` と `retainArtifact` によって、何を記録・保持するかを Card ごとに選択できます。保持された成果物は改ざんやパス逸脱を検出します。
+- `saveRunHistory`（デフォルト `true`）が有効なら、完了した実行履歴をプロジェクト内の `.tsugumi/runs.sqlite` にも自動で書き出します。入出力値は FlatBuffers のバイナリ列のまま、スキーマ（bfbs）をハッシュで引ける形で保存するため、後から Card の型定義を変更しても過去の実行値を正確に解釈できます。
+- プロジェクトをコピーしたり別の Mac へ移したりしても、開いたときに `run_id` で照合して履歴を自動的に取り込みます。
+- 「実行履歴を削除」を実行すると、VM 内・`.tsugumi/runs.sqlite`・実行ごとのファイル領域の 3 か所すべてから削除されます。
 
 ## 7. 可視化
 
-- Card から `tsugumi::visualization::text(...)` などで表示を出せます。text・scalar・折れ線・表・画像・3D 点群・Canvas module の 7 種。
-- 折れ線は Dawn（WebGPU 実装、Metal backend）で描画し、Live Stream デモのように実行中に更新されます。
-- 出力表示は Canvas 上の枠として配置・拡大でき、配置は `layout.json` に保存されます。
+- Card のコードから `tsugumi::visualization::text(...)` などの API を呼ぶことで、text・scalar・折れ線・表・画像・3D 点群・Canvas module の出力表示を行えます。
+- 折れ線グラフは Dawn（WebGPU 実装、Metal バックエンド）で高速に描画され、Live Stream デモのように実行中もリアルタイムに更新されます。
+- 出力表示は Canvas 上の独立した枠として自由に配置・拡大でき、そのレイアウトは `layout.json` に保存されます。
 
 ## 8. UI（ワークベンチ）
 
-- 左: 階層・Card 定義・表示中の Card / 中央: Canvas（上から下へ流れる）/ 下: 状態バーとログ・タイムライン / 右: チャット。
-- Canvas: 追加・移動（グリッド吸着）・複製・接続・範囲選択・ズーム・整列、グループ（見た目だけ）、Markdown の付箋、出力表示の枠。
-- Card 設定ウインドウ: Nix 定義・ソース（構文強調・整形・エラー位置）・入出力・実行履歴・成果物。作業コピーで編集し「適用」で反映。
-- 編集は未確定のまま保持し、⌘Z / ⇧⌘Z、⌘S で 1 つの保存要求として確定します。
-- プロジェクトの VM 内ターミナル（そのプロジェクトの名前空間と uid で開く）。
-- 日本語 / English の切り替え。
+- 左：階層・Card 定義・表示中の Card / 中央：Canvas / 下：状態バーとログ・タイムライン / 右：Agent チャット。
+- Canvas：Card の追加・移動（グリッド吸着）・複製・配線・範囲選択・ズーム・整列、グループ、Markdown の付箋、出力表示の枠。
+- Card 設定ウインドウ：Nix 定義・ソース（構文強調・自動整形・エラー箇所の表示）・入出力・実行履歴・成果物。作業コピー上で編集し、「適用」で反映。
+- プロジェクト専用の VM 内ターミナル（そのプロジェクトの名前空間と専用 uid で bash を起動）。
+- 日本語 / English の表示切り替え。
 
-画面仕様の詳細は [ui-view.md](../ui-view.md) です。
+画面仕様の詳細は [ui-view.md](../ui-view.md) を参照してください。
 
 ## 9. Agent
 
-- `agent/` の独立パッケージ。Anthropic Messages API / OpenAI Responses API に対応し、ストリーミングで応答します。
-- tool 定義は `tsugumi.bfbs`（FBS の doc comment 付き）から自動生成し、tool 引数⇄FlatBuffers も同じスキーマで変換します。RPC 契約を変えれば Agent の tool も追従します。
-- 変更を伴う tool には Agent が `op_id` を付け、UI と同じ revision・競合検査・確定通知を通ります。
-- **Draft から Card を生成**: Draft の概要・処理内容・制約・完了条件・配線を Agent に渡し、型・Nix・ソースを 1 トランザクションで保存してから検証・実行させます。途中の失敗や取消では何も保存されず、計画は残ります。
-- Skill（プロジェクトの `skills/` と設定で追加したフォルダ）を `$` で呼び出せます。会話の一覧・全文検索・圧縮（全文履歴は残る）。
-- Mac のフォルダをチャットに添付すると、Agent が `AttachedFolderRead` で読めます（読み取り専用、そのプロジェクトだけに共有。読んだ内容はモデルに送られます）。
+- `agent/` として分離された独立パッケージです。Anthropic Messages API および OpenAI Responses API に対応し、ストリーミングで応答します。
+- Agent が使う tool 定義は `tsugumi.bfbs`（FlatBuffers スキーマの doc comment 付き）から自動生成され、tool 引数と FlatBuffers メッセージの相互変換も同一のスキーマで行います。RPC 契約を更新すれば Agent の tool も自動的に追従します。
+- 変更を伴う tool 呼び出しには Agent が一意な `op_id` を付与し、UI とまったく同じリビジョン検査・競合検出・確定通知の経路を通ります。
+- **Draft から Card を生成**：Draft の概要・処理内容・仮ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させたうえで、ビルドと実行による検証まで行わせます。途中の失敗やキャンセルでは中途半端な変更を保存せず、計画は残ります。
+- Skill（プロジェクト内の `skills/` や設定で追加したフォルダ）を `$` で呼び出せます。会話の一覧・全文検索・要約圧縮に対応しています。
+- Mac のフォルダをチャットに添付すると、Agent が `AttachedFolderRead` ツールで読み取れます（そのプロジェクトだけに読み取り専用で共有されます。読み取った内容はモデルに送信されます）。
 
 ## 10. デモ
 
 | デモ | 見どころ |
 | --- | --- |
-| `report`（データからレポートへ） | seed による再現性、意図的な失敗と blocked、単体再実行、入れ子の Workflow、Directory 成果物 |
-| `collatz`（C++ / Python） | 2 言語の独立実装の結果一致、feedback loop と `maxRuns`、branch による skipped、overflow の検出 |
-| `live-stream` | 100 ms 間隔の値を Dawn の折れ線で逐次表示、即時の Cancel |
+| `report`（データからレポートへ） | `seed` による再現性、意図的な失敗と下流の `blocked`、保存済み入力による単体再実行、入れ子の Workflow、ディレクトリ成果物 |
+| `collatz`（C++ / Python） | 2 言語の独立実装による結果の一致検証、フィードバックループと `maxRuns`、条件分岐による `skipped`、整数オーバーフローの検出 |
+| `live-stream` | 100 ms 間隔のランダムウォークを Dawn（WebGPU / Metal）の折れ線で逐次描画、即時のキャンセル応答 |
 
-デモは「コピーを開く」で `~/Documents/Tsugumi/<demo>` に編集可能なコピーを作って開きます。
+デモはホームの「デモを見る」から「コピーを開く」を選ぶことで、`~/Documents/Tsugumi/<demo>` に編集可能なコピーを作ってすぐ試せます。
