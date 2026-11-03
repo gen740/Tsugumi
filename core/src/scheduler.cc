@@ -1174,7 +1174,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<std::pair<std::string, int32_t>> project_dirs;  // real path, descriptor slot
     auto make_dir = [&](const stdfs::path& d) {
       stdfs::create_directories(d);
-      if (::geteuid() == 0) ::chown(d.c_str(), kCardUid, kCardUid);
+      if (::geteuid() == 0 && worker_uid_on_host()) ::chown(d.c_str(), kCardUid, kCardUid);
       return d.string();
     };
     if (needs_out) out = make_dir(dir / "out");

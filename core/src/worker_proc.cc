@@ -144,6 +144,15 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
 
 }  // namespace
 
+bool worker_uid_on_host() {
+#ifdef __APPLE__
+  return true;
+#else
+  std::string bwrap = TSUGUMI_BWRAP;
+  return bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0;
+#endif
+}
+
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   int data[2], control[2], out[2], err[2];
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 ||
@@ -152,7 +161,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
   for (const char* d : {"work", "tmp", "scripts", "home"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
-  if (::geteuid() == 0 && sp.uid)
+  if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
     for (const char* d : {"work", "tmp", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {

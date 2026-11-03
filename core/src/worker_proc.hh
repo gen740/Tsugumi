@@ -62,6 +62,11 @@ struct WorkerOutcome {
   std::optional<FailureData> failure;
 };
 
+// Whether a Card worker runs as its own uid on the host (folders it writes are
+// then handed to that uid when tsugumid is root): not under bubblewrap, whose
+// user namespace maps the Card's uid to tsugumid's own.
+bool worker_uid_on_host();
+
 class WorkerProc {
  public:
   using LogSink = std::function<void(LogStream stream, const std::string& text)>;

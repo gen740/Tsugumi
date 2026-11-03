@@ -407,8 +407,16 @@ TEST(history_fault_fails_writes) {
 
 namespace {
 
+// A reply message as the server sends it (it reads the request id of every
+// reply it queues, so replies are real messages, never placeholder bytes).
+std::string reply_message(uint64_t request_id) {
+  flatbuffers::FlatBufferBuilder b;
+  b.Finish(Tsugumi::RPC::CreateMessage(b, request_id), "TSG1");
+  return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
+}
+
 struct Sink : RequestSink {
-  std::pair<std::string, bool> hello(const RequestIn&) override { return {"hello-reply", true}; }
+  std::pair<std::string, bool> hello(const RequestIn&) override { return {reply_message(1), true}; }
   void dispatch(RequestIn) override {}
   void disconnected(ConnId) override {}
 };
@@ -483,12 +491,12 @@ TEST(send_queue_keeps_order_and_drops_only_slow_peers) {
   CHECK(fast >= 0 && slow >= 0);
   auto hf = hello_frame();
   CHECK(::write(fast, hf.data(), hf.size()) == static_cast<ssize_t>(hf.size()));
-  CHECK(read_frame(fast) == std::optional<std::string>("hello-reply"));
+  CHECK(read_frame(fast) == std::optional<std::string>(reply_message(1)));
   CHECK(::write(slow, hf.data(), hf.size()) == static_cast<ssize_t>(hf.size()));
-  CHECK(read_frame(slow) == std::optional<std::string>("hello-reply"));
-  server.subscribe(1, "sub-fast", "open-fast");
-  server.subscribe(2, "sub-slow", "open-slow");
-  CHECK(read_frame(fast) == std::optional<std::string>("open-fast"));
+  CHECK(read_frame(slow) == std::optional<std::string>(reply_message(1)));
+  server.subscribe(1, "sub-fast", reply_message(2));
+  server.subscribe(2, "sub-slow", reply_message(2));
+  CHECK(read_frame(fast) == std::optional<std::string>(reply_message(2)));
   // The fast peer reads everything in order with consecutive seq; the slow
   // peer never reads, overflows its queue and is disconnected alone.
   std::thread reader([&] {
