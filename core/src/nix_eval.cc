@@ -126,10 +126,8 @@ struct NixEvaluator::Impl {
 
   static void* main(void* self) {
     auto* d = static_cast<Impl*>(self);
-    // Boehm GC scans only registered threads; this one evaluates.
-    GC_stack_base sb;
-    GC_get_stack_base(&sb);
-    GC_register_my_thread(&sb);
+    // Registered with Boehm GC by GC_pthread_create (gc.h redirects
+    // pthread_create in this file), so it is scanned while it evaluates.
     nix::unix::interruptCheck = [d] {
       const NixCall* c = d->current.load(std::memory_order_relaxed);
       return c && d->interrupted(*c, nullptr);
@@ -148,7 +146,6 @@ struct NixEvaluator::Impl {
     d->state.reset();
     d->pkgs.clear();
     d->entry.reset();
-    GC_unregister_my_thread();
     return nullptr;
   }
 

@@ -311,13 +311,19 @@ struct GraphCanvas: View {
     return ZStack(alignment: .topLeading) {
       BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top)
         .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
-        .gesture(boundaryMove(input: true, from: b.top.origin))
+        .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
         .help("ドラッグで移動できます")
       BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom)
         .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
-        .gesture(boundaryMove(input: false, from: b.bottom.origin))
+        .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
     }
+  }
+
+  /// A bar's position without the drag in progress.
+  private func undragged(_ p: CGPoint, input: Bool) -> CGPoint {
+    guard let d = boundaryDrag, d.input == input else { return p }
+    return CGPoint(x: p.x - d.offset.width / camera.zoom, y: p.y - d.offset.height / camera.zoom)
   }
 
   /// Moves a boundary bar; the wires to its ports follow while dragging.

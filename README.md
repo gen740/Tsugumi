@@ -192,7 +192,28 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
 | `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
 | `tests/python/measure.py` | 評価指標の計測（下記） |
 
-## 計測（2026-11-03、共通 VM）
+## 計測（2026-11-03、高速化後・共通 VM）
+
+条件は下の節と同じ（M3 Max、共通 VM 8 vCPU / 16 GiB、Collatz 1344 invocation、3 回目の実行）。
+変更: 履歴の書き込み削減、worker の常駐・待機 worker、VM 内の一時領域、bash 以外で入力の変換をしない、評価器の組み込み。
+
+| 指標 | 変更前 | 変更後 | 読み方 |
+| --- | --- | --- | --- |
+| Run の所要時間（共通 VM） | 4.5〜5.0 s | 2.6〜2.9 s | 残りの大半は virtiofs 上の履歴 SQLite の確定待ち |
+| 同（履歴だけ VM 内の tmpfs に置いた試験） | 1.8 s | 0.8 s | 履歴を VM 内に置けばさらに 3 倍強。置き場所の変更は未実施（判断待ち） |
+| 同（Mac 上の tsugumid、参考） | 1.35 s | 0.43 s | |
+| 1 回の受け渡し（C++ 側の直列 670 回） | 6.5 ms | 3.9 ms（tmpfs の試験で 0.55 ms） | |
+| C++ Card の実行段階（平均） | 4.6 ms | 0.26 ms | 共有フォルダ上のフォルダ作成・削除と入力ファイルがなくなった |
+| 2 回目以降の準備段階（9 Card の合計） | 約 470 ms | 20 ms | 評価器の再利用（評価 1 Card 中央値 2 ms）、`nix-store` 起動とファイル書き出しなし |
+| 1 回目（プロジェクトを開いて最初） | 7.8 s | 9.4 s | nixpkgs の読み込みを含む評価（tsugumid ごとに 1 回） |
+| tsugumid のメモリ | — | 29 MB → 121 MB（評価後） | 評価器と nixpkgs の評価状態。常駐 worker 9 個は合計 89 MB |
+| 共有 store の掃除 | — | 1203 → 712 MiB | root のある Card のコンパイラ・nixpkgs のソースは残る（`keep-outputs`） |
+
+保存段階の記録は確定（commit）の直前で閉じるので、確定待ちは段階の外（終了から通知まで）に現れます。
+入力を FD で渡さない理由は実測で確認しました: 読み取り専用で開いた FD を bubblewrap に渡すと、中から
+`/proc/self/fd/3` に書き込めて元のファイルが変わり、パスでは読み取り専用の bind で拒否されます。
+
+## 計測（2026-11-03、共通 VM、高速化前）
 
 条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。
 `tests/python/measure_stages.py collatz`（VM、`--host` で Mac 上の tsugumid）と、アプリの smoke モード

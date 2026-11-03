@@ -20,6 +20,7 @@ import TsugumiRPC
 ///   panel log|timeline              details <card path>
 ///   click <x> <y> [window title]    move <x> <y> [window title]
 ///   drag <x1> <y1> <x2> <y2> [window title]
+///   save
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -214,6 +215,7 @@ final class UIScript {
           if let e = event(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f) { win.sendEvent(e) }
         }
         if let u = event(.leftMouseUp, x2, y2) { win.sendEvent(u) }
+      case "save": if let s = session { await s.save() }
       case "quit": NSApp.terminate(nil)
       default: say("unknown " + line)
       }
