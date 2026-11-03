@@ -202,12 +202,12 @@ struct DisplayContent: View {
   var body: some View {
     switch display?.value {
     case .text(let t)?:
-      ScrollView {
+      ScrollView(.vertical, showsIndicators: large) {
         Text(t).font(.system(size: size(11, 13), design: .monospaced)).textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
     case .markdown(let t)?:
-      ScrollView {
+      ScrollView(.vertical, showsIndicators: large) {
         MarkdownView(text: t, fontSize: size(12, 14)).frame(maxWidth: .infinity, alignment: .leading)
       }
     case .scalar(let v, let label)?:
@@ -228,7 +228,7 @@ struct DisplayContent: View {
         }
       }
     case .table(let columns, let rows)?:
-      ScrollView([.horizontal, .vertical]) {
+      ScrollView([.horizontal, .vertical], showsIndicators: large) {
         Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
           GridRow {
             ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }

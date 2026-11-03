@@ -578,10 +578,12 @@ func writeAll(_ fd: Int32, _ data: Data) throws {
   }
 }
 
+/// One reply line. Lists (histories, status) grow with the projects, so the
+/// line may be long; a cut one would leave its rest for the next reply.
 func readLine(_ fd: Int32) -> String {
   var bytes: [UInt8] = []
   var c: UInt8 = 0
-  while bytes.count < 4096 {
+  while bytes.count < 1 << 20 {
     let n = read(fd, &c, 1)
     if n <= 0 || c == 10 { break }
     bytes.append(c)

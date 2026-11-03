@@ -12,6 +12,8 @@ struct CanvasWorkspace: View {
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
   var onSwitchProject: (() -> Void)? = nil
+  /// Where the window buttons and the sidebar button end (title bar).
+  static let besideSidebarButton: CGFloat = 142
 
   var body: some View {
     ZStack(alignment: .top) {
@@ -35,7 +37,12 @@ struct CanvasWorkspace: View {
         CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
         projectActions.fixedSize().layoutPriority(2)
       }
-      .padding(10)
+      // In the title bar's row, beside the window buttons: right of the
+      // sidebar button while the sidebar is closed.
+      .padding(.leading, workspace.columns == .detailOnly ? Self.besideSidebarButton : 10)
+      .padding(.trailing, 10)
+      .padding(.top, 11)
+      .ignoresSafeArea(.container, edges: .top)
     }
     .overlay(alignment: .bottomLeading) { viewControls.padding(10) }
   }

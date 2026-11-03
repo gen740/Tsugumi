@@ -119,6 +119,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Launched with `swift run` there is no bundle: still behave as a regular app.
     NSApp.setActivationPolicy(.regular)
+    // The Dock icon also when the executable is started directly (scripts,
+    // `swift run` next to the repository's icon).
+    let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+      ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/AppIcon.icns")
+    if let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
     NSApp.activate(ignoringOtherApps: true)
     Task { @MainActor in
       AppPreferences.shared.applyTheme()

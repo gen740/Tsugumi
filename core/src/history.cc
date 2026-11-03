@@ -960,26 +960,35 @@ std::string finished_states() {
          std::to_string(static_cast<int>(RunState::cancelled));
 }
 
-// This database with the copy attached as `ex` (created when missing). A
-// copy written by a newer version is never changed.
+// The copy is changed under another name and put in place whole when done:
+// it lives on the project share, where the Mac (and other programs) read it
+// and cannot see this side's file locks, so a rollback journal left there
+// during a write would look like a crashed writer to them.
+std::filesystem::path staged(const std::filesystem::path& copy) { return copy.string() + ".new"; }
+
+// This database with a staged copy attached as `ex` (made from the copy, or
+// new when there is none). A copy written by a newer version is never
+// changed. `put_copy` puts the staged copy in place.
 std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const std::filesystem::path& copy) {
   std::error_code ec;
-  if (!std::filesystem::exists(copy, ec)) {
-    // Made complete under another name first: readers never see it half made.
-    auto fresh = copy.string() + ".new";
-    std::filesystem::remove(fresh, ec);
-    {
-      sql::Db f(":memory:");
-      f.prepare("ATTACH DATABASE ? AS ex").bind(1, fresh).run();
-      f.exec("PRAGMA ex.journal_mode=DELETE");
-      f.exec(kCopySchema);
-      f.prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
-          .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
-    }
-    std::filesystem::rename(fresh, copy);
+  auto fresh = staged(copy);
+  std::filesystem::remove(fresh, ec);
+  if (std::filesystem::exists(copy, ec)) {
+    // Written by SQLite like a new database (a file copy of the system can
+    // be refused on the project share).
+    sql::Db f(":memory:");
+    f.prepare("ATTACH DATABASE ? AS ex").bind(1, copy.string()).run();
+    f.prepare("VACUUM ex INTO ?").bind(1, fresh.string()).run();
+  } else {
+    sql::Db f(":memory:");
+    f.prepare("ATTACH DATABASE ? AS ex").bind(1, fresh.string()).run();
+    f.exec("PRAGMA ex.journal_mode=DELETE");
+    f.exec(kCopySchema);
+    f.prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
+        .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
   }
   auto db = std::make_unique<sql::Db>(db_path.string());
-  db->prepare("ATTACH DATABASE ? AS ex").bind(1, copy.string()).run();
+  db->prepare("ATTACH DATABASE ? AS ex").bind(1, fresh.string()).run();
   {
     auto st = db->prepare("SELECT 1 FROM ex.sqlite_master WHERE type='table' AND name='meta'");
     if (st.step()) {
@@ -999,6 +1008,12 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
   db->prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
       .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
   return db;
+}
+
+// Detaches the staged copy and puts it in place of the copy (one rename).
+void put_copy(sql::Db& db, const std::filesystem::path& copy) {
+  db.exec("DETACH DATABASE ex");
+  std::filesystem::rename(staged(copy), copy);
 }
 
 // BEGIN (deferred: reading one side never blocks the other's writers) / COMMIT.
@@ -1049,6 +1064,7 @@ size_t History::import_runs(const std::filesystem::path& copy) {
   Txn t(*db);
   size_t n = copy_runs(*db, "ex", "main");
   t.commit();
+  put_copy(*db, copy);
   return n;
 }
 
@@ -1058,6 +1074,7 @@ size_t History::export_runs(const std::filesystem::path& copy) {
   Txn t(*db);
   size_t n = copy_runs(*db, "main", "ex");
   t.commit();
+  put_copy(*db, copy);
   return n;
 }
 
@@ -1102,6 +1119,7 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
     } catch (const std::exception&) {
     }
   }
+  if (has_copy) put_copy(*db, copy);
   return ids;
 }
 
@@ -1129,6 +1147,7 @@ void History::rename_card(const std::filesystem::path& copy, const std::string& 
     }
   }
   t.commit();
+  if (has_copy) put_copy(*db, copy);
 }
 
 std::string History::schema_blob(sql::Db& db, const std::string& hash) {

@@ -58,4 +58,7 @@ PLIST
 # Local use only: ad-hoc signature (no notarization), with the
 # virtualization entitlement the shared VM needs.
 codesign --force --deep --sign - --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
+# The bundle was made anew: Finder and the Dock read its icon again.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
+touch "$app"
 echo "$app"
