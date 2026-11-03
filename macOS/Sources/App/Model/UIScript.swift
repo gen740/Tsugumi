@@ -19,6 +19,7 @@ import TsugumiRPC
 ///   run | waitrun                   enter <scope path or ->
 ///   panel log|timeline              details <card path>
 ///   click <x> <y> [window title]    move <x> <y> [window title]
+///   drag <x1> <y1> <x2> <y2> [window title]
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -196,6 +197,23 @@ final class UIScript {
           try? await Task.sleep(for: .milliseconds(60))
           if let u = event(.leftMouseUp) { win.sendEvent(u) }
         }
+      case "drag":
+        let title = w.dropFirst(5).joined(separator: " ")
+        let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }
+        guard let win, w.count >= 5, let x1 = Double(w[1]), let y1 = Double(w[2]), let x2 = Double(w[3]), let y2 = Double(w[4])
+        else { say("no window for " + line); break }
+        func event(_ t: NSEvent.EventType, _ x: Double, _ y: Double) -> NSEvent? {
+          NSEvent.mouseEvent(with: t, location: NSPoint(x: x, y: win.frame.height - y), modifierFlags: [],
+                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber, context: nil,
+                             eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        if let d = event(.leftMouseDown, x1, y1) { win.sendEvent(d) }
+        for i in 1...12 {
+          try? await Task.sleep(for: .milliseconds(30))
+          let f = Double(i) / 12
+          if let e = event(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f) { win.sendEvent(e) }
+        }
+        if let u = event(.leftMouseUp, x2, y2) { win.sendEvent(u) }
       case "quit": NSApp.terminate(nil)
       default: say("unknown " + line)
       }

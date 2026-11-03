@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from conftest import VMEnv
+from conftest import SharedVM, VMEnv
 from projects import card
 from test_cards_container import bash, make, run, log
 from tsugumi_client import new_id, path, text
@@ -78,3 +78,77 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
     finally:
         slow.stop()
         other.stop()
+
+
+CPP_ONE = r"""
+#include <card.hh>
+
+auto run(Card::Input&) -> Card::Output {
+  Card::Output out;
+  out.out.emplace().value = 1;
+  return out;
+}
+"""
+
+
+def build_outcome(c, run_id, card_id):
+    """Outcome of the build stage of the Card's first invocation (2 done: built, 3 cached: in the store)."""
+    rec = c.call("RunInvocationsRequest", runId=run_id, card=path(card_id)).records[0]
+    return {s.phase: s.outcome for s in rec.stages}
+
+
+def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
+    """Results stay usable without rebuilding after a reopen, the shared
+    store's cleanup, and for a copy of the project (its own id and roots)
+    after the original's data is deleted. Project root folders are created
+    by vmd only."""
+    from Tsugumi.Data.Phase import Phase
+    from projects import card as c_
+    nix = ("{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n"
+           "{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
+    from test_cards_container import NUM
+    from test_regressions import put
+    root = tmp_path / "P"
+    make(root, {"trigger": {"template": "trigger"}, "one": {"language": "cpp", "_outputs": NUM, "_nix": nix}},
+         [c_("begin", "trigger"), c_("one", "one")], [])
+    put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
+    p = VMEnv(root, "P").start()
+    copy = None
+    try:
+        rid, st = run(p.client(), "begin")
+        assert st.state == RunState.succeeded, log(p.client(), rid, "one", 3)
+        roots = p.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{p.id}")
+        assert "--" in roots and "tsugumi-card.json" in roots, roots
+        # The folder of roots is vmd's: no project can create one for another.
+        assert p.exec("stat -c %a /nix/var/nix/gcroots/tsugumi/projects").strip().splitlines()[-1] == "755"
+        assert "denied" in p.exec("mkdir /nix/var/nix/gcroots/tsugumi/projects/someone-else 2>&1")
+        # Reopened: evaluated again, nothing built.
+        p.stop()
+        p.start()
+        rid, st = run(p.client(), "begin")
+        assert st.state == RunState.succeeded
+        assert build_outcome(p.client(), rid, "one")[Phase.build] == 3
+        # The shared store's cleanup keeps rooted results.
+        assert SharedVM.get().command("vm gc")[-1].startswith("ok ")
+        rid, st = run(p.client(), "begin")
+        assert build_outcome(p.client(), rid, "one")[Phase.build] == 3
+        # A copy (another id) roots what it uses itself; the original's data
+        # goes and the cleanup runs: the copy still builds nothing.
+        p.stop()
+        import shutil
+        shutil.copytree(root, tmp_path / "P2", symlinks=True)
+        copy = VMEnv(tmp_path / "P2", "P2").start()
+        rid, st = run(copy.client(), "begin")
+        assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
+        assert "tsugumi-card.json" in copy.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{copy.id}")
+        copy.stop()
+        SharedVM.get().command(f"delete {root}")
+        assert SharedVM.get().command("vm gc")[-1].startswith("ok ")
+        copy.start()
+        rid, st = run(copy.client(), "begin")
+        assert st.state == RunState.succeeded
+        assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
+    finally:
+        p.stop()
+        if copy:
+            copy.stop()

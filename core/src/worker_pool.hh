@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <future>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -65,6 +66,7 @@ class WorkerPool {
   std::map<std::string, Idle> standby_;  // one per key
   std::map<std::string, bool> refilling_;
   std::deque<std::pair<std::string, WorkerSpawn>> pending_;  // standby workers to start
+  std::deque<std::packaged_task<std::unique_ptr<WorkerProc>()>> spawns_;  // workers a call waits for
   uint64_t seq_ = 0;
   bool stopping_ = false;
   std::thread reaper_;  // starts standby workers, ends idle ones

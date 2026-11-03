@@ -14,6 +14,7 @@ struct GraphCanvas: View {
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
   @State private var drag: (key: CardKey, offset: CGSize)?
+  @State private var boundaryDrag: (input: Bool, offset: CGSize)?
   @State private var pending: (from: (CardKey, String), point: CGPoint)?
   @State private var panStart: (x: Double, y: Double)?
   @State private var marquee: (start: CGPoint, end: CGPoint)?
@@ -279,8 +280,20 @@ struct GraphCanvas: View {
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
     let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
     let x = box.midX - width / 2
-    let top = CGRect(x: x, y: box.minY - 96, width: width, height: 40)
-    let bottom = CGRect(x: x, y: box.maxY + 56, width: width, height: 40)
+    // Placed above / below the inner Cards unless moved (layout.json "boundaries").
+    func placed(_ side: String, _ auto: CGPoint) -> CGPoint {
+      var p = auto
+      if let v = session.layout["boundaries"]?[scopeKey]?[side], let px = v["x"]?.double, let py = v["y"]?.double {
+        p = CGPoint(x: px, y: py)
+      }
+      if let d = boundaryDrag, d.input == (side == "inputs") {
+        p.x += d.offset.width / camera.zoom
+        p.y += d.offset.height / camera.zoom
+      }
+      return p
+    }
+    let top = CGRect(origin: placed("inputs", CGPoint(x: x, y: box.minY - 96)), size: CGSize(width: width, height: 40))
+    let bottom = CGRect(origin: placed("outputs", CGPoint(x: x, y: box.maxY + 56)), size: CGSize(width: width, height: 40))
     let resolved = session.resolution[scopeKey]
     func ports(_ list: [(String, JSONValue)], bar: CGRect, output: Bool) -> [BoundaryPort] {
       list.enumerated().map { i, e in
@@ -298,9 +311,39 @@ struct GraphCanvas: View {
     return ZStack(alignment: .topLeading) {
       BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top)
         .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
+        .gesture(boundaryMove(input: true, from: b.top.origin))
+        .help("ドラッグで移動できます")
       BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom)
         .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
+        .gesture(boundaryMove(input: false, from: b.bottom.origin))
+        .help("ドラッグで移動できます")
     }
+  }
+
+  /// Moves a boundary bar; the wires to its ports follow while dragging.
+  private func boundaryMove(input: Bool, from origin: CGPoint) -> some Gesture {
+    DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas"))
+      .onChanged { v in
+        clearHover()
+        boundaryDrag = (input, v.translation)
+      }
+      .onEnded { v in
+        boundaryDrag = nil
+        var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
+        if prefs.showGrid {
+          x = (x / prefs.gridSize).rounded() * prefs.gridSize
+          y = (y / prefs.gridSize).rounded() * prefs.gridSize
+        }
+        let scope = scopeKey
+        // Layout only.
+        session.edit { s in
+          var all = s.layout["boundaries"] ?? .object([])
+          var bars = all[scope] ?? .object([])
+          bars[input ? "inputs" : "outputs"] = .object([("x", .real(x.rounded())), ("y", .real(y.rounded()))])
+          all[scope] = bars
+          s.layout["boundaries"] = all
+        }
+      }
   }
 
   // MARK: - Layers

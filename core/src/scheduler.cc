@@ -38,7 +38,7 @@ namespace {
 
 constexpr size_t kQueueCapacity = 16;
 constexpr uid_t kCardUid = 65534;  // unprivileged identity for Card processes
-// Descriptor slots of the folders passed to a sandboxed worker (out, work, tmp).
+// Descriptor slot of the output folder passed to a sandboxed worker.
 constexpr int32_t kOutSlot = 900;
 
 Note run_event_note(const std::string& run_id,
@@ -1156,12 +1156,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return d.string();
     };
     if (needs_out) out = make_dir(dir / "out");
-    if (node.settings.filesystem) {
-      work = make_dir(dir / "work");
-      tmp = make_dir(dir / "tmp");
-    }
-    // Under bubblewrap the project folders of this call reach the Card as
-    // descriptors (/proc/self/fd/<slot>); the run trees are bound read-only.
+    // Under bubblewrap the call's output folder reaches the Card as a
+    // descriptor (/proc/self/fd/<slot>); the run trees are bound read-only.
+    // Working folders are never passed that way (a current directory outside
+    // the sandbox has no path): with filesystem: true they are copied into
+    // the run after the call.
     std::vector<int> fds;
     std::vector<int32_t> slots;
     rt.out_alias.reset();
@@ -1180,10 +1179,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       ~Close() { for (int f : fds) ::close(f); }
     } close_fds{fds};
     pass(out, kOutSlot);
-    if (node.settings.filesystem) {
-      pass(work, kOutSlot + 1);
-      pass(tmp, kOutSlot + 2);
-    }
     auto ptype = NixRunner::params_type(node);
     std::string params = NixRunner::params_buffer(node);
     std::vector<std::pair<std::string, std::string>> env = {
@@ -1215,7 +1210,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       on_display(rt, d);
     });
     svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::execute, lane, t0, now_ms()));
-    if (!node.settings.filesystem) worker.clear_scratch();
+    if (node.settings.filesystem) {
+      // Kept for inspection in the run (CacheClear removes it).
+      std::error_code ec;
+      for (const auto& [from, to] : {std::pair{worker.work_dir(), dir / "work"}, std::pair{worker.tmp_dir(), dir / "tmp"}}) {
+        stdfs::create_directories(to, ec);
+        stdfs::copy(from, to, stdfs::copy_options::recursive | stdfs::copy_options::overwrite_existing |
+                                  stdfs::copy_options::copy_symlinks, ec);
+      }
+    }
+    worker.clear_scratch();
     // Kept only after a clean call: a failed, cancelled or timed out worker
     // (and anything it started) ends.
     svc_.workers().release(card_key, key, std::move(lease.worker),

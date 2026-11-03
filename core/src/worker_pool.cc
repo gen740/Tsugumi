@@ -1,6 +1,7 @@
 #include "worker_pool.hh"
 
 #include <algorithm>
+#include <future>
 
 #include "util/log.hh"
 
@@ -23,17 +24,30 @@ WorkerPool::~WorkerPool() {
   }
   cv_.notify_all();
   if (reaper_.joinable()) reaper_.join();
+  spawns_.clear();  // anyone still waiting gets broken_promise
   clear();
   std::error_code ec;
   stdfs::remove_all(root_, ec);
 }
 
+// Workers are started on the pool's own thread: bubblewrap's
+// --die-with-parent ends a worker when the *thread* that started it ends, and
+// a run's lanes end with the run while its workers stay resident.
 std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
   {
     std::lock_guard<std::mutex> l(mu_);
     sp.scratch = (root_ / ("w" + std::to_string(++seq_))).string();
   }
-  return std::make_unique<WorkerProc>(sp);
+  if (std::this_thread::get_id() == reaper_.get_id()) return std::make_unique<WorkerProc>(sp);
+  std::packaged_task<std::unique_ptr<WorkerProc>()> task([sp] { return std::make_unique<WorkerProc>(sp); });
+  auto result = task.get_future();
+  {
+    std::lock_guard<std::mutex> l(mu_);
+    if (stopping_) throw Failed(FailureKind::worker_failed, "the project is stopping");
+    spawns_.push_back(std::move(task));
+  }
+  cv_.notify_all();
+  return result.get();
 }
 
 WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string& key, const WorkerSpawn& sp,
@@ -140,10 +154,18 @@ size_t WorkerPool::standby_count() {
 void WorkerPool::reaper() {
   std::unique_lock<std::mutex> l(mu_);
   while (!stopping_) {
-    cv_.wait_for(l, std::chrono::seconds(30), [&] { return stopping_ || !pending_.empty(); });
+    cv_.wait_for(l, std::chrono::seconds(30), [&] { return stopping_ || !pending_.empty() || !spawns_.empty(); });
     if (stopping_) break;
+    // Workers a call waits for come first.
+    while (!spawns_.empty()) {
+      auto task = std::move(spawns_.front());
+      spawns_.pop_front();
+      l.unlock();
+      task();
+      l.lock();
+    }
     // Standby workers, one at a time (spawned outside the lock).
-    while (!pending_.empty() && !stopping_) {
+    while (!pending_.empty() && !stopping_ && spawns_.empty()) {
       auto [key, sp] = std::move(pending_.front());
       pending_.pop_front();
       l.unlock();

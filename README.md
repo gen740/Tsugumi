@@ -16,8 +16,8 @@ macOS 側の SwiftUI アプリと Agent は同じ FlatBuffers RPC 契約を使�
  project A: tsugumid（uid・mount/PID 名前空間・cgroup を分離）── vsock ─ 127.0.0.1 中継 ── SwiftUI UI（+ Dawn 描画）
    ├ 文書・journal・receipt（/project = virtiofs）                                     └ Agent（モデル接続・会話・tool）
    ├ SQLite 履歴・ログ・成果物                                         ── 同じ RPC ──┘
-   ├ スケジューラー・Nix レーン
-   └ Card worker（bubblewrap で隔離）
+   ├ スケジューラー・Nix 評価器（libnixexpr をプロセス内に組み込み）
+   └ worker プール（実行をまたいで常駐・待機 worker、bubblewrap で隔離）
  project B: tsugumid（同上。A の停止は B に影響しない）
 ```
 
@@ -127,26 +127,35 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
 - **pkgsPath**: `tsugumi:default`（同梱 pin）または `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`。Card の Nix 評価は restricted eval・IFD 禁止・allowed-uris 限定です。
 - **組み込み Card のポート**: trigger `out` / input（`_outputs.fbs` の各メッセージを同名 params から構築、File は選んだプロジェクトファイルを run にコピー）/ fork `in`→params `branches` / branch `value`,`condition`(value:bool)→`a`,`b` / merge 宣言 inputs→`out`（入力ポート名付き union `tsugumi.merge.Merged`）/ logger `in` / subgraph は `boundary`。
 - **隔離**: VM と共有するのは開いているプロジェクトのフォルダと、その 0700 の control フォルダ（server.ready と import grant）だけです（virtiofs、プロジェクトを閉じると共有から外す）。VM 内では tsugumi-vmd がプロジェクトごとに専用の uid・mount/PID/IPC/UTS 名前空間・cgroup で tsugumid を起動し、そのプロジェクトの `/project` と `/control` 以外（他のプロジェクト、共有の全体、store ディスク）は見えません。あるプロジェクトの停止はその cgroup だけを終わらせます。RPC は VM の vsock から Mac の 127.0.0.1 にだけ中継し、token は control ファイルにだけ置いて URL・ログに出しません。virtiofs は全ファイルを見る側の所有として見せるため、`sandbox: false` の Card からは control フォルダと `.tsugumi` を空の tmpfs で隠します（ファイルの mode に頼らない）。Card は bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成、nobody に対応づけた uid）で実行します。bubblewrap が使えない環境では `sandbox: true` の Card を拒否します。
-- **永続化と実行環境の置き場所**: 実行環境のデータは `~/Library/Application Support/Tsugumi/` にあります。`vm/` に VM イメージの展開先（`image/`、アプリ同梱から APFS clone）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（既定で最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）を置き、`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。VM は store ディスクを `/persist` にし、`/nix` は rootfs の store（下層）＋ `/persist`（上層）の overlay で、nix-daemon 1 つを全プロジェクトが使います。各プロジェクトのビルド結果の GC root は `/nix/var/nix/gcroots/tsugumi/projects/<id>` にあり、閉じているプロジェクトのビルドも CacheClear の GC で消えません。設定の「すべての実行環境を初期化」は VM を止めて `vm/` と `environments/` を削除し（以前の版が Apple container に作った環境もあれば削除）、プロジェクトの文書・履歴・成果物やホストの `/nix/store` には触れません。
+- **永続化と実行環境の置き場所**: 実行環境のデータは `~/Library/Application Support/Tsugumi/` にあります。`vm/` に VM イメージの展開先（`image/`、アプリ同梱から APFS clone）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（既定で最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）を置き、`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。VM は store ディスクを `/persist` にし、`/nix` は rootfs の store（下層）＋ `/persist`（上層）の overlay で、nix-daemon 1 つを全プロジェクトが使います。各プロジェクトのビルド結果の GC root は `/nix/var/nix/gcroots/tsugumi/projects/<id>/<Card>--<結果>` にあります（フォルダは vmd が root として作り、親フォルダはプロジェクトから書けないので他のプロジェクトが先取りできない）。結果は使うたびに一時 root（daemon 接続が持つ）→ 恒久 root の順に確保するので、有効性の確認・使用と GC が競合しません。Card ごとに直近 2 つの結果を残し、30 日使われない root と、30 日起動されていないプロジェクトの root フォルダは回収します。プロジェクト設定の「ビルドキャッシュを削除」はそのプロジェクトの root を外すだけで、共有 store の掃除（root のないものの削除、vmd の `gc`）はアプリ設定の「共有 store を掃除」でだけ行います。`keep-outputs = true` なので、root のある Card のビルドに使ったコンパイラや nixpkgs のソースは掃除しても残ります。設定の「すべての実行環境を初期化」は VM を止めて `vm/` と `environments/` を削除し（以前の版が Apple container に作った環境もあれば削除）、プロジェクトの文書・履歴・成果物やホストの `/nix/store` には触れません。
 - **二重起動防止**: VM は `vm/vm.lock` の flock を持つアプリ 1 つだけが起動します（2 つ目のアプリは「別の Tsugumi が実行環境を使っています」で止まる）。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
-- **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（`nix-instantiate`）→ build（`nix-store --realise`）→ 実行（`preRun → run（.so）→ script → postRun`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preRun / postRun は worker を再利用しても invocation ごとに、その作業ディレクトリ・入出力の中で動きます。preRun の環境変数と `cd` は後段に引き継ぎ、postRun は失敗後も後始末として動きます（`TSUGUMI_FAILED=1`、前段の失敗は消さない）。停止・期限切れの後は postRun を含めて何も始めません（旧名 preScript / postScript も受け付けます）。
-- **Card SDK**: `default.nix` で契約から SDK を作り、言語ごとの package に渡します。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。
+- **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（tsugumid に組み込んだ評価器）→ build（daemon。store に結果があれば何もしない）→ 実行（`preRun → run → postRun`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preRun / postRun は worker を再利用しても invocation ごとに、その作業ディレクトリの中で動き、Card の入力は受け取りません（preRun は準備、postRun は成果物と後始末: `TSUGUMI_OUTPUT_DIR`・送った出力ポート `TSUGUMI_OUTPUTS`・`TSUGUMI_FAILED`）。preRun の環境変数と `cd` は後段に引き継ぎ、postRun は失敗後も後始末として動きます（`TSUGUMI_FAILED=1`、前段の失敗は消さない）。停止・期限切れの後は postRun を含めて何も始めません。
+- **Card SDK**: `default.nix` で契約から SDK を作り、Card 本体を `run` に書きます。derivation（package）なら worker がその `lib/main.so` を読み込んでメモリ経由で呼び、文字列なら bash として実行します（どちらか一方）。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。
 
   ```nix
   { pkgs, inputs, params }:
   let
     sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };   # inputs / outputs / params を明示して渡すこともできる
-    package = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
   in
   {
-    inherit package;
-    run = "${package}/lib/main.so";   # worker が読み込む shared object
-    preRun = "mkdir -p scratch";      # 任意。postRun も同様
+    run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };   # package
+    preRun = "mkdir -p scratch";                                  # 任意。postRun も同様
+  }
+  ```
+
+  ```nix
+  { pkgs, inputs, params }: {
+    run = ''
+      jq '{out: {value: (.value + 1)}}' "$JSON_IN" > "$TSUGUMI_OUTPUT"
+    '';                                                           # bash
   }
   ```
 
   ```cpp
   #include <card.hh>
+
+  static std::vector<uint64_t> seen;               // worker は実行をまたいで常駐する
+  auto onRunStart() -> void { seen.clear(); }      // 任意: 各実行の最初の呼び出しの前
 
   auto run(Card::Input& input) -> Card::Output {
     Card::Output out;
@@ -156,9 +165,10 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
   }
   ```
 
-  `Card::Input` は入力ポートごとの member（任意入力は `std::optional`、merge は入力ポート名付き union）、`Card::Output` は出力ポートごとの `std::optional`（設定したものだけ送る）、`Card::params()` が params です（数値・bool は未設定を表せる `flatbuffers::Optional` なので `.value()` / `.value_or(x)` で読む）。File / Directory は `.value` のパスで、出力先は `tsugumi::context().output_directory`。失敗は `throw tsugumi::Failure(kind, message)`、停止の確認は `tsugumi::cancelled()`。生成ヘッダー（`_inputs_generated.h` など）を Card が include する必要はありません。`sdk` を使わない旧形式（`#include <tsugumi/sdk/card.hh>` と `TSUGUMI_CARD`）も当面は動きます。
-- **shell の入力**: ポート `P` ごとに `JSON_P`（JSON ファイルのパス、大きさの制限なし）、`BIN_P`（FlatBuffer のパス）、`INPUT_P`（4 KiB 以下の値だけ: 単一の `value` ならその値、他は JSON 文字列）、File/Directory は `FILE_P`/`DIR_P`。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します。スクリプトはファイル経由で実行するので大きさの制限を受けません。
-- **Nix の上流参照**: `default.nix` は `inputs.upstream."<Card path>"`（`inputs.local.<id>` は同じ階層）で、**どの経路で発火しても必ず先に実行される**コード Card の属性集合（`package`・スクリプト・`exports` の関数や値・store context）を参照できます。同じポートへの複数経路は共通部分、`all` は必須入力の和、`any` は全入力の共通部分、ループは最大不動点で求め、分岐の片側だけの Card や下流・自分自身は渡しません（静的診断 `nix_reference_*`）。参照されたものだけが遅延評価され、非選択分岐は build しません。ビルドの鍵はソース・入力型・Nix 用 params・参照する上流定義で決まり、実行時だけの params は含みません。
+  `Card::Input` は入力ポートごとの member（任意入力は `std::optional`、merge は入力ポート名付き union）、`Card::Output` は出力ポートごとの `std::optional`（設定したものだけ送る）、`Card::params()` が params です（数値・bool は未設定を表せる `flatbuffers::Optional` なので `.value()` / `.value_or(x)` で読む）。File / Directory は `.value` のパスで、出力先は `tsugumi::context().output_directory`。失敗は `throw tsugumi::Failure(kind, message)`、停止の確認は `tsugumi::cancelled()`。Python は `main(ctx)` と任意の `on_run_start(ctx)` です。生成ヘッダー（`_inputs_generated.h` など）を Card が include する必要はありません。
+- **worker**: プロジェクトの worker プールが Card ごとの worker を持ちます。`reuseWorker`（既定 true）の worker は実行をまたいで常駐し（static な状態も残る。各実行の最初に `onRunStart` / `on_run_start`）、ビルド・実行条件の変更、失敗・取消・期限切れ、プロジェクトの停止、10 分の未使用、2 GiB を超えるメモリ、常駐数 32 を超えた古いもので終わります。`reuseWorker = false` の Card には、使うたびに次の新しい worker を先に起動しておきます（sandbox・worker の起動・`lib/main.so` の読み込み・Python の import まで。preRun は呼び出しごと）。worker の起動はプールの長命なスレッドで行います（bubblewrap の `--die-with-parent` は起動したスレッドの終了で worker を止めるため）。`filesystem: false` の Card の `work`・`tmp` と、preRun / bash の run / postRun のファイルは worker ごとの VM 内の一時領域（プロジェクトの共有フォルダではない）にあり、呼び出しの間に空にします。`out` は File / Directory の出力を持つ Card にだけ作り、下流と成果物のために残します。sandbox の中から見えるのは、プロジェクトの `runs`・保存済み入力（読み取り専用、起動時に 1 度だけ bind）と自分の一時領域で、呼び出しの出力フォルダは `SCM_RIGHTS` の FD で渡して `/proc/self/fd/900` として見せ、core が本来のパスに戻して検証します。作業フォルダは FD で渡しません（sandbox の外を指すカレントフォルダには `getcwd` が失敗する）。`filesystem: true` の Card も一時領域で動き、呼び出しの後で `work`・`tmp` を run のフォルダへ写します。入力を FD で渡さないのは、`/proc/self/fd/N` から開き直すと読み取り専用を破れるためです（入力は読み取り専用の mount で守る）。Mac の開発環境（bubblewrap なし）は本来のパスをそのまま使います。
+- **bash の入力**: ポート `P` ごとに `JSON_P`（JSON ファイルのパス、大きさの制限なし。`jq` が使える）、File/Directory は `FILE_P`/`DIR_P`。入力の JSON とその変換器は bash の `run` を動かすときだけ作ります。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します（成果物の `out` とは別なので、成果物のない Card でも動く）。
+- **Nix の上流参照**: `default.nix` は `inputs.upstream."<Card path>"`（`inputs.local.<id>` は同じ階層）で、**どの経路で発火しても必ず先に実行される**コード Card の属性集合（`run`・`preRun`・`exports` の関数や値・store context）を参照できます。同じポートへの複数経路は共通部分、`all` は必須入力の和、`any` は全入力の共通部分、ループは最大不動点で求め、分岐の片側だけの Card や下流・自分自身は渡しません（静的診断 `nix_reference_*`）。参照されたものだけが遅延評価され、非選択分岐は build しません。Nix に渡すのはソース（`_card.json`・`_meta.json` を除く）・入力型・Nix 用 params・参照する上流定義で、実行時だけの params は含みません。Tsugumi 独自のビルドキーやキャッシュの記録はなく、評価した derivation の結果（outPath）が store にあれば build しません。評価器は tsugumid に 1 つで、nixpkgs の読み込み・評価状態・daemon 接続を Card と実行をまたいで使い回します（取消・`buildTimeoutSeconds` は評価器のスレッドだけを止める）。
 - **Card in Card**: 子 Workflow は `boundary.inputs/outputs` で外側のポートを内部 Card のポートに対応づけ、外からは通常の Card として接続・実行できます（Run の対象にでき、単体実行では境界入力に保存済みの値を使う）。状態と履歴は完全な Card path で区別します。見た目だけのグループ（layout.json）とは別物です。
 - **Draft**: `_meta.json` に概要・処理内容・制約・完了条件・入出力の用途を持ち、型なしの仮ポートで配線できます。実行も成功扱いもせず、Draft に依存する Card は理由付きで blocked、独立した部分はそのまま実行します。「Card を生成」は Agent に Draft・配線・説明を渡し、PutDefinition/PutSource の 1 トランザクションで型・Nix・ソースを保存してから検証・実行させます（途中の失敗や取消では何も保存されず、計画は残ります）。
 - **Agent**: `agent/` の独立パッケージ。tool 定義は `tsugumi.bfbs`（FBS の doc comment 付き）から生成し、tool 引数⇄FlatBuffers も同じ BFBS で変換します（64 bit は 10 進文字列）。op_id は tool 呼び出しごとに Agent が付け、会話・tool 証跡と一緒にホスト側へ永続化します。応答を失った変更は OperationGet で照合し、盲目的に再送しません。モデルの API キーは Keychain に保存し core/worker には渡しません。取消はモデル通信と未送信 tool を止め、受理済み run は止めません。
@@ -172,8 +182,9 @@ VM を使うには virtualization の entitlement 付きの署名が必要なの
 | `tests/python/test_scheduler.py`（6） | any の到着順消費・欠落/重複なし、all の 1 値ずつ消費と optional 出力の非発火、maxRuns、Card in Card の単体実行・伝播・同じ内部 ID の path 区別、保存入力なしの明示的失敗、Start→入力 Card と Draft 依存の blocked |
 | `tests/python/test_history.py`（7） | `recordIO × retainArtifact` 全組合せ×CacheClear×再起動、成果物の改ざん検出・パス逸脱、大容量のページング、UTF-8 境界、過去と最新の記録の分離 |
 | `tests/python/test_transport.py`（5） | WebSocket の Origin/subprotocol/token 拒否、fragment・ping 割り込み・連結、Unix の 1 byte ずつ・連結フレーム、実行元切断後も run 継続・別接続から状態取得 |
-| `tests/python/test_cards_container.py`（11） | 実環境（共通 VM。`TSUGUMI_TEST_ENV=container` で以前の Apple container）: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、明示した `run` の .so、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、shell 契約（preRun の cd/環境、300 KB 入力、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
-| `tests/python/test_shared_vm.py`（2） | 共通 VM: 2 プロジェクトが 1 つの Nix store を共有しつつ uid・見えるファイル・プロセス（PID 名前空間）が分かれていること、片方を止めてももう片方の実行が成功し、止めた方も同じ VM で再開できること |
+| `tests/python/test_cards_container.py`（11） | 実環境（共通 VM。`TSUGUMI_TEST_ENV=container` で以前の Apple container）: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、package の `run`、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、bash 契約（preRun の cd/環境、preRun・postRun に入力がないこと、300 KB 入力は JSON ファイルだけで `.bin`・`INPUT_` なし、`jq`、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
+| `tests/python/test_shared_vm.py`（3） | 共通 VM: 2 プロジェクトが 1 つの Nix store を共有しつつ uid・見えるファイル・プロセス（PID 名前空間）が分かれていること、片方を止めてももう片方の実行が成功し、止めた方も同じ VM で再開できること、ビルド結果が開き直し・共有 store の掃除・プロジェクトのコピー（コピー元のデータ削除後も）でビルドし直さずに使えること、GC root のフォルダを他のプロジェクトが作れないこと |
+| `tests/python/test_workers.py`（3） | 共通 VM: 常駐 worker が次の実行でも同じプロセスで動き `onRunStart` で実行が始まること、File 入力の Card が worker を使い回して状態（stream）を保ち、入力に書き込めないこと（出力は FD のフォルダに書け、渡していない FD はないこと）、`reuseWorker = false` が呼び出しごとに新しい worker になること |
 | `tests/python/test_demos.py`（9） | 3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
 | `tests/cpp`（`tsugumi_core_tests`、15） | 型（catalog・構造的互換・merge union）、型の伝播、Nix 上流参照（直線・分岐+any・all と optional・同一ポート複数経路・feedback loop・入れ子・到達不能な循環・診断）、run plan（全体・単体・子 Workflow）、履歴の状態選択と障害注入、送信キュー（順序・seq・遅い peer の隔離） |
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
