@@ -888,6 +888,223 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
   return {*c.hi, *c.after};
 }
 
+// ---------------------------------------------------------------------------
+// The project's copy of finished runs
+
+namespace {
+
+constexpr const char* kCopyFormat = "tsugumi-runs";
+constexpr const char* kCopyVersion = "1";
+
+// Version 1 of the copy. Columns keep the names used here, so runs move
+// between the two with the same column lists (kCopied).
+constexpr const char* kCopySchema = R"SQL(
+CREATE TABLE IF NOT EXISTS ex.meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ex.runs(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL UNIQUE, op_id TEXT NOT NULL,
+  state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
+  accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
+  source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
+  has_artifacts INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS ex.run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS ex.invocations(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
+  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
+  duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
+  input_sources TEXT, display BLOB, build_cached INTEGER, detail TEXT,
+  PRIMARY KEY(run_id, card, invocation));
+CREATE TABLE IF NOT EXISTS ex.schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS ex.ivalues(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
+  port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
+  size INTEGER NOT NULL, bytes BLOB, artifact_id TEXT,
+  PRIMARY KEY(run_id, card, invocation, side, port));
+CREATE TABLE IF NOT EXISTS ex.logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
+  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS ex.logs_run ON logs(run_id, stream, run_off);
+CREATE INDEX IF NOT EXISTS ex.logs_inv ON logs(run_id, card, invocation, stream, inv_off);
+CREATE TABLE IF NOT EXISTS ex.artifacts(
+  artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
+  members TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ex.artifacts_run ON artifacts(run_id, card, invocation);
+CREATE TABLE IF NOT EXISTS ex.displays(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
+  PRIMARY KEY(run_id, card));
+)SQL";
+
+struct Copied {
+  const char* table;
+  const char* cols;
+  const char* order;
+};
+// Parents first: a run is complete in the other database once it commits.
+constexpr Copied kCopied[] = {
+    {"runs", "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
+             "target, propagate, has_artifacts", "seq"},
+    {"run_cards", "run_id, card", "rowid"},
+    {"invocations", "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
+                    "record_io, input_sources, display, build_cached, detail", "rowid"},
+    {"ivalues", "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, artifact_id", "rowid"},
+    {"logs", "run_id, card, invocation, stream, run_off, card_off, inv_off, data", "id"},
+    {"artifacts", "artifact_id, run_id, card, invocation, output, kind, name, members", "rowid"},
+    {"displays", "run_id, card, revision, data", "rowid"},
+};
+
+std::string finished_states() {
+  return std::to_string(static_cast<int>(RunState::succeeded)) + "," +
+         std::to_string(static_cast<int>(RunState::failed)) + "," +
+         std::to_string(static_cast<int>(RunState::cancelled));
+}
+
+// This database with the copy attached as `ex` (created when missing). A
+// copy written by a newer version is never changed.
+std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const std::filesystem::path& copy) {
+  std::error_code ec;
+  if (!std::filesystem::exists(copy, ec)) {
+    // Made complete under another name first: readers never see it half made.
+    auto fresh = copy.string() + ".new";
+    std::filesystem::remove(fresh, ec);
+    {
+      sql::Db f(":memory:");
+      f.prepare("ATTACH DATABASE ? AS ex").bind(1, fresh).run();
+      f.exec("PRAGMA ex.journal_mode=DELETE");
+      f.exec(kCopySchema);
+      f.prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
+          .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
+    }
+    std::filesystem::rename(fresh, copy);
+  }
+  auto db = std::make_unique<sql::Db>(db_path.string());
+  db->prepare("ATTACH DATABASE ? AS ex").bind(1, copy.string()).run();
+  {
+    auto st = db->prepare("SELECT 1 FROM ex.sqlite_master WHERE type='table' AND name='meta'");
+    if (st.step()) {
+      auto v = db->prepare("SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
+      std::map<std::string, std::string> meta;
+      while (v.step()) meta[v.text(0)] = v.text(1);
+      if (meta["format"] != kCopyFormat || meta["version"] != kCopyVersion)
+        throw std::runtime_error(copy.string() + " is format " + meta["format"] + " version " + meta["version"] +
+                                 ", not " + kCopyFormat + " " + kCopyVersion);
+    }
+  }
+  // A plain rollback journal: the copy lives on the project share, where
+  // other programs (and the Mac) may read it.
+  db->exec("PRAGMA ex.journal_mode=DELETE");
+  db->exec("PRAGMA ex.synchronous=FULL");
+  db->exec(kCopySchema);
+  db->prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
+      .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
+  return db;
+}
+
+// BEGIN (deferred: reading one side never blocks the other's writers) / COMMIT.
+class Txn {
+ public:
+  explicit Txn(sql::Db& db) : db_(db) { db_.exec("BEGIN"); }
+  ~Txn() {
+    if (!done_) {
+      try {
+        db_.exec("ROLLBACK");
+      } catch (...) {
+      }
+    }
+  }
+  void commit() {
+    db_.exec("COMMIT");
+    done_ = true;
+  }
+
+ private:
+  sql::Db& db_;
+  bool done_ = false;
+};
+
+// Copies the finished runs `from` has and `to` lacks; inside a transaction.
+size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
+  db.exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
+  db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from + ".runs WHERE state IN (" + finished_states() +
+          ") AND run_id NOT IN (SELECT run_id FROM " + to + ".runs) ORDER BY seq");
+  size_t n = static_cast<size_t>(db.changes());
+  if (n == 0) return 0;
+  for (const auto& c : kCopied)
+    db.exec(std::string("INSERT OR IGNORE INTO ") + to + "." + c.table + "(" + c.cols + ") SELECT " + c.cols +
+            " FROM " + from + "." + c.table + " WHERE run_id IN (SELECT run_id FROM temp.moving) ORDER BY " + c.order);
+  db.exec("INSERT OR IGNORE INTO " + to + ".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM " + from +
+          ".schemas WHERE hash IN (SELECT schema_hash FROM " + from +
+          ".ivalues WHERE run_id IN (SELECT run_id FROM temp.moving))");
+  return n;
+}
+
+}  // namespace
+
+size_t History::import_runs(const std::filesystem::path& copy) {
+  std::lock_guard<std::mutex> l(copy_mu_);
+  std::error_code ec;
+  if (!std::filesystem::exists(copy, ec)) return 0;
+  auto db = with_copy(path_, copy);
+  Txn t(*db);
+  size_t n = copy_runs(*db, "ex", "main");
+  t.commit();
+  return n;
+}
+
+size_t History::export_runs(const std::filesystem::path& copy) {
+  std::lock_guard<std::mutex> l(copy_mu_);
+  auto db = with_copy(path_, copy);
+  Txn t(*db);
+  size_t n = copy_runs(*db, "main", "ex");
+  t.commit();
+  return n;
+}
+
+std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before) {
+  std::lock_guard<std::mutex> l(copy_mu_);
+  std::error_code ec;
+  bool has_copy = std::filesystem::exists(copy, ec);
+  auto db = has_copy ? with_copy(path_, copy) : std::make_unique<sql::Db>(path_.string());
+  std::vector<std::string> schemas = {"main"};
+  if (has_copy) schemas.push_back("ex");
+  std::vector<std::string> ids;
+  {
+    Txn t(*db);
+    db->exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
+    for (const auto& s : schemas) {
+      auto st = db->prepare("INSERT OR IGNORE INTO temp.moving SELECT run_id FROM " + s + ".runs WHERE state IN (" +
+                            finished_states() + ") AND (?1 IS NULL OR ended_at < ?1)");
+      st.bind(1, ended_before).run();
+    }
+    auto st = db->prepare("SELECT run_id FROM temp.moving");
+    while (st.step()) ids.push_back(st.text(0));
+    for (const auto& s : schemas) {
+      for (const auto& c : kCopied)
+        db->exec("DELETE FROM " + s + "." + c.table + " WHERE run_id IN (SELECT run_id FROM temp.moving)");
+      if (s == "main") db->exec("DELETE FROM main.statuses WHERE run_id IN (SELECT run_id FROM temp.moving)");
+    }
+    // Saved inputs here may still name types, so only the copy drops unused ones.
+    if (has_copy) db->exec("DELETE FROM ex.schemas WHERE hash NOT IN (SELECT schema_hash FROM ex.ivalues)");
+    t.commit();
+  }
+  if (!ids.empty()) {
+    // The space goes back to the disk; a failure here loses nothing.
+    for (const auto& s : schemas) {
+      try {
+        db->exec("VACUUM " + s);
+      } catch (const std::exception& e) {
+        log::warn("history: VACUUM " + s + " failed: " + e.what());
+      }
+    }
+    try {
+      db->exec("PRAGMA main.wal_checkpoint(TRUNCATE)");
+    } catch (const std::exception&) {
+    }
+  }
+  return ids;
+}
+
 std::string History::schema_blob(sql::Db& db, const std::string& hash) {
   auto st = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
   st.bind(1, hash);

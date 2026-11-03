@@ -108,7 +108,7 @@ def main() -> None:
             "first_state": st.state, "env_ready_s": round(t_ready, 2), "open_s": round(t_open, 3),
             "first_run_s": round(first_run, 1), "cached_start_to_operable_s": round(cached_start, 2),
             "cached_run_s": round(cached_run, 2), "store_union_bytes": image_root, "store_persisted_bytes": store_after,
-            "history_bytes": (dst / ".tsugumi" / "history.sqlite").stat().st_size,
+            "history_bytes": history_bytes(dst),
             "runs_dir_bytes": sum(f.stat().st_size for f in (dst / ".tsugumi" / "runs").rglob("*") if f.is_file()),
         }
         if demo == "live-stream":
@@ -117,6 +117,11 @@ def main() -> None:
         env.cleanup()
     report["demos"] = results
     print(json.dumps(report, indent=2))
+
+
+def history_bytes(root) -> int:
+    """Run history in the project: the database itself (outside the VM) or its copy of finished runs."""
+    return sum(f.stat().st_size for f in (root / ".tsugumi").glob("*.sqlite"))
 
 
 def live_metrics(env: ContainerEnv, c) -> dict:
@@ -141,7 +146,7 @@ def live_metrics(env: ContainerEnv, c) -> dict:
     out["cancel_to_cancelled_s"] = round(time.time() - t, 2)
     # Ten complete runs: memory, workers and storage must not accumulate.
     rss0, store0 = rss_kib(env), du(env, "/persist/nix/upper")
-    hist0 = (env.project / ".tsugumi" / "history.sqlite").stat().st_size
+    hist0 = history_bytes(env.project)
     for _ in range(10):
         wait_run(c, run(c, ["begin"]), timeout=600)
     time.sleep(1)
@@ -149,7 +154,7 @@ def live_metrics(env: ContainerEnv, c) -> dict:
         "rss_kib_before": rss0, "rss_kib_after": rss_kib(env),
         "workers_after": workers(env),
         "store_growth_bytes": du(env, "/persist/nix/upper") - store0,
-        "history_growth_bytes": (env.project / ".tsugumi" / "history.sqlite").stat().st_size - hist0,
+        "history_growth_bytes": history_bytes(env.project) - hist0,
     }
     other.close()
     return out

@@ -90,6 +90,8 @@ struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
   Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
+  // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
+  Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
 };
 

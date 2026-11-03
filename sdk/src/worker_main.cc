@@ -60,7 +60,6 @@ constexpr int kControl = 4;
 std::mutex g_write_mu;
 std::atomic<bool> g_cancel{false};
 std::atomic<pid_t> g_child{0};
-uint64_t g_step = 0;
 
 bool read_full(int fd, void* p, size_t n) {
   auto* c = static_cast<char*>(p);

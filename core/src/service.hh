@@ -4,6 +4,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -11,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "history.hh"
 #include "lanes.hh"
@@ -41,6 +44,10 @@ struct ServiceOptions {
   // Local folder for the workers' own work/tmp/scripts folders (never the
   // project share). Empty: <system temp>/tsugumi-<project id>.
   std::filesystem::path scratch_dir;
+  // Folder of the run history database (history.sqlite). Empty: the
+  // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
+  // runs are then also kept in the project (.tsugumi/runs.sqlite).
+  std::filesystem::path history_dir;
   Limits limits;
 };
 
@@ -67,6 +74,8 @@ class Service : public RequestSink {
   const ServiceOptions& options() const { return opts_; }
   NixRunner& nix() { return *nix_; }
   WorkerPool& workers() { return *workers_; }
+  // A run finished: its record goes to the project's copy soon.
+  void schedule_export();
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -80,6 +89,7 @@ class Service : public RequestSink {
   void reload(RequestIn& req);
   void import_definitions(RequestIn& req);
   void cache_clear(RequestIn& req);
+  void history_delete(RequestIn& req);
   void run(RequestIn& req);
   void sdk_prepare(RequestIn& req);
   // Read pool handlers.
@@ -152,6 +162,17 @@ class Service : public RequestSink {
 
   std::mutex view_mu_;
   std::string cursor_secret_;
+
+  // The project's copy of finished runs (.tsugumi/runs.sqlite), written
+  // shortly after runs end when the project keeps its run history.
+  std::filesystem::path runs_copy() const { return store_->state_dir() / "runs.sqlite"; }
+  void export_loop();
+  void export_now();
+  std::mutex export_mu_;
+  std::condition_variable export_cv_;
+  std::optional<std::chrono::steady_clock::time_point> export_first_, export_last_;
+  bool export_stop_ = false;
+  std::thread exporter_;
 };
 
 // Canonical request digests (all arguments except request_id, defaults expanded).

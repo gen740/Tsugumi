@@ -13,6 +13,7 @@ import pytest
 from conftest import SharedVM, VMEnv
 from projects import card
 from test_cards_container import bash, make, run, log
+from test_run_history import copy_runs, wait_copy
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -152,3 +153,32 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
         p.stop()
         if copy:
             copy.stop()
+
+
+def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
+    root = tmp_path / "hist"
+    env = project(root, 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "hist")
+    try:
+        def listed():
+            return [text(r.status.runId) for r in env.client().call("RunHistoryRequest", limit=100).runs]
+
+        rid, st = run(env.client(), "begin")
+        assert st.state == RunState.succeeded
+        # The database is on the VM's disk, seen by the project only as /history.
+        assert "history.sqlite" in env.exec("ls /history")
+        assert not (root / ".tsugumi" / "history.sqlite").exists()
+        assert wait_copy(root, 1) == [rid]
+        assert env.id in env.vm.command("vm histories")[-1]
+        # It stays across restarts.
+        env.stop()
+        env.start()
+        assert listed() == [rid]
+        # Data deletion removes it; the project's copy brings the runs back.
+        env.stop()
+        assert env.vm.command(f"delete {root}")[-1] == "deleted"
+        assert env.id not in env.vm.command("vm histories")[-1]
+        env.start()
+        assert listed() == [rid]
+        assert copy_runs(root) == [rid]
+    finally:
+        env.stop()

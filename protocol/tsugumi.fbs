@@ -175,6 +175,11 @@ table CacheClearResult {
   freed_bytes:uint64 = null (id: 2);
 }
 
+table HistoryDeleteResult {
+  deleted_runs:uint64 = null (id: 0);
+  freed_bytes:uint64 = null (id: 1);
+}
+
 table SDKFile {
   path:string (id: 0, required);
   hash:string (id: 1, required);
@@ -201,6 +206,7 @@ union ReceiptValue {
   CacheClearResult = 4,
   SDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
+  HistoryDeleteResult = 7,
 }
 
 table OperationReceipt {
@@ -261,6 +267,14 @@ table ProjectImportRequest {
 
 /// -> CacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
+
+/// -> HistoryDeleteResult. Deletes finished runs (all, or those that ended
+/// before ended_before, Unix ms) with their records, values, logs and files,
+/// here and in the project's copy. Only while no run is active.
+table RunHistoryDeleteRequest {
+  op_id:string (id: 0, required);
+  ended_before:int64 = null (id: 1);
+}
 
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); }
@@ -441,6 +455,7 @@ union RequestPayload {
   LogRangeRequest = 27,
   ViewSetVisibleRequest = 28,
   ViewSaveRequest = 29,
+  RunHistoryDeleteRequest = 30,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -660,6 +675,7 @@ union ReplyPayload {
   LogSlice = 22,
   ViewSaveResult = 23,
   Failure: Tsugumi.Data.Failure = 24,
+  HistoryDeleteResult = 25,
 }
 
 // ---- Notifications -----------------------------------------------------------

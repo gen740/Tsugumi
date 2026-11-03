@@ -232,6 +232,15 @@ public extension RPCClient {
     return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
   }
 
+  /// Deletes finished runs (all, or those that ended before the date) with
+  /// their files, in the VM and in the project's copy.
+  func deleteHistory(opId: UUID, endedBefore: Date?) async throws -> Tsugumi_RPC_HistoryDeleteResultT {
+    let r = Tsugumi_RPC_RunHistoryDeleteRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.endedBefore = endedBefore.map { Int64($0.timeIntervalSince1970 * 1000) }
+    return try await call(.runhistorydeleterequest, r, timeout: .seconds(300))
+  }
+
   func format(path: String, text: String) async throws -> Tsugumi_RPC_FormatResultT {
     let r = Tsugumi_RPC_ProjectFileFormatRequestT()
     r.path = path

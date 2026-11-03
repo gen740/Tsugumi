@@ -27,6 +27,28 @@ namespace stdfs = std::filesystem;
 
 constexpr uint32_t kProtocol = 1;
 
+namespace {
+
+// The run history database left the project (for the VM's disk): the first
+// start takes it along as one consistent copy and removes it from the project.
+void move_history(const stdfs::path& old_db, const stdfs::path& db) {
+  std::error_code ec;
+  if (!stdfs::exists(old_db, ec)) return;
+  if (!stdfs::exists(db, ec)) {
+    auto tmp = db.string() + ".moving";
+    stdfs::remove(tmp, ec);
+    {
+      sql::Db src(old_db.string());  // a WAL left behind is recovered first
+      src.prepare("VACUUM INTO ?").bind(1, tmp).run();
+    }
+    stdfs::rename(tmp, db);
+    log::info("history: moved " + old_db.string() + " to " + db.string());
+  }
+  for (const char* ext : {"", "-wal", "-shm"}) stdfs::remove(old_db.string() + ext, ec);
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Request digests
 
@@ -171,7 +193,18 @@ Service::~Service() { shutdown(); }
 void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
-  history_ = std::make_unique<History>(store_->state_dir() / "history.sqlite", cursor_secret_, opts_.fault);
+  auto history_db = (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) / "history.sqlite";
+  if (!opts_.history_dir.empty()) {
+    stdfs::create_directories(opts_.history_dir);
+    move_history(store_->state_dir() / "history.sqlite", history_db);
+  }
+  history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
+  // Runs kept in the project and missing here (a copied or moved project).
+  try {
+    if (auto n = history_->import_runs(runs_copy())) log::info("history: " + std::to_string(n) + " runs from .tsugumi/runs.sqlite");
+  } catch (const std::exception& e) {
+    log::error(std::string("history: cannot read .tsugumi/runs.sqlite: ") + e.what());
+  }
   // Local folders (never the project share): the evaluator's inputs by
   // content and the workers' own folders.
   auto scratch = opts_.scratch_dir.empty() ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
@@ -181,18 +214,71 @@ void Service::open() {
   workers_ = std::make_unique<WorkerPool>(scratch / "workers");
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
+  exporter_ = std::thread([this] { export_loop(); });
+  schedule_export();  // runs that ended before (and interrupted ones)
 }
 
 void Service::shutdown() {
   if (scheduler_) scheduler_->shutdown();
   workers_.reset();  // the project's resident and standby workers end
+  if (exporter_.joinable()) {
+    {
+      std::lock_guard<std::mutex> l(export_mu_);
+      export_stop_ = true;
+    }
+    export_cv_.notify_all();
+    exporter_.join();
+    // What the last runs (and interrupted ones) recorded goes to the project.
+    history_->flush();
+    export_now();
+  }
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
 }
 
+void Service::schedule_export() {
+  {
+    std::lock_guard<std::mutex> l(export_mu_);
+    auto now = std::chrono::steady_clock::now();
+    if (!export_first_) export_first_ = now;
+    export_last_ = now;
+  }
+  export_cv_.notify_all();
+}
+
+// Once writes have paused for 2 s, or 30 s after the first request at the latest.
+void Service::export_loop() {
+  std::unique_lock<std::mutex> l(export_mu_);
+  while (!export_stop_) {
+    if (!export_last_) {
+      export_cv_.wait(l);
+      continue;
+    }
+    auto due = std::min(*export_first_ + std::chrono::seconds(30), *export_last_ + std::chrono::seconds(2));
+    if (std::chrono::steady_clock::now() < due) {
+      export_cv_.wait_until(l, due);
+      continue;
+    }
+    export_first_.reset();
+    export_last_.reset();
+    l.unlock();
+    export_now();
+    l.lock();
+  }
+}
+
+void Service::export_now() {
+  if (!store_->current()->save_run_history()) return;
+  try {
+    if (auto n = history_->export_runs(runs_copy())) log::info("history: " + std::to_string(n) + " runs to .tsugumi/runs.sqlite");
+  } catch (const std::exception& e) {
+    log::error(std::string("history: cannot write .tsugumi/runs.sqlite: ") + e.what());
+  }
+}
+
 std::vector<std::string> Service::capabilities() {
   return {"SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
-          "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "OperationGet",
+          "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
           "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat",
           "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
           "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
@@ -266,6 +352,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectReloadRequest: return on_lane(m, std::move(req), &Service::reload);
     case P::ProjectImportRequest: return on_lane(m, std::move(req), &Service::import_definitions);
     case P::ProjectCacheClearRequest: return on_lane(m, std::move(req), &Service::cache_clear);
+    case P::RunHistoryDeleteRequest: return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest: return on_lane(m, std::move(req), &Service::run);
     case P::CardSDKPrepareRequest: return on_lane(m, std::move(req), &Service::sdk_prepare);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
@@ -309,6 +396,7 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
     case R::ReceiptValue::RunAccepted: type = R::ReplyPayload::RunAccepted; tname = "Tsugumi.RPC.RunAccepted"; break;
     case R::ReceiptValue::CacheClearResult: type = R::ReplyPayload::CacheClearResult; tname = "Tsugumi.RPC.CacheClearResult"; break;
     case R::ReceiptValue::SDKPrepareResult: type = R::ReplyPayload::SDKPrepareResult; tname = "Tsugumi.RPC.SDKPrepareResult"; break;
+    case R::ReceiptValue::HistoryDeleteResult: type = R::ReplyPayload::HistoryDeleteResult; tname = "Tsugumi.RPC.HistoryDeleteResult"; break;
     default: type = R::ReplyPayload::Failure; tname = "Tsugumi.Data.Failure"; break;
   }
   value = wire::copy_table(b, tname, reinterpret_cast<const flatbuffers::Table*>(rc->result()));
@@ -598,6 +686,8 @@ std::string finish_receipt(FBB& b, const std::string& op_id, R::ReceiptValue typ
 }  // namespace
 
 void Service::publish_delta(const Delta& delta) {
+  // Keeping the run history switched on: the project's copy catches up.
+  if (delta.project_changed && exporter_.joinable()) schedule_export();
   auto shared = std::make_shared<Delta>(delta);
   Note n;
   n.kind = Note::Kind::Doc;
@@ -891,6 +981,52 @@ void Service::cache_clear(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "cache_clear", digest, f.failure);
     throw;
+  }
+}
+
+void Service::history_delete(RequestIn& req) {
+  const auto* r = req.request()->value_as_RunHistoryDeleteRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "history_delete", digest)) return;
+  try {
+    // A later run may read files of earlier ones (saved inputs, upstream outputs).
+    if (scheduler_->active_status())
+      throw Failed(FailureKind::busy, "run history can only be deleted while no run is active");
+    auto sizes = [&] {
+      uint64_t n = 0;
+      std::error_code ec;
+      for (const auto& f : {history_->path(), stdfs::path(history_->path().string() + "-wal"), runs_copy()})
+        if (stdfs::is_regular_file(f, ec)) n += stdfs::file_size(f, ec);
+      return n;
+    };
+    uint64_t before = sizes(), files = 0;
+    auto ids = history_->delete_runs(runs_copy(), r->ended_before());
+    // The runs' own files: outputs, copied work folders.
+    for (const auto& id : ids) {
+      auto dir = store_->state_dir() / "runs" / id;
+      std::error_code ec;
+      if (!stdfs::is_directory(dir, ec)) continue;
+      for (auto it = stdfs::recursive_directory_iterator(dir, ec); !ec && it != stdfs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file(ec)) files += it->file_size(ec);
+      stdfs::remove_all(dir, ec);
+      if (ec) log::warn("history: cannot remove " + dir.string() + ": " + ec.message());
+    }
+    uint64_t after = sizes();
+    FBB b;
+    auto dr = R::CreateHistoryDeleteResult(b, ids.size(), (before > after ? before - after : 0) + files);
+    std::string receipt = finish_receipt(b, op_id, R::ReceiptValue::HistoryDeleteResult, dr.Union());
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "history_delete", digest, receipt); });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+    log::info("history: deleted " + std::to_string(ids.size()) + " runs");
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "history_delete", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::persistence_failed, std::string("deleting run history failed: ") + e.what());
+    store_failure_receipt(op_id, "history_delete", digest, f);
+    throw Failed(f);
   }
 }
 

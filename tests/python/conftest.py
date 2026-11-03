@@ -33,8 +33,9 @@ def write_project(root: Path, project: dict | None = None, layout: dict | None =
 
 
 class Daemon:
-    def __init__(self, project: Path, env: dict | None = None, listen: bool = False):
+    def __init__(self, project: Path, env: dict | None = None, listen: bool = False, args: list | None = None):
         self.project = project
+        self.args = list(args or [])
         # Unix socket paths are short-limited; keep them under /tmp-like dirs.
         self.sock_dir = Path(tempfile.mkdtemp(prefix="tsg-"))
         self.unix = str(self.sock_dir / "s")
@@ -50,6 +51,7 @@ class Daemon:
                 "--sdk-dir", str(ROOT / "sdk"), "--allow-missing-origin"]
         if self.listen:
             args += ["--listen", "127.0.0.1:0"]
+        args += self.args
         env = dict(os.environ)
         env.update(self.env)
         ready = self.control / "server.ready"

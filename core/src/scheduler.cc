@@ -1609,6 +1609,7 @@ std::optional<Note> Scheduler::latest_display_note(const std::string& card_key) 
 }
 
 void Scheduler::finished(RunExec* exec) {
+  svc_.schedule_export();
   std::shared_ptr<RunExec> done;
   {
     std::lock_guard<std::mutex> l(mu_);

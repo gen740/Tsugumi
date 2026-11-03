@@ -12,6 +12,9 @@
 //                  other projects are not); a private /tmp
 //   cgroup         /sys/fs/cgroup/tsugumi/<id>: stopping a project ends
 //                  exactly its processes and never another project's
+//   run history    its database on the store disk (/persist/tsugumi/history/<id>,
+//                  seen by the project as /history); the project keeps a copy
+//                  of finished runs in .tsugumi/runs.sqlite
 //   Nix            the shared store through the one nix-daemon; build roots
 //                  under /nix/var/nix/gcroots/tsugumi/projects/<id>, a folder
 //                  only vmd creates (the parent is not writable by projects);
@@ -24,7 +27,9 @@
 //           start <id> <cpus> <name> <slot> -> ok <rpc port>
 //           stop <id>                       -> ok
 //           forget <id>                     -> ok (stopped project's build
-//                                              roots go; data deletion)
+//                                              roots and run history go;
+//                                              data deletion)
+//           histories                       -> ok <id>:<bytes>:<last start ms>:<0|1 running> ...
 //           gc                              -> ok <bytes freed> <paths deleted>
 //                                              (the shared store's cleanup:
 //                                              what no root keeps)
@@ -73,6 +78,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -240,14 +246,18 @@ std::vector<std::string> project_env(const std::string& id) {
           "TSUGUMI_PROJECT_ID=" + id};
 }
 
+std::string history_dir(const std::string& id) { return opt.state + "/history/" + id; }
+
 // Mount namespace of one project: its folder and control folder at /project
-// and /control, nothing of the share, the store disk or other projects.
-void enter_project_view(int slot) {
+// and /control, its run history at /history, nothing of the share, the store
+// disk or other projects.
+void enter_project_view(int slot, const std::string& id) {
   if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) die("make / private");
   std::string dir = opt.host + "/" + std::to_string(slot);
-  std::string p = dir + "/project", c = dir + "/control";
+  std::string p = dir + "/project", c = dir + "/control", h = history_dir(id);
   if (::mount(p.c_str(), "/project", nullptr, MS_BIND, nullptr) != 0) die("bind /project");
   if (::mount(c.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0) die("bind /control");
+  if (::mount(h.c_str(), "/history", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /history");
   // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
   if (::umount2(fs::path(opt.host).parent_path().c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
@@ -323,7 +333,7 @@ int project_main(void* arg) {
   ::close(a->sync_fd);
   ::dup2(a->log_fd, 1);
   ::dup2(a->log_fd, 2);
-  enter_project_view(a->slot);
+  enter_project_view(a->slot, a->id);
   // A fresh /proc for this PID namespace.
   if (::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr) != 0) die("mount /proc");
   ::sethostname(a->name.c_str(), a->name.size());
@@ -333,7 +343,7 @@ int project_main(void* arg) {
   std::vector<std::string> argv = {opt.tini, "-g", "--", opt.tsugumid, "--project", "/project",
                                    "--listen", "127.0.0.1:" + std::to_string(a->port), "--control-dir", "/control",
                                    "--cpus", std::to_string(a->cpus), "--allow-missing-origin",
-                                   "--gcroots-dir", roots};
+                                   "--gcroots-dir", roots, "--history-dir", "/history"};
   std::vector<std::string> env = project_env(a->id);
   auto av = cstrings(argv), ev = cstrings(env);
   ::chdir("/project");
@@ -393,6 +403,20 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   ::lchown(roots.c_str(), pr.uid, pr.uid);
   ::chmod(roots.c_str(), 0755);
   ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last start: for the 30-day cleanup
+  // Run history on the store disk, readable by this project only; kept
+  // until the project's data is deleted (never by age).
+  std::string hist_parent = opt.state + "/history", hist = history_dir(id);
+  ::mkdir(hist_parent.c_str(), 0700);
+  ::chown(hist_parent.c_str(), 0, 0);
+  ::chmod(hist_parent.c_str(), 0700);
+  if (::lstat(hist.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
+    std::error_code ec;
+    fs::remove(hist, ec);
+  }
+  ::mkdir(hist.c_str(), 0700);
+  if (::lstat(hist.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the run history folder";
+  ::lchown(hist.c_str(), pr.uid, pr.uid);
+  ::chmod(hist.c_str(), 0700);
   std::string cg = cgroup_dir(id);
   fs::create_directories(cg);
   std::string log_path = c + "/tsugumid.log";
@@ -458,6 +482,9 @@ std::string forget_project(const std::string& id) {
   if (r != "ok") return r;
   std::error_code ec;
   fs::remove_all(kRoots + "/" + id, ec);
+  std::error_code hec;
+  fs::remove_all(history_dir(id), hec);
+  if (!ec) ec = hec;
   ::rmdir(cgroup_dir(id).c_str());
   std::lock_guard<std::mutex> l(mu);
   projects.erase(id);
@@ -469,6 +496,31 @@ std::string status() {
   std::string out = "ok";
   for (const auto& [id, p] : projects)
     if (p.running) out += " " + id + ":" + std::to_string(p.pid) + ":" + std::to_string(p.port);
+  return out;
+}
+
+// Run history kept per project: size and last start (of the build roots folder).
+std::string histories() {
+  std::set<std::string> running;
+  {
+    std::lock_guard<std::mutex> l(mu);
+    for (const auto& [id, p] : projects)
+      if (p.running) running.insert(id);
+  }
+  std::string out = "ok";
+  std::error_code ec;
+  for (const auto& e : fs::directory_iterator(opt.state + "/history", ec)) {
+    std::string id = e.path().filename().string();
+    if (!valid_id(id) || !e.is_directory(ec)) continue;
+    uintmax_t bytes = 0;
+    for (const auto& f : fs::directory_iterator(e.path(), ec))
+      if (f.is_regular_file(ec)) bytes += f.file_size(ec);
+    struct stat st {};
+    long long ms = 0;
+    if (::stat((kRoots + "/" + id).c_str(), &st) == 0 || ::stat(e.path().c_str(), &st) == 0)
+      ms = static_cast<long long>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
+    out += " " + id + ":" + std::to_string(bytes) + ":" + std::to_string(ms) + ":" + (running.count(id) ? "1" : "0");
+  }
   return out;
 }
 
@@ -647,6 +699,7 @@ void control(int conn) {
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
   else if (w[0] == "gc" && w.size() == 1) r = collect_garbage();
+  else if (w[0] == "histories" && w.size() == 1) r = histories();
   else if (w[0] == "shell" && w.size() == 4 && valid_id(w[1])) {
     shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
     ::close(conn);

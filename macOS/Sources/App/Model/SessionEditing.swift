@@ -578,6 +578,11 @@ extension ProjectSession {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.clearCache(opId: UUID())
   }
+
+  func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_HistoryDeleteResultT {
+    guard let rpc else { throw RPCError.disconnected }
+    return try await rpc.deleteHistory(opId: UUID(), endedBefore: endedBefore)
+  }
 }
 
 /// Definition ids readable from another project folder (for Import).

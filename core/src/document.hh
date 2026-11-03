@@ -68,6 +68,7 @@ struct Document {
   const std::vector<schema::DatabaseConnection>& database_connections() const {
     return project.database_connections->value();
   }
+  bool save_run_history() const { return project.save_run_history->value_or(true); }
 };
 using DocumentPtr = std::shared_ptr<const Document>;
 

@@ -151,7 +151,7 @@ let
 in
 runCommand "tsugumi-vm-${tsugumid.version}" { nativeBuildInputs = [ erofs-utils ]; } ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,var/empty,bin,mnt}
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,history,var/empty,bin,mnt}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

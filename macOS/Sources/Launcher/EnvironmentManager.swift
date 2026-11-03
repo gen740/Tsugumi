@@ -182,9 +182,6 @@ public actor EnvironmentManager {
     set(p.id, .stopped)
   }
 
-  /// Deletes the project's environment data: its control folder and its
-  /// build roots in the shared store (the builds become garbage). Documents,
-  /// history and artifacts in the project folder stay.
   /// The shared store's cleanup (an app setting): what no project's GC root
   /// keeps. Starts the VM when it is not running.
   public func cleanupStore() async throws -> (bytes: UInt64, paths: Int) {
@@ -197,6 +194,44 @@ public actor EnvironmentManager {
     return (UInt64(parts.first ?? "") ?? 0, Int(parts.dropFirst().first ?? "") ?? 0)
   }
 
+  /// Run history kept in the VM, per project id.
+  public struct VMHistory: Sendable, Identifiable, Hashable {
+    public let id: String
+    public let bytes: UInt64
+    public let lastStart: Date?
+    public let running: Bool
+  }
+
+  /// Lists the run histories in the VM. Starts the VM when it is not running.
+  public func vmHistories() async throws -> [VMHistory] {
+    if case .running = vm.state {} else {
+      guard let image else { throw LauncherError.imageMissing }
+      try await vm.start(image: image, resources: resources)
+    }
+    let reply = try await vm.request("histories")
+    return reply.split(separator: " ").compactMap { item in
+      let f = item.split(separator: ":")
+      guard f.count == 4, let bytes = UInt64(f[1]), let ms = Int64(f[2]) else { return nil }
+      return VMHistory(id: String(f[0]), bytes: bytes, lastStart: ms > 0 ? Date(timeIntervalSince1970: Double(ms) / 1000) : nil,
+                       running: f[3] == "1")
+    }
+  }
+
+  /// Deletes a stopped project's data in the VM by id (its run history and
+  /// build roots), also for a project whose folder is gone.
+  public func deleteVMData(id: String) async throws {
+    guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
+    let status = try await vm.request("status")
+    if status.split(separator: " ").contains(where: { $0.hasPrefix("\(id):") }) {
+      throw LauncherError.notReady("the project is running; close it first")
+    }
+    _ = try await vm.request("forget \(id)")
+  }
+
+  /// Deletes the project's environment data: its control folder, its build
+  /// roots in the shared store (the builds become garbage) and its run
+  /// history in the VM. Documents, artifacts and the run history copy in the
+  /// project folder (.tsugumi/runs.sqlite) stay.
   public func deleteData(_ p: ProjectIdentity) async throws {
     try await stop(p)
     if case .running = vm.state { try await vm.request("forget \(p.id)") }

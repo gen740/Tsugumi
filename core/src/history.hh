@@ -151,12 +151,26 @@ class History {
   std::string schema_blob(sql::Db& db, const std::string& hash);
   const std::filesystem::path& path() const { return path_; }
 
+  // --- the project's copy of finished runs (.tsugumi/runs.sqlite) ---
+  // Its tables are a fixed contract, read by others: runs, run_cards,
+  // invocations, ivalues (FlatBuffers bytes, typed by `schemas`: bfbs by
+  // hash), logs, artifacts and displays, plus meta(format, version). Runs
+  // are matched by run id; only finished runs are copied, each once.
+  // Adds the copy's runs missing here; returns how many.
+  size_t import_runs(const std::filesystem::path& copy);
+  // Adds the runs missing in the copy (creating it); returns how many.
+  size_t export_runs(const std::filesystem::path& copy);
+  // Deletes finished runs (all, or those that ended before `ended_before`)
+  // here and in the copy when it exists; returns their run ids.
+  std::vector<std::string> delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before);
+
  private:
   void writer_loop();
   void init_schema(sql::Db& db);
   sql::Db& reader();
 
   std::filesystem::path path_;
+  std::mutex copy_mu_;  // one import, export or deletion at a time
   std::string secret_;
   std::string fault_;
   std::unique_ptr<sql::Db> writer_db_;

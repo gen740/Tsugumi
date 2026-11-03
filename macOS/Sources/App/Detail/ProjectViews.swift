@@ -310,18 +310,19 @@ struct CardDatabaseView: View {
 
 // MARK: - Workflow settings
 
-/// Project settings shared in the project: general, database connections, build cache.
+/// Project settings shared in the project: general, database connections, run history, build cache.
 struct WorkflowSettingsView: View {
   let session: ProjectSession
   @State private var tab = Tab.general
 
   enum Tab: String, CaseIterable, Identifiable {
-    case general, databases, cache
+    case general, databases, history, cache
     var id: String { rawValue }
     var title: String {
       switch self {
       case .general: return String(localized: "一般")
       case .databases: return String(localized: "データベース接続先")
+      case .history: return String(localized: "実行履歴")
       case .cache: return String(localized: "ビルドキャッシュ")
       }
     }
@@ -335,6 +336,7 @@ struct WorkflowSettingsView: View {
       switch tab {
       case .general: GeneralProjectSettings(session: session)
       case .databases: DatabaseSettings(session: session)
+      case .history: RunHistorySettings(session: session)
       case .cache: CacheSettings(session: session)
       }
     }
@@ -437,6 +439,81 @@ private struct DatabaseSettings: View {
       await session.save()
       message = session.saveError ?? "保存しました。"
       if session.saveError == nil { load() }
+    }
+  }
+}
+
+private struct RunHistorySettings: View {
+  let session: ProjectSession
+  enum Scope: Hashable { case all, before }
+  @State private var scope = Scope.before
+  @State private var before = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+  @State private var working = false
+  @State private var message: String?
+  @State private var failed = false
+  @State private var confirm = false
+
+  private var saving: Binding<Bool> {
+    Binding(
+      get: { session.project["saveRunHistory"]?.bool ?? true },
+      set: { on in
+        session.edit { $0.project["saveRunHistory"] = .bool(on) }
+        Task {
+          await session.save()
+          failed = session.saveError != nil
+          message = session.saveError.map { "保存できませんでした: \($0)" }
+        }
+      })
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Form {
+        Section {
+          Toggle("実行履歴をプロジェクトに保存する", isOn: saving).disabled(!session.isEditable)
+          Text("実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        Section("削除") {
+          Picker("対象", selection: $scope) {
+            Text("指定した日時より前に終わった実行").tag(Scope.before)
+            Text("すべての実行").tag(Scope.all)
+          }
+          if scope == .before { DatePicker("日時", selection: $before) }
+          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      .formStyle(.grouped)
+      HStack {
+        if let message { Text(message).font(.callout).foregroundStyle(failed ? .red : .secondary).textSelection(.enabled) }
+        Spacer()
+        if working { ProgressView().controlSize(.small) }
+        Button("削除…", role: .destructive) { confirm = true }
+          .disabled(working || session.runActive || !session.connected)
+      }
+      .padding(12)
+    }
+    .confirmationDialog(scope == .all ? "すべての実行履歴を削除しますか？" : "この日時より前に終わった実行を削除しますか？", isPresented: $confirm) {
+      Button("削除", role: .destructive) { delete() }
+      Button("キャンセル", role: .cancel) {}
+    }
+  }
+
+  private func delete() {
+    working = true
+    message = nil
+    Task {
+      do {
+        let r = try await session.deleteRunHistory(endedBefore: scope == .all ? nil : before)
+        failed = false
+        let freed = ByteCountFormatter.string(fromByteCount: Int64(r.freedBytes ?? 0), countStyle: .file)
+        message = String(localized: "\(r.deletedRuns ?? 0) 件の実行を削除し、\(freed) を解放しました。")
+      } catch {
+        failed = true
+        message = "削除できませんでした: \(error)"
+      }
+      working = false
     }
   }
 }
