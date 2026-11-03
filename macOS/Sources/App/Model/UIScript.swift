@@ -211,6 +211,10 @@ final class UIScript {
         let target = w.count > 2
           ? windows.first { $0.title.contains(wanted) || ($0.identifier?.rawValue.localizedCaseInsensitiveContains(wanted) ?? false) }
           : mainWindow
+        // In front, as when used (the window buttons and selection in their active colors).
+        NSApp.activate()
+        target?.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(for: .milliseconds(300))
         say("capture \(w[1]) \(target?.windowNumber ?? -1)")
         try? await Task.sleep(for: .milliseconds(1800))
       case "zoom":
