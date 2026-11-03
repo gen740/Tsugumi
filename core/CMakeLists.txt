@@ -46,6 +46,9 @@ target_include_directories(tsugumi_core
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   PkgConfig::SQLITE3 Threads::Threads tsugumi_nix_eval)
+if(NOT APPLE)
+  target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
+endif()
 
 # Values fixed at build time (Nix supplies them for the container image).
 set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")

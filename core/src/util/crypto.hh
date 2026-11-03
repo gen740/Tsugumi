@@ -3,25 +3,28 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 
 namespace tsugumi::crypto {
 
+// SHA-256 of the platform (CommonCrypto on macOS, OpenSSL's libcrypto
+// elsewhere), fed in parts.
 class Sha256 {
  public:
   Sha256();
+  ~Sha256();
+  Sha256(const Sha256&) = delete;
+  Sha256& operator=(const Sha256&) = delete;
   void update(const void* data, size_t size);
   void update(std::string_view s) { update(s.data(), s.size()); }
   std::array<uint8_t, 32> finish();
   std::string finish_hex();
 
  private:
-  void block(const uint8_t* p);
-  uint32_t h_[8];
-  uint8_t buf_[64];
-  size_t buf_len_ = 0;
-  uint64_t total_ = 0;
+  struct State;
+  std::unique_ptr<State> s_;
 };
 
 std::string sha256_hex(std::string_view data);

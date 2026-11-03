@@ -170,6 +170,21 @@ std::set<std::string> codes(const Resolution& r, const std::string& key) {
 
 // ---- types ----------------------------------------------------------------------
 
+// The platform's SHA-256 and SHA-1 against known vectors, whole and in parts.
+TEST(hashes_match_known_vectors) {
+  CHECK(crypto::sha256_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  CHECK(crypto::sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  std::string million(1000000, 'a');
+  CHECK(crypto::sha256_hex(million) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+  for (size_t part : {1u, 63u, 64u, 65u, 4097u}) {
+    crypto::Sha256 h;
+    for (size_t i = 0; i < million.size(); i += part) h.update(million.data() + i, std::min(part, million.size() - i));
+    CHECK(h.finish_hex() == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+  }
+  auto s1 = crypto::sha1("abc");
+  CHECK(crypto::hex(s1.data(), s1.size()) == "a9993e364706816aba3e25717850c26c9cd0d89d");
+}
+
 TEST(catalog_ports_and_errors) {
   auto r = types::parse_catalog(
       R"(namespace a; table N { v:int; } table F { value:string; }

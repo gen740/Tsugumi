@@ -79,6 +79,10 @@ if(TSUGUMI_BUILD_CORE)
   pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
   # The embedded Nix evaluator: the same Nix version as the environment's daemon.
   pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-util)
+  # Hashing: CommonCrypto on macOS, OpenSSL's libcrypto elsewhere.
+  if(NOT APPLE)
+    pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
+  endif()
   find_package(Threads REQUIRED)
   add_subdirectory(sdk)
   add_subdirectory(core)

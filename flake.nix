@@ -61,7 +61,7 @@
             ruff
             nixfmt-rfc-style
             shfmt
-          ] ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ];
+          ] ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap openssl ];
           MACOSX_DEPLOYMENT_TARGET = "26.0";
           HOSQ_INCLUDE_DIR = "${hosq}/include";
           TSUGUMI_CARD_NIXPKGS_REV = cardNixpkgs.rev;
