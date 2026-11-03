@@ -207,6 +207,27 @@ std::optional<std::string> path_value(const Value& v) {
   return s->str();
 }
 
+/// What a logger in Markdown mode shows: the text of a message with one
+/// string field (Text { value }, …) as it is, any other message as JSON in
+/// a code block.
+std::string markdown_text(const types::Type& t, const std::string& bytes, const std::string& json) {
+  if (const auto* root = t.root()) {
+    const reflection::Field* text = nullptr;
+    int fields = 0;
+    for (const auto* f : *root->fields()) {
+      if (f->deprecated()) continue;
+      ++fields;
+      if (f->type()->base_type() == reflection::String) text = f;
+    }
+    if (fields == 1 && text) {
+      const auto* table = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(bytes.data()));
+      const auto* str = flatbuffers::GetFieldS(*table, *text);
+      return str ? str->str() : "";
+    }
+  }
+  return "```json\n" + json + "\n```";
+}
+
 }  // namespace
 
 Note display_note(const DisplayData& d) {
@@ -1035,6 +1056,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         d.run_id = run_id_;
         d.invocation = s.invocation;
         d.value = DisplayData::Text{text};
+        if (node.settings.markdown) d.value = DisplayData::Text{markdown_text(*v->type, v->bytes, text), true};
         on_display(rt, d);
         break;
       }

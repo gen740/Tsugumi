@@ -375,7 +375,7 @@ struct ChatPanel: View {
       if chat.busy && item.id == chat.items.last?.id {
         StreamingText(text: item.text)
       } else {
-        MarkdownBlocks(text: item.text).opacity(item.archived ? 0.6 : 1)
+        ChatMarkdown(text: item.text).opacity(item.archived ? 0.6 : 1)
       }
     }
   }
@@ -500,8 +500,6 @@ private struct ToolRow: View {
   }
 }
 
-/// Markdown of an answer: paragraphs, headings, lists and code blocks (with
-/// copy). Very long answers are folded.
 /// The answer being written: shown at a steady pace that catches up with
 /// what arrived (no jumps of whole chunks), new blocks fading in.
 struct StreamingText: View {
@@ -509,115 +507,50 @@ struct StreamingText: View {
   @State private var shown = 0
 
   var body: some View {
-    let visible = String(text.prefix(shown))
-    let blocks = MarkdownBlocks.blocks(visible)
-    VStack(alignment: .leading, spacing: 8) {
-      ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
-        MarkdownBlocks.view(b).transition(.opacity.animation(.easeOut(duration: 0.25)))
+    MarkdownView(text: String(text.prefix(shown)), fontSize: 13, codeTools: true, fadeIn: true)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .task(id: text.count) {
+        // About 0.25 s to catch up with whatever arrived, a few characters per frame at least.
+        while shown < text.count {
+          let behind = text.count - shown
+          shown = min(text.count, shown + max(2, behind / 15))
+          try? await Task.sleep(for: .milliseconds(16))
+          if Task.isCancelled { break }
+        }
       }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .textSelection(.enabled)
-    .animation(.easeOut(duration: 0.25), value: blocks.count)
-    .task(id: text.count) {
-      // About 0.25 s to catch up with whatever arrived, a few characters per frame at least.
-      while shown < text.count {
-        let behind = text.count - shown
-        shown = min(text.count, shown + max(2, behind / 15))
-        try? await Task.sleep(for: .milliseconds(16))
-        if Task.isCancelled { break }
-      }
-    }
   }
 }
 
-struct MarkdownBlocks: View {
+/// A finished answer as Markdown with math; very long answers are folded.
+struct ChatMarkdown: View {
   let text: String
   @State private var expanded = false
 
-  enum Block: Hashable {
-    case paragraph(String)
-    case heading(String, Int)
-    case bullet(String)
-    case code(String, String)
-  }
-
-  static func blocks(_ text: String) -> [Block] {
-    var out: [Block] = []
-    var para: [String] = []
-    var code: [String]?
-    var lang = ""
-    func flush() {
-      if !para.isEmpty { out.append(.paragraph(para.joined(separator: "\n"))); para = [] }
-    }
-    for line in text.components(separatedBy: "\n") {
-      if line.hasPrefix("```") {
-        if let c = code {
-          out.append(.code(c.joined(separator: "\n"), lang))
-          code = nil
-        } else {
-          flush()
-          lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-          code = []
-        }
-        continue
-      }
-      if code != nil { code!.append(line); continue }
-      let t = line.trimmingCharacters(in: .whitespaces)
-      if t.isEmpty { flush(); continue }
-      if t.hasPrefix("#") {
-        flush()
-        let level = t.prefix { $0 == "#" }.count
-        out.append(.heading(t.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces), level))
-      } else if t.hasPrefix("- ") || t.hasPrefix("* ") {
-        flush()
-        out.append(.bullet(String(t.dropFirst(2))))
-      } else {
-        para.append(line)
-      }
-    }
-    if let c = code { out.append(.code(c.joined(separator: "\n"), lang)) }
-    flush()
-    return out
-  }
-
   var body: some View {
-    let all = Self.blocks(text)
     let long = text.count > 6000 && !expanded
-    let shown = long ? Array(all.prefix(12)) : all
     VStack(alignment: .leading, spacing: 8) {
-      ForEach(Array(shown.enumerated()), id: \.offset) { _, b in block(b) }
+      MarkdownView(text: long ? Self.fold(text) : text, fontSize: 13, codeTools: true)
       if long {
-        Button("続きを表示（\(all.count - shown.count) ブロック）") { expanded = true }.buttonStyle(.link).font(.caption)
+        Button("続きを表示") { expanded = true }.buttonStyle(.link).font(.caption)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .textSelection(.enabled)
   }
 
-  private func inline(_ s: String) -> AttributedString {
-    (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
-  }
-
-  @ViewBuilder static func view(_ b: Block) -> some View {
-    MarkdownBlocks(text: "").block(b)
-  }
-
-  @ViewBuilder fileprivate func block(_ b: Block) -> some View {
-    switch b {
-    case .paragraph(let s): Text(inline(s)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
-    case .heading(let s, let level): Text(inline(s)).font(level <= 1 ? .title3.bold() : .headline)
-    case .bullet(let s):
-      HStack(alignment: .firstTextBaseline, spacing: 6) {
-        Text("•").foregroundStyle(.secondary)
-        Text(inline(s)).fixedSize(horizontal: false, vertical: true)
-      }
-    case .code(let code, let lang): CodeBlock(code: code, language: lang)
+  /// The first part of a long answer, cut between paragraphs (never inside code).
+  static func fold(_ text: String) -> String {
+    var out = ""
+    var fence = false
+    for line in text.components(separatedBy: "\n") {
+      if line.hasPrefix("```") { fence.toggle() }
+      out += line + "\n"
+      if out.count > 4000 && !fence && line.trimmingCharacters(in: .whitespaces).isEmpty { break }
     }
+    return out
   }
 }
 
-private struct CodeBlock: View {
+struct ChatCodeBlock: View {
   let code: String
   let language: String
   @State private var copied = false

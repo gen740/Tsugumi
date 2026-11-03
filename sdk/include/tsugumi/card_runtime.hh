@@ -52,6 +52,8 @@ struct Series {
   std::vector<double> x, y;
 };
 void text(const std::string& text);
+/// Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted.
+void markdown(const std::string& text);
 void scalar(double value, const std::string& label);
 void line_chart(const std::vector<Series>& series);
 void table(const std::vector<std::string>& columns, const std::vector<std::vector<std::string>>& rows);

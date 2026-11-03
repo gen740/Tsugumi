@@ -122,6 +122,7 @@ struct CardDefinition {
   Opt<"sandbox", v::Bool> sandbox;
   Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
   Opt<"network", v::Bool> network;           // Experimental, default false
+  Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
 
@@ -140,9 +141,7 @@ struct PortNote {
 // _meta.json: the intent of a definition, kept when a Draft is implemented.
 struct CardMeta {
   Opt<"description", v::String> description;  // short summary
-  Opt<"plan", v::String> plan;                // what it does, in detail
-  Opt<"constraints", v::String> constraints;
-  Opt<"done", v::String> done;                // completion criteria
+  Opt<"content", v::String> content;          // a Draft's plan: inputs, outputs, processing (free text)
   Opt<"context", v::String> context;          // extra intent/notes for the Agent and readers
   Opt<"origin", v::String> origin;            // where an imported definition came from
   Opt<"inputs", v::Array<Obj<PortNote>>> inputs;

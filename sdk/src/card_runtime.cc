@@ -30,6 +30,9 @@ void log(const std::string& message) { current().log(current().host, message.c_s
 namespace visualization {
 
 void text(const std::string& text) { check(current().display_text(current().host, text.c_str()), "text display"); }
+void markdown(const std::string& text) {
+  check(current().display_markdown(current().host, text.c_str()), "markdown display");
+}
 
 void scalar(double value, const std::string& label) {
   check(current().display_scalar(current().host, value, label.c_str()), "scalar display");

@@ -103,6 +103,10 @@ class Context:
     def display_text(self, text: str) -> None:
         _host.display_text(text)
 
+    def display_markdown(self, text: str) -> None:
+        """Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted."""
+        _host.display_markdown(text)
+
     def display_scalar(self, value: float, label: str) -> None:
         _host.display_scalar(float(value), label)
 

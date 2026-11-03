@@ -259,6 +259,14 @@ int display_text_impl(void*, const char* text) {
   return 0;
 }
 
+int display_markdown_impl(void*, const char* text) {
+  std::string t = text;
+  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+    return std::make_pair(D::DisplayValue::DisplayText, D::CreateDisplayText(b, b.CreateString(t), true).Union());
+  });
+  return 0;
+}
+
 int display_scalar_impl(void*, double value, const char* label) {
   std::string l = label;
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
@@ -476,6 +484,7 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   c.display_image = display_image_impl;
   c.display_points = display_points_impl;
   c.display_module = display_module_impl;
+  c.display_markdown = display_markdown_impl;
   return c;
 }
 

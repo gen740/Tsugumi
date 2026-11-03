@@ -234,6 +234,7 @@ class Builder {
     boolean(d.sandbox, s.sandbox);
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
+    boolean(d.markdown, s.markdown);
     if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
     if (const auto* folders = schema::get(d.host_folders)) {
       std::set<std::string> names;

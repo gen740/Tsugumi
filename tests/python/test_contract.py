@@ -639,7 +639,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft", "inputs": [{"name": "in"}]}),
-               metaJson=json.dumps({"description": "d", "plan": "p", "context": "why"})),
+               metaJson=json.dumps({"description": "d", "content": "p", "context": "why"})),
         change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
         change("SetProject", json=json.dumps(doc)),
     ])

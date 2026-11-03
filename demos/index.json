@@ -15,14 +15,15 @@
     {
       "id": "collatz",
       "title": "Collatz (C++ / Python)",
-      "description": "The same feedback loop implemented in C++ and Python inside two nested graphs, with merge, fork and branch. 27 reaches 1 after 111 steps; both sequences are compared.",
+      "description": "The same feedback loop implemented in C++ and Python inside two nested graphs, with merge, fork and branch. 27 reaches 1 after 111 steps; both sequences are compared and kept as a CSV file. The Collatz conjecture is explained on a note with formulas.",
       "path": "collatz",
       "tags": [
         "C++",
         "Python",
         "ループ",
         "分岐・分配・合流",
-        "Card in Card"
+        "Card in Card",
+        "成果物"
       ]
     },
     {

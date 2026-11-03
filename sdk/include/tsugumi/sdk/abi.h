@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 2u
+#define TSUGUMI_ABI_VERSION 3u
 
 enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
 
@@ -72,6 +72,8 @@ typedef struct tsugumi_call {
                         size_t count);
   /* Input for a named UI Canvas module, as JSON text. */
   int (*display_module)(void* host, const char* name, const char* data_json);
+  /* ABI 3. Markdown text (with TeX math) shown as formatted text. */
+  int (*display_markdown)(void* host, const char* text);
 } tsugumi_call;
 
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call);

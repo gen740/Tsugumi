@@ -71,6 +71,7 @@ class Context {
   }
 
   void display_text(const std::string& text) const { c_->display_text(c_->host, text.c_str()); }
+  void display_markdown(const std::string& text) const { c_->display_markdown(c_->host, text.c_str()); }
   void display_scalar(double value, const std::string& label) const {
     c_->display_scalar(c_->host, value, label.c_str());
   }

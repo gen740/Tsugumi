@@ -108,8 +108,8 @@ public actor Agent {
     "card_json": "<_card.json>", "meta_json": "<_meta.json>"}}, {"value_type": "PutSource", "value": {"path":
     "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
     One save is one transaction: either everything is stored or nothing is.
-  - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description, plan,
-    constraints, done, inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or
+  - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description: a summary;
+    content: what it takes, what it gives and how it works, in the user's words; inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or
     bash) and remove "template" in _card.json, write _outputs.fbs (one table per output port, root table Outputs),
     default.nix (let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in { run = inputs.tsugumi.pythonCard
     { inherit sdk; src = ./src; }; }, the same with "cpp" and cppCard; for bash, run is the script text: inputs are

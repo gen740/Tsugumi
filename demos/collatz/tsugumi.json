@@ -21,6 +21,9 @@
       },
       {
         "id": "compare"
+      },
+      {
+        "id": "record"
       }
     ],
     "connections": [
@@ -82,6 +85,16 @@
         "to": {
           "card": "compare",
           "port": "python"
+        }
+      },
+      {
+        "from": {
+          "card": "compare",
+          "port": "sequence"
+        },
+        "to": {
+          "card": "record",
+          "port": "sequence"
         }
       }
     ]

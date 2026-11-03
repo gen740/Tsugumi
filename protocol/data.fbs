@@ -70,7 +70,11 @@ table NamedValue {
 
 // ---- Display ---------------------------------------------------------------
 
-table DisplayText { text:string (id: 0, required); }
+/// `markdown`: Markdown with TeX math ($…$, $$…$$), drawn by the UI.
+table DisplayText {
+  text:string (id: 0, required);
+  markdown:bool = false (id: 1);
+}
 
 table DisplayScalar {
   value:double = null (id: 0);

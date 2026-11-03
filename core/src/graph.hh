@@ -52,6 +52,7 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = true;
   bool network = false;
+  bool markdown = false;  // logger: shows the text it receives as Markdown
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data
 };

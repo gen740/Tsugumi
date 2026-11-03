@@ -103,6 +103,12 @@ final class ChatController {
 
   let session: ProjectSession
   private(set) var items: [Item] = []
+
+  /// Shows a sample exchange without calling a model (UI script `chatsample`).
+  func showSample(question: String, answer: String) {
+    items.append(Item(role: "user", text: question))
+    items.append(Item(role: "assistant", text: answer))
+  }
   private(set) var busy = false
   private(set) var status: String?
   private(set) var failed = false
@@ -281,6 +287,7 @@ final class ChatController {
     case .display(let k):
       switch session.displays[k]?.value {
       case .text(let t)?: return "Display of Card \(k) (text):\n\(t.prefix(4000))"
+      case .markdown(let t)?: return "Display of Card \(k) (Markdown):\n\(t.prefix(4000))"
       case .scalar(let v, let l)?: return "Display of Card \(k): \(l) = \(v)"
       case .lineChart(let series)?:
         let lines = series.map { s in

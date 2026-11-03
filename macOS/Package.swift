@@ -26,6 +26,9 @@ let package = Package(
     // Terminal emulator of the project terminal (UI only). 1.11.2: later
     // versions need the Metal Toolchain (an Xcode download) for their shaders.
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.2"),
+    // Markdown and TeX math in chat replies, notes and Cards (UI only, native drawing).
+    .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.7.3"),
+    .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
   ],
   targets: [
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
@@ -84,6 +87,8 @@ let package = Package(
         .product(name: "TreeSitterBash", package: "tree-sitter-bash"),
         "TreeSitterNix", "TreeSitterFBS", "TreeSitterPython",
         .product(name: "SwiftTerm", package: "SwiftTerm"),
+        .product(name: "Markdown", package: "swift-markdown"),
+        .product(name: "SwiftMath", package: "SwiftMath"),
       ],
       path: "Sources/App",
       exclude: ["Resources/TreeSitter/SOURCES.md"],

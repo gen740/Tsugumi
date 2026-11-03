@@ -216,7 +216,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     canvas["cards"] = .array(cards)
     canvas["connections"] = .array(conns)
     doc["canvas"] = canvas
-    let meta = #"{"description":"Count words","plan":"Split the message text and count the words.","constraints":"No network","done":"summary holds the count","inputs":[{"name":"data","description":"the message"}],"outputs":[{"name":"summary","description":"the word count"}]}"#
+    let meta = #"{"description":"Count words","content":"Input: the message. Output: summary with the word count. Split the message text and count the words; no network.","inputs":[{"name":"data","description":"the message"}],"outputs":[{"name":"summary","description":"the word count"}]}"#
     _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
       Change.putDefinition(id: "plan", cardJSON: #"{"template":"draft","inputs":[{"name":"data"}]}"#, metaJSON: meta),
       Change.setProject(doc.serialized()),

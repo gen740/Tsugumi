@@ -117,7 +117,14 @@ def test_collatz_27(collatz):
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     expected = collatz_reference(27)
     assert len(expected) == 112
-    assert display_text(c, rid, "compare") == "C++ and Python agree: 112 values, 111 steps to 1"
+    shown = c.call("RunRecordRequest", runId=rid, card=path("compare")).record.display.value
+    assert shown.markdown and text(shown.text).startswith("**C++ and Python agree**: 112 values, $a_0 = 27$")
+    assert "after $111$ steps" in text(shown.text) and "9232" in text(shown.text)
+    # The agreed sequence is kept as a CSV file (a File artifact of record).
+    art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
+    csv = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
+    lines = csv.splitlines()
+    assert lines[0] == "k,a_k,parity" and lines[1] == "0,27,odd" and lines[-1] == "111,1,odd" and len(lines) == 113
     for lang in ("collatz-cpp", "collatz-py"):
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))

@@ -136,7 +136,10 @@ struct DisplayData {
   std::string run_id;
   uint64_t invocation = 0;
   uint64_t revision = 0;
-  struct Text { std::string text; };
+  struct Text {
+    std::string text;
+    bool markdown = false;
+  };
   struct Scalar { double value = 0; std::string label; };
   struct LineChart { std::vector<LineSeriesData> series; };
   struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };

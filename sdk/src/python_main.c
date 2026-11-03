@@ -48,6 +48,13 @@ static PyObject* host_display_text(PyObject* self, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* host_display_markdown(PyObject* self, PyObject* args) {
+  const char* text;
+  if (!PyArg_ParseTuple(args, "s", &text)) return NULL;
+  g_call->display_markdown(g_call->host, text);
+  Py_RETURN_NONE;
+}
+
 static PyObject* host_display_scalar(PyObject* self, PyObject* args) {
   double value;
   const char* label;
@@ -204,6 +211,7 @@ static PyMethodDef host_methods[] = {
     {"info", host_info, METH_NOARGS, NULL},
     {"emit_output", host_emit_output, METH_VARARGS, NULL},
     {"display_text", host_display_text, METH_VARARGS, NULL},
+    {"display_markdown", host_display_markdown, METH_VARARGS, NULL},
     {"display_scalar", host_display_scalar, METH_VARARGS, NULL},
     {"display_line_chart", host_display_line_chart, METH_VARARGS, NULL},
     {"display_table", host_display_table, METH_VARARGS, NULL},

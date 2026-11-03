@@ -219,7 +219,7 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
   Off<void> value;
   D::DisplayValue type = D::DisplayValue::NONE;
   if (const auto* t = std::get_if<DisplayData::Text>(&d.value)) {
-    value = D::CreateDisplayText(b, b.CreateString(t->text)).Union();
+    value = D::CreateDisplayText(b, b.CreateString(t->text), t->markdown).Union();
     type = D::DisplayValue::DisplayText;
   } else if (const auto* s = std::get_if<DisplayData::Scalar>(&d.value)) {
     auto label = b.CreateString(s->label);
@@ -279,7 +279,7 @@ DisplayData display(const D::Display* d) {
     case D::DisplayValue::DisplayText: {
       const auto* t = d->value_as_DisplayText();
       if (!t || !t->text()) throw Failed(FailureKind::output_invalid, "display text missing");
-      out.value = DisplayData::Text{t->text()->str()};
+      out.value = DisplayData::Text{t->text()->str(), t->markdown()};
       break;
     }
     case D::DisplayValue::DisplayScalar: {

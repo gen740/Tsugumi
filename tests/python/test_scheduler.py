@@ -168,7 +168,7 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     # The Draft's ports come from _meta.json (names and purposes only).
     import json as _json
     snap = c.call("ProjectInspectRequest")
-    meta = {"description": "Summarize", "plan": "count words", "constraints": "fast", "done": "a summary exists",
+    meta = {"description": "Summarize", "content": "Input: messages. Output: the word count. Count the words.",
             "inputs": [{"name": "data", "description": "messages"}],
             "outputs": [{"name": "summary", "description": "the word count"}]}
     from tsugumi_client import change, new_id

@@ -1,4 +1,5 @@
 namespace collatz;
 table Verdict { equal:bool; count:ulong; }
-table Outputs { verdict:Verdict (required); }
+table Sequence { values:[ulong] (required); }
+table Outputs { verdict:Verdict (required); sequence:Sequence (required); }
 root_type Outputs;

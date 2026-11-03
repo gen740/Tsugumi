@@ -23,23 +23,36 @@
     "compare": {
       "x": 0.0,
       "y": 760.0
+    },
+    "record": {
+      "x": 0.0,
+      "y": 950.0
     }
   },
   "displays": {
     "compare": {
-      "x": 250.0,
+      "x": 260.0,
       "y": 760.0,
-      "width": 320.0,
-      "height": 80.0
+      "width": 360.0,
+      "height": 90.0
+    },
+    "record": {
+      "x": 260.0,
+      "y": 950.0,
+      "width": 360.0,
+      "height": 150.0
     }
   },
   "notes": [
     {
       "id": "n1",
       "scope": "",
-      "text": "Edit the initial value and the check Card's maxRuns (iteration limit). Double-click a subgraph to open it.",
-      "x": -520.0,
-      "y": 0.0
+      "color": "yellow",
+      "x": -600.0,
+      "y": 0.0,
+      "width": 470.0,
+      "height": 470.0,
+      "text": "## コラッツ予想\n\n正の整数 $n$ に次の操作 $T$ を繰り返すと、どこから始めても必ず $1$ に着く、という予想です（未解決）。\n\n$$\nT(n) = \\begin{cases} n/2 & n \\equiv 0 \\pmod 2 \\\\ 3n+1 & n \\equiv 1 \\pmod 2 \\end{cases}\n$$\n\n漸化式 $a_0 = n$、$a_{k+1} = T(a_k)$ で数列を作り、$a_k = 1$ になる最小の $k$（停止時間）を数えます。$n = 27$ なら $111$ 手で $1$ に着き、途中の最大値は $9232$ です。\n\n- **collatz-cpp** と **collatz-py**: 同じループを C++ と Python で書いた Card in Card（中に入ると編集できます）\n- **compare**: 2 つの数列が一致するかを確かめます\n- **record**: 数列を `collatz.csv` に書き、成果物として残します\n\n**initial** の値と、中の **check** の maxRuns（繰り返しの上限）を変えて試せます。"
     }
   ]
 }
