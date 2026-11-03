@@ -77,6 +77,8 @@ if(TSUGUMI_BUILD_CORE)
   find_package(flatbuffers CONFIG REQUIRED)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+  # The embedded Nix evaluator: the same Nix version as the environment's daemon.
+  pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-util)
   find_package(Threads REQUIRED)
   add_subdirectory(sdk)
   add_subdirectory(core)

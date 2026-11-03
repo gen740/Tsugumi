@@ -34,7 +34,6 @@ struct ServiceOptions {
   std::filesystem::path worker_binary;
   std::string fault;                  // test-only fault injection point
   uint32_t env_cpus = 2;              // execution slot limits of the environment
-  bool own_nix_store = false;         // true inside the container: CacheClear may run nix GC
   // Where build results are registered as Nix GC roots. Empty: the build
   // cache in the project. The shared VM keeps them in the store
   // (/nix/var/nix/gcroots/...), visible to the one nix-daemon.

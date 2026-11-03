@@ -501,6 +501,7 @@ private struct EnvironmentStorageSettings: View {
   @State private var message: String?
   @State private var failed = false
   @State private var confirmReset = false
+  @State private var confirmCleanup = false
 
   var body: some View {
     GroupBox("実行環境のデータ") {
@@ -511,7 +512,11 @@ private struct EnvironmentStorageSettings: View {
           Text(model.environments.support.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
           Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([model.environments.support]) }.controlSize(.small)
         }
+        Text("共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
+          Button("共有 store を掃除…") { confirmCleanup = true }
+            .disabled(working)
           Button("すべての実行環境を初期化…", role: .destructive) { confirmReset = true }
             .disabled(working)
           if working { ProgressView().controlSize(.small) }
@@ -523,11 +528,33 @@ private struct EnvironmentStorageSettings: View {
       }
       .padding(6)
     }
+    .confirmationDialog("共有 Nix store を掃除しますか？", isPresented: $confirmCleanup) {
+      Button("掃除") { cleanup() }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。")
+    }
     .confirmationDialog("すべての実行環境を初期化しますか？", isPresented: $confirmReset) {
       Button("初期化", role: .destructive) { reset() }
       Button("キャンセル", role: .cancel) {}
     } message: {
       Text("開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。プロジェクトの文書・履歴・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。")
+    }
+  }
+
+  private func cleanup() {
+    working = true
+    message = nil
+    Task {
+      do {
+        let r = try await model.environments.cleanupStore()
+        failed = false
+        message = String(localized: "\(r.paths) 件を削除し、\(ByteCountFormatter.string(fromByteCount: Int64(r.bytes), countStyle: .file)) を解放しました。")
+      } catch {
+        failed = true
+        message = String(localized: "掃除できませんでした: ") + "\(error)"
+      }
+      working = false
     }
   }
 

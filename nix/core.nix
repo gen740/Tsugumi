@@ -1,5 +1,5 @@
 # tsugumid, tsugumi-worker and the installed Card SDK.
-{ lib, stdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, bash, coreutils, findutils, gnugrep
+{ lib, stdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, nix, bash, coreutils, findutils, gnugrep
 , gnused, gawk, gnutar, gzip, jq, bubblewrap, self, cardNixpkgs, hosq }:
 let
   # Tools on PATH for Card bash steps (preRun, a bash run, postRun).
@@ -13,7 +13,8 @@ stdenv.mkDerivation {
     fileset = lib.fileset.unions [ ../CMakeLists.txt ../cmake ../core ../sdk ../protocol ../tests/cpp ];
   };
   nativeBuildInputs = [ cmake ninja pkg-config flatbuffers ];
-  buildInputs = [ flatbuffers sqlite ];
+  # The embedded Nix evaluator: the same Nix as the environment's daemon.
+  buildInputs = [ flatbuffers sqlite nix.libs.nix-expr nix.libs.nix-store nix.libs.nix-fetchers nix.libs.nix-util ];
   cmakeFlags = [
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
     "-DTSUGUMI_BUILD_TESTS=OFF"

@@ -185,6 +185,15 @@ public actor EnvironmentManager {
   /// Deletes the project's environment data: its control folder and its
   /// build roots in the shared store (the builds become garbage). Documents,
   /// history and artifacts in the project folder stay.
+  /// The shared store's cleanup (an app setting): what no project's GC root
+  /// keeps. Starts the VM when it is not running.
+  public func cleanupStore() async throws -> (bytes: UInt64, paths: Int) {
+    if case .running = vm.state {} else { try await vm.start(image: image, resources: resources) }
+    let reply = try await vm.request("gc", timeout: 3600)
+    let parts = reply.split(separator: " ")
+    return (UInt64(parts.first ?? "") ?? 0, Int(parts.dropFirst().first ?? "") ?? 0)
+  }
+
   public func deleteData(_ p: ProjectIdentity) async throws {
     try await stop(p)
     if case .running = vm.state { try await vm.request("forget \(p.id)") }

@@ -13,7 +13,9 @@
 //   cgroup         /sys/fs/cgroup/tsugumi/<id>: stopping a project ends
 //                  exactly its processes and never another project's
 //   Nix            the shared store through the one nix-daemon; build roots
-//                  under /nix/var/nix/gcroots/tsugumi/projects/<id>
+//                  under /nix/var/nix/gcroots/tsugumi/projects/<id>, a folder
+//                  only vmd creates (the parent is not writable by projects);
+//                  folders of projects not started for 30 days go at boot
 //
 // The host talks to vsock ports:
 //
@@ -23,6 +25,9 @@
 //           stop <id>                       -> ok
 //           forget <id>                     -> ok (stopped project's build
 //                                              roots go; data deletion)
+//           gc                              -> ok <bytes freed> <paths deleted>
+//                                              (the shared store's cleanup:
+//                                              what no root keeps)
 //           status                          -> ok <id>:<pid>:<port> ...
 //           shell <id> <rows> <cols>        -> ok <session>, then the
 //                                              connection is the terminal
@@ -202,6 +207,27 @@ void die(const char* what) {
   _exit(127);
 }
 
+const std::string kRoots = "/nix/var/nix/gcroots/tsugumi/projects";
+
+// Root folders of projects not started for 30 days go (their builds become
+// garbage for the next cleanup); the parent is writable by vmd only.
+void prune_project_roots() {
+  fs::create_directories(kRoots);
+  ::chown(kRoots.c_str(), 0, 0);
+  ::chmod(kRoots.c_str(), 0755);
+  auto now = std::chrono::system_clock::now();
+  std::error_code ec;
+  for (const auto& e : fs::directory_iterator(kRoots, ec)) {
+    struct stat st {};
+    if (::lstat(e.path().c_str(), &st) != 0) continue;
+    auto age = now - std::chrono::system_clock::from_time_t(st.st_mtime);
+    if (!S_ISDIR(st.st_mode) || age > std::chrono::hours(24 * 30)) {
+      logf("removing build roots %s (%s)", e.path().filename().c_str(), S_ISDIR(st.st_mode) ? "unused for 30 days" : "not a folder");
+      fs::remove_all(e.path(), ec);
+    }
+  }
+}
+
 std::vector<std::string> project_env(const std::string& id) {
   return {"PATH=" + opt.path,
           "HOME=/tmp/home",
@@ -244,6 +270,52 @@ std::vector<char*> cstrings(std::vector<std::string>& v) {
   return out;
 }
 
+// The shared store's cleanup: deletes what no GC root keeps (an app setting,
+// never a project's cache clearing). Runs as root against the local store.
+std::string collect_garbage() {
+  int out[2];
+  if (::pipe2(out, O_CLOEXEC) != 0) return "error pipe";
+  std::vector<std::string> argv = {opt.bash, "-c", "exec nix-store --gc"}, env = {"PATH=" + opt.path};
+  auto av = cstrings(argv), ev = cstrings(env);
+  pid_t pid = ::fork();
+  if (pid == 0) {
+    ::dup2(out[1], 1);
+    ::dup2(out[1], 2);
+    ::execve(av[0], av.data(), ev.data());
+    ::_exit(127);
+  }
+  ::close(out[1]);
+  std::string text;
+  char buf[4096];
+  for (ssize_t n; (n = ::read(out[0], buf, sizeof buf)) > 0;) text.append(buf, static_cast<size_t>(n));
+  ::close(out[0]);
+  // The reaper collects the exit status.
+  int st = -1;
+  for (int i = 0; i < 600; ++i) {
+    {
+      std::lock_guard<std::mutex> l(mu);
+      if (auto it = exit_status.find(pid); it != exit_status.end()) {
+        st = it->second;
+        exit_status.erase(it);
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  logf("store cleanup: %s", text.c_str());
+  if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) return "error nix-store --gc failed";
+  // "N store paths deleted, X MiB freed"
+  unsigned long long paths = 0;
+  double amount = 0;
+  char unit[8] = "";
+  if (auto at = text.rfind(" store paths deleted, "); at != std::string::npos) {
+    auto line = text.find_last_of('\n', at);
+    std::sscanf(text.c_str() + (line == std::string::npos ? 0 : line + 1), "%llu store paths deleted, %lf %7s", &paths, &amount, unit);
+  }
+  double mul = std::string(unit) == "GiB" ? 1073741824.0 : std::string(unit) == "MiB" ? 1048576.0 : std::string(unit) == "KiB" ? 1024.0 : 1.0;
+  return "ok " + std::to_string(static_cast<unsigned long long>(amount * mul)) + " " + std::to_string(paths);
+}
+
 int project_main(void* arg) {
   auto* a = static_cast<ChildArgs*>(arg);
   char b;
@@ -255,12 +327,12 @@ int project_main(void* arg) {
   // A fresh /proc for this PID namespace.
   if (::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr) != 0) die("mount /proc");
   ::sethostname(a->name.c_str(), a->name.size());
-  std::string roots = "/nix/var/nix/gcroots/tsugumi/projects/" + a->id;
+  std::string roots = kRoots + "/" + a->id;
   ::chown("/tmp/home", a->uid, a->uid);
   drop_to(a->uid);
   std::vector<std::string> argv = {opt.tini, "-g", "--", opt.tsugumid, "--project", "/project",
                                    "--listen", "127.0.0.1:" + std::to_string(a->port), "--control-dir", "/control",
-                                   "--cpus", std::to_string(a->cpus), "--own-nix-store", "--allow-missing-origin",
+                                   "--cpus", std::to_string(a->cpus), "--allow-missing-origin",
                                    "--gcroots-dir", roots};
   std::vector<std::string> env = project_env(a->id);
   auto av = cstrings(argv), ev = cstrings(env);
@@ -308,11 +380,19 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   pr.uid = uid_for(id);
   pr.port = 7700 + static_cast<int>(pr.uid - 20000);
   ensure_user(id, pr.uid);
-  // Build roots of this project, kept while the project exists.
-  std::string roots = "/nix/var/nix/gcroots/tsugumi/projects/" + id;
-  fs::create_directories(roots);
-  ::chown(roots.c_str(), pr.uid, pr.uid);
+  // Build roots of this project, kept while the project exists. Only vmd
+  // creates the folder; anything else in its place is replaced, never followed.
+  std::string roots = kRoots + "/" + id;
+  struct stat rst {};
+  if (::lstat(roots.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
+    std::error_code ec;
+    fs::remove(roots, ec);
+  }
+  ::mkdir(roots.c_str(), 0755);
+  if (::lstat(roots.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the build root folder";
+  ::lchown(roots.c_str(), pr.uid, pr.uid);
   ::chmod(roots.c_str(), 0755);
+  ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last start: for the 30-day cleanup
   std::string cg = cgroup_dir(id);
   fs::create_directories(cg);
   std::string log_path = c + "/tsugumid.log";
@@ -377,7 +457,7 @@ std::string forget_project(const std::string& id) {
   std::string r = stop_project(id);
   if (r != "ok") return r;
   std::error_code ec;
-  fs::remove_all("/nix/var/nix/gcroots/tsugumi/projects/" + id, ec);
+  fs::remove_all(kRoots + "/" + id, ec);
   ::rmdir(cgroup_dir(id).c_str());
   std::lock_guard<std::mutex> l(mu);
   projects.erase(id);
@@ -566,6 +646,7 @@ void control(int conn) {
     r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()));
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
+  else if (w[0] == "gc" && w.size() == 1) r = collect_garbage();
   else if (w[0] == "shell" && w.size() == 4 && valid_id(w[1])) {
     shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
     ::close(conn);
@@ -674,6 +755,7 @@ int main(int argc, char** argv) {
   fs::create_directories("/sys/fs/cgroup/tsugumi");
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
+  prune_project_roots();
   std::thread(reaper).detach();
   std::thread(serve, opt.rpc_port, rpc).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port, opt.rpc_port);

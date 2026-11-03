@@ -35,7 +35,11 @@ let
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
     max-jobs = auto
     allow-import-from-derivation = false
-    keep-outputs = false
+    # Build-time dependencies (compilers, the nixpkgs source) of every rooted
+    # Card build stay through a store cleanup, so editing a Card rebuilds
+    # without downloading them again.
+    keep-outputs = true
+    keep-derivations = true
     allowed-users = *
     trusted-users = root
   '';
@@ -122,7 +126,7 @@ let
     mkdir -p /nix/var/nix/gcroots/tsugumi/projects /nix/var/nix/daemon-socket
     # The VM's own closure is a GC root: CacheClear removes Card builds only.
     while read -r p; do ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"; done < /store-paths
-    chmod 1777 /nix/var/nix/gcroots/tsugumi/projects
+    chmod 0755 /nix/var/nix/gcroots/tsugumi/projects
     nix-daemon --daemon >/persist/nix-daemon.log 2>&1 &
     for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
     [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start (see /persist/nix-daemon.log)"

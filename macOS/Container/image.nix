@@ -75,7 +75,7 @@ let
     # tini stays PID 1 so exited sandbox helpers never accumulate as zombies.
     exec ${tini}/bin/tini -g -- ${tsugumid}/bin/tsugumid --project /project --listen 0.0.0.0:7700 \
       --unix /run/tsugumi/tsugumid.sock --control-dir /control \
-      --cpus "''${TSUGUMI_CPUS:-2}" --own-nix-store --allow-missing-origin "$@"
+      --cpus "''${TSUGUMI_CPUS:-2}" --allow-missing-origin "$@"
   '';
 in
 dockerTools.buildLayeredImage {

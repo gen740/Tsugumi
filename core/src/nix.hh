@@ -19,6 +19,7 @@
 namespace tsugumi {
 
 class Service;
+class NixEvaluator;
 
 struct CardBuild {
   // The body (`run`): a package whose lib/main.so the worker loads, or a bash script.
@@ -26,8 +27,8 @@ struct CardBuild {
   std::optional<std::string> bash;
   std::string pre_run, post_run;
   bool reuse_worker = true;  // the default: the loaded worker stays and serves later invocations
-  std::string key;
-  bool cached = false;
+  std::string key;      // the manifest's store path
+  bool cached = false;  // the store already had the result: nothing was built
 };
 
 struct BuildRequest {
@@ -40,7 +41,7 @@ struct BuildRequest {
   std::optional<uint64_t> timeout_seconds;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
-  std::function<void(Phase)> on_phase;          // evaluate, then build (not called for cached builds)
+  std::function<void(Phase)> on_phase;          // evaluate, then build (only when the store lacks the result)
 };
 
 struct CacheClearOutcome {
@@ -59,7 +60,7 @@ struct SDKJob {
 
 class NixRunner {
  public:
-  explicit NixRunner(Service& svc);
+  NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
   // _inputs.fbs/_outputs.fbs/_params.fbs (+ .bfbs) and JSON parameter files.
@@ -81,7 +82,7 @@ class NixRunner {
   std::optional<std::string> sdk_file(const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
-  bool available() const { return !nix_build_.empty(); }
+  bool available() const { return true; }
 
  private:
   std::filesystem::path cache_dir() const;
@@ -89,16 +90,21 @@ class NixRunner {
   void acquire_lane(const std::atomic<bool>* cancel);
   void release_lane();
   std::string nixpkgs_pin_json(const Document& doc) const;
-  std::vector<std::string> nix_env() const;
+  NixEvaluator& evaluator();
+  std::filesystem::path content_dir(const char* kind, const std::string& digest,
+                                    const std::function<std::map<std::string, std::string>()>& files);
+  void prune_roots(const std::string& prefix = {}, const std::string& keep = {});
 
   Service& svc_;
-  std::string nix_build_, nix_store_, nix_instantiate_;
-  std::string sdk_hash_;  // content hash of the installed SDK (part of every build key)
+  std::filesystem::path eval_dir_;  // local folder: definitions and generated files by content
+  std::filesystem::path sdk_dir_;
+  std::mutex eval_mu_;
+  std::unique_ptr<NixEvaluator> evaluator_;
+  std::mutex dirs_mu_;
+  std::set<std::string> written_;
   std::mutex lane_mu_;
   std::condition_variable lane_cv_;
   bool lane_busy_ = false;
-  std::mutex defs_mu_;
-  std::set<std::string> copied_defs_;  // run_dir/def_id
   std::mutex sdk_mu_;
   std::map<std::string, SDKJob> sdk_jobs_;
   std::vector<std::thread> sdk_threads_;

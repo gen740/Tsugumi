@@ -12,6 +12,11 @@ add_custom_command(
   DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   VERBATIM)
 
+# The Nix headers need C++23; only this file includes them.
+add_library(tsugumi_nix_eval STATIC src/nix_eval.cc)
+target_compile_features(tsugumi_nix_eval PRIVATE cxx_std_23)
+target_link_libraries(tsugumi_nix_eval PRIVATE PkgConfig::NIX Threads::Threads)
+
 add_library(tsugumi_core STATIC
   src/util/crypto.cc
   src/util/fs.cc
@@ -40,7 +45,7 @@ target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 Threads::Threads)
+  PkgConfig::SQLITE3 Threads::Threads tsugumi_nix_eval)
 
 # Values fixed at build time (Nix supplies them for the container image).
 set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")
@@ -56,6 +61,7 @@ target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_CARD_PATH="${TSUGUMI_CARD_PATH}")
 
 add_executable(tsugumid src/main.cc)
+target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
 

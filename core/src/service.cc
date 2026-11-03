@@ -172,11 +172,13 @@ void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
   history_ = std::make_unique<History>(store_->state_dir() / "history.sqlite", cursor_secret_, opts_.fault);
-  nix_ = std::make_unique<NixRunner>(*this);
-  for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
+  // Local folders (never the project share): the evaluator's inputs by
+  // content and the workers' own folders.
   auto scratch = opts_.scratch_dir.empty() ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
                                            : opts_.scratch_dir;
-  workers_ = std::make_unique<WorkerPool>(scratch);
+  nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
+  workers_ = std::make_unique<WorkerPool>(scratch / "workers");
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
 }

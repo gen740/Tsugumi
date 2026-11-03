@@ -1104,12 +1104,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       };
       rt.build = svc_.nix().build(br);
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
-      journal("build", "output", node.path, s.invocation, rt.build->cached ? "build reused from cache" : "built");
-      if (rt.build->cached) {
-        // The Nix store already had the build: nothing was evaluated or built.
-        stage_begin(s, Phase::evaluate, StageOutcome::cached);
-        stage_begin(s, Phase::build, StageOutcome::cached);
-      }
+      journal("build", "output", node.path, s.invocation,
+              rt.build->cached ? "evaluated; the store already had the result" : "built");
+      // Evaluated (the resident evaluator reuses nixpkgs); nothing to build.
+      if (rt.build->cached) stage_begin(s, Phase::build, StageOutcome::cached);
     } else {
       // Built by an earlier invocation of this run.
       stage_close(s, StageOutcome::reused);

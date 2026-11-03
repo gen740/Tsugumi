@@ -42,6 +42,11 @@
             flatbuffers
             sqlite
             pkg-config
+            # The embedded Nix evaluator (headers and libraries of the Nix in use).
+            nix.libs.nix-expr
+            nix.libs.nix-store
+            nix.libs.nix-fetchers
+            nix.libs.nix-util
             git
             (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ]))
             # Source formatters used by ProjectFileFormat (also in the image).
