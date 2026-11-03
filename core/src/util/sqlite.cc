@@ -72,7 +72,7 @@ std::string Stmt::blob(int c) const {
 
 Db::Db(const std::string& path, bool readonly) {
   int flags = readonly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-  flags |= SQLITE_OPEN_NOMUTEX;
+  flags |= SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI;  // file:...?mode=ro attaches
   if (sqlite3_open_v2(path.c_str(), &db_, flags, nullptr) != SQLITE_OK) {
     std::string msg = db_ ? sqlite3_errmsg(db_) : "open failed";
     if (db_) sqlite3_close(db_);

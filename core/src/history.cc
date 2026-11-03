@@ -1,5 +1,7 @@
 #include "history.hh"
 
+#include <cstdio>
+
 #include "util/crypto.hh"
 #include "schema.hh"
 #include "util/log.hh"
@@ -1002,6 +1004,27 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
   return db;
 }
 
+// Attaches the copy read-only as `ex` (reading it never rewrites it).
+void attach_copy(sql::Db& db, const std::filesystem::path& copy) {
+  std::string uri = "file:";
+  for (char c : copy.string()) {
+    if (c == '%' || c == '?' || c == '#') {
+      char b[4];
+      std::snprintf(b, sizeof b, "%%%02X", static_cast<unsigned char>(c));
+      uri += b;
+    } else {
+      uri += c;
+    }
+  }
+  db.prepare("ATTACH DATABASE ? AS ex").bind(1, uri + "?mode=ro").run();
+  auto v = db.prepare("SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
+  std::map<std::string, std::string> meta;
+  while (v.step()) meta[v.text(0)] = v.text(1);
+  if (meta["format"] != kCopyFormat || meta["version"] != kCopyVersion)
+    throw std::runtime_error(copy.string() + " is format " + meta["format"] + " version " + meta["version"] +
+                             ", not " + kCopyFormat + " " + kCopyVersion);
+}
+
 // Detaches the staged copy and puts it in place of the copy (one rename).
 void put_copy(sql::Db& db, const std::filesystem::path& copy) {
   db.exec("DETACH DATABASE ex");
@@ -1052,16 +1075,32 @@ size_t History::import_runs(const std::filesystem::path& copy) {
   std::lock_guard<std::mutex> l(copy_mu_);
   std::error_code ec;
   if (!std::filesystem::exists(copy, ec)) return 0;
-  auto db = with_copy(path_, copy);
-  Txn t(*db);
-  size_t n = copy_runs(*db, "ex", "main");
+  // Read where it is: importing changes this database only.
+  sql::Db db(path_.string());
+  attach_copy(db, copy);
+  Txn t(db);
+  size_t n = copy_runs(db, "ex", "main");
   t.commit();
-  put_copy(*db, copy);
+  db.exec("DETACH DATABASE ex");
   return n;
 }
 
 size_t History::export_runs(const std::filesystem::path& copy) {
   std::lock_guard<std::mutex> l(copy_mu_);
+  std::error_code ec;
+  if (std::filesystem::exists(copy, ec)) {
+    // Nothing new for the copy: it is left as it is (not written again).
+    sql::Db probe(path_.string());
+    attach_copy(probe, copy);
+    bool none;
+    {
+      auto st = probe.prepare("SELECT count(*) FROM main.runs WHERE state IN (" + finished_states() +
+                              ") AND run_id NOT IN (SELECT run_id FROM ex.runs)");
+      none = st.step() && st.i64(0) == 0;
+    }
+    probe.exec("DETACH DATABASE ex");
+    if (none) return 0;
+  }
   auto db = with_copy(path_, copy);
   Txn t(*db);
   size_t n = copy_runs(*db, "main", "ex");
