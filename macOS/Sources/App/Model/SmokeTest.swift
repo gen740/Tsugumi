@@ -30,7 +30,7 @@ enum SmokeTest {
         s.edit { $0.setPosition("begin", CGPoint(x: 5, y: 5)) }
         await s.save()
         report["layout_save_rev"] = [before, s.rev]
-        let trigger = s.cards(in: []).first { $0["definition"]?.string == "trigger" }?["id"]?.string ?? "begin"
+        let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "begin"
         let t1 = Date()
         try await s.run(card: [trigger], propagate: true)
         try await Task.sleep(for: .milliseconds(200))
@@ -76,7 +76,7 @@ enum SmokeTest {
         _ = s.addNote(in: [], at: CGPoint(x: 10, y: 400))
         _ = s.addGroup(Set(first), in: [])
         s.setCollapsed([first[0]], true)
-        if let shown = s.resolution.keys.first(where: { s.cardSetting($0, "canvasEnabled")?.bool == true }) {
+        if let shown = s.resolution.keys.first(where: { s.displays[$0] != nil }) {
           s.updateDisplayFrame(shown) { $0["hidden"] = .bool(true) }
         }
         await s.save()
@@ -84,13 +84,13 @@ enum SmokeTest {
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
         // A Draft with provisional outputs can be wired before it is implemented.
-        let draft = s.createDefinition(name: "Smoke draft", template: .draft)
+        let dk = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
+        let draft = path(dk)[0]
         s.edit { s in
           var meta = s.definitionMeta[draft] ?? .object([])
           meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
           s.setDefinition(draft, card: s.definitions[draft] ?? .object([]), meta: meta)
         }
-        let dk = s.addCard(definition: draft, in: [], at: CGPoint(x: 0, y: 600))
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
         ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.map(\.name) == ["summary"]

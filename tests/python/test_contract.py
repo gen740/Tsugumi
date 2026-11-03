@@ -210,27 +210,24 @@ def test_document_validation(client):
 def test_uint64_max_and_original_spelling_preserved(tmp_path):
     root = tmp_path / "p"
     builtin_project(root)
-    (root / "definitions" / "big").mkdir()
-    (root / "definitions" / "big" / "_card.json").write_text(json.dumps(
-        {"template": "input", "params": [{"name": "n", "type": "uint64"}]}))
     d = Daemon(root).start()
     try:
         c = d.client()
         c.hello()
         snap = c.open().snapshot
         doc = project_json(snap)
-        doc["canvas"]["cards"].append({"id": "b", "definition": "big", "params": {"n": 0}})
-        raw = json.dumps(doc).replace('"n": 0', '"n": 18446744073709551615')
+        doc["canvas"]["cards"].append({"id": "b"})
+        raw = '{"template": "input", "params": [{"name": "n", "type": "uint64", "data": 18446744073709551615}]}'
         res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                     changes=[change("SetProject", json=raw)])
-        assert "18446744073709551615" in text(res.delta.projectJson)
+                     changes=[change("SetProject", json=json.dumps(doc)), change("PutDefinition", id="b", cardJson=raw)])
+        assert "18446744073709551615" in text(next(x for x in res.delta.definitionsUpsert if text(x.id) == "b").cardJson)
         diags = [text(x.code) for r in res.delta.resolution for x in r.diagnostics
                  if text(r.card.segments[0]) == "b"]
         assert "invalid_param" not in diags
         # One more than uint64 max is a type error diagnostic, not a silent truncation.
         raw2 = raw.replace("18446744073709551615", "18446744073709551616")
         res2 = c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-                      changes=[change("SetProject", json=raw2)])
+                      changes=[change("PutDefinition", id="b", cardJson=raw2)])
         diags2 = [text(x.code) for r in res2.delta.resolution for x in r.diagnostics
                   if text(r.card.segments[0]) == "b"]
         assert "invalid_param" in diags2
@@ -249,7 +246,7 @@ def test_explicit_false_is_not_omitted(tmp_path):
         files = c.call("ProjectFileListRequest", path=".", atRev=snap.rev, depth=0, includeDirectories=False)
         assert all(text(e.path).count("/") == 0 for e in files.entries)
         files2 = c.call("ProjectFileListRequest", path=".", atRev=snap.rev, depth=3)
-        assert any(text(e.path) == "definitions/source/_outputs.fbs" for e in files2.entries)
+        assert any(text(e.path) == "definitions/src/_outputs.fbs" for e in files2.entries)
         plan = c.call("RunPlanRequest", atRev=snap.rev, card=path("src"), propagate=False)
         assert [list(map(text, t.segments)) for t in plan.targets] == [["src"]]
         plan2 = c.call("RunPlanRequest", atRev=snap.rev, card=path("src"))
@@ -322,7 +319,7 @@ def test_second_daemon_is_refused(daemon):
 
 def test_source_operations(client):
     snap = client.open().snapshot
-    src = "graphs/notes.txt"
+    src = "skills/notes.txt"
     body = "こんにちは\n".encode()
     r1 = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                      changes=[change("PutSource", path=src, bytes=list(body))])
@@ -356,14 +353,14 @@ def test_source_operations(client):
 def test_external_change_and_reload(daemon, client):
     snap = client.open().snapshot
     r1 = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                     changes=[change("PutSource", path="graphs/a.txt", bytes=list(b"one"))])
-    (daemon.project / "graphs" / "a.txt").write_text("edited outside")
+                     changes=[change("PutSource", path="skills/a.txt", bytes=list(b"one"))])
+    (daemon.project / "skills" / "a.txt").write_text("edited outside")
     with pytest.raises(RpcFailure) as e:
-        client.call("ProjectFileReadRequest", path="graphs/a.txt", atRev=r1.rev)
+        client.call("ProjectFileReadRequest", path="skills/a.txt", atRev=r1.rev)
     assert e.value.kind == "external_change"
     rl = client.call("ProjectReloadRequest", baseRev=r1.rev, opId=new_id(), origin="t")
     assert rl.rev == r1.rev + 1
-    got = client.call("ProjectFileReadRequest", path="graphs/a.txt", atRev=rl.rev)
+    got = client.call("ProjectFileReadRequest", path="skills/a.txt", atRev=rl.rev)
     assert bytes(got.bytes) == b"edited outside"
     none = client.call("ProjectReloadRequest", baseRev=rl.rev, opId=new_id(), origin="t")
     assert none.delta is None and none.rev == rl.rev
@@ -564,13 +561,13 @@ def test_import_through_launcher_grant(tmp_path):
         c.hello()
         rev = c.call("ProjectInspectRequest").rev
         res = c.call("ProjectImportRequest", baseRev=rev, opId=new_id(), origin="t", sourceGrant=grant,
-                     definitions=["source"])
+                     definitions=["src"])
         mapping = {text(m.from_): text(m.to) for m in res.idMap} if hasattr(res.idMap[0], "from_") else \
                   {text(getattr(m, "from")): text(m.to) for m in res.idMap}
-        assert mapping == {"source": "source-2"}
+        assert mapping == {"src": "src-2"}
         snap = c.call("ProjectInspectRequest")
-        assert any(text(dd.id) == "source-2" for dd in snap.definitions)
-        assert any(text(s.path) == "definitions/source-2/_outputs.fbs" for s in snap.sources)
+        assert any(text(dd.id) == "src-2" for dd in snap.definitions)
+        assert any(text(s.path) == "definitions/src-2/_outputs.fbs" for s in snap.sources)
         with pytest.raises(RpcFailure) as e:
             c.call("ProjectImportRequest", baseRev=snap.rev, opId=new_id(), origin="t", sourceGrant=new_id())
         assert e.value.kind == "permission_denied"
@@ -638,10 +635,10 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert e.value.kind == "invalid_document"
 
     doc = project_json(client.call("ProjectInspectRequest"))
-    doc["canvas"]["cards"].append({"id": "plan", "definition": "plan"})
+    doc["canvas"]["cards"].append({"id": "plan"})
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps({"name": "Plan", "template": "draft", "inputs": [{"name": "in"}]}),
+        change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft", "inputs": [{"name": "in"}]}),
                metaJson=json.dumps({"description": "d", "plan": "p", "context": "why"})),
         change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
         change("SetProject", json=json.dumps(doc)),

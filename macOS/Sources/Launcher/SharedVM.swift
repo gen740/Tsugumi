@@ -495,7 +495,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   /// Gives the project a slot (its own virtiofs device, `tsugumi-<slot>`)
   /// sharing `entries` (name -> folder); the same slot again for a project
   /// that has one.
-  public func attach(_ projectId: String, _ entries: [String: URL]) async throws -> Int {
+  public func attach(_ projectId: String, _ entries: [String: URL], readOnly: Set<String> = []) async throws -> Int {
     let slot: Int? = lock.withLock {
       if let s = slots[projectId] { return s }
       let used = Set(slots.values)
@@ -506,7 +506,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     guard let slot else {
       throw LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: "")
     }
-    await setShare(slot, entries.mapValues { VZSharedDirectory(url: $0, readOnly: false) })
+    var dirs: [String: VZSharedDirectory] = [:]
+    for (name, url) in entries { dirs[name] = VZSharedDirectory(url: url, readOnly: readOnly.contains(name)) }
+    await setShare(slot, dirs)
     return slot
   }
 

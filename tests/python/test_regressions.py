@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from conftest import Daemon
+from materialize import convert_in_place
 from projects import card, conn
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -46,6 +47,8 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         "name": "regression", "pkgsPath": "tsugumi:default", "databaseConnections": [],
         "canvas": {"cards": cards, "connections": conns}}))
     put(root / "layout.json", "{}")
+    # Described with shared definitions; written one definition per Card.
+    convert_in_place(root)
 
 
 def run_and_wait(c, card_id: str, propagate: bool = True, timeout: float = 30.0):

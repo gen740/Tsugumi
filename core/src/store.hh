@@ -24,9 +24,11 @@ struct SourcePatchIn {
 };
 
 struct ChangeIn {
-  enum class Kind { SetProject, SetLayout, PutDefinition, RemoveDefinition, PutSource, PatchSource, RemoveSource };
+  enum class Kind { SetProject, SetLayout, PutDefinition, RemoveDefinition, RenameDefinition, PutSource, PatchSource, RemoveSource };
   Kind kind;
   std::string id;    // definitions
+  std::string to;    // RenameDefinition
+  std::optional<std::string> link_json;
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   std::string path;   // sources
@@ -48,6 +50,7 @@ struct Delta {
   std::vector<std::string> definitions_removed;
   std::vector<std::string> sources_upsert;
   std::vector<std::string> sources_removed;
+  std::vector<std::pair<std::string, std::string>> renamed;  // definition id: from -> to
   DocumentPtr doc;
 };
 

@@ -977,8 +977,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               // A selected project file is copied into the run before use.
               schema::v::String relv;
               if (schema::decode(*prm.data, relv)) throw Failed(FailureKind::invalid_path, "input file must be a path string");
-              const std::string& rel = relv.value();
-              if (!fs::valid_relative_path(rel) || !doc_->sources.count(rel))
+              // Relative to the project the Card is written in.
+              std::string rel = node.project_dir + relv.value();
+              if (!fs::valid_relative_path(relv.value()) || !doc_->sources.count(rel))
                 throw Failed(FailureKind::invalid_path, "input file " + rel + " is not a project source", {{"path", rel}});
               auto data = svc_.store().read_source(*doc_, rel);
               auto dest = invocation_dir(node, s.invocation) / "out" / stdfs::path(rel).filename();
@@ -1035,7 +1036,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         d.invocation = s.invocation;
         d.value = DisplayData::Text{text};
         on_display(rt, d);
-        if (node.settings.logger_database) write_logger_db(node, s.invocation, text);
         break;
       }
       default:
@@ -1043,22 +1043,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::execute, 0, t0, now_ms()));
     return p;
-  }
-
-  void write_logger_db(const Node& node, uint64_t inv, const std::string& text) {
-    std::string url;
-    for (const auto& db : doc_->database_connections())
-      if (db.name->value() == *node.settings.logger_database) url = db.url->value();
-    if (!url.starts_with("sqlite:"))
-      throw Failed(FailureKind::unsupported, "logger databases support sqlite:<name>.db URLs only");
-    std::string name = url.substr(7);
-    if (!valid_id(name)) throw Failed(FailureKind::invalid_path, "invalid logger database name " + name);
-    auto path = svc_.store().state_dir() / "logger" / name;
-    stdfs::create_directories(path.parent_path());
-    sql::Db db(path.string());
-    db.exec("CREATE TABLE IF NOT EXISTS records(time_ms INTEGER, run_id TEXT, card TEXT, invocation INTEGER, value TEXT)");
-    db.prepare("INSERT INTO records VALUES(?,?,?,?,?)")
-        .bind(1, now_ms()).bind(2, run_id_).bind(3, path_key(node.path)).bind(4, inv).bind(5, text).run();
   }
 
   void on_display(NodeRt& rt, DisplayData d) {
@@ -1134,12 +1118,26 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     sp.ro_paths = {(svc_.store().state_dir() / "runs").string(), (svc_.store().state_dir() / "inputs").string()};
     if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
     sp.hidden_paths.push_back(svc_.store().state_dir().string());
+    sp.network = node.settings.network;
+    for (const auto& f : node.settings.host_folders) {
+      std::string source = f.path;
+      if (const auto& root = svc_.options().host_folders; !root.empty())
+        source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
+      std::error_code ec;
+      if (!stdfs::is_directory(source, ec))
+        throw Failed(FailureKind::not_found,
+                     "the folder " + f.path + " (/host/" + f.name +
+                         ") is not available here: it is missing on this Mac, or the project must be opened again to share it",
+                     {{"path", f.path}});
+      sp.binds.push_back({source, "/host/" + f.name, f.write});
+    }
     // The resident worker of this Card, if it runs the same build under the same conditions.
     std::string key = rt.build->package.value_or("") + "|" + rt.build->bash.value_or("") + "|" + rt.build->pre_run +
                       "|" + rt.build->post_run + "|" + (sp.sandbox ? "s" : "u") + "|" +
-                      (uid ? std::to_string(*uid) : "-");
+                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-");
+    for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
     std::string card_key = path_key(node.path);
-    auto lease = svc_.workers().acquire(card_key, key, sp, rt.build->reuse_worker);
+    auto lease = svc_.workers().acquire(card_key, key, sp, rt.node->settings.reuse_worker);
     auto& worker = *lease.worker;
     s.worker_reused = lease.reused;
     // Folders: without filesystem: true, work/ and tmp/ are the worker's own
@@ -1223,7 +1221,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Kept only after a clean call: a failed, cancelled or timed out worker
     // (and anything it started) ends.
     svc_.workers().release(card_key, key, std::move(lease.worker),
-                           rt.build->reuse_worker && !outcome.failure);
+                           rt.node->settings.reuse_worker && !outcome.failure);
     Produced p;
     p.failure = outcome.failure;
     if (!p.failure)

@@ -76,6 +76,10 @@ void write(const stdfs::path& p, const std::string& text) {
 const char* kNumberFbs = R"(namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;)";
 const char* kFlagFbs = R"(namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;)";
 
+// Cards named for a definition written under another name (c("go",
+// "trigger")): each Card gets its own copy when the project is resolved.
+std::vector<std::pair<std::string, std::string>> g_copies;
+
 // A project on disk built from a list of code / builtin definitions.
 struct Project {
   stdfs::path root = temp_dir();
@@ -94,7 +98,8 @@ struct Project {
       ins += std::string(ins.empty() ? "" : ",") + "{\"name\":\"" + i + "\"" + (opt ? ",\"optional\":true" : "") + "}";
     }
     write(root / "definitions" / id / "_card.json",
-          "{\"language\":\"bash\",\"inputMode\":\"" + mode + "\",\"inputs\":[" + ins + "]}");
+          "{\"language\":\"bash\",\"trigger\":\"" + std::string(mode == "any" ? "eachInput" : "allInputs") +
+              "\",\"inputs\":[" + ins + "]}");
     write(root / "definitions" / id / "_outputs.fbs", kNumberFbs);
     write(root / "definitions" / id / "default.nix", "{ pkgs, inputs, params }:\n" + nix + "\n");
   }
@@ -104,7 +109,26 @@ struct Project {
           R"({"template":"input","params":[{"name":"value","type":"bool","data":true}]})");
     write(root / "definitions" / id / "_outputs.fbs", kFlagFbs);
   }
+  // A Card in Card: the named definitions move into externals/<id>/, a
+  // project of its own with `boundary`, linked from definitions/<id>/.
+  void external(const std::string& id, const std::vector<std::string>& cards, const std::string& conns,
+                const std::string& boundary) {
+    auto ext = root / "externals" / id;
+    stdfs::create_directories(ext / "definitions");
+    std::string list;
+    for (const auto& card : cards) {
+      stdfs::rename(root / "definitions" / card, ext / "definitions" / card);
+      list += std::string(list.empty() ? "" : ",") + "{\"id\":\"" + card + "\"}";
+    }
+    write(ext / "tsugumi.json", R"({"name":")" + id + R"(","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[)" +
+                                    list + "],\"connections\":[" + conns + "]},\"boundary\":" + boundary + "}");
+    write(root / "definitions" / id / "_link.json", "{\"external\":\"" + id + "\"}");
+  }
   std::shared_ptr<const Resolution> resolve(const std::string& cards, const std::string& conns) {
+    for (const auto& [def, id] : g_copies)
+      if (def != id && !stdfs::exists(root / "definitions" / id))
+        stdfs::copy(root / "definitions" / def, root / "definitions" / id, stdfs::copy_options::recursive);
+    g_copies.clear();
     write(root / "tsugumi.json", R"({"name":"t","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[)" +
                                      cards + "],\"connections\":[" + conns + "]}}");
     write(root / "layout.json", "{}");
@@ -118,7 +142,10 @@ struct Project {
   }
 };
 
-std::string c(const std::string& id, const std::string& def) { return "{\"id\":\"" + id + "\",\"definition\":\"" + def + "\"}"; }
+std::string c(const std::string& id, const std::string& def) {
+  g_copies.emplace_back(def, id);
+  return "{\"id\":\"" + id + "\"}";
+}
 std::string e(const std::string& a, const std::string& ap, const std::string& b, const std::string& bp) {
   return R"({"from":{"card":")" + a + R"(","port":")" + ap + R"("},"to":{"card":")" + b + R"(","port":")" + bp + R"("}})";
 }
@@ -274,10 +301,9 @@ TEST(upstream_through_nested_subgraph) {
   p.code("a", {});
   p.code("inner", {"x"});
   p.code("d", {"x"}, "{ run = \"${inputs.upstream.\"s/inner\".run}\"; }");
+  p.external("s", {"inner"}, "", R"({"inputs":{"in":{"card":"inner","port":"x"}},"outputs":{"out":{"card":"inner","port":"out"}}})");
   auto r = p.resolve(
-      c("a", "a") + R"(,{"id":"s","canvas":{"cards":[)" + c("inner", "inner") +
-          R"(],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"x"}},"outputs":{"out":{"card":"inner","port":"out"}}}},)" +
-          c("d", "d"),
+      c("a", "a") + "," + c("s", "s") + "," + c("d", "d"),
       e("a", "out", "s", "in") + "," + e("s", "out", "d", "x"));
   CHECK_EQ(guaranteed(*r, "d"), (std::set<std::string>{"a", "s/inner"}));
   CHECK(codes(*r, "d").empty());
@@ -299,10 +325,9 @@ TEST(run_plans_whole_partial_and_subgraph) {
   p.code("a", {});
   p.code("inner", {"x"});
   p.code("d", {"x"});
+  p.external("s", {"inner"}, "", R"({"inputs":{"in":{"card":"inner","port":"x"}},"outputs":{"out":{"card":"inner","port":"out"}}})");
   auto r = p.resolve(
-      c("go", "trigger") + "," + c("a", "a") + R"(,{"id":"s","canvas":{"cards":[)" + c("inner", "inner") +
-          R"(],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"x"}},"outputs":{"out":{"card":"inner","port":"out"}}}},)" +
-          c("d", "d"),
+      c("go", "trigger") + "," + c("a", "a") + "," + c("s", "s") + "," + c("d", "d"),
       e("a", "out", "s", "in") + "," + e("s", "out", "d", "x"));
   auto whole = Scheduler::plan(*r, {"go"}, true);
   CHECK_EQ(whole.targets.size(), size_t(4));  // go, a, s/inner, d (not the container)

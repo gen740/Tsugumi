@@ -45,6 +45,14 @@ struct WorkerSpawn {
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.
   std::vector<std::string> hidden_paths;
+  // Experimental, per Card: outside network (otherwise the worker has its
+  // own network namespace with nothing in it) and folders of the Mac.
+  bool network = false;
+  struct Bind {
+    std::string source, target;
+    bool write = false;
+  };
+  std::vector<Bind> binds;
   std::optional<uid_t> uid;
   std::optional<gid_t> gid;
 };

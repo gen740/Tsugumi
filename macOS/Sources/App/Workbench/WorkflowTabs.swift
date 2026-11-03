@@ -231,7 +231,7 @@ enum RunActions {
   /// The whole document runs from its root trigger, whichever scope is shown.
   static func runAll(_ s: ProjectSession, scope: [String]) {
     let trigger = s.cards(in: []).first { c in
-      c["definition"]?.string.flatMap { s.definitions[$0]?["template"]?.string } == "trigger"
+      c["id"]?.string.map { s.kind(key([$0])) } == .trigger
     }
     guard let id = trigger?["id"]?.string else {
       s.notice = "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。"

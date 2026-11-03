@@ -1,5 +1,4 @@
 {
-  "name": "Report",
   "language": "python",
   "inputs": [
     {
@@ -11,6 +10,5 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "report",
-  "canvasEnabled": true,
   "filesystem": true
 }

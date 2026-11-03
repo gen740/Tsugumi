@@ -26,7 +26,6 @@ struct CardBuild {
   std::optional<std::string> package;
   std::optional<std::string> bash;
   std::string pre_run, post_run;
-  bool reuse_worker = true;  // the default: the loaded worker stays and serves later invocations
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };
@@ -89,7 +88,8 @@ class NixRunner {
   std::filesystem::path gcroots_dir() const;
   void acquire_lane(const std::atomic<bool>* cancel);
   void release_lane();
-  std::string nixpkgs_pin_json(const Document& doc) const;
+  // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
+  std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
   std::filesystem::path content_dir(const char* kind, const std::string& digest,
                                     const std::function<std::map<std::string, std::string>()>& files);

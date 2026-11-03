@@ -70,13 +70,12 @@ def tool_results(messages):
     return out
 
 
-def find_card(graph, path):
-    cards = graph["cards"]
-    for i, cid in enumerate(path):
-        card = next(c for c in cards if c["id"] == cid)
-        if i + 1 < len(path):
-            cards = card["canvas"]["cards"]
-    return card
+def trigger_of(inspect_value):
+    """The Card whose own definition is the trigger template."""
+    for d in inspect_value.get("definitions", []):
+        if d.get("card_json") and json.loads(d["card_json"]).get("template") == "trigger":
+            return d["id"]
+    return "begin"
 
 
 DRAFTS = re.compile(r"Implement these Draft Cards", re.I)
@@ -133,8 +132,7 @@ def decide_drafts(messages, text, start):
     if name == "project_validate":
         problems = [d.get("message") for d in value.get("diagnostics", []) if d.get("severity") != "warning"]
         inspect = next(r for n, r, _ in tool_results(messages[start + 1:]) if n == "project_inspect")
-        doc = json.loads(inspect["value"]["project_json"])
-        trigger = next(c["id"] for c in doc["canvas"]["cards"] if c.get("definition") == "trigger")
+        trigger = trigger_of(inspect["value"])
         rev = next(r for n, r, _ in reversed(results) if n == "project_save")["value"]["rev"]
         return ("tool", "run", {"base_rev": str(rev), "card": {"segments": [trigger]}}) if True else ("text", str(problems))
     if name in ("run", "run_status"):
@@ -165,16 +163,20 @@ def decide(messages):
     name, res, is_error = results[-1]
     value_obj = res.get("value", {})
     if name == "project_inspect":
-        doc = json.loads(value_obj["project_json"])
-        card = find_card(doc["canvas"], card_path)
+        # A Card's settings are its own definition (definitions/<id>/_card.json).
+        d = next(x for x in value_obj["definitions"] if x["id"] == card_path[-1])
+        card = json.loads(d["card_json"])
         try:
             v = json.loads(value)
         except ValueError:
             v = value
-        card.setdefault("params", {})[param] = v
+        next(p for p in card["params"] if p["name"] == param)["data"] = v
+        change = {"id": d["id"], "card_json": json.dumps(card)}
+        if d.get("meta_json"):
+            change["meta_json"] = d["meta_json"]
         return ("tool", "project_save", {
             "base_rev": str(value_obj["rev"]),
-            "changes": [{"value_type": "SetProject", "value": {"json": json.dumps(doc)}}],
+            "changes": [{"value_type": "PutDefinition", "value": change}],
         })
     if name == "project_save":
         if is_error:
@@ -182,8 +184,7 @@ def decide(messages):
                 return ("tool", "project_inspect", {})
             return ("text", f"Saving failed: {value_obj.get('diagnostic')}")
         inspect = next(r for n, r, _ in reversed(results) if n == "project_inspect")
-        doc = json.loads(inspect["value"]["project_json"])
-        trigger = next(c["id"] for c in doc["canvas"]["cards"] if c.get("definition") in ("trigger", "begin") or c["id"] in ("begin", "trigger"))
+        trigger = trigger_of(inspect["value"])
         return ("tool", "run", {"base_rev": str(value_obj["rev"]), "card": {"segments": [trigger]}})
     if name in ("run", "run_status"):
         if is_error:

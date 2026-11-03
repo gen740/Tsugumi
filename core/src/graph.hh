@@ -32,10 +32,16 @@ struct ParamDef {
   bool nix = false;
 };
 
+struct HostFolder {
+  std::string path;  // on the Mac
+  std::string name;  // /host/<name> in the worker
+  bool write = false;
+};
+
 struct Settings {
-  std::string name, symbol, description;
+  std::string name, symbol, description;  // name: the Card id
   std::string language;  // "", cpp, python, bash
-  bool any_mode = false;
+  bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
@@ -44,9 +50,10 @@ struct Settings {
   std::optional<std::string> artifact_output;
   bool filesystem = false;
   bool sandbox = true;
-  std::optional<std::string> logger_database;
-  bool canvas_enabled = false;
-  std::vector<ParamDef> params;               // definitions with effective values in data
+  bool reuse_worker = true;
+  bool network = false;
+  std::vector<HostFolder> host_folders;
+  std::vector<ParamDef> params;  // with their values in data
 };
 
 struct InputDef {
@@ -57,8 +64,13 @@ struct InputDef {
 struct Node {
   CardPath path;
   Template kind = Template::Code;
-  std::string definition;  // may be empty for inline subgraphs
-  schema::CardInstance instance;
+  // The Card's definition folder, project relative ("definitions/<id>/", or
+  // "externals/<p>/definitions/<id>/" inside a Card in Card).
+  std::string def_dir;
+  std::string project_dir;                    // "" or "externals/<p>/": the project the Card is written in
+  std::string pkgs_path;                      // of the project the Card is written in
+  std::optional<schema::Boundary> boundary;  // Card in Card: its external's ports
+  std::string external;                      // Card in Card: "externals/<p>/" (project relative)
   Settings settings;
   std::vector<InputDef> input_defs;
   std::vector<types::PortType> inputs;

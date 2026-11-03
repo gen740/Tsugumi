@@ -305,11 +305,12 @@ def demo_environment(tmp_path: Path, demo: str):
     if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":
         # One store per demo (container) or the one shared store (VM) keeps Nix downloads.
         return real_environment(dst, f"tsugumi-test-{demo}")
-    for d in (dst / "definitions").iterdir():
-        card = json.loads((d / "_card.json").read_text())
+    # Every Card's own definition, also inside its Cards in Card (externals).
+    for f in dst.rglob("definitions/*/_card.json"):
+        card = json.loads(f.read_text())
         if card.get("language"):
             card["sandbox"] = False
-            (d / "_card.json").write_text(json.dumps(card))
+            f.write_text(json.dumps(card))
     daemon = Daemon(dst).start()
     daemon.client_hello = True
     return daemon

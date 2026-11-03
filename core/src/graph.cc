@@ -1,5 +1,6 @@
 #include "graph.hh"
 
+#include <deque>
 #include <limits>
 #include <regex>
 #include <set>
@@ -150,7 +151,7 @@ class Builder {
 
   std::shared_ptr<Resolution> run() {
     res_ = std::make_shared<Resolution>();
-    scope(doc_.project.canvas->value(), {}, 0);
+    scope(doc_.project, "", {}, 0);
     connect_all();
     resolve_types();
     finish_checks();
@@ -165,25 +166,18 @@ class Builder {
     std::string from, from_port, to, to_port;
   };
 
-  Template template_of(const schema::CardInstance& card, const DefinitionDoc* def) {
-    if (card.canvas->has_value() || card.project->has_value()) return Template::Subgraph;
+  Template template_of(const DefinitionDoc* def) {
     if (!def) return Template::Draft;
+    if (def->link) return Template::Subgraph;
     const auto* t = schema::get(def->card.template_name);
     if (!t || *t == "none" || t->empty()) return Template::Code;
     static const std::map<std::string, Template> m = {
         {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
         {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
-        {"subgraph", Template::Subgraph}, {"draft", Template::Draft},
+        {"draft", Template::Draft},
     };
     auto it = m.find(*t);
     return it == m.end() ? Template::Code : it->second;
-  }
-
-  // Instance override, else definition default, else nullptr (builtin default).
-  template <class F>
-  static auto pick(const F& inst, const auto* def_field) -> decltype(schema::get(inst)) {
-    if (const auto* v = schema::get(inst)) return v;
-    return def_field ? schema::get(*def_field) : nullptr;
   }
 
   void timeout(Node& n, const char* key, const hosq::json::GenericDom<>* v, std::optional<uint64_t>& out) {
@@ -199,105 +193,97 @@ class Builder {
 
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
-    const auto& inst = n.instance;
-    const schema::CardDefinition* d = def ? &def->card : nullptr;
-    auto str = [&](const auto& i, const auto* df, std::string& out) {
-      if (const auto* v = pick(i, df)) out = *v;
+    s.name = n.path.back();
+    if (!def || def->link) return;
+    const auto& d = def->card;
+    auto str = [&](const auto& f, std::string& out) {
+      if (const auto* v = schema::get(f)) out = *v;
     };
-    auto boolean = [&](const auto& i, const auto* df, bool& out) {
-      if (const auto* v = pick(i, df)) out = *v;
+    auto boolean = [&](const auto& f, bool& out) {
+      if (const auto* v = schema::get(f)) out = *v;
     };
-    str(inst.name, d ? &d->name : nullptr, s.name);
-    str(inst.symbol, d ? &d->symbol : nullptr, s.symbol);
-    str(inst.description, d ? &d->description : nullptr, s.description);
-    if (d) {
-      if (const auto* lang = schema::get(d->language)) s.language = *lang == "none" ? "" : *lang;
-      if (const auto* mode = schema::get(d->input_mode)) {
-        if (*mode == "all" || *mode == "any") s.any_mode = *mode == "any";
-        else n.diags.push_back(diag(n.path, "invalid_setting", "inputMode must be all or any"));
-      }
-      if (const auto* ins = schema::get(d->inputs)) {
-        std::set<std::string> seen;
-        for (const auto& in : *ins) {
-          const auto* name = schema::get(in.name);
-          if (!name || !valid_id(*name)) {
-            n.diags.push_back(diag(n.path, "invalid_setting", "inputs entries need a valid name"));
-            continue;
-          }
-          if (!seen.insert(*name).second)
-            n.diags.push_back(diag(n.path, "invalid_setting", "duplicate input " + *name));
-          const auto* opt = schema::get(in.optional);
-          n.input_defs.push_back({*name, opt && *opt});
+    str(d.symbol, s.symbol);
+    str(d.description, s.description);
+    if (const auto* lang = schema::get(d.language)) s.language = *lang == "none" ? "" : *lang;
+    if (const auto* t = schema::get(d.trigger)) {
+      if (*t == "allInputs" || *t == "eachInput") s.any_mode = *t == "eachInput";
+      else n.diags.push_back(diag(n.path, "invalid_setting", "trigger must be allInputs or eachInput"));
+    }
+    if (const auto* ins = schema::get(d.inputs)) {
+      std::set<std::string> seen;
+      for (const auto& in : *ins) {
+        const auto* name = schema::get(in.name);
+        if (!name || !valid_id(*name)) {
+          n.diags.push_back(diag(n.path, "invalid_setting", "inputs entries need a valid name"));
+          continue;
         }
+        if (!seen.insert(*name).second) n.diags.push_back(diag(n.path, "invalid_setting", "duplicate input " + *name));
+        const auto* opt = schema::get(in.optional);
+        n.input_defs.push_back({*name, opt && *opt});
       }
     }
-    if (const auto* v = pick(inst.max_runs, d ? &d->max_runs : nullptr)) {
+    if (const auto* v = schema::get(d.max_runs)) {
       if (*v > 0) s.max_runs = *v;
       else n.diags.push_back(diag(n.path, "invalid_setting", "maxRuns must be a positive integer (0 is rejected)"));
     }
-    timeout(n, "timeoutSeconds", pick(inst.timeout_seconds, d ? &d->timeout_seconds : nullptr), s.timeout_seconds);
-    timeout(n, "buildTimeoutSeconds", pick(inst.build_timeout_seconds, d ? &d->build_timeout_seconds : nullptr),
-            s.build_timeout_seconds);
-    boolean(inst.record_io, d ? &d->record_io : nullptr, s.record_io);
-    boolean(inst.retain_artifact, d ? &d->retain_artifact : nullptr, s.retain_artifact);
-    boolean(inst.filesystem, d ? &d->filesystem : nullptr, s.filesystem);
-    boolean(inst.sandbox, d ? &d->sandbox : nullptr, s.sandbox);
-    boolean(inst.canvas_enabled, d ? &d->canvas_enabled : nullptr, s.canvas_enabled);
-    if (const auto* v = pick(inst.artifact_output, d ? &d->artifact_output : nullptr)) s.artifact_output = *v;
-    if (const auto* v = pick(inst.logger_database, d ? &d->logger_database : nullptr)) {
-      s.logger_database = *v;
-      bool found = false;
-      for (const auto& db : doc_.database_connections()) found |= db.name->value() == *v;
-      if (!found)
-        n.diags.push_back(diag(n.path, "unknown_database", "database connection " + *v + " is not defined"));
+    timeout(n, "timeoutSeconds", schema::get(d.timeout_seconds), s.timeout_seconds);
+    timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds), s.build_timeout_seconds);
+    boolean(d.record_io, s.record_io);
+    boolean(d.retain_artifact, s.retain_artifact);
+    boolean(d.filesystem, s.filesystem);
+    boolean(d.sandbox, s.sandbox);
+    boolean(d.reuse_worker, s.reuse_worker);
+    boolean(d.network, s.network);
+    if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
+    if (const auto* folders = schema::get(d.host_folders)) {
+      std::set<std::string> names;
+      for (const auto& f : *folders) {
+        const auto* path = schema::get(f.path);
+        const auto* name = schema::get(f.name);
+        if (!path || path->empty() || path->front() != '/' || !name || !valid_id(*name)) {
+          n.diags.push_back(diag(n.path, "invalid_setting", "hostFolders entries need an absolute path and a name"));
+          continue;
+        }
+        if (!names.insert(*name).second) {
+          n.diags.push_back(diag(n.path, "invalid_setting", "duplicate host folder name " + *name));
+          continue;
+        }
+        const auto* w = schema::get(f.write);
+        s.host_folders.push_back({*path, *name, w && *w});
+      }
     }
     read_params(n, def);
   }
 
   void read_params(Node& n, const DefinitionDoc* def) {
     std::set<std::string> names;
-    if (def) {
-      if (const auto* list = schema::get(def->card.params)) {
-        for (const auto& p : *list) {
-          const auto* name = schema::get(p.name);
-          const auto* type = schema::get(p.type);
-          if (!name || !valid_id(*name) || !type) {
-            n.diags.push_back(diag(n.path, "invalid_param", "params need a name and type"));
-            continue;
-          }
-          auto pt = parse_param_type(*type);
-          if (!pt) {
-            n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type));
-            continue;
-          }
-          if (!names.insert(*name).second) {
-            n.diags.push_back(diag(n.path, "invalid_param", "duplicate param " + *name));
-            continue;
-          }
-          ParamDef d;
-          d.name = *name;
-          d.type = *pt;
-          if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
-          if (const auto* data = schema::get(p.data)) {
-            if (auto err = check_param_value(d.type, *data))
-              n.diags.push_back(diag(n.path, "invalid_param", "param " + d.name + " default: " + *err));
-            else d.data = *data;
-          }
-          n.settings.params.push_back(std::move(d));
-        }
-      }
-    }
-    if (const auto* overrides = schema::get(n.instance.params)) {
-      for (const auto& [key, value] : overrides->entries()) {
-        auto it = std::find_if(n.settings.params.begin(), n.settings.params.end(),
-                               [&](const ParamDef& d) { return d.name == key; });
-        if (it == n.settings.params.end()) {
-          n.diags.push_back(diag(n.path, "unknown_param", "param " + key + " is not defined"));
+    if (const auto* list = schema::get(def->card.params)) {
+      for (const auto& p : *list) {
+        const auto* name = schema::get(p.name);
+        const auto* type = schema::get(p.type);
+        if (!name || !valid_id(*name) || !type) {
+          n.diags.push_back(diag(n.path, "invalid_param", "params need a name and type"));
           continue;
         }
-        if (auto err = check_param_value(it->type, value))
-          n.diags.push_back(diag(n.path, "invalid_param", "param " + key + ": " + *err));
-        else it->data = value;
+        auto pt = parse_param_type(*type);
+        if (!pt) {
+          n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type));
+          continue;
+        }
+        if (!names.insert(*name).second) {
+          n.diags.push_back(diag(n.path, "invalid_param", "duplicate param " + *name));
+          continue;
+        }
+        ParamDef d;
+        d.name = *name;
+        d.type = *pt;
+        if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
+        if (const auto* data = schema::get(p.data)) {
+          if (auto err = check_param_value(d.type, *data))
+            n.diags.push_back(diag(n.path, "invalid_param", "param " + d.name + ": " + *err));
+          else d.data = *data;
+        }
+        n.settings.params.push_back(std::move(d));
       }
     }
     for (const auto& p : n.settings.params)
@@ -311,7 +297,7 @@ class Builder {
   }
 
   void load_catalog(Node& n) {
-    std::string rel = "definitions/" + n.definition + "/_outputs.fbs";
+    std::string rel = n.def_dir + "_outputs.fbs";
     if (!doc_.sources.count(rel)) {
       if (n.kind == Template::Code || n.kind == Template::Input)
         n.exec_diags.push_back(diag(n.path, "missing_outputs", rel + " is missing", true, rel));
@@ -327,18 +313,55 @@ class Builder {
     n.outputs = std::move(cat.ports);
   }
 
-  void scope(const schema::Graph& graph, const CardPath& scope_path, int depth) {
-    for (const auto& card : graph.cards->value()) {
+  // The definition of a Card written in an external project (read as sources).
+  const DefinitionDoc* external_definition(Node& n) {
+    auto card = read_(n.def_dir + "_card.json");
+    auto link = read_(n.def_dir + "_link.json");
+    if (card.has_value() == link.has_value()) {
+      n.diags.push_back(diag(n.path, "invalid_document", n.def_dir + " needs _card.json or _link.json (one of them)"));
+      return nullptr;
+    }
+    DefinitionDoc d;
+    const std::string& id = n.path.back();
+    try {
+      if (card) {
+        d.card = parse_card_json(id, *card);
+        d.card_json = *card;
+      } else {
+        d.link = parse_link_json(id, *link).external->value();
+        d.link_json = *link;
+      }
+      if (auto meta = read_(n.def_dir + "_meta.json")) {
+        d.meta = parse_meta_json(*meta);
+        d.meta_json = *meta;
+      }
+    } catch (const DocumentError& e) {
+      n.diags.push_back(diag(n.path, "invalid_document", e.what(), true, n.def_dir));
+      return nullptr;
+    }
+    external_defs_.push_back(std::move(d));
+    return &external_defs_.back();
+  }
+
+  // One project's canvas: the root project (prefix "") or an external
+  // ("externals/<p>/", nested further inside its own externals).
+  void scope(const schema::Project& project, const std::string& prefix, const CardPath& scope_path, int depth) {
+    std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
+    for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
       n.path = scope_path;
       n.path.push_back(card.id->value());
-      n.instance = card;
+      n.def_dir = prefix + "definitions/" + card.id->value() + "/";
+      n.project_dir = prefix;
+      n.pkgs_path = pkgs;
       const DefinitionDoc* def = nullptr;
-      if (const auto* d = schema::get(card.definition)) {
-        n.definition = *d;
-        def = &doc_.definitions.at(n.definition);
+      if (prefix.empty()) {
+        auto it = doc_.definitions.find(card.id->value());
+        if (it != doc_.definitions.end()) def = &it->second;
+      } else {
+        def = external_definition(n);
       }
-      n.kind = template_of(card, def);
+      n.kind = template_of(def);
       read_settings(n, def);
       switch (n.kind) {
         case Template::Code:
@@ -346,9 +369,9 @@ class Builder {
               n.settings.language != "bash")
             n.exec_diags.push_back(diag(n.path, "invalid_language",
                                         "language must be cpp, python or bash"));
-          if (!doc_.sources.count("definitions/" + n.definition + "/default.nix"))
+          if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
-                                        "definitions/" + n.definition + "/default.nix"));
+                                        n.def_dir + "default.nix"));
           load_catalog(n);
           break;
         case Template::Input:
@@ -412,26 +435,31 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
+      std::optional<std::string> link = def ? def->link : std::nullopt;
       res_->nodes.push_back(std::move(n));
 
-      if (card.canvas->has_value()) {
-        scope(inner_graph(card), inner_scope, depth + 1);
-      } else if (const auto* rel = schema::get(card.project)) {
-        auto text = read_(*rel);
+      if (link) {
+        // A Card in Card: the project externals/<link>/ of this project.
+        std::string ext = prefix + "externals/" + *link + "/";
+        res_->nodes[idx].external = ext;
+        auto text = read_(ext + "tsugumi.json");
         if (!text) {
-          res_->nodes[idx].diags.push_back(diag(inner_scope, "external_change", *rel + " could not be read"));
-        } else if (depth > 15) {
-          res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph", "graph nesting too deep"));
+          res_->nodes[idx].diags.push_back(diag(inner_scope, "unknown_external", ext + " is not a Tsugumi project (no tsugumi.json)", true, ext));
+        } else if (depth >= 15) {
+          res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph", "Card in Card nesting deeper than 15", true, ext));
         } else {
           try {
-            scope(parse_graph_file(*rel, *text), inner_scope, depth + 1);
+            auto inner = parse_external_project(ext + "tsugumi.json", *text);
+            if (const auto* b = schema::get(inner.boundary)) res_->nodes[idx].boundary = *b;
+            projects_.push_back(std::move(inner));
+            scope(projects_.back(), ext, inner_scope, depth + 1);
           } catch (const DocumentError& e) {
-            res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph", e.what(), true, *rel));
+            res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph", e.what(), true, ext + "tsugumi.json"));
           }
         }
       }
     }
-    for (const auto& c : graph.connections->value()) {
+    for (const auto& c : project.canvas->value().connections->value()) {
       RawEdge e;
       e.scope = scope_path;
       e.from = c.from->value().card->value();
@@ -450,7 +478,7 @@ class Builder {
       if (it == res_->index.end()) return std::nullopt;
       Node& n = res_->nodes[it->second];
       if (n.kind != Template::Subgraph) return std::make_pair(it->second, port);
-      const auto* b = schema::get(n.instance.boundary);
+      const auto* b = n.boundary ? &*n.boundary : nullptr;
       const auto* side = b ? (output ? schema::get(b->outputs) : schema::get(b->inputs)) : nullptr;
       const schema::Endpoint* ep = nullptr;
       if (side)
@@ -477,7 +505,7 @@ class Builder {
     // Boundary ports become ports of the virtual subgraph node for display.
     for (auto& n : res_->nodes) {
       if (n.kind != Template::Subgraph) continue;
-      if (const auto* b = schema::get(n.instance.boundary)) {
+      if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
         if (const auto* ins = schema::get(b->inputs))
           for (const auto& [name, _] : ins->entries()) n.inputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
         if (const auto* outs = schema::get(b->outputs))
@@ -717,13 +745,15 @@ class Builder {
 
   // Static check of `inputs.upstream."<path>"` / `inputs.local.<id>` in each
   // Code Card's default.nix, so a reference to a Card that is not always
-  // upstream is reported before any evaluation.
+  // upstream is reported before any evaluation. Paths are relative to the
+  // project the Card is written in (the same as when that project is opened
+  // on its own).
   void check_nix_references() {
     static const std::regex re(R"re(\b(upstream|local)\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_'-]*)))re");
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       Node& n = res_->nodes[i];
       if (n.kind != Template::Code) continue;
-      std::string rel = "definitions/" + n.definition + "/default.nix";
+      std::string rel = n.def_dir + "default.nix";
       if (!doc_.sources.count(rel)) continue;
       auto text = read_(rel);
       if (!text) continue;
@@ -732,13 +762,8 @@ class Builder {
       for (auto it = std::sregex_iterator(text->begin(), text->end(), re); it != std::sregex_iterator(); ++it) {
         const auto& m = *it;
         std::string name = m[2].matched ? m[2].str() : m[3].str();
-        CardPath target;
-        if (m[1] == "local") {
-          target = scope_path;
-          target.push_back(name);
-        } else {
-          target = path_from_key(name);
-        }
+        CardPath target = scope_path;
+        for (const auto& part : path_from_key(name)) target.push_back(part);
         std::string key = path_key(target);
         auto found = res_->index.find(key);
         if (target == n.path) {
@@ -760,6 +785,8 @@ class Builder {
 
   const Document& doc_;
   const SourceReader& read_;
+  std::deque<DefinitionDoc> external_defs_;
+  std::deque<schema::Project> projects_;
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
   std::set<std::string> merge_failed_;

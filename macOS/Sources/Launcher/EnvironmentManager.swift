@@ -138,7 +138,17 @@ public actor EnvironmentManager {
       try Data(#"{"grants":{}}"#.utf8).write(to: grants, options: .atomic)
     }
     try writeEnvironmentInfo(p)
-    let slot = try await vm.attach(p.id, ["project": p.url, "control": control])
+    // Folders of the Mac the project's Cards may use (Experimental), and those
+    // attached to its chats: each a share entry host-<tag>, seen only by this
+    // project (/run/tsugumi/host/<tag>); read-only unless a Card writes there.
+    var entries: [String: URL] = ["project": p.url, "control": control]
+    var readOnly: Set<String> = []
+    for f in HostFolders.wanted(project: p.url, extra: extraFolders[p.id] ?? []) {
+      let name = "host-" + HostFolders.tag(f.path)
+      entries[name] = URL(fileURLWithPath: f.path, isDirectory: true)
+      if !f.write { readOnly.insert(name) }
+    }
+    let slot = try await vm.attach(p.id, entries, readOnly: readOnly)
     // The share may take a moment to show new folders in the VM.
     var started = false
     var lastError = ""
@@ -181,6 +191,12 @@ public actor EnvironmentManager {
     try? FileManager.default.removeItem(at: controlDir(p).appendingPathComponent("server.ready"))
     set(p.id, .stopped)
   }
+
+  /// Folders shared with a project besides those its Cards name (a chat's
+  /// attached folders); applied when the project's environment starts.
+  public private(set) var extraFolders: [String: [String]] = [:]
+
+  public func setExtraFolders(_ p: ProjectIdentity, _ paths: [String]) { extraFolders[p.id] = paths }
 
   /// The shared store's cleanup (an app setting): what no project's GC root
   /// keeps. Starts the VM when it is not running.

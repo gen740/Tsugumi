@@ -1105,6 +1105,32 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
   return ids;
 }
 
+void History::rename_card(const std::filesystem::path& copy, const std::string& from, const std::string& to) {
+  std::lock_guard<std::mutex> l(copy_mu_);
+  std::error_code ec;
+  bool has_copy = std::filesystem::exists(copy, ec);
+  auto db = has_copy ? with_copy(path_, copy) : std::make_unique<sql::Db>(path_.string());
+  std::vector<std::string> schemas = {"main"};
+  if (has_copy) schemas.push_back("ex");
+  // "<card>", "<card>/<inner>" and the saved inputs' "<card>#<port>".
+  auto rewrite = [&](const std::string& s, const std::string& table, const std::string& col) {
+    db->prepare("UPDATE " + s + "." + table + " SET " + col + " = ?2 || substr(" + col + ", length(?1) + 1) WHERE " +
+                col + " = ?1 OR substr(" + col + ", 1, length(?1) + 1) IN (?1 || '/', ?1 || '#')")
+        .bind(1, from).bind(2, to).run();
+  };
+  Txn t(*db);
+  for (const auto& s : schemas) {
+    for (const auto& c : kCopied)
+      if (std::string(c.table) != "runs") rewrite(s, c.table, "card");
+    rewrite(s, "runs", "target");
+    if (s == "main") {
+      rewrite(s, "statuses", "card");
+      rewrite(s, "last_inputs", "card");
+    }
+  }
+  t.commit();
+}
+
 std::string History::schema_blob(sql::Db& db, const std::string& hash) {
   auto st = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
   st.bind(1, hash);

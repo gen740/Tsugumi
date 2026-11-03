@@ -124,7 +124,7 @@ final class UIScript {
         // editor <card> set <field> <value> | category <name> | apply
         guard let m = editors[w[1]] else { say("no editor for \(w[1])"); break }
         switch w[2] {
-        case "set": m.instance[w[3]] = .string(w.dropFirst(4).joined(separator: " "))
+        case "set": m.definition?[w[3]] = .string(w.dropFirst(4).joined(separator: " "))
         case "category": m.category = CardEditorCategory(rawValue: w[3]) ?? m.category
         case "load":
           do { let t = try await m.text(w[3]); say("loaded \(w[3]) \(t.count) chars") } catch { say("load failed \(w[3]): \(error)") }
@@ -136,7 +136,7 @@ final class UIScript {
           if let t = m.loadedText(p) { m.texts[p] = t + w.dropFirst(4).joined(separator: " ") + "\n" } else { say("not loaded \(p)") }
         case "apply":
           let ok = await m.apply()
-          say("apply \(ok) conflict=\(m.conflict != nil) unapplied=\(m.unapplied) description=\(m.instance["description"]?.string ?? "")")
+          say("apply \(ok) conflict=\(m.conflict != nil) unapplied=\(m.unapplied) description=\(m.definition?["description"]?.string ?? "")")
         default: break
         }
       case "state":

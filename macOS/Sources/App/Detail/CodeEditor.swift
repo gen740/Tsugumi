@@ -119,6 +119,12 @@ struct CodeEditor: NSViewRepresentable {
     tv.textContainerInset = NSSize(width: 4, height: 6)
     tv.drawsBackground = true
     tv.backgroundColor = .textBackgroundColor
+    // The editor's area only: no insets for a title bar above it (the line
+    // number column would otherwise reach under the title bar).
+    scroll.automaticallyAdjustsContentInsets = false
+    scroll.contentInsets = NSEdgeInsetsZero
+    scroll.drawsBackground = true
+    scroll.backgroundColor = .textBackgroundColor
     scroll.hasVerticalRuler = true
     scroll.rulersVisible = true
     let ruler = LineNumberRuler(textView: tv)
@@ -307,11 +313,17 @@ final class LineNumberRuler: NSRulerView {
 
   override func drawHashMarksAndLabels(in rect: NSRect) {
     guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
+    // Only inside the editor's own area (never beyond the scroll view).
+    let area = visibleRect.intersection(rect)
+    guard !area.isEmpty else { return }
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSBezierPath(rect: area).addClip()
     // A gutter of its own: calmer background and a line between numbers and code.
     (NSColor.textBackgroundColor.blended(withFraction: 0.06, of: .labelColor) ?? .windowBackgroundColor).setFill()
-    bounds.fill()
+    area.fill()
     NSColor.separatorColor.setFill()
-    NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+    NSRect(x: bounds.maxX - 1, y: area.minY, width: 1, height: area.height).fill()
     let cursorLine = (tv.string as NSString).substring(to: min(tv.selectedRange().location, (tv.string as NSString).length))
       .components(separatedBy: "\n").count
     let font = NSFont.monospacedDigitSystemFont(ofSize: max(9, (tv.font?.pointSize ?? 12) - 2), weight: .regular)

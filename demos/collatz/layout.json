@@ -12,73 +12,25 @@
       "x": 0.0,
       "y": 380.0
     },
-    "cpp": {
+    "collatz-cpp": {
       "x": -130.0,
       "y": 570.0
     },
-    "python": {
+    "collatz-py": {
       "x": 130.0,
       "y": 570.0
     },
     "compare": {
       "x": 0.0,
       "y": 760.0
-    },
-    "cpp/loop": {
-      "x": 0.0,
-      "y": 0.0
-    },
-    "cpp/split": {
-      "x": 0.0,
-      "y": 190.0
-    },
-    "cpp/check": {
-      "x": -130.0,
-      "y": 380.0
-    },
-    "cpp/collect": {
-      "x": 130.0,
-      "y": 380.0
-    },
-    "cpp/route": {
-      "x": 0.0,
-      "y": 570.0
-    },
-    "cpp/halve": {
-      "x": -130.0,
-      "y": 760.0
-    },
-    "cpp/triple": {
-      "x": 130.0,
-      "y": 760.0
-    },
-    "python/loop": {
-      "x": 0.0,
-      "y": 0.0
-    },
-    "python/split": {
-      "x": 0.0,
-      "y": 190.0
-    },
-    "python/check": {
-      "x": -130.0,
-      "y": 380.0
-    },
-    "python/collect": {
-      "x": 130.0,
-      "y": 380.0
-    },
-    "python/route": {
-      "x": 0.0,
-      "y": 570.0
-    },
-    "python/halve": {
-      "x": -130.0,
-      "y": 760.0
-    },
-    "python/triple": {
-      "x": 130.0,
-      "y": 760.0
+    }
+  },
+  "displays": {
+    "compare": {
+      "x": 250.0,
+      "y": 760.0,
+      "width": 320.0,
+      "height": 80.0
     }
   },
   "notes": [
@@ -89,25 +41,5 @@
       "x": -520.0,
       "y": 0.0
     }
-  ],
-  "displays": {
-    "compare": {
-      "x": 250.0,
-      "y": 760.0,
-      "width": 320.0,
-      "height": 80.0
-    },
-    "cpp/collect": {
-      "x": 380.0,
-      "y": 380.0,
-      "width": 520.0,
-      "height": 120.0
-    },
-    "python/collect": {
-      "x": 380.0,
-      "y": 380.0,
-      "width": 520.0,
-      "height": 120.0
-    }
-  }
+  ]
 }

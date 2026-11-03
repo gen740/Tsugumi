@@ -92,6 +92,14 @@ public actor Agent {
   - project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
     SetProject replaces the whole document, so start from the project_json you inspected and change only what is needed.
   - Never save edits the user did not ask for. If a save returns revision_conflict, inspect again and re-apply.
+  - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
+    definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
+    "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, network, hostFolders, ...). Change a
+    setting with PutDefinition of that Card. A new Card needs both its {"id"} in SetProject and its definition;
+    never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
+    SetProject (connections) in the same save.
+  - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
+    own tsugumi.json (boundary: outer ports to inner Card ports) and definitions. Externals are read-only here.
   - Run with {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}; then poll run_status with the run_id until
     succeeded/failed/cancelled and read results with run_record. Cancelling runs requires an explicit run_cancel.
   - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
@@ -110,7 +118,8 @@ public actor Agent {
     tsugumi::visualization::text/scalar/line_chart/table/image/points/module. The worker stays across runs, so
     reset static state in `auto onRunStart() -> void` (Python: on_run_start(ctx)). Input types come from the
     connected outputs; never write _inputs.fbs.
-    Keep the instance ids and wiring; you may split one Draft into several Cards (rewire them in SetProject).
+    Keep the Card ids and wiring; you may split one Draft into several Cards (each with its own definition; rewire
+    them in SetProject).
     Keep the intent and the port descriptions in _meta.json. Then project_validate, fix what it reports, run the
     workflow and check the result. If something fails, report it; never leave a half-written save.
   - 64 bit integers are decimal strings. Explain results briefly in the user's language.

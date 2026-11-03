@@ -15,7 +15,7 @@ enum CardKind: String {
     case .merge: return String(localized: "合流")
     case .logger: return String(localized: "記録")
     case .draft: return "Draft"
-    case .subgraph: return String(localized: "子 Workflow")
+    case .subgraph: return "Card in Card"
     case .code: return String(localized: "処理")
     }
   }
@@ -29,15 +29,16 @@ enum CardKind: String {
     case .merge: return "arrow.triangle.merge"
     case .logger: return "list.bullet.rectangle"
     case .draft: return "pencil.and.outline"
-    case .subgraph: return "square.stack.3d.up"
+    case .subgraph: return "link"
     case .code: return "chevron.left.forwardslash.chevron.right"
     }
   }
 }
 
-/// New definition scaffolds offered by the Card database.
+/// What a new Card starts from: a built-in Card or a scaffold. Every Card
+/// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case draft, python, cpp, input
+  case python, cpp, input, draft, trigger, fork, branch, merge, logger
   var id: String { rawValue }
   var label: String {
     switch self {
@@ -45,6 +46,19 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
     case .input: return String(localized: "入力値")
+    case .trigger: return String(localized: "開始")
+    case .fork: return String(localized: "分配")
+    case .branch: return String(localized: "分岐")
+    case .merge: return String(localized: "合流")
+    case .logger: return String(localized: "記録")
+    }
+  }
+  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
+  /// A name for the new Card (its id; made unique).
+  var baseName: String {
+    switch self {
+    case .python, .cpp: return "card"
+    default: return rawValue
     }
   }
 }
@@ -60,54 +74,51 @@ extension ProjectSession {
   // MARK: - Reading
 
   func kind(_ k: CardKey) -> CardKind {
-    guard let inst = instance(k) else { return .code }
-    if inst["canvas"] != nil || inst["project"] != nil { return .subgraph }
-    guard let defId = inst["definition"]?.string, let def = definitions[defId] else { return .draft }
+    if cardExternal(k) != nil { return .subgraph }
+    guard let def = cardDefinition(k) else { return .draft }
     if let t = def["template"]?.string, let k = CardKind(rawValue: t) { return k }
     return def["language"] == nil ? .draft : .code
   }
 
-  func displayName(_ k: CardKey) -> String {
-    if let n = instance(k)?["name"]?.string, !n.isEmpty { return n }
-    if let d = instance(k)?["definition"]?.string, let n = definitions[d]?["name"]?.string, !n.isEmpty { return n }
-    return path(k).last ?? k
-  }
+  /// A Card's name is its id (and its definition folder).
+  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
 
   func scopeName(_ scope: [String]) -> String {
     scope.isEmpty ? (project["name"]?.string ?? identity.url.lastPathComponent) : displayName(key(scope))
   }
 
-  /// Every scope of the document (root first), for the hierarchy.
+  /// The Cards in Card of a scope, for the hierarchy.
   func childScopes(of scope: [String]) -> [[String]] {
     cards(in: scope).compactMap { c in
-      guard c["canvas"] != nil, let id = c["id"]?.string else { return nil }
+      guard let id = c["id"]?.string, cardExternal(key(scope + [id])) != nil else { return nil }
       return scope + [id]
     }
   }
 
-  /// Every Card (any depth) placed from a definition.
-  func instances(ofDefinition id: String) -> [CardKey] {
-    var out: [CardKey] = []
-    func walk(_ scope: [String]) {
-      for c in cards(in: scope) {
-        guard let cid = c["id"]?.string else { continue }
-        if c["definition"]?.string == id { out.append(key(scope + [cid])) }
-        if c["canvas"] != nil { walk(scope + [cid]) }
-      }
-    }
-    walk([])
-    return out
+  /// Whether a Card can be changed here (not inside a Card in Card).
+  func isOwnCard(_ k: CardKey) -> Bool { path(k).count == 1 }
+
+  /// Definition folders of this project that no Card uses (copied from
+  /// another project, or left over).
+  var unplacedDefinitions: [String] {
+    let used = Set(cards(in: []).compactMap { $0["id"]?.string })
+    return Set(definitions.keys).union(links.keys).subtracting(used).sorted()
   }
 
-  func usageCount(ofDefinition id: String) -> Int {
-    func count(_ scope: [String]) -> Int {
-      cards(in: scope).reduce(0) { n, c in
-        var m = n + (c["definition"]?.string == id ? 1 : 0)
-        if c["canvas"] != nil, let cid = c["id"]?.string { m += count(scope + [cid]) }
-        return m
+  /// Places a definition folder no Card uses as its Card (the same name).
+  @discardableResult
+  func placeDefinition(_ id: String, at point: CGPoint) -> CardKey {
+    let k = key([id])
+    guard unplacedDefinitions.contains(id) else { return k }
+    edit { s in
+      s.updateGraph([]) { g in
+        var cards = g["cards"]?.array ?? []
+        cards.append(.object([("id", .string(id))]))
+        g["cards"] = .array(cards)
       }
+      s.setPosition(k, point)
     }
-    return count([])
+    return k
   }
 
   var isEditable: Bool { connected && !runActive }
@@ -121,21 +132,22 @@ extension ProjectSession {
 
   func collapsed(_ k: CardKey) -> Bool { layout["cards"]?[k]?["collapsed"]?.bool ?? false }
 
-  /// The Card instance as last confirmed by the core (not the draft).
-  func confirmedInstance(_ k: CardKey) -> JSONValue? {
-    var graph = confirmedProject["canvas"]
-    let p = path(k)
-    for id in p.dropLast() {
-      guard let card = graph?["cards"]?.array?.first(where: { $0["id"]?.string == id }) else { return nil }
-      graph = card["canvas"]
-    }
-    return graph?["cards"]?.array?.first { $0["id"]?.string == p.last }
+  /// The Card's settings as last confirmed by the core (not the draft).
+  func confirmedCardDefinition(_ k: CardKey) -> JSONValue? {
+    guard isOwnCard(k), let id = path(k).first else { return nil }
+    return confirmedDefinitions[id]
   }
 
   // MARK: - Cards and connections
 
-  func uniqueId(_ base: String, in scope: [String]) -> String {
-    let existing = Set(cards(in: scope).compactMap { $0["id"]?.string })
+  /// A free Card name: not a Card, nor a definition folder, of this project.
+  func uniqueId(_ base: String, in scope: [String] = []) -> String {
+    var existing = Set(cards(in: scope).compactMap { $0["id"]?.string })
+    existing.formUnion(definitions.keys)
+    existing.formUnion(links.keys)
+    existing.formUnion(confirmedDefinitions.keys)
+    existing.formUnion(confirmedLinks.keys)
+    existing.formUnion(sourcePaths.filter { $0.hasPrefix("externals/") }.compactMap { $0.split(separator: "/").dropFirst().first.map(String.init) })
     let clean = base.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" }
     var stem = String(clean).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     if stem.isEmpty { stem = "card" }
@@ -145,14 +157,16 @@ extension ProjectSession {
     return id
   }
 
+  /// A new Card from a template, with its own definition folder.
   @discardableResult
-  func addCard(definition def: String, in scope: [String], at point: CGPoint) -> CardKey {
-    let id = uniqueId(def, in: scope)
-    let k = key(scope + [id])
+  func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil) -> CardKey {
+    let id = uniqueId(name ?? t.baseName)
+    let k = key([id])
     edit { s in
-      s.updateGraph(scope) { g in
+      s.writeTemplate(t, id: id)
+      s.updateGraph([]) { g in
         var cards = g["cards"]?.array ?? []
-        cards.append(.object([("id", .string(id)), ("definition", .string(def))]))
+        cards.append(.object([("id", .string(id))]))
         g["cards"] = .array(cards)
       }
       s.setPosition(k, point)
@@ -160,25 +174,38 @@ extension ProjectSession {
     return k
   }
 
-  /// Copies Cards (settings and inner graphs) with new ids; connections
-  /// between the copied Cards are copied too.
-  func duplicate(_ keys: Set<CardKey>, in scope: [String]) -> Set<CardKey> {
+  /// Copies Cards with their definition folders (settings, sources) under new
+  /// names; connections between the copied Cards are copied too.
+  func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
+    guard scope.isEmpty else { return [] }
+    var map: [String: String] = [:]
+    var files: [String: String] = [:]  // new path -> text
+    var taken: Set<String> = []
+    for k in keys.sorted() {
+      guard let id = path(k).first else { continue }
+      var newId = uniqueId(id)
+      var n = 2
+      while taken.contains(newId) { newId = uniqueId("\(id)-\(n)"); n += 1 }
+      taken.insert(newId)
+      map[id] = newId
+      for p in sourcePaths where p.hasPrefix("definitions/\(id)/") {
+        if let text = try? await sourceText(p) { files["definitions/\(newId)/" + p.dropFirst("definitions/\(id)/".count)] = text }
+      }
+    }
     var made: Set<CardKey> = []
     edit { s in
-      var map: [String: String] = [:]
-      s.updateGraph(scope) { g in
+      for (old, new) in map {
+        if let link = s.links[old] {
+          s.definitionEdits[new] = DefinitionDraft(card: .object([]), meta: s.definitionMeta[old], link: link)
+        } else if let card = s.definitions[old] {
+          s.setDefinition(new, card: card, meta: s.definitionMeta[old])
+        }
+      }
+      for (p, text) in files { s.putSource(p, text) }
+      s.updateGraph([]) { g in
         var cards = g["cards"]?.array ?? []
         var conns = g["connections"]?.array ?? []
-        for k in keys.sorted() {
-          guard let id = path(k).last, var c = cards.first(where: { $0["id"]?.string == id }) else { continue }
-          var newId = id
-          let taken = Set(cards.compactMap { $0["id"]?.string })
-          var n = 2
-          repeat { newId = "\(id)-\(n)"; n += 1 } while taken.contains(newId)
-          map[id] = newId
-          c["id"] = .string(newId)
-          cards.append(c)
-        }
+        for (_, new) in map.sorted(by: { $0.key < $1.key }) { cards.append(.object([("id", .string(new))])) }
         for c in conns {
           if let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string, let nf = map[f], let nt = map[t] {
             var copy = c
@@ -191,19 +218,66 @@ extension ProjectSession {
         g["connections"] = .array(conns)
       }
       for (old, new) in map {
-        let ok = key(scope + [old]), nk = key(scope + [new])
-        let p = s.position(ok)
-        s.setPosition(nk, CGPoint(x: p.x + 30, y: p.y + 30))
-        made.insert(nk)
+        let p = s.position(key([old]))
+        s.setPosition(key([new]), CGPoint(x: p.x + 30, y: p.y + 30))
+        made.insert(key([new]))
       }
     }
     return made
   }
 
+  /// Renames a Card (its id, its definition folder): saved at once, with its
+  /// connections, positions and run history following.
+  func renameCard(_ k: CardKey, to raw: String) async throws {
+    guard isOwnCard(k), let old = path(k).first else { return }
+    let new = raw.trimmingCharacters(in: .whitespaces)
+    guard new != old else { return }
+    guard !new.isEmpty, new.count <= 128, new != ".", new != "..",
+          new.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else {
+      throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "名前に使えるのは英数字と - _ . だけです（128 文字まで）。"))
+    }
+    if uniqueId(new) != new { throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "「\(new)」はすでに使われています。")) }
+    if dirty { await save() }
+    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
+    guard let rpc else { throw RPCError.disconnected }
+    var proj = confirmedProject
+    var lay = confirmedLayout
+    var canvas = proj["canvas"] ?? .object([])
+    canvas["cards"] = .array((canvas["cards"]?.array ?? []).map { $0["id"]?.string == old ? .object([("id", .string(new))]) : $0 })
+    canvas["connections"] = .array((canvas["connections"]?.array ?? []).map { c in
+      var c = c
+      for side in ["from", "to"] where c[side]?["card"]?.string == old { c[side]?["card"] = .string(new) }
+      return c
+    })
+    proj["canvas"] = canvas
+    func rk(_ s: String) -> String { s == old ? new : s.hasPrefix(old + "/") ? new + s.dropFirst(old.count) : s }
+    for field in ["cards", "displays", "boundaries"] {
+      if let o = lay[field]?.object { lay[field] = .object(o.map { (rk($0.0), $0.1) }) }
+    }
+    for field in ["notes", "groups"] {
+      if let arr = lay[field]?.array {
+        lay[field] = .array(arr.map { item in
+          var item = item
+          if let sc = item["scope"]?.string { item["scope"] = .string(rk(sc)) }
+          if (item["scope"]?.string ?? "") == "", let cs = item["cards"]?.array { item["cards"] = .array(cs.map { $0.string == old ? .string(new) : $0 }) }
+          if let outs = item["outputs"]?.array {
+            item["outputs"] = .array(outs.map { o in var o = o; if o["card"]?.string == old { o["card"] = .string(new) }; return o })
+          }
+          return item
+        })
+      }
+    }
+    var changes = [Change.setProject(proj.serialized()), Change.renameDefinition(id: old, to: new)]
+    if lay != confirmedLayout { changes.append(Change.setLayout(lay.serialized())) }
+    _ = try await rpc.save(baseRev: rev, opId: UUID(), origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+  }
+
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty else { return }
+    guard !ids.isEmpty, scope.isEmpty else { return }
     edit { s in
+      // Each Card's definition folder goes with it.
+      for id in ids { s.removeDefinition(id) }
       s.updateGraph(scope) { g in
         g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
         g["connections"] = .array((g["connections"]?.array ?? []).filter {
@@ -277,33 +351,42 @@ extension ProjectSession {
 
   func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
     edit { s in
-      s.updateInstance(k) { c in
-        var params = c["params"] ?? .object([])
-        params[name] = value
-        c["params"] = (params.object?.isEmpty ?? true) ? nil : params
+      s.updateCard(k) { c in
+        var params = c["params"]?.array ?? []
+        if let i = params.firstIndex(where: { $0["name"]?.string == name }) { params[i]["data"] = value }
+        c["params"] = .array(params)
       }
     }
   }
 
-  /// Moves the selected Cards into a new Card in Card. Wires crossing the
-  /// selection become its boundary ports, so the graph computes the same.
+  /// Moves the selected Cards into a new Card in Card: a new external project
+  /// (externals/<name>/) with their definitions and the wires between them.
+  /// Wires crossing the selection become its boundary ports, so the graph
+  /// computes the same.
   @discardableResult
-  func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "子 Workflow")) -> CardKey? {
+  func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty else { return nil }
-    let newId = uniqueId("sub", in: scope)
-    let newKey = key(scope + [newId])
+    guard !ids.isEmpty, scope.isEmpty else { return nil }
+    let newId = uniqueId(name)
+    let newKey = key([newId])
+    let ext = "externals/\(newId)/"
+    var files: [String: String] = [:]
+    for id in ids {
+      for p in sourcePaths where p.hasPrefix("definitions/\(id)/") {
+        if let text = try? await sourceText(p) { files[ext + p] = text }
+      }
+    }
     edit { s in
       var center = CGPoint.zero
       for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
       center.x /= CGFloat(keys.count)
       center.y /= CGFloat(keys.count)
-      s.updateGraph(scope) { g in
+      var inner: [JSONValue] = [], innerConns: [JSONValue] = []
+      var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
+      s.updateGraph([]) { g in
         let all = g["cards"]?.array ?? []
         let conns = g["connections"]?.array ?? []
-        var inner: [JSONValue] = [], outer: [JSONValue] = []
-        var innerConns: [JSONValue] = [], outerConns: [JSONValue] = []
-        var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
+        var outer: [JSONValue] = [], outerConns: [JSONValue] = []
         for c in all { if ids.contains(c["id"]?.string ?? "") { inner.append(c) } else { outer.append(c) } }
         func portName(_ list: [(String, JSONValue)], _ card: String, _ port: String) -> String {
           var n = "\(card)_\(port)"
@@ -334,30 +417,37 @@ extension ProjectSession {
             outerConns.append(nc)
           }
         }
-        outer.append(.object([
-          ("id", .string(newId)), ("name", .string(name)),
-          ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
-          ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
-        ]))
+        outer.append(.object([("id", .string(newId))]))
         g["cards"] = .array(outer)
         g["connections"] = .array(outerConns)
       }
-      // Layout: inner positions keep their arrangement under the new path.
+      // The external: a project of its own, opened on its own to edit.
+      let extProject: JSONValue = .object([
+        ("name", .string(newId)), ("pkgsPath", s.project["pkgsPath"] ?? .string("tsugumi:default")),
+        ("databaseConnections", .array([])),
+        ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
+        ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
+      ])
+      var extCards: [(String, JSONValue)] = []
+      for id in ids.sorted() {
+        let p = s.position(key([id]))
+        extCards.append((id, .object([("x", .real(p.x - center.x)), ("y", .real(p.y - center.y))])))
+        if let card = s.definitions[id] { s.putSource(ext + "definitions/\(id)/_card.json", card.serialized() + "\n") }
+        if let link = s.links[id] { s.putSource(ext + "definitions/\(id)/_link.json", link.serialized() + "\n") }
+        if let meta = s.definitionMeta[id] { s.putSource(ext + "definitions/\(id)/_meta.json", meta.serialized() + "\n") }
+      }
+      for (p, text) in files { s.putSource(p, text) }
+      s.putSource(ext + "tsugumi.json", extProject.serialized() + "\n")
+      s.putSource(ext + "layout.json", JSONValue.object([("cards", .object(extCards))]).serialized() + "\n")
+      for id in ids { s.removeDefinition(id) }
+      s.definitionEdits[newId] = DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(newId))]))
       if var cards = s.layout["cards"]?.object {
-        cards = cards.map { k, v in
-          for id in ids {
-            let old = key(scope + [id])
-            if k == old || k.hasPrefix(old + "/") {
-              return (newKey + "/" + k.dropFirst(key(scope).isEmpty ? 0 : key(scope).count + 1), v)
-            }
-          }
-          return (k, v)
-        }
+        cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
         s.layout["cards"] = .object(cards)
       }
       s.setPosition(newKey, center)
       s.updateGroups { groups in
-        for i in groups.indices where (groups[i]["scope"]?.string ?? "") == key(scope) {
+        for i in groups.indices where (groups[i]["scope"]?.string ?? "") == "" {
           groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
         }
       }
@@ -496,70 +586,61 @@ extension ProjectSession {
     if sources[p] != nil { sourceRemovals.insert(p) }
   }
 
-  func uniqueDefinitionId(_ base: String) -> String {
-    var stem = String(base.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" })
-    stem = stem.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    if stem.isEmpty { stem = "card" }
-    var id = stem
-    var n = 2
-    while definitions[id] != nil || confirmedDefinitions[id] != nil { id = "\(stem)-\(n)"; n += 1 }
-    return id
-  }
-
-  /// Adds a new definition from a scaffold to the draft.
-  @discardableResult
-  func createDefinition(name: String, template: DefinitionTemplate) -> String {
-    let id = uniqueDefinitionId(name.isEmpty ? template.rawValue : name)
-    let ns = id.replacingOccurrences(of: "-", with: "_")
-    edit { s in
-      let dir = "definitions/\(id)/"
-      switch template {
-      case .draft:
-        s.setDefinition(id, card: .object([("name", .string(name)), ("template", .string("draft"))]),
-                        meta: .object([("description", .string("")), ("plan", .string(""))]))
-      case .input:
-        s.setDefinition(id, card: .object([
-          ("name", .string(name)), ("template", .string("input")),
-          ("params", .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])),
-        ]), meta: nil)
-        s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-      case .python:
-        s.setDefinition(id, card: .object([
-          ("name", .string(name)), ("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])])),
-        ]), meta: nil)
-        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")
-        s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-        s.putSource(dir + "src/main.py", """
-        import outputs.out.\(ns).Text as out
+  /// The definition folder of a new Card made from a template (in the draft).
+  func writeTemplate(_ t: DefinitionTemplate, id: String) {
+    let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
+    let dir = "definitions/\(id)/"
+    switch t {
+    case .draft:
+      setDefinition(id, card: .object([("template", .string("draft"))]),
+                    meta: .object([("description", .string("")), ("plan", .string(""))]))
+    case .trigger, .fork, .branch, .logger:
+      setDefinition(id, card: .object([("template", .string(t.rawValue))]), meta: nil)
+    case .merge:
+      setDefinition(id, card: .object([
+        ("template", .string("merge")), ("inputs", .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])])),
+      ]), meta: nil)
+    case .input:
+      setDefinition(id, card: .object([
+        ("template", .string("input")),
+        ("params", .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])),
+      ]), meta: nil)
+      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
+    case .python:
+      setDefinition(id, card: .object([
+        ("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])])),
+      ]), meta: nil)
+      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")
+      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
+      putSource(dir + "src/main.py", """
+      import outputs.out.\(ns).Text as out
 
 
-        def main(ctx):
-            b = ctx.builder()
-            text = b.CreateString("hello")
-            out.Start(b)
-            out.AddValue(b, text)
-            ctx.output("out", b, out.End(b))
+      def main(ctx):
+          b = ctx.builder()
+          text = b.CreateString("hello")
+          out.Start(b)
+          out.AddValue(b, text)
+          ctx.output("out", b, out.End(b))
 
-        """)
-      case .cpp:
-        s.setDefinition(id, card: .object([
-          ("name", .string(name)), ("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])])),
-        ]), meta: nil)
-        s.putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
-        s.putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-        s.putSource(dir + "src/card.cc", """
-        #include <card.hh>
+      """)
+    case .cpp:
+      setDefinition(id, card: .object([
+        ("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])])),
+      ]), meta: nil)
+      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
+      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
+      putSource(dir + "src/card.cc", """
+      #include <card.hh>
 
-        auto run(Card::Input& input) -> Card::Output {
-          Card::Output out;
-          out.out.emplace().value = "hello";
-          return out;
-        }
-
-        """)
+      auto run(Card::Input& input) -> Card::Output {
+        Card::Output out;
+        out.out.emplace().value = "hello";
+        return out;
       }
+
+      """)
     }
-    return id
   }
 
   /// Copies definitions from another project folder through an import grant.

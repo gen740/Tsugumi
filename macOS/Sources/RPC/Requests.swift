@@ -241,6 +241,18 @@ public extension RPCClient {
     return try await call(.runhistorydeleterequest, r, timeout: .seconds(300))
   }
 
+  /// The types of an _outputs.fbs text as the core compiles them (bfbs); with
+  /// a port and a type, also the text with that port changed. Saves nothing.
+  func outputTypes(text: String, port: String? = nil, typeName: String? = nil,
+                   kind: Tsugumi_Data_PortKind = .flatbuffer) async throws -> Tsugumi_RPC_OutputTypesResultT {
+    let r = Tsugumi_RPC_OutputTypesRequestT()
+    r.text = text
+    r.port = port
+    r.typeName = typeName
+    if port != nil { r.kind = kind }
+    return try await call(.outputtypesrequest, r)
+  }
+
   func format(path: String, text: String) async throws -> Tsugumi_RPC_FormatResultT {
     let r = Tsugumi_RPC_ProjectFileFormatRequestT()
     r.path = path
@@ -271,12 +283,20 @@ public enum Change {
     return wrap(v, .setlayout)
   }
 
-  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?) -> Tsugumi_RPC_DocumentChangeT {
+  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?, linkJSON: String? = nil) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_PutDefinitionT()
     v.id = id
-    v.cardJson = cardJSON
+    v.cardJson = linkJSON == nil ? cardJSON : ""
     v.metaJson = metaJSON
+    v.linkJson = linkJSON
     return wrap(v, .putdefinition)
+  }
+
+  public static func renameDefinition(id: String, to: String) -> Tsugumi_RPC_DocumentChangeT {
+    let v = Tsugumi_RPC_RenameDefinitionT()
+    v.id = id
+    v.to = to
+    return wrap(v, .renamedefinition)
   }
 
   public static func removeDefinition(id: String) -> Tsugumi_RPC_DocumentChangeT {

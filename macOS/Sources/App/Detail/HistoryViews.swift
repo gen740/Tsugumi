@@ -61,7 +61,8 @@ struct CardExecutionView: View {
               Text("\(r.status.state.label) · 対象 \(r.target.path.joined(separator: "/"))").font(.caption).foregroundStyle(.secondary)
             }
           }
-          .tag(r.status.runId)
+          // The selection is optional: the tag must be too, or a click selects nothing.
+          .tag(Optional(r.status.runId))
         }
         .overlay {
           if loaded && filtered.isEmpty {
@@ -193,6 +194,9 @@ struct CardExecutionView: View {
   }
 
   private func loadInvocations() async {
+    // Another run: its own latest call is shown, never the previous run's number.
+    invocation = nil
+    record = nil
     guard let rpc = session.rpc, let runId else { invocations = []; return }
     invocations = (try? await rpc.invocations(runId: runId, card: path(cardKey)).records.compactMap { $0 }) ?? []
     invocation = invocations.last?.invocation
@@ -267,7 +271,7 @@ struct CardArtifactsView: View {
             Text(a.output).font(.callout.bold())
             Text("#\(a.invocation ?? 0) · \(String(describing: a.kind)) · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
           }
-          .tag(a.artifactId)
+          .tag(Optional(a.artifactId))
         }
         .overlay {
           if loaded && artifacts.isEmpty {
@@ -285,7 +289,7 @@ struct CardArtifactsView: View {
               Spacer()
               Text(ByteCountFormatter.string(fromByteCount: Int64(m.sizeBytes ?? 0), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
             }
-            .tag(m.path)
+            .tag(Optional(m.path))
           }
         }
         .frame(minWidth: 220, idealWidth: 280)

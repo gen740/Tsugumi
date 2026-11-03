@@ -206,7 +206,9 @@ struct WorkbenchCommands: Commands {
       Button("付箋を追加") { NotificationCenter.default.post(name: .canvasAddNote, object: tab?.id) }
         .shortcut(.addNote)
       Button("複製") {
-        if let s = session, let t = tab, s.isEditable { t.selection = s.duplicate(t.selection, in: t.scope) }
+        if let s = session, let t = tab, s.isEditable {
+          Task { t.selection = await s.duplicate(t.selection, in: t.scope) }
+        }
       }
       .shortcut(.duplicate)
       .disabled(tab?.selection.isEmpty ?? true)
@@ -231,6 +233,8 @@ extension Notification.Name {
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
   static let canvasReveal = Notification.Name("tsugumi.canvas.reveal")
+  /// A Card was renamed (userInfo: from, to, project): views showing it follow.
+  static let cardRenamed = Notification.Name("tsugumi.card.renamed")
   /// Zooms a canvas (object: tab id): userInfo "zoom" factor, 0 = 100 %.
   static let canvasZoom = Notification.Name("tsugumi.canvas.zoom")
   /// Opens the Card search of a canvas (object: tab id).

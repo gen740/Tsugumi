@@ -144,6 +144,8 @@ Listing list_tree(const stdfs::path& root) {
     if (it->is_symlink()) {
       out.links.push_back(rel);
       it.disable_recursion_pending();
+    } else if (it->path().filename() == ".tsugumi" && it->is_directory()) {
+      it.disable_recursion_pending();  // a project's own state (an external's), never a source
     } else if (it->is_regular_file()) {
       if (rel.find(".tsugumi-tmp-") == std::string::npos) out.files.push_back(rel);
     }

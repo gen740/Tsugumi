@@ -278,17 +278,19 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   std::set<std::string> targets;
   std::set<std::string> removed_defs;
   for (const auto& c : changes) {
-    std::string key;
+    std::vector<std::string> keys;
     switch (c.kind) {
-      case K::SetProject: key = "project"; break;
-      case K::SetLayout: key = "layout"; break;
+      case K::SetProject: keys = {"project"}; break;
+      case K::SetLayout: keys = {"layout"}; break;
       case K::PutDefinition:
-      case K::RemoveDefinition: key = "def:" + c.id; break;
-      default: key = "src:" + c.path; break;
+      case K::RemoveDefinition: keys = {"def:" + c.id}; break;
+      case K::RenameDefinition: keys = {"def:" + c.id, "def:" + c.to}; break;
+      default: keys = {"src:" + c.path}; break;
     }
-    if (!targets.insert(key).second)
-      throw Failed(FailureKind::invalid_request, "multiple changes target " + key.substr(key.find(':') + 1));
-    if (c.kind == K::RemoveDefinition) removed_defs.insert(c.id);
+    for (const auto& key : keys)
+      if (!targets.insert(key).second)
+        throw Failed(FailureKind::invalid_request, "multiple changes target " + key.substr(key.find(':') + 1));
+    if (c.kind == K::RemoveDefinition || c.kind == K::RenameDefinition) removed_defs.insert(c.id);
   }
   for (const auto& c : changes) {
     if (c.kind == K::PutSource || c.kind == K::PatchSource || c.kind == K::RemoveSource) {
@@ -340,8 +342,14 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         if (!valid_id(c.id)) throw Failed(FailureKind::invalid_request, "invalid definition id " + c.id);
         DefinitionDoc d;
         wrap([&] {
-          d.card = parse_card_json(c.id, c.json);
-          d.card_json = c.json;
+          if (c.link_json) {
+            if (!c.json.empty()) throw DocumentError("invalid_document", "a definition has card_json or link_json, not both");
+            d.link = parse_link_json(c.id, *c.link_json).external->value();
+            d.link_json = *c.link_json;
+          } else {
+            d.card = parse_card_json(c.id, c.json);
+            d.card_json = c.json;
+          }
           if (c.meta_json) {
             d.meta = parse_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
@@ -363,6 +371,40 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         }
         break;
       }
+      case K::RenameDefinition: {
+        if (!valid_id(c.to)) throw Failed(FailureKind::invalid_request, "invalid definition id " + c.to);
+        auto it = doc->definitions.find(c.id);
+        if (it == doc->definitions.end())
+          throw Failed(FailureKind::not_found, "definition " + c.id + " does not exist", {{"definition", c.id}});
+        if (doc->definitions.count(c.to))
+          throw Failed(FailureKind::invalid_request, "a Card named " + c.to + " already exists", {{"definition", c.to}});
+        {
+          std::error_code ec;
+          if (stdfs::exists(opts_.root / def_dir(c.to), ec))
+            throw Failed(FailureKind::external_change, def_dir(c.to) + " exists on disk but not in the document; Reload first",
+                         {{"path", def_dir(c.to)}});
+        }
+        doc->definitions[c.to] = std::move(it->second);
+        doc->definitions.erase(c.id);
+        // The sources move with the folder (written anew, removed at the old place).
+        std::vector<std::pair<std::string, SourceEntry>> moved;
+        for (auto s = doc->sources.begin(); s != doc->sources.end();) {
+          if (s->first.starts_with(def_dir(c.id))) {
+            moved.emplace_back(s->first, s->second);
+            s = doc->sources.erase(s);
+          } else {
+            ++s;
+          }
+        }
+        for (const auto& [path, entry] : moved) {
+          std::string to = def_dir(c.to) + path.substr(def_dir(c.id).size());
+          files[path] = std::nullopt;
+          files[to] = read_source(*base, path);
+          doc->sources[to] = entry;
+        }
+        st.delta.renamed.emplace_back(c.id, c.to);
+        break;
+      }
       case K::PutSource:
       case K::PatchSource:
       case K::RemoveSource: {
@@ -371,6 +413,18 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         if (!Document::is_source_area(c.path))
           throw Failed(FailureKind::permission_denied,
                        c.path + " cannot be changed through source operations", {{"path", c.path}});
+        // An external is edited where it is opened on its own; here only a
+        // new one can be written (a Card in Card made from selected Cards).
+        if (c.path.starts_with("externals/")) {
+          auto name = c.path.substr(10, c.path.find('/', 10) - 10);
+          std::string prefix = "externals/" + name + "/";
+          bool existing = false;
+          for (auto s = base->sources.lower_bound(prefix); s != base->sources.end() && s->first.starts_with(prefix); ++s)
+            existing = true;
+          if (existing)
+            throw Failed(FailureKind::permission_denied,
+                         prefix + " is an external project: open it on its own to change it", {{"path", c.path}});
+        }
         if (!fs::resolves_inside(opts_.root, opts_.root / c.path))
           throw Failed(FailureKind::invalid_path, c.path + " leaves the project", {{"path", c.path}});
         auto it = doc->sources.find(c.path);
@@ -457,9 +511,15 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   }
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
-    bool card_changed = old == base->definitions.end() || old->second.card_json != d.card_json;
-    bool meta_changed = old == base->definitions.end() || old->second.meta_json != d.meta_json;
-    if (card_changed) files[def_dir(id) + "_card.json"] = d.card_json;
+    bool fresh = old == base->definitions.end();
+    bool card_changed = fresh || old->second.card_json != d.card_json || old->second.link_json != d.link_json;
+    bool meta_changed = fresh || old->second.meta_json != d.meta_json;
+    if (card_changed) {
+      if (d.link_json) files[def_dir(id) + "_link.json"] = *d.link_json;
+      else files[def_dir(id) + "_card.json"] = d.card_json;
+      if (!fresh && d.link_json && !old->second.link_json) files[def_dir(id) + "_card.json"] = std::nullopt;
+      if (!fresh && !d.link_json && old->second.link_json) files[def_dir(id) + "_link.json"] = std::nullopt;
+    }
     if (meta_changed) {
       if (d.meta_json) files[def_dir(id) + "_meta.json"] = *d.meta_json;
       else if (old != base->definitions.end() && old->second.meta_json)
@@ -470,7 +530,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   for (const auto& [id, d] : base->definitions) {
     if (doc->definitions.count(id)) continue;
     st.delta.definitions_removed.push_back(id);
-    files[def_dir(id) + "_card.json"] = std::nullopt;
+    files[def_dir(id) + (d.link_json ? "_link.json" : "_card.json")] = std::nullopt;
     if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {

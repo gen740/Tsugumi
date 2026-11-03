@@ -16,7 +16,7 @@ struct CardMenu: View {
     let ref = CardRef(path: session.identity.url.path, card: cardKey)
     let kind = session.kind(cardKey)
     let targets = tab.selection.contains(cardKey) ? tab.selection : [cardKey]
-    if kind == .subgraph, session.instance(cardKey)?["canvas"] != nil {
+    if kind == .subgraph {
       Button("開く") { tab.enter(path(cardKey)) }
       Button("新しいタブで開く") { workspace.openTab(path(cardKey)) }
       Button("別ウインドウで開く") { openWindow(id: "workflow", value: WorkflowRef(path: ref.path, scope: path(cardKey))) }
@@ -37,34 +37,28 @@ struct CardMenu: View {
     Button("この Card だけ実行（最後の入力）") { RunActions.run(session, card: cardKey, propagate: false) }
       .disabled(!session.connected || session.runActive)
     Divider()
-    Button("複製") { tab.selection = session.duplicate(targets, in: tab.scope) }.disabled(!session.isEditable)
+    Button("複製") { Task { tab.selection = await session.duplicate(targets, in: tab.scope) } }
+      .disabled(!session.isEditable || !tab.scope.isEmpty)
     Button(session.collapsed(cardKey) ? "展開" : "折りたたむ") { session.setCollapsed(targets, !session.collapsed(cardKey)) }
-    if session.cardSetting(cardKey, "canvasEnabled")?.bool == true {
-      if session.displayFrame(cardKey)?["hidden"]?.bool == true {
-        Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
-      }
-    } else if kind != .subgraph && kind != .draft {
-      Button("出力表示を有効にする") {
-        session.edit { s in s.updateInstance(cardKey) { $0["canvasEnabled"] = .bool(true) } }
-      }
-      .disabled(!session.isEditable)
+    if session.displayFrame(cardKey)?["hidden"]?.bool == true {
+      Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
     }
     Button("グループ化（見た目だけ）") {
       if !tab.selection.contains(cardKey) { tab.selection = [cardKey] }
       onGroup()
     }
-    Button("子 Workflow にまとめる（入出力のある Card）") {
-      if let k = session.makeSubgraph(targets, in: tab.scope) { tab.selection = [k] }
+    Button("Card in Card にまとめる（新しい external プロジェクト）") {
+      Task { if let k = await session.makeSubgraph(targets, in: tab.scope) { tab.selection = [k] } }
     }
-    .disabled(!session.isEditable)
+    .disabled(!session.isEditable || !tab.scope.isEmpty)
     Divider()
-    Button("入力を切断") { session.disconnect(cardKey, inputs: true, in: tab.scope) }.disabled(!session.isEditable)
-    Button("出力を切断") { session.disconnect(cardKey, inputs: false, in: tab.scope) }.disabled(!session.isEditable)
+    Button("入力を切断") { session.disconnect(cardKey, inputs: true, in: tab.scope) }.disabled(!session.isEditable || !tab.scope.isEmpty)
+    Button("出力を切断") { session.disconnect(cardKey, inputs: false, in: tab.scope) }.disabled(!session.isEditable || !tab.scope.isEmpty)
     Button("削除", role: .destructive) {
       session.deleteCards(targets, in: tab.scope)
       tab.selection.subtract(targets)
     }
-    .disabled(!session.isEditable)
+    .disabled(!session.isEditable || !tab.scope.isEmpty)
   }
 }
 

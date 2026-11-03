@@ -1,0 +1,9 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "maxRuns": 100000
+}

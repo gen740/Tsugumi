@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// Left column: workflow hierarchy, Card definitions and the Cards shown in
-/// the current scope.
+/// Left column: workflow hierarchy, new Cards (each with a definition folder
+/// of its own) and the Cards shown in the current scope.
 struct WorkbenchSidebar: View {
   @Environment(\.openWindow) private var openWindow
   @Bindable var workspace: Workspace
@@ -24,19 +24,15 @@ struct WorkbenchSidebar: View {
           definitions
         } header: {
           HStack {
-            Text("Card 定義")
+            Text("Card を追加")
             Spacer()
             Menu {
-              ForEach(DefinitionTemplate.allCases) { t in
-                Button(t.label) { create(t) }
-              }
-              Divider()
               Button("他のプロジェクトからコピー…") { importing = true }
-              Button("Card 定義を管理…") { openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path)) }
-            } label: { Image(systemName: "plus") }
+              Button("Card の定義を一覧…") { openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path)) }
+            } label: { Image(systemName: "ellipsis.circle") }
               .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
               .disabled(!session.isEditable)
-              .help("定義を追加")
+              .help("他のプロジェクトから Card をコピー")
           }
         }
         Section("表示中の Card") {
@@ -62,199 +58,65 @@ struct WorkbenchSidebar: View {
   }
 
   @ViewBuilder private var definitions: some View {
-    TextField("定義を検索", text: $defSearch).textFieldStyle(.roundedBorder)
-    DefinitionTree(session: session, search: defSearch, expanded: $expanded,
-                   onPlace: { place($0) },
-                   onReveal: { k in
-                     tab.enter(Array(path(k).dropLast()))
-                     tab.selection = [k]
-                   },
-                   onEdit: { id in openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path, definition: id)) })
-  }
-
-  private func place(_ id: String) {
-    guard session.isEditable else { return }
-    let cam = session.cameras[key(tab.scope)] ?? (40, 40, 1)
-    let k = session.addCard(definition: id, in: tab.scope,
-                            at: CGPoint(x: (240 - cam.x) / cam.zoom, y: (160 - cam.y) / cam.zoom))
-    tab.selection = [k]
-  }
-
-  private func create(_ t: DefinitionTemplate) {
-    let id = session.createDefinition(name: t == .draft ? "新しい Draft" : "新しい Card", template: t)
-    place(id)
-    if t == .draft, let k = tab.selection.first {
-      openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
+    TextField("検索", text: $defSearch).textFieldStyle(.roundedBorder)
+    ForEach(DefinitionTemplate.allCases.filter { defSearch.isEmpty || $0.label.localizedCaseInsensitiveContains(defSearch) }) { t in
+      HStack(spacing: 6) {
+        Image(systemName: t.symbol).foregroundStyle(.secondary).frame(width: 16)
+        Text(t.label).lineLimit(1)
+        Spacer()
+      }
+      .contentShape(Rectangle())
+      .draggable(DefinitionDrag.templatePrefix + t.rawValue)
+      .onTapGesture(count: 2) { create(t) }
+      .help("ダブルクリックまたは Canvas へドラッグして追加。Card ごとに定義のフォルダを作ります。")
+      .contextMenu { Button("Canvas に追加") { create(t) }.disabled(!session.isEditable) }
+      .selectionDisabled()
     }
-  }
-}
-
-/// Card definitions as a tree of what contains what: the project (or the
-/// project a definition was copied from), its composite Cards (Card in
-/// Card, nested as on the canvas) and the definitions used inside each.
-/// Plain definitions are leaves. Where a definition is used is listed
-/// separately (its menu), not as children.
-struct DefinitionTree: View {
-  let session: ProjectSession
-  let search: String
-  @Binding var expanded: Set<String>
-  var onPlace: (String) -> Void
-  var onReveal: (CardKey) -> Void
-  var onEdit: (String) -> Void
-
-  private func matches(_ id: String) -> Bool {
-    search.isEmpty || id.localizedCaseInsensitiveContains(search) ||
-      (session.definitions[id]?["name"]?.string ?? "").localizedCaseInsensitiveContains(search) ||
-      (session.definitionMeta[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
-  }
-
-  private func origin(_ id: String) -> String { session.definitionMeta[id]?["origin"]?.string ?? "" }
-
-  /// Definitions used directly in a scope (not inside its composite Cards).
-  private func definitions(in scope: [String]) -> [String] {
-    var seen: [String] = []
-    for c in session.cards(in: scope) where c["canvas"] == nil && c["project"] == nil {
-      if let d = c["definition"]?.string, !seen.contains(d), session.definitions[d] != nil { seen.append(d) }
-    }
-    return seen
-  }
-
-  private func composites(in scope: [String]) -> [CardKey] {
-    session.cards(in: scope).compactMap { c in
-      guard c["canvas"] != nil || c["project"] != nil, let id = c["id"]?.string else { return nil }
-      return key(scope + [id])
-    }
-  }
-
-  /// A composite Card is shown when it (or anything inside) matches.
-  private func compositeMatches(_ k: CardKey) -> Bool {
-    if search.isEmpty || session.displayName(k).localizedCaseInsensitiveContains(search) { return true }
-    let scope = path(k)
-    return definitions(in: scope).contains { matches($0) && origin($0).isEmpty } || composites(in: scope).contains(where: compositeMatches)
-  }
-
-  var body: some View {
-    let all = session.definitions.keys.sorted()
-    let local = all.filter { origin($0).isEmpty }
-    let used = Set(local.filter { session.usageCount(ofDefinition: $0) > 0 })
-    let imported = Dictionary(grouping: all.filter { !origin($0).isEmpty && matches($0) }, by: origin)
-    let rootDefs = definitions(in: []).filter { origin($0).isEmpty && matches($0) }
-    let unused = local.filter { !used.contains($0) && matches($0) }
-    let topComposites = composites(in: []).filter(compositeMatches)
-    if all.isEmpty { Text("定義はありません").foregroundStyle(.secondary) }
-    else if rootDefs.isEmpty && unused.isEmpty && topComposites.isEmpty && imported.isEmpty && !search.isEmpty {
-      Text("一致する定義はありません").foregroundStyle(.secondary)
-    }
-    if !rootDefs.isEmpty || !topComposites.isEmpty || !unused.isEmpty {
-      DisclosureGroup(isExpanded: binding("origin:", default: !search.isEmpty)) {
-        ForEach(topComposites, id: \.self) { k in CompositeNode(tree: self, cardKey: k) }
-        ForEach(rootDefs, id: \.self) { id in DefinitionLeaf(tree: self, id: id) }
-        if !unused.isEmpty {
-          DisclosureGroup(isExpanded: binding("unused:", default: !search.isEmpty)) {
-            ForEach(unused, id: \.self) { id in DefinitionLeaf(tree: self, id: id) }
-          } label: {
-            Label("配置されていない定義", systemImage: "tray").font(.callout).foregroundStyle(.secondary)
+    // Definition folders without a Card (copied from another project).
+    let unplaced = session.unplacedDefinitions.filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) }
+    if !unplaced.isEmpty {
+      DisclosureGroup(isExpanded: Binding(get: { expanded.contains("unplaced") || !defSearch.isEmpty },
+                                          set: { if $0 { expanded.insert("unplaced") } else { expanded.remove("unplaced") } })) {
+        ForEach(unplaced, id: \.self) { id in
+          HStack(spacing: 6) {
+            Image(systemName: definitionKind(session.definitions[id]).symbol).foregroundStyle(.secondary).frame(width: 16)
+            Text(id).lineLimit(1)
+            Spacer()
+          }
+          .contentShape(Rectangle())
+          .draggable(DefinitionDrag.prefix + id)
+          .onTapGesture(count: 2) { place(id) }
+          .help("ダブルクリックまたは Canvas へドラッグして配置")
+          .contextMenu {
+            Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
+            Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) } }.disabled(!session.isEditable)
           }
           .selectionDisabled()
         }
       } label: {
-        Label(String(localized: "このプロジェクト"), systemImage: "folder").font(.callout.weight(.medium))
-          .help("このプロジェクトの定義。複合 Card（Card in Card）は中の定義を内包しています。")
-      }
-      .selectionDisabled()
-    }
-    ForEach(imported.keys.sorted(), id: \.self) { o in
-      DisclosureGroup(isExpanded: binding("origin:" + o, default: !search.isEmpty)) {
-        ForEach(imported[o] ?? [], id: \.self) { id in DefinitionLeaf(tree: self, id: id) }
-      } label: {
-        Label(o, systemImage: "square.and.arrow.down.on.square").font(.callout.weight(.medium))
-          .help("取り込み元: \(o)（\(imported[o]?.count ?? 0) 件）")
+        Label("配置されていない定義", systemImage: "tray").font(.callout).foregroundStyle(.secondary)
       }
       .selectionDisabled()
     }
   }
 
-  func binding(_ key: String, default value: Bool) -> Binding<Bool> {
-    Binding(get: { value || expanded.contains(key) }, set: { if $0 { expanded.insert(key) } else { expanded.remove(key) } })
+  private var dropPoint: CGPoint {
+    let cam = session.cameras[key(tab.scope)] ?? (40, 40, 1)
+    return CGPoint(x: (240 - cam.x) / cam.zoom, y: (160 - cam.y) / cam.zoom)
   }
 
-  /// A composite Card: its nested composite Cards and the definitions inside.
-  struct CompositeNode: View {
-    let tree: DefinitionTree
-    let cardKey: CardKey
-
-    var body: some View {
-      let s = tree.session
-      let scope = path(cardKey)
-      let inner = tree.composites(in: scope).filter(tree.compositeMatches)
-      let defs = tree.definitions(in: scope).filter(tree.matches)
-      let external = s.instance(cardKey)?["project"] != nil
-      if inner.isEmpty && defs.isEmpty {
-        row(external: external)
-      } else {
-        DisclosureGroup(isExpanded: tree.binding("comp:" + cardKey, default: !tree.search.isEmpty)) {
-          ForEach(inner, id: \.self) { k in CompositeNode(tree: tree, cardKey: k) }
-          ForEach(defs, id: \.self) { id in DefinitionLeaf(tree: tree, id: id) }
-        } label: { row(external: external) }
-        .selectionDisabled()
-      }
-    }
-
-    private func row(external: Bool) -> some View {
-      HStack(spacing: 6) {
-        Image(systemName: "square.stack.3d.up").foregroundStyle(Color.accentColor).frame(width: 16)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(tree.session.displayName(cardKey)).lineLimit(1)
-          Text(external ? String(localized: "複合 Card · 別プロジェクト") : String(localized: "複合 Card")).font(.caption2).foregroundStyle(.secondary)
-        }
-        Spacer()
-      }
-      .contentShape(Rectangle())
-      .contextMenu { Button("Canvas で表示") { tree.onReveal(cardKey) } }
-      .help("Card in Card。中で使う定義を内包しています（ダブルクリックで Canvas に表示）")
-      .onTapGesture(count: 2) { tree.onReveal(cardKey) }
-      .selectionDisabled()
-    }
+  private func place(_ id: String) {
+    guard session.isEditable, tab.scope.isEmpty else { return }
+    tab.selection = [session.placeDefinition(id, at: dropPoint)]
   }
 
-  /// One definition (a leaf); its uses are in its menu.
-  struct DefinitionLeaf: View {
-    let tree: DefinitionTree
-    let id: String
-
-    var body: some View {
-      let s = tree.session
-      let def = s.definitions[id]
-      let uses = s.instances(ofDefinition: id)
-      HStack(spacing: 6) {
-        Image(systemName: def?["symbol"]?.string ?? definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(def?["name"]?.string ?? id).lineLimit(1)
-          Text(uses.isEmpty ? String(localized: "\(definitionKind(def).label) · 未配置") : String(localized: "\(definitionKind(def).label) · \(uses.count) 枚で使用"))
-            .font(.caption2).foregroundStyle(.secondary)
-        }
-        Spacer()
-        if s.definitionEdits[id] != nil {
-          Image(systemName: "pencil.circle.fill").foregroundStyle(.orange).help("未保存の変更")
-        }
-      }
-      .contentShape(Rectangle())
-      .draggable(DefinitionDrag.prefix + id)
-      .onTapGesture(count: 2) { tree.onPlace(id) }
-      .help("ダブルクリックまたは Canvas へドラッグして配置。定義の変更は使用中の \(uses.count) 枚すべてに反映されます。")
-      .contextMenu {
-        Button("Canvas に配置") { tree.onPlace(id) }.disabled(!s.isEditable)
-        Button("編集…") { tree.onEdit(id) }
-        Menu("使用箇所（\(uses.count)）") {
-          if uses.isEmpty { Text("配置されていません") }
-          ForEach(uses, id: \.self) { k in
-            Button(s.displayName(k) + "  ·  " + (path(k).dropLast().isEmpty ? String(localized: "最上位") : path(k).dropLast().joined(separator: " / "))) {
-              tree.onReveal(k)
-            }
-          }
-        }
-      }
-      .selectionDisabled()
+  private func create(_ t: DefinitionTemplate) {
+    guard session.isEditable else { return }
+    if !tab.scope.isEmpty { tab.enter([]) }
+    let k = session.addCard(template: t, in: [], at: dropPoint)
+    tab.selection = [k]
+    if t == .draft {
+      openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
     }
   }
 }
@@ -264,11 +126,15 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
   return def?["language"] == nil ? .draft : .code
 }
 
-/// Dragging a definition from the sidebar onto the canvas places a Card
-/// (carried as a prefixed string).
+/// Dragging onto the canvas: a template makes a new Card, a definition
+/// folder without a Card is placed (carried as prefixed strings).
 enum DefinitionDrag {
   static let prefix = "tsugumi-definition:"
+  static let templatePrefix = "tsugumi-template:"
   static func id(_ s: String) -> String? { s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : nil }
+  static func template(_ s: String) -> DefinitionTemplate? {
+    s.hasPrefix(templatePrefix) ? DefinitionTemplate(rawValue: String(s.dropFirst(templatePrefix.count))) : nil
+  }
 }
 
 /// One scope in the hierarchy, with its child workflows.
@@ -367,10 +233,10 @@ struct VisibleCardRow: View {
         }
         .help("\(state.state.label)（実行 #\(state.invocation)）")
       }
-      if kind == .subgraph, session.instance(cardKey)?["canvas"] != nil {
+      if kind == .subgraph {
         Button("開く") { tab.enter(path(cardKey)) }
           .buttonStyle(.borderless).font(.caption)
-          .help("子 Workflow を開いて中を編集")
+          .help("Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）")
       }
     }
     .contentShape(Rectangle())
@@ -476,9 +342,10 @@ func concreteSettings(_ card: JSONValue) -> JSONValue {
   let code = c["language"] != nil && c["template"] == nil
   let defaults: [(String, JSONValue)] = [
     ("maxRuns", .number("1")), ("recordIO", .bool(false)), ("retainArtifact", .bool(false)),
-    ("filesystem", .bool(false)), ("sandbox", .bool(true)), ("canvasEnabled", .bool(false)),
+    ("filesystem", .bool(false)), ("sandbox", .bool(true)),
     ("timeoutSeconds", .null),
-  ] + (code ? [("buildTimeoutSeconds", .null), ("inputMode", .string("all"))] : [])
+  ] + (code ? [("buildTimeoutSeconds", .null), ("trigger", .string("allInputs")), ("reuseWorker", .bool(true)),
+               ("network", .bool(false))] : [])
   for (k, v) in defaults where c[k] == nil { c[k] = v }
   return c
 }

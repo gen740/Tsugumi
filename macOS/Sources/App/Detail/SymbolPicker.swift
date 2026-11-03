@@ -43,7 +43,7 @@ enum CardSymbols {
 
 /// Picks a Card's icon from a grid (search by words; no symbol names).
 struct SymbolPicker: View {
-  /// The instance's own choice (nil: the definition's default applies).
+  /// The Card's own choice (nil: the icon of its kind).
   @Binding var symbol: String?
   let inherited: String
   @State private var open = false
@@ -58,11 +58,12 @@ struct SymbolPicker: View {
           Text("アイコンを選ぶ…")
         }
       }
-      .popover(isPresented: $open, arrowEdge: .bottom) { grid(current) }
+      // Opens beside the button, where the window leaves it room.
+      .popover(isPresented: $open, arrowEdge: .trailing) { grid(current) }
       .accessibilityLabel("アイコンを選ぶ")
       if symbol != nil {
         Button("既定に戻す") { symbol = nil }.buttonStyle(.link)
-          .help("定義の既定のアイコンを使います")
+          .help("Card の種類のアイコンを使います")
       }
     }
   }
@@ -87,16 +88,17 @@ struct SymbolPicker: View {
           }
         }
       }
-      .frame(height: 220)
+      // 9 columns of 34 pt with 4 pt gaps, plus room for the scroll bar.
+      .frame(width: 9 * 34 + 8 * 4 + 16, height: 220)
       if shown.isEmpty { Text("一致するアイコンはありません").font(.caption).foregroundStyle(.secondary) }
       HStack {
-        Button("定義の既定に戻す") { symbol = nil; open = false }.disabled(symbol == nil)
+        Button("既定に戻す") { symbol = nil; open = false }.disabled(symbol == nil)
         Spacer()
         Image(systemName: inherited).foregroundStyle(.secondary)
         Text("既定").font(.caption).foregroundStyle(.secondary)
       }
     }
     .padding(12)
-    .frame(width: 350)
+    .fixedSize()
   }
 }

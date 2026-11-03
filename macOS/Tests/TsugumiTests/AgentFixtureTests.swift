@@ -35,13 +35,13 @@ struct AgentHarness {
   }
 
   mutating func start(fixtureArgs: [String] = []) throws {
-    try write("definitions/trigger/_card.json", #"{"template":"trigger"}"#)
-    try write("definitions/source/_card.json", #"{"template":"input","params":[{"name":"text","type":"string","data":"x"}]}"#)
-    try write("definitions/source/_outputs.fbs", "namespace demo;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n")
-    try write("definitions/log/_card.json", #"{"template":"logger","canvasEnabled":true}"#)
+    try write("definitions/begin/_card.json", #"{"template":"trigger"}"#)
+    try write("definitions/src/_card.json", #"{"template":"input","params":[{"name":"text","type":"string","data":"x"}]}"#)
+    try write("definitions/src/_outputs.fbs", "namespace demo;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n")
+    try write("definitions/out/_card.json", #"{"template":"logger"}"#)
     try write("tsugumi.json", """
     {"name":"agent test","pkgsPath":"tsugumi:default","databaseConnections":[],
-     "canvas":{"cards":[{"id":"begin","definition":"trigger"},{"id":"src","definition":"source"},{"id":"out","definition":"log"}],
+     "canvas":{"cards":[{"id":"begin"},{"id":"src"},{"id":"out"}],
                "connections":[{"from":{"card":"src","port":"msg"},"to":{"card":"out","port":"in"}}]}}
     """)
     try write("layout.json", "{}")
@@ -128,7 +128,8 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
     let snap = try await client.inspect()
-    #expect(snap.projectJson.contains("Hello from the agent"))
+    // The value lives in the Card's own definition.
+    #expect(snap.definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello from the agent") == true)
     let runs = try await client.history()
     #expect(runs.runs.first??.status.state == .succeeded)
     // The trace is persisted with op_ids for mutating calls.
@@ -155,7 +156,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await agent.send("set src.text to \"Hello over Responses\" and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
-    #expect(try await client.inspect().projectJson.contains("Hello over Responses"))
+    #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello over Responses") == true)
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
     #expect(Keychain.load(account: account) == nil)
@@ -208,7 +209,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let snap = try await client.inspect()
     var doc = try JSONValue.parse(snap.projectJson)
     var cards = doc["canvas"]?["cards"]?.array ?? []
-    cards.append(.object([("id", .string("plan")), ("definition", .string("plan"))]))
+    cards.append(.object([("id", .string("plan"))]))
     var conns = doc["canvas"]?["connections"]?.array ?? []
     conns.append(try JSONValue.parse(#"{"from":{"card":"src","port":"msg"},"to":{"card":"plan","port":"data"}}"#))
     var canvas = doc["canvas"]!
@@ -217,7 +218,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     doc["canvas"] = canvas
     let meta = #"{"description":"Count words","plan":"Split the message text and count the words.","constraints":"No network","done":"summary holds the count","inputs":[{"name":"data","description":"the message"}],"outputs":[{"name":"summary","description":"the word count"}]}"#
     _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
-      Change.putDefinition(id: "plan", cardJSON: #"{"name":"Word count","template":"draft","inputs":[{"name":"data"}]}"#, metaJSON: meta),
+      Change.putDefinition(id: "plan", cardJSON: #"{"template":"draft","inputs":[{"name":"data"}]}"#, metaJSON: meta),
       Change.setProject(doc.serialized()),
     ])
   }

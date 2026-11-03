@@ -5,24 +5,19 @@
   "canvas": {
     "cards": [
       {
-        "id": "begin",
-        "definition": "trigger"
+        "id": "begin"
       },
       {
-        "id": "settings",
-        "definition": "settings"
+        "id": "settings"
       },
       {
-        "id": "loop",
-        "definition": "loop"
+        "id": "loop"
       },
       {
-        "id": "generate",
-        "definition": "generate"
+        "id": "generate"
       },
       {
-        "id": "plot",
-        "definition": "plot"
+        "id": "plot"
       }
     ],
     "connections": [

@@ -50,7 +50,7 @@ bool Document::is_document_file(const std::string& rel) {
   auto slash = rest.find('/');
   if (slash == std::string::npos) return false;
   auto file = rest.substr(slash + 1);
-  return file == "_card.json" || file == "_meta.json";
+  return file == "_card.json" || file == "_meta.json" || file == "_link.json";
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -63,7 +63,11 @@ bool Document::is_source_area(const std::string& rel) {
     auto slash = rest.find('/');
     return slash != std::string::npos && slash > 0 && valid_id(rest.substr(0, slash));
   }
-  return rel.starts_with("skills/") || rel.starts_with("graphs/");
+  // externals/<project>/...: whole projects for Card in Card, read here as
+  // sources (their own .tsugumi is never part of it).
+  if (rel.starts_with("externals/"))
+    return rel.find("/.tsugumi/") == std::string::npos && !rel.ends_with("/.tsugumi");
+  return rel.starts_with("skills/");
 }
 
 namespace {
@@ -86,33 +90,13 @@ void check_endpoint(const schema::Endpoint& ep, const std::string& where) {
     invalid(where + " needs card and port");
 }
 
-void check_graph_shape(const schema::Graph& g, const std::string& where, int depth);
-
-void check_card_shape(const schema::CardInstance& card, const std::string& where, int depth) {
-  if (!card.id->has_value() || !valid_id(card.id->value()))
-    invalid(where + ": card id must match [A-Za-z0-9_.-]{1,128}");
-  if (card.canvas->has_value()) {
-    if (depth >= 16) invalid(where + ": graph nesting deeper than 16");
-    check_graph_shape(inner_graph(card), where + ".canvas", depth + 1);
-  }
-  if (const auto* proj = schema::get(card.project)) {
-    if (!fs::valid_relative_path(*proj) || !proj->starts_with("graphs/"))
-      invalid(where + ": project must be a graphs/ relative path");
-  }
-  if (const auto* b = schema::get(card.boundary)) {
-    if (const auto* ins = schema::get(b->inputs))
-      for (const auto& [name, ep] : ins->entries()) check_endpoint(ep, where + ".boundary.inputs." + name);
-    if (const auto* outs = schema::get(b->outputs))
-      for (const auto& [name, ep] : outs->entries()) check_endpoint(ep, where + ".boundary.outputs." + name);
-  }
-}
-
-void check_graph_shape(const schema::Graph& g, const std::string& where, int depth) {
+void check_graph_shape(const schema::Graph& g, const std::string& where) {
   if (!g.cards->has_value()) invalid(where + ": \"cards\" is required");
   if (!g.connections->has_value()) invalid(where + ": \"connections\" is required");
   const auto& cards = g.cards->value();
   for (size_t i = 0; i < cards.size(); ++i)
-    check_card_shape(cards[i], where + ".cards[" + std::to_string(i) + "]", depth);
+    if (!cards[i].id->has_value() || !valid_id(cards[i].id->value()))
+      invalid(where + ".cards[" + std::to_string(i) + "]: card id must match [A-Za-z0-9_.-]{1,128}");
   const auto& conns = g.connections->value();
   for (size_t i = 0; i < conns.size(); ++i) {
     std::string w = where + ".connections[" + std::to_string(i) + "]";
@@ -122,67 +106,16 @@ void check_graph_shape(const schema::Graph& g, const std::string& where, int dep
   }
 }
 
-CardPath child(const CardPath& scope, const std::string& id) {
-  CardPath p = scope;
-  p.push_back(id);
-  return p;
-}
-
-const std::string* template_of(const Document& doc, const std::string& def_id) {
-  auto it = doc.definitions.find(def_id);
-  if (it == doc.definitions.end()) return nullptr;
-  return schema::get(it->second.card.template_name);
-}
-
-// Checks ids and connections of one scope (and nested inline scopes).
-void check_scope(const Document& doc, const schema::Graph& graph, const CardPath& scope,
-                 std::set<std::string>& graph_files) {
-  std::set<std::string> ids;
-  int triggers = 0;
-  for (const auto& card : graph.cards->value()) {
-    const auto& id = card.id->value();
-    CardPath path = child(scope, id);
-    if (!ids.insert(id).second)
-      throw DocumentError("invalid_document", "duplicate card id " + id + " in " + path_display(scope),
-                          {{"card", path_key(path)}});
-    if (const auto* def = schema::get(card.definition)) {
-      if (!doc.definitions.count(*def))
-        throw DocumentError("invalid_document",
-                            "card " + path_key(path) + " references definition " + *def + ", which does not exist",
-                            {{"card", path_key(path)}, {"definition", *def}});
-      if (const auto* t = template_of(doc, *def); t && *t == "trigger") ++triggers;
-    }
-    if (card.canvas->has_value() && card.project->has_value())
-      invalid("card " + path_key(path) + " cannot have both canvas and project", {{"card", path_key(path)}});
-    if (card.canvas->has_value()) check_scope(doc, inner_graph(card), path, graph_files);
-    if (const auto* proj = schema::get(card.project)) graph_files.insert(*proj);
-  }
-  if (triggers > 1)
-    throw DocumentError("invalid_document", "graph " + path_display(scope) + " has more than one trigger card");
-  for (const auto& c : graph.connections->value()) {
-    for (const auto* ep : {&c.from->value(), &c.to->value()}) {
-      const auto& card = ep->card->value();
-      if (!ids.count(card))
-        throw DocumentError("invalid_document",
-                            "connection refers to unknown card " + card + " in " + path_display(scope),
-                            {{"card", path_key(child(scope, card))}});
-    }
+void check_boundary(const schema::Project& p, const std::string& where) {
+  if (const auto* b = schema::get(p.boundary)) {
+    if (const auto* ins = schema::get(b->inputs))
+      for (const auto& [name, ep] : ins->entries()) check_endpoint(ep, where + " boundary.inputs." + name);
+    if (const auto* outs = schema::get(b->outputs))
+      for (const auto& [name, ep] : outs->entries()) check_endpoint(ep, where + " boundary.outputs." + name);
   }
 }
 
 }  // namespace
-
-schema::Graph inner_graph(const schema::CardInstance& card) {
-  schema::Graph g;
-  if (auto err = schema::decode(card.canvas->value(), g)) invalid("canvas: " + err->message);
-  return g;
-}
-
-schema::Graph parse_graph_file(const std::string& rel, const std::string& text) {
-  auto g = decode_doc<schema::Graph>(rel, text);
-  check_graph_shape(g, rel, 1);
-  return g;
-}
 
 schema::Project parse_project_json(const std::string& text) {
   auto p = decode_doc<schema::Project>("tsugumi.json", text);
@@ -195,8 +128,25 @@ schema::Project parse_project_json(const std::string& text) {
     if (!db.name->has_value() || !db.url->has_value()) invalid("databaseConnections entries need name and url");
     if (!names.insert(db.name->value()).second) invalid("duplicate database connection " + db.name->value());
   }
-  check_graph_shape(p.canvas->value(), "tsugumi.json canvas", 0);
+  check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
+  check_boundary(p, "tsugumi.json");
   return p;
+}
+
+schema::Project parse_external_project(const std::string& rel, const std::string& text) {
+  auto p = decode_doc<schema::Project>(rel, text);
+  if (!p.canvas->has_value()) invalid(rel + ": \"canvas\" is required", {{"path", rel}});
+  check_graph_shape(p.canvas->value(), rel + " canvas");
+  check_boundary(p, rel);
+  return p;
+}
+
+schema::CardLink parse_link_json(const std::string& id, const std::string& text) {
+  std::string rel = "definitions/" + id + "/_link.json";
+  auto l = decode_doc<schema::CardLink>(rel, text);
+  const auto* ext = schema::get(l.external);
+  if (!ext || !valid_id(*ext)) invalid(rel + ": \"external\" must name a folder of externals/", {{"path", rel}});
+  return l;
 }
 
 schema::Layout parse_layout_json(const std::string& text) {
@@ -222,11 +172,27 @@ schema::CardDefinition parse_card_json(const std::string& id, const std::string&
 schema::CardMeta parse_meta_json(const std::string& text) { return decode_doc<schema::CardMeta>("_meta.json", text); }
 
 void check_structure(const Document& doc) {
-  std::set<std::string> graph_files;
-  check_scope(doc, doc.project.canvas->value(), {}, graph_files);
-  for (const auto& gf : graph_files)
-    if (!doc.sources.count(gf))
-      throw DocumentError("invalid_document", "subgraph project file " + gf + " does not exist", {{"path", gf}});
+  const auto& graph = doc.project.canvas->value();
+  std::set<std::string> ids;
+  int triggers = 0;
+  for (const auto& card : graph.cards->value()) {
+    const auto& id = card.id->value();
+    if (!ids.insert(id).second)
+      throw DocumentError("invalid_document", "duplicate card id " + id, {{"card", id}});
+    auto it = doc.definitions.find(id);
+    if (it == doc.definitions.end())
+      throw DocumentError("invalid_document", "card " + id + " has no definition (definitions/" + id + "/)",
+                          {{"card", id}, {"definition", id}});
+    if (const auto* t = schema::get(it->second.card.template_name); t && *t == "trigger") ++triggers;
+  }
+  if (triggers > 1) throw DocumentError("invalid_document", "the canvas has more than one trigger card");
+  for (const auto& c : graph.connections->value()) {
+    for (const auto* ep : {&c.from->value(), &c.to->value()}) {
+      const auto& card = ep->card->value();
+      if (!ids.count(card))
+        throw DocumentError("invalid_document", "connection refers to unknown card " + card, {{"card", card}});
+    }
+  }
 }
 
 std::string execution_fingerprint(const Document& doc) {
@@ -236,6 +202,7 @@ std::string execution_fingerprint(const Document& doc) {
     h.update("\0def\0", 5);
     h.update(id);
     h.update(def.card_json);
+    if (def.link_json) h.update(*def.link_json);
   }
   for (const auto& [path, src] : doc.sources) {
     if (path.starts_with("skills/")) continue;
@@ -267,11 +234,19 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       std::string id = entry.path().filename().string();
       if (!valid_id(id)) throw DocumentError("invalid_document", "invalid definition id " + id);
       auto card_text = fs::read_file(entry.path() / "_card.json");
-      if (!card_text) throw DocumentError("invalid_document", "definitions/" + id + "/_card.json is missing");
+      auto link_text = fs::read_file(entry.path() / "_link.json");
+      if (card_text.has_value() == link_text.has_value())
+        throw DocumentError("invalid_document", "definitions/" + id + " needs _card.json or _link.json (one of them)");
       DefinitionDoc d;
-      d.card = parse_card_json(id, *card_text);
-      d.card_json = *card_text;
-      doc->disk_hashes["definitions/" + id + "/_card.json"] = crypto::sha256_hex(*card_text);
+      if (card_text) {
+        d.card = parse_card_json(id, *card_text);
+        d.card_json = *card_text;
+        doc->disk_hashes["definitions/" + id + "/_card.json"] = crypto::sha256_hex(*card_text);
+      } else {
+        d.link = parse_link_json(id, *link_text).external->value();
+        d.link_json = *link_text;
+        doc->disk_hashes["definitions/" + id + "/_link.json"] = crypto::sha256_hex(*link_text);
+      }
       if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
         d.meta = parse_meta_json(*meta);
         d.meta_json = *meta;
@@ -280,7 +255,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       doc->definitions.emplace(id, std::move(d));
     }
   }
-  for (const char* area : {"definitions", "skills", "graphs"}) {
+  for (const char* area : {"definitions", "skills", "externals"}) {
     auto listing = fs::list_tree(root / area);
     if (!listing.links.empty())
       throw DocumentError("invalid_path",

@@ -202,6 +202,7 @@ private struct EditorSettings: View {
         // The same editor as Card settings: what you see here is what you get there.
         CodeEditor(text: $sample, language: language)
           .id("\(prefs.editorFontSize)-\(prefs.indentWidth)-\(prefs.showIndentGuides)-\(prefs.editorTheme.rawValue)")
+          .clipShape(RoundedRectangle(cornerRadius: 6))
           .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)))
         Text("サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。")
           .font(.caption).foregroundStyle(.secondary)

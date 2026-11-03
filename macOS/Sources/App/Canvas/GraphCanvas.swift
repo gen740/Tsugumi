@@ -46,6 +46,16 @@ struct GraphCanvas: View {
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
         ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
+        if !tab.scope.isEmpty {
+          // Inside a Card in Card: the external project, shown but not edited here.
+          Label(String(localized: "external プロジェクト \(session.cardExternal(scopeKey) ?? "")（読み取り専用。単体で開いて編集します）"),
+                systemImage: "link")
+            .font(.caption).padding(.horizontal, 10).padding(.vertical, 4)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+        }
         if let p = pending {
           Path { path in
             path.move(to: screen(portWorld(p.from.0, p.from.1, output: true)))
@@ -109,12 +119,17 @@ struct GraphCanvas: View {
       })
       .onDeleteCommand { deleteSelection() }
       .dropDestination(for: String.self) { items, loc in
-        guard session.isEditable else { return false }
+        // Cards are added to this project's canvas only (a Card in Card is read-only).
+        guard session.isEditable, tab.scope.isEmpty else { return false }
         var placed: [CardKey] = []
         for (i, item) in items.enumerated() {
-          guard let id = DefinitionDrag.id(item) else { continue }
           let w = world(loc)
-          placed.append(session.addCard(definition: id, in: tab.scope, at: CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)))
+          let at = CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)
+          if let t = DefinitionDrag.template(item) {
+            placed.append(session.addCard(template: t, in: [], at: at))
+          } else if let id = DefinitionDrag.id(item) {
+            placed.append(session.placeDefinition(id, at: at))
+          }
         }
         if !placed.isEmpty { tab.selection = Set(placed) }
         return !placed.isEmpty
@@ -150,7 +165,8 @@ struct GraphCanvas: View {
   private var cardKeys: [CardKey] { session.cards(in: tab.scope).compactMap { $0["id"]?.string }.map { key(tab.scope + [$0]) } }
 
   private var outputKeys: [CardKey] {
-    cardKeys.filter { session.cardSetting($0, "canvasEnabled")?.bool == true && session.displayFrame($0)?["hidden"]?.bool != true }
+    // A Card's output frame: once its code has shown something (display SDK).
+    cardKeys.filter { (session.displays[$0] != nil || session.displayFrame($0) != nil) && session.displayFrame($0)?["hidden"]?.bool != true }
   }
 
   private var noteIds: [String] {
@@ -273,8 +289,8 @@ struct GraphCanvas: View {
 
   /// The outer Card's inputs (above the inner graph) and outputs (below it).
   private var boundary: Boundary? {
-    guard !tab.scope.isEmpty, let outer = session.instance(scopeKey), outer["canvas"] != nil else { return nil }
-    let ins = outer["boundary"]?["inputs"]?.object ?? [], outs = outer["boundary"]?["outputs"]?.object ?? []
+    guard !tab.scope.isEmpty, let b = session.boundary(scopeKey) else { return nil }
+    let ins = b["inputs"]?.object ?? [], outs = b["outputs"]?.object ?? []
     guard !ins.isEmpty || !outs.isEmpty else { return nil }
     var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.position($1), size: session.geometry($1).size)) }
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
@@ -723,7 +739,7 @@ struct GraphCanvas: View {
 
   private func open(_ k: CardKey) {
     switch session.kind(k) {
-    case .subgraph where session.instance(k)?["canvas"] != nil: tab.enter(path(k))
+    case .subgraph: tab.enter(path(k))
     case .draft: openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
     default: openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k))
     }
@@ -746,8 +762,8 @@ struct GraphCanvas: View {
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String) {
     guard session.isEditable,
-          let def = session.instance(k)?["definition"]?.string,
-          let type = session.definitions[def]?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string else { return }
+          session.isOwnCard(k),
+          let type = session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string else { return }
     session.setParam(k, name, parseParam(text, type))
   }
 

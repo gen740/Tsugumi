@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from materialize import convert_in_place
+
 MSG_FBS = """
 namespace demo;
 table Msg { text:string; }
@@ -33,7 +35,7 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
         "trigger": {"template": "trigger"},
         "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"},
                                                    {"name": "value", "type": "bool", "data": True}]},
-        "log": {"template": "logger", "canvasEnabled": True},
+        "log": {"template": "logger"},
         "fork": {"template": "fork"},
         "branch": {"template": "branch"},
         "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
@@ -56,3 +58,4 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
     project["canvas"]["connections"] = [conn("src", "msg", "out", "in"), *extra_conns]
     (root / "tsugumi.json").write_text(json.dumps(project))
     (root / "layout.json").write_text("{}")
+    convert_in_place(root)

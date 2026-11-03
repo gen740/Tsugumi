@@ -284,9 +284,12 @@ struct DemoThumbnail: View {
     for c in p["canvas"]?["cards"]?.array ?? [] {
       guard let id = c["id"]?.string else { continue }
       let pos = CGPoint(x: l["cards"]?[id]?["x"]?.double ?? 0, y: l["cards"]?[id]?["y"]?.double ?? 0)
-      let def = c["definition"]?.string ?? ""
-      let routing = ["fork", "branch", "merge", "split", "route", "loop", "both"].contains(where: def.contains)
-      let color: Color = c["canvas"] != nil ? TsugumiPalette.olive : routing ? TsugumiPalette.mist : def.contains("trigger") || def.contains("initial") ? TsugumiPalette.rufous : TsugumiPalette.cream
+      // The Card's own definition (definitions/<id>/): a template, a link (Card in Card) or code.
+      let dir = url.appendingPathComponent("definitions/\(id)")
+      let link = FileManager.default.fileExists(atPath: dir.appendingPathComponent("_link.json").path)
+      let def = (try? JSONValue.parse(String(contentsOf: dir.appendingPathComponent("_card.json"), encoding: .utf8)))?["template"]?.string ?? ""
+      let routing = ["fork", "branch", "merge"].contains(def)
+      let color: Color = link ? TsugumiPalette.olive : routing ? TsugumiPalette.mist : def == "trigger" || def == "input" ? TsugumiPalette.rufous : TsugumiPalette.cream
       cards.append((id, CGRect(x: pos.x, y: pos.y, width: routing ? 70 : 220, height: routing ? 44 : 64), color))
     }
     var wires: [(CGPoint, CGPoint)] = []

@@ -52,28 +52,10 @@ struct Boundary {
   Opt<"outputs", v::Mapping<v::String, Obj<Endpoint>>> outputs;
 };
 
-// Settings shared by instances (overrides) and definitions (defaults).
-// Optional storage keeps "omitted" distinct from false/0/""/null.
+// A Card on the canvas. Its id is its name and the folder of its own
+// definition (definitions/<id>/), which holds every setting.
 struct CardInstance {
   Opt<"id", v::String> id;
-  Opt<"definition", v::String> definition;
-  Opt<"name", v::String> name;
-  Opt<"symbol", v::String> symbol;
-  Opt<"description", v::String> description;
-  Opt<"params", v::Mapping<v::String, Json>> params;
-  Opt<"maxRuns", v::Uint64> max_runs;
-  Opt<"timeoutSeconds", Json> timeout_seconds;            // positive integer or null
-  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;  // positive integer or null
-  Opt<"recordIO", v::Bool> record_io;
-  Opt<"retainArtifact", v::Bool> retain_artifact;
-  Opt<"artifactOutput", v::String> artifact_output;
-  Opt<"filesystem", v::Bool> filesystem;
-  Opt<"sandbox", v::Bool> sandbox;
-  Opt<"loggerDatabaseConnection", v::String> logger_database;
-  Opt<"canvasEnabled", v::Bool> canvas_enabled;
-  Opt<"project", v::String> project;    // external graph (graphs/...)
-  Opt<"canvas", Json> canvas;           // inline graph; decoded as Graph on demand
-  Opt<"boundary", Obj<Boundary>> boundary;
 };
 
 struct Graph {
@@ -93,6 +75,9 @@ struct Project {
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
+  // The ports this project has as a Card in Card (an external of another
+  // project): outer port name -> a port of one of its Cards.
+  Opt<"boundary", Obj<Boundary>> boundary;
 };
 
 // ---- definitions/<id>/_card.json ---------------------------------------------
@@ -109,25 +94,41 @@ struct InputDef {
   Opt<"optional", v::Bool> optional;
 };
 
+// A folder the worker may read (Experimental): a folder of the Mac, seen in
+// the worker as /host/<name>.
+struct HostFolder {
+  Opt<"path", v::String> path;  // absolute path on the Mac
+  Opt<"name", v::String> name;  // folder name under /host (an id)
+  Opt<"write", v::Bool> write;  // default false: read-only
+};
+
 struct CardDefinition {
-  Opt<"name", v::String> name;
   Opt<"symbol", v::String> symbol;
   Opt<"description", v::String> description;
   Opt<"language", v::String> language;
   Opt<"template", v::String> template_name;
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
-  Opt<"inputMode", v::String> input_mode;
+  // When the Card runs: "allInputs" (every required input has a value, the
+  // default) or "eachInput" (once per arriving value).
+  Opt<"trigger", v::String> trigger;
   Opt<"maxRuns", v::Uint64> max_runs;
-  Opt<"timeoutSeconds", Json> timeout_seconds;
-  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;
+  Opt<"timeoutSeconds", Json> timeout_seconds;            // positive integer or null
+  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;  // positive integer or null
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;
   Opt<"filesystem", v::Bool> filesystem;
   Opt<"sandbox", v::Bool> sandbox;
-  Opt<"loggerDatabaseConnection", v::String> logger_database;
-  Opt<"canvasEnabled", v::Bool> canvas_enabled;
+  Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
+  Opt<"network", v::Bool> network;           // Experimental, default false
+  Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
+};
+
+// definitions/<id>/_link.json: the Card is a Card in Card, the project
+// externals/<external>/ (never a symlink).
+struct CardLink {
+  Opt<"external", v::String> external;
 };
 
 // Purpose of a port in words (Drafts have no types yet).
@@ -352,7 +353,6 @@ struct CardManifest {
   Opt<"run", Obj<ManifestRun>> run;
   Opt<"preRun", v::String> pre_run;
   Opt<"postRun", v::String> post_run;
-  Opt<"reuseWorker", v::Bool> reuse_worker;
 };
 
 struct SdkFileJson {

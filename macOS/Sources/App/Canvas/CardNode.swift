@@ -14,9 +14,8 @@ extension ProjectSession {
   }
 
   func portData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
-    let defId = instance(k)?["definition"]?.string
-    let def = definition ?? defId.flatMap { definitions[$0] }
-    let m = meta ?? defId.flatMap { definitionMeta[$0] }
+    let def = definition ?? cardDefinition(k)
+    let m = meta ?? (isOwnCard(k) ? path(k).first.flatMap { definitionMeta[$0] } : nil)
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
@@ -37,14 +36,12 @@ extension ProjectSession {
   }
 
   /// Params edited directly on input Cards.
-  func inlineParams(_ k: CardKey, instance inst: JSONValue? = nil, definition: JSONValue? = nil) -> [ParamData] {
-    let i = inst ?? instance(k)
-    guard kind(k) == .input, let d = i?["definition"]?.string else { return [] }
-    let def = definition ?? definitions[d]
-    return (def?["params"]?.array ?? []).compactMap { p -> ParamData? in
+  func inlineParams(_ k: CardKey, definition: JSONValue? = nil) -> [ParamData] {
+    guard kind(k) == .input, let def = definition ?? cardDefinition(k) else { return [] }
+    return (def["params"]?.array ?? []).compactMap { p -> ParamData? in
       guard let name = p["name"]?.string, let type = p["type"]?.string,
             ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }
-      let v = i?["params"]?[name] ?? p["data"]
+      let v = p["data"]
       let text: String
       switch v {
       case .string(let s)?: text = s
@@ -57,11 +54,8 @@ extension ProjectSession {
   }
 
   func cardDescription(_ k: CardKey) -> String? {
-    if let d = instance(k)?["description"]?.string, !d.isEmpty { return d }
-    if let id = instance(k)?["definition"]?.string {
-      if let d = definitions[id]?["description"]?.string, !d.isEmpty { return d }
-      if let d = definitionMeta[id]?["description"]?.string, !d.isEmpty { return d }
-    }
+    if let d = cardDefinition(k)?["description"]?.string, !d.isEmpty { return d }
+    if isOwnCard(k), let id = path(k).first, let d = definitionMeta[id]?["description"]?.string, !d.isEmpty { return d }
     return nil
   }
 
@@ -112,32 +106,28 @@ extension ProjectSession {
 
   /// The inner Card and port an outer output of a Card in Card comes from.
   func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
-    guard let ep = instance(k)?["boundary"]?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
+    guard let ep = boundary(k)?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
     return (key(path(k) + [c]), p)
   }
 
-  func nodeData(_ k: CardKey, instance inst: JSONValue? = nil, definition: JSONValue? = nil, meta: JSONValue? = nil,
+  func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
     let kind = self.kind(k)
     let state = cardStates[k]
     let diags = resolution[k]?.diagnostics ?? []
     let ports = portData(k, definition: definition, meta: meta)
-    let i = inst ?? instance(k)
-    let defId = i?["definition"]?.string
-    let def = definition ?? defId.flatMap { definitions[$0] }
-    var title = i?["name"]?.string ?? ""
-    if title.isEmpty { title = def?["name"]?.string ?? "" }
-    if title.isEmpty { title = path(k).last ?? k }
-    var summary = i?["description"]?.string
-    if summary?.isEmpty ?? true { summary = def?["description"]?.string }
-    if summary?.isEmpty ?? true { summary = (meta ?? defId.flatMap { definitionMeta[$0] })?["description"]?.string }
+    let def = definition ?? cardDefinition(k)
+    // The name is the Card's id.
+    let title = path(k).last ?? k
+    var summary = def?["description"]?.string
+    if summary?.isEmpty ?? true { summary = (meta ?? (isOwnCard(k) ? definitionMeta[title] : nil))?["description"]?.string }
     if summary?.isEmpty ?? true { summary = nil }
-    let display = (i?["canvasEnabled"]?.bool ?? def?["canvasEnabled"]?.bool ?? false) && displayFrame(k)?["hidden"]?.bool != true
+    let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
       title: title, kind: kind,
-      symbol: (i?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 } ?? def?["symbol"]?.string,
+      symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: ports.inputs, outputs: outputs ?? ports.outputs,
-      params: inlineParams(k, instance: inst, definition: definition),
+      params: inlineParams(k, definition: definition),
       result: displays[k]?.summary, resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : state?.state, stage: stageProgress(k),
       invocation: state?.invocation ?? 0, runContinues: runActive,

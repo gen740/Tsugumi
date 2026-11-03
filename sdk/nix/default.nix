@@ -185,17 +185,14 @@ rec {
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)
-  #   reuseWorker  true (default): the worker that loaded the package stays
-  #            and serves later invocations, also of later runs of the project
-  #            (static state persists; onRunStart / on_run_start is called
-  #            before the first invocation of each run); false: a fresh
-  #            worker per invocation
   #   exports  free-form values, functions and derivations that downstream
   #            Cards read through inputs.upstream."<path>".exports
+  # Whether the worker stays across invocations and runs (reuseWorker) is a
+  # setting of the Card (_card.json), not of its build.
   manifest =
     card:
     let
-      known = [ "sdk" "run" "preRun" "postRun" "reuseWorker" "exports" ];
+      known = [ "sdk" "run" "preRun" "postRun" "exports" ];
       unknown = lib.subtractLists known (builtins.attrNames card);
       body =
         if !(card ? run) then throw "a Card needs `run`: a package (derivation) or a bash script (string)"
@@ -205,7 +202,7 @@ rec {
     in
     assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown} (known: ${toString known})";
     pkgs.writeText "tsugumi-card.json" (builtins.toJSON (
-      { reuseWorker = card.reuseWorker or true; run = body; }
+      { run = body; }
       // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
       // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
     ));

@@ -313,6 +313,166 @@ std::optional<TypeRef> compile(const std::string& fbs_text, const std::string& r
   return t;
 }
 
+std::optional<std::string> schema_bfbs(const std::string& fbs_text, std::string* root, std::string* error) {
+  auto parser = make_parser();
+  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+    *error = parser->error_;
+    return std::nullopt;
+  }
+  if (parser->root_struct_def_) {
+    const auto* sd = parser->root_struct_def_;
+    *root = sd->defined_namespace->GetFullyQualifiedName(sd->name);
+  }
+  parser->Serialize();
+  return std::string(reinterpret_cast<const char*>(parser->builder_.GetBufferPointer()), parser->builder_.GetSize());
+}
+
+namespace {
+
+// Positions of the tokens of a schema text (identifiers and single
+// punctuation), skipping comments and string literals.
+struct Tok {
+  size_t begin, end;
+  char punct;  // 0 for an identifier or literal
+};
+
+std::vector<Tok> tokens(const std::string& s) {
+  std::vector<Tok> out;
+  for (size_t i = 0; i < s.size();) {
+    char c = s[i];
+    if (std::isspace(static_cast<unsigned char>(c))) { ++i; continue; }
+    if (c == '/' && i + 1 < s.size() && s[i + 1] == '/') {
+      while (i < s.size() && s[i] != '\n') ++i;
+      continue;
+    }
+    if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+      size_t e = s.find("*/", i + 2);
+      i = e == std::string::npos ? s.size() : e + 2;
+      continue;
+    }
+    if (c == '"') {
+      size_t j = i + 1;
+      while (j < s.size() && s[j] != '"') j += s[j] == '\\' ? 2 : 1;
+      out.push_back({i, std::min(j + 1, s.size()), 0});
+      i = j + 1;
+      continue;
+    }
+    if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.') {
+      size_t j = i;
+      while (j < s.size() && (std::isalnum(static_cast<unsigned char>(s[j])) || s[j] == '_' || s[j] == '.')) ++j;
+      out.push_back({i, j, 0});
+      i = j;
+      continue;
+    }
+    out.push_back({i, i + 1, c});
+    ++i;
+  }
+  return out;
+}
+
+}  // namespace
+
+std::optional<std::string> set_catalog_port(const std::string& fbs_text, const std::string& port,
+                                            const std::string& type_name, PortKind kind, std::string* error) {
+  auto parser = make_parser();
+  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+    *error = parser->error_;
+    return std::nullopt;
+  }
+  const auto* catalog = parser->root_struct_def_;
+  if (!catalog) {
+    *error = "root_type (the port catalog) is required";
+    return std::nullopt;
+  }
+  // The type: written short when it is in the catalog's namespace.
+  const flatbuffers::StructDef* type = nullptr;
+  for (const auto* sd : parser->structs_.vec) {
+    auto full = sd->defined_namespace->GetFullyQualifiedName(sd->name);
+    if (!sd->fixed && sd != catalog && (full == type_name || sd->name == type_name)) {
+      type = sd;
+      if (full == type_name) break;
+    }
+  }
+  if (!type) {
+    *error = "no table " + type_name + " in the schema";
+    return std::nullopt;
+  }
+  std::string written = type->defined_namespace == catalog->defined_namespace
+                            ? type->name
+                            : type->defined_namespace->GetFullyQualifiedName(type->name);
+  // The catalog's body, then the port's declaration in it.
+  const auto& s = fbs_text;
+  auto t = tokens(s);
+  auto text_of = [&](const Tok& k) { return s.substr(k.begin, k.end - k.begin); };
+  size_t body = 0, body_end = 0;
+  for (size_t i = 0; i + 2 < t.size(); ++i) {
+    if (!t[i].punct && text_of(t[i]) == "table" && !t[i + 1].punct && text_of(t[i + 1]) == catalog->name) {
+      size_t j = i + 2;
+      while (j < t.size() && t[j].punct != '{') ++j;  // attributes of the table
+      body = j + 1;
+      int depth = 1;
+      for (size_t k = body; k < t.size(); ++k) {
+        if (t[k].punct == '{') ++depth;
+        if (t[k].punct == '}' && --depth == 0) { body_end = k; break; }
+      }
+      break;
+    }
+  }
+  if (!body_end) {
+    *error = "table " + catalog->name + " not found";
+    return std::nullopt;
+  }
+  size_t field = 0, semi = 0;
+  bool at_start = true;
+  for (size_t i = body; i < body_end; ++i) {
+    if (at_start && !t[i].punct && text_of(t[i]) == port && i + 1 < body_end && t[i + 1].punct == ':') {
+      field = i;
+      for (size_t k = i; k < body_end; ++k)
+        if (t[k].punct == ';') { semi = k; break; }
+      break;
+    }
+    at_start = t[i].punct == ';';
+  }
+  if (!semi) {
+    *error = "port " + port + " not found in table " + catalog->name;
+    return std::nullopt;
+  }
+  // Attributes kept as written, except tsugumi.
+  std::vector<std::string> attrs;
+  for (size_t i = field; i < semi; ++i) {
+    if (t[i].punct != '(') continue;
+    size_t start = i + 1;
+    for (size_t k = start; k < semi; ++k) {
+      if (t[k].punct == ',' || t[k].punct == ')') {
+        if (k > start) {
+          auto item = s.substr(t[start].begin, t[k - 1].end - t[start].begin);
+          if (text_of(t[start]) != "tsugumi") attrs.push_back(item);
+        }
+        start = k + 1;
+        if (t[k].punct == ')') break;
+      }
+    }
+    break;
+  }
+  if (kind == PortKind::File) attrs.push_back("tsugumi: \"file\"");
+  else if (kind == PortKind::Directory) attrs.push_back("tsugumi: \"directory\"");
+  std::string decl = port + ":" + written;
+  if (!attrs.empty()) {
+    decl += " (";
+    for (size_t i = 0; i < attrs.size(); ++i) decl += (i ? ", " : "") + attrs[i];
+    decl += ")";
+  }
+  std::string out = s.substr(0, t[field].begin) + decl + s.substr(t[semi].begin);
+  // The tsugumi attribute needs its declaration.
+  if (kind != PortKind::FlatBuffer && out.find("attribute \"tsugumi\"") == std::string::npos) out += "attribute \"tsugumi\";\n";
+  auto check = parse_catalog(out, "_outputs.fbs");
+  if (!check.errors.empty()) {
+    *error = check.errors.front();
+    return std::nullopt;
+  }
+  return out;
+}
+
 CatalogResult parse_catalog(const std::string& fbs_text, const std::string& filename) {
   CatalogResult r;
   auto parser = make_parser();

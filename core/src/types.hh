@@ -48,6 +48,15 @@ struct CatalogResult {
 // message must have a string `value` field.
 CatalogResult parse_catalog(const std::string& fbs_text, const std::string& filename);
 
+// The whole schema of an _outputs.fbs text, rooted at its catalog (`root`).
+std::optional<std::string> schema_bfbs(const std::string& fbs_text, std::string* root, std::string* error);
+
+// The text with one catalog field (port) set to `type_name` (a table of the
+// schema, fully qualified or not) and `kind` (File / Directory: the tsugumi
+// attribute). Only that field's declaration changes.
+std::optional<std::string> set_catalog_port(const std::string& fbs_text, const std::string& port,
+                                            const std::string& type_name, PortKind kind, std::string* error);
+
 // Compiles a schema text and returns the type rooted at `root`.
 std::optional<TypeRef> compile(const std::string& fbs_text, const std::string& root,
                                std::string* error);

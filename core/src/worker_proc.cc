@@ -125,7 +125,14 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   auto own = [&](std::vector<std::string>& argv) {
     for (const auto& p : sp.ro_paths) argv.insert(argv.end(), {"--ro-bind", p, p});
     argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string()});
+    for (const auto& b : sp.binds) argv.insert(argv.end(), {b.write ? "--bind" : "--ro-bind", b.source, b.target});
+    if (sp.network)
+      // Name resolution and the CA bundle of the environment.
+      for (const char* f : {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
+        argv.insert(argv.end(), {"--ro-bind-try", f, f});
   };
+  if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
+    throw Failed(FailureKind::unsupported, "folders of the Mac need the shared VM (bubblewrap)");
   if (sp.sandbox) {
     std::string bwrap = TSUGUMI_BWRAP;
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
@@ -134,6 +141,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
                  "--ro-bind", "/nix/store", "/nix/store", "--proc", "/proc", "--dev", "/dev",
                  "--tmpfs", "/tmp"};
+    if (sp.network) spec.argv.push_back("--share-net");
     if (sp.uid) {
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
     }
@@ -144,8 +152,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     // sandbox: false lifts the file access limits only. The worker still gets
     // its own PID and network namespaces, so every descendant ends with it
     // and the Card has no network.
-    spec.argv = {bwrap, "--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--die-with-parent",
+    spec.argv = {bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--die-with-parent",
                  "--new-session", "--dev-bind", "/", "/", "--proc", "/proc"};
+    if (!sp.network) spec.argv.push_back("--unshare-net");
     if (sp.uid)
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
     // Shared folders (virtiofs) show every file as owned by whoever looks, so
@@ -162,6 +171,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   }
   spec.argv.insert(spec.argv.end(), args.begin(), args.end());
   spec.env = {"PATH=/var/empty", "LANG=C.UTF-8"};
+  if (sp.network)
+    for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
+      if (const char* x = std::getenv(v)) spec.env.push_back(std::string(v) + "=" + x);
   spec.fds = {{3, data[1]}, {4, control[1]}};
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];

@@ -38,11 +38,15 @@ struct SourceEntry {
   uint64_t size = 0;
 };
 
+// definitions/<id>/: the settings of one Card (_card.json), or, for a Card in
+// Card, the link to its external project (_link.json); never both.
 struct DefinitionDoc {
   schema::CardDefinition card;
-  std::string card_json;
+  std::string card_json;  // empty for a link
   std::optional<schema::CardMeta> meta;
   std::optional<std::string> meta_json;
+  std::optional<std::string> link;  // externals/<link>/
+  std::optional<std::string> link_json;
 };
 
 struct Resolution;  // graph.hh
@@ -89,13 +93,12 @@ schema::Project parse_project_json(const std::string& text);
 schema::Layout parse_layout_json(const std::string& text);
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
 schema::CardMeta parse_meta_json(const std::string& text);
-// Decodes the inline graph of a subgraph Card (already shape-checked).
-schema::Graph inner_graph(const schema::CardInstance& card);
-// Decodes an external graph file (graphs/...). Throws DocumentError.
-schema::Graph parse_graph_file(const std::string& rel, const std::string& text);
+schema::CardLink parse_link_json(const std::string& id, const std::string& text);
+// The tsugumi.json of an external project (externals/.../tsugumi.json).
+schema::Project parse_external_project(const std::string& rel, const std::string& text);
 
-// Hard structural checks over the whole (final) document: unique ids, known
-// definitions, connections between existing cards, subgraph shapes.
+// Hard structural checks over the whole (final) document: unique ids, a
+// definition for every card, connections between existing cards.
 void check_structure(const Document& doc);
 
 // Loads the document from disk (startup / Reload). Throws DocumentError.

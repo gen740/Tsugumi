@@ -1,0 +1,27 @@
+{
+  "name": "Archive (nested graph)",
+  "pkgsPath": "tsugumi:default",
+  "databaseConnections": [],
+  "boundary": {
+    "inputs": {
+      "report": {
+        "card": "copy",
+        "port": "report"
+      }
+    },
+    "outputs": {
+      "archive": {
+        "card": "copy",
+        "port": "archive"
+      }
+    }
+  },
+  "canvas": {
+    "cards": [
+      {
+        "id": "copy"
+      }
+    ],
+    "connections": []
+  }
+}

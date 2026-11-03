@@ -119,7 +119,7 @@ def test_backpressure_stall_ends_the_run(env):
         "seed": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"'),
         "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["x"], maxRuns=1000,
-                     extra="  reuseWorker = true;\n"),
+                     reuseWorker=True),
         "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
         "branch": {"template": "branch"},
     }
@@ -311,7 +311,7 @@ def main(ctx):
     ctx.display_module("histogram", {"bins": [1, 2, 3]})
 '''
     defs = {"trigger": {"template": "trigger"},
-            "show": {"language": "python", "canvasEnabled": True,
+            "show": {"language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
     root = env.project
@@ -542,20 +542,18 @@ let
 in
 {
   run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
-  reuseWorker = true;
   preRun = "echo pre > pre.txt && export PRE_VALUE=5";
   postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
 }
 """
-    other_nix = calc_nix.replace("  reuseWorker = true;\n", "").replace(
+    other_nix = calc_nix.replace(
         '  preRun = "echo pre > pre.txt && export PRE_VALUE=5";\n', "").replace(
         '  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";\n', "")
     defs = {"trigger": {"template": "trigger"}, "seed": seed,
             "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,
-                     "canvasEnabled": True,
+            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True,
                      "_outputs": calc_out, "_nix": calc_nix},
-            "other": {"language": "cpp", "inputs": [{"name": "in"}], "canvasEnabled": True,
+            "other": {"language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False,
                       "params": [{"name": "step", "type": "uint64", "data": 10}],
                       "_outputs": NUM, "_nix": other_nix}}
     root = env.project

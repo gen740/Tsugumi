@@ -257,7 +257,7 @@ final class ChatController {
   private func describe(_ r: Reference) -> String {
     switch r {
     case .card(let k):
-      var s = "Card \(k) (\(session.kind(k).label), definition \(session.instance(k)?["definition"]?.string ?? "-"), name \"\(session.displayName(k))\""
+      var s = "Card \(k) (\(session.kind(k).label), definition \(session.definitionDir(k) ?? "-"), name \"\(session.displayName(k))\""
       if let st = session.cardStates[k] { s += ", last state \(st.state.label)" }
       if let r = session.resultSummary(k) { s += ", result: \(r)" }
       return s + ")"
@@ -311,8 +311,9 @@ final class ChatController {
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
     let list = cards.map { k -> String in
-      let def = session.instance(k)?["definition"]?.string ?? "-"
-      let meta = session.definitionMeta[def]
+      // A Card's definition folder is named by its id.
+      let def = path(k).last ?? "-"
+      let meta = session.isOwnCard(k) ? session.definitionMeta[def] : nil
       return "- \(k) (definition \(def)): \(meta?["description"]?.string ?? "")\n  plan: \(meta?["plan"]?.string ?? "")"
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? "the root workflow" : "the child workflow \(scope.joined(separator: "/"))"

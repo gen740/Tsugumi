@@ -279,7 +279,7 @@ void Service::export_now() {
 std::vector<std::string> Service::capabilities() {
   return {"SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
           "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
-          "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat",
+          "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes",
           "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
           "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
           "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -363,6 +363,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
+    case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
     case P::RunPlanRequest: return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest: return on_lane(r, std::move(req), &Service::run_cancel);
@@ -752,11 +753,17 @@ std::vector<ChangeIn> decode_changes(const R::ProjectSaveRequest* r) {
         ch.id = p->id()->str();
         ch.json = p->card_json()->str();
         if (p->meta_json()) ch.meta_json = p->meta_json()->str();
+        if (p->link_json()) ch.link_json = p->link_json()->str();
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:
         ch.kind = ChangeIn::Kind::RemoveDefinition;
         ch.id = c->value_as_RemoveDefinition()->id()->str();
+        break;
+      case R::DocumentChangeValue::RenameDefinition:
+        ch.kind = ChangeIn::Kind::RenameDefinition;
+        ch.id = c->value_as_RenameDefinition()->id()->str();
+        ch.to = c->value_as_RenameDefinition()->to()->str();
         break;
       case R::DocumentChangeValue::PutSource: {
         const auto* p = c->value_as_PutSource();
@@ -827,6 +834,17 @@ void Service::save(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
+    // Renamed Cards keep their run history and saved inputs.
+    for (const auto& [from, to] : staged.delta.renamed) {
+      try {
+        history_->rename_card(runs_copy(), from, to);
+        std::error_code ec;
+        auto inputs = store_->state_dir() / "inputs";
+        if (stdfs::exists(inputs / from, ec)) stdfs::rename(inputs / from, inputs / to, ec);
+      } catch (const std::exception& e) {
+        log::error("history: renaming " + from + " to " + to + " failed: " + e.what());
+      }
+    }
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1168,7 +1186,7 @@ void Service::file_list(RequestIn& req) {
   files.insert("tsugumi.json");
   files.insert("layout.json");
   for (const auto& [id, d] : doc->definitions) {
-    files.insert("definitions/" + id + "/_card.json");
+    files.insert("definitions/" + id + (d.link_json ? "/_link.json" : "/_card.json"));
     if (d.meta_json) files.insert("definitions/" + id + "/_meta.json");
   }
   std::string prefix = path == "." ? "" : path + "/";
@@ -1221,7 +1239,7 @@ void Service::file_list(RequestIn& req) {
       } else {
         auto id = p.substr(12, p.find('/', 12) - 12);
         const auto& d = doc->definitions.at(id);
-        const std::string& text = p.ends_with("_card.json") ? d.card_json : *d.meta_json;
+        const std::string& text = p.ends_with("_card.json") ? d.card_json : p.ends_with("_link.json") ? *d.link_json : *d.meta_json;
         hash = crypto::sha256_hex(text);
         size = text.size();
       }
@@ -1250,7 +1268,8 @@ std::optional<std::string> confirmed_bytes(const Document& doc, const Store& sto
     auto id = p.substr(12, p.find('/', 12) - 12);
     auto it = doc.definitions.find(id);
     if (it == doc.definitions.end()) return std::nullopt;
-    if (p.ends_with("_card.json")) return it->second.card_json;
+    if (p.ends_with("_card.json")) return it->second.link_json ? std::nullopt : std::optional(it->second.card_json);
+    if (p.ends_with("_link.json")) return it->second.link_json;
     return it->second.meta_json;
   }
   if (!doc.sources.count(p)) return std::nullopt;
@@ -1378,6 +1397,24 @@ uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
 
 // Formatting never changes the document: the text comes and goes in the
 // request/reply only. Formatters are external tools of the environment.
+void Service::output_types(RequestIn& req) {
+  const auto* r = req.request()->value_as_OutputTypesRequest();
+  std::string text = r->text()->str(), root, err;
+  auto bfbs = types::schema_bfbs(text, &root, &err);
+  std::optional<std::string> changed;
+  if (bfbs && r->port() && r->type_name()) {
+    changed = types::set_catalog_port(text, r->port()->str(), r->type_name()->str(), r->kind() == D::PortKind::unspecified ? D::PortKind::FlatBuffer : r->kind(), &err);
+    if (changed) bfbs = types::schema_bfbs(*changed, &root, &err);
+  }
+  FBB b;
+  auto bv = b.CreateVector(reinterpret_cast<const uint8_t*>(bfbs ? bfbs->data() : ""), bfbs ? bfbs->size() : 0);
+  auto rt = root.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(root);
+  auto tx = changed ? b.CreateString(*changed) : flatbuffers::Offset<flatbuffers::String>();
+  auto er = err.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(err);
+  auto res = R::CreateOutputTypesResult(b, bv, rt, tx, er);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::OutputTypesResult, res.Union()));
+}
+
 void Service::file_format(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectFileFormatRequest();
   std::string rel = r->path()->str();

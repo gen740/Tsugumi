@@ -35,14 +35,14 @@ std::string entry_nix() {
 #
 # inputs.upstream."<card path>" / inputs.local.<id> are the attribute sets
 # (run, preRun, extra attributes, functions) of the code Cards that have
-# always run before this one. They are imported lazily: only what is
+# always run before this one; paths are relative to the Card's own project. They are imported lazily: only what is
 # referenced is evaluated, and branches that may not run are never offered.
 pkgs: { sdk, gen, card }:
 let
   up = builtins.fromJSON (builtins.readFile (gen + "/upstream.json"));
   inputsFor = tsugumi: deps: {
     inherit tsugumi;
-    upstream = builtins.listToAttrs (map (d: { name = d.key; value = cards.${d.key}; }) deps);
+    upstream = builtins.listToAttrs (map (d: { name = d.name; value = cards.${d.key}; }) deps);
     local = builtins.listToAttrs (map (d: { name = d.local; value = cards.${d.key}; })
       (builtins.filter (d: d.local != null) deps));
   };
@@ -83,13 +83,20 @@ std::string root_prefix(const CardPath& card) {
   return out + "-" + crypto::sha256_hex(k).substr(0, 8) + "--";
 }
 
-// One reference entry of upstream.json: {"key": "<path>", "local": "<id>"|null}.
+// Whether `target` is in the project `from` is written in (its scope or a
+// Card in Card below it): only those can be referenced from its default.nix.
+bool in_project_of(const CardPath& target, const CardPath& from) {
+  return target.size() >= from.size() && std::equal(from.begin(), from.end() - 1, target.begin());
+}
+
+// One reference entry of upstream.json: {"key": "<full path>", "name": "<path
+// in the referring Card's project>", "local": "<id>"|null}.
 std::string dep_json(const CardPath& target, const CardPath& from) {
   auto key = schema::string_value(path_key(target));
-  bool same_scope = target.size() == from.size() &&
-                    std::equal(target.begin(), target.end() - 1, from.begin(), from.end() - 1);
+  auto name = schema::string_value(path_key(CardPath(target.begin() + static_cast<long>(from.size() - 1), target.end())));
+  bool same_scope = target.size() == from.size();
   auto local = same_scope ? schema::string_value(target.back()) : schema::capture("null");
-  return schema::object_text({{"key", &key}, {"local", &local}});
+  return schema::object_text({{"key", &key}, {"name", &name}, {"local", &local}});
 }
 
 }  // namespace
@@ -178,8 +185,7 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-std::string NixRunner::nixpkgs_pin_json(const Document& doc) const {
-  std::string pkgs = doc.pkgs_path();
+std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
   std::string url, hash;
   if (pkgs == "tsugumi:default") {
     std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
@@ -352,8 +358,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   // Definition sources from the confirmed snapshot. _card.json and
   // _meta.json are not part of it: Nix gets what it needs from them through
   // the generated files, and settings or descriptions never re-evaluate.
-  auto definition_dir = [&](const std::string& definition) {
-    std::string prefix = "definitions/" + definition + "/";
+  auto definition_dir = [&](const std::string& prefix) {
     crypto::Sha256 h;
     std::vector<std::string> paths;
     for (const auto& [path, entry] : req.doc->sources) {
@@ -381,19 +386,21 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
   auto files = generate(node);
-  files["nixpkgs.json"] = nixpkgs_pin_json(*req.doc);
+  files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
   // Upstream code Cards this definition may reference (see entry.nix).
   const auto& graph = *req.doc->resolution;
   size_t self = graph.index.at(path_key(node.path));
-  auto allowed = graph.nix_upstream(self);
+  std::vector<size_t> allowed;
+  for (size_t u : graph.nix_upstream(self))
+    if (in_project_of(graph.nodes[u].path, node.path)) allowed.push_back(u);
   std::string cards_json = "[", deps_json = "[";
   for (size_t i = 0; i < allowed.size(); ++i) {
     const Node& u = graph.nodes[allowed[i]];
     auto ugen = schema::string_value(generated_dir(generate(u)).string());
-    auto udef = schema::string_value(definition_dir(u.definition).string());
+    auto udef = schema::string_value(definition_dir(u.def_dir).string());
     std::string udeps = "[";
     for (size_t d : graph.nix_upstream(allowed[i]))
-      if (std::find(allowed.begin(), allowed.end(), d) != allowed.end())
+      if (std::find(allowed.begin(), allowed.end(), d) != allowed.end() && in_project_of(graph.nodes[d].path, u.path))
         udeps += (udeps.size() > 1 ? "," : "") + dep_json(graph.nodes[d].path, u.path);
     udeps += "]";
     auto k = schema::string_value(path_key(u.path));
@@ -409,7 +416,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     files["upstream.json"] = schema::object_text({{"cards", &c}, {"deps", &d}});
   }
   auto gen = generated_dir(files);
-  auto def = definition_dir(node.definition);
+  auto def = definition_dir(node.def_dir);
   schema::NixpkgsPin pin;
   if (auto err = schema::decode(files["nixpkgs.json"], pin)) throw Failed(FailureKind::internal_error, err->message);
   NixCall call;
@@ -455,7 +462,6 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     throw Failed(FailureKind::nix_failed, "the Card manifest needs exactly one body: run.package or run.bash");
   if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
   if (const auto* p = schema::get(m.post_run)) b.post_run = *p;
-  if (const auto* p = schema::get(m.reuse_worker)) b.reuse_worker = *p;
   b.key = res.out;
   b.cached = !res.built;
   return b;

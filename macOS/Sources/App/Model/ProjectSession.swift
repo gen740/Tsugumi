@@ -90,11 +90,23 @@ struct TimelineEntry: Identifiable, Hashable {
   var stages: [StageRecord] = []
 }
 
-/// Draft of one Card definition (`_card.json` and `_meta.json`), or its removal.
+/// Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
+/// Card in Card `_link.json`), or its removal.
 struct DefinitionDraft: Equatable {
   var card: JSONValue
   var meta: JSONValue?
   var removed = false
+  var link: JSONValue? = nil
+}
+
+/// A project inside this one (externals/<name>/, nested further): the inner
+/// canvas of a Card in Card. Read from the confirmed sources; edited only
+/// where it opens on its own.
+struct ExternalProject: Equatable {
+  var project: JSONValue
+  var layout: JSONValue
+  var definitions: [String: JSONValue]  // Card id -> _card.json
+  var links: [String: String]           // Card id -> external name (its own Cards in Card)
 }
 
 /// Save/sync state, shown separately from the run state.
@@ -151,6 +163,10 @@ final class ProjectSession {
   private(set) var confirmedLayout: JSONValue = .object([])
   private(set) var confirmedDefinitions: [String: JSONValue] = [:]
   private(set) var confirmedDefinitionMeta: [String: JSONValue] = [:]
+  private(set) var confirmedLinks: [String: JSONValue] = [:]
+  /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
+  private(set) var externals: [String: ExternalProject] = [:]
+  @ObservationIgnored private var externalsKey = ""
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -212,6 +228,13 @@ final class ProjectSession {
   var definitions: [String: JSONValue] {
     var d = confirmedDefinitions
     for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.card }
+    return d
+  }
+
+  /// Card in Card links of this project's Cards (_link.json), with the draft applied.
+  var links: [String: JSONValue] {
+    var d = confirmedLinks
+    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.link }
     return d
   }
 
@@ -392,12 +415,14 @@ final class ProjectSession {
     confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
     confirmedDefinitions = [:]
     confirmedDefinitionMeta = [:]
+    confirmedLinks = [:]
     for d in s.definitions.compactMap({ $0 }) {
-      confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson)
+      if let l = d.linkJson { confirmedLinks[d.id] = try? JSONValue.parse(l) } else { confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson) }
       if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
     }
     sources = [:]
     for src in s.sources.compactMap({ $0 }) { sources[src.path] = (src.hash ?? "", src.sizeBytes ?? 0) }
+    refreshExternals()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     runStatus = s.run
     if let v = s.view {
@@ -449,13 +474,24 @@ final class ProjectSession {
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
     if let lj = d.layoutJson, let v = try? JSONValue.parse(lj) { confirmedLayout = v }
+    for def in d.definitionsRemoved.compactMap({ $0 }) {
+      confirmedDefinitions[def] = nil
+      confirmedDefinitionMeta[def] = nil
+      confirmedLinks[def] = nil
+    }
     for def in d.definitionsUpsert.compactMap({ $0 }) {
-      confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
+      if let l = def.linkJson {
+        confirmedLinks[def.id] = try? JSONValue.parse(l)
+        confirmedDefinitions[def.id] = nil
+      } else {
+        confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
+        confirmedLinks[def.id] = nil
+      }
       confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
     }
-    for id in d.definitionsRemoved.compactMap({ $0 }) { confirmedDefinitions[id] = nil; confirmedDefinitionMeta[id] = nil }
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
+    refreshExternals()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if wasClean {
       // Nothing local to keep: follow the confirmed document.
@@ -658,7 +694,8 @@ final class ProjectSession {
       if d.removed {
         if confirmedDefinitions[id] != nil { changes.append(Change.removeDefinition(id: id)) }
       } else {
-        changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized()))
+        changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
+                                            linkJSON: d.link?.serialized()))
       }
     }
     for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) {
@@ -767,7 +804,9 @@ final class ProjectSession {
 
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
-    let canvasCards = resolution.keys.filter { cardSetting($0, "canvasEnabled")?.bool == true }
+    // What a Card shows is up to its code (the display SDK): every Card that
+    // can run may send displays.
+    let canvasCards = resolution.keys.filter { [.code, .logger].contains(kind($0)) }
     try? await client.setVisible(subscription: subscription, cards: canvasCards.map(path), enabled: true)
   }
 
@@ -834,37 +873,38 @@ final class ProjectSession {
 
   // MARK: - Document helpers
 
-  /// Graph cards of a scope in the draft (inline subgraphs only).
-  func cards(in scope: [String]) -> [JSONValue] {
-    var graph = project["canvas"]
+  /// The project a scope's Cards are written in: "" for this project,
+  /// "externals/<name>/" (nested further) inside a Card in Card; nil when the
+  /// scope is not a Card in Card.
+  func projectPrefix(_ scope: [String]) -> String? {
+    var prefix = ""
     for id in scope {
-      guard let card = graph?["cards"]?.array?.first(where: { $0["id"]?.string == id }) else { return [] }
-      graph = card["canvas"]
+      let link: String?
+      if prefix.isEmpty { link = links[id]?["external"]?.string } else { link = externals[prefix]?.links[id] }
+      guard let name = link else { return nil }
+      prefix += "externals/\(name)/"
     }
-    return graph?["cards"]?.array ?? []
+    return prefix
   }
 
-  func connections(in scope: [String]) -> [JSONValue] {
-    var graph = project["canvas"]
-    for id in scope {
-      guard let card = graph?["cards"]?.array?.first(where: { $0["id"]?.string == id }) else { return [] }
-      graph = card["canvas"]
-    }
-    return graph?["connections"]?.array ?? []
+  /// Whether a scope is inside a Card in Card (read-only here).
+  func isExternalScope(_ scope: [String]) -> Bool { !scope.isEmpty }
+
+  private func graph(_ scope: [String]) -> JSONValue? {
+    guard let prefix = projectPrefix(scope) else { return nil }
+    return prefix.isEmpty ? project["canvas"] : externals[prefix]?.project["canvas"]
   }
 
-  /// Mutates the graph object of `scope` in the draft.
+  /// Cards of a scope: this project's draft, or an external's (confirmed).
+  func cards(in scope: [String]) -> [JSONValue] { graph(scope)?["cards"]?.array ?? [] }
+
+  func connections(in scope: [String]) -> [JSONValue] { graph(scope)?["connections"]?.array ?? [] }
+
+  /// Mutates this project's canvas in the draft (externals are read-only).
   func updateGraph(_ scope: [String], _ fn: (inout JSONValue) -> Void) {
-    func recurse(_ graph: inout JSONValue, _ rest: ArraySlice<String>) {
-      guard let id = rest.first else { fn(&graph); return }
-      guard var cards = graph["cards"]?.array, let i = cards.firstIndex(where: { $0["id"]?.string == id }),
-            var inner = cards[i]["canvas"] else { return }
-      recurse(&inner, rest.dropFirst())
-      cards[i]["canvas"] = inner
-      graph["cards"] = .array(cards)
-    }
+    guard scope.isEmpty else { return }
     var canvas = project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
-    recurse(&canvas, scope[...])
+    fn(&canvas)
     project["canvas"] = canvas
   }
 
@@ -874,26 +914,87 @@ final class ProjectSession {
     return cards(in: Array(p.dropLast())).first { $0["id"]?.string == last }
   }
 
-  func updateInstance(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
+  /// The Card's settings (its _card.json), from the draft or an external.
+  func cardDefinition(_ k: CardKey) -> JSONValue? {
     let p = path(k)
-    guard let last = p.last else { return }
-    updateGraph(Array(p.dropLast())) { g in
-      guard var cards = g["cards"]?.array, let i = cards.firstIndex(where: { $0["id"]?.string == last }) else { return }
-      fn(&cards[i])
-      g["cards"] = .array(cards)
-    }
+    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
+    return prefix.isEmpty ? definitions[id] : externals[prefix]?.definitions[id]
   }
 
-  /// Effective setting: instance override, else definition default.
-  func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? {
-    if let v = instance(k)?[name] { return v }
-    if let def = instance(k)?["definition"]?.string { return definitions[def]?[name] }
-    return nil
+  /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
+  func cardExternal(_ k: CardKey) -> String? {
+    let p = path(k)
+    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
+    let name = prefix.isEmpty ? links[id]?["external"]?.string : externals[prefix]?.links[id]
+    return name.map { prefix + "externals/\($0)/" }
   }
+
+  /// The folder of the Card's definition, project relative ("definitions/<id>/").
+  func definitionDir(_ k: CardKey) -> String? {
+    let p = path(k)
+    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
+    return prefix + "definitions/\(id)/"
+  }
+
+  /// A Card in Card's ports: its external's boundary.
+  func boundary(_ k: CardKey) -> JSONValue? {
+    guard let ext = cardExternal(k) else { return nil }
+    return externals[ext]?.project["boundary"]
+  }
+
+  /// Changes this project's Card's _card.json in the draft.
+  func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
+    let p = path(k)
+    guard p.count == 1, let id = p.first, var card = definitions[id] else { return }
+    fn(&card)
+    setDefinition(id, card: card, meta: definitionMeta[id])
+  }
+
+  /// A setting of the Card (its _card.json).
+  func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   func position(_ k: CardKey) -> CGPoint {
-    let p = layout["cards"]?[k]
+    var p = layout["cards"]?[k]
+    // Inside a Card in Card: the external's own layout.
+    let parts = path(k)
+    if p == nil, parts.count > 1, let prefix = projectPrefix(Array(parts.dropLast())) {
+      p = externals[prefix]?.layout["cards"]?[parts.last!]
+    }
     return CGPoint(x: p?["x"]?.double ?? 0, y: p?["y"]?.double ?? 0)
+  }
+
+  /// Reads the externals' documents when their sources changed.
+  func refreshExternals() {
+    let paths = sources.keys.filter { $0.hasPrefix("externals/") }.sorted()
+    let key = paths.map { "\($0)=\(sources[$0]?.hash ?? "")" }.joined(separator: ";")
+    guard key != externalsKey else { return }
+    externalsKey = key
+    guard let client else { return }
+    let atRev = rev
+    let known = Set(sources.keys)
+    Task { @MainActor in
+      var found: [String: ExternalProject] = [:]
+      for p in paths where p.hasSuffix("/tsugumi.json") {
+        let prefix = String(p.dropLast("tsugumi.json".count))
+        // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
+        let parts = prefix.split(separator: "/")
+        guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
+        func read(_ rel: String) async -> JSONValue? {
+          guard known.contains(rel), let d = try? await client.readFile(path: rel, atRev: atRev) else { return nil }
+          return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
+        }
+        guard let proj = await read(p) else { continue }
+        var ext = ExternalProject(project: proj, layout: await read(prefix + "layout.json") ?? .object([]), definitions: [:], links: [:])
+        for c in proj["canvas"]?["cards"]?.array ?? [] {
+          guard let id = c["id"]?.string else { continue }
+          let dir = prefix + "definitions/\(id)/"
+          if let l = await read(dir + "_link.json"), let name = l["external"]?.string { ext.links[id] = name }
+          else if let card = await read(dir + "_card.json") { ext.definitions[id] = card }
+        }
+        found[prefix] = ext
+      }
+      if self.externalsKey == key { self.externals = found }
+    }
   }
 
   func setPosition(_ k: CardKey, _ pt: CGPoint) {

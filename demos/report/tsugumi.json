@@ -5,51 +5,22 @@
   "canvas": {
     "cards": [
       {
-        "id": "begin",
-        "definition": "trigger"
+        "id": "begin"
       },
       {
-        "id": "settings",
-        "definition": "settings"
+        "id": "settings"
       },
       {
-        "id": "generate",
-        "definition": "generate"
+        "id": "generate"
       },
       {
-        "id": "aggregate",
-        "definition": "aggregate"
+        "id": "aggregate"
       },
       {
-        "id": "render",
-        "definition": "render"
+        "id": "render"
       },
       {
-        "id": "archive",
-        "name": "Archive (nested graph)",
-        "canvas": {
-          "cards": [
-            {
-              "id": "copy",
-              "definition": "archive-copy"
-            }
-          ],
-          "connections": []
-        },
-        "boundary": {
-          "inputs": {
-            "report": {
-              "card": "copy",
-              "port": "report"
-            }
-          },
-          "outputs": {
-            "archive": {
-              "card": "copy",
-              "port": "archive"
-            }
-          }
-        }
+        "id": "archive"
       }
     ],
     "connections": [

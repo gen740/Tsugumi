@@ -1,5 +1,4 @@
 {
-  "name": "Live chart",
   "language": "python",
   "maxRuns": 100000,
   "inputs": [
@@ -7,7 +6,6 @@
       "name": "sample"
     }
   ],
-  "canvasEnabled": true,
   "params": [
     {
       "name": "window",

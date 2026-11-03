@@ -38,10 +38,13 @@ table SourceInfo {
   size_bytes:uint64 = null (id: 4);
 }
 
+/// definitions/<id>/: card_json (_card.json), or for a Card in Card
+/// link_json (_link.json) with an empty card_json.
 table Definition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
   meta_json:string (id: 2);
+  link_json:string (id: 3);
 }
 
 table ResolvedCard {
@@ -100,10 +103,18 @@ table SetProject { json:string (id: 0, required); }
 table SetLayout { json:string (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
-  card_json:string (id: 1, required);
+  card_json:string (id: 1, required);  // empty with link_json
   meta_json:string (id: 2);  // omitted removes _meta.json
+  link_json:string (id: 3);  // a Card in Card: _link.json instead of _card.json
 }
 table RemoveDefinition { id:string (id: 0, required); }
+/// A Card's new name: its definition folder (with its sources) moves, and
+/// its run history follows. The client sends the matching SetProject and
+/// SetLayout in the same save.
+table RenameDefinition {
+  id:string (id: 0, required);
+  to:string (id: 1, required);
+}
 table PutSource {
   path:string (id: 0, required);
   bytes:[ubyte] (id: 1, required);
@@ -132,6 +143,7 @@ union DocumentChangeValue {
   PutSource = 5,
   PatchSource = 6,
   RemoveSource = 7,
+  RenameDefinition = 8,
 }
 
 table DocumentChange { value:DocumentChangeValue (id: 1); }
@@ -311,6 +323,17 @@ table ProjectFileFormatRequest {
   language:Tsugumi.Data.FormatLanguage (id: 2);
 }
 
+/// -> OutputTypesResult. Compiles an _outputs.fbs text (nothing is saved):
+/// its reflection schema (bfbs), from which a client lists the types. With
+/// port and type_name, also the text with that port's type and kind set
+/// (File / Directory: the tsugumi attribute).
+table OutputTypesRequest {
+  text:string (id: 0, required);
+  port:string (id: 1);
+  type_name:string (id: 2);
+  kind:Tsugumi.Data.PortKind (id: 3);
+}
+
 /// -> SDKPrepareResult. Accepted asynchronously.
 table CardSDKPrepareRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
@@ -456,6 +479,7 @@ union RequestPayload {
   ViewSetVisibleRequest = 28,
   ViewSaveRequest = 29,
   RunHistoryDeleteRequest = 30,
+  OutputTypesRequest = 31,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -504,6 +528,13 @@ table FileContent {
 table FormatResult {
   text:string (id: 0, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 1, required);
+}
+
+table OutputTypesResult {
+  bfbs:[ubyte] (id: 0, required);  // empty when the text does not compile
+  root_type:string (id: 1);        // the catalog (fully qualified)
+  text:string (id: 2);             // with the port changed
+  error:string (id: 3);
 }
 
 table RunPlanResult {
@@ -676,6 +707,7 @@ union ReplyPayload {
   ViewSaveResult = 23,
   Failure: Tsugumi.Data.Failure = 24,
   HistoryDeleteResult = 25,
+  OutputTypesResult = 26,
 }
 
 // ---- Notifications -----------------------------------------------------------

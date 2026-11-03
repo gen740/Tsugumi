@@ -1,5 +1,4 @@
 {
-  "name": "Random walk (C++)",
   "language": "cpp",
   "maxRuns": 100000,
   "inputs": [

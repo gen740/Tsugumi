@@ -44,21 +44,31 @@ def run(c, card, propagate=True, concurrency=4):
     return text(acc.run.runId)
 
 
-def edit_project(c, fn):
+def edit_card(env, c, card: str, fn, raw=lambda s: s):
+    """Changes a Card's settings (its _card.json) through a save; `raw`
+    rewrites the JSON text after `fn` (spellings JSON numbers cannot keep)."""
     snap = c.call("ProjectInspectRequest")
-    doc = json.loads(text(snap.projectJson))
-    fn(doc)
+    d = next(x for x in snap.definitions if text(x.id) == card)
+    body = json.loads(text(d.cardJson))
+    fn(body)
+    meta = {"metaJson": text(d.metaJson)} if d.metaJson else {}
     return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-                  changes=[change("SetProject", json=json.dumps(doc))])
+                  changes=[change("PutDefinition", id=card, cardJson=raw(json.dumps(body)), **meta)])
 
 
-def find_card(doc, *ids):
-    cards = doc["canvas"]["cards"]
-    for i, id_ in enumerate(ids):
-        card = next(x for x in cards if x["id"] == id_)
-        if i + 1 < len(ids):
-            cards = card["canvas"]["cards"]
-    return card
+def edit_external_card(env, c, external: str, card: str, fn):
+    """A Card inside a Card in Card: its external is read-only here, so the
+    file changes where the external is kept, and the project reloads."""
+    from test_cards_container import reload
+    f = env.project / "externals" / external / "definitions" / card / "_card.json"
+    body = json.loads(f.read_text())
+    fn(body)
+    f.write_text(json.dumps(body))
+    reload(c)
+
+
+def set_param(body: dict, name: str, value):
+    next(p for p in body["params"] if p["name"] == name)["data"] = value
 
 
 def display_text(c, run_id, *card):
@@ -107,38 +117,41 @@ def test_collatz_27(collatz):
     expected = collatz_reference(27)
     assert len(expected) == 112
     assert display_text(c, rid, "compare") == "C++ and Python agree: 112 values, 111 steps to 1"
-    for lang in ("cpp", "python"):
+    for lang in ("collatz-cpp", "collatz-py"):
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))
     # The C++ Card in Card runs alone from its boundary input (saved value).
-    rid2 = run(c, ["cpp"], propagate=False)
+    rid2 = run(c, ["collatz-cpp"], propagate=False)
     assert wait_run(c, rid2).state == RunState.succeeded
-    assert display_text(c, rid2, "cpp", "collect") == "112 values: " + " ".join(map(str, expected))
+    assert display_text(c, rid2, "collatz-cpp", "collect") == "112 values: " + " ".join(map(str, expected))
 
 
 def test_collatz_limit_overflow_and_skipped(collatz):
     c = connect(collatz)
     # Iteration limit: the check Card may run only 50 times.
-    edit_project(c, lambda d: [find_card(d, lang, "check").__setitem__("maxRuns", 50) for lang in ("cpp", "python")])
+    original = {}
+    for lang in ("collatz-cpp", "collatz-py"):
+        edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: (original.__setitem__(lang, b.get("maxRuns")),
+                                                                            b.__setitem__("maxRuns", 50)))
     st = wait_run(c, run(c, ["begin"]))
     assert st.state == RunState.failed
     assert st.failure.kind == 19  # execution_limit
     # Overflow: 3n+1 exceeds uint64 for this odd value.
     big = 12297829382473034411
-    edit_project(c, lambda d: (find_card(d, "initial")["params"].__setitem__("value", 0),
-                               [find_card(d, lang, "check").pop("maxRuns") for lang in ("cpp", "python")]))
-    snap = c.call("ProjectInspectRequest")
-    raw = text(snap.projectJson).replace('"value": 0', f'"value": {big}').replace('"value":0', f'"value":{big}')
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[change("SetProject", json=raw)])
+    for lang in ("collatz-cpp", "collatz-py"):
+        edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: b.__setitem__("maxRuns", original[lang]))
+    edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0),
+              raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
     rid = run(c, ["begin"])
     st = wait_run(c, rid)
     assert st.state == RunState.failed
-    assert "integer overflow" in stderr(c, rid, "cpp", "triple")
+    assert "integer overflow" in stderr(c, rid, "collatz-cpp", "triple")
     # n = 2: the odd branch is never selected, so triple is skipped.
-    edit_project(c, lambda d: find_card(d, "initial")["params"].__setitem__("value", 2))
+    edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 2))
     rid = run(c, ["begin"])
-    assert wait_run(c, rid).state == RunState.succeeded
-    rec = c.call("RunRecordRequest", runId=rid, card=path("cpp", "triple"))
+    st = wait_run(c, rid)
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    rec = c.call("RunRecordRequest", runId=rid, card=path("collatz-cpp", "triple"))
     assert rec.status.state == CardState.skipped
 
 
@@ -153,21 +166,21 @@ def test_report_failure_rerun_and_artifacts(report):
     assert wait_run(c, rid2).state == RunState.succeeded
     assert display_text(c, rid2, "render") == first
     # Heading change is reflected.
-    edit_project(c, lambda d: find_card(d, "settings").setdefault("params", {}).__setitem__("heading", "見出し変更"))
+    edit_card(report, c, "settings", lambda b: set_param(b, "heading", "見出し変更"))
     rid3 = run(c, ["begin"])
     st3 = wait_run(c, rid3)
     assert st3.state == RunState.succeeded, (st3.failure and text(st3.failure.diagnostic),
                                              [(text(a.key), text(a.value)) for a in st3.failure.args] if st3.failure else None)
     assert display_text(c, rid3, "render").startswith("# 見出し変更")
     # Intentional failure: stderr is recorded and downstream Cards stop.
-    edit_project(c, lambda d: find_card(d, "aggregate").setdefault("params", {}).__setitem__("fail_on_purpose", True))
+    edit_card(report, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", True))
     rid4 = run(c, ["begin"])
     st = wait_run(c, rid4)
     assert st.state == RunState.failed
     assert "failing on purpose" in stderr(c, rid4, "aggregate")
     assert c.call("RunRecordRequest", runId=rid4, card=path("render")).status.state == CardState.blocked
     # Fix the setting and re-run only Aggregate with its last saved input.
-    edit_project(c, lambda d: find_card(d, "aggregate")["params"].__setitem__("fail_on_purpose", False))
+    edit_card(report, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", False))
     rid5 = run(c, ["aggregate"], propagate=False)
     assert wait_run(c, rid5).state == RunState.succeeded
     rec = c.call("RunRecordRequest", runId=rid5, card=path("aggregate"))

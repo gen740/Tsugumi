@@ -72,7 +72,7 @@ struct DraftEditor: View {
       Divider()
       Form {
         Section {
-          TextField("名前", text: Binding(get: { m.definition?["name"]?.string ?? "" }, set: { m.definition?["name"] = .string($0) }))
+          LabeledContent("名前", value: session.displayName(cardKey)).help("名前（Card の ID）は Card 設定の「一般」で変更します")
           TextField("短い概要", text: meta(m, "description"))
           LabeledContent("詳しい処理内容") {
             TextEditor(text: meta(m, "plan")).frame(minHeight: 80).border(.secondary.opacity(0.3))
@@ -166,7 +166,8 @@ struct DraftEditor: View {
 
 // MARK: - Card database
 
-/// Every definition: search, edit the shared definition, place on the canvas.
+/// Every definition folder of the project (one per Card, and those without
+/// a Card): search, edit its JSON, place an unplaced one on the canvas.
 struct CardDatabaseView: View {
   @Environment(\.openWindow) private var openWindow
   let session: ProjectSession
@@ -189,7 +190,7 @@ struct CardDatabaseView: View {
           TextField("検索", text: $search).textFieldStyle(.roundedBorder)
           Menu {
             ForEach(DefinitionTemplate.allCases) { t in
-              Button(t.label) { selected = session.createDefinition(name: "新しい定義", template: t) }
+              Button(t.label) { selected = path(session.addCard(template: t, in: [], at: CGPoint(x: 40, y: 40))).first }
             }
             Divider()
             Button("他のプロジェクトからコピー…") { importing = true }
@@ -203,8 +204,9 @@ struct CardDatabaseView: View {
           HStack {
             Image(systemName: definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
             VStack(alignment: .leading) {
-              Text(def?["name"]?.string ?? id)
-              Text("\(id) · \(definitionKind(def).label) · \(session.usageCount(ofDefinition: id)) 枚").font(.caption).foregroundStyle(.secondary)
+              Text(id)
+              Text(definitionKind(def).label + (session.unplacedDefinitions.contains(id) ? String(localized: " · 未配置") : ""))
+                .font(.caption).foregroundStyle(.secondary)
             }
           }
           .tag(id)
@@ -217,13 +219,12 @@ struct CardDatabaseView: View {
     .sheet(isPresented: $importing) { ImportDefinitionsSheet(session: session) }
     .onChange(of: selected) { load() }
     .onAppear { if selected == nil, let initial, session.definitions[initial] != nil { selected = initial } }
-    .navigationTitle("Card 定義")
+    .navigationTitle("Card の定義")
   }
 
   private var ids: [String] {
     session.definitions.keys.sorted().filter { id in
       search.isEmpty || id.localizedCaseInsensitiveContains(search) ||
-        (session.definitions[id]?["name"]?.string ?? "").localizedCaseInsensitiveContains(search) ||
         (session.definitions[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
     }
   }
@@ -233,28 +234,27 @@ struct CardDatabaseView: View {
       let unapplied = cardText != baseCard || metaText != baseMeta
       VStack(alignment: .leading, spacing: 8) {
         HStack {
-          Text(session.definitions[id]?["name"]?.string ?? id).font(.title2.bold())
+          Text(id).font(.title2.bold())
           Spacer()
           if unapplied { Label("未適用の変更", systemImage: "pencil.circle.fill").foregroundStyle(.orange) }
         }
-        Text("この定義を使う \(session.usageCount(ofDefinition: id)) 枚の Card に変更が反映されます。")
-          .font(.callout).foregroundStyle(.secondary)
-        Text("_card.json（既定値・params・入力）").font(.headline)
+        Text("Card「\(id)」の定義（definitions/\(id)/）です。").font(.callout).foregroundStyle(.secondary)
+        Text("_card.json（設定・params・入力）").font(.headline)
         CodeEditor(text: $cardText, language: "json").frame(minHeight: 180)
         Text("_meta.json（説明・計画・追加コンテキスト、任意）").font(.headline)
         CodeEditor(text: $metaText, language: "json").frame(minHeight: 80, maxHeight: 140)
         if let parseError { Label(parseError, systemImage: "xmark.octagon").foregroundStyle(.red) }
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
         HStack {
-          Button("Canvas（最上位）に配置") { place(id) }.disabled(!session.isEditable)
+          Button("Canvas に配置") { place(id) }.disabled(!session.isEditable || !session.unplacedDefinitions.contains(id))
           Button("ソースを開く…") {
-            if let k = firstUse(id) { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .source)) }
+            openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: key([id]), category: .source))
           }
-          .disabled(firstUse(id) == nil)
-          .help("この定義を使う Card の設定画面で開きます")
+          .disabled(session.unplacedDefinitions.contains(id))
+          .help("Card の設定画面で開きます")
           Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) }; selected = nil }
-            .disabled(session.usageCount(ofDefinition: id) > 0 || !session.isEditable)
-            .help(session.usageCount(ofDefinition: id) > 0 ? "使用中の定義は削除できません" : "定義とソースを削除")
+            .disabled(!session.unplacedDefinitions.contains(id) || !session.isEditable)
+            .help(session.unplacedDefinitions.contains(id) ? "定義とソースを削除" : "Card を削除すると定義も削除されます")
           Spacer()
           Button("再読込") { load() }
           Button("適用") { Task { await apply(id) } }.disabled(!unapplied || !session.isEditable)
@@ -264,18 +264,6 @@ struct CardDatabaseView: View {
     } else {
       ContentUnavailableView("定義を選んでください", systemImage: "square.stack", description: Text("ドラッグして Canvas に配置できます。"))
     }
-  }
-
-  private func firstUse(_ id: String) -> CardKey? {
-    func find(_ scope: [String]) -> CardKey? {
-      for c in session.cards(in: scope) {
-        guard let cid = c["id"]?.string else { continue }
-        if c["definition"]?.string == id { return key(scope + [cid]) }
-        if c["canvas"] != nil, let k = find(scope + [cid]) { return k }
-      }
-      return nil
-    }
-    return find([])
   }
 
   private func load() {
@@ -289,8 +277,8 @@ struct CardDatabaseView: View {
   }
 
   private func place(_ id: String) {
-    let k = session.addCard(definition: id, in: [], at: CGPoint(x: 40, y: 40))
-    message = "\(k) を最上位の Workflow に配置しました（未保存）。"
+    let k = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
+    message = "\(k) を Workflow に配置しました（未保存）。"
   }
 
   private func apply(_ id: String) async {

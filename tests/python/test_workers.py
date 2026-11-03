@@ -173,12 +173,13 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
 
 
 def test_fresh_worker_per_call(env):
-    nix = CPP_NIX.replace("src = ./src; };\n", "src = ./src; };\n  reuseWorker = false;\n")
+    nix = CPP_NIX
     out = ("namespace t; table Num { value:ulong; }\ntable Outputs { again:Num; }\nroot_type Outputs;\n")
     seed = bash('echo \'{"out":{"value":3}}\' > "$TSUGUMI_OUTPUT"')
     c = load(env, {"trigger": {"template": "trigger"}, "seed": seed,
                    "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-                   "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "_outputs": out, "_nix": nix}},
+                   "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": False,
+                             "_outputs": out, "_nix": nix}},
              [card("begin", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
@@ -224,3 +225,63 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     c.call("ProjectInspectRequest")
     run_id, st = run(c, "ok")
     assert c.call("RunRecordRequest", runId=run_id, card=path("ok")).status.state == CardState.succeeded
+
+
+# Reaches 1.1.1.1:80 over TCP (bash's /dev/tcp, no DNS): value 1 when it connects.
+REACH = ('if (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null; then v=1; else v=0; fi; '
+         'echo "{\\"out\\":{\\"value\\":$v}}" > "$TSUGUMI_OUTPUT"')
+
+
+def number(c, run_id, card_id):
+    rec = c.call("RunRecordRequest", runId=run_id, card=path(card_id))
+    assert rec.status.state == CardState.succeeded, rec.status.failure and text(rec.status.failure.diagnostic)
+    return log(c, run_id, card_id)
+
+
+def test_network_is_off_unless_the_card_allows_it(env):
+    """Experimental network setting: without it no worker step (preRun, run,
+    postRun) reaches outside; with it, the run step does. Sandboxed and not."""
+    cards = {"trigger": {"template": "trigger"}}
+    for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": False},
+                           "open": {"network": True}, "open_unsandboxed": {"network": True, "sandbox": False}}.items():
+        cards[name] = bash(REACH + '; echo "reach=$v"', inputs=["go"],
+                           pre=REACH.replace('> "$TSUGUMI_OUTPUT"', "> /dev/null") + '; echo "pre=$v" >&2', **settings)
+    names = [n for n in cards if n != "trigger"]
+    c = load(env, cards, [card("begin", "trigger")] + [card(n, n) for n in names],
+             [conn("begin", "out", n, "go") for n in names])
+    run_id, st = run(c, "begin", timeout=900)
+    for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
+        out = number(c, run_id, name)
+        want = "reach=1" if name.startswith("open") else "reach=0"
+        assert want in out, (name, out)
+        err = log(c, run_id, name, stream=2)
+        assert ("pre=1" if name.startswith("open") else "pre=0") in err, (name, err)
+
+
+def test_mac_folders_are_read_only_unless_written(env, tmp_path):
+    """Experimental host folders: a folder of the Mac named by a Card is
+    shared with its project only, at /host/<name> in the worker, read-only
+    unless the Card writes there."""
+    shared = tmp_path / "mac-folder"
+    shared.mkdir()
+    (shared / "hello.txt").write_text("from the Mac")
+    read = bash('cat /host/data/hello.txt; if echo x > /host/data/new.txt 2>/dev/null; then echo wrote; else echo read-only; fi; '
+                'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
+                hostFolders=[{"path": str(shared), "name": "data"}])
+    write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
+                  hostFolders=[{"path": str(shared), "name": "out", "write": True}])
+    other = bash('ls /host 2>&1; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
+    load(env, {"trigger": {"template": "trigger"}, "read": read, "write": write_, "other": other},
+         [card("begin", "trigger"), card("read", "read"), card("write", "write"), card("other", "other")],
+         [conn("begin", "out", n, "go") for n in ("read", "write", "other")])
+    # The share is set when the project's environment starts.
+    env.stop()
+    env.start()
+    c = env.client()
+    run_id, st = run(c, "begin", timeout=900)
+    out = number(c, run_id, "read")
+    assert "from the Mac" in out and "read-only" in out, out
+    number(c, run_id, "write")
+    assert (shared / "made.txt").read_text().strip() == "made"
+    assert not (shared / "new.txt").exists()
+    assert "data" not in number(c, run_id, "other")  # a Card that names no folder sees none
