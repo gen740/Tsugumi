@@ -48,7 +48,7 @@ auto onRunStart() -> void {
   calls = 0;
 }
 
-auto run_and_wait(Card::Input&) -> Card::Output {
+auto run(Card::Input&) -> Card::Output {
   ++calls;
   tsugumi::visualization::text("worker " + std::to_string(worker) + " runs " + std::to_string(runs) + " calls " +
                                std::to_string(calls));
@@ -69,7 +69,7 @@ READ = r"""
 
 static std::vector<std::string> lines;
 
-auto run_and_wait(Card::Input& input) -> Card::Output {
+auto run(Card::Input& input) -> Card::Output {
   // No folder descriptor of this or an earlier call is left (this Card has no File outputs).
   if (std::ifstream("/proc/self/fd/900")) throw tsugumi::Failure("worker_failed", "a passed descriptor was left open");
   std::ifstream in(input.doc.value);
@@ -95,7 +95,7 @@ FRESH = r"""
 static const unsigned worker = std::random_device{}();
 static int calls = 0;
 
-auto run_and_wait(Card::Input& input) -> Card::Output {
+auto run(Card::Input& input) -> Card::Output {
   ++calls;
   uint64_t n = 0;
   if (const auto* v = input.x.value.Asinit()) n = v->value;

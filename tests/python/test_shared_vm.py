@@ -85,7 +85,7 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
 CPP_ONE = r"""
 #include <card.hh>
 
-auto run_and_wait(Card::Input&) -> Card::Output {
+auto run(Card::Input&) -> Card::Output {
   Card::Output out;
   out.out.emplace().value = 1;
   return out;
