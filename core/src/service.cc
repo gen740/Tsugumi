@@ -27,28 +27,6 @@ namespace stdfs = std::filesystem;
 
 constexpr uint32_t kProtocol = 1;
 
-namespace {
-
-// The run history database left the project (for the VM's disk): the first
-// start takes it along as one consistent copy and removes it from the project.
-void move_history(const stdfs::path& old_db, const stdfs::path& db) {
-  std::error_code ec;
-  if (!stdfs::exists(old_db, ec)) return;
-  if (!stdfs::exists(db, ec)) {
-    auto tmp = db.string() + ".moving";
-    stdfs::remove(tmp, ec);
-    {
-      sql::Db src(old_db.string());  // a WAL left behind is recovered first
-      src.prepare("VACUUM INTO ?").bind(1, tmp).run();
-    }
-    stdfs::rename(tmp, db);
-    log::info("history: moved " + old_db.string() + " to " + db.string());
-  }
-  for (const char* ext : {"", "-wal", "-shm"}) stdfs::remove(old_db.string() + ext, ec);
-}
-
-}  // namespace
-
 // ---------------------------------------------------------------------------
 // Request digests
 
@@ -194,10 +172,7 @@ void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
   auto history_db = (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) / "history.sqlite";
-  if (!opts_.history_dir.empty()) {
-    stdfs::create_directories(opts_.history_dir);
-    move_history(store_->state_dir() / "history.sqlite", history_db);
-  }
+  if (!opts_.history_dir.empty()) stdfs::create_directories(opts_.history_dir);
   history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
   // Runs kept in the project and missing here (a copied or moved project).
   try {

@@ -189,7 +189,7 @@ final class ChatController {
 
   private func url(_ id: String) -> URL { dir.appendingPathComponent("sessions/\(id).json") }
 
-  /// The single conversation.json of earlier versions becomes the first session.
+  /// The saved sessions, newest first.
   func refreshSessions() {
     let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     sessions = files.filter { $0.pathExtension == "json" }.map { f in

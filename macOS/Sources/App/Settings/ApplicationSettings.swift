@@ -686,7 +686,6 @@ private struct EnvironmentStorageSettings: View {
         failed = false
         var parts = [String(localized: "プロジェクトの環境 \(r.environments) 件を削除しました")]
         if r.vmRemoved { parts.append(String(localized: "VM と Nix store を削除")) }
-        if !r.legacyContainers.isEmpty { parts.append(String(localized: "以前の版の container \(r.legacyContainers.count) 件を削除")) }
         message = parts.joined(separator: "。") + "。"
       } catch {
         failed = true

@@ -1,8 +1,7 @@
 """Run history on its own disk (--history-dir, as in the shared VM) and the
 project's copy of finished runs (.tsugumi/runs.sqlite): written shortly after
 runs end, read back by a copied project, merged by run id, switched off by
-saveRunHistory, deleted together with the runs' files; the database that
-used to live in the project moves out on the first start."""
+saveRunHistory, deleted together with the runs' files."""
 
 from __future__ import annotations
 
@@ -161,29 +160,6 @@ def test_delete_runs_here_in_the_copy_and_their_files(tmp_path):
         assert listed(c) == []
     finally:
         d.cleanup()
-
-
-def test_history_in_the_project_moves_out(tmp_path):
-    root = tmp_path / "p"
-    project(root, False, False)
-    d = Daemon(root).start()
-    try:
-        c = d.client()
-        c.hello()
-        run_id, st = run_and_wait(c, "src")
-        assert st.state == RunState.succeeded
-    finally:
-        d.cleanup()
-    assert (root / ".tsugumi" / "history.sqlite").exists()
-    d = start(root, tmp_path / "h")
-    try:
-        c = d.client()
-        c.hello()
-        assert listed(c) == [run_id]
-    finally:
-        d.cleanup()
-    assert not any((root / ".tsugumi").glob("history.sqlite*"))
-    assert (tmp_path / "h" / "history.sqlite").exists()
 
 
 def test_a_history_of_another_layout_is_started_over(tmp_path):

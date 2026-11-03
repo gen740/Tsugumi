@@ -298,14 +298,12 @@ public actor EnvironmentManager {
   public struct ResetReport: Sendable {
     public var environments = 0
     public var vmRemoved = false
-    public var legacyContainers: [String] = []
     public init() {}
   }
 
   /// Stops the VM and removes the shared store, the VM image copy and every
-  /// project's control folder. Containers made by earlier versions (Apple
-  /// container, labelled by Tsugumi) are removed too when the CLI is there.
-  /// Project folders are not touched. The next start sets everything up anew.
+  /// project's control folder. Project folders are not touched. The next
+  /// start sets everything up anew.
   public func resetAll() async throws -> ResetReport {
     var report = ResetReport()
     await shutdown()
@@ -320,7 +318,6 @@ public actor EnvironmentManager {
       try removeFolder(environmentsDir.appendingPathComponent(id))
       report.environments += 1
     }
-    report.legacyContainers = await LegacyContainers.removeAll()
     return report
   }
 
@@ -402,26 +399,5 @@ public actor EnvironmentManager {
       throw LauncherError.notReady("server.ready is incomplete")
     }
     return Endpoint(url: URL(string: "ws://127.0.0.1:\(port)/rpc")!, token: token, projectId: pid, serverInstanceId: sid)
-  }
-}
-
-/// Environments of earlier versions (one Apple container per project), only
-/// for removing them on reset. Nothing else uses Apple container any more.
-enum LegacyContainers {
-  static let label = "tsugumi.project"
-
-  static func removeAll() async -> [String] {
-    let cli = ContainerCLI()
-    guard FileManager.default.isExecutableFile(atPath: cli.executable.path), await cli.serviceRunning(),
-          let o = try? await cli.run(["ls", "-a", "--format", "json"], timeout: 30), o.ok,
-          let list = try? JSONSerialization.jsonObject(with: Data(o.stdout.utf8)) as? [[String: Any]] else { return [] }
-    var removed: [String] = []
-    for c in list {
-      let config = c["configuration"] as? [String: Any]
-      guard let id = config?["id"] as? String, (config?["labels"] as? [String: String])?[label] != nil else { continue }
-      _ = try? await cli.run(["stop", "--time", "20", id], timeout: 60)
-      if let r = try? await cli.run(["rm", "-f", id], timeout: 60), r.ok { removed.append(id) }
-    }
-    return removed
   }
 }
