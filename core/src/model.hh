@@ -131,21 +131,34 @@ struct LineSeriesData {
   std::vector<double> x, y;
 };
 
+// The kinds of display, outside DisplayData: clang with libstdc++ does not
+// count a nested struct with member initializers as default-constructible
+// inside its enclosing class, so the variant would have no default.
+namespace display {
+struct Text {
+  std::string text;
+  bool markdown = false;
+};
+struct Scalar { double value = 0; std::string label; };
+struct LineChart { std::vector<LineSeriesData> series; };
+struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
+struct Image { std::string media_type; std::string data; std::string alt; };
+struct PointCloud { std::vector<float> x, y, z; std::vector<uint32_t> colors; };
+struct Module { std::string module; std::string data_json; };
+}  // namespace display
+
 struct DisplayData {
   CardPath card;
   std::string run_id;
   uint64_t invocation = 0;
   uint64_t revision = 0;
-  struct Text {
-    std::string text;
-    bool markdown = false;
-  };
-  struct Scalar { double value = 0; std::string label; };
-  struct LineChart { std::vector<LineSeriesData> series; };
-  struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
-  struct Image { std::string media_type; std::string data; std::string alt; };
-  struct PointCloud { std::vector<float> x, y, z; std::vector<uint32_t> colors; };
-  struct Module { std::string module; std::string data_json; };
+  using Text = display::Text;
+  using Scalar = display::Scalar;
+  using LineChart = display::LineChart;
+  using Table = display::Table;
+  using Image = display::Image;
+  using PointCloud = display::PointCloud;
+  using Module = display::Module;
   std::variant<Text, Scalar, LineChart, Table, Image, PointCloud, Module> value;
 
   // Validates structure and size limits of every variant (see data.fbs).

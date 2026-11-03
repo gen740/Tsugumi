@@ -1,11 +1,13 @@
 # tsugumid, tsugumi-worker and the installed Card SDK.
-{ lib, stdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, nix, bash, coreutils, findutils, gnugrep
+{ lib, clangStdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, nix, bash, coreutils, findutils, gnugrep
 , gnused, gawk, gnutar, gzip, jq, bubblewrap, self, cardNixpkgs, hosq }:
 let
   # Tools on PATH for Card bash steps (preRun, a bash run, postRun).
   cardTools = [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ];
 in
-stdenv.mkDerivation {
+# Clang on Linux too (with GCC's libstdc++, as the Nix libraries linked here):
+# GCC 16 did not finish compiling one of the core's files.
+clangStdenv.mkDerivation {
   pname = "tsugumid";
   version = "1.0.0";
   src = lib.fileset.toSource {
@@ -22,7 +24,7 @@ stdenv.mkDerivation {
     "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
     "-DTSUGUMI_BASH=${bash}/bin/bash"
     "-DTSUGUMI_CARD_PATH=${lib.makeBinPath cardTools}"
-  ] ++ lib.optionals stdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
+  ] ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
   meta = {
     description = "Tsugumi core daemon and Card worker";
     mainProgram = "tsugumid";
