@@ -118,8 +118,10 @@ docs/assets/       アイコンとキービジュアルの SVG
 | `tests/cpp`（`tsugumi_core_tests`、15） | 型（catalog・構造的互換・merge union）、型の伝播、Nix 上流参照（直線・分岐+any・all と optional・同一ポート複数経路・feedback loop・入れ子・到達不能な循環・診断）、run plan（全体・単体・子 Workflow）、履歴の状態選択と障害注入、送信キュー（順序・seq・遅い peer の隔離） |
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
-| `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
-| 実際の API（任意、`TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
+| `macOS/CoreTests`（`cd macOS/CoreTests && swift test`、21） | アプリ本体なしでビルドする独立パッケージ: JSON モデル、FlatJSON の境界値、Mac のフォルダの設定、Agent × テスト用モデル（`tests/fixtures/model_fixture.py`）× 実 tsugumid（読取→変更→実行→説明、取消、取消後の再試行、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る）、参考資料の読込 |
+| `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: 段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出 |
+| `macOS/Tests/TsugumiBenchmarks`（`TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks`） | 描画のベンチマーク（3D 点群の 1 フレーム）。通常のテストでは動かない |
+| 実際の API（任意、`cd macOS/CoreTests && TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
 | CI（`.github/workflows/ci.yml`、GitHub Actions の Linux） | 開発シェルで tsugumid をビルドし、C++ のテストとホストの tsugumid に対する Python のテストを流す（Card は bubblewrap で隔離）。macOS アプリと共通 VM は Apple silicon が要るため Mac で確認する |
 | `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 

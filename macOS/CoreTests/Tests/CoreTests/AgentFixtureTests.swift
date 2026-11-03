@@ -8,7 +8,7 @@ import TsugumiRPC
 /// WebSocket. Only the model connection is replaced; every core operation is
 /// the real RPC. Requires `build/core/tsugumid` (cmake build) and python3.
 struct AgentHarness {
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..").standardizedFileURL
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
   let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-agent-\(UUID().uuidString)")
   var daemon: Process?
   var fixture: Process?
@@ -70,10 +70,15 @@ struct AgentHarness {
     usleep(500_000)
   }
 
+  /// Ends the daemon and the fixture, polled with a deadline (waitUntilExit
+  /// can miss the exit inside an async test and wait for ever).
   func stop() {
-    daemon?.terminate()
-    daemon?.waitUntilExit()
-    fixture?.terminate()
+    for p in [daemon, fixture].compactMap({ $0 }) where p.isRunning {
+      p.terminate()
+      let deadline = Date().addingTimeInterval(10)
+      while p.isRunning && Date() < deadline { usleep(20_000) }
+      if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+    }
     try? FileManager.default.removeItem(at: dir)
   }
 }
@@ -445,7 +450,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
 /// The examples in the Agent's rules are the bundled demos' own files, and
 /// the references it reads are the real ones.
 @Suite struct AgentReferenceTests {
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..").standardizedFileURL
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
 
   func indented(_ rel: String) throws -> String {
     let text = try String(contentsOf: root.appendingPathComponent(rel), encoding: .utf8)

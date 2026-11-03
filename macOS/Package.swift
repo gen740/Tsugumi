@@ -13,6 +13,8 @@ let package = Package(
     .executable(name: "Tsugumi", targets: ["TsugumiApp"]),
     .executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"]),
     .library(name: "TsugumiRPC", targets: ["TsugumiRPC"]),
+    // For the core tests (CoreTests/, a package of their own without the app).
+    .library(name: "TsugumiLauncher", targets: ["TsugumiLauncher"]),
   ],
   dependencies: [
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
@@ -94,10 +96,18 @@ let package = Package(
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
       swiftSettings: [.swiftLanguageMode(.v5)]),
+    // The app's own logic. The model, RPC, Agent and launcher tests are the
+    // package CoreTests/ (they build without the app).
     .testTarget(
-      name: "TsugumiTests",
-      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", .product(name: "TsugumiAgent", package: "agent")],
-      path: "Tests/TsugumiTests",
+      name: "TsugumiAppTests",
+      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp"],
+      path: "Tests/TsugumiAppTests",
+      swiftSettings: [.swiftLanguageMode(.v5)]),
+    // Drawing benchmarks: TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks.
+    .testTarget(
+      name: "TsugumiBenchmarks",
+      dependencies: ["TsugumiApp"],
+      path: "Tests/TsugumiBenchmarks",
       swiftSettings: [.swiftLanguageMode(.v5)]),
   ]
 )

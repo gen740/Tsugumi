@@ -6,7 +6,8 @@ import Testing
 /// One frame of the point cloud (what a drag redraws), offscreen: the
 /// bitmap against one SwiftUI path per point. Measured 2026-11-03 (M3 Max,
 /// release, 100 000 points): 12 ms → 1.0 ms.
-@MainActor @Test func pointCloudFrameTime() {
+@MainActor @Test(.enabled(if: ProcessInfo.processInfo.environment["TSUGUMI_BENCH"] == "1"))
+func pointCloudFrameTime() {
   let n = 100_000
   var x: [Float] = [], y: [Float] = [], z: [Float] = [], c: [UInt32] = []
   for i in 0..<n {
