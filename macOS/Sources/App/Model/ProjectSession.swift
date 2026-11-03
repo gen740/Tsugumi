@@ -586,7 +586,10 @@ final class ProjectSession {
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     refreshExternals()
+    let shown = displayedCards
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
+    // A Draft implemented (or any Card that became code or a logger) sends its displays too.
+    if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     if wasClean {
       // Nothing local to keep: follow the confirmed document.
       project = confirmedProject
@@ -1133,12 +1136,13 @@ final class ProjectSession {
     }
   }
 
+  /// Cards whose displays the canvas shows: what a Card shows is up to its
+  /// code (the display SDK), so every Card that can run may send displays.
+  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { [.code, .logger].contains(kind($0)) }) }
+
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
-    // What a Card shows is up to its code (the display SDK): every Card that
-    // can run may send displays.
-    let canvasCards = resolution.keys.filter { [.code, .logger].contains(kind($0)) }
-    try? await client.setVisible(subscription: subscription, cards: canvasCards.map(path), enabled: true)
+    try? await client.setVisible(subscription: subscription, cards: displayedCards.sorted().map(path), enabled: true)
   }
 
   // MARK: - Runs

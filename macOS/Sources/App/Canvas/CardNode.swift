@@ -7,7 +7,20 @@ import TsugumiRPC
 extension ProjectSession {
   /// The direction this project's Cards are laid out in (layout.json
   /// "flow"; projects without it follow the app's default).
-  var flow: FlowDirection { FlowDirection(rawValue: layout["flow"]?.string ?? "") ?? AppPreferences.shared.flowDirection }
+  /// Without one, it is read from where the wired Cards sit (mostly to the
+  /// right of their sources: left to right), else the app's default.
+  var flow: FlowDirection {
+    if let f = FlowDirection(rawValue: layout["flow"]?.string ?? "") { return f }
+    var across = 0.0, down = 0.0
+    for c in connections(in: []) {
+      guard let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string else { continue }
+      let a = position(f), b = position(t)
+      across += abs(b.x - a.x)
+      down += abs(b.y - a.y)
+    }
+    if across + down > 0 { return across > down ? .leftToRight : .topToBottom }
+    return AppPreferences.shared.flowDirection
+  }
 
   func setFlow(_ f: FlowDirection) { edit { $0.layout["flow"] = .string(f.rawValue) } }
 
