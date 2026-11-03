@@ -96,6 +96,10 @@ public actor Agent {
   private let references: [String: URL]
   /// A run started by a tool call whose end was not seen yet.
   private var unconfirmedRun: String?
+  /// Replies cut at the output limit in this turn.
+  private var cutReplies = 0
+  /// How long run_status waits for a run to end before it answers.
+  public var statusWait: TimeInterval = 30
 
   /// The rules and working examples the model gets. The default.nix and
   /// _outputs.fbs examples are the bundled demos' own files (a test keeps
@@ -125,16 +129,19 @@ public actor Agent {
     project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
     under externals/<name>/ (base_hash of the file you read).
   - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
-    "card_json": "<_card.json>", "meta_json": "<_meta.json>"}}, {"value_type": "PutSource", "value": {"path":
+    "card_json": "<_card.json>", "keep_meta": true}} keeps _meta.json as it is (never write the user's intent text
+    again; send "meta_json" only to change it, e.g. port descriptions), {"value_type": "PutSource", "value": {"path":
     "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
     One save is one transaction: either everything is stored or nothing is.
   - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
     Card alone (propagate false) only works on the inputs saved by an earlier whole run. Poll run_status with the
     run_id until succeeded/failed/cancelled; read what each Card produced with run_record and its stderr with
-    log_range (stream 2). Cancelling runs requires an explicit run_cancel.
+    log_range (stream 2). run_status waits up to 30 s for a run to end, so call it again only when it still runs.
+    Cancelling runs requires an explicit run_cancel.
   - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
     content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
-    Card ids, the wiring and the intent in _meta.json. Decide for each Draft what it becomes:
+    Card ids, the wiring and the intent in _meta.json (PutDefinition with "keep_meta": true). Decide for each Draft
+    what it becomes:
     * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
       _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
       relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the
@@ -202,12 +209,15 @@ public actor Agent {
           images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
           ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
       raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
+      HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
+      matplotlib need nothing more).
     * C++: sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per
       port (input.<port>, Output's ports are std::optional); visualization is
       tsugumi::visualization::text/markdown/scalar/line_chart/table/image/points/module.
     * The worker stays across runs, so reset static state in `auto onRunStart() -> void` (Python:
       on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs. Optional preRun /
       postRun are bash without the Card inputs.
+    Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
     Work one Draft at a time, upstream first: write it, check it with project_validate {"changes": [...]}, save,
     run from the trigger, check its run_record (and log_range when it failed), then go on to the next. You may split
     one Draft into several Cards (each with its own definition; rewire them in SetProject). If something fails,
@@ -317,11 +327,28 @@ public actor Agent {
   private func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
     do {
       try await reconcilePending(events)
+      cutReplies = 0
       var done = false
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
-        let (blocks, stop) = try await modelTurn(events)
+        var (blocks, stop) = try await modelTurn(events)
+        if stop == "max_tokens" {
+          // The reply was cut at the output limit, maybe inside a tool call:
+          // nothing of it is executed; the model is asked for smaller steps.
+          cutReplies += 1
+          guard cutReplies <= 3 else { throw AgentError.provider("the model's replies were cut at the output limit three times") }
+          blocks = blocks.filter { if case .toolUse = $0 { return false }; return true }
+          if blocks.isEmpty { blocks = [.text("[cut at the output limit]")] }
+          conversation.messages.append(ChatMessage(role: "assistant", content: blocks))
+          conversation.messages.append(ChatMessage(role: "user", content: [.text(
+            "Your last reply was cut at the output limit, so its tool call was not run and nothing was saved. Make the "
+            + "change in smaller steps: one Card per project_save, and long source files in saves of their own.")],
+            display: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）"))
+          events(.retrying("the reply was cut at the output limit; asking for smaller steps"))
+          try? conversation.save(storage)
+          continue
+        }
         conversation.messages.append(ChatMessage(role: "assistant", content: blocks))
         try? conversation.save(storage)
         let uses = blocks.compactMap { b -> (String, String, String)? in
@@ -480,10 +507,23 @@ public actor Agent {
     try? conversation.save(storage)
     do {
       let codec = self.codec
-      let (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+      var (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
         try codec.build(spec.object, full, into: &b)
       }
-      let json = renderReply(replyType, table)
+      var json = renderReply(replyType, table)
+      // A run still building or running: wait here (up to 30 s) instead of
+      // the model spending a reply on each look.
+      if name == "run_status" {
+        let deadline = Date().addingTimeInterval(statusWait)
+        while replyType == "RunStatus", ["\"queued\"", "\"preparing\"", "\"running\"", "\"cancelling\""].contains(where: json.contains),
+              Date() < deadline {
+          try await Task.sleep(for: .seconds(1))
+          (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+            try codec.build(spec.object, full, into: &b)
+          }
+          json = renderReply(replyType, table)
+        }
+      }
       noteRun(tool: name, reply: replyType, json: json)
       return finish(&record, json, isError: replyType == "Failure", events)
     } catch {

@@ -143,6 +143,8 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     // The trace is persisted with op_ids for mutating calls.
     let conv = await agent.conversation
     #expect(conv.tools.contains { $0.name == "project_save" && $0.opId != nil && $0.state == .completed })
+    // run_status waited for the run to end: the model looked at most once.
+    #expect(conv.tools.filter { $0.name == "run_status" }.count <= 1, "\(conv.tools.map(\.name))")
     await client.close()
   }
 
@@ -194,6 +196,27 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await waitFinished(more)
     #expect(more.all.contains { if case .finished = $0 { return true }; return false }, "\(more.all)")
     #expect(more.text.contains("succeeded"))
+    await client.close()
+  }
+
+  /// A reply cut at the output limit inside a tool call runs nothing and is
+  /// asked again in smaller steps; the work still finishes.
+  @Test func cutReplyIsRetriedInSmallerSteps() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--cut-once"])
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("set src.text to \"after a cut\" and run, then report out", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.all.contains { if case .retrying(let s) = $0 { return s.contains("output limit") }; return false }, "\(log.all)")
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false })
+    #expect(log.text.contains("succeeded"))
+    let conv = await agent.conversation
+    #expect(conv.tools.filter { $0.name == "project_save" }.count == 1, "the cut call never ran")
+    #expect(conv.messages.contains { $0.display?.contains("途中で切れた") == true })
     await client.close()
   }
 

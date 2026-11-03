@@ -212,6 +212,8 @@ class Handler(BaseHTTPRequestHandler):
     slow = 0.0
     drop_once = False
     dropped = False
+    cut_once = False
+    cut = False
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -259,9 +261,19 @@ class Handler(BaseHTTPRequestHandler):
             stop = "end_turn"
         else:
             _, name, args = decision
+            with Handler.lock:
+                cut = Handler.cut_once and not Handler.cut and name == "project_save"
+                Handler.cut = Handler.cut or cut
             self._event("content_block_start", {"type": "content_block_start", "index": 0,
                                                  "content_block": {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": name, "input": {}}})
             text = json.dumps(args)
+            if cut:
+                # The reply ends at the output limit inside the tool call.
+                self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                    "delta": {"type": "input_json_delta", "partial_json": text[:15]}})
+                self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 20}})
+                self._event("message_stop", {"type": "message_stop"})
+                return
             for i in range(0, len(text), 24):
                 self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                     "delta": {"type": "input_json_delta", "partial_json": text[i:i + 24]}})
@@ -336,9 +348,11 @@ def main():
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--slow", type=float, default=0.0)
     ap.add_argument("--drop-once", action="store_true")
+    ap.add_argument("--cut-once", action="store_true", help="cut the first project_save reply at the output limit")
     a = ap.parse_args()
     Handler.slow = a.slow
     Handler.drop_once = a.drop_once
+    Handler.cut_once = a.cut_once
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     print(f"model fixture on http://127.0.0.1:{srv.server_address[1]}", flush=True)
     srv.serve_forever()

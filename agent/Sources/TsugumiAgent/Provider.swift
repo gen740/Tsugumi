@@ -89,7 +89,8 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
   public var model: String
   public var usesKeychain: Bool  // false for the local fixture
   public var api: API = .anthropicMessages
-  public var maxTokens = 4096
+  /// Output limit of one model reply: a Card's sources fit in one save.
+  public var maxTokens = 32768
   public var contextLimit = 180_000
 
   public init(name: String, baseURL: URL, model: String, usesKeychain: Bool, api: API = .anthropicMessages) {
@@ -349,7 +350,7 @@ extension MessagesProvider {
               usage.inputTokens = u?["input_tokens"] as? Int ?? 0
               usage.outputTokens = u?["output_tokens"] as? Int ?? 0
               let incomplete = obj["type"] as? String == "response.incomplete"
-              cont.yield(.stop(reason: usedTools ? "tool_use" : incomplete ? "max_tokens" : "end_turn", usage: usage))
+              cont.yield(.stop(reason: incomplete ? "max_tokens" : usedTools ? "tool_use" : "end_turn", usage: usage))
               finished = true
             case "response.failed", "error":
               let e = ((obj["response"] as? [String: Any])?["error"] ?? obj["error"]) as? [String: Any]
