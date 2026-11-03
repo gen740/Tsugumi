@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Builds the tsugumi-env image inside an Apple container (no Linux host or
-# remote builder needed) and loads it into the local image store.
+# Builds the shared VM's Linux parts inside an Apple container (no Linux host
+# or remote builder needed).
 #
-#   macOS/Container/build-image.sh            # build and load
-#   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
-#   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
 #   macOS/Container/build-image.sh --vm       # the shared VM into dist/tsugumi-vm/: Tsugumi's layer
 #                                             # (vm-layer.nix) on the base (vm-base.nix), which is
 #                                             # downloaded from gen740/tsugumi-vm when released
+#   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
+#   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
 #
 # Pinned builder: docker.io/nixos/nix:2.31.2 (see versions.env). The builder's
 # Nix store lives in the volume tsugumi-builder-nix and is reused.
@@ -15,10 +14,12 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 source "$here/versions.env"
-attr=image
-[ "${1:-}" = "--check" ] && attr=tsugumid
-[ "${1:-}" = "--kernel" ] && attr=kernel
-[ "${1:-}" = "--vm" ] && attr=vm
+case "${1:-}" in
+  --vm) attr=vm ;;
+  --check) attr=tsugumid ;;
+  --kernel) attr=kernel ;;
+  *) sed -n '2,10s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac
 # The builder VM runs on Tsugumi's guest kernel when it exists (the stock
 # kernel's SELinux oops leaves builder VMs stuck on shutdown; kernel.nix).
 kernel_args=()
@@ -89,12 +90,6 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
         cp /cache$img/layer-version /out/; mkdir -p /out/base; cp /cache$img/base-version /out/base/
         mv /out/vmlinux /out/rootfs.erofs /out/base/
       fi
-      if [ "'"$attr"'" = image ]; then
-        cp /cache$img /out/tsugumi-env.tar.gz
-        # OCI layout for `container image load`, converted by skopeo run in the store namespace.
-        nixf shell nixpkgs#skopeo -c skopeo --insecure-policy copy \
-          "docker-archive:/out/tsugumi-env.tar.gz" "oci-archive:/out/tsugumi-env.tar:tsugumi-env:'"$TSUGUMI_IMAGE_TAG"'"
-      fi
     }
     touch /out/done
   ' >/dev/null
@@ -122,14 +117,4 @@ if [ "$attr" = vm ] || [ "$attr" = vm-layer ]; then
   rm -rf "$out"
   exit 0
 fi
-[ "$attr" = image ] || exit 0
-# `image load` keeps an existing tag; replace it explicitly. Running containers keep their image.
-container image rm "$TSUGUMI_IMAGE:$TSUGUMI_IMAGE_TAG" >/dev/null 2>&1 || true
-container image load --input "$out/tsugumi-env.tar"
-# Keep the OCI archive when requested (the app bundle ships it for first start).
-if [ -n "${TSUGUMI_IMAGE_OUT:-}" ]; then
-  mkdir -p "$(dirname "$TSUGUMI_IMAGE_OUT")"
-  cp "$out/tsugumi-env.tar" "$TSUGUMI_IMAGE_OUT"
-fi
-echo "loaded tsugumi-env:$TSUGUMI_IMAGE_TAG; compressed image: $(stat -f %z "$out/tsugumi-env.tar.gz") bytes"
 rm -rf "$out"

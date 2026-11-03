@@ -116,83 +116,6 @@ def client(daemon):
     c.close()
 
 
-class ContainerEnv:
-    """Runs a project inside the real Apple container environment image."""
-
-    image = "tsugumi-env:1.0.0"
-
-    def __init__(self, project: Path, name: str):
-        self.project = project
-        self.name = name
-        self.control = Path(tempfile.mkdtemp(prefix="tsgc-"))
-        os.chmod(self.control, 0o700)
-        self.volume = f"{name}-store"
-        self.port = None
-        self.ready: dict = {}
-
-    def _container(self, *args, check=True, timeout=600):
-        return subprocess.run(["container", *args], check=check, capture_output=True, text=True, timeout=timeout)
-
-    def start(self) -> "ContainerEnv":
-        import socket
-        self._container("rm", "-f", self.name, check=False)
-        if self._container("volume", "inspect", self.volume, check=False).returncode != 0:
-            self._container("volume", "create", "-s", "20G", self.volume)
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            self.port = s.getsockname()[1]
-        ready = self.control / "server.ready"
-        if ready.exists():
-            ready.unlink()
-        # The environment's guest kernel (macOS/Container/kernel.nix) when built.
-        kernel = os.environ.get("TSUGUMI_KERNEL", str(ROOT / "dist" / "tsugumi-kernel"))
-        kernel_args = ["--kernel", kernel] if os.path.exists(kernel) else []
-        self._container("run", "-d", "--name", self.name, *kernel_args, "-c", "2", "-m", "4G",
-                        "-v", f"{self.project}:/project", "-v", f"{self.control}:/control",
-                        "-v", f"{self.volume}:/persist", "-p", f"127.0.0.1:{self.port}:7700",
-                        "-e", "TSUGUMI_CPUS=2", self.image)
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            if ready.exists():
-                self.ready = json.loads(ready.read_text())
-                return self
-            time.sleep(0.1)
-        raise TimeoutError(self._container("logs", self.name, check=False).stdout)
-
-    def client(self):
-        from tsugumi_client import Client
-        c = Client(ws=f"ws://127.0.0.1:{self.port}/rpc")
-        c.hello(token=self.ready["token"])
-        return c
-
-    def crash(self):
-        """Abnormal termination: the VM's main process is killed."""
-        self._container("kill", "--signal", "KILL", self.name, check=False)
-        time.sleep(1)
-
-    def exec(self, script: str) -> str:
-        return subprocess.run(["container", "exec", self.name, "bash", "-c", script], capture_output=True, text=True).stdout
-
-    def stop(self):
-        # TSUGUMI_TEST_LOGS=<dir> keeps the environment's log for diagnosis.
-        if os.environ.get("TSUGUMI_TEST_LOGS"):
-            out = Path(os.environ["TSUGUMI_TEST_LOGS"]) / f"{self.name}-{int(time.time())}.log"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(self._container("logs", self.name, check=False).stdout)
-        try:
-            self._container("stop", "--time", "20", self.name, check=False, timeout=120)
-        except subprocess.TimeoutExpired:
-            # A VM that does not shut down is killed; the test result stands.
-            self._container("kill", "--signal", "KILL", self.name, check=False, timeout=120)
-        self._container("rm", "-f", self.name, check=False, timeout=120)
-
-    def cleanup(self, keep_volume: bool = True):
-        self.stop()
-        if not keep_volume:
-            self._container("volume", "rm", self.volume, check=False)
-        shutil.rmtree(self.control, ignore_errors=True)
-
-
 class SharedVM:
     """The app's shared VM driven through tsugumi-vmctl: one per test session,
     with its Nix store kept in TSUGUMI_TEST_VM_SUPPORT (build/test-vm) so
@@ -290,20 +213,17 @@ class VMEnv:
 
 
 def real_environment(project: Path, name: str):
-    """The real execution environment: the shared VM, or with
-    TSUGUMI_TEST_ENV=container the Apple container of earlier versions."""
-    if os.environ.get("TSUGUMI_TEST_ENV") == "container":
-        return ContainerEnv(project, name).start()
+    """The real execution environment: the shared VM."""
     return VMEnv(project, name).start()
 
 
 def demo_environment(tmp_path: Path, demo: str):
-    """A fresh copy of a demo served by the container (TSUGUMI_TEST_CONTAINER=1)
+    """A fresh copy of a demo served by the shared VM (TSUGUMI_TEST_CONTAINER=1)
     or by a host tsugumid with sandboxing disabled for development."""
     dst = tmp_path / demo
     shutil.copytree(ROOT / "demos" / demo, dst)
     if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":
-        # One store per demo (container) or the one shared store (VM) keeps Nix downloads.
+        # The one shared store of the VM keeps Nix downloads.
         return real_environment(dst, f"tsugumi-test-{demo}")
     # Every Card's own definition, also inside its Cards in Card (externals).
     for f in dst.rglob("definitions/*/_card.json"):

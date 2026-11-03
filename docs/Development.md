@@ -111,7 +111,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 | `tests/python/test_history.py`（7） | `recordIO × retainArtifact` 全組合せ×CacheClear×再起動、成果物の改ざん検出・パス逸脱、大容量のページング、UTF-8 境界、過去と最新の記録の分離 |
 | `tests/python/test_run_history.py`（4） | 履歴を別の場所に置いたとき（`--history-dir`）: `.tsugumi/runs.sqlite` への書き出し（形式・値と bfbs・ログ・成果物・rollback journal）、コピーしたプロジェクトでの読み込み（記録・成果物）と `run_id` での統合、`saveRunHistory` のオフとオンへの切替での追いつき、日時指定と全部の削除（両方の DB と実行のファイル、受領記録での再送、再起動後も戻らない）、プロジェクト内の履歴の移動 |
 | `tests/python/test_transport.py`（5） | WebSocket の Origin/subprotocol/token 拒否、fragment・ping 割り込み・連結、Unix の 1 byte ずつ・連結フレーム、実行元切断後も run 継続・別接続から状態取得 |
-| `tests/python/test_cards_container.py`（11） | 実環境（共通 VM。`TSUGUMI_TEST_ENV=container` で以前の Apple container）: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、package の `run`、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、bash 契約（preRun の cd/環境、preRun・postRun に入力がないこと、300 KB 入力は JSON ファイルだけで `.bin`・`INPUT_` なし、`jq`、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
+| `tests/python/test_cards_container.py`（11） | 実環境（共通 VM）: C++ SDK（`card.hh` の `run(Card::Input&) -> Card::Output`、merge union・任意出力・File 出力・params・visualization、package の `run`、再利用 worker でも invocation ごとの preRun/postRun、2 つの SDK が同じ共通 runtime を使うこと）、背圧で進行不能な run の終了、bash 契約（preRun の cd/環境、preRun・postRun に入力がないこと、300 KB 入力は JSON ファイルだけで `.bin`・`INPUT_` なし、`jq`、期限の継続、post 失敗）、取消で子孫プロセスまで終了（sandbox on/off）、隔離（プロジェクト・token・ネットワーク）、Nix 上流参照と拒否、段階とキャッシュ、Python の表示 4 種、Python/C++/shell 間の値（64 bit 境界・10 万要素・enum/struct/union・別名前空間・File・破損 buffer・必須出力欠落） |
 | `tests/python/test_shared_vm.py`（4） | 共通 VM: 履歴が VM のディスク（`/history`）にあり共有フォルダにないこと・`.tsugumi/runs.sqlite` への書き出し・再起動後も残り、データ削除後は `.tsugumi/runs.sqlite` から戻ること、2 プロジェクトが 1 つの Nix store を共有しつつ uid・見えるファイル・プロセス（PID 名前空間）が分かれていること、片方を止めてももう片方の実行が成功し、止めた方も同じ VM で再開できること、ビルド結果が開き直し・共有 store の掃除・プロジェクトのコピー（コピー元のデータ削除後も）でビルドし直さずに使えること、GC root のフォルダを他のプロジェクトが作れないこと |
 | `tests/python/test_workers.py`（6） | 共通 VM: 常駐 worker が次の実行でも同じプロセスで動き `onRunStart` で実行が始まること、File 入力の Card が worker を使い回して状態（stream）を保ち、入力に書き込めないこと（出力は FD のフォルダに書け、渡していない FD はないこと）、`reuseWorker = false` が呼び出しごとに新しい worker になること、評価の無限再帰・`buildTimeoutSeconds` の後も tsugumid が動き続けること、`network` を許可しない Card は sandbox の有無にかかわらず preRun・run・postRun のどこからも外へ通信できないこと、`hostFolders` のフォルダが指定した Card にだけ見え `write: true` 以外は読み取り専用であること |
 | `tests/python/test_demos.py`（9） | 3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
@@ -119,7 +119,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
 | `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
-| `tests/python/measure.py` | 評価指標の計測（下記） |
+| `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 
 ## 計測（2026-11-03、高速化後・共通 VM）
 
@@ -193,7 +193,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 | bubblewrap による Card 隔離、環境変数の非継承、`sandbox:false` の扱い | 実装済み（共通 VM） |
 | 共通 VM（Virtualization.framework、読み取り専用 rootfs、共通 Nix store、実行履歴ディスク、プロジェクトごとの uid・名前空間・cgroup、ローカル限定公開） | 実装済み |
 | Card ごとのネットワーク・Mac のフォルダ（`network`・`hostFolders`）、チャットへのフォルダ添付 | Experimental（`test_workers.py`・`test_definitions.py`） |
-| SwiftUI アプリ（ui-view.md の構成、split view の sidebar とチャット inspector、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。UI スクリプトで実ウインドウを撮影して確認（上の表）。マウスのクリック・ドラッグは未確認 |
+| SwiftUI アプリ（[ui-view.md](ui-view.md) の構成、split view の sidebar とチャット inspector、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。UI スクリプトで実ウインドウを撮影して確認（上の表）。マウスのクリック・ドラッグは未確認 |
 | Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。Live Stream の折れ線の目視確認は未実施 |
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮） | 実装済み（fixture 経由の読取→変更→実行→説明、取消、切断再試行を自動テスト）。文脈圧縮は自動テストなし。実 provider（有料 API）での動作は未検証 |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
@@ -206,5 +206,5 @@ docs/assets/       アイコンとキービジュアルの SVG
 
 ### 解決済み（以前の構成での記録）
 
-- **VM が終了できず残る問題（Apple container 時代）**: Apple container 0.6.0 の推奨カーネル（6.12.28）では、マウント名前空間が片付けられるとき（Nix のビルド sandbox・bubblewrap・コンテナの終了）に SELinux の inode 解放処理 `selinux_inode_free_security` が NULL を参照して kernel oops になり、そのプロセスが終わらず VM が終了処理に進めませんでした。Tsugumi は SELinux を使わない（Card の隔離は bubblewrap の名前空間）ので、同じ設定から SELinux だけを外した専用カーネル（`macOS/Container/kernel.nix`）を作りました。現在の共通 VM もこのカーネルを使います。変更後、起動→Collatz 実行→停止→削除の 8 回の繰り返し（`tests/python/stress_shutdown.py`）で oops 0 件・残存 0 でした。
+- **VM が終了できず残る問題（Apple container 時代）**: Apple container 0.6.0 の推奨カーネル（6.12.28）では、マウント名前空間が片付けられるとき（Nix のビルド sandbox・bubblewrap・コンテナの終了）に SELinux の inode 解放処理 `selinux_inode_free_security` が NULL を参照して kernel oops になり、そのプロセスが終わらず VM が終了処理に進めませんでした。Tsugumi は SELinux を使わない（Card の隔離は bubblewrap の名前空間）ので、同じ設定から SELinux だけを外した専用カーネル（`macOS/Container/kernel.nix`）を作りました。現在の共通 VM もこのカーネルを使います。変更後、起動→Collatz 実行→停止→削除の 8 回の繰り返し（当時の `tests/python/stress_shutdown.py`）で oops 0 件・残存 0 でした。
 - CacheClear の Nix GC が環境自身の実行時パスまで回収し、次の起動で entrypoint が壊れる問題がありました（Apple container 時代の、プロジェクトごとの store）。イメージの実行時 closure を GC root にし、起動時に上層の whiteout を取り除くよう修正しました。現在は全プロジェクトで 1 つの store を共有し、GC root は vmd が管理します（[実行環境の置き場所](#主な設計上の決定)）。

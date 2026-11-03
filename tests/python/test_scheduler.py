@@ -93,12 +93,12 @@ def test_any_consumes_in_arrival_order_without_loss_or_duplicates(env):
 
 
 def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
-    c = env([card("begin", "trigger"), card("src", "msg"), card("cond", "flag"), card("gate", "branch"),
+    c = env([card("start", "trigger"), card("src", "msg"), card("cond", "flag"), card("gate", "branch"),
              card("yes", "log"), card("no", "log")],
             [conn("src", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"),
              conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
     # Whole run from the trigger: every source starts once.
-    run_id, st = run_and_wait(c, "begin")
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert states(c, run_id, "gate") == [CardState.succeeded]
     assert states(c, run_id, "yes") == [CardState.succeeded]
@@ -162,8 +162,8 @@ def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
 def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     defs = dict(BASE_DEFS)
     defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
-    c = env([card("begin", "trigger"), card("src", "msg"), card("out", "log"), card("plan", "plan"), card("after", "log")],
-            [conn("begin", "out", "src", "start"), conn("src", "msg", "out", "in"), conn("src", "msg", "plan", "data"),
+    c = env([card("start", "trigger"), card("src", "msg"), card("out", "log"), card("plan", "plan"), card("after", "log")],
+            [conn("start", "out", "src", "start"), conn("src", "msg", "out", "in"), conn("src", "msg", "plan", "data"),
              conn("plan", "summary", "after", "in")], defs)
     # The Draft's ports come from _meta.json (names and purposes only).
     import json as _json
@@ -176,7 +176,7 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
         change("PutDefinition", id="plan", cardJson=_json.dumps(defs["plan"]), metaJson=_json.dumps(meta))])
     plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
     assert [text(p.name) for p in plan.outputs] == ["summary"]
-    run_id, st = run_and_wait(c, "begin")
+    run_id, st = run_and_wait(c, "start")
     # The implemented part ran; the Draft and the Card that needs its output did not.
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert states(c, run_id, "src") == [CardState.succeeded]
@@ -194,8 +194,8 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
 def test_merges_nested_several_levels_deep(env):
     """A merge whose input comes (through a fork) from a merge, three and more
     levels deep: the nested union types keep their own names."""
-    cards = [card("begin", "trigger"), card("src", "msg"), card("out", "log")]
-    conns = [conn("begin", "out", "src", "start")]
+    cards = [card("start", "trigger"), card("src", "msg"), card("out", "log")]
+    conns = [conn("start", "out", "src", "start")]
     prev = ("src", "msg")
     for i in range(4):
         cards += [card(f"f{i}", "fork"), card(f"m{i}", "merge")]
@@ -203,7 +203,7 @@ def test_merges_nested_several_levels_deep(env):
         prev = (f"m{i}", "out")
     conns.append(conn(prev[0], prev[1], "out", "in"))
     c = env(cards, conns, defs=dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))
-    run_id, st = run_and_wait(c, "begin")
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     out = json.loads(logs(c, run_id, "out")[0])
     for _ in range(4):

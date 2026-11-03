@@ -1,5 +1,5 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_CONTAINER=1; the
-shared VM, or Apple container with TSUGUMI_TEST_ENV=container):
+shared VM):
 backpressure stalls, the shell step contract, deadlines and cancellation,
 worker reuse, isolation, Nix upstream references, stages and caching, and
 the display variants of the Python SDK."""
@@ -64,7 +64,7 @@ def make(root: Path, defs: dict, cards, conns) -> None:
 def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
     root = tmp_path_factory.mktemp("cards") / "p"
-    write(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
+    write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
     e = real_environment(root, os.environ.get("TSUGUMI_TEST_CARDS_NAME", "tsugumi-test-cards"))
     yield e
     e.cleanup()
@@ -124,12 +124,12 @@ def test_backpressure_stall_ends_the_run(env):
         "branch": {"template": "branch"},
     }
     c = load(env, defs,
-             [card("begin", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
+             [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
               card("never", "flag"), card("gate", "branch"), card("wait", "branch")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "loop", "again"),
               conn("step", "out", "wait", "value"), conn("never", "flag", "gate", "value"),
               conn("never", "flag", "gate", "condition"), conn("gate", "a", "wait", "condition")])
-    run_id, st = run(c, "begin", timeout=600)
+    run_id, st = run(c, "start", timeout=600)
     assert st.state == RunState.failed
     assert "cannot progress" in text(st.failure.diagnostic)
 
@@ -155,10 +155,10 @@ def test_shell_step_contract(env):
         "slow": bash("sleep 1.5; echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"", pre="sleep 1.5", timeoutSeconds=2),
     }
     c = load(env, defs,
-             [card("begin", "trigger"), card("make", "make"), card("use", "use"), card("small", "small"),
+             [card("start", "trigger"), card("make", "make"), card("use", "use"), card("small", "small"),
               card("postfail", "postfail"), card("runfail", "runfail"), card("slow", "slow")],
              [conn("make", "out", "use", "in"), conn("use", "out", "small", "in")])
-    run_id, st = run(c, "begin")
+    run_id, st = run(c, "start")
     states = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)) for k in
               ("make", "use", "small", "postfail", "runfail", "slow")}
     detail = {k: (r.status.state, r.status.failure and text(r.status.failure.diagnostic)) for k, r in states.items()}
@@ -190,9 +190,9 @@ def proc_count(env, pattern: str) -> int:
 def test_cancel_ends_every_descendant(env, sandbox):
     defs = {"trigger": {"template": "trigger"},
             "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719; wait", sandbox=sandbox)}
-    c = load(env, defs, [card("begin", "trigger"), card("hang", "hang")], [])
+    c = load(env, defs, [card("start", "trigger"), card("hang", "hang")], [])
     snap = c.call("ProjectInspectRequest")
-    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
+    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
     run_id = text(acc.run.runId)
     deadline = time.time() + 600
     try:
@@ -227,8 +227,8 @@ def test_isolation(env):
                "[ \"$UID\" = 65534 ] || { echo \"uid $UID\"; fail=1; }; "
                "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
     defs = {"trigger": {"template": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
-    c = load(env, defs, [card("begin", "trigger"), card("probe", "probe"), card("open", "open")], [])
-    run_id, st = run(c, "begin")
+    c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
+    run_id, st = run(c, "start")
     detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
               for k in ("probe", "open")}
     assert st.state == RunState.succeeded, detail
@@ -241,13 +241,13 @@ def test_nix_upstream_references(env):
              "    test -n \"${inputs.local.a.run}\"\n    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
     defs = {"trigger": {"template": "trigger"}, "a": a,
             "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
-    c = load(env, defs, [card("begin", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
-    run_id, st = run(c, "begin")
+    c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
+    run_id, st = run(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
     # A downstream reference is reported before any build.
     bad = a.copy()
     bad["_nix"] = "{ pkgs, inputs, params }:\n{ run = \"${inputs.upstream.\"b\".run}\"; }\n"
-    c = load(env, {**defs, "a": bad}, [card("begin", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
+    c = load(env, {**defs, "a": bad}, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     snap = c.call("ProjectInspectRequest")
     codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
     assert "nix_reference_not_guaranteed" in codes
@@ -255,7 +255,7 @@ def test_nix_upstream_references(env):
 
 def test_stages_and_cache(env):
     defs = {"trigger": {"template": "trigger"}, "one": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')}
-    c = load(env, defs, [card("begin", "trigger"), card("one", "one")], [])
+    c = load(env, defs, [card("start", "trigger"), card("one", "one")], [])
     c.open()
     phases = []
     trace = []
@@ -275,7 +275,7 @@ def test_stages_and_cache(env):
         return n.valueType == NotificationPayload.RunEvent and n.value.valueType == 5
 
     snap = c.call("ProjectInspectRequest")
-    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
+    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
     c.wait_notification(collect, timeout=900)
     seen = []
     for p, _ in phases:
@@ -287,7 +287,7 @@ def test_stages_and_cache(env):
     assert Phase.execute in seen and Phase.save in seen, seen
     phases.clear()
     snap = c.call("ProjectInspectRequest")
-    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
+    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
     c.wait_notification(collect, timeout=600)
     assert Phase.build not in [p for p, _ in phases]
     assert any(cached for _, cached in phases)
@@ -311,10 +311,10 @@ def main(ctx):
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
     root = env.project
-    c = load(env, defs, [card("begin", "trigger"), card("show", "show")], [])
+    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run(c, "begin", timeout=1800)
+    run_id, st = run(c, "start", timeout=1800)
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     shown = text(rec.record.display.value.text)
@@ -343,10 +343,10 @@ def main(ctx):
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}}
     root = env.project
-    c = load(env, defs, [card("begin", "trigger"), card("show", "show")], [])
+    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run(c, "begin", timeout=1800)
+    run_id, st = run(c, "start", timeout=1800)
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
@@ -474,7 +474,7 @@ def main(ctx):
             "after": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
     root = env.project
     c = load(env, defs,
-             [card("begin", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell"),
+             [card("start", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell"),
               card("bad", "bad"), card("missing", "missing"), card("after_bad", "after"), card("after_missing", "after")],
              [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in"),
               conn("bad", "rich", "after_bad", "in"), conn("missing", "rich", "after_missing", "in")])
@@ -483,7 +483,7 @@ def main(ctx):
     put(root / "definitions" / "bad" / "src" / "main.py", bad)
     put(root / "definitions" / "missing" / "src" / "main.py", missing)
     reload(c)
-    run_id, st = run(c, "begin", timeout=2400)
+    run_id, st = run(c, "start", timeout=2400)
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in
            ("make", "check", "shell", "bad", "missing", "after_bad", "after_missing")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
@@ -586,14 +586,14 @@ in
                       "_outputs": NUM, "_nix": other_nix}}
     root = env.project
     c = load(env, defs,
-             [card("begin", "trigger"), card("seed", "seed"), card("loop", "loop"), card("calc", "calc"),
+             [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("calc", "calc"),
               card("other", "other")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "calc", "x"),
               conn("calc", "again", "loop", "again"), conn("calc", "calls", "other", "in")])
     put(root / "definitions" / "calc" / "src" / "card.cc", SDK_CALC)
     put(root / "definitions" / "other" / "src" / "card.cc", SDK_OTHER)
     reload(c)
-    run_id, st = run(c, "begin", timeout=2400)
+    run_id, st = run(c, "start", timeout=2400)
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
     assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
@@ -621,13 +621,13 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
             "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
             "branch": {"template": "branch"}, "broken": broken}
     c = load(env, defs,
-             [card("begin", "trigger"), *[card(f"s{i}", "sleepy") for i in range(4)],
+             [card("start", "trigger"), *[card(f"s{i}", "sleepy") for i in range(4)],
               card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
              [conn("cond", "flag", "gate", "value"), conn("cond", "flag", "gate", "condition"),
               conn("gate", "a", "never", "in")])
     snap = c.call("ProjectInspectRequest")
     t0 = time.time()
-    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"), maxConcurrency=2)
+    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"), maxConcurrency=2)
     run_id = text(acc.run.runId)
     while c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed, RunState.cancelled):
         time.sleep(0.1)
@@ -653,10 +653,10 @@ def test_worker_crash_then_edit_and_rerun(env):
              "_nix": "{ pkgs, inputs, params }:\n{ run = inputs.tsugumi.pythonCard { src = ./src; }; }\n"}
     defs = {"trigger": {"template": "trigger"}, "crash": crash}
     root = env.project
-    c = load(env, defs, [card("begin", "trigger"), card("crash", "crash")], [])
+    c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
     put(root / "definitions" / "crash" / "src" / "main.py", "import os, signal\n\ndef main(ctx):\n    os.kill(os.getpid(), signal.SIGKILL)\n")
     reload(c)
-    run_id, st = run(c, "begin", timeout=1800)
+    run_id, st = run(c, "start", timeout=1800)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
     assert st.state == RunState.failed and rec.state == CardState.failed
     assert rec.failure.kind == 23  # worker_failed
@@ -664,5 +664,5 @@ def test_worker_crash_then_edit_and_rerun(env):
     put(root / "definitions" / "crash" / "src" / "main.py",
         "import outputs.out.t.Num as Num\n\ndef main(ctx):\n    b = ctx.builder()\n    Num.Start(b)\n    Num.AddValue(b, 1)\n    ctx.output('out', b, Num.End(b))\n")
     reload(c)
-    _, st2 = run(c, "begin", timeout=1800)
+    _, st2 = run(c, "start", timeout=1800)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)

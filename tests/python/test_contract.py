@@ -64,7 +64,7 @@ def test_basic_contract_example(tmp_path):
 
         # Run accepted, connection lost before the reply.
         op_r = new_id()
-        run_req = make("RunRequest", baseRev=rev + 1, opId=op_r, origin="ui", card=path("begin"))
+        run_req = make("RunRequest", baseRev=rev + 1, opId=op_r, origin="ui", card=path("start"))
         ui.send("RunRequest", run_req)
         ui.close()
 
@@ -79,7 +79,7 @@ def test_basic_contract_example(tmp_path):
             assert time.time() < deadline
             time.sleep(0.05)
         run_id = text(got.receipt.result.run.runId)
-        replay = ui2.call("RunRequest", baseRev=rev + 1, opId=op_r, origin="ui", card=path("begin"))
+        replay = ui2.call("RunRequest", baseRev=rev + 1, opId=op_r, origin="ui", card=path("start"))
         assert replay.replayed is True and text(replay.run.runId) == run_id
         st = ui2.call("RunStatusRequest", runId=run_id)
         assert text(st.runId) == run_id
@@ -396,7 +396,7 @@ def test_builtin_run_logs_and_display(tmp_path):
         opened = c.open()
         sub = text(opened.subscriptionId)
         c.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("out")])
-        acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=path("begin"))
+        acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=path("start"))
         run_id = text(acc.run.runId)
         fin = c.wait_notification(lambda n: n.valueType == NotificationPayload.RunEvent and
                                   n.value.valueType == 5)
@@ -442,7 +442,7 @@ def test_history_pagination_and_cursor_checks(tmp_path):
         c.hello()
         rev = c.call("ProjectInspectRequest").rev
         for _ in range(5):
-            c.call("RunRequest", baseRev=rev, opId=new_id(), origin="t", card=path("begin"))
+            c.call("RunRequest", baseRev=rev, opId=new_id(), origin="t", card=path("start"))
             while True:
                 st = c.call("RunStatusRequest")
                 if st.state in (RunState.succeeded, RunState.failed, RunState.cancelled):
@@ -451,7 +451,7 @@ def test_history_pagination_and_cursor_checks(tmp_path):
         page1 = c.call("RunHistoryRequest", limit=2)
         assert len(page1.runs) == 2 and page1.nextCursor
         # A run added during paging does not appear in the same scan.
-        c.call("RunRequest", baseRev=rev, opId=new_id(), origin="t", card=path("begin"))
+        c.call("RunRequest", baseRev=rev, opId=new_id(), origin="t", card=path("start"))
         time.sleep(0.3)
         seen = [text(r.status.runId) for r in page1.runs]
         cur = text(page1.nextCursor)

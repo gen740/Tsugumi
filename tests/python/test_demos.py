@@ -1,7 +1,7 @@
 """End-to-end checks of the bundled demos against the expected results.
 
-Run in the container environment with TSUGUMI_TEST_CONTAINER=1 (the
-reference configuration); without it a host tsugumid is used.
+Run in the shared VM with TSUGUMI_TEST_CONTAINER=1 (the reference
+configuration); without it a host tsugumid is used.
 """
 
 from __future__ import annotations

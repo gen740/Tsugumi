@@ -1,5 +1,5 @@
-"""The app's one shared VM with several projects (TSUGUMI_TEST_CONTAINER=1,
-not with TSUGUMI_TEST_ENV=container): one Nix store for all, separate users,
+"""The app's one shared VM with several projects (TSUGUMI_TEST_CONTAINER=1):
+one Nix store for all, separate users,
 views and processes per project, and stopping one project never stops
 another's run."""
 
@@ -18,12 +18,12 @@ from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("TSUGUMI_TEST_CONTAINER") != "1" or os.environ.get("TSUGUMI_TEST_ENV") == "container",
+    os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
     reason="needs the shared VM (TSUGUMI_TEST_CONTAINER=1)")
 
 
 def project(root, script, name):
-    make(root, {"trigger": {"template": "trigger"}, "step": bash(script)}, [card("begin", "trigger"), card("step", "step")], [])
+    make(root, {"trigger": {"template": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
     return VMEnv(root, name).start()
 
 
@@ -59,7 +59,7 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
     try:
         c = slow.client()
         snap = c.call("ProjectInspectRequest")
-        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
+        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
         run_id = text(acc.run.runId)
         # Wait until the slow Card runs, then stop the other project.
         # Wait until the slow Card's process runs (seen from the project's own view).
@@ -74,7 +74,7 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
         assert c.call("RunStatusRequest", runId=run_id).state == RunState.succeeded, log(c, run_id, "step", 2)
         # The stopped project starts again in the same VM.
         other.start()
-        _, st = run(other.client(), "begin")
+        _, st = run(other.client(), "start")
         assert st.state == RunState.succeeded
     finally:
         slow.stop()
@@ -111,12 +111,12 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
     from test_regressions import put
     root = tmp_path / "P"
     make(root, {"trigger": {"template": "trigger"}, "one": {"language": "cpp", "_outputs": NUM, "_nix": nix}},
-         [c_("begin", "trigger"), c_("one", "one")], [])
+         [c_("start", "trigger"), c_("one", "one")], [])
     put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
     p = VMEnv(root, "P").start()
     copy = None
     try:
-        rid, st = run(p.client(), "begin")
+        rid, st = run(p.client(), "start")
         assert st.state == RunState.succeeded, log(p.client(), rid, "one", 3)
         roots = p.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{p.id}")
         assert "--" in roots and "tsugumi-card.json" in roots, roots
@@ -126,12 +126,12 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
         # Reopened: evaluated again, nothing built.
         p.stop()
         p.start()
-        rid, st = run(p.client(), "begin")
+        rid, st = run(p.client(), "start")
         assert st.state == RunState.succeeded
         assert build_outcome(p.client(), rid, "one")[Phase.build] == 3
         # The shared store's cleanup keeps rooted results.
         assert SharedVM.get().command("vm gc")[-1].startswith("ok ")
-        rid, st = run(p.client(), "begin")
+        rid, st = run(p.client(), "start")
         assert build_outcome(p.client(), rid, "one")[Phase.build] == 3
         # A copy (another id) roots what it uses itself; the original's data
         # goes and the cleanup runs: the copy still builds nothing.
@@ -139,14 +139,14 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
         import shutil
         shutil.copytree(root, tmp_path / "P2", symlinks=True)
         copy = VMEnv(tmp_path / "P2", "P2").start()
-        rid, st = run(copy.client(), "begin")
+        rid, st = run(copy.client(), "start")
         assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
         assert "tsugumi-card.json" in copy.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{copy.id}")
         copy.stop()
         SharedVM.get().command(f"delete {root}")
         assert SharedVM.get().command("vm gc")[-1].startswith("ok ")
         copy.start()
-        rid, st = run(copy.client(), "begin")
+        rid, st = run(copy.client(), "start")
         assert st.state == RunState.succeeded
         assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
     finally:
@@ -162,7 +162,7 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
         def listed():
             return [text(r.status.runId) for r in env.client().call("RunHistoryRequest", limit=100).runs]
 
-        rid, st = run(env.client(), "begin")
+        rid, st = run(env.client(), "start")
         assert st.state == RunState.succeeded
         # The database is on the VM's disk, seen by the project only as /history.
         assert "history.sqlite" in env.exec("ls /history")

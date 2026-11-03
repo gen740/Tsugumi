@@ -29,7 +29,6 @@
           default = core;
           tsugumid = core;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          image = pkgs.callPackage ./macOS/Container/image.nix { tsugumid = core; };
           inherit kernel vm-base vm-layer;
           # The whole shared VM: the base (published prebuilt) and the layer.
           vm = pkgs.runCommand "tsugumi-vm" { } ''

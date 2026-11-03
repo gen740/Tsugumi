@@ -190,15 +190,15 @@ def test_run_continues_after_its_client_disconnects(tmp_path):
                  "doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/doc/a.txt"}],
                          "_outputs": FILE_FBS},
                  "log": {"template": "logger"}},
-          [card("begin", "trigger"), card("src", "doc"), card("out", "log")],
-          [conn("begin", "out", "src", "start"), conn("src", "doc", "out", "in")],
+          [card("start", "trigger"), card("src", "doc"), card("out", "log")],
+          [conn("start", "out", "src", "start"), conn("src", "doc", "out", "in")],
           files={"definitions/doc/a.txt": "x" * 1000})
     d = Daemon(root).start()
     try:
         c1 = d.client()
         c1.hello()
         snap = c1.call("ProjectInspectRequest")
-        acc = c1.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("begin"))
+        acc = c1.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
         run_id = text(acc.run.runId)
         c1.close()  # the client that started the run goes away
         c2 = d.client()

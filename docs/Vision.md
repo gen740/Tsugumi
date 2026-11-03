@@ -42,7 +42,7 @@ Vibe coding で素早く作った便利なツールが、いつの間にかブ�
 さらに Tsugumi では、まとまった処理を子 Workflow（Card in Card）として扱い、他のプロジェクトからも定義を取り込んで組み合わせることができます。
 「一度作って終わり」の使い捨てスクリプトから、部品ごとに確かめながら育て続けられるソフトウェアへ——それがエンジニアリングにおける Tsugumi の狙いです。
 
-関連する機能：[Card の編集と結果の確認](../ui-view.md#card-の編集と結果の確認)、[Card と Workflow](features.md#2-card-と-workflow)
+関連する機能：[Card の編集と結果の確認](ui-view.md#card-の編集と結果の確認)、[Card と Workflow](features.md#2-card-と-workflow)
 
 ## 業務自動化とデータの境界
 

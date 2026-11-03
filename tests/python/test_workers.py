@@ -19,7 +19,7 @@ from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
-pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1" or os.environ.get("TSUGUMI_TEST_ENV") == "container",
+pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
                                 reason="needs the shared VM (TSUGUMI_TEST_CONTAINER=1)")
 
 CPP_NIX = """{ pkgs, inputs, params }:
@@ -111,7 +111,7 @@ auto run(Card::Input& input) -> Card::Output {
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
     root = tmp_path_factory.mktemp("workers") / "p"
-    write(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
+    write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
     e = real_environment(root, "tsugumi-test-workers")
     yield e
     e.cleanup()
@@ -129,13 +129,13 @@ def invocations(c, run_id, card_id):
 def test_resident_worker_serves_later_runs(env):
     c = load(env, {"trigger": {"template": "trigger"},
                    "count": {"language": "cpp", "_outputs": NUM, "_nix": CPP_NIX}},
-             [card("begin", "trigger"), card("count", "count")], [])
+             [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
     reload(c)
-    first, st = run(c, "begin", timeout=2400)
+    first, st = run(c, "start", timeout=2400)
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
-    second, st = run(c, "begin")
+    second, st = run(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "count", 2)
     a, b = display(c, first, "count"), display(c, second, "count")
     pa, pb = re.search(r"worker (\d+)", a).group(1), re.search(r"worker (\d+)", b).group(1)
@@ -153,16 +153,16 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"template": "trigger"}, "make": make,
                    "read": {"language": "cpp", "inputs": [{"name": "doc"}], "_outputs": NUM, "_nix": CPP_NIX}},
-             [card("begin", "trigger"), card("make", "make"), card("read", "read")],
+             [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
     from test_cards_container import reload
     reload(c)
-    first, st = run(c, "begin", timeout=2400)
+    first, st = run(c, "start", timeout=2400)
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
     assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
                                             log(c, first, "make", 2), log(c, first, "read", 2))
-    second, st = run(c, "begin")
+    second, st = run(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "read", 2)
     # Another input path (another run's output) and the same worker: the stream goes on.
     assert display(c, second, "read") == "2 lines"
@@ -180,12 +180,12 @@ def test_fresh_worker_per_call(env):
                    "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
                    "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": False,
                              "_outputs": out, "_nix": nix}},
-             [card("begin", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
+             [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
     from test_cards_container import reload
     reload(c)
-    run_id, st = run(c, "begin", timeout=2400)
+    run_id, st = run(c, "start", timeout=2400)
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)
     recs = invocations(c, run_id, "fresh")
     assert len(recs) == 4
@@ -210,9 +210,9 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     c = load(env, {"trigger": {"template": "trigger"},
                    "loop": {"language": "bash", "_outputs": NUM, "_nix": loop_nix},
                    "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
-             [card("begin", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
+             [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
     t0 = time.time()
-    run_id, st = run(c, "begin", timeout=600)
+    run_id, st = run(c, "start", timeout=600)
     took = time.time() - t0
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}
     assert rec["loop"].state == CardState.failed
@@ -247,9 +247,9 @@ def test_network_is_off_unless_the_card_allows_it(env):
         cards[name] = bash(REACH + '; echo "reach=$v"', inputs=["go"],
                            pre=REACH.replace('> "$TSUGUMI_OUTPUT"', "> /dev/null") + '; echo "pre=$v" >&2', **settings)
     names = [n for n in cards if n != "trigger"]
-    c = load(env, cards, [card("begin", "trigger")] + [card(n, n) for n in names],
-             [conn("begin", "out", n, "go") for n in names])
-    run_id, st = run(c, "begin", timeout=900)
+    c = load(env, cards, [card("start", "trigger")] + [card(n, n) for n in names],
+             [conn("start", "out", n, "go") for n in names])
+    run_id, st = run(c, "start", timeout=900)
     for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
         out = number(c, run_id, name)
         want = "reach=1" if name.startswith("open") else "reach=0"
@@ -272,13 +272,13 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
                   hostFolders=[{"path": str(shared), "name": "out", "write": True}])
     other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
     load(env, {"trigger": {"template": "trigger"}, "read": read, "write": write_, "other": other},
-         [card("begin", "trigger"), card("read", "read"), card("write", "write"), card("other", "other")],
-         [conn("begin", "out", n, "go") for n in ("read", "write", "other")])
+         [card("start", "trigger"), card("read", "read"), card("write", "write"), card("other", "other")],
+         [conn("start", "out", n, "go") for n in ("read", "write", "other")])
     # The share is set when the project's environment starts.
     env.stop()
     env.start()
     c = env.client()
-    run_id, st = run(c, "begin", timeout=900)
+    run_id, st = run(c, "start", timeout=900)
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")

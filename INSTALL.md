@@ -29,13 +29,13 @@ nix develop
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
-共通 VM のイメージ生成（カーネルと rootfs を `dist/tsugumi-vm/` に出力。コンテナ内の Nix がビルドするため、別途の Linux ホストやリモートビルダーは不要）：
+共通 VM のイメージ生成（`dist/tsugumi-vm/` に出力）。カーネルと nixpkgs だけのベースは [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) の公開版をダウンロードし、Tsugumi のレイヤー（tsugumid など、数 MB）だけをコンテナ内の Nix でビルドします（別途の Linux ホストやリモートビルダーは不要）。ベースを変えたときは `macOS/tools/publish-vm.sh` で公開します：
 
 ```bash
 macOS/Container/build-image.sh --vm
 ```
 
-ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（デフォルト `8`）、`TSUGUMI_BUILDER_MEMORY`（デフォルト `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、デフォルト `tsugumi-builder-nix`）で調整できます。`TSUGUMI_IMAGE_OUT=dist/tsugumi-env.tar` を指定すると、アプリ同梱用の OCI アーカイブも出力します。
+ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（デフォルト `8`）、`TSUGUMI_BUILDER_MEMORY`（デフォルト `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、デフォルト `tsugumi-builder-nix`）で調整できます。
 
 Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）：
 

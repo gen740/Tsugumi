@@ -3,9 +3,9 @@ Nix evaluate and build, execute, validate, save), the wait for a free lane
 after the inputs arrived, and how long a Card's completion takes to reach a
 client. A first run and a rerun are measured separately.
 
-    python measure_stages.py collatz            # demo, in the shared VM (TSUGUMI_TEST_ENV=container: Apple container)
+    python measure_stages.py collatz            # demo, in the shared VM
     python measure_stages.py builtin-chain      # builtin Cards only, host tsugumid
-    python measure_stages.py large-values       # 100 000-element values, Python -> C++ -> shell (container)
+    python measure_stages.py large-values       # 100 000-element values, Python -> C++ -> shell (shared VM)
 
 Prints a table per run and writes JSON next to it (--out)."""
 
