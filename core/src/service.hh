@@ -23,6 +23,7 @@ namespace tsugumi {
 
 class Scheduler;
 class NixRunner;
+class WorkerPool;
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -38,6 +39,9 @@ struct ServiceOptions {
   // cache in the project. The shared VM keeps them in the store
   // (/nix/var/nix/gcroots/...), visible to the one nix-daemon.
   std::filesystem::path gcroots_dir;
+  // Local folder for the workers' own work/tmp/scripts folders (never the
+  // project share). Empty: <system temp>/tsugumi-<project id>.
+  std::filesystem::path scratch_dir;
   Limits limits;
 };
 
@@ -63,6 +67,7 @@ class Service : public RequestSink {
   Store& store() { return *store_; }
   const ServiceOptions& options() const { return opts_; }
   NixRunner& nix() { return *nix_; }
+  WorkerPool& workers() { return *workers_; }
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -130,6 +135,7 @@ class Service : public RequestSink {
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
   std::unique_ptr<NixRunner> nix_;
+  std::unique_ptr<WorkerPool> workers_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;

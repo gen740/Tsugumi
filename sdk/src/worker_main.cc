@@ -91,12 +91,44 @@ bool write_full(int fd, const void* p, size_t n) {
   return true;
 }
 
+// Descriptors received with data frames (SCM_RIGHTS), in arrival order.
+std::vector<int> g_received;
+
+bool recv_full(int fd, void* p, size_t n) {
+  auto* c = static_cast<char*>(p);
+  while (n > 0) {
+    iovec iov{c, n};
+    alignas(cmsghdr) char ctrl[CMSG_SPACE(sizeof(int) * 8)];
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl;
+    msg.msg_controllen = sizeof ctrl;
+    ssize_t r = ::recvmsg(fd, &msg, 0);
+    if (r == 0) return false;
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    for (cmsghdr* h = CMSG_FIRSTHDR(&msg); h; h = CMSG_NXTHDR(&msg, h))
+      if (h->cmsg_level == SOL_SOCKET && h->cmsg_type == SCM_RIGHTS) {
+        size_t k = (h->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+        const int* fds = reinterpret_cast<const int*>(CMSG_DATA(h));
+        g_received.insert(g_received.end(), fds, fds + k);
+      }
+    c += r;
+    n -= static_cast<size_t>(r);
+  }
+  return true;
+}
+
 std::optional<std::string> read_frame(int fd) {
   uint32_t len;
-  if (!read_full(fd, &len, 4)) return std::nullopt;
+  auto rd = fd == kData ? recv_full : read_full;
+  if (!rd(fd, &len, 4)) return std::nullopt;
   if (len == 0 || len > kMaxFrame) return std::nullopt;
   std::string buf(len, '\0');
-  if (!read_full(fd, buf.data(), len)) return std::nullopt;
+  if (!rd(fd, buf.data(), len)) return std::nullopt;
   return buf;
 }
 
@@ -714,7 +746,26 @@ int main(int argc, char** argv) {
     }
     g_cancel = false;
     g_call = &call;
-    execute(opt, call);
+    // Folders passed as descriptors are installed where the call says (the
+    // directories then read /proc/self/fd/<n>); they are closed afterwards.
+    std::vector<int> installed;
+    size_t want = wc->passed_fds() ? wc->passed_fds()->size() : 0;
+    if (want != g_received.size()) {
+      record_failure(D::FailureKind::worker_failed, "the call's folder descriptors did not arrive");
+    } else {
+      for (size_t i = 0; i < want; ++i) {
+        int slot = wc->passed_fds()->Get(i);
+        if (::fcntl(slot, F_GETFD) != -1 || ::dup2(g_received[i], slot) != slot) {
+          record_failure(D::FailureKind::worker_failed, "descriptor " + std::to_string(slot) + " is not free");
+          break;
+        }
+        installed.push_back(slot);
+      }
+    }
+    for (int f : g_received) ::close(f);
+    g_received.clear();
+    if (!call.failure) execute(opt, call);
+    for (int f : installed) ::close(f);
     std::fflush(stdout);
     std::fflush(stderr);
     reply(call);

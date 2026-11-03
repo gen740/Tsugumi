@@ -3,11 +3,16 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
+#include <fstream>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "store.hh"
@@ -88,21 +93,24 @@ bool write_full(int fd, const char* p, size_t n) {
 
 }  // namespace
 
-WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(logs)) {
+WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   int data[2], control[2], out[2], err[2];
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 ||
       ::pipe(out) != 0 || ::pipe(err) != 0)
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
-  // Script files for the steps.
+  // The worker's own folder; the step scripts are written once per worker.
+  auto scripts = std::filesystem::path(scratch_) / "scripts";
+  for (const char* d : {"work", "tmp", "scripts"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
+  if (::geteuid() == 0 && sp.uid)
+    for (const char* d : {"work", "tmp"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {
     if (text.empty()) return;
-    auto path = std::filesystem::path(sp.script_dir) / name;
-    fs::write_atomic(path, text, 0644);
+    auto path = scripts / name;
+    std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
     args.push_back(flag);
     args.push_back(path.string());
   };
-  std::filesystem::create_directories(sp.script_dir);
   script("--pre", sp.build.pre_run, "pre.sh");
   if (sp.build.bash) script("--run", *sp.build.bash, "run.sh");
   script("--post", sp.build.post_run, "post.sh");
@@ -114,6 +122,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
   args.push_back(sp.bash);
 
   proc::Spec spec;
+  auto own = [&](std::vector<std::string>& argv) {
+    for (const auto& p : sp.ro_paths) argv.insert(argv.end(), {"--ro-bind", p, p});
+    argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string()});
+  };
   if (sp.sandbox) {
     std::string bwrap = TSUGUMI_BWRAP;
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
@@ -125,9 +137,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
     if (sp.uid) {
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
     }
-    for (const auto& p : sp.ro_paths) spec.argv.insert(spec.argv.end(), {"--ro-bind", p, p});
-    for (const auto& p : sp.rw_paths) spec.argv.insert(spec.argv.end(), {"--bind", p, p});
-    spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.script_dir, sp.script_dir, "--", sp.worker_binary});
+    own(spec.argv);
+    spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
+    passes_dirs_ = true;
   } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
     // sandbox: false lifts the file access limits only. The worker still gets
     // its own PID and network namespaces, so every descendant ends with it
@@ -138,15 +150,12 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
     // Shared folders (virtiofs) show every file as owned by whoever looks, so
     // file modes cannot keep the token from the Card: the folders are hidden.
-    if (!sp.hidden_paths.empty()) {
-      for (const auto& p : sp.hidden_paths) spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
-      for (const auto& p : sp.ro_paths) spec.argv.insert(spec.argv.end(), {"--ro-bind", p, p});
-      for (const auto& p : sp.rw_paths) spec.argv.insert(spec.argv.end(), {"--bind", p, p});
-      spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.script_dir, sp.script_dir});
-    }
+    for (const auto& p : sp.hidden_paths) spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
+    own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
+    passes_dirs_ = true;
   } else {
-    // Development hosts without bubblewrap (never the container image).
+    // Development hosts without bubblewrap (never the VM): paths as they are.
     spec.argv = {sp.worker_binary};
     spec.uid = sp.uid;
     spec.gid = sp.gid;
@@ -188,7 +197,59 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp, LogSink logs) : logs_(std::move(lo
   });
 }
 
-WorkerProc::~WorkerProc() { terminate(); }
+WorkerProc::~WorkerProc() {
+  terminate();
+  std::error_code ec;
+  if (!scratch_.empty()) std::filesystem::remove_all(scratch_, ec);
+}
+
+bool WorkerProc::alive() const {
+  if (!alive_ || pid_ <= 0) return false;
+  siginfo_t si{};
+  if (::waitid(P_PID, static_cast<id_t>(pid_), &si, WEXITED | WNOHANG | WNOWAIT) == 0 && si.si_pid == pid_) return false;
+  return true;
+}
+
+void WorkerProc::set_logs(LogSink logs) {
+  read_logs(false);  // what the previous call left goes to its own sink
+  std::lock_guard<std::mutex> l(log_mu_);
+  logs_ = std::move(logs);
+}
+
+void WorkerProc::clear_scratch() {
+  std::error_code ec;
+  for (const auto& d : {work_dir(), tmp_dir()})
+    for (auto it = std::filesystem::directory_iterator(d, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+      std::filesystem::remove_all(it->path(), ec);
+}
+
+std::optional<uint64_t> WorkerProc::rss_bytes() const {
+  if (pid_ <= 0) return std::nullopt;
+#ifdef __APPLE__
+  rusage_info_v2 ri{};
+  if (proc_pid_rusage(pid_, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ri)) != 0) return std::nullopt;
+  return ri.ri_resident_size;
+#else
+  // Under bubblewrap the worker is a descendant of pid_: sum the whole tree.
+  uint64_t total = 0;
+  bool any = false;
+  std::vector<pid_t> todo = {pid_};
+  while (!todo.empty()) {
+    pid_t p = todo.back();
+    todo.pop_back();
+    std::ifstream st("/proc/" + std::to_string(p) + "/status");
+    for (std::string line; std::getline(st, line);)
+      if (line.starts_with("VmRSS:")) {
+        total += std::stoull(line.substr(6)) * 1024;
+        any = true;
+      }
+    std::ifstream ch("/proc/" + std::to_string(p) + "/task/" + std::to_string(p) + "/children");
+    for (pid_t c; ch >> c;) todo.push_back(c);
+  }
+  if (!any) return std::nullopt;
+  return total;
+#endif
+}
 
 void WorkerProc::terminate() {
   if (pid_ > 0) {
@@ -227,17 +288,47 @@ void WorkerProc::read_logs(bool drain) {
   }
 }
 
-void WorkerProc::send(int fd, const std::string& frame) {
+void WorkerProc::send(int fd, const std::string& frame, const std::vector<int>& fds) {
   uint32_t len = static_cast<uint32_t>(frame.size());
-  if (!write_full(fd, reinterpret_cast<const char*>(&len), 4) || !write_full(fd, frame.data(), frame.size()))
+  std::string buf(reinterpret_cast<const char*>(&len), 4);
+  buf += frame;
+  size_t off = 0;
+  if (!fds.empty()) {
+    // The descriptors travel with the frame's first bytes.
+    iovec iov{buf.data(), buf.size()};
+    std::vector<char> ctrl(CMSG_SPACE(sizeof(int) * fds.size()));
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl.data();
+    msg.msg_controllen = static_cast<socklen_t>(ctrl.size());
+    cmsghdr* c = CMSG_FIRSTHDR(&msg);
+    c->cmsg_level = SOL_SOCKET;
+    c->cmsg_type = SCM_RIGHTS;
+    c->cmsg_len = CMSG_LEN(sizeof(int) * fds.size());
+    std::memcpy(CMSG_DATA(c), fds.data(), sizeof(int) * fds.size());
+    ssize_t n;
+    do n = ::sendmsg(fd, &msg, 0);
+    while (n < 0 && errno == EINTR);
+    if (n <= 0) throw Failed(FailureKind::worker_failed, "worker connection broken");
+    off = static_cast<size_t>(n);
+  }
+  if (!write_full(fd, buf.data() + off, buf.size() - off))
     throw Failed(FailureKind::worker_failed, "worker connection broken");
 }
 
-WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const std::atomic<bool>* cancel,
+WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const std::vector<int>& fds,
+                               const std::atomic<bool>* cancel,
                                std::optional<std::chrono::steady_clock::time_point> deadline,
                                const DisplaySink& display) {
   WorkerOutcome outcome;
-  send(data_fd_, frame);
+  try {
+    send(data_fd_, frame, fds);
+  } catch (const Failed&) {
+    terminate();
+    outcome.failure = FailureData::make(FailureKind::worker_failed, "the worker exited before the call");
+    return outcome;
+  }
   std::string rbuf;
   bool cancel_sent = false;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -342,7 +433,7 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
                               const std::string& params, const std::vector<types::PortType>& outputs,
                               const std::string& work, const std::string& tmp, const std::string& out,
                               const std::vector<std::pair<std::string, std::string>>& env,
-                              std::optional<uint64_t> deadline_ms) {
+                              std::optional<uint64_t> deadline_ms, const std::vector<int32_t>& passed_fds) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) { return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size()); };
   std::vector<flatbuffers::Offset<W::WorkerInput>> ins;
@@ -360,7 +451,11 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   auto evv = b.CreateVector(ev);
   auto run = b.CreateString(run_id);
   auto cp = wire::path(b, card);
-  auto w = b.CreateString(work), t = b.CreateString(tmp), o = b.CreateString(out);
+  auto w = b.CreateString(work), t = b.CreateString(tmp);
+  flatbuffers::Offset<flatbuffers::String> o;
+  if (!out.empty()) o = b.CreateString(out);
+  flatbuffers::Offset<flatbuffers::Vector<int32_t>> pf;
+  if (!passed_fds.empty()) pf = b.CreateVector(passed_fds);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -370,7 +465,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   cb.add_outputs(outsv);
   cb.add_working_directory(w);
   cb.add_temporary_directory(t);
-  cb.add_output_directory(o);
+  if (!out.empty()) cb.add_output_directory(o);
+  if (!passed_fds.empty()) cb.add_passed_fds(pf);
   cb.add_environment(evv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();

@@ -1,4 +1,5 @@
 #include "service.hh"
+#include "worker_pool.hh"
 
 #include <unistd.h>
 
@@ -172,12 +173,17 @@ void Service::open() {
   store_->open();
   history_ = std::make_unique<History>(store_->state_dir() / "history.sqlite", cursor_secret_, opts_.fault);
   nix_ = std::make_unique<NixRunner>(*this);
+  for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
+  auto scratch = opts_.scratch_dir.empty() ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
+                                           : opts_.scratch_dir;
+  workers_ = std::make_unique<WorkerPool>(scratch);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
 }
 
 void Service::shutdown() {
   if (scheduler_) scheduler_->shutdown();
+  workers_.reset();  // the project's resident and standby workers end
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
 }
@@ -869,6 +875,7 @@ void Service::cache_clear(RequestIn& req) {
   try {
     if (scheduler_->active_status() || nix_->sdk_jobs_active())
       throw Failed(FailureKind::busy, "cache can only be cleared while no run or SDK job is active");
+    workers_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
     FBB b;
     std::vector<flatbuffers::Offset<flatbuffers::String>> del, ret;

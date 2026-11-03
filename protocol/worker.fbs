@@ -29,10 +29,15 @@ table WorkerCall {
   outputs:[Tsugumi.Data.Port] (id: 5, required);
   working_directory:string (id: 6, required);
   temporary_directory:string (id: 7, required);
-  output_directory:string (id: 8, required);
+  // Only for Cards with File / Directory outputs.
+  output_directory:string (id: 8);
   environment:[EnvVar] (id: 9, required);
   // Remaining time in milliseconds. Omitted means no deadline.
   deadline_ms:uint64 = null (id: 10);
+  // Directory descriptors sent with this frame (SCM_RIGHTS), in order: the
+  // worker installs the i-th one as descriptor passed_fds[i] for the call.
+  // The directories above then read /proc/self/fd/<n>.
+  passed_fds:[int32] (id: 11);
 }
 
 table WorkerOutput {

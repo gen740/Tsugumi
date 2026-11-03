@@ -29,6 +29,7 @@ add_library(tsugumi_core STATIC
   src/server.cc
   src/nix.cc
   src/worker_proc.cc
+  src/worker_pool.cc
   src/scheduler.cc
   src/service.cc
   src/service_run.cc

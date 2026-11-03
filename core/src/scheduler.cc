@@ -1,5 +1,6 @@
 #include "scheduler.hh"
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -16,6 +17,7 @@
 #include "util/fs.hh"
 #include "util/log.hh"
 #include "wire.hh"
+#include "worker_pool.hh"
 #include "worker_proc.hh"
 
 #ifndef TSUGUMI_CARD_PATH
@@ -36,6 +38,8 @@ namespace {
 
 constexpr size_t kQueueCapacity = 16;
 constexpr uid_t kCardUid = 65534;  // unprivileged identity for Card processes
+// Descriptor slots of the folders passed to a sandboxed worker (out, work, tmp).
+constexpr int32_t kOutSlot = 900;
 
 Note run_event_note(const std::string& run_id,
                     std::function<std::pair<R::RunEventValue, flatbuffers::Offset<void>>(FBB&)> body) {
@@ -283,10 +287,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
     std::optional<CardBuild> build;
-    std::unique_ptr<WorkerProc> worker;
-    std::string worker_signature;
-    uint64_t call_id = 0;
     uint64_t display_rev = 0;
+    // The call's output folder as the Card sees it (a passed descriptor) and its real path.
+    std::optional<std::pair<std::string, std::string>> out_alias;
     std::optional<DisplayData> display;
     // Inputs of the latest invocation; saved for single-Card runs at the end of the run.
     std::optional<std::pair<uint64_t, std::vector<Value>>> last_inputs;
@@ -574,8 +577,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     task_cv_.notify_all();
     for (auto& t : pool_) t.join();
-    for (auto& n : nodes_)
-      if (n.worker) n.worker->terminate();
+    // Workers stay in the project's pool (resident across runs).
     finalize();
   }
 
@@ -876,6 +878,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                      {{"port", v.name}});
       if (v.kind != PortKind::FlatBuffer) {
         auto p = path_value(v);
+        // A path under the passed output descriptor is the output folder's real path.
+        if (p && rt.out_alias) {
+          const auto& [alias, real] = *rt.out_alias;
+          if (*p == alias || p->starts_with(alias + "/")) {
+            v = with_path(v, real + p->substr(alias.size()));
+            p = path_value(v);
+          }
+        }
         auto out_dir = invocation_dir(node, inv) / "out";
         std::error_code ec;
         bool is_forward = p && forwarded.count(stdfs::path(*p).lexically_normal().string());
@@ -1110,58 +1120,77 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     stage_begin(s, Phase::execute);
     card_status(s);
     set_state(RunState::running);
-    auto dir = invocation_dir(node, s.invocation);
-    auto work = dir / "work", tmp = dir / "tmp", out = dir / "out";
-    for (const auto& d : {work, tmp, out}) {
-      stdfs::create_directories(d);
-      if (::geteuid() == 0) ::chown(d.c_str(), kCardUid, kCardUid);
-    }
     // Cards run as nobody: switched to by root (container), or mapped in
     // bubblewrap's user namespace when tsugumid is not root (shared VM).
     std::optional<uid_t> uid;
     if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
-    // A reused worker keeps exactly the binds it was started with; a call that
-    // needs other input paths gets a new worker.
-    std::vector<std::string> ro;
-    for (const auto& v : in)
-      if (v.kind != PortKind::FlatBuffer)
-        if (auto p = path_value(v)) ro.push_back(*p);
-    std::sort(ro.begin(), ro.end());
-    ro.erase(std::unique(ro.begin(), ro.end()), ro.end());
-    std::string signature = std::string(rt.build->package.value_or("")) + "|" + rt.build->bash.value_or("") + "|" +
-                            (node.settings.sandbox ? "s" : "u");
-    for (const auto& p : ro) signature += "|" + p;
-    s.worker_reused = rt.worker && rt.worker->alive() && rt.build->reuse_worker && rt.worker_signature == signature;
-    if (!*s.worker_reused) {
-      if (rt.worker) rt.worker->terminate();
-      rt.worker_signature = signature;
-      WorkerSpawn sp;
-      sp.worker_binary = svc_.options().worker_binary.string();
-      sp.bash = TSUGUMI_BASH;
-      sp.build = *rt.build;
-      sp.script_dir = (run_dir_ / "build" / path_key(node.path) / "scripts").string();
-      sp.sandbox = node.settings.sandbox;
-      sp.uid = uid;
-      sp.gid = uid;
-      // Reused workers keep the whole Card work tree; single calls get exactly their dirs.
-      if (rt.build->reuse_worker) sp.rw_paths = {(run_dir_ / "work" / path_key(node.path)).string()};
-      else sp.rw_paths = {work.string(), tmp.string(), out.string()};
-      sp.ro_paths = ro;
-      if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
-      sp.hidden_paths.push_back(svc_.store().state_dir().string());
-      CardPath card = node.path;
-      auto inv_ptr = std::make_shared<std::atomic<uint64_t>>(s.invocation);
-      current_inv_[rt.idx] = inv_ptr;
-      rt.worker = std::make_unique<WorkerProc>(sp, [this, card, inv_ptr](LogStream stream, const std::string& text) {
-        card_log(card, inv_ptr->load(), stream, text);
-      });
+    WorkerSpawn sp;
+    sp.worker_binary = svc_.options().worker_binary.string();
+    sp.bash = TSUGUMI_BASH;
+    sp.build = *rt.build;
+    sp.sandbox = node.settings.sandbox;
+    sp.uid = uid;
+    sp.gid = uid;
+    // Every File / Directory input lives in these trees: one set of binds
+    // serves any input, so the worker is reused whatever the paths.
+    sp.ro_paths = {(svc_.store().state_dir() / "runs").string(), (svc_.store().state_dir() / "inputs").string()};
+    if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
+    sp.hidden_paths.push_back(svc_.store().state_dir().string());
+    // The resident worker of this Card, if it runs the same build under the same conditions.
+    std::string key = rt.build->package.value_or("") + "|" + rt.build->bash.value_or("") + "|" + rt.build->pre_run +
+                      "|" + rt.build->post_run + "|" + (sp.sandbox ? "s" : "u") + "|" +
+                      (uid ? std::to_string(*uid) : "-");
+    std::string card_key = path_key(node.path);
+    auto lease = svc_.workers().acquire(card_key, key, sp, rt.build->reuse_worker);
+    auto& worker = *lease.worker;
+    s.worker_reused = lease.reused;
+    // Folders: without filesystem: true, work/ and tmp/ are the worker's own
+    // (local, emptied between calls); out/ exists only for Cards with File or
+    // Directory outputs and stays (downstream Cards and artifacts use it).
+    bool needs_out = false;
+    for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
+    auto dir = invocation_dir(node, s.invocation);
+    std::string work = worker.work_dir(), tmp = worker.tmp_dir(), out;
+    std::vector<std::pair<std::string, int32_t>> project_dirs;  // real path, descriptor slot
+    auto make_dir = [&](const stdfs::path& d) {
+      stdfs::create_directories(d);
+      if (::geteuid() == 0) ::chown(d.c_str(), kCardUid, kCardUid);
+      return d.string();
+    };
+    if (needs_out) out = make_dir(dir / "out");
+    if (node.settings.filesystem) {
+      work = make_dir(dir / "work");
+      tmp = make_dir(dir / "tmp");
     }
-    if (auto it = current_inv_.find(rt.idx); it != current_inv_.end()) it->second->store(s.invocation);
+    // Under bubblewrap the project folders of this call reach the Card as
+    // descriptors (/proc/self/fd/<slot>); the run trees are bound read-only.
+    std::vector<int> fds;
+    std::vector<int32_t> slots;
+    rt.out_alias.reset();
+    auto pass = [&](std::string& path, int32_t slot) {
+      if (path.empty() || !worker.passes_directories()) return;
+      int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+      if (fd < 0) throw Failed(FailureKind::worker_failed, "cannot open " + path);
+      fds.push_back(fd);
+      slots.push_back(slot);
+      std::string alias = "/proc/self/fd/" + std::to_string(slot);
+      if (slot == kOutSlot) rt.out_alias = std::make_pair(alias, path);
+      path = alias;
+    };
+    struct Close {
+      std::vector<int>& fds;
+      ~Close() { for (int f : fds) ::close(f); }
+    } close_fds{fds};
+    pass(out, kOutSlot);
+    if (node.settings.filesystem) {
+      pass(work, kOutSlot + 1);
+      pass(tmp, kOutSlot + 2);
+    }
     auto ptype = NixRunner::params_type(node);
     std::string params = NixRunner::params_buffer(node);
     std::vector<std::pair<std::string, std::string>> env = {
         {"PATH", TSUGUMI_CARD_PATH},
-        {"HOME", work.string()},
+        {"HOME", work},
         {"LANG", "C.UTF-8"},
         {"TSUGUMI_RUN_ID", run_id_},
         {"TSUGUMI_CARD", path_key(node.path)},
@@ -1175,25 +1204,24 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       deadline_ms = *node.settings.timeout_seconds * 1000;
       deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
     }
-    std::string frame = worker_call_frame(++rt.call_id, run_id_, node.path, s.invocation, in, ptype->bfbs,
-                                          ptype->root_type, params, node.outputs, work.string(), tmp.string(),
-                                          out.string(), env, deadline_ms);
+    uint64_t call_id = worker.next_call_id();
+    std::string frame = worker_call_frame(call_id, run_id_, node.path, s.invocation, in, ptype->bfbs,
+                                          ptype->root_type, params, node.outputs, work, tmp, out, env, deadline_ms,
+                                          slots);
+    // Logs and displays of this call belong to this run and invocation.
+    CardPath card = node.path;
+    uint64_t inv = s.invocation;
+    worker.set_logs([this, card, inv](LogStream stream, const std::string& text) { card_log(card, inv, stream, text); });
     int64_t t0 = now_ms();
-    auto outcome = rt.worker->call(frame, rt.call_id, &cancel_, deadline, [this, &rt](const DisplayData& d) {
+    auto outcome = worker.call(frame, call_id, fds, &cancel_, deadline, [this, &rt](const DisplayData& d) {
       on_display(rt, d);
     });
     svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::execute, lane, t0, now_ms()));
-    // Reuse only after a clean call: a failed, cancelled or timed out worker
-    // (and anything it started) is ended.
-    if (!rt.build->reuse_worker || !rt.worker->alive() || outcome.failure) {
-      rt.worker->terminate();
-      rt.worker.reset();
-    }
-    if (!node.settings.filesystem) {
-      std::error_code ec;
-      stdfs::remove_all(work, ec);
-      stdfs::remove_all(tmp, ec);
-    }
+    if (!node.settings.filesystem) worker.clear_scratch();
+    // Kept only after a clean call: a failed, cancelled or timed out worker
+    // (and anything it started) ends.
+    svc_.workers().release(card_key, key, std::move(lease.worker),
+                           rt.build->reuse_worker && !outcome.failure);
     Produced p;
     p.failure = outcome.failure;
     if (!p.failure)
@@ -1365,7 +1393,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> first_failure_, start_failure_, stall_failure_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
-  std::map<size_t, std::shared_ptr<std::atomic<uint64_t>>> current_inv_;
 };
 
 // ---------------------------------------------------------------------------
