@@ -218,12 +218,27 @@ def live_points(c, rid):
 
 @pytest.mark.parametrize("concurrency", [1, 2])
 def test_live_stream_complete_and_ordered(live, concurrency):
+    # Count and order only: no interval between samples (the pace is its own test).
     c = connect(live)
+    edit_card(live, c, "settings", lambda b: set_param(b, "interval_ms", 0))
     rid = run(c, ["start"], concurrency=concurrency)
     assert wait_run(c, rid).state == RunState.succeeded
     xs, calls = live_points(c, rid)
     assert calls == 200
     assert xs == [float(i) for i in range(140, 200)]  # most recent 60 points, none missing
+
+
+def test_live_stream_keeps_its_pace(live):
+    # A few samples at the demo's 100 ms: the loop waits between them.
+    c = connect(live)
+    edit_card(live, c, "settings", lambda b: set_param(b, "samples", 5))
+    rid = run(c, ["start"])
+    st = wait_run(c, rid)
+    assert st.state == RunState.succeeded
+    xs, calls = live_points(c, rid)
+    assert calls == 5 and xs == [0.0, 1.0, 2.0, 3.0, 4.0]
+    # Measured by the core from start to end: at least the four waits between five samples.
+    assert st.endedAt - st.startedAt >= 400, st.endedAt - st.startedAt
 
 
 def test_live_stream_cancel_and_rerun(live):

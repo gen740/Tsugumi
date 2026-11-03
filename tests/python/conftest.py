@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -57,13 +59,16 @@ class Daemon:
         ready = self.control / "server.ready"
         if ready.exists():
             ready.unlink()
-        self.proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Its output goes to a file (a pipe nobody reads would stop it once full).
+        self.log = self.sock_dir / "tsugumid.log"
+        with open(self.log, "ab") as log:
+            self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 if expect_exit:
                     return self
-                raise RuntimeError("tsugumid exited: " + self.proc.stderr.read().decode())
+                raise RuntimeError("tsugumid exited: " + self.log.read_text(errors="replace")[-4000:])
             if ready.exists():
                 self.ready = json.loads(ready.read_text())
                 return self
@@ -131,7 +136,15 @@ class SharedVM:
         self.console = support / "vmctl-console.log"
         self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=open(self.console, "a"), text=True, bufsize=1)
+        # Its answers are read by a thread so that every wait has a deadline.
+        self.lines: queue.Queue = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
         atexit.register(self.quit)
+
+    def _pump(self):
+        for line in self.proc.stdout:
+            self.lines.put(line.rstrip("\n"))
+        self.lines.put(None)
 
     @classmethod
     def get(cls) -> "SharedVM":
@@ -139,22 +152,30 @@ class SharedVM:
             cls._instance = SharedVM()
         return cls._instance
 
-    def command(self, line: str, until=lambda l: True) -> list[str]:
+    def command(self, line: str, until=lambda l: True, timeout: float = 900.0) -> list[str]:
+        """Sends one command and reads its answer up to the line `until` accepts.
+        A vmctl that does not answer in time is ended (the next test starts a
+        new one) and the test fails with where to look."""
         self.proc.stdin.write(line + "\n")
         self.proc.stdin.flush()
         out = []
+        deadline = time.monotonic() + timeout
         while True:
-            l = self.proc.stdout.readline()
-            if not l:
+            try:
+                l = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                self.proc.kill()
+                raise TimeoutError(f"tsugumi-vmctl did not answer {line.split()[0]!r} within {timeout:.0f} s; see {self.console}")
+            if l is None:
                 raise RuntimeError(f"tsugumi-vmctl exited; see {self.console}")
-            out.append(l.rstrip("\n"))
-            if until(out[-1]):
+            out.append(l)
+            if until(l):
                 return out
 
     def quit(self):
         if self.proc.poll() is None:
             try:
-                self.command("quit", until=lambda l: l == "bye")
+                self.command("quit", until=lambda l: l == "bye", timeout=120)
                 self.proc.wait(timeout=60)
             except Exception:
                 self.proc.kill()
