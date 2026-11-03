@@ -37,9 +37,11 @@ std::string entry_nix() {
 # (run, preRun, extra attributes, functions) of the code Cards that have
 # always run before this one; paths are relative to the Card's own project. They are imported lazily: only what is
 # referenced is evaluated, and branches that may not run are never offered.
-pkgs: { sdk, gen, card }:
+pkgs: { sdk, gen, upstream, card }:
 let
-  up = builtins.fromJSON (builtins.readFile (gen + "/upstream.json"));
+  # upstream.json is read here only: it names folders of this evaluator, so it
+  # is kept out of `gen`, which builds take in by content.
+  up = builtins.fromJSON (builtins.readFile upstream);
   inputsFor = tsugumi: deps: {
     inherit tsugumi;
     upstream = builtins.listToAttrs (map (d: { name = d.name; value = cards.${d.key}; }) deps);
@@ -417,11 +419,20 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   }
   cards_json += "]";
   deps_json += "]";
+  std::string upstream_json;
   {
     auto c = schema::capture(cards_json);
     auto d = schema::capture(deps_json);
-    files["upstream.json"] = schema::object_text({{"cards", &c}, {"deps", &d}});
+    upstream_json = schema::object_text({{"cards", &c}, {"deps", &d}});
   }
+  // The upstream references hold this evaluator's folder paths: a folder of
+  // their own, so the generated contract (a build input) depends on contents
+  // only and builds are shared by copies of a project.
+  crypto::Sha256 uh;
+  uh.update(upstream_json);
+  auto upstream = content_dir("up", uh.finish_hex(), [&] {
+    return std::map<std::string, std::string>{{"upstream.json", upstream_json}};
+  });
   auto gen = generated_dir(files);
   auto def = definition_dir(node.def_dir);
   schema::NixpkgsPin pin;
@@ -430,6 +441,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
+              "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";
   call.cancel = req.cancel;
   if (req.timeout_seconds) call.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
