@@ -119,6 +119,8 @@ docs/assets/       アイコンとキービジュアルの SVG
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
 | `macOS/Tests`（`swift test`、25） | JSON モデル、段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、Agent × ローカル model fixture × 実 tsugumid（読取→変更→実行→説明、取消、再試行、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る） |
+| 実際の API（任意、`TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
+| CI（`.github/workflows/ci.yml`、GitHub Actions の Linux） | 開発シェルで tsugumid をビルドし、C++ のテストとホストの tsugumid に対する Python のテストを流す（Card は bubblewrap で隔離）。macOS アプリと共通 VM は Apple silicon が要るため Mac で確認する |
 | `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 
 ## 計測（2026-11-03、高速化後・共通 VM）
@@ -195,9 +197,10 @@ docs/assets/       アイコンとキービジュアルの SVG
 | Card ごとのネットワーク・Mac のフォルダ（`network`・`hostFolders`）、チャットへのフォルダ添付 | Experimental（`test_workers.py`・`test_definitions.py`） |
 | SwiftUI アプリ（[ui-view.md](ui-view.md) の構成、split view の sidebar とチャット inspector、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。UI スクリプトで実ウインドウを撮影して確認（上の表）。マウスのクリック・ドラッグは未確認 |
 | Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。Live Stream の折れ線の目視確認は未実施 |
-| Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮） | 実装済み（fixture 経由の読取→変更→実行→説明、取消、切断再試行を自動テスト）。文脈圧縮は自動テストなし。実 provider（有料 API）での動作は未検証 |
+| Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮、プロンプトキャッシュ） | 実装済み。テスト用モデル（`tests/fixtures/model_fixture.py`）で読取→変更→実行→説明、Draft の実装、取消、取消後の再試行（未回答の tool_use を閉じる）、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録を自動テスト。実際の API（claude-sonnet-5-5）での Draft から実行までの記録は [AgentRun.md](AgentRun.md) |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
-| N-Queens・200 Card の大規模デモ、Web UI、WASM 表示 | 未実装（仕様上の次段階） |
+| Web UI（同じ画面・操作・ショートカットをブラウザで。Mac 上の tsugumid、Seatbelt による Card の隔離） | 実装済み（[WebUI.md](WebUI.md)、型検査とビルドで確認） |
+| N-Queens・200 Card の大規模デモ、WASM 表示 | 未実装（仕様上の次段階） |
 
 ## 既知の問題
 

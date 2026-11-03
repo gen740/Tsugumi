@@ -12,6 +12,7 @@
 | [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
 | [security.md](security.md) | 4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
 | [novelty.md](novelty.md) | 既存のツールやアプローチとの違いと、なぜ今 Tsugumi の設計なのか |
+| [AgentRun.md](AgentRun.md) | 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録 |
 | [Development.md](Development.md) | 実行基盤の設計決定、ディレクトリ構成、テストスイート、パフォーマンス計測、実装状況 |
 | [Lock.md](Lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
 
