@@ -13,6 +13,8 @@
 "C++ の処理" = "C++ step";
 "Canvas に配置" = "Place on the canvas";
 "Card が見つかりません" = "Card not found";
+"Card の実行履歴から、前の入力と出力をいつでも見返せるよ" = "A Card's Run History keeps every earlier input and output.";
+"Card は C++ でも Python でも bash でも書けるよ" = "Cards can be written in C++, Python or bash.";
 "Card はありません" = "No Cards";
 "Card を生成" = "Generate Cards";
 "Card 定義" = "Card Definitions";
@@ -21,7 +23,9 @@
 "Draft · %@" = "Draft · %@";
 "Draft が見つかりません" = "Draft not found";
 "Draft ではありません" = "Not a Draft";
+"Draft の実装は、チャットから Agent に頼めるよ" = "Ask the Agent in the chat to implement a Draft.";
 "Draft を編集…" = "Edit Draft…";
+"Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ" = "Place Drafts and wire them up to sketch the flow before writing any code.";
 "Draft（未実装の計画）" = "Draft (plan, not implemented)";
 "Finder で表示" = "Show in Finder";
 "Nix 定義" = "Nix Definition";
@@ -48,8 +52,11 @@
 "tsugumi.json のあるフォルダを選んでください。" = "Choose a folder that contains tsugumi.json.";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
+"⌥⌘K で、実行環境のコンソールを開けるよ" = "⌥⌘K opens the environment's console.";
 "「%@」と重複しています" = "Conflicts with “%@”";
 "「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
+"「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
+"くわえている手毬の糸は「紡ぐ」から。この糸が Card をつなぐ配線になるよ" = "The thread from my temari is that spun thread. It becomes the wires between Cards.";
 "ここから下流を実行" = "Run from Here Downstream";
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。" = "This Card does not record inputs and outputs (Settings > Ports > Record I/O).";
@@ -62,6 +69,7 @@
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "すべて" = "All";
+"つぐみ → つむぐ。試行錯誤をつないで、研究を「紡ぐ」道具でありたいんだ" = "Tsugumi → tsumugu, to spin: a tool for spinning trial and error into research.";
 "どうすればよいか" = "What to do";
 "なし" = "None";
 "まだ結果がありません" = "No result yet";
@@ -76,6 +84,7 @@
 "キー" = "Key";
 "キーを保存" = "Save Key";
 "キーを押してください…" = "Press a key…";
+"クリックで次のヒント" = "Click for the next tip";
 "グリッド" = "Grid";
 "グリッドを表示（移動時に吸着）" = "Show grid (snap when moving)";
 "グリッド間隔 %lld" = "Grid spacing %lld";
@@ -108,6 +117,7 @@
 "チャットの表示切替" = "Toggle Chat";
 "チャットの送信キー" = "Chat send key";
 "チャットは任意機能です。通常の操作はすべて UI から行えます。" = "The chat is optional; everything can be done from the UI.";
+"ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ" = "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.";
 "テーマ" = "Theme";
 "デフォルト" = "Default";
 "デモ" = "Demos";
@@ -214,6 +224,7 @@
 "再確認" = "Check Again";
 "再試行" = "Retry";
 "再読込" = "Reload";
+"冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
 "処理" = "Step";
 "処理 Card の実行環境は default.nix で定義します。" = "A step Card's environment is defined in default.nix.";
 "出力" = "Outputs";
@@ -239,6 +250,7 @@
 "合流" = "Merge";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
+"名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ" = "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.";
 "名前を変更" = "Rename";
 "名前を変更…" = "Rename…";
 "呼び出し" = "Invocation";
@@ -284,6 +296,7 @@
 "実行履歴はありません" = "No run history";
 "実行待ち" = "Ready";
 "実行状況はありません" = "No run activity";
+"実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
 "実行環境は停止しています" = "The environment is stopped";
 "実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。" = "Stop the environment and retry. If it keeps failing, delete the environment data (documents are kept).";
 "実行環境を起動できませんでした" = "The environment could not start";
@@ -409,6 +422,7 @@
 "追加" = "Add";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";
+"途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "適用" = "Apply";
 "選択した Card を参照に追加" = "Add selected Cards as references";
 "選択をグループ化" = "Group Selection";

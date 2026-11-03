@@ -365,6 +365,20 @@ enum TsugumiThread {
     g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round))
   }
 
+  /// A let-go thread: from the ball's top `a`, sagging to its end `e`, then a
+  /// short tail curling down.
+  static func slack(_ g: GraphicsContext, from a: CGPoint, to e: CGPoint, time: Double) {
+    let d = hypot(e.x - a.x, e.y - a.y)
+    var p = Path()
+    p.move(to: a)
+    p.addCurve(to: e, control1: CGPoint(x: a.x + (e.x - a.x) * 0.3, y: a.y - min(6, d * 0.2)),
+               control2: CGPoint(x: a.x + (e.x - a.x) * 0.8, y: e.y - min(5, d * 0.15)))
+    let w = CGFloat(sin(time * 1.3)) * 1.2
+    p.addCurve(to: CGPoint(x: e.x + 6 + w, y: e.y + 12), control1: CGPoint(x: e.x + 5, y: e.y - 2),
+               control2: CGPoint(x: e.x + 7, y: e.y + 6))
+    g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+  }
+
   /// A short loose end out of the bill `s`, swaying lightly.
   static func loose(_ g: GraphicsContext, from s: CGPoint, time: Double) {
     let w = CGFloat(sin(time * 1.3)) * 3

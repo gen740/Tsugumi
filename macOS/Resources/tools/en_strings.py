@@ -6,6 +6,21 @@ macOS/Resources/en.lproj/Localizable.strings; build-app.sh bundles it.
 import os
 
 EN = {
+# Home: the bird's tips (Home/HomeTips.swift)
+"Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ": "Place Drafts and wire them up to sketch the flow before writing any code.",
+"Draft の実装は、チャットから Agent に頼めるよ": "Ask the Agent in the chat to implement a Draft.",
+"Card は C++ でも Python でも bash でも書けるよ": "Cards can be written in C++, Python or bash.",
+"途中の Card を直したら、保存された入力でそこから試し直せるよ": "Changed a Card midway? Run again from there with the saved inputs.",
+"Card の実行履歴から、前の入力と出力をいつでも見返せるよ": "A Card's Run History keeps every earlier input and output.",
+"実行環境は Nix で固定。同じ計算をもう一度確かめられるよ": "The environment is pinned with Nix, so any result can be checked again.",
+"⌥⌘K で、実行環境のコンソールを開けるよ": "⌥⌘K opens the environment's console.",
+"「デモを見る」から、Collatz などの例をすぐに開けるよ": "Open an example such as Collatz from Browse Demos.",
+"名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ": "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.",
+"つぐみ → つむぐ。試行錯誤をつないで、研究を「紡ぐ」道具でありたいんだ": "Tsugumi → tsumugu, to spin: a tool for spinning trial and error into research.",
+"くわえている手毬の糸は「紡ぐ」から。この糸が Card をつなぐ配線になるよ": "The thread from my temari is that spun thread. It becomes the wires between Cards.",
+"ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ": "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.",
+"冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ": "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.",
+"クリックで次のヒント": "Click for the next tip",
 "VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）": "Building Tsugumi inside the VM (first start and after an update only; a minute or two)",
 'Tsugumi の実行環境のイメージが見つかりません。': 'The Tsugumi environment image is not available.',
 '別の Tsugumi の処理がこの実行環境を起動または停止しています。': 'Another Tsugumi process is starting or stopping this environment.',

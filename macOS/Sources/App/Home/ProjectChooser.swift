@@ -229,8 +229,8 @@ struct HomeBackground: View {
   }
 }
 
-/// The left column of home: the bird on its branch in the key visual's
-/// colours, the name, and the ways in.
+/// The left column of home: the bird on its branch with the temari, telling
+/// tips, the name, and the ways in; together a little above the middle.
 private struct HomeSidebar: View {
   @Binding var showDemos: Bool
   let onNew: () -> Void
@@ -238,9 +238,12 @@ private struct HomeSidebar: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      TsugumiIdleScene(temari: true, birdScale: 0.19)
+      Spacer(minLength: 0)
+      HomeTipBubble()
+        .padding(.horizontal, 18)
+      TsugumiTemariScene(birdScale: 0.19)
         .frame(height: 150)
-        .padding(.top, 30)
+        .padding(.top, -6)
       Text("Tsugumi").font(.largeTitle.bold()).foregroundStyle(TsugumiPalette.cream)
         .padding(.horizontal, 18)
       VStack(alignment: .leading, spacing: 8) {
@@ -255,8 +258,9 @@ private struct HomeSidebar: View {
       }
       .padding(.horizontal, 18)
       Spacer(minLength: 0)
+      Spacer(minLength: 0)   // twice: the block sits a little above the middle
     }
-    .frame(maxHeight: .infinity, alignment: .top)
+    .frame(maxHeight: .infinity)
     .background(LowPolyBackground().ignoresSafeArea())
     .environment(\.colorScheme, .dark)
   }
