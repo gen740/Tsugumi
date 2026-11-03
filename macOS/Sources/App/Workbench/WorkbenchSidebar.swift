@@ -12,7 +12,7 @@ struct WorkbenchSidebar: View {
   @State private var defSearch = ""
   /// Expanded tree nodes; kept across searches and reloads.
   @State private var expanded: Set<String> = ["origin:"]
-  @State private var importing = false
+  @State private var importError: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -26,13 +26,11 @@ struct WorkbenchSidebar: View {
           HStack {
             Text("Card を追加")
             Spacer()
-            Menu {
-              Button("他のプロジェクトからコピー…") { importing = true }
-              Button("Card の定義を一覧…") { openWindow(id: "definitions", value: ProjectRef(path: session.identity.url.path)) }
-            } label: { Image(systemName: "ellipsis.circle") }
-              .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            Button { importProject() } label: { Image(systemName: "square.and.arrow.down.on.square") }
+              .buttonStyle(.borderless)
               .disabled(!session.isEditable)
-              .help("他のプロジェクトから Card をコピー")
+              .help("他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）")
+              .accessibilityLabel("プロジェクトを取り込む")
           }
         }
         Section("表示中の Card") {
@@ -54,50 +52,77 @@ struct WorkbenchSidebar: View {
         .padding(.horizontal, 8).padding(.vertical, 5)
       }
     }
-    .sheet(isPresented: $importing) { ImportDefinitionsSheet(session: session) }
+    .alert("取り込めませんでした", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+      Button("OK", role: .cancel) {}
+    } message: { Text(importError ?? "") }
   }
 
+  /// Externals of this project: their definitions (copied into the scope as
+  /// new Cards) and the external itself (a new Card in Card, a copy of its own).
   @ViewBuilder private var definitions: some View {
     TextField("検索", text: $defSearch).textFieldStyle(.roundedBorder)
-    ForEach(DefinitionTemplate.allCases.filter { defSearch.isEmpty || $0.label.localizedCaseInsensitiveContains(defSearch) }) { t in
-      HStack(spacing: 6) {
-        Image(systemName: t.symbol).foregroundStyle(.secondary).frame(width: 16)
-        Text(t.label).lineLimit(1)
-        Spacer()
+    let exts = session.effectiveExternals.keys.filter { $0.split(separator: "/").count == 2 }.sorted()
+    if exts.isEmpty {
+      Text("externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        .selectionDisabled()
+    }
+    ForEach(exts, id: \.self) { prefix in
+      let name = prefix.split(separator: "/").last.map(String.init) ?? prefix
+      let ids = (session.external(prefix)?.definitions.keys.sorted() ?? [])
+        .filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) || name.localizedCaseInsensitiveContains(defSearch) }
+      DisclosureGroup(isExpanded: Binding(get: { expanded.contains(prefix) || !defSearch.isEmpty },
+                                          set: { if $0 { expanded.insert(prefix) } else { expanded.remove(prefix) } })) {
+        row(symbol: CardKind.subgraph.symbol, title: String(localized: "\(name) 全体（Card in Card）"),
+            drag: DefinitionDrag.externalPrefix + prefix,
+            help: String(localized: "このプロジェクト全体のコピーを Card in Card として置きます")) {
+          Task { await placeExternal(prefix) }
+        }
+        ForEach(ids, id: \.self) { id in
+          let d = session.external(prefix)?.definitions[id]
+          row(symbol: d?.link != nil ? CardKind.subgraph.symbol : definitionKind(d?.card).symbol, title: id,
+              drag: DefinitionDrag.externalDefinitionPrefix + prefix + "\n" + id,
+              help: String(localized: "定義をこのプロジェクトの definitions にコピーして Card を置きます")) {
+            Task { await placeCopy(prefix, id) }
+          }
+        }
+      } label: {
+        Label(name, systemImage: "shippingbox").lineLimit(1)
       }
-      .contentShape(Rectangle())
-      .draggable(DefinitionDrag.templatePrefix + t.rawValue)
-      .onTapGesture(count: 2) { create(t) }
-      .help("ダブルクリックまたは Canvas へドラッグして追加。Card ごとに定義のフォルダを作ります。")
-      .contextMenu { Button("Canvas に追加") { create(t) }.disabled(!session.isEditable) }
       .selectionDisabled()
     }
-    // Definition folders without a Card (copied from another project).
+    // Definition folders without a Card (left over).
     let unplaced = session.unplacedDefinitions.filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) }
     if !unplaced.isEmpty {
       DisclosureGroup(isExpanded: Binding(get: { expanded.contains("unplaced") || !defSearch.isEmpty },
                                           set: { if $0 { expanded.insert("unplaced") } else { expanded.remove("unplaced") } })) {
         ForEach(unplaced, id: \.self) { id in
-          HStack(spacing: 6) {
-            Image(systemName: definitionKind(session.definitions[id]).symbol).foregroundStyle(.secondary).frame(width: 16)
-            Text(id).lineLimit(1)
-            Spacer()
-          }
-          .contentShape(Rectangle())
-          .draggable(DefinitionDrag.prefix + id)
-          .onTapGesture(count: 2) { place(id) }
-          .help("ダブルクリックまたは Canvas へドラッグして配置")
-          .contextMenu {
-            Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
-            Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) } }.disabled(!session.isEditable)
-          }
-          .selectionDisabled()
+          row(symbol: definitionKind(session.definitions[id]).symbol, title: id, drag: DefinitionDrag.prefix + id,
+              help: String(localized: "ダブルクリックまたは Canvas へドラッグして配置")) { place(id) }
+            .contextMenu {
+              Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
+              Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) } }.disabled(!session.isEditable)
+            }
         }
       } label: {
         Label("配置されていない定義", systemImage: "tray").font(.callout).foregroundStyle(.secondary)
       }
       .selectionDisabled()
     }
+  }
+
+  private func row(symbol: String, title: String, drag: String, help: String, add: @escaping () -> Void) -> some View {
+    HStack(spacing: 6) {
+      Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 16)
+      Text(title).lineLimit(1)
+      Spacer()
+    }
+    .contentShape(Rectangle())
+    .draggable(drag)
+    .onTapGesture(count: 2) { if session.isEditable { add() } }
+    .help(help + String(localized: "（ダブルクリックまたは Canvas へドラッグ）"))
+    .contextMenu { Button("Canvas に追加") { add() }.disabled(!session.isEditable) }
+    .selectionDisabled()
   }
 
   private var dropPoint: CGPoint {
@@ -110,13 +135,26 @@ struct WorkbenchSidebar: View {
     tab.selection = [session.placeDefinition(id, at: dropPoint)]
   }
 
-  private func create(_ t: DefinitionTemplate) {
-    guard session.isEditable else { return }
-    if !tab.scope.isEmpty { tab.enter([]) }
-    let k = session.addCard(template: t, in: [], at: dropPoint)
-    tab.selection = [k]
-    if t == .draft {
-      openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
+  private func placeCopy(_ prefix: String, _ id: String) async {
+    if let k = await session.placeDefinitionCopy(prefix: prefix, id: id, in: tab.scope, at: dropPoint) { tab.selection = [k] }
+  }
+
+  private func placeExternal(_ prefix: String) async {
+    if let k = await session.placeExternalCopy(from: prefix, in: tab.scope, at: dropPoint) { tab.selection = [k] }
+  }
+
+  /// Chooses a Tsugumi project folder and takes it in as a Card in Card.
+  private func importProject() {
+    let p = NSOpenPanel()
+    p.canChooseDirectories = true
+    p.canChooseFiles = false
+    p.prompt = String(localized: "取り込む")
+    p.message = String(localized: "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。")
+    guard p.runModal() == .OK, let url = p.url else { return }
+    do {
+      tab.selection = [try session.importProject(from: url, in: tab.scope, at: dropPoint)]
+    } catch {
+      importError = (error as? RPCFailure)?.diagnostic ?? "\(error)"
     }
   }
 }
@@ -131,6 +169,10 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
 enum DefinitionDrag {
   static let prefix = "tsugumi-definition:"
   static let templatePrefix = "tsugumi-template:"
+  /// A definition of an external ("<folder>\n<id>"), copied as a new Card.
+  static let externalDefinitionPrefix = "tsugumi-external-definition:"
+  /// An external itself, copied as a new Card in Card.
+  static let externalPrefix = "tsugumi-external:"
   static func id(_ s: String) -> String? { s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : nil }
   static func template(_ s: String) -> DefinitionTemplate? {
     s.hasPrefix(templatePrefix) ? DefinitionTemplate(rawValue: String(s.dropFirst(templatePrefix.count))) : nil
@@ -247,105 +289,4 @@ struct VisibleCardRow: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(session.displayName(cardKey)), \(kind.label), \(state.map { $0.state.label } ?? String(localized: "未実行"))")
   }
-}
-
-/// Copies definitions from another project (through a read-only import grant).
-struct ImportDefinitionsSheet: View {
-  @Environment(\.dismiss) private var dismiss
-  let session: ProjectSession
-  @State private var folder: URL?
-  @State private var available: [(id: String, name: String)] = []
-  @State private var chosen: Set<String> = []
-  @State private var working = false
-  @State private var message: String?
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("他のプロジェクトから定義をコピー").font(.title2.bold())
-      HStack {
-        Text(folder?.path ?? "コピー元のプロジェクトを選んでください").foregroundStyle(folder == nil ? .secondary : .primary)
-          .lineLimit(1).truncationMode(.middle)
-        Spacer()
-        Button("選択…") { choose() }
-      }
-      List(available, id: \.id) { d in
-        Toggle(isOn: Binding(get: { chosen.contains(d.id) }, set: { if $0 { chosen.insert(d.id) } else { chosen.remove(d.id) } })) {
-          VStack(alignment: .leading) {
-            Text(d.name)
-            Text(d.id).font(.caption).foregroundStyle(.secondary)
-          }
-        }
-      }
-      .frame(minHeight: 200)
-      Text("定義とソースをこのプロジェクトにコピーします（以後はこのプロジェクトの定義として編集でき、元とは連動しません）。設定はコピー時点の値を、既定値も含めて具体的な値として保存します。ID が重なる場合は新しい ID を割り当てます。Canvas への配置は別に行います。")
-        .font(.caption).foregroundStyle(.secondary)
-      if session.dirty { Label("コピーの前に未保存の変更を保存してください。", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
-      if let message { Text(message).font(.callout).textSelection(.enabled) }
-      HStack {
-        Spacer()
-        Button("閉じる") { dismiss() }
-        Button("コピー") { run() }
-          .disabled(chosen.isEmpty || working || session.dirty || !session.isEditable)
-          .keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(20)
-    .frame(width: 520, height: 480)
-  }
-
-  private func choose() {
-    let p = NSOpenPanel()
-    p.canChooseDirectories = true
-    p.canChooseFiles = false
-    p.message = "tsugumi.json を含むフォルダを選んでください"
-    guard p.runModal() == .OK, let url = p.url else { return }
-    folder = url
-    available = definitionIds(inProject: url)
-    chosen = Set(available.map(\.id))
-  }
-
-  private func run() {
-    guard let folder else { return }
-    working = true
-    Task {
-      do {
-        let map = try await session.importDefinitions(from: folder, ids: chosen.sorted())
-        let renamed = map.filter { $0.key != $0.value }
-        // Remember where each definition came from (shown in the definition tree).
-        let imported = chosen.map { map[$0] ?? $0 }
-        for _ in 0..<40 where !imported.allSatisfy({ session.definitions[$0] != nil }) {
-          try await Task.sleep(for: .milliseconds(50))
-        }
-        let origin = folder.lastPathComponent
-        session.edit { s in
-          for id in imported {
-            guard let card = s.definitions[id] else { continue }
-            var meta = s.definitionMeta[id] ?? .object([])
-            meta["origin"] = .string(origin)
-            s.setDefinition(id, card: concreteSettings(card), meta: meta)
-          }
-        }
-        await session.save()
-        message = "\(chosen.count) 件をコピーしました。" + (renamed.isEmpty ? "" : " 新しい ID: " + renamed.map { "\($0.key) → \($0.value)" }.joined(separator: ", "))
-      } catch {
-        message = "コピーできませんでした: \(error)"
-      }
-      working = false
-    }
-  }
-}
-
-/// A copied definition carries every setting as a value: what it had, and
-/// the core's default for what it left out (graph.hh: CardSettings).
-func concreteSettings(_ card: JSONValue) -> JSONValue {
-  var c = card
-  let code = c["language"] != nil && c["template"] == nil
-  let defaults: [(String, JSONValue)] = [
-    ("maxRuns", .number("1")), ("recordIO", .bool(false)), ("retainArtifact", .bool(false)),
-    ("filesystem", .bool(false)), ("sandbox", .bool(true)),
-    ("timeoutSeconds", .null),
-  ] + (code ? [("buildTimeoutSeconds", .null), ("trigger", .string("allInputs")), ("reuseWorker", .bool(true)),
-               ("network", .bool(false))] : [])
-  for (k, v) in defaults where c[k] == nil { c[k] = v }
-  return c
 }

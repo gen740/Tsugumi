@@ -180,7 +180,6 @@ struct CardDatabaseView: View {
   @State private var baseCard = ""
   @State private var baseMeta = ""
   @State private var parseError: String?
-  @State private var importing = false
   @State private var message: String?
 
   var body: some View {
@@ -192,8 +191,6 @@ struct CardDatabaseView: View {
             ForEach(DefinitionTemplate.allCases) { t in
               Button(t.label) { selected = path(session.addCard(template: t, in: [], at: CGPoint(x: 40, y: 40))).first }
             }
-            Divider()
-            Button("他のプロジェクトからコピー…") { importing = true }
           } label: { Image(systemName: "plus") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .disabled(!session.isEditable)
@@ -216,7 +213,6 @@ struct CardDatabaseView: View {
       .frame(minWidth: 240, idealWidth: 280)
       detail.frame(minWidth: 420)
     }
-    .sheet(isPresented: $importing) { ImportDefinitionsSheet(session: session) }
     .onChange(of: selected) { load() }
     .onAppear { if selected == nil, let initial, session.definitions[initial] != nil { selected = initial } }
     .navigationTitle("Card の定義")

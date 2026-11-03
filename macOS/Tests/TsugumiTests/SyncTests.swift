@@ -159,4 +159,57 @@ import Testing
     #expect(s.confirmedDefinitions["a"]?["description"]?.string == "mine")
     #expect(s.confirmedDefinitions["a"]?["maxRuns"]?.uint64 == 3)
   }
+
+  /// Another project taken in as a Card in Card is a copy of its own: its
+  /// Cards are edited from inside, and its definitions are copied as new Cards.
+  @Test func importedProjectIsEditedInside() async throws {
+    let dir = try Self.project()
+    let other = try Self.project()
+    try FileManager.default.createDirectory(at: other.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
+    try Data("history".utf8).write(to: other.appendingPathComponent(".tsugumi/runs.sqlite"))
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+
+    let k = try s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
+    await s.save()
+    #expect(s.saveError == nil)
+    let name = path(k).last!
+    let ext = dir.appendingPathComponent("externals/\(name)")
+    #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/a/_card.json").path))
+    #expect(!FileManager.default.fileExists(atPath: ext.appendingPathComponent(".tsugumi").path))
+    #expect(s.kind(k) == .subgraph)
+    for _ in 0..<100 where s.cards(in: [name]).isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.cards(in: [name]).count == 4)
+
+    // Inside: wire and move Cards, add one; the external's own files change.
+    s.connect(from: (key([name, "begin"]), "out"), to: (key([name, "a"]), "in"), in: [name])
+    s.edit { $0.setPosition(key([name, "a"]), CGPoint(x: 123, y: 45)) }
+    let added = s.addCard(template: .logger, in: [name], at: CGPoint(x: 0, y: 200))
+    await s.save()
+    #expect(s.saveError == nil && !s.dirty)
+    let proj = try JSONValue.parse(String(decoding: try Data(contentsOf: ext.appendingPathComponent("tsugumi.json")), as: UTF8.self))
+    #expect(proj["canvas"]?["connections"]?.array?.count == 1)
+    #expect(proj["canvas"]?["cards"]?.array?.contains { $0["id"]?.string == path(added).last } == true)
+    let lay = try JSONValue.parse(String(decoding: try Data(contentsOf: ext.appendingPathComponent("layout.json")), as: UTF8.self))
+    #expect(lay["cards"]?["a"]?["x"]?.double == 123)
+    #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/\(path(added).last!)/_card.json").path))
+    // The core resolves the inner Cards from the edited files.
+    for _ in 0..<100 where s.resolution[added] == nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.resolution[added] != nil)
+
+    // A definition of the external, copied into this project as a new Card.
+    let copy = await s.placeDefinitionCopy(prefix: "externals/\(name)/", id: "c", in: [], at: .zero)
+    await s.save()
+    #expect(copy == "c-2")
+    #expect(s.confirmedDefinitions["c-2"]?["template"]?.string == "logger")
+
+    // Undo of the copy, then of the inner move, one operation each.
+    s.undo()
+    await s.save()
+    #expect(s.confirmedDefinitions["c-2"] == nil && s.instance("c-2") == nil)
+  }
 }

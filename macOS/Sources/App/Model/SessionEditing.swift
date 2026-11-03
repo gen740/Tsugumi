@@ -186,42 +186,169 @@ extension ProjectSession {
   /// Copies a Card's definition folder (settings and every file) into a
   /// scope as a new Card. A Card in Card brings its own copy of the external.
   func copyDefinition(from k: CardKey, to scope: [String], name: String? = nil) async -> (id: String, apply: (ProjectSession) -> Void)? {
-    guard let d = cardDefinitionDraft(k), let dir = definitionDir(k) else { return nil }
-    let newId = uniqueId(name ?? path(k).last ?? "card", in: scope)
+    guard let id = path(k).last, let prefix = projectPrefix(Array(path(k).dropLast())) else { return nil }
+    return await copyDefinition(prefix: prefix, id: id, to: scope, name: name)
+  }
+
+  /// Copies the definition `id` of the project at `prefix` ("" for this one).
+  func copyDefinition(prefix: String, id: String, to scope: [String], name: String? = nil) async
+    -> (id: String, apply: (ProjectSession) -> Void)? {
+    guard let d = prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id] else { return nil }
+    let dir = prefix + "definitions/\(id)/"
+    let newId = uniqueId(name ?? id, in: scope)
     let toPrefix = projectPrefix(scope) ?? ""
     var files: [String: Data] = [:]
     for p in sourcePaths where p.hasPrefix(dir) {
       let rel = String(p.dropFirst(dir.count))
       if ["_card.json", "_link.json", "_meta.json"].contains(rel) { continue }
-      if let t = try? await sourceText(p) { files[toPrefix + "definitions/\(newId)/" + rel] = Data(t.utf8) }
+      if let d = try? await rpcBytes(p) { files[toPrefix + "definitions/\(newId)/" + rel] = d }
     }
     // A Card in Card's external is copied along (a copy of its own).
     var link = d.link
-    var extFiles: [String: Data] = [:]
-    var extDocs: (String, ExternalProject)?
-    if let from = cardExternal(k), let name = link?["external"]?.string, let e = external(from) {
+    var ext: ExternalCopy?
+    if let name = link?["external"]?.string {
       let extName = uniqueId(name, in: scope)
-      let to = toPrefix + "externals/\(extName)/"
-      for p in sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(from.count))) {
-        if let t = try? await sourceText(p) { extFiles[to + p.dropFirst(from.count)] = Data(t.utf8) }
-      }
-      // Externals nested in it come along as files.
-      for (q, inner) in effectiveExternals where q.hasPrefix(from) && q != from {
-        for (rel, text) in inner.files { extFiles[to + q.dropFirst(from.count) + rel] = Data(text.utf8) }
-      }
-      extDocs = (to, e)
+      ext = await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
       link = .object([("external", .string(extName))])
     }
     let draft = DefinitionDraft(card: d.card, meta: d.meta, link: link)
     let newKey = key(scope + [newId])
     return (newId, { s in
       s.setCardDefinition(newKey, draft)
-      for (p, bytes) in files.merging(extFiles, uniquingKeysWith: { a, _ in a }) {
+      for (p, bytes) in files {
         s.sourceRemovals.remove(p)
         s.sourceEdits[p] = bytes
       }
-      if let (to, e) = extDocs { s.createExternal(to, e) }
+      ext?.apply(s)
     })
+  }
+
+  /// An external's documents and files, ready to be written under another folder.
+  struct ExternalCopy {
+    var docs: [String: ExternalProject] = [:]  // folder -> documents (the external and the ones in it)
+    var files: [String: Data] = [:]
+
+    @MainActor func apply(_ s: ProjectSession) {
+      for (p, d) in files {
+        s.sourceRemovals.remove(p)
+        s.sourceEdits[p] = d
+      }
+      for (p, e) in docs.sorted(by: { $0.key < $1.key }) { s.createExternal(p, e) }
+    }
+  }
+
+  /// Copies the external at `from` (with the externals in it) to the folder `to`.
+  func copyExternal(from: String, to: String) async -> ExternalCopy {
+    var c = ExternalCopy()
+    let inside = effectiveExternals.filter { $0.key.hasPrefix(from) }
+    for (p, e) in inside { c.docs[to + p.dropFirst(from.count)] = e }
+    for p in sourcePaths where p.hasPrefix(from) {
+      let rel = String(p.dropFirst(from.count))
+      // Documents come from the parsed externals; every other file is copied.
+      if inside.keys.contains(where: { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }) { continue }
+      if let t = try? await rpcBytes(p) { c.files[to + rel] = t }
+    }
+    return c
+  }
+
+  /// A file's bytes as the draft sees them.
+  func rpcBytes(_ p: String) async throws -> Data {
+    if let d = sourceEdits[p] { return d }
+    guard let rpc else { throw RPCError.disconnected }
+    return try await rpc.readFile(path: p, atRev: rev)
+  }
+
+  /// Places a copy of an external (`from`) in a scope as a new Card in Card.
+  @discardableResult
+  func placeExternalCopy(from: String, in scope: [String], at point: CGPoint) async -> CardKey? {
+    guard external(from) != nil else { return nil }
+    let base = from.split(separator: "/").last.map(String.init) ?? "sub"
+    let name = uniqueId(base, in: scope)
+    let toPrefix = projectPrefix(scope) ?? ""
+    let copy = await copyExternal(from: from, to: toPrefix + "externals/\(name)/")
+    let k = key(scope + [name])
+    edit { s in
+      copy.apply(s)
+      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(name))])))
+      s.appendCard(name, in: scope)
+      s.setPosition(k, point)
+    }
+    return k
+  }
+
+  /// Places a copy of a definition of an external (or of this project) as a new Card.
+  @discardableResult
+  func placeDefinitionCopy(prefix: String, id: String, in scope: [String], at point: CGPoint) async -> CardKey? {
+    guard let c = await copyDefinition(prefix: prefix, id: id, to: scope) else { return nil }
+    let k = key(scope + [c.id])
+    edit { s in
+      c.apply(s)
+      s.appendCard(c.id, in: scope)
+      s.setPosition(k, point)
+    }
+    return k
+  }
+
+  /// Takes in another Tsugumi project as a Card in Card: its folder is
+  /// copied to externals/<name>/ (without .tsugumi, .git and other hidden
+  /// folders) and placed in the scope.
+  @discardableResult
+  func importProject(from folder: URL, in scope: [String], at point: CGPoint) throws -> CardKey {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: folder.appendingPathComponent("tsugumi.json").path) else {
+      throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "tsugumi.json のあるフォルダを選んでください。"))
+    }
+    var files: [String: Data] = [:]
+    var total = 0
+    let root = folder.standardizedFileURL.resolvingSymlinksInPath()
+    let e = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey],
+                          options: [.skipsHiddenFiles])
+    while let u = e?.nextObject() as? URL {
+      let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
+      if v?.isSymbolicLink == true { if v?.isDirectory == true { e?.skipDescendants() }; continue }  // e.g. Nix result links
+      guard v?.isRegularFile == true else { continue }
+      let rel = String(u.standardizedFileURL.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1))
+      guard let d = try? Data(contentsOf: u) else { continue }
+      total += d.count
+      if total > 64 << 20 {
+        throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "プロジェクトが大きすぎます（64 MB まで）。"))
+      }
+      files[rel] = d
+    }
+    func json(_ rel: String) -> JSONValue? { files[rel].flatMap { try? JSONValue.parse(String(decoding: $0, as: UTF8.self)) } }
+    // The project and the externals in it, each with its documents.
+    let projects = files.keys.filter { rel in
+      guard rel.hasSuffix("tsugumi.json") else { return false }
+      let parts = rel.split(separator: "/").dropLast()
+      return parts.count % 2 == 0 && stride(from: 0, to: parts.count, by: 2).allSatisfy { parts[parts.startIndex + $0] == "externals" }
+    }.map { String($0.dropLast("tsugumi.json".count)) }
+    let name = uniqueId(folder.lastPathComponent, in: scope)
+    let to = (projectPrefix(scope) ?? "") + "externals/\(name)/"
+    var docs: [String: ExternalProject] = [:]
+    for p in projects {
+      guard let proj = json(p + "tsugumi.json") else { continue }
+      var ext = ExternalProject(project: proj, layout: json(p + "layout.json") ?? .object([]), definitions: [:])
+      for rel in files.keys where rel.hasPrefix(p + "definitions/") {
+        let rest = rel.dropFirst((p + "definitions/").count).split(separator: "/")
+        guard rest.count == 2 else { continue }
+        let id = String(rest[0]), dir = p + "definitions/\(id)/"
+        if rest[1] == "_link.json", let l = json(rel) { ext.definitions[id] = DefinitionDraft(card: .object([]), meta: json(dir + "_meta.json"), link: l) }
+        if rest[1] == "_card.json", let c = json(rel) { ext.definitions[id] = DefinitionDraft(card: c, meta: json(dir + "_meta.json")) }
+      }
+      docs[to + p] = ext
+    }
+    let k = key(scope + [name])
+    edit { s in
+      for (rel, d) in files where !projects.contains(where: { rel.hasPrefix($0) && ExternalProject.isDocument(String(rel.dropFirst($0.count))) }) {
+        s.sourceRemovals.remove(to + rel)
+        s.sourceEdits[to + rel] = d
+      }
+      for (p, e) in docs.sorted(by: { $0.key < $1.key }) { s.createExternal(p, e) }
+      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(name))])))
+      s.appendCard(name, in: scope)
+      s.setPosition(k, point)
+    }
+    return k
   }
 
   /// Copies Cards with their definition folders (settings, sources) under new
@@ -327,7 +454,7 @@ extension ProjectSession {
     let from = prefix + "definitions/\(old)/", to = prefix + "definitions/\(new)/"
     var files: [String: Data] = [:]
     for p in sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(prefix.count))) {
-      files[to + p.dropFirst(from.count)] = Data(try await sourceText(p).utf8)
+      files[to + p.dropFirst(from.count)] = try await rpcBytes(p)
     }
     edit { s in
       s.updateExternal(prefix) { e in
@@ -488,12 +615,12 @@ extension ProjectSession {
     for k in keys {
       guard let dir = definitionDir(k), let id = path(k).last else { continue }
       for p in sourcePaths where p.hasPrefix(dir) && !ExternalProject.isDocument(String(p.dropFirst(scopePrefix.count))) {
-        if let t = try? await sourceText(p) { files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = Data(t.utf8) }
+        if let d = try? await rpcBytes(p) { files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = d }
       }
       if let inner = cardExternal(k), let e = external(inner), let name = cardDefinitionDraft(k)?.link?["external"]?.string {
         let to = ext + "externals/\(name)/"
         for p in sourcePaths where p.hasPrefix(inner) && !ExternalProject.isDocument(String(p.dropFirst(inner.count))) {
-          if let t = try? await sourceText(p) { files[to + p.dropFirst(inner.count)] = Data(t.utf8) }
+          if let d = try? await rpcBytes(p) { files[to + p.dropFirst(inner.count)] = d }
         }
         moved[to] = e
         moved[inner] = nil
@@ -826,18 +953,6 @@ extension ProjectSession {
     }
   }
 
-  /// Copies definitions from another project folder through an import grant.
-  func importDefinitions(from folder: URL, ids: [String]) async throws -> [String: String] {
-    guard let rpc else { throw RPCError.disconnected }
-    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: "コピーする前に変更を保存してください。") }
-    let grant = try await environments.grantImport(identity, source: folder)
-    let r = try await rpc.importDefinitions(baseRev: rev, opId: UUID(), origin: "ui:\(viewId.uuidString.lowercased())",
-                                            grant: grant, definitions: ids)
-    var map: [String: String] = [:]
-    for m in r.idMap.compactMap({ $0 }) { map[m.from] = m.to }
-    return map
-  }
-
   func clearBuildCache() async throws -> Tsugumi_RPC_CacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.clearCache(opId: UUID())
@@ -846,17 +961,5 @@ extension ProjectSession {
   func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_HistoryDeleteResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.deleteHistory(opId: UUID(), endedBefore: endedBefore)
-  }
-}
-
-/// Definition ids readable from another project folder (for Import).
-func definitionIds(inProject folder: URL) -> [(id: String, name: String)] {
-  let defs = folder.appendingPathComponent("definitions")
-  let ids = (try? FileManager.default.contentsOfDirectory(atPath: defs.path)) ?? []
-  return ids.sorted().compactMap { id in
-    let card = defs.appendingPathComponent("\(id)/_card.json")
-    guard let data = try? Data(contentsOf: card) else { return nil }
-    let name = (try? JSONValue.parse(String(decoding: data, as: UTF8.self)))?["name"]?.string ?? id
-    return (id, name)
   }
 }

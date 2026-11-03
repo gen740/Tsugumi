@@ -212,13 +212,3 @@ import Testing
   #expect(TreeSitterHighlighter.spans("x", language: "txt") == nil)
 }
 
-@Test func copiedDefinitionsCarryConcreteSettings() {
-  let card = try! JSONValue.parse(#"{"language":"python","maxRuns":5}"#)
-  let c = concreteSettings(card)
-  #expect(c["maxRuns"] == .number("5"))  // kept
-  #expect(c["sandbox"] == .bool(true) && c["recordIO"] == .bool(false) && c["trigger"] == .string("allInputs"))
-  #expect(c["reuseWorker"] == .bool(true) && c["network"] == .bool(false))
-  #expect(c["timeoutSeconds"] == .null && c["buildTimeoutSeconds"] == .null)
-  let builtin = concreteSettings(try! JSONValue.parse(#"{"template":"logger"}"#))
-  #expect(builtin["trigger"] == nil && builtin["maxRuns"] == .number("1"))
-}

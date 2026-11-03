@@ -138,6 +138,7 @@ struct GraphCanvas: View {
       .dropDestination(for: String.self) { items, loc in
         guard session.isEditable else { return false }
         var placed: [CardKey] = []
+        var accepted = false
         for (i, item) in items.enumerated() {
           let w = world(loc)
           let at = CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)
@@ -145,10 +146,19 @@ struct GraphCanvas: View {
             placed.append(session.addCard(template: t, in: tab.scope, at: at))
           } else if let id = DefinitionDrag.id(item) {
             placed.append(session.placeDefinition(id, at: at))
+          } else if item.hasPrefix(DefinitionDrag.externalDefinitionPrefix) {
+            let parts = item.dropFirst(DefinitionDrag.externalDefinitionPrefix.count).split(separator: "\n").map(String.init)
+            guard parts.count == 2 else { continue }
+            Task { if let k = await session.placeDefinitionCopy(prefix: parts[0], id: parts[1], in: tab.scope, at: at) { tab.selection = [k] } }
+            accepted = true
+          } else if item.hasPrefix(DefinitionDrag.externalPrefix) {
+            let from = String(item.dropFirst(DefinitionDrag.externalPrefix.count))
+            Task { if let k = await session.placeExternalCopy(from: from, in: tab.scope, at: at) { tab.selection = [k] } }
+            accepted = true
           }
         }
         if !placed.isEmpty { tab.selection = Set(placed) }
-        return !placed.isEmpty
+        return !placed.isEmpty || accepted
       }
       .onAppear {
         size = geo.size
