@@ -173,7 +173,8 @@ final class AppModel {
 
     """
     try Data(project.utf8).write(to: url.appendingPathComponent("tsugumi.json"))
-    try Data("{}\n".utf8).write(to: url.appendingPathComponent("layout.json"))
+    // The direction the new project's Cards are laid out in (the app's default).
+    try Data("{\"flow\": \"\(AppPreferences.shared.flowDirection.rawValue)\"}\n".utf8).write(to: url.appendingPathComponent("layout.json"))
   }
 }
 

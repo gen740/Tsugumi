@@ -99,6 +99,11 @@ void Store::open() {
   doc_ = doc;
 }
 
+DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
+  auto st = stage(changes, "preview", "preview");
+  return finalize(st.doc, &st.ops);
+}
+
 std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending) const {
   doc->execution_fingerprint = execution_fingerprint(*doc);
   auto root = opts_.root;

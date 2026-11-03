@@ -92,18 +92,26 @@ final class EventLog: @unchecked Sendable {
   private var events: [AgentEvent] = []
   func add(_ e: AgentEvent) { lock.lock(); events.append(e); lock.unlock() }
   var all: [AgentEvent] { lock.lock(); defer { lock.unlock() }; return events }
-  var finished: Bool { all.contains { if case .finished = $0 { return true }; if case .error = $0 { return true }; return false } }
+  var finished: Bool {
+    all.contains {
+      switch $0 {
+      case .finished, .error, .stepLimit: return true
+      default: return false
+      }
+    }
+  }
   var text: String { all.compactMap { if case .text(let t) = $0 { return t }; return nil }.joined() }
 }
 
-func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil) throws -> Agent {
+func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil, references: [String: URL] = [:]) throws -> Agent {
   let bfbs = try #require(RPCSchema.bfbs())
   let schema = try BFBS(data: bfbs)
   let catalog = try ToolCatalog(schema: schema)
   var names: [UInt8: String] = [:]
   for v in schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" })!.values { names[UInt8(v.value)] = v.name }
   return Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
-               provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"))
+               provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"),
+               references: references)
 }
 
 func waitFinished(_ log: EventLog, seconds: Double = 60) async {
@@ -160,6 +168,32 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
     #expect(Keychain.load(account: account) == nil)
+    await client.close()
+  }
+
+  /// The step limit is said, with the run the Agent started and did not
+  /// check; "continue" goes on from there and checks it.
+  @Test func stepLimitIsReportedAndContinues() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    await agent.setMaxSteps(3)  // inspect, save, run
+    let log = EventLog()
+    await agent.send("set src.text to \"limited\" and run, then report out", context: []) { log.add($0) }
+    await waitFinished(log)
+    let limit = log.all.compactMap { e -> (Int, String?)? in if case .stepLimit(let n, let r) = e { return (n, r) }; return nil }.first
+    #expect(limit?.0 == 3, "\(log.all)")
+    #expect(limit?.1 != nil, "the started run is named")
+    #expect(!log.all.contains { if case .finished = $0 { return true }; return false })
+    await agent.setMaxSteps(60)
+    let more = EventLog()
+    await agent.continueAfterLimit { more.add($0) }
+    await waitFinished(more)
+    #expect(more.all.contains { if case .finished = $0 { return true }; return false }, "\(more.all)")
+    #expect(more.text.contains("succeeded"))
     await client.close()
   }
 
@@ -275,5 +309,53 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(after.rev == before.rev)
     #expect(after.definitions.compactMap { $0 }.first { $0.id == "plan" }?.cardJson.contains("draft") == true)
     await client.close()
+  }
+}
+
+/// The examples in the Agent's rules are the bundled demos' own files, and
+/// the references it reads are the real ones.
+@Suite struct AgentReferenceTests {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..").standardizedFileURL
+
+  func indented(_ rel: String) throws -> String {
+    let text = try String(contentsOf: root.appendingPathComponent(rel), encoding: .utf8)
+    return text.split(separator: "\n", omittingEmptySubsequences: false).dropLast(text.hasSuffix("\n") ? 1 : 0)
+      .map { $0.isEmpty ? "" : "      " + $0 }.joined(separator: "\n")
+  }
+
+  @Test func promptExamplesAreTheDemoFiles() throws {
+    for rel in ["demos/report/definitions/generate/default.nix", "demos/collatz/externals/collatz-cpp/definitions/halve/default.nix",
+                "demos/report/externals/archive/definitions/copy/default.nix", "demos/report/definitions/generate/_outputs.fbs"] {
+      #expect(Agent.systemPrompt.contains(try indented(rel)), "\(rel) differs from the example in the rules")
+    }
+    // Every demo path the rules and the guide name exists.
+    let guide = try String(contentsOf: root.appendingPathComponent("agent/Reference/card-guide.md"), encoding: .utf8)
+    let named = (Agent.systemPrompt + guide).matches(of: try Regex("demos/[A-Za-z0-9_/.-]+[A-Za-z0-9]")).map { String((Agent.systemPrompt + guide)[$0.range]) }
+    #expect(!named.isEmpty)
+    for n in Set(named) { #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(n).path), "\(n)") }
+  }
+
+  @Test func referenceReadListsAndReadsOnlyTheReferences() async throws {
+    let refs = ["demos": root.appendingPathComponent("demos", isDirectory: true),
+                "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
+                "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]
+    let bfbs = try #require(RPCSchema.bfbs())
+    let agent = Agent(catalog: try ToolCatalog(schema: try BFBS(data: bfbs)), transport: NoTransport(), provider: .localFixture(port: 1),
+                      storage: FileManager.default.temporaryDirectory.appendingPathComponent("ref-\(UUID()).json"), references: refs)
+    #expect(await agent.tools.contains { $0.name == "reference_read" })
+    let (top, e1) = await agent.readReference("")
+    #expect(!e1 && top.contains("demos/") && top.contains("card-guide.md"))
+    let (main, e2) = await agent.readReference("demos/report/definitions/generate/src/main.py")
+    #expect(!e2 && main.contains("ctx.output_directory"))
+    let (sdk, e3) = await agent.readReference("sdk/python/tsugumi/__init__.py")
+    #expect(!e3 && sdk.contains("def display_table"))
+    let (_, e4) = await agent.readReference("demos/../../core/src/store.cc")
+    #expect(e4)
+  }
+}
+
+struct NoTransport: ToolTransport {
+  func call(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset) async throws -> (replyType: String, table: FlatBuffers.Table) {
+    throw CancellationError()
   }
 }

@@ -214,6 +214,9 @@ final class ProjectSession {
   private(set) var redoStack: [UndoEntry] = []
   private(set) var saveError: String?
   private(set) var saving = false
+  /// Cards renamed inside Cards in Card by edits not saved yet: the save
+  /// names them so their run history follows.
+  var pendingCardRenames: [(from: [String], to: [String])] = []
   /// Edits wait for the run to end (the core keeps Card changes back while it runs).
   private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
@@ -367,6 +370,9 @@ final class ProjectSession {
   // MARK: - Connection
 
   func start() {
+    // Shown as starting at once: the loading card, never a "stopped" page
+    // for the moment before the environment reports its state.
+    if case .stopped = environment { environment = .starting("") }
     Task { [weak self] in
       guard let self else { return }
       if observerToken == nil, endpointOverride == nil {
@@ -993,7 +999,10 @@ final class ProjectSession {
     }
     let op = UUID()
     do {
-      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+      let renames = layoutOnly ? [] : pendingCardRenames
+      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes,
+                                         renamed: renames)
+      if !renames.isEmpty { pendingCardRenames.removeFirst(min(renames.count, pendingCardRenames.count)) }
       saveError = nil
       conflictRetries = 0
       if let d = result.delta { applyDeltaFromSave(d) }

@@ -165,6 +165,7 @@ struct StickyNote {
   Opt<"y", Number> y;
   Opt<"width", Number> width;
   Opt<"height", Number> height;
+  Opt<"fontSize", Number> font_size;  // text size of the note (default 13)
 };
 
 struct DisplayPanel {
@@ -198,8 +199,11 @@ struct BoundaryLayout {
 };
 
 struct Layout {
+  // The direction the Cards were laid out in: "topToBottom" or "leftToRight".
+  Opt<"flow", v::String> flow;
   Opt<"cards", v::Mapping<v::String, Obj<Position>>> cards;  // card path key -> position
   Opt<"boundaries", v::Mapping<v::String, Obj<BoundaryLayout>>> boundaries;  // scope path key -> bars
+  Opt<"boundary", Obj<BoundaryLayout>> boundary;  // a Card in Card's own layout: its boundary bars
   Opt<"notes", v::Array<Obj<StickyNote>>> notes;
   Opt<"displays", v::Mapping<v::String, Obj<DisplayPanel>>> displays;  // card path key -> panel
   Opt<"groups", v::Array<Obj<CardGroup>>> groups;

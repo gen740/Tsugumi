@@ -35,7 +35,9 @@ struct BoxedTextField: View {
 
 /// Multi-line text in the shared look: inner margins so no text touches the
 /// border, and a scroll bar only once the text is longer than the field.
-/// While empty it shows `placeholder` in light text (for example a template).
+/// While empty and not being edited it shows `placeholder` in light text (for
+/// example a template); it goes away as soon as the field is edited, so it
+/// never overlaps text being composed with an input method.
 struct TextArea: View {
   @Binding var text: String
   var placeholder = ""
@@ -47,7 +49,7 @@ struct TextArea: View {
     ScrollingText(text: $text, monospaced: monospaced, focused: $focused)
       .frame(minHeight: minHeight)
       .overlay(alignment: .topLeading) {
-        if text.isEmpty && !placeholder.isEmpty {
+        if text.isEmpty && !placeholder.isEmpty && !focused {
           Text(placeholder)
             .font(monospaced ? .body.monospaced() : .body)
             .foregroundStyle(.tertiary)

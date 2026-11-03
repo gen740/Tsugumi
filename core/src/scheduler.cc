@@ -438,7 +438,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Cards consume one port per invocation, so each port has its own latest value.
     auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
     if (!last) return fail(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path) +
-                                                           "; run the whole workflow once first");
+                                                           "; run the workflow from its trigger Card once first (it saves every Card's inputs)");
     for (const auto& port : outside) {
       std::optional<History::LastInput> one;
       if (n.node->settings.any_mode)
@@ -489,7 +489,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
         if (!last) {
           start_failure_ = FailureData::make(FailureKind::input_missing,
-                                             "no saved inputs for " + path_key(n.node->path), {{"card", path_key(n.node->path)}});
+                                             "no saved inputs for " + path_key(n.node->path) +
+                                                 "; run the workflow from its trigger Card once first (it saves every Card's inputs)",
+                                             {{"card", path_key(n.node->path)}});
           n.halted = true;
           n.last = CardState::failed;
           n.last_failure = start_failure_;

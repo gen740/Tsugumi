@@ -702,7 +702,7 @@ void Service::publish_delta(const Delta& delta) {
 }
 
 void Service::check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const {
-  if (!at_rev) throw Failed(FailureKind::invalid_request, "at_rev is required");
+  if (!at_rev) return;  // omitted: the latest revision
   if (*at_rev != doc.rev) {
     FailureData f = FailureData::make(FailureKind::revision_conflict, "the document is at another revision");
     f.current_rev = doc.rev;
@@ -735,9 +735,10 @@ void Service::open_project(RequestIn& req) {
 
 namespace {
 
-std::vector<ChangeIn> decode_changes(const R::ProjectSaveRequest* r) {
+std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offset<R::DocumentChange>>* list) {
   std::vector<ChangeIn> out;
-  for (const auto* c : *r->changes()) {
+  if (!list) return out;
+  for (const auto* c : *list) {
     ChangeIn ch;
     switch (c->value_type()) {
       case R::DocumentChangeValue::SetProject:
@@ -815,7 +816,7 @@ void Service::save(RequestIn& req) {
   if (replay_or_join(req, op_id, "save", digest)) return;
   try {
     require_mutation(r->base_rev(), r->op_id());
-    auto changes = decode_changes(r);
+    auto changes = decode_changes(r->changes());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
@@ -835,8 +836,16 @@ void Service::save(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
-    // Renamed Cards keep their run history and saved inputs.
-    for (const auto& [from, to] : staged.delta.renamed) {
+    // Renamed Cards keep their run history and saved inputs (RenameDefinition,
+    // and renames inside Cards in Card the client names).
+    auto renamed = staged.delta.renamed;
+    if (r->renamed_cards())
+      for (const auto* c : *r->renamed_cards()) {
+        auto from = wire::card_arg(c->from(), "from"), to = wire::card_arg(c->to(), "to");
+        if (staged.doc->resolution->find(to) && !staged.doc->resolution->find(from))
+          renamed.emplace_back(path_key(from), path_key(to));
+      }
+    for (const auto& [from, to] : renamed) {
       try {
         history_->rename_card(runs_copy(), from, to);
         std::error_code ec;
@@ -1074,6 +1083,10 @@ void Service::validate(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectValidateRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
+  if (r->changes() && r->changes()->size() > 0) {
+    // The document as it would be after the changes; nothing is written.
+    doc = store_->preview(decode_changes(r->changes()));
+  }
   auto mode = r->mode();
   if (mode == D::ValidateMode::unspecified) mode = D::ValidateMode::executable;
   else if (mode != D::ValidateMode::structure && mode != D::ValidateMode::executable)
@@ -1136,7 +1149,8 @@ void Service::operation_get(RequestIn& req) {
 
 namespace {
 
-void check_path_arg(const std::string& p, bool allow_root) {
+void check_path_arg(std::string& p, bool allow_root) {
+  if (allow_root && p.empty()) p = ".";  // "" names the project folder too
   if (!fs::valid_relative_path(p, allow_root))
     throw Failed(FailureKind::invalid_path, "invalid path " + p, {{"path", p}});
 }

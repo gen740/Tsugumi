@@ -108,15 +108,8 @@ struct DraftEditor: View {
           field("内容") {
             VStack(alignment: .leading, spacing: 4) {
               TextArea(text: meta(m, "content"), placeholder: Self.template, minHeight: 230)
-              HStack {
-                Text("何を受け取り、何を出し、どう処理するかを自由に書きます。型やコードはまだ要りません。")
-                  .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if (m.meta?["content"]?.string ?? "").isEmpty {
-                  Button("見出しを入れる") { meta(m, "content").wrappedValue = Self.template.replacingOccurrences(of: "- 例: ", with: "- ") }
-                    .buttonStyle(.link).font(.caption)
-                }
-              }
+              Text("何を受け取り、何を出し、どう処理するかを自由に書きます。型やコードはまだ要りません。")
+                .font(.caption).foregroundStyle(.secondary)
             }
           }
           portSection("仮の入力", ports: $inputs, add: "in",
@@ -401,6 +394,12 @@ private struct GeneralProjectSettings: View {
         TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text("tsugumi:default"))
         Text("「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)
+        Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
+          ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
+        }
+        .help("このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
+        Label("変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.orange)
         LabeledContent("場所", value: session.identity.url.path)
       }
       .formStyle(.grouped)

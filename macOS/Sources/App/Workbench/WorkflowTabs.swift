@@ -106,7 +106,6 @@ struct Workbench: View {
         CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .frame(minHeight: 240, maxHeight: .infinity)
       }
-      StatusBar(workspace: workspace, session: session, tab: tab)
     }
     .frame(minWidth: 360)
   }

@@ -21,7 +21,9 @@ import TsugumiRPC
 ///   click <x> <y> [window title]    move <x> <y> [window title]
 ///   drag <x1> <y1> <x2> <y2> [window title]
 ///   save                            key delete|forwarddelete|escape
+///   winsize <w> <h> <window title>
 ///   add <template> <x> <y>          wire <index>   chatsample
+///   chatsend <text>                 waitchat
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -86,6 +88,16 @@ final class UIScript {
           f.size = CGSize(width: width, height: height)
           win.setFrame(f, display: true, animate: false)
         }
+      case "winsize":
+        // winsize <width> <height> <window title>: another window's size
+        let title = w.dropFirst(3).joined(separator: " ")
+        if let win = NSApp.windows.first(where: { $0.isVisible && $0.title.contains(title) }),
+           let width = Double(w[1]), let height = Double(w[2]) {
+          var f = win.frame
+          f.origin.y += f.height - height
+          f.size = CGSize(width: width, height: height)
+          win.setFrame(f, display: true, animate: false)
+        }
       case "select": workspace?.active?.selection = [w[1]]
       case "arrange": if let s = session, let t = workspace?.active { s.arrange(t.scope) }
       case "open":
@@ -145,6 +157,16 @@ final class UIScript {
           `compare` Card の出力 `sequence` を `record` が CSV に書きます。
           """)
         }
+      case "chatsend":
+        // chatsend <text>: sends to the configured model (real provider)
+        if let s = session { AppModel.shared.chat(for: s).send(w.dropFirst().joined(separator: " ")) }
+      case "waitchat":
+        try? await Task.sleep(for: .seconds(1))
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          for _ in 0..<3000 where chat.busy { try? await Task.sleep(for: .milliseconds(200)) }
+        }
+        say("chat done")
       case "focus":
         // Gives the canvas the keyboard focus (as a click on it does).
         if let win = mainWindow { win.makeFirstResponder(win.contentView) }

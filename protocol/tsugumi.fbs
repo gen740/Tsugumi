@@ -247,11 +247,19 @@ table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 table ProjectInspectRequest {}
 
 /// -> SaveResult. One project transaction.
+/// A Card renamed by this save's changes (inside a Card in Card, where the
+/// rename is an edit of the external's files): its run history follows.
+table CardRename {
+  from:Tsugumi.Data.CardPath (id: 0, required);
+  to:Tsugumi.Data.CardPath (id: 1, required);
+}
+
 table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
   changes:[DocumentChange] (id: 3, required);
+  renamed_cards:[CardRename] (id: 4);
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.
@@ -262,10 +270,16 @@ table ProjectReloadRequest {
 }
 
 /// -> ValidationResult. targets = [] means everything; mode = executable.
+/// With `changes` (the same as project_save's), the document as it would be
+/// after them is checked and nothing is saved: try definitions, _outputs.fbs
+/// and default.nix text here instead of saving trial versions.
 table ProjectValidateRequest {
+  /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 0);
   targets:[Tsugumi.Data.CardPath] (id: 1);
   mode:Tsugumi.Data.ValidateMode (id: 2);
+  /// Proposed changes (as in project_save): checked, never saved.
+  changes:[DocumentChange] (id: 3);
 }
 
 /// -> ImportResult. definitions = [] imports every definition of the grant.
@@ -293,7 +307,9 @@ table OperationGetRequest { op_id:string (id: 0, required); }
 
 /// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
 table ProjectFileListRequest {
+  /// Relative to the project; "" or "." is the project folder.
   path:string (id: 0, required);
+  /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 1);
   depth:uint32 = null (id: 2);
   include_directories:bool = null (id: 3);
@@ -310,6 +326,7 @@ table ProjectFileStatRequest {
 /// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
 table ProjectFileReadRequest {
   path:string (id: 0, required);
+  /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 1);
   if_hash:string (id: 2);
   offset:uint64 = null (id: 3);

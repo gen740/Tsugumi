@@ -32,6 +32,7 @@ struct WorkbenchSidebar: View {
               .disabled(!session.isEditable)
               .help("他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）")
               .accessibilityLabel("プロジェクトを取り込む")
+              .padding(.trailing, 10)
           }
         }
         Section("表示中の Card") {

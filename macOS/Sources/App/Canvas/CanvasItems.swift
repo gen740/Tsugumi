@@ -122,11 +122,10 @@ struct StickyNoteView: View {
   static func fontSize(_ note: JSONValue) -> CGFloat { CGFloat(note["fontSize"]?.double ?? 13) }
 
   var body: some View {
-    ScrollView {
-      MarkdownView(text: note["text"]?.string ?? "", fontSize: Self.fontSize(note) * z)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .scrollIndicators(.hidden)
+    // Cut at the note's size (no scroll bar on the canvas; resize to see more).
+    MarkdownView(text: note["text"]?.string ?? "", fontSize: Self.fontSize(note) * z)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .clipped()
     .padding(10 * z)
     .background(noteColor(note["color"]?.string).opacity(0.28), in: RoundedRectangle(cornerRadius: 6 * z))
     .overlay(RoundedRectangle(cornerRadius: 6 * z).strokeBorder(noteColor(note["color"]?.string).opacity(0.5)))
@@ -179,9 +178,7 @@ struct OutputFrameView: View {
           .buttonStyle(.borderless).help("枠を削除（Card は残ります）")
       }
       .foregroundStyle(.secondary)
-      // On the canvas the wheel pans the canvas: no scroll bars over results.
       DisplayContent(display: session.displays[cardKey], zoom: z)
-        .scrollIndicators(.hidden)
     }
     .padding(8 * z)
     .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
@@ -199,15 +196,25 @@ struct DisplayContent: View {
 
   private func size(_ small: CGFloat, _ big: CGFloat) -> CGFloat { (large ? big : small) * zoom }
 
+  /// Scrolls in the large viewer; on the canvas (where the wheel moves the
+  /// canvas) the content is cut at the frame, with no scroll bar.
+  @ViewBuilder private func scrolling(axes: Axis.Set = .vertical, @ViewBuilder _ content: () -> some View) -> some View {
+    if large {
+      ScrollView(axes) { content() }
+    } else {
+      content().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
+    }
+  }
+
   var body: some View {
     switch display?.value {
     case .text(let t)?:
-      ScrollView(.vertical, showsIndicators: large) {
+      scrolling {
         Text(t).font(.system(size: size(11, 13), design: .monospaced)).textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
     case .markdown(let t)?:
-      ScrollView(.vertical, showsIndicators: large) {
+      scrolling {
         MarkdownView(text: t, fontSize: size(12, 14)).frame(maxWidth: .infinity, alignment: .leading)
       }
     case .scalar(let v, let label)?:
@@ -228,7 +235,7 @@ struct DisplayContent: View {
         }
       }
     case .table(let columns, let rows)?:
-      ScrollView([.horizontal, .vertical], showsIndicators: large) {
+      scrolling(axes: [.horizontal, .vertical]) {
         Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
           GridRow {
             ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
@@ -394,10 +401,9 @@ struct ModuleDisplayView: View {
         }
       } else {
         Text("モジュール \(name)").font(.system(size: 10 * zoom, weight: .bold)).foregroundStyle(.secondary)
-        ScrollView {
-          Text(value?.serialized() ?? json).font(.system(size: (large ? 12 : 10) * zoom, design: .monospaced)).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
+        let text = Text(value?.serialized() ?? json).font(.system(size: (large ? 12 : 10) * zoom, design: .monospaced))
+          .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        if large { ScrollView { text } } else { text.frame(maxHeight: .infinity, alignment: .top).clipped() }
       }
     }
   }

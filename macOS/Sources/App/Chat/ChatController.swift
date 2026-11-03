@@ -103,6 +103,8 @@ final class ChatController {
 
   let session: ProjectSession
   private(set) var items: [Item] = []
+  /// The last turn stopped at the step limit and can go on.
+  private(set) var stoppedAtLimit = false
 
   /// Shows a sample exchange without calling a model (UI script `chatsample`).
   func showSample(question: String, answer: String) {
@@ -145,6 +147,22 @@ final class ChatController {
   @ObservationIgnored private let dir: URL
 
   var provider: ProviderConfig { AgentSettings.current() }
+
+  /// The references the Agent may read (reference_read): the bundled demos,
+  /// the Python SDK and the Card guide; next to the repository in a
+  /// development build.
+  static let references: [String: URL] = {
+    let fm = FileManager.default
+    if let res = Bundle.main.resourceURL, fm.fileExists(atPath: res.appendingPathComponent("reference/card-guide.md").path) {
+      return ["demos": res.appendingPathComponent("demos", isDirectory: true),
+              "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
+              "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]
+    }
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
+    return ["demos": repo.appendingPathComponent("demos", isDirectory: true),
+            "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
+            "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]
+  }()
 
   init(session: ProjectSession) {
     self.session = session
@@ -190,6 +208,7 @@ final class ChatController {
 
   private func firstText(_ c: Conversation) -> String? {
     for m in c.fullHistory where m.role == "user" {
+      if let d = m.display { return String(d.prefix(60)) }
       for b in m.content { if case .text(let t) = b { return String(t.prefix(60)) } }
     }
     return nil
@@ -203,7 +222,7 @@ final class ChatController {
     status = nil
     currentId = id
     let agent = Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
-                      provider: provider, storage: url(id))
+                      provider: provider, storage: url(id), references: Self.references)
     self.agent = agent
     items = []
     Task {
@@ -219,6 +238,10 @@ final class ChatController {
     var out: [Item] = []
     for (i, m) in conv.fullHistory.enumerated() {
       let archived = i < conv.archive.count
+      if let d = m.display {
+        out.append(Item(role: m.role, text: d, archived: archived))
+        continue
+      }
       for b in m.content {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
@@ -335,6 +358,17 @@ final class ChatController {
     }
   }
 
+  /// Sends a request the app wrote for the model; the chat shows `display`.
+  private func sendRequest(display: String, prompt: String) {
+    guard let agent else { return }
+    items.append(Item(role: "user", text: display))
+    begin()
+    Task {
+      await agent.setProvider(provider)
+      await agent.send(prompt: prompt, title: display, display: display) { e in Task { @MainActor in self.handle(e) } }
+    }
+  }
+
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
     let list = cards.map { k -> String in
@@ -344,10 +378,16 @@ final class ChatController {
       return "- \(k) (definition \(def)): \(meta?["description"]?.string ?? "")\n  content: \(meta?["content"]?.string ?? "")"
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? "the root workflow" : "the child workflow \(scope.joined(separator: "/"))"
-    send("""
-    Implement these Draft Cards in \(where_). For each one, turn its definition into a working Card (language, \
-    default.nix, sources and _outputs.fbs) that matches its description, content, provisional ports and the existing \
-    connections, keeping the instance ids and wiring. Save with project_save, then validate and report what you changed.
+    let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
+    sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"), prompt: """
+    Implement these Draft Cards in \(where_), matching each one's description, content, provisional ports and the \
+    existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in \
+    the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, \
+    default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write \
+    something, and check planned changes with project_validate {"changes": [...]} instead of saving trials.
+    Work one Card at a time, upstream first: save it, project_validate, run the workflow from its trigger Card, and \
+    confirm the Card's result with run_record before going on to the next. At the end, report what each Card does \
+    and what the run produced.
     \(list)
     """)
   }
@@ -356,6 +396,17 @@ final class ChatController {
     Task { await agent?.cancel() }
     busy = false
     status = "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。"
+  }
+
+  /// Goes on after the step limit stopped the Agent.
+  func continueWork() {
+    guard let agent else { return }
+    items.append(Item(role: "user", text: String(localized: "（止まったところから続けます）")))
+    begin()
+    Task {
+      await agent.setProvider(provider)
+      await agent.continueAfterLimit { e in Task { @MainActor in self.handle(e) } }
+    }
   }
 
   func retry() {
@@ -380,6 +431,7 @@ final class ChatController {
   private func begin() {
     busy = true
     failed = false
+    stoppedAtLimit = false
     status = nil
   }
 
@@ -410,6 +462,12 @@ final class ChatController {
       refreshAfterTurn()
     case .finished:
       busy = false
+      refreshAfterTurn()
+    case .stepLimit(let steps, let run):
+      busy = false
+      stoppedAtLimit = true
+      status = String(localized: "\(steps) 手の上限で中断しました。「続ける」で続きから再開できます。")
+        + (run.map { String(localized: " 実行 \(String($0.prefix(8))) の結果はまだ確かめていません。") } ?? "")
       refreshAfterTurn()
     }
   }

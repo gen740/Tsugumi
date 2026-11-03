@@ -245,3 +245,46 @@ def test_attached_folder_is_read_only_inside_it(tmp_path):
             assert err.value.kind in ("invalid_path", "permission_denied"), bad
     finally:
         d.cleanup()
+
+
+def test_rename_inside_a_card_in_card_keeps_the_history(tmp_path):
+    """Inside a Card in Card a rename is an edit of the external's files; the
+    save names it (renamed_cards) and the run history follows."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    external(root, "greeting", "hello")
+    put(root / "definitions" / "greet" / "_link.json", json.dumps({"external": "greeting"}))
+    project = json.loads((root / "tsugumi.json").read_text())
+    project["canvas"]["cards"].append({"id": "greet"})
+    put(root / "tsugumi.json", json.dumps(project))
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        run_id, st = run_and_wait(c, "greet")
+        assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+        assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
+        snap = c.call("ProjectInspectRequest")
+        hashes = {text(s.path): text(s.hash) for s in snap.sources}
+        ext = "externals/greeting/"
+        doc = json.loads((root / ext / "tsugumi.json").read_text())
+        doc["canvas"]["cards"] = [{"id": "talk" if x["id"] == "say" else x["id"]} for x in doc["canvas"]["cards"]]
+        for e in doc["canvas"]["connections"]:
+            for side in ("from", "to"):
+                if e[side]["card"] == "say":
+                    e[side]["card"] = "talk"
+        changes = [change("PutSource", path=ext + "tsugumi.json", bytes=list(json.dumps(doc).encode()), baseHash=hashes[ext + "tsugumi.json"])]
+        for f in ("_card.json", "_outputs.fbs"):
+            old = ext + "definitions/say/" + f
+            changes.append(change("PutSource", path=ext + "definitions/talk/" + f, bytes=list((root / old).read_bytes())))
+            changes.append(change("RemoveSource", path=old, baseHash=hashes[old]))
+        from Tsugumi.RPC.CardRename import CardRenameT
+        r = CardRenameT()
+        r.from_ = path("greet", "say")
+        r.to = path("greet", "talk")
+        c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=changes, renamedCards=[r])
+        assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "talk")).records
+        with pytest.raises(RpcFailure):
+            c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say"))
+    finally:
+        d.cleanup()

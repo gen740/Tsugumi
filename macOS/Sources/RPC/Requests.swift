@@ -20,12 +20,19 @@ public extension RPCClient {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
 
-  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> Tsugumi_RPC_SaveResultT {
+  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT],
+            renamed: [(from: [String], to: [String])] = []) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectSaveRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
     r.changes = changes
+    r.renamedCards = renamed.map { x in
+      let c = Tsugumi_RPC_CardRenameT()
+      c.from = cardPath(x.from)
+      c.to = cardPath(x.to)
+      return c
+    }
     return try await call(.projectsaverequest, r)
   }
 

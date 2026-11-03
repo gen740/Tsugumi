@@ -56,9 +56,13 @@ public enum ContentBlock: Codable, Equatable {
 public struct ChatMessage: Codable, Equatable {
   public var role: String  // "user" | "assistant"
   public var content: [ContentBlock]
-  public init(role: String, content: [ContentBlock]) {
+  /// What the chat shows for a request the app wrote for the model (the
+  /// model gets `content`; this is never sent).
+  public var display: String?
+  public init(role: String, content: [ContentBlock], display: String? = nil) {
     self.role = role
     self.content = content
+    self.display = display
   }
 }
 

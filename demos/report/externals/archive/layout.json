@@ -1,4 +1,5 @@
 {
+  "flow": "topToBottom",
   "cards": {
     "copy": {
       "x": 0.0,

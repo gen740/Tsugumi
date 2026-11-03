@@ -27,6 +27,10 @@ cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
+# What the in-app Agent may read as references (reference_read).
+mkdir -p "$app/Contents/Resources/reference"
+cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
+cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"

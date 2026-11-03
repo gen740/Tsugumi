@@ -478,6 +478,8 @@ extension ProjectSession {
         s.sourceEdits[p] = d
       }
     }
+    // The run history of the Card (and of anything inside it) follows the name.
+    pendingCardRenames.append((from: scope + [old], to: scope + [new]))
     await save()
   }
 
@@ -860,7 +862,7 @@ extension ProjectSession {
     for id in ids { _ = level(id, []) }
     var layers: [Int: [String]] = [:]
     for id in ids { layers[depth[id] ?? 0, default: []].append(id) }
-    let vertical = AppPreferences.shared.flowDirection == .topToBottom
+    let vertical = flow == .topToBottom
     edit { s in
       for (level, members) in layers {
         for (i, id) in members.enumerated() {

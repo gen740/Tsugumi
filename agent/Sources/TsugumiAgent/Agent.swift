@@ -73,6 +73,9 @@ public enum AgentEvent: Sendable {
   case retrying(String)
   case error(String)
   case finished
+  /// The turn used its steps (model replies with tool calls) without
+  /// finishing; `unconfirmedRun` is a run it started and never saw end.
+  case stepLimit(steps: Int, unconfirmedRun: String?)
 }
 
 /// The Agent loop: streaming model turns, tool argument validation, real RPC
@@ -85,13 +88,32 @@ public actor Agent {
   public private(set) var conversation: Conversation
   private var provider: MessagesProvider
   private var turn: Task<Void, Never>?
+  /// Model replies with tool calls in one turn before it stops and asks to
+  /// continue (Draft generation takes many: write, check, save, run, read).
+  public var maxSteps = 60
+  /// Bundled references for reference_read: a top-level name ("demos",
+  /// "sdk/python/tsugumi/__init__.py", "card-guide.md") -> where it is.
+  private let references: [String: URL]
+  /// A run started by a tool call whose end was not seen yet.
+  private var unconfirmedRun: String?
 
+  /// The rules and working examples the model gets. The default.nix and
+  /// _outputs.fbs examples are the bundled demos' own files (a test keeps
+  /// them equal), so they never drift from what works.
   public static let systemPrompt = """
   You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
-  - Call project_inspect first; use its rev as base_rev/at_rev. Revisions change after every save.
+  - Call project_inspect first. Reads (project_file_list, project_file_read, project_validate, run_plan) use the latest
+    revision when at_rev is omitted; saves need base_rev = the rev you inspected. Revisions change after every save.
+    The project folder itself is the path "" (or ".").
   - project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
     SetProject replaces the whole document, so start from the project_json you inspected and change only what is needed.
-  - Never save edits the user did not ask for. If a save returns revision_conflict, inspect again and re-apply.
+  - Never save edits the user did not ask for, and never save trial content (probes, placeholders, guesses) into the
+    user's project. Check a planned change with project_validate {"changes": [<the same changes as project_save>]}:
+    it resolves the project as it would be after them (types, ports, settings, _outputs.fbs) and saves nothing. Save
+    only what you mean to keep. If a save returns revision_conflict, inspect again and re-apply.
+  - When unsure how something is written, read the bundled references with reference_read (path "" lists them):
+    demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++ and
+    Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
   - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
     definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
     "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, network, hostFolders, ...). Change a
@@ -102,34 +124,102 @@ public actor Agent {
     own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
     project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
     under externals/<name>/ (base_hash of the file you read).
-  - Run with {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}; then poll run_status with the run_id until
-    succeeded/failed/cancelled and read results with run_record. Cancelling runs requires an explicit run_cancel.
   - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
     "card_json": "<_card.json>", "meta_json": "<_meta.json>"}}, {"value_type": "PutSource", "value": {"path":
     "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
     One save is one transaction: either everything is stored or nothing is.
-  - Implementing Drafts: a Draft (template "draft") states its purpose in _meta.json (description: a summary;
-    content: what it takes, what it gives and how it works, in the user's words; inputs/outputs with descriptions). Turn it into code Cards: set "language" (python, cpp or
-    bash) and remove "template" in _card.json, write _outputs.fbs (one table per output port, root table Outputs),
-    default.nix (let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in { run = inputs.tsugumi.pythonCard
-    { inherit sdk; src = ./src; }; }, the same with "cpp" and cppCard; for bash, run is the script text: inputs are
-    $JSON_<PORT> files (jq is available) and $FILE_<PORT> / $DIR_<PORT> paths, outputs are {"port": {...}} JSON
-    written to $TSUGUMI_OUTPUT) and the sources. Optional preRun / postRun are bash without the Card inputs. C++
-    sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per port
-    (input.<port>, Output's ports are std::optional); visualization is
-    tsugumi::visualization::text/scalar/line_chart/table/image/points/module. The worker stays across runs, so
-    reset static state in `auto onRunStart() -> void` (Python: on_run_start(ctx)). Input types come from the
-    connected outputs; never write _inputs.fbs.
-    Keep the Card ids and wiring; you may split one Draft into several Cards (each with its own definition; rewire
-    them in SetProject).
-    Keep the intent and the port descriptions in _meta.json. Then project_validate, fix what it reports, run the
-    workflow and check the result. If something fails, report it; never leave a half-written save.
+  - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
+    Card alone (propagate false) only works on the inputs saved by an earlier whole run. Poll run_status with the
+    run_id until succeeded/failed/cancelled; read what each Card produced with run_record and its stderr with
+    log_range (stream 2). Cancelling runs requires an explicit run_cancel.
+  - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
+    content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
+    Card ids, the wiring and the intent in _meta.json. Decide for each Draft what it becomes:
+    * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
+      _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
+      relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the
+      trigger), and _outputs.fbs with a File port (one table whose only field is value:string):
+          attribute "tsugumi";
+          namespace data;
+          table EventsFile { value:string; }
+          table Outputs { events:EventsFile (required, tsugumi: "file"); }
+          root_type Outputs;
+      When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
+      the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
+      branch, merge, logger (card-guide.md).
+    * Otherwise a code Card: set "language" ("python", "cpp" or "bash") and remove "template" in _card.json, write
+      _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
+      default.nix is a function of { pkgs, inputs, params }. Python (demos/report/definitions/generate/default.nix):
+        { pkgs, inputs, params }:
+        let
+          sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+        in
+        {
+          run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
+        }
+      Python packages from nixpkgs go in the same call: inputs.tsugumi.pythonCard { inherit sdk; src = ./src;
+      packages = ps: [ ps.numpy ps.astropy ps.pillow ]; }. C++ (demos/collatz/externals/collatz-cpp/definitions/
+      halve/default.nix; libraries: cppCard { ...; buildInputs = [ pkgs.cfitsio ]; }):
+        { pkgs, inputs, params }:
+        let
+          sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+        in
+        {
+          run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+        }
+      bash (demos/report/externals/archive/definitions/copy/default.nix): run is the script text; inputs are
+      $JSON_<PORT> files (jq is available) and $FILE_<PORT> / $DIR_<PORT> paths; outputs are {"port": {...}} JSON
+      written to $TSUGUMI_OUTPUT; files go to $TSUGUMI_OUTPUT_DIR:
+        { pkgs, inputs, params }:
+        {
+          # A bash Card: $DIR_REPORT is the input directory and the output port
+          # values are written as JSON to $TSUGUMI_OUTPUT.
+          run = ''
+            dest="$TSUGUMI_OUTPUT_DIR/archive"
+            mkdir -p "$dest"
+            cp -R "$DIR_REPORT/." "$dest/"
+            date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/ARCHIVED_AT"
+            echo "archived $(ls "$dest" | wc -l) files"
+            printf '{"archive": {"value": "%s"}}' "$dest" > "$TSUGUMI_OUTPUT"
+          '';
+        }
+    * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
+      "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
+      "filesystem": true in _card.json and write under ctx.output_directory. demos/report/definitions/generate:
+        attribute "tsugumi";
+        namespace report;
+        table CsvFile { value:string; }
+        table Outputs { csv:CsvFile (required, tsugumi: "file"); }
+        root_type Outputs;
+    * Python: src/main.py defines main(ctx). Input classes are generated from the types of the connected outputs,
+      output classes from _outputs.fbs, params from _card.json:
+          from inputs.events.data.EventsFile import EventsFile    # inputs.<port>.<namespace>.<Table>
+          import outputs.images.bands.ImagesDir as images_out      # outputs.<port>.<namespace>.<Table>
+          path = ctx.input("events", EventsFile).Value().decode()  # a File input is a path
+          low = ctx.params().Low()                                 # param "low" ({"name": "low", "type": "double", "data": 600})
+          out_dir = ctx.output_directory                           # with "filesystem": true
+          b = ctx.builder(); p = b.CreateString(out_dir)
+          images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
+          ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
+      raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
+    * C++: sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per
+      port (input.<port>, Output's ports are std::optional); visualization is
+      tsugumi::visualization::text/markdown/scalar/line_chart/table/image/points/module.
+    * The worker stays across runs, so reset static state in `auto onRunStart() -> void` (Python:
+      on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs. Optional preRun /
+      postRun are bash without the Card inputs.
+    Work one Draft at a time, upstream first: write it, check it with project_validate {"changes": [...]}, save,
+    run from the trigger, check its run_record (and log_range when it failed), then go on to the next. You may split
+    one Draft into several Cards (each with its own definition; rewire them in SetProject). If something fails,
+    report it; never leave a half-written save.
   - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
     "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
   - 64 bit integers are decimal strings. Explain results briefly in the user's language.
   """
 
-  public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL) {
+  public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
+              references: [String: URL] = [:]) {
+    self.references = references
     self.catalog = catalog
     self.codec = FlatJSON(schema: catalog.schema)
     self.transport = transport
@@ -139,6 +229,7 @@ public actor Agent {
   }
 
   public func setProvider(_ config: ProviderConfig) { provider = MessagesProvider(config: config) }
+  public func setMaxSteps(_ n: Int) { maxSteps = max(1, n) }
   public func models() async throws -> [String] { try await provider.models() }
 
   public func reset() {
@@ -162,10 +253,10 @@ public actor Agent {
   }
 
   /// Sends a prepared prompt (references and skills already attached).
-  public func send(prompt: String, title: String, events: @escaping @Sendable (AgentEvent) -> Void) {
+  public func send(prompt: String, title: String, display: String? = nil, events: @escaping @Sendable (AgentEvent) -> Void) {
     turn?.cancel()
     if conversation.title == nil { conversation.title = String(title.prefix(60)) }
-    conversation.messages.append(ChatMessage(role: "user", content: [.text(prompt)]))
+    conversation.messages.append(ChatMessage(role: "user", content: [.text(prompt)], display: display))
     conversation.updatedAt = Date()
     try? conversation.save(storage)
     turn = Task { await self.loop(events) }
@@ -185,6 +276,18 @@ public actor Agent {
     }
     guard let lastText else { return }
     conversation.messages.append(lastText)
+    conversation.updatedAt = Date()
+    try? conversation.save(storage)
+    turn = Task { await self.loop(events) }
+  }
+
+  /// Goes on after the step limit stopped a turn.
+  public func continueAfterLimit(events: @escaping @Sendable (AgentEvent) -> Void) {
+    turn?.cancel()
+    var note = "Continue from where you stopped (the step limit ended the previous turn). Check the current state first"
+    if let run = unconfirmedRun { note += " and the outcome of run \(run) (run_status), which was started and never checked" }
+    note += ", then finish the remaining work."
+    conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: "（止まったところから続けます）"))
     conversation.updatedAt = Date()
     try? conversation.save(storage)
     turn = Task { await self.loop(events) }
@@ -214,7 +317,8 @@ public actor Agent {
   private func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
     do {
       try await reconcilePending(events)
-      for _ in 0..<24 {
+      var done = false
+      for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
         let (blocks, stop) = try await modelTurn(events)
@@ -224,7 +328,10 @@ public actor Agent {
           if case .toolUse(let id, let name, let input) = b { return (id, name, input) }
           return nil
         }
-        if uses.isEmpty || stop != "tool_use" { break }
+        if uses.isEmpty || stop != "tool_use" {
+          done = true
+          break
+        }
         var results: [ContentBlock] = []
         for (id, name, input) in uses {
           try Task.checkCancellation()
@@ -233,7 +340,8 @@ public actor Agent {
         conversation.messages.append(ChatMessage(role: "user", content: results))
         try? conversation.save(storage)
       }
-      events(.finished)
+      // Never a silent stop: the limit is its own outcome, and it can go on.
+      events(done ? .finished : .stepLimit(steps: maxSteps, unconfirmedRun: unconfirmedRun))
     } catch where error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
       // Tools that were not sent are recorded as skipped; nothing is re-sent later.
       for i in conversation.tools.indices where conversation.tools[i].state == .pending {
@@ -256,7 +364,7 @@ public actor Agent {
       var order: [Int] = []
       var stopReason = "end_turn"
       do {
-        for try await e in try provider.stream(system: Self.systemPrompt, messages: wireMessages(), tools: catalog.tools) {
+        for try await e in try provider.stream(system: Self.systemPrompt, messages: wireMessages(), tools: self.tools) {
           switch e {
           case .text(let t):
             text += t
@@ -299,11 +407,54 @@ public actor Agent {
     return [ChatMessage(role: "user", content: [.text("Summary of the earlier conversation:\n\(s)")])] + conversation.messages
   }
 
+  /// The RPC tools and the Agent's own (reference_read, when references exist).
+  public var tools: [ToolSpec] { references.isEmpty ? catalog.tools : catalog.tools + [Self.referenceTool] }
+
+  static let referenceTool = ToolSpec(
+    name: "reference_read", requestName: "", payloadType: 0, object: -1,
+    description: "Reads Tsugumi's bundled references (read only): demos/ (working example projects), "
+      + "sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A folder lists its entries.",
+    inputSchema: ["type": "object", "additionalProperties": false, "required": ["path"],
+                  "properties": ["path": ["type": "string", "description": "e.g. \"\" for the list, \"demos/report/definitions/generate/src/main.py\""]]],
+    mutating: false)
+
+  /// Reads a bundled reference file or lists a folder.
+  public func readReference(_ raw: String) -> (String, Bool) {
+    let rel = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).replacingOccurrences(of: "./", with: "")
+    if rel.isEmpty || rel == "." {
+      return (references.keys.sorted().map { references[$0]!.hasDirectoryPath ? $0 + "/" : $0 }.joined(separator: "\n"), false)
+    }
+    guard !rel.split(separator: "/").contains(".."),
+          let (top, base) = references.first(where: { rel == $0.key || rel.hasPrefix($0.key + "/") }) else {
+      return ("not found: \(rel) (reference_read \"\" lists what there is)", true)
+    }
+    let rest = rel == top ? "" : String(rel.dropFirst(top.count + 1))
+    let url = rest.isEmpty ? base : base.appendingPathComponent(rest)
+    // Never outside the reference (symbolic links included).
+    guard url.resolvingSymlinksInPath().path.hasPrefix(base.resolvingSymlinksInPath().path) else { return ("not found: \(rel)", true) }
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return ("not found: \(rel)", true) }
+    if isDir.boolValue {
+      let names = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+      return (names.filter { !$0.lastPathComponent.hasPrefix(".") }.map { u in
+        ((try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) ? u.lastPathComponent + "/" : u.lastPathComponent
+      }.sorted().joined(separator: "\n"), false)
+    }
+    guard let data = try? Data(contentsOf: url) else { return ("cannot read \(rel)", true) }
+    if data.count > 200_000 { return (String(decoding: data.prefix(200_000), as: UTF8.self) + "\n[cut at 200000 bytes]", false) }
+    return (String(decoding: data, as: UTF8.self), false)
+  }
+
   /// Validates arguments, executes the RPC and records the result.
   private func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async -> ContentBlock {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
+    if name == Self.referenceTool.name, !references.isEmpty {
+      let path = (try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any])?["path"] as? String ?? ""
+      let (text, isError) = readReference(path)
+      return finish(&record, text, isError: isError, events)
+    }
     guard let spec = catalog.tool(named: name) else {
       return finish(&record, "unknown tool \(name)", isError: true, events)
     }
@@ -333,6 +484,7 @@ public actor Agent {
         try codec.build(spec.object, full, into: &b)
       }
       let json = renderReply(replyType, table)
+      noteRun(tool: name, reply: replyType, json: json)
       return finish(&record, json, isError: replyType == "Failure", events)
     } catch {
       // Unknown outcome: keep the record as sent so a resume asks OperationGet.
@@ -341,6 +493,17 @@ public actor Agent {
                       isError: true, events, keepSent: true)
       }
       return finish(&record, "\(error)", isError: true, events)
+    }
+  }
+
+  /// Remembers a run the model started until it sees the run end.
+  private func noteRun(tool: String, reply: String, json: String) {
+    if tool == "run", reply != "Failure",
+       let r = json.range(of: #""run_id":"([0-9a-f-]+)""#, options: .regularExpression) {
+      unconfirmedRun = String(json[r]).components(separatedBy: "\"").dropLast().last
+    } else if let run = unconfirmedRun, json.contains(run),
+              ["\"succeeded\"", "\"failed\"", "\"cancelled\""].contains(where: json.contains) {
+      unconfirmedRun = nil
     }
   }
 

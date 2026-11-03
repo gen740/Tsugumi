@@ -5,7 +5,11 @@ import TsugumiRPC
 /// Builds the canvas data of Cards from a project session (and, for previews
 /// in Card settings, from unapplied working copies).
 extension ProjectSession {
-  var flow: FlowDirection { AppPreferences.shared.flowDirection }
+  /// The direction this project's Cards are laid out in (layout.json
+  /// "flow"; projects without it follow the app's default).
+  var flow: FlowDirection { FlowDirection(rawValue: layout["flow"]?.string ?? "") ?? AppPreferences.shared.flowDirection }
+
+  func setFlow(_ f: FlowDirection) { edit { $0.layout["flow"] = .string(f.rawValue) } }
 
   /// Ports for drawing: resolved ports when available, else declared inputs.
   func ports(_ k: CardKey) -> (inputs: [String], outputs: [String]) {

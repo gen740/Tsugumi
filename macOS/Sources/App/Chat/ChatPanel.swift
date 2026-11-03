@@ -137,6 +137,7 @@ struct ChatPanel: View {
           Text(s).font(.caption).foregroundStyle(chat.failed ? .red : .secondary).lineLimit(3).textSelection(.enabled)
           Spacer()
           if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
+          if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
       }

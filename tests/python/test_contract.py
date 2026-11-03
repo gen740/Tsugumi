@@ -650,3 +650,14 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert json.loads(text(meta.metaJson))["context"] == "why"
     v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
     assert "draft" in [text(d.code) for d in v.diagnostics]
+
+
+def test_layout_keeps_flow_note_size_and_boundary_bars(client):
+    """layout.json: the direction the Cards were laid out in, a note's text
+    size and (in a Card in Card's own layout) its boundary bars."""
+    snap = client.call("ProjectInspectRequest")
+    layout = {"flow": "leftToRight", "boundary": {"inputs": {"x": 1, "y": 2}},
+              "notes": [{"id": "n", "scope": "", "text": "$x$", "x": 0, "y": 0, "fontSize": 20}]}
+    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+                      changes=[change("SetLayout", json=json.dumps(layout))])
+    assert json.loads(text(res.delta.layoutJson))["notes"][0]["fontSize"] == 20

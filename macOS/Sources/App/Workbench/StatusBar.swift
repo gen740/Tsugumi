@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// Bottom bar: run state and save/sync state shown separately, counts, and
-/// the toggle for the log/timeline panel.
+/// Floating bar at the canvas's bottom right: run state and save/sync state
+/// shown separately, counts, and the toggles of the log/timeline panels.
 struct StatusBar: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -26,9 +26,9 @@ struct StatusBar: View {
       }
     }
     .font(.callout)
-    .padding(.horizontal, 10).padding(.vertical, 5)
-    .background(.bar)
-    .overlay(alignment: .top) { Divider() }
+    .padding(.horizontal, 12).padding(.vertical, 5)
+    .background(.regularMaterial, in: Capsule())
+    .fixedSize(horizontal: false, vertical: true)
     .confirmationDialog("保存できない変更を破棄して、保存済みの内容に戻しますか？", isPresented: $confirmDiscard) {
       Button("変更を破棄", role: .destructive) { session.discardDraft() }
       Button("キャンセル", role: .cancel) {}

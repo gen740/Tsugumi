@@ -44,7 +44,17 @@ struct CanvasWorkspace: View {
       .padding(.top, 11)
       .ignoresSafeArea(.container, edges: .top)
     }
-    .overlay(alignment: .bottomLeading) { viewControls.padding(10) }
+    // Zoom and layout controls, and the run and save state with counts and
+    // the panels: floating like the controls at the top, in one row so they
+    // never overlap (the state takes a shorter form when room is short).
+    .overlay(alignment: .bottom) {
+      HStack(alignment: .bottom, spacing: 8) {
+        viewControls.fixedSize()
+        Spacer(minLength: 0)
+        StatusBar(workspace: workspace, session: session, tab: tab)
+      }
+      .padding(10)
+    }
   }
 
   /// Open another project, chat: beside the run control, the same look.
@@ -132,8 +142,8 @@ struct CanvasWorkspace: View {
         .help("グリッド")
     }
     .buttonStyle(.borderless)
-    .padding(.horizontal, 8).padding(.vertical, 5)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    .padding(.horizontal, 10).padding(.vertical, 5)
+    .background(.regularMaterial, in: Capsule())
   }
 
   private func setZoom(_ z: Double) {

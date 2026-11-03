@@ -208,11 +208,10 @@ private struct AppearanceSettings: View {
         Picker("テーマ", selection: $prefs.theme) {
           ForEach(AppPreferences.Theme.allCases) { Text($0.label).tag($0) }
         }
-        Picker("流れの向き", selection: $prefs.flowDirection) {
+        Picker("新しいプロジェクトの流れの向き", selection: $prefs.flowDirection) {
           ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
         }
-        Label("変えると、Card の配置が崩れることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
-          .font(.caption).foregroundStyle(.orange)
+        .help("新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「一般」で変えます。")
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
