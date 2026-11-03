@@ -23,19 +23,19 @@
         let
           core = pkgs.callPackage ./nix/core.nix { inherit self cardNixpkgs hosq; };
           kernel = pkgs.callPackage ./macOS/Container/kernel.nix { };
-          vm-base = pkgs.callPackage ./macOS/Container/vm-base.nix { inherit kernel; };
-          vm-layer = pkgs.callPackage ./macOS/Container/vm-layer.nix { tsugumid = core; base = vm-base; };
+          vm-boot = pkgs.callPackage ./macOS/Container/vm-boot.nix { inherit kernel; };
         in {
           default = core;
           tsugumid = core;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          inherit kernel vm-base vm-layer;
-          # The whole shared VM: the base (published prebuilt) and the layer.
+          inherit kernel vm-boot;
+          # Tsugumi in the shared VM: built inside the VM at boot from this source.
+          vm-system = pkgs.callPackage ./macOS/Container/vm-system.nix { tsugumid = core; };
+          # What the app bundles: the boot disk (kernel and a small rootfs with Nix).
           vm = pkgs.runCommand "tsugumi-vm" { } ''
             mkdir -p $out
-            ln -s ${vm-base}/vmlinux ${vm-base}/rootfs.erofs ${vm-layer}/tsugumi.erofs $out/
-            echo ${baseNameOf vm-base} > $out/base-version
-            echo ${baseNameOf vm-layer} > $out/layer-version
+            ln -s ${vm-boot}/vmlinux ${vm-boot}/rootfs.erofs $out/
+            echo ${baseNameOf vm-boot} > $out/vm-version
           '';
         });
 

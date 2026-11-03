@@ -19,7 +19,7 @@ Agent を使う場合は、設定の「API」で利用するモデルのプロ�
 以下は、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
 依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
 
-前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM イメージをビルドするときのみ Apple container 0.6.0（`container system start` 済み）を使用します。
+前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM の起動ディスクをビルドするとき（公開版がないとき）のみ Apple container 0.6.0（`container system start` 済み）を使用します。
 
 ```bash
 nix develop
@@ -29,7 +29,7 @@ nix develop
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
-共通 VM のイメージ生成（`dist/tsugumi-vm/` に出力）。カーネルと nixpkgs だけのベースは [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) の公開版をダウンロードし、Tsugumi のレイヤー（tsugumid など、数 MB）だけをコンテナ内の Nix でビルドします（別途の Linux ホストやリモートビルダーは不要）。ベースを変えたときは `macOS/tools/publish-vm.sh` で公開します：
+共通 VM の起動ディスク（カーネルと Nix の入った小さな rootfs、`dist/tsugumi-vm/` に出力）。[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) に公開版があればダウンロードし、なければコンテナ内の Nix でビルドします（別途の Linux ホストやリモートビルダーは不要）。変わるのは nixpkgs の固定か `macOS/Container/vm-boot.nix` を変えたときだけで、変えたら `macOS/tools/publish-vm.sh` で公開します。Tsugumi 自身（tsugumid など）は VM が初回起動時に、共有されたソースから VM の中の Nix でビルドします（`macOS/Container/vm-system.nix`。ソースが変わったときだけ作り直す）：
 
 ```bash
 macOS/Container/build-image.sh --vm
@@ -43,7 +43,7 @@ Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得
 ui/renderer/build.sh
 ```
 
-アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・初回用 VM イメージを同梱し、ローカル実行用の ad-hoc 署名を付与）：
+アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、ローカル実行用の ad-hoc 署名を付与）：
 
 ```bash
 macOS/build-app.sh

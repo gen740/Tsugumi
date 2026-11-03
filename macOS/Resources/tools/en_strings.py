@@ -6,6 +6,7 @@ macOS/Resources/en.lproj/Localizable.strings; build-app.sh bundles it.
 import os
 
 EN = {
+"VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）": "Building Tsugumi inside the VM (first start and after an update only; a minute or two)",
 'Tsugumi の実行環境のイメージが見つかりません。': 'The Tsugumi environment image is not available.',
 '別の Tsugumi の処理がこの実行環境を起動または停止しています。': 'Another Tsugumi process is starting or stopping this environment.',
 'このプロジェクトの tsugumid が起動中に終了しました': 'tsugumid exited during startup',

@@ -2,32 +2,46 @@ import Darwin
 import Foundation
 import Virtualization
 
-/// Kernel and root file system of the shared VM's base
-/// (macOS/Container/vm-base.nix) and Tsugumi's layer on top of it
-/// (vm-layer.nix): from the app bundle, or dist/tsugumi-vm when run from the
-/// source tree.
+/// The shared VM's boot disk (macOS/Container/vm-boot.nix: kernel and a
+/// small root file system with Nix) and Tsugumi's source, from which the VM
+/// builds Tsugumi itself on its first boot (vm-system.nix). From the app
+/// bundle, or dist/tsugumi-vm and the repository when run from the source tree.
 public struct VMImage: Sendable, Equatable {
-  static let files = ["vmlinux", "rootfs.erofs", "tsugumi.erofs"]
+  static let files = ["vmlinux", "rootfs.erofs"]
   public let kernel: URL
   public let rootfs: URL
-  public let layer: URL
+  /// The source folder; `sourceEntries` lists what of it the VM gets (all of
+  /// it when nil, as in the bundle, which holds only those).
+  public let source: URL
+  public let sourceEntries: [String]?
   public let version: String
 
-  public init?(directory: URL) {
+  public init?(directory: URL, source: URL, sourceEntries: [String]? = nil) {
     let urls = Self.files.map { directory.appendingPathComponent($0) }
-    guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
+    guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }),
+          FileManager.default.fileExists(atPath: source.appendingPathComponent("flake.nix").path) else { return nil }
     kernel = urls[0]
     rootfs = urls[1]
-    layer = urls[2]
+    self.source = source
+    self.sourceEntries = sourceEntries
     version = (try? String(contentsOf: directory.appendingPathComponent("vm-version"), encoding: .utf8))?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
   }
 
   public static func find(bundle: Bundle = .main) -> VMImage? {
-    if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil), let image = VMImage(directory: dir) { return image }
-    var dir = URL(fileURLWithPath: #filePath)
-    for _ in 0..<4 { dir.deleteLastPathComponent() }
-    return VMImage(directory: dir.appendingPathComponent("dist/tsugumi-vm"))
+    if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil),
+       let source = bundle.url(forResource: "tsugumi-source", withExtension: nil),
+       let image = VMImage(directory: dir, source: source) { return image }
+    var repo = URL(fileURLWithPath: #filePath)
+    for _ in 0..<4 { repo.deleteLastPathComponent() }
+    return VMImage(directory: repo.appendingPathComponent("dist/tsugumi-vm"), source: repo,
+                   sourceEntries: sourceList(repo.appendingPathComponent("macOS/Container/vm-source.txt")))
+  }
+
+  /// macOS/Container/vm-source.txt: one path per line, `#` comments.
+  static func sourceList(_ url: URL) -> [String]? {
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    return text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
   }
 }
 
@@ -142,7 +156,7 @@ public final class ConsoleLog: @unchecked Sendable {
 public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   /// Steps of starting the VM; the guest reports the later ones on the console.
   public enum Stage: String, Sendable, CaseIterable {
-    case image, disk, boot, store, nix, network, supervisor, ready
+    case image, disk, boot, store, nix, network, system, supervisor, ready
   }
 
   public enum State: Sendable, Equatable {
@@ -268,12 +282,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       hostLock = nil
       throw error
     }
-    // A guest that never reports in (kernel or console trouble) fails the start.
+    // A guest that never reports in (kernel or console trouble) fails the
+    // start. Once it does, it reports its own failures: building Tsugumi on
+    // the first boot takes as long as the downloads take.
     let watchdog = Task { [weak self] in
       try await Task.sleep(for: .seconds(240))
-      guard let self, case .starting = self.state else { return }
-      self.console.note("no ready report from the guest within 240 s")
-      self.setState(.failed("the VM did not report ready within 240 s"))
+      guard let self, case .starting(let stage) = self.state, [.image, .disk, .boot].contains(stage) else { return }
+      self.console.note("no report from the guest within 240 s")
+      self.setState(.failed("the VM did not report within 240 s"))
     }
     defer { watchdog.cancel() }
     try await waitReady()
@@ -300,26 +316,46 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   }
 
   /// The bundled files, copied (APFS clone) next to the store so an app
-  /// update never pulls them away from a running VM.
+  /// update never pulls them away from a running VM. The source is copied
+  /// on every start (it is small); the VM rebuilds Tsugumi only when its
+  /// content changed.
   private func installImage(_ image: VMImage) throws -> VMImage {
     let dest = directory.appendingPathComponent("image", isDirectory: true)
+    let fm = FileManager.default
     let stamp = dest.appendingPathComponent("vm-version")
-    if let have = try? String(contentsOf: stamp, encoding: .utf8), have == image.version,
-       let installed = VMImage(directory: dest), image.version != "dev" {
-      return installed
-    }
-    console.note("installing the VM image \(image.version)")
-    try? FileManager.default.removeItem(at: dest)
-    try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-    for (src, name) in zip([image.kernel, image.rootfs, image.layer], VMImage.files) {
-      let to = dest.appendingPathComponent(name)
-      if copyfile(src.path, to.path, nil, copyfile_flags_t(COPYFILE_CLONE)) != 0 {
-        throw LauncherError.startFailed(reason: "cannot copy \(name) into \(dest.path)", log: String(cString: strerror(errno)))
+    let have = try? String(contentsOf: stamp, encoding: .utf8)
+    if have != image.version || image.version == "dev" || Self.files(in: dest) == nil {
+      console.note("installing the VM image \(image.version)")
+      try? fm.removeItem(at: dest)
+      try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+      for (src, name) in zip([image.kernel, image.rootfs], VMImage.files) {
+        try copy(src, dest.appendingPathComponent(name), name)
       }
+      try image.version.write(to: stamp, atomically: true, encoding: .utf8)
     }
-    try image.version.write(to: stamp, atomically: true, encoding: .utf8)
-    guard let installed = VMImage(directory: dest) else { throw LauncherError.imageMissing }
+    let source = directory.appendingPathComponent("source", isDirectory: true)
+    try? fm.removeItem(at: source)
+    try fm.createDirectory(at: source, withIntermediateDirectories: true)
+    let entries = try image.sourceEntries ?? fm.contentsOfDirectory(atPath: image.source.path)
+    for entry in entries {
+      let to = source.appendingPathComponent(entry)
+      try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try copy(image.source.appendingPathComponent(entry), to, entry)
+    }
+    guard let installed = VMImage(directory: dest, source: source) else { throw LauncherError.imageMissing }
     return installed
+  }
+
+  private static func files(in dir: URL) -> [URL]? {
+    let urls = VMImage.files.map { dir.appendingPathComponent($0) }
+    return urls.allSatisfy { FileManager.default.fileExists(atPath: $0.path) } ? urls : nil
+  }
+
+  /// A file or folder (cloned where APFS can).
+  private func copy(_ from: URL, _ to: URL, _ name: String) throws {
+    do { try FileManager.default.copyItem(at: from, to: to) } catch {
+      throw LauncherError.startFailed(reason: "cannot copy \(name) into \(to.deletingLastPathComponent().path)", log: "\(error)")
+    }
   }
 
   /// A disk: a sparse file, formatted by the guest on first boot.
@@ -346,21 +382,22 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     c.memorySize = max(VZVirtualMachineConfiguration.minimumAllowedMemorySize,
                        min(UInt64(resources.memoryGiB) << 30, VZVirtualMachineConfiguration.maximumAllowedMemorySize))
     let root = try VZDiskImageStorageDeviceAttachment(url: files.rootfs, readOnly: true)
-    let layer = try VZDiskImageStorageDeviceAttachment(url: files.layer, readOnly: true)
     let store = try VZDiskImageStorageDeviceAttachment(url: storeImage, readOnly: false,
                                                        cachingMode: .automatic, synchronizationMode: .full)
     let history = try VZDiskImageStorageDeviceAttachment(url: historyImage, readOnly: false,
                                                          cachingMode: .automatic, synchronizationMode: .fsync)
-    c.storageDevices = [root, store, history, layer].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
+    c.storageDevices = [root, store, history].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
     let net = VZVirtioNetworkDeviceConfiguration()
     net.attachment = VZNATNetworkDeviceAttachment()
     c.networkDevices = [net]
     lock.withLock { slots.removeAll() }
+    let source = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-source")
+    source.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: files.source, readOnly: true))
     c.directorySharingDevices = (0..<Self.slotCount).map { i in
       let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-\(i)")
       fs.share = VZMultipleDirectoryShare(directories: [:])
       return fs
-    }
+    } + [source]
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]

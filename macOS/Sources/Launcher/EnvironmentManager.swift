@@ -11,6 +11,7 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
   case vmStore = "mounting the Nix store disk"
   case vmNix = "starting the Nix daemon"
   case vmNetwork = "configuring the network"
+  case vmSystem = "building Tsugumi in the VM"
   case vmSupervisor = "starting the supervisor"
   case startingDaemon = "starting tsugumid"
   case connecting = "waiting for tsugumid to become ready"
@@ -23,6 +24,7 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
     case .store: self = .vmStore
     case .nix: self = .vmNix
     case .network: self = .vmNetwork
+    case .system: self = .vmSystem
     case .supervisor, .ready: self = .vmSupervisor
     }
   }

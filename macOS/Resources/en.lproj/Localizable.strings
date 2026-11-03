@@ -36,6 +36,7 @@
 "Skill を検索" = "Search Skills";
 "Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
+"VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）" = "Building Tsugumi inside the VM (first start and after an update only; a minute or two)";
 "Workflow の実行を停止（チャットの回答停止とは別の操作です）" = "Stop the workflow run (separate from stopping a chat answer)";
 "Workflow の相談・生成・編集を依頼できます。" = "Ask for advice, generation or edits of the workflow.";
 "Workflow 階層" = "Workflow Hierarchy";

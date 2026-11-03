@@ -1,0 +1,12 @@
+# What the shared VM builds Tsugumi from (vm-boot.nix's /init, vm-system.nix):
+# copied into the app (build-app.sh) and shared with the VM read-only.
+flake.nix
+flake.lock
+CMakeLists.txt
+cmake
+core
+sdk
+protocol
+nix
+tests/cpp
+macOS/Container/vm-system.nix

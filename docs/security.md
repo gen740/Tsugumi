@@ -40,7 +40,7 @@
 
 | デバイス | 内容 | 書込 |
 | --- | --- | --- |
-| rootfs | アプリ同梱の erofs イメージ：ベース（Linux カーネル 6.12.28、`macOS/Container/vm-base.nix`）と Tsugumi のレイヤー（`macOS/Container/vm-layer.nix`） | 読み取り専用 |
+| rootfs | アプリ同梱の erofs イメージ（Linux カーネル 6.12.28 と Nix、`macOS/Container/vm-boot.nix`）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（`macOS/Container/vm-system.nix`、依存は署名を検証して cache.nixos.org から取得） | 読み取り専用（ソースの共有も読み取り専用） |
 | store ディスク | `~/Library/Application Support/Tsugumi/vm/store.img`（全プロジェクト共通の Nix store） | 可 |
 | 実行履歴ディスク | `~/Library/Application Support/Tsugumi/vm/history.img`（全プロジェクトの実行履歴、プロジェクトごとにディレクトリ分離） | 可 |
 | virtiofs（スロットごと） | 開いているプロジェクトのフォルダ（`project`）と、その control フォルダ（`control`） | 可 |
@@ -120,7 +120,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 ## 5. Nix 評価の制限
 
-Card の `default.nix` には任意の Nix 式を書けますが、評価時には以下の制限を強制しています（`core/src/nix_eval.cc`、`macOS/Container/vm-base.nix`）。
+Card の `default.nix` には任意の Nix 式を書けますが、評価時には以下の制限を強制しています（`core/src/nix_eval.cc`、`macOS/Container/vm-boot.nix`）。
 
 - `restrictEval = true`：許可されたパス（Card のソース・SDK・参照が許可された上流定義）以外のファイルを読み取れません。
 - `enableImportFromDerivation = false`：Nix 式の評価中にビルドやコマンド実行を走らせる（IFD）ことを禁止しています。

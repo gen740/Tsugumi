@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the Dawn renderer, the bundled
-# demos and the shared VM (kernel, base and Tsugumi layer: macOS/Container/vm-base.nix, vm-layer.nix).
+# demos, the shared VM's boot disk (macOS/Container/vm-boot.nix) and the source
+# the VM builds Tsugumi from on its first boot (macOS/Container/vm-source.txt).
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
@@ -13,7 +14,7 @@ renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 
 [ -f "$renderer" ] || "$repo/ui/renderer/build.sh"
 vm="$dist/tsugumi-vm"
-[ -f "$vm/rootfs.erofs" ] && [ -f "$vm/tsugumi.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
+[ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
@@ -36,6 +37,14 @@ python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
 # The shared VM: copied to the support folder on first start (APFS clone).
 cp -R "$vm" "$app/Contents/Resources/tsugumi-vm"
+# Tsugumi's source: the VM builds Tsugumi from it (vm-system.nix).
+src="$app/Contents/Resources/tsugumi-source"
+mkdir -p "$src"
+grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
+  [ -n "$entry" ] || continue
+  mkdir -p "$src/$(dirname "$entry")"
+  cp -R "$repo/$entry" "$src/$entry"
+done
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
