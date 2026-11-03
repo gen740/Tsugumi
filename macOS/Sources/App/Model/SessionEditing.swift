@@ -58,6 +58,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
   var baseName: String {
     switch self {
     case .python, .cpp: return "card"
+    case .trigger: return "start"
     default: return rawValue
     }
   }

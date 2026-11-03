@@ -75,7 +75,7 @@ def trigger_of(inspect_value):
     for d in inspect_value.get("definitions", []):
         if d.get("card_json") and json.loads(d["card_json"]).get("template") == "trigger":
             return d["id"]
-    return "begin"
+    return "start"
 
 
 DRAFTS = re.compile(r"Implement these Draft Cards", re.I)

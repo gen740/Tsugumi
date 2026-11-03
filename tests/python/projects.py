@@ -49,9 +49,9 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
         "pkgsPath": "tsugumi:default",
         "databaseConnections": [],
         "canvas": {
-            "cards": [card("begin", "trigger"), card("src", "source", params={"text": text}),
+            "cards": [card("start", "trigger"), card("src", "source", params={"text": text}),
                       card("out", "log"), *extra_cards],
-            "connections": [conn("begin", "out", "out", "in"), *extra_conns],
+            "connections": [conn("start", "out", "out", "in"), *extra_conns],
         },
     }
     # The input card is a start Card (no inputs); the logger reads its message.

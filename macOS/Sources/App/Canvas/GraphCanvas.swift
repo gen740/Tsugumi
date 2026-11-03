@@ -447,7 +447,9 @@ struct GraphCanvas: View {
                         onInputDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, false) } },
                         onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: pt) },
                         onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
-                        onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) })
+                        onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
+                        onRun: data.kind == .trigger && session.connected && !session.runActive
+                          ? { RunActions.run(session, card: k, propagate: true) } : nil)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }

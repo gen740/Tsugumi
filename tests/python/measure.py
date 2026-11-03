@@ -88,7 +88,7 @@ def main() -> None:
         t_open = time.time() - t_open0
         image_root = du(env, "/nix/store")  # lower (image) + upper (persistent) union
         t1 = time.time()
-        rid = run(c, ["begin"])
+        rid = run(c, ["start"])
         st = wait_run(c, rid, timeout=3600)
         first_run = time.time() - t1
         store_after = du(env, "/persist/nix/upper")
@@ -101,7 +101,7 @@ def main() -> None:
         c.open()
         cached_start = time.time() - t2
         t3 = time.time()
-        rid2 = run(c, ["begin"])
+        rid2 = run(c, ["start"])
         wait_run(c, rid2, timeout=3600)
         cached_run = time.time() - t3
         results[demo] = {
@@ -129,7 +129,7 @@ def live_metrics(env: ContainerEnv, c) -> dict:
     # RPC responsiveness while the stream runs (proxy for UI input latency).
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
-    rid = run(c, ["begin"])
+    rid = run(c, ["start"])
     lat = []
     other = connect(env)
     for _ in range(100):
@@ -148,7 +148,7 @@ def live_metrics(env: ContainerEnv, c) -> dict:
     rss0, store0 = rss_kib(env), du(env, "/persist/nix/upper")
     hist0 = history_bytes(env.project)
     for _ in range(10):
-        wait_run(c, run(c, ["begin"]), timeout=600)
+        wait_run(c, run(c, ["start"]), timeout=600)
     time.sleep(1)
     out["ten_runs"] = {
         "rss_kib_before": rss0, "rss_kib_after": rss_kib(env),

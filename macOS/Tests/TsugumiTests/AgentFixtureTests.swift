@@ -35,13 +35,13 @@ struct AgentHarness {
   }
 
   mutating func start(fixtureArgs: [String] = []) throws {
-    try write("definitions/begin/_card.json", #"{"template":"trigger"}"#)
+    try write("definitions/start/_card.json", #"{"template":"trigger"}"#)
     try write("definitions/src/_card.json", #"{"template":"input","params":[{"name":"text","type":"string","data":"x"}]}"#)
     try write("definitions/src/_outputs.fbs", "namespace demo;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n")
     try write("definitions/out/_card.json", #"{"template":"logger"}"#)
     try write("tsugumi.json", """
     {"name":"agent test","pkgsPath":"tsugumi:default","databaseConnections":[],
-     "canvas":{"cards":[{"id":"begin"},{"id":"src"},{"id":"out"}],
+     "canvas":{"cards":[{"id":"start"},{"id":"src"},{"id":"out"}],
                "connections":[{"from":{"card":"src","port":"msg"},"to":{"card":"out","port":"in"}}]}}
     """)
     try write("layout.json", "{}")

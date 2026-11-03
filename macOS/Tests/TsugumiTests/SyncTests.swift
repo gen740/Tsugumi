@@ -56,7 +56,7 @@ import Testing
   static func project() throws -> URL {
     let p = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sync-\(UUID().uuidString.prefix(8))")
     let fm = FileManager.default
-    let cards = ["begin": "trigger", "a": "logger", "b": "logger", "c": "logger"]
+    let cards = ["start": "trigger", "a": "logger", "b": "logger", "c": "logger"]
     for (id, t) in cards {
       let d = p.appendingPathComponent("definitions/\(id)")
       try fm.createDirectory(at: d, withIntermediateDirectories: true)
@@ -75,7 +75,7 @@ import Testing
       let snap = try await c.inspect()
       var proj = try JSONValue.parse(snap.projectJson)
       var conns = proj["canvas"]?["connections"]?.array ?? []
-      conns.append(.object([("from", .object([("card", .string("begin")), ("port", .string("out"))])),
+      conns.append(.object([("from", .object([("card", .string("start")), ("port", .string("out"))])),
                             ("to", .object([("card", .string(card)), ("port", .string("in"))]))]))
       proj["canvas"]?["connections"] = .array(conns)
       do {
@@ -186,7 +186,7 @@ import Testing
     #expect(s.cards(in: [name]).count == 4)
 
     // Inside: wire and move Cards, add one; the external's own files change.
-    s.connect(from: (key([name, "begin"]), "out"), to: (key([name, "a"]), "in"), in: [name])
+    s.connect(from: (key([name, "start"]), "out"), to: (key([name, "a"]), "in"), in: [name])
     s.edit { $0.setPosition(key([name, "a"]), CGPoint(x: 123, y: 45)) }
     let added = s.addCard(template: .logger, in: [name], at: CGPoint(x: 0, y: 200))
     await s.save()

@@ -234,10 +234,11 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge
+  case card, branch, fork, merge, start
 
   init(_ kind: CardKind) {
     switch kind {
+    case .trigger: self = .start
     case .branch: self = .branch
     case .fork: self = .fork
     case .merge: self = .merge
@@ -293,6 +294,8 @@ struct CardGeometry {
     case .branch: return CGSize(width: 60, height: 48)
     case .fork: return CGSize(width: max(56, CGFloat(outputs.count) * 30 + 12), height: 40)
     case .merge: return CGSize(width: max(56, CGFloat(inputs.count) * 30 + 12), height: 40)
+    // The start Card: its name and a run button, nothing more.
+    case .start: return CGSize(width: 116, height: 34)
     case .card: return .zero
     }
   }
@@ -308,6 +311,7 @@ struct CardGeometry {
   var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
   var size: CGSize {
+    if shape == .start { return routingSize }
     if shape != .card {
       let r = routingSize
       return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
@@ -323,7 +327,7 @@ struct CardGeometry {
   /// The outline's frame inside the Card's box.
   var outlineRect: CGRect {
     let s = size
-    guard shape != .card else { return CGRect(origin: .zero, size: s) }
+    guard shape != .card, shape != .start else { return CGRect(origin: .zero, size: s) }
     if flow == .topToBottom { return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut) }
     return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
@@ -333,6 +337,8 @@ struct CardGeometry {
     switch shape {
     case .card:
       return Path(roundedRect: r, cornerRadius: 9)
+    case .start:
+      return Path(roundedRect: r, cornerRadius: r.height / 2)
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
                              CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6)
@@ -365,7 +371,7 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch:
+    case .card, .branch, .start:
       let s = shape == .card ? CGSize(width: Self.width, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .fork, .merge:
@@ -394,6 +400,7 @@ struct CardGeometry {
     let list = input ? inputs : outputs
     guard !list.isEmpty else { return false }
     if shape == .card && collapsed { return false }
+    if shape == .start { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
     if shape == .fork || shape == .merge { return false }
     if shape == .branch { return true }
@@ -406,6 +413,10 @@ struct CardGeometry {
     let i = CGFloat(index)
     let n = CGFloat(max(list.count, 1))
     let r = outlineRect
+    if shape == .start {
+      // Its one output, in the middle of the downstream edge.
+      return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
+    }
     if shape == .branch {
       // value / condition on the two upper edges, a / b on the two lower edges.
       let first = index == 0
@@ -529,6 +540,8 @@ struct CardNodeView: View {
   var onInputDrop: ((String, CGPoint) -> Void)?
   var onStageTap: ((Stage) -> Void)?
   var onToggleCollapse: (() -> Void)?
+  /// The start Card's button: runs the workflow from it (nil: not offered).
+  var onRun: (() -> Void)?
 
   private var z: CGFloat { CGFloat(zoom) }
   private func s(_ v: CGFloat) -> CGFloat { v * z }
@@ -545,7 +558,7 @@ struct CardNodeView: View {
     ZStack(alignment: .topLeading) {
       path.fill(fillColor)
         .shadow(color: .black.opacity(selected ? 0.2 : 0.07), radius: selected ? 4 : 1.5, y: 1)
-      if g.shape == .card { cardBody(g) } else { routingBody(g, outline: outline) }
+      if g.shape == .card { cardBody(g) } else if g.shape == .start { startBody(outline: outline) } else { routingBody(g, outline: outline) }
       path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
       portLabels(g)
       portMarks(g)
@@ -659,6 +672,27 @@ struct CardNodeView: View {
       Text(data.idleText).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  // MARK: Start Card
+
+  /// Its name and a small run button; the run's state beside the name.
+  private func startBody(outline: CGRect) -> some View {
+    HStack(spacing: s(6)) {
+      Button { onRun?() } label: {
+        Image(systemName: "play.fill").font(font(9, .bold)).foregroundStyle(.white)
+          .frame(width: s(20), height: s(20))
+          .background(Circle().fill(onRun == nil ? Color.secondary : Color.accentColor))
+      }
+      .buttonStyle(.plain)
+      .disabled(onRun == nil)
+      .help(String(localized: "ここから Workflow を実行"))
+      Text(data.title).font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
+      Spacer(minLength: 0)
+      if let st = data.state, st != .notStarted { Image(systemName: st.symbol).font(font(10)).foregroundStyle(st.color) }
+    }
+    .padding(.horizontal, s(7))
+    .frame(width: outline.width, height: outline.height)
   }
 
   // MARK: Routing Card (branch, fork, merge)

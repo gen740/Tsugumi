@@ -20,11 +20,11 @@ FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; 
 def make(root: Path) -> None:
     put(root / "tsugumi.json", json.dumps({
         "name": "files", "pkgsPath": "tsugumi:default", "databaseConnections": [],
-        "canvas": {"cards": [{"id": "begin"}, {"id": "load"}, {"id": "show"}], "connections": [
-            {"from": {"card": "begin", "port": "out"}, "to": {"card": "load", "port": "start"}},
+        "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
+            {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": "start"}},
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
     put(root / "layout.json", "{}")
-    put(root / "definitions" / "begin" / "_card.json", json.dumps({"template": "trigger"}))
+    put(root / "definitions" / "start" / "_card.json", json.dumps({"template": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
         "template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/load/data/events.txt"}]}))
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
@@ -79,7 +79,7 @@ def test_input_card_hands_a_project_file_on(tmp_path):
         # A single Card run before any run says how to get its inputs.
         _, st = run_and_wait(c, "show", propagate=False)
         assert st.state == RunState.failed and "trigger" in text(st.failure.diagnostic), text(st.failure.diagnostic)
-        rid, st = run_and_wait(c, "begin")
+        rid, st = run_and_wait(c, "start")
         assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
         log = text(c.call("LogRangeRequest", runId=rid, card=path("show"), invocation=1, stream=1, limitBytes=65536).text)
         shown = json.loads(log)["value"]

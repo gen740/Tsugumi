@@ -41,8 +41,8 @@ def builtin_chain(root: Path, n: int = 40) -> str:
             "fork": {"template": "fork"},
             "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
             "log": {"template": "logger"}}
-    cards = [card("begin", "trigger"), card("src", "msg")]
-    conns = [conn("begin", "out", "src", "start")]
+    cards = [card("start", "trigger"), card("src", "msg")]
+    conns = [conn("start", "out", "src", "start")]
     prev = ("src", "msg")
     for i in range(n):
         cards += [card(f"f{i}", "fork"), card(f"m{i}", "merge")]
@@ -51,7 +51,7 @@ def builtin_chain(root: Path, n: int = 40) -> str:
     cards.append(card("out", "log"))
     conns.append(conn(prev[0], prev[1], "out", "in"))
     write(root, defs, cards, conns)
-    return "begin"
+    return "start"
 
 
 def all_cards(c, scope=()):
@@ -167,11 +167,11 @@ def main():
         else:
             if a.scenario == "collatz":
                 shutil.copytree(ROOT / "demos" / "collatz", root)
-                start = "begin"
+                start = "start"
             else:
                 import test_cards_container as T
-                start = "begin"
-                T.make(root, {"trigger": {"template": "trigger"}}, [card("begin", "trigger")], [])
+                start = "start"
+                T.make(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
             if a.host:
                 # The host has no bubblewrap: Cards run unsandboxed, as in test_demos.
                 for d in (root / "definitions").iterdir():
@@ -196,7 +196,7 @@ def main():
                                  "make": {"language": "python", "_outputs": a_out, "_nix": py_nix},
                                  "check": {"language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
                                  "shell": shell},
-                           [card("begin", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell")],
+                           [card("start", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell")],
                            [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in")])
                 put(root / "definitions" / "make" / "src" / "main.py", T.PY_MAKE)
                 put(root / "definitions" / "check" / "src" / "card.cc", T.CPP_CHECK)

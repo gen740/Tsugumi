@@ -29,7 +29,7 @@ def main(rounds: int) -> int:
         env.start()
         c = env.client()
         snap = c.call("ProjectInspectRequest")
-        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="stress", card=path("begin"))
+        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="stress", card=path("start"))
         for _ in range(3000):
             st = c.call("RunStatusRequest", runId=acc.run.runId)
             if st.state in (6, 7, 8):

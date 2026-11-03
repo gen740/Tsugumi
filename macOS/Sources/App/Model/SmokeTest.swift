@@ -27,10 +27,10 @@ enum SmokeTest {
         }
         report["operable_s"] = Date().timeIntervalSince(t0)
         let before = s.rev
-        s.edit { $0.setPosition("begin", CGPoint(x: 5, y: 5)) }
+        s.edit { $0.setPosition("start", CGPoint(x: 5, y: 5)) }
         await s.save()
         report["layout_save_rev"] = [before, s.rev]
-        let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "begin"
+        let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "start"
         let t1 = Date()
         try await s.run(card: [trigger], propagate: true)
         try await Task.sleep(for: .milliseconds(200))
@@ -102,11 +102,11 @@ enum SmokeTest {
           let snap = try await other.inspect()
           s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
           var layout = try JSONValue.parse(snap.layoutJson)
-          layout["cards"]?["begin"] = .object([("x", .real(77)), ("y", .real(77))])
+          layout["cards"]?["start"] = .object([("x", .real(77)), ("y", .real(77))])
           _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
           await other.close()
           await s.save()
-          for _ in 0..<50 where s.confirmedLayout["cards"]?["begin"]?["x"]?.double != 77 { try await Task.sleep(for: .milliseconds(100)) }
+          for _ in 0..<50 where s.confirmedLayout["cards"]?["start"]?["x"]?.double != 77 { try await Task.sleep(for: .milliseconds(100)) }
           let merged = s.saveError == nil && !s.dirty && s.confirmedLayout["cards"]?[dk]?["x"]?.double == 333
           report["concurrent_edit"] = ["merged": merged, "error": s.saveError ?? ""] as [String: Any]
           ok = ok && merged
