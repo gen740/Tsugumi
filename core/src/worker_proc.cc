@@ -151,8 +151,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     passes_dirs_ = true;
   } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
     // sandbox: false lifts the file access limits only. The worker still gets
-    // its own PID and network namespaces, so every descendant ends with it
-    // and the Card has no network.
+    // its own PID namespace, so every descendant ends with it, and its own
+    // network namespace (no network) unless the Card allows the network.
     spec.argv = {bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--die-with-parent",
                  "--new-session", "--dev-bind", "/", "/", "--proc", "/proc"};
     if (!sp.network) spec.argv.push_back("--unshare-net");

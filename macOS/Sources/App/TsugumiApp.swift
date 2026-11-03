@@ -192,9 +192,6 @@ struct WorkbenchCommands: Commands {
         .disabled(session?.redoStack.isEmpty ?? true)
     }
     CommandGroup(after: .saveItem) {
-      Button("保存") { if let s = session { Task { await s.save() } } }
-        .shortcut(.save)
-        .disabled(!(session?.dirty ?? false))
       Button("プロジェクトを複製…") { post(.appDuplicateProject) }
         .shortcut(.duplicateProject)
         .disabled(session == nil)

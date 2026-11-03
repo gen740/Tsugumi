@@ -100,22 +100,46 @@ struct DefinitionDraft: Equatable {
 }
 
 /// A project inside this one (externals/<name>/, nested further): the inner
-/// canvas of a Card in Card. Read from the confirmed sources; edited only
-/// where it opens on its own.
+/// canvas of a Card in Card. A copy owned by this project, edited here like
+/// the project's own documents (written back as its files).
 struct ExternalProject: Equatable {
   var project: JSONValue
   var layout: JSONValue
-  var definitions: [String: JSONValue]  // Card id -> _card.json
-  var links: [String: String]           // Card id -> external name (its own Cards in Card)
+  /// Card id -> its definition files (_card.json or _link.json, _meta.json).
+  var definitions: [String: DefinitionDraft]
+  /// Removed (the folder goes with it).
+  var removed = false
+
+  /// Card id -> external name (its own Cards in Card).
+  var links: [String: String] { definitions.compactMapValues { $0.link?["external"]?.string } }
+
+  /// The documents as files, relative to the external's folder.
+  var files: [String: String] {
+    var out = ["tsugumi.json": project.serialized() + "\n", "layout.json": layout.serialized() + "\n"]
+    for (id, d) in definitions {
+      let dir = "definitions/\(id)/"
+      if let l = d.link { out[dir + "_link.json"] = l.serialized() + "\n" } else { out[dir + "_card.json"] = d.card.serialized() + "\n" }
+      if let m = d.meta { out[dir + "_meta.json"] = m.serialized() + "\n" }
+    }
+    return out
+  }
+
+  /// Whether a path (relative to the external) is one of its documents.
+  static func isDocument(_ rel: String) -> Bool {
+    if rel == "tsugumi.json" || rel == "layout.json" { return true }
+    let parts = rel.split(separator: "/")
+    return parts.count == 3 && parts[0] == "definitions" && ["_card.json", "_link.json", "_meta.json"].contains(parts[2])
+  }
 }
 
 /// Save/sync state, shown separately from the run state.
 enum SyncState: Equatable {
   case saved
-  case unsaved
   case saving
   case failed(String)
   case offline
+  /// Card changes wait until the run ends.
+  case waitingForRun
 }
 
 enum DisplayValue {
@@ -171,20 +195,25 @@ final class ProjectSession {
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
 
-  // Draft (uncommitted, managed here)
+  // Draft: edits not saved yet. Every edit is saved at once (`edit`), so the
+  // draft holds only what is on its way to the core, or what could not be
+  // saved (a run in progress, a lost connection).
   var project: JSONValue = .object([])
   var layout: JSONValue = .object([])
   var sourceEdits: [String: Data] = [:]  // path -> new bytes
   var sourceRemovals: Set<String> = []
   var definitionEdits: [String: DefinitionDraft] = [:]
+  /// Edited externals (by folder), written back as their files.
+  var externalEdits: [String: ExternalProject] = [:]
   /// Base hashes chosen by an editor that read the file before this draft
   /// started: the save is checked against what the editor actually saw.
   var sourceBases: [String: String] = [:]
-  private(set) var undoStack: [Snapshot] = []
-  private(set) var redoStack: [Snapshot] = []
+  private(set) var undoStack: [UndoEntry] = []
+  private(set) var redoStack: [UndoEntry] = []
   private(set) var saveError: String?
-  private(set) var remoteChangePending = false
   private(set) var saving = false
+  /// Edits wait for the run to end (the core keeps Card changes back while it runs).
+  private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
   var notice: String?
 
@@ -194,34 +223,74 @@ final class ProjectSession {
     var sources: [String: Data]
     var removals: Set<String>
     var definitions: [String: DefinitionDraft]
+    var externals: [String: ExternalProject]
   }
 
-  /// The confirmed state the current draft was started from. While the draft
-  /// is dirty, remote saves move `rev` and the source hashes forward, but a
-  /// save must still be checked against the base the edits were made on;
-  /// otherwise an edit of an old version would pass the conflict check and
-  /// overwrite the newer change.
+  /// The documents as they look with the draft applied (what an undo entry records).
+  struct DocState: Equatable {
+    var project: JSONValue
+    var layout: JSONValue
+    var definitions: [String: DefinitionDraft]
+    var externals: [String: ExternalProject]
+  }
+
+  /// A source file's content before or after an edit.
+  enum SourceValue: Equatable {
+    case absent
+    case bytes(Data)
+    /// The confirmed file (read before the edit is saved, for undo).
+    case confirmed
+  }
+
+  /// One saved operation: undo applies `before` over what is there now, so
+  /// changes made since by the Agent or another window stay.
+  final class UndoEntry {
+    let before: DocState
+    let after: DocState
+    var sourcesBefore: [String: SourceValue]
+    let sourcesAfter: [String: SourceValue]
+    init(before: DocState, after: DocState, sourcesBefore: [String: SourceValue], sourcesAfter: [String: SourceValue]) {
+      self.before = before
+      self.after = after
+      self.sourcesBefore = sourcesBefore
+      self.sourcesAfter = sourcesAfter
+    }
+  }
+
+  /// The confirmed state the current draft was started from: a save merges
+  /// the draft's changes from it onto the latest confirmed state.
   private struct DraftBase {
     let rev: UInt64
     let hashes: [String: String]
+    let project: JSONValue
+    let layout: JSONValue
+    let definitions: [String: DefinitionDraft]
   }
   @ObservationIgnored private var draftBase: DraftBase?
+  /// Confirmed externals when each external's edit started.
+  @ObservationIgnored private var externalBases: [String: ExternalProject?] = [:]
+  /// Hashes of the externals' documents as they were read into `externals`.
+  @ObservationIgnored private var externalHashes: [String: String] = [:]
+  @ObservationIgnored private var saveTask: Task<Void, Never>?
+  @ObservationIgnored private var saveAgain = false
   /// Revision the draft is based on (equals `rev` while clean).
   var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
 
   var dirty: Bool {
     project != confirmedProject || layout != confirmedLayout || !sourceEdits.isEmpty || !sourceRemovals.isEmpty ||
-      !definitionEdits.isEmpty
+      !definitionEdits.isEmpty || !externalEdits.isEmpty
   }
   var computationDirty: Bool {
-    project != confirmedProject || !sourceEdits.isEmpty || !sourceRemovals.isEmpty || !definitionEdits.isEmpty
+    project != confirmedProject || !sourceEdits.isEmpty || !sourceRemovals.isEmpty || !definitionEdits.isEmpty ||
+      !externalEdits.isEmpty
   }
 
   var syncState: SyncState {
     if !connected { return dirty ? .failed(connectionMessage ?? "Not connected") : .offline }
     if saving { return .saving }
     if let e = saveError { return .failed(e) }
-    return dirty ? .unsaved : .saved
+    if savingAfterRun && dirty { return .waitingForRun }
+    return dirty ? .saving : .saved
   }
 
   /// Effective definitions: confirmed ones with the draft applied.
@@ -298,7 +367,7 @@ final class ProjectSession {
   func start() {
     Task { [weak self] in
       guard let self else { return }
-      if observerToken == nil {
+      if observerToken == nil, endpointOverride == nil {
         observerToken = await environments.observe(identity) { [weak self] s in
           Task { @MainActor in self?.environment = s }
         }
@@ -307,10 +376,14 @@ final class ProjectSession {
     }
   }
 
+  /// A tsugumid to use instead of starting the environment (tests).
+  @ObservationIgnored var endpointOverride: Endpoint?
+
   private func connect() async {
     connectionMessage = nil
     do {
-      let ep = try await environments.start(identity)
+      let ep: Endpoint
+      if let o = endpointOverride { ep = o } else { ep = try await environments.start(identity) }
       let c = RPCClient(endpoint: ep.url)
       _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
       let opened = try await c.open(viewId: viewId)
@@ -321,6 +394,7 @@ final class ProjectSession {
       lastSeq = opened.seq ?? 1
       connected = true
       listen(c)
+      if dirty { scheduleSave() }
       await refreshVisibleDisplays()
     } catch {
       connected = false
@@ -451,10 +525,12 @@ final class ProjectSession {
       sourceEdits = [:]
       sourceRemovals = []
       definitionEdits = [:]
+      externalEdits = [:]
       draftBase = nil
-      remoteChangePending = false
+      externalBases = [:]
     } else if draftBase?.rev != rev {
-      remoteChangePending = true
+      // Edits kept over a reconnect: merged onto what is there now, then saved.
+      rebase()
     }
   }
 
@@ -473,7 +549,7 @@ final class ProjectSession {
     diagnostics = all
   }
 
-  private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT) {
+  private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
     guard d.baseRev == rev else {
       if let r = d.rev, r <= rev { return }  // already applied (our own save reply)
       reconnect()
@@ -508,9 +584,10 @@ final class ProjectSession {
       project = confirmedProject
       layout = confirmedLayout
       draftBase = nil
-    } else if d.origin != "ui:\(viewId.uuidString.lowercased())" {
-      // The draft stays based on draftBase; the next save is checked against it.
-      remoteChangePending = true
+    } else if !fromSave {
+      // Changed elsewhere (the Agent, another window) while edits are on
+      // their way: shown at once, the edits merged on top.
+      rebase()
     }
   }
 
@@ -554,6 +631,7 @@ final class ProjectSession {
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
+      if dirty { scheduleSave() }
     default:
       break
     }
@@ -606,16 +684,39 @@ final class ProjectSession {
   // MARK: - Editing (draft, undo/redo)
 
   private func snapshot() -> Snapshot {
-    Snapshot(project: project, layout: layout, sources: sourceEdits, removals: sourceRemovals, definitions: definitionEdits)
+    Snapshot(project: project, layout: layout, sources: sourceEdits, removals: sourceRemovals, definitions: definitionEdits,
+             externals: externalEdits)
   }
 
-  private func restore(_ s: Snapshot) {
-    project = s.project
-    layout = s.layout
-    sourceEdits = s.sources
-    sourceRemovals = s.removals
-    definitionEdits = s.definitions
-    settleDraftBase()
+  /// Confirmed definitions as definition files (card, meta, link).
+  var confirmedDefinitionDrafts: [String: DefinitionDraft] {
+    var d: [String: DefinitionDraft] = [:]
+    for (id, c) in confirmedDefinitions { d[id] = DefinitionDraft(card: c, meta: confirmedDefinitionMeta[id]) }
+    for (id, l) in confirmedLinks { d[id] = DefinitionDraft(card: .object([]), meta: confirmedDefinitionMeta[id], link: l) }
+    return d
+  }
+
+  /// Definitions with the draft applied, as definition files.
+  var definitionDrafts: [String: DefinitionDraft] {
+    var d = confirmedDefinitionDrafts
+    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e }
+    return d
+  }
+
+  /// Externals with the draft applied.
+  var effectiveExternals: [String: ExternalProject] {
+    var d = externals
+    for (p, e) in externalEdits { d[p] = e.removed ? nil : e }
+    return d
+  }
+
+  func docState() -> DocState {
+    DocState(project: project, layout: layout, definitions: definitionDrafts, externals: effectiveExternals)
+  }
+
+  private func makeBase() -> DraftBase {
+    DraftBase(rev: rev, hashes: sources.mapValues(\.hash), project: confirmedProject, layout: confirmedLayout,
+              definitions: confirmedDefinitionDrafts)
   }
 
   /// Fixes the draft's base when it leaves the clean state, and forgets it
@@ -623,129 +724,299 @@ final class ProjectSession {
   private func settleDraftBase() {
     if !dirty {
       draftBase = nil
-      remoteChangePending = false
+      externalBases = [:]
     } else if draftBase == nil {
-      draftBase = DraftBase(rev: rev, hashes: sources.mapValues(\.hash))
+      draftBase = makeBase()
     }
   }
 
-  /// Applies an edit to the draft and records it for undo.
+  /// Sets a definition as it should look with the draft applied.
+  func setEffectiveDefinition(_ id: String, _ d: DefinitionDraft?) {
+    let confirmed = confirmedDefinitionDrafts[id]
+    if d == confirmed { definitionEdits[id] = nil } else { definitionEdits[id] = d ?? DefinitionDraft(card: .object([]), meta: nil, removed: true) }
+  }
+
+  /// Changes an external's documents in the draft.
+  func updateExternal(_ prefix: String, _ fn: (inout ExternalProject) -> Void) {
+    guard !prefix.isEmpty, var e = externalEdits[prefix] ?? externals[prefix] else { return }
+    if externalEdits[prefix] == nil, externalBases[prefix] == nil { externalBases[prefix] = externals[prefix] }
+    fn(&e)
+    externalEdits[prefix] = e
+  }
+
+  /// Adds a new external (its documents; other files go to the sources).
+  func createExternal(_ prefix: String, _ e: ExternalProject) {
+    if externalBases[prefix] == nil { externalBases[prefix] = .some(externals[prefix]) }
+    externalEdits[prefix] = e
+  }
+
+  /// Removes an external with every file in its folder.
+  func removeExternal(_ prefix: String) {
+    guard var e = externalEdits[prefix] ?? externals[prefix] else { return }
+    if externalBases[prefix] == nil { externalBases[prefix] = .some(externals[prefix]) }
+    e.removed = true
+    externalEdits[prefix] = e
+    for p in sourcePaths where p.hasPrefix(prefix) { removeSource(p) }
+  }
+
+  /// Drops edits of externals that equal what is confirmed.
+  private func normalizeExternalEdits() {
+    for (p, e) in externalEdits where (e.removed && externals[p] == nil) || (!e.removed && e == externals[p]) {
+      externalEdits[p] = nil
+      externalBases[p] = nil
+    }
+  }
+
+  private func sourceValue(_ snap: Snapshot, _ p: String) -> SourceValue {
+    if snap.removals.contains(p) { return .absent }
+    if let d = snap.sources[p] { return .bytes(d) }
+    return sources[p] != nil ? .confirmed : .absent
+  }
+
+  @ObservationIgnored private var unfilled: [UndoEntry] = []
+
+  private func record(before: DocState, beforeSnap: Snapshot, after: DocState, afterSnap: Snapshot) -> UndoEntry {
+    let paths = Set(beforeSnap.sources.keys).union(afterSnap.sources.keys).union(beforeSnap.removals).union(afterSnap.removals)
+    var sb: [String: SourceValue] = [:], sa: [String: SourceValue] = [:]
+    for p in paths where sourceValue(beforeSnap, p) != sourceValue(afterSnap, p) {
+      sb[p] = sourceValue(beforeSnap, p)
+      sa[p] = sourceValue(afterSnap, p)
+    }
+    let e = UndoEntry(before: before, after: after, sourcesBefore: sb, sourcesAfter: sa)
+    if sb.values.contains(.confirmed) { unfilled.append(e) }
+    return e
+  }
+
+  /// Applies an edit and saves it at once. One call is one step of undo.
   func edit(_ change: (ProjectSession) -> Void) {
-    let before = snapshot()
-    if !dirty { draftBase = DraftBase(rev: rev, hashes: sources.mapValues(\.hash)) }
+    let before = docState(), beforeSnap = snapshot()
+    if !dirty { draftBase = makeBase() }
     change(self)
-    let after = snapshot()
-    guard before != after else {
+    normalizeExternalEdits()
+    let afterSnap = snapshot()
+    guard beforeSnap != afterSnap else {
       settleDraftBase()
       return
     }
-    undoStack.append(before)
+    undoStack.append(record(before: before, beforeSnap: beforeSnap, after: docState(), afterSnap: afterSnap))
     if undoStack.count > 500 { undoStack.removeFirst() }
     redoStack.removeAll()
     settleDraftBase()
+    scheduleSave()
   }
 
   func undo() {
-    guard let s = undoStack.popLast() else { return }
-    redoStack.append(snapshot())
-    restore(s)
+    guard let e = undoStack.popLast() else { return }
+    if let inverse = revert(e) { redoStack.append(inverse) }
   }
 
   func redo() {
-    guard let s = redoStack.popLast() else { return }
-    undoStack.append(snapshot())
-    restore(s)
+    guard let e = redoStack.popLast() else { return }
+    if let inverse = revert(e) { undoStack.append(inverse) }
   }
 
-  /// Drops every unsaved edit and follows the latest confirmed document.
-  func discardDraft() {
-    edit { s in
-      s.project = s.confirmedProject
-      s.layout = s.confirmedLayout
-      s.sourceEdits = [:]
-      s.sourceRemovals = []
-      s.definitionEdits = [:]
+  /// Puts back what an entry changed (its `before`), over the current state.
+  /// Returns the entry that does it again.
+  private func revert(_ e: UndoEntry) -> UndoEntry? {
+    let cur = docState(), curSnap = snapshot()
+    if !dirty { draftBase = makeBase() }
+    project = merge3(base: e.after.project, ours: e.before.project, theirs: cur.project) ?? cur.project
+    layout = merge3(base: e.after.layout, ours: e.before.layout, theirs: cur.layout) ?? cur.layout
+    for id in Set(e.before.definitions.keys).union(e.after.definitions.keys) where e.before.definitions[id] != e.after.definitions[id] {
+      setEffectiveDefinition(id, DefinitionDraft.merge(base: e.after.definitions[id], ours: e.before.definitions[id],
+                                                       theirs: cur.definitions[id]))
     }
-    sourceBases = [:]
-    draftBase = nil
-    remoteChangePending = false
-    saveError = nil
-  }
-
-  /// The unsaved edits as text, for copying them out when they cannot be saved.
-  func draftSummary() -> String {
-    var out = "Tsugumi unsaved edits (based on revision \(draftBaseRev))\n"
-    if project != confirmedProject { out += "\n== tsugumi.json ==\n" + project.serialized() + "\n" }
-    if layout != confirmedLayout { out += "\n== layout.json ==\n" + layout.serialized() + "\n" }
-    for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
-      if d.removed { out += "\n== definitions/\(id) removed ==\n"; continue }
-      out += "\n== definitions/\(id)/_card.json ==\n" + d.card.serialized() + "\n"
-      if let m = d.meta { out += "\n== definitions/\(id)/_meta.json ==\n" + m.serialized() + "\n" }
-    }
-    for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) {
-      out += "\n== \(p) ==\n" + String(decoding: bytes, as: UTF8.self) + "\n"
-    }
-    for p in sourceRemovals.sorted() { out += "\n== \(p) removed ==\n" }
-    return out
-  }
-
-  /// Commits the draft as one ProjectSave transaction. On conflict the draft is
-  /// kept and the conflict is shown; nothing is rebased automatically.
-  func save() async {
-    guard dirty, let client else { return }
-    saving = true
-    defer { saving = false }
-    // Checked against the base the edits were made on, never the latest rev.
-    let base = draftBase ?? DraftBase(rev: rev, hashes: sources.mapValues(\.hash))
-    var changes: [Tsugumi_RPC_DocumentChangeT] = []
-    if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
-    if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
-    for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
-      if d.removed {
-        if confirmedDefinitions[id] != nil { changes.append(Change.removeDefinition(id: id)) }
+    for p in Set(e.before.externals.keys).union(e.after.externals.keys) where e.before.externals[p] != e.after.externals[p] {
+      if let b = e.before.externals[p] {
+        if externalBases[p] == nil { externalBases[p] = .some(externals[p]) }
+        var t = ExternalProject.merge(base: e.after.externals[p], ours: b, theirs: cur.externals[p])
+        t.removed = false
+        externalEdits[p] = t
       } else {
-        changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
-                                            linkJSON: d.link?.serialized()))
+        removeExternal(p)
       }
     }
-    for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) {
-      changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
+    for (p, v) in e.sourcesBefore {
+      switch v {
+      case .absent: removeSource(p)
+      case .bytes(let d):
+        sourceRemovals.remove(p)
+        sourceEdits[p] = d
+      case .confirmed: break  // could not be read: left as it is
+      }
     }
-    for p in sourceRemovals.sorted() {
-      if let h = sourceBases[p] ?? base.hashes[p] { changes.append(Change.removeSource(path: p, baseHash: h)) }
+    normalizeExternalEdits()
+    settleDraftBase()
+    let now = snapshot()
+    guard now != curSnap else { return nil }
+    var sb: [String: SourceValue] = [:]
+    for p in e.sourcesBefore.keys { sb[p] = sourceValue(curSnap, p) }
+    let inverse = UndoEntry(before: cur, after: docState(), sourcesBefore: sb, sourcesAfter: e.sourcesBefore)
+    if sb.values.contains(.confirmed) { unfilled.append(inverse) }
+    scheduleSave()
+    return inverse
+  }
+
+  /// Reads the files undo entries need before a save replaces them.
+  private func fillUndoSources() async {
+    guard let client, !unfilled.isEmpty else { return }
+    let list = unfilled
+    unfilled = []
+    for e in list {
+      for (p, v) in e.sourcesBefore where v == .confirmed {
+        if let d = try? await client.readFile(path: p, atRev: rev) { e.sourcesBefore[p] = .bytes(d) }
+      }
+    }
+  }
+
+  /// Moves the draft onto the confirmed state that just arrived: what the
+  /// draft changed stays, everything else follows the new state.
+  private func rebase() {
+    guard let b = draftBase else { return }
+    project = merge3(base: b.project, ours: project, theirs: confirmedProject) ?? confirmedProject
+    layout = merge3(base: b.layout, ours: layout, theirs: confirmedLayout) ?? confirmedLayout
+    let theirs = confirmedDefinitionDrafts
+    for (id, e) in definitionEdits {
+      setEffectiveDefinition(id, DefinitionDraft.merge(base: b.definitions[id], ours: e.removed ? nil : e, theirs: theirs[id]))
+    }
+    var hashes = sources.mapValues(\.hash)
+    // Files edited here stay checked against the version they were edited from.
+    for p in Set(sourceEdits.keys).union(sourceRemovals) { hashes[p] = b.hashes[p] }
+    draftBase = DraftBase(rev: rev, hashes: hashes, project: confirmedProject, layout: confirmedLayout, definitions: theirs)
+    settleDraftBase()
+  }
+
+  /// Drops every unsaved edit and follows the latest confirmed document
+  /// (only for edits that cannot be saved).
+  func discardDraft() {
+    project = confirmedProject
+    layout = confirmedLayout
+    sourceEdits = [:]
+    sourceRemovals = []
+    definitionEdits = [:]
+    externalEdits = [:]
+    sourceBases = [:]
+    draftBase = nil
+    externalBases = [:]
+    saveError = nil
+    savingAfterRun = false
+  }
+
+  /// Starts saving what the draft holds (edits made meanwhile are saved next).
+  func scheduleSave() {
+    guard connected, client != nil else { return }
+    if saveTask != nil {
+      saveAgain = true
+      return
+    }
+    saveTask = Task { [weak self] in
+      guard let self else { return }
+      var attempts = 0
+      repeat {
+        self.saveAgain = false
+        attempts += 1
+        await self.saveOnce()
+      } while self.saveAgain && attempts < 50
+      self.saveTask = nil
+    }
+  }
+
+  /// Waits until what was edited so far is saved (or cannot be saved now).
+  func save() async {
+    if saveTask == nil { scheduleSave() } else { saveAgain = true }
+    while let t = saveTask { await t.value }
+  }
+
+  @ObservationIgnored private var conflictRetries = 0
+
+  /// Sends the draft as one ProjectSave transaction. Changes that arrived
+  /// meanwhile are merged in first; a conflict means newer changes are on
+  /// their way, so the save is tried again once they arrived.
+  private func saveOnce() async {
+    guard dirty, let client else { return }
+    await fillUndoSources()
+    if let b = draftBase, b.rev != rev { rebase() }
+    guard dirty else { return }
+    saving = true
+    defer { saving = false }
+    let base = draftBase ?? makeBase()
+    // While a run is active the core takes layout changes only.
+    let layoutOnly = runActive && computationDirty
+    savingAfterRun = layoutOnly
+    var changes: [Tsugumi_RPC_DocumentChangeT] = []
+    let sent = snapshot()
+    if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
+    var merged: [String: ExternalProject] = [:]
+    if !layoutOnly {
+      if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
+      for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
+        if d.removed {
+          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil { changes.append(Change.removeDefinition(id: id)) }
+        } else {
+          changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
+                                              linkJSON: d.link?.serialized()))
+        }
+      }
+      var written = Set<String>()
+      for (prefix, ours) in externalEdits.sorted(by: { $0.key < $1.key }) where !ours.removed {
+        let theirs = externals[prefix]
+        let m = ExternalProject.merge(base: externalBases[prefix] ?? nil, ours: ours, theirs: theirs)
+        merged[prefix] = m
+        let now = m.files, was = theirs?.files ?? [:]
+        for (rel, text) in now.sorted(by: { $0.key < $1.key }) where was[rel] != text {
+          let p = prefix + rel
+          written.insert(p)
+          changes.append(Change.putSource(path: p, bytes: Data(text.utf8), baseHash: theirs == nil ? sources[p]?.hash : externalHashes[p]))
+        }
+        for rel in was.keys.sorted() where now[rel] == nil {
+          let p = prefix + rel
+          if let h = externalHashes[p] ?? sources[p]?.hash, !sourceRemovals.contains(p) {
+            written.insert(p)
+            changes.append(Change.removeSource(path: p, baseHash: h))
+          }
+        }
+      }
+      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) && !written.contains(p) {
+        changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
+      }
+      for p in sourceRemovals.sorted() where !written.contains(p) {
+        if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
+      }
+    }
+    guard !changes.isEmpty else {
+      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
+      return
     }
     let op = UUID()
-    let saved = snapshot()
     do {
       let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
       saveError = nil
-      if let d = result.delta {
-        applyDeltaFromSave(d)
-      }
-      // Edits made while the save was in flight stay in the draft.
-      if snapshot() == saved {
-        sourceEdits = [:]
-        sourceRemovals = []
-        definitionEdits = [:]
-        sourceBases = [:]
-        project = confirmedProject
-        layout = confirmedLayout
-      }
-      // Whatever is left was edited on top of what was just saved.
-      draftBase = nil
-      settleDraftBase()
-      remoteChangePending = false
+      conflictRetries = 0
+      if let d = result.delta { applyDeltaFromSave(d) }
+      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
     } catch let f as RPCFailure {
       switch f.kind {
-      case .revisionConflict:
-        saveError = "別のウインドウまたは Agent が revision \(f.currentRev ?? 0) を保存しました。変更は保持しています。コピーしてから再読込してください。"
-        remoteChangePending = true
-      case .hashConflict:
-        saveError = "\(f.args["path"] ?? "ソース") が編集開始後に変更されました。変更は保持しています。"
+      case .revisionConflict, .hashConflict:
+        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
+          // A file this window edited was changed elsewhere too: kept, not merged.
+          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
+          return
+        }
+        guard conflictRetries < 8 else {
+          conflictRetries = 0
+          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
+          return
+        }
+        // Newer changes are on their way (DocPatched): merge them in and try again.
+        conflictRetries += 1
+        let want = f.currentRev ?? rev + 1
+        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
+        saveAgain = true
+      case .busy:
+        savingAfterRun = true
       case .externalChange:
         saveError = "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。"
-      case .busy:
-        saveError = "実行中のため Card の変更は保存できません。実行が終わってから保存してください（配置の変更は保存できます）。"
       default:
         saveError = f.description
       }
@@ -753,23 +1024,60 @@ final class ProjectSession {
       // The reply may have been lost after the save committed: ask the core.
       if let r = try? await client.operation(op), r.state == .completed {
         saveError = nil
-        if snapshot() == saved {
-          // Committed: the DocPatched notification brings the confirmed copy.
-          sourceEdits = [:]
-          sourceRemovals = []
-          definitionEdits = [:]
-          draftBase = nil
-        }
+        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
       } else {
-        saveError = "保存できませんでした: \(error)。変更は保持しています。"
+        saveError = String(localized: "保存できませんでした: \(error)。変更は保持しています。")
       }
     }
+  }
+
+  /// Whether a path is one of an external's documents (merged, not compared by hash).
+  private func isExternalDocument(_ p: String) -> Bool {
+    effectiveExternals.keys.contains { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }
+  }
+
+  /// After a save: the parts sent are confirmed now; edits made while it was
+  /// on its way stay in the draft.
+  private func forgetSaved(_ sent: Snapshot, layoutOnly: Bool, merged: [String: ExternalProject]) {
+    if layout == sent.layout { layout = confirmedLayout } else { layout = merge3(base: sent.layout, ours: layout, theirs: confirmedLayout) ?? layout }
+    if !layoutOnly {
+      if project == sent.project { project = confirmedProject } else { project = merge3(base: sent.project, ours: project, theirs: confirmedProject) ?? project }
+      for (id, d) in sent.definitions where definitionEdits[id] == d { definitionEdits[id] = nil }
+      for (p, d) in sent.sources where sourceEdits[p] == d {
+        sourceEdits[p] = nil
+        sourceBases[p] = nil
+      }
+      for p in sent.removals where sourceRemovals.contains(p) && sent.sources[p] == nil {
+        sourceRemovals.remove(p)
+        sourceBases[p] = nil
+      }
+      for (prefix, m) in merged {
+        // What was written is now the external's confirmed content.
+        externals[prefix] = m
+        for rel in m.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
+        if externalEdits[prefix] == sent.externals[prefix] {
+          externalEdits[prefix] = nil
+          externalBases[prefix] = nil
+        } else {
+          externalBases[prefix] = .some(m)
+        }
+      }
+      for (prefix, e) in sent.externals where e.removed && externalEdits[prefix] == e {
+        externalEdits[prefix] = nil
+        externalBases[prefix] = nil
+        externals[prefix] = nil
+      }
+      savingAfterRun = false
+    }
+    // Whatever is left was edited on top of what was just saved.
+    draftBase = nil
+    settleDraftBase()
   }
 
   private func applyDeltaFromSave(_ d: Tsugumi_RPC_DocumentDeltaT) {
     if d.baseRev == rev {
       let keep = snapshot()
-      applyDelta(d)
+      applyDelta(d, fromSave: true)
       project = keep.project
       layout = keep.layout
     }
@@ -824,7 +1132,10 @@ final class ProjectSession {
 
   func run(card: [String], propagate: Bool) async throws {
     guard let client else { throw RPCError.disconnected }
-    if computationDirty { throw RPCFailure(kind: .validationFailed, diagnostic: "実行する前に変更を保存してください。") }
+    if computationDirty { await save() }
+    if computationDirty {
+      throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できないため実行できません。"))
+    }
     let op = UUID()
     let parallel = UInt32(max(1, min(64, AppPreferences.shared.maxConcurrency)))
     do {
@@ -894,33 +1205,65 @@ final class ProjectSession {
     var prefix = ""
     for id in scope {
       let link: String?
-      if prefix.isEmpty { link = links[id]?["external"]?.string } else { link = externals[prefix]?.links[id] }
+      if prefix.isEmpty { link = links[id]?["external"]?.string } else { link = external(prefix)?.links[id] }
       guard let name = link else { return nil }
       prefix += "externals/\(name)/"
     }
     return prefix
   }
 
-  /// Whether a scope is inside a Card in Card (read-only here).
+  /// An external's documents with the draft applied.
+  func external(_ prefix: String) -> ExternalProject? {
+    if let e = externalEdits[prefix] { return e.removed ? nil : e }
+    return externals[prefix]
+  }
+
+  /// Whether a scope is inside a Card in Card (its Cards belong to the external's copy).
   func isExternalScope(_ scope: [String]) -> Bool { !scope.isEmpty }
 
   private func graph(_ scope: [String]) -> JSONValue? {
     guard let prefix = projectPrefix(scope) else { return nil }
-    return prefix.isEmpty ? project["canvas"] : externals[prefix]?.project["canvas"]
+    return prefix.isEmpty ? project["canvas"] : external(prefix)?.project["canvas"]
   }
 
-  /// Cards of a scope: this project's draft, or an external's (confirmed).
+  /// Cards of a scope: this project's, or (inside a Card in Card) the external's.
   func cards(in scope: [String]) -> [JSONValue] { graph(scope)?["cards"]?.array ?? [] }
 
   func connections(in scope: [String]) -> [JSONValue] { graph(scope)?["connections"]?.array ?? [] }
 
-  /// Mutates this project's canvas in the draft (externals are read-only).
+  /// Mutates a scope's canvas in the draft (inside a Card in Card: its external's).
   func updateGraph(_ scope: [String], _ fn: (inout JSONValue) -> Void) {
-    guard scope.isEmpty else { return }
-    var canvas = project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
-    fn(&canvas)
-    project["canvas"] = canvas
+    guard let prefix = projectPrefix(scope) else { return }
+    if prefix.isEmpty {
+      var canvas = project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
+      fn(&canvas)
+      project["canvas"] = canvas
+    } else {
+      updateExternal(prefix) { e in
+        var canvas = e.project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
+        fn(&canvas)
+        e.project["canvas"] = canvas
+      }
+    }
   }
+
+  /// The layout a scope's Cards, notes and groups are kept in, and the key of
+  /// a Card there (inside a Card in Card: the external's layout, by Card id).
+  func layout(of scope: [String]) -> JSONValue {
+    guard let prefix = projectPrefix(scope), !prefix.isEmpty else { return layout }
+    return external(prefix)?.layout ?? .object([])
+  }
+
+  func updateLayout(of scope: [String], _ fn: (inout JSONValue) -> Void) {
+    guard let prefix = projectPrefix(scope) else { return }
+    if prefix.isEmpty { fn(&layout) } else { updateExternal(prefix) { fn(&$0.layout) } }
+  }
+
+  /// A Card's key in the layout of its scope.
+  func layoutKey(_ k: CardKey) -> String { path(k).count > 1 ? (path(k).last ?? k) : k }
+
+  /// The scope a note's or group's "scope" field means in the layout it is in.
+  func layoutScopeKey(_ scope: [String]) -> String { scope.count > 0 ? "" : key(scope) }
 
   func instance(_ k: CardKey) -> JSONValue? {
     let p = path(k)
@@ -928,18 +1271,41 @@ final class ProjectSession {
     return cards(in: Array(p.dropLast())).first { $0["id"]?.string == last }
   }
 
-  /// The Card's settings (its _card.json), from the draft or an external.
-  func cardDefinition(_ k: CardKey) -> JSONValue? {
+  /// The Card's definition files with the draft applied (its own project's, or the external's).
+  func cardDefinitionDraft(_ k: CardKey) -> DefinitionDraft? {
     let p = path(k)
     guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
-    return prefix.isEmpty ? definitions[id] : externals[prefix]?.definitions[id]
+    return prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id]
+  }
+
+  /// The Card's settings (its _card.json).
+  func cardDefinition(_ k: CardKey) -> JSONValue? {
+    guard let d = cardDefinitionDraft(k), d.link == nil else { return nil }
+    return d.card
+  }
+
+  /// The Card's _meta.json.
+  func cardMeta(_ k: CardKey) -> JSONValue? { cardDefinitionDraft(k)?.meta }
+
+  /// The confirmed definition files of a Card (not the draft).
+  func confirmedCardDefinitionDraft(_ k: CardKey) -> DefinitionDraft? {
+    let p = path(k)
+    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
+    return prefix.isEmpty ? confirmedDefinitionDrafts[id] : externals[prefix]?.definitions[id]
+  }
+
+  /// Sets a Card's definition files in the draft (nil removes them).
+  func setCardDefinition(_ k: CardKey, _ d: DefinitionDraft?) {
+    let p = path(k)
+    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return }
+    if prefix.isEmpty { setEffectiveDefinition(id, d) } else { updateExternal(prefix) { $0.definitions[id] = d } }
   }
 
   /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
   func cardExternal(_ k: CardKey) -> String? {
     let p = path(k)
     guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
-    let name = prefix.isEmpty ? links[id]?["external"]?.string : externals[prefix]?.links[id]
+    let name = prefix.isEmpty ? links[id]?["external"]?.string : external(prefix)?.links[id]
     return name.map { prefix + "externals/\($0)/" }
   }
 
@@ -953,27 +1319,21 @@ final class ProjectSession {
   /// A Card in Card's ports: its external's boundary.
   func boundary(_ k: CardKey) -> JSONValue? {
     guard let ext = cardExternal(k) else { return nil }
-    return externals[ext]?.project["boundary"]
+    return external(ext)?.project["boundary"]
   }
 
-  /// Changes this project's Card's _card.json in the draft.
+  /// Changes a Card's _card.json in the draft.
   func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    let p = path(k)
-    guard p.count == 1, let id = p.first, var card = definitions[id] else { return }
-    fn(&card)
-    setDefinition(id, card: card, meta: definitionMeta[id])
+    guard var d = cardDefinitionDraft(k), d.link == nil else { return }
+    fn(&d.card)
+    setCardDefinition(k, d)
   }
 
   /// A setting of the Card (its _card.json).
   func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   func position(_ k: CardKey) -> CGPoint {
-    var p = layout["cards"]?[k]
-    // Inside a Card in Card: the external's own layout.
-    let parts = path(k)
-    if p == nil, parts.count > 1, let prefix = projectPrefix(Array(parts.dropLast())) {
-      p = externals[prefix]?.layout["cards"]?[parts.last!]
-    }
+    let p = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]
     return CGPoint(x: p?["x"]?.double ?? 0, y: p?["y"]?.double ?? 0)
   }
 
@@ -985,36 +1345,57 @@ final class ProjectSession {
     externalsKey = key
     guard let client else { return }
     let atRev = rev
-    let known = Set(sources.keys)
+    let hashes = sources.mapValues(\.hash)
     Task { @MainActor in
       var found: [String: ExternalProject] = [:]
+      var read: [String: String] = [:]
       for p in paths where p.hasSuffix("/tsugumi.json") {
         let prefix = String(p.dropLast("tsugumi.json".count))
         // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
         let parts = prefix.split(separator: "/")
         guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
-        func read(_ rel: String) async -> JSONValue? {
-          guard known.contains(rel), let d = try? await client.readFile(path: rel, atRev: atRev) else { return nil }
+        func doc(_ rel: String) async -> JSONValue? {
+          guard let h = hashes[rel], let d = try? await client.readFile(path: rel, atRev: atRev) else { return nil }
+          read[rel] = h
           return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
         }
-        guard let proj = await read(p) else { continue }
-        var ext = ExternalProject(project: proj, layout: await read(prefix + "layout.json") ?? .object([]), definitions: [:], links: [:])
-        for c in proj["canvas"]?["cards"]?.array ?? [] {
-          guard let id = c["id"]?.string else { continue }
+        guard let proj = await doc(p) else { continue }
+        var ext = ExternalProject(project: proj, layout: await doc(prefix + "layout.json") ?? .object([]), definitions: [:])
+        // Every definition folder of the external (placed or not).
+        var ids = Set<String>()
+        for q in paths where q.hasPrefix(prefix + "definitions/") {
+          let rest = q.dropFirst((prefix + "definitions/").count).split(separator: "/")
+          if rest.count == 2, ["_card.json", "_link.json"].contains(rest[1]) { ids.insert(String(rest[0])) }
+        }
+        for id in ids.sorted() {
           let dir = prefix + "definitions/\(id)/"
-          if let l = await read(dir + "_link.json"), let name = l["external"]?.string { ext.links[id] = name }
-          else if let card = await read(dir + "_card.json") { ext.definitions[id] = card }
+          let meta = await doc(dir + "_meta.json")
+          if let l = await doc(dir + "_link.json") {
+            ext.definitions[id] = DefinitionDraft(card: .object([]), meta: meta, link: l)
+          } else if let card = await doc(dir + "_card.json") {
+            ext.definitions[id] = DefinitionDraft(card: card, meta: meta)
+          }
         }
         found[prefix] = ext
       }
-      if self.externalsKey == key { self.externals = found }
+      guard self.externalsKey == key else { return }
+      self.externals = found
+      self.externalHashes = read
+      self.normalizeExternalEdits()
+      self.settleDraftBase()
     }
   }
 
   func setPosition(_ k: CardKey, _ pt: CGPoint) {
-    var cards = layout["cards"] ?? .object([])
-    cards[k] = .object([("x", .real((pt.x * 10).rounded() / 10)), ("y", .real((pt.y * 10).rounded() / 10))])
-    layout["cards"] = cards
+    let lk = layoutKey(k)
+    updateLayout(of: Array(path(k).dropLast())) { l in
+      var cards = l["cards"] ?? .object([])
+      var entry = cards[lk] ?? .object([])
+      entry["x"] = .real((pt.x * 10).rounded() / 10)
+      entry["y"] = .real((pt.y * 10).rounded() / 10)
+      cards[lk] = entry
+      l["cards"] = cards
+    }
   }
 }
 

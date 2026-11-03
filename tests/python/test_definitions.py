@@ -2,7 +2,7 @@
 id and its definition folder; renaming moves the folder and its run history;
 Card in Card is definitions/<id>/_link.json to externals/<p>/, a project that
 also opens on its own (its boundary in its own tsugumi.json, its own
-definitions and pkgsPath, its .tsugumi never read), read-only from the
+definitions and pkgsPath, its .tsugumi never read), edited from the
 outer project except while it is being created; trigger replaces inputMode."""
 
 from __future__ import annotations
@@ -134,13 +134,13 @@ def test_card_in_card_is_an_external_project(tmp_path):
         assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
         log = c.call("LogRangeRequest", runId=run_id, card=path("show"), invocation=1, stream=1, limitBytes=65536)
         assert "from the external" in text(log.text)
-        # The external is read-only here; a new one can be written.
+        # The external is this project's copy: its files change here like any other.
         rev = snap.rev
-        with pytest.raises(RpcFailure) as err:
-            c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
-                   changes=[change("PutSource", path="externals/greeting/notes.txt", bytes=list(b"x"))])
-        assert err.value.kind == "permission_denied"
         c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
+               changes=[change("PutSource", path="externals/greeting/notes.txt", bytes=list(b"x"))])
+        assert (root / "externals" / "greeting" / "notes.txt").read_bytes() == b"x"
+        snap = c.call("ProjectInspectRequest")
+        c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                changes=[change("PutSource", path="externals/fresh/tsugumi.json", bytes=list(b"{}"))])
     finally:
         d.cleanup()

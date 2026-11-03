@@ -38,7 +38,7 @@ struct CardMenu: View {
       .disabled(!session.connected || session.runActive)
     Divider()
     Button("複製") { Task { tab.selection = await session.duplicate(targets, in: tab.scope) } }
-      .disabled(!session.isEditable || !tab.scope.isEmpty)
+      .disabled(!session.isEditable)
     Button(session.collapsed(cardKey) ? "展開" : "折りたたむ") { session.setCollapsed(targets, !session.collapsed(cardKey)) }
     if session.displayFrame(cardKey)?["hidden"]?.bool == true {
       Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
@@ -50,15 +50,15 @@ struct CardMenu: View {
     Button("Card in Card にまとめる（新しい external プロジェクト）") {
       Task { if let k = await session.makeSubgraph(targets, in: tab.scope) { tab.selection = [k] } }
     }
-    .disabled(!session.isEditable || !tab.scope.isEmpty)
+    .disabled(!session.isEditable)
     Divider()
-    Button("入力を切断") { session.disconnect(cardKey, inputs: true, in: tab.scope) }.disabled(!session.isEditable || !tab.scope.isEmpty)
-    Button("出力を切断") { session.disconnect(cardKey, inputs: false, in: tab.scope) }.disabled(!session.isEditable || !tab.scope.isEmpty)
+    Button("入力を切断") { session.disconnect(cardKey, inputs: true, in: tab.scope) }.disabled(!session.isEditable)
+    Button("出力を切断") { session.disconnect(cardKey, inputs: false, in: tab.scope) }.disabled(!session.isEditable)
     Button("削除", role: .destructive) {
       session.deleteCards(targets, in: tab.scope)
       tab.selection.subtract(targets)
     }
-    .disabled(!session.isEditable || !tab.scope.isEmpty)
+    .disabled(!session.isEditable)
   }
 }
 
@@ -425,7 +425,7 @@ struct NoteEditor: View {
     .padding(20)
     .frame(width: 560)
     .onAppear {
-      let n = (session.layout["notes"]?.array ?? []).first { $0["id"]?.string == noteId }
+      let n = session.note(noteId)
       text = n?["text"]?.string ?? ""
       color = n?["color"]?.string ?? "yellow"
       width = n?["width"]?.double ?? 240

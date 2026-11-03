@@ -5,13 +5,13 @@ import TsugumiRPC
 
 /// Local working copy of one Card's settings (its `_card.json`), metadata
 /// and sources. Nothing reaches the project until "適用". Every Card has its
-/// own definition folder, so what is edited here is this Card only; Cards
-/// inside a Card in Card belong to the external project and are read-only.
+/// own definition folder, so what is edited here is this Card only (inside a
+/// Card in Card: the Card of the external, this project's copy).
 ///
-/// The copy remembers what it was based on (the confirmed definition and
-/// source hashes). If the project changes underneath it, the next apply is
-/// held back as a conflict instead of silently replacing the newer content,
-/// and sources are saved against the hashes actually read.
+/// The copy follows what changes elsewhere while it is open (the Agent,
+/// the canvas): settings and files not touched here take the new content;
+/// those changed on both sides are listed as conflicts, and applying keeps
+/// what was edited here.
 @MainActor
 @Observable
 final class CardEditorModel {
@@ -24,8 +24,8 @@ final class CardEditorModel {
   var created: Set<String> = []
   var message: String?
   var applying = false
-  /// The project changed since this copy was taken (see `apply`).
-  var conflict: String?
+  /// Settings and files changed both here and elsewhere since the copy was taken.
+  var conflicts: [String] = []
   /// Category shown in the window (kept with the model, so edits and the
   /// place survive switching).
   var category: CardEditorCategory = .general
@@ -33,7 +33,6 @@ final class CardEditorModel {
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
-  private var confirmedAtLoad: (definition: JSONValue?, meta: JSONValue?) = (nil, nil)
 
   init(session: ProjectSession, cardKey: CardKey) {
     self.session = session
@@ -41,10 +40,8 @@ final class CardEditorModel {
     reload()
   }
 
-  /// The Card's definition folder name (its id), for Cards of this project.
-  var definitionId: String? { session.isOwnCard(cardKey) ? path(cardKey).first : nil }
-  /// Inside a Card in Card: shown, never changed here.
-  var readOnly: Bool { !session.isOwnCard(cardKey) }
+  /// The Card's definition folder name (its id).
+  var definitionId: String? { path(cardKey).last }
   var kind: CardKind { session.kind(cardKey) }
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
@@ -61,13 +58,21 @@ final class CardEditorModel {
     return Set(session.sourcePaths.filter { $0.hasPrefix(prefix) && !docs.contains($0) }).union(created).subtracting(removed).sorted()
   }
 
+  /// Changes whenever what this copy follows changes (the settings, the
+  /// files' hashes).
+  var followToken: String {
+    let files = session.sourcePaths.filter { $0.hasPrefix(prefix) }.map { "\($0)=\(session.sources[$0]?.hash ?? "-")" }
+    return [session.cardDefinition(cardKey)?.serialized() ?? "", session.cardMeta(cardKey)?.serialized() ?? ""]
+      .joined(separator: "\u{1}") + files.joined(separator: ";")
+  }
+
   /// Takes the project's current state as the new base. After an apply
   /// (`keepingSources`) the files stay open with the text just saved, which
   /// is now their base; otherwise they are read again.
   func reload(keepingSources: Bool = false) {
     let keep = keepingSources ? texts.filter { !removed.contains($0.key) } : [:]
     definition = session.cardDefinition(cardKey)
-    meta = definitionId.flatMap { session.definitionMeta[$0] }
+    meta = session.cardMeta(cardKey)
     baseDefinition = definition
     baseMeta = meta
     texts = [:]
@@ -84,12 +89,45 @@ final class CardEditorModel {
     removed = []
     created = []
     message = nil
-    conflict = nil
-    confirmedAtLoad = currentConfirmed()
+    conflicts = []
   }
 
-  private func currentConfirmed() -> (definition: JSONValue?, meta: JSONValue?) {
-    (session.confirmedCardDefinition(cardKey), definitionId.flatMap { session.confirmedDefinitionMeta[$0] })
+  /// Takes in what changed elsewhere since the copy was taken.
+  func follow() {
+    let defNow = session.cardDefinition(cardKey), metaNow = session.cardMeta(cardKey)
+    func clashes(_ base: JSONValue?, _ ours: JSONValue?, _ theirs: JSONValue?, _ file: String) -> [String] {
+      guard ours != base, theirs != base, ours != theirs else { return [] }
+      let keys = Set((base?.object ?? []).map(\.0) + (ours?.object ?? []).map(\.0) + (theirs?.object ?? []).map(\.0))
+      return keys.sorted().filter { k in
+        base?[k] != ours?[k] && base?[k] != theirs?[k] && ours?[k] != theirs?[k]
+      }.map { "\(file): \($0)" }
+    }
+    var found: [String] = []
+    if defNow != baseDefinition {
+      found += clashes(baseDefinition, definition, defNow, "_card.json")
+      definition = merge3(base: baseDefinition, ours: definition, theirs: defNow)
+      baseDefinition = defNow
+    }
+    if metaNow != baseMeta {
+      found += clashes(baseMeta, meta, metaNow, "_meta.json")
+      meta = merge3(base: baseMeta, ours: meta, theirs: metaNow)
+      baseMeta = metaNow
+    }
+    for p in Array(texts.keys) where loads[p] == .loaded && !created.contains(p) {
+      let h = session.sources[p]?.hash
+      guard let base = baseHashes[p], h != base else { continue }
+      if isEdited(p) {
+        found.append(String(p.dropFirst(prefix.count)))
+      } else {
+        // Not edited here: read the new content.
+        texts[p] = nil
+        baseTexts[p] = nil
+        baseHashes[p] = nil
+        loads[p] = nil
+        generation += 1
+      }
+    }
+    if !found.isEmpty { conflicts = Array(Set(conflicts + found)).sorted() }
   }
 
   /// Whether a source file's content is known. A file that could not be read
@@ -159,7 +197,7 @@ final class CardEditorModel {
   }
 
   func createFile(_ rel: String, text: String = "") {
-    guard !readOnly, !prefix.isEmpty, !rel.isEmpty else { return }
+    guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
     removed.remove(p)
     created.insert(p)
@@ -189,49 +227,43 @@ final class CardEditorModel {
     loads[p] = nil
   }
 
-  /// Copies the working copy into the project draft as one undoable edit, then
-  /// saves. With `force` the user chose to replace newer content explicitly.
-  func apply(force: Bool = false) async -> Bool {
-    guard !readOnly else {
-      message = String(localized: "Card in Card の中の Card は、その external プロジェクトを単体で開いて変更します。")
-      return false
-    }
+  /// Copies the working copy into the project as one undoable edit (saved at once).
+  func apply() async -> Bool {
     guard session.isEditable else {
       message = String(localized: "実行中は Card を変更できません。実行が終わってから適用してください。")
       return false
     }
-    let now = currentConfirmed()
-    if !force, now.definition != confirmedAtLoad.definition || now.meta != confirmedAtLoad.meta {
-      conflict = String(localized: "この Card は編集を始めた後に別の場所で更新されました。編集内容は保持しています。最新を読み込むか、自分の編集で置き換えるかを選んでください。")
-      return false
-    }
-    conflict = nil
+    follow()
     applying = true
     defer { applying = false }
-    let def = definition, m = meta, defId = definitionId
+    let def = definition, m = meta, k = cardKey
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
     let gone = removed
     let bases = baseHashes
+    let clashing = Set(conflicts)
     session.edit { s in
-      if let defId, let def, def != s.definitions[defId] || m != s.definitionMeta[defId] {
-        s.setDefinition(defId, card: def, meta: m)
+      if let def, var d = s.cardDefinitionDraft(k), d.link == nil, def != d.card || m != d.meta {
+        d.card = def
+        d.meta = m
+        s.setCardDefinition(k, d)
       }
       for (p, t) in changedTexts {
         s.putSource(p, t)
-        // Saved against the version this editor read, not the newest one.
-        if let h = bases[p], !force { s.sourceBases[p] = h }
+        // Saved against the version this editor read (a file changed on both
+        // sides replaces the other version: the user chose so by applying).
+        if let h = bases[p], !clashing.contains(String(p.dropFirst(prefix.count))) { s.sourceBases[p] = h }
       }
       for p in gone {
         s.removeSource(p)
-        if let h = bases[p], !force { s.sourceBases[p] = h }
+        if let h = bases[p] { s.sourceBases[p] = h }
       }
     }
     await session.save()
     if let e = session.saveError {
-      message = String(localized: "Workflow には反映しましたが保存できませんでした: ") + e
+      message = String(localized: "保存できませんでした: ") + e
       return false
     }
-    message = String(localized: "適用しました（revision \(session.rev)）。")
+    message = String(localized: "適用しました。")
     reload(keepingSources: true)
     return true
   }
@@ -314,13 +346,13 @@ struct CardSettingsEditor: View {
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        if let c = m.conflict {
+        if !m.conflicts.isEmpty {
           HStack(alignment: .top) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text(c).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Text("別の場所でも変更されました: \(m.conflicts.joined(separator: ", "))。適用するとここでの編集が残ります。")
+              .font(.callout).fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button("最新を読み込む") { confirmReload = true }
-            Button("自分の編集で置き換える") { Task { _ = await m.apply(force: true) } }
           }
           .padding(8)
           .background(Color.orange.opacity(0.1))
@@ -332,6 +364,8 @@ struct CardSettingsEditor: View {
     // Resizable: wider windows give the editor and lists the room; smaller
     // ones scroll (each category scrolls on its own).
     .frame(minWidth: 620, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
+    // What changes elsewhere while the window is open is taken in at once.
+    .onChange(of: m.followToken) { m.follow() }
     .confirmationDialog("未適用の変更を破棄して読み込み直しますか？", isPresented: $confirmReload) {
       Button("破棄して再読込", role: .destructive) { m.reload() }
       Button("キャンセル", role: .cancel) {}
@@ -345,9 +379,6 @@ struct CardSettingsEditor: View {
       }
       if let msg = m.message {
         Text(msg).font(.callout).foregroundStyle(session.saveError == nil ? Color.secondary : Color.red).lineLimit(2).textSelection(.enabled)
-      } else if m.readOnly {
-        Label("Card in Card の中（読み取り専用）", systemImage: "link").foregroundStyle(.secondary)
-          .help("この Card は external プロジェクトのものです。変更はそのプロジェクトを単体で開いて行います。")
       } else if !session.isEditable {
         Label("実行中は変更を適用できません", systemImage: "lock.fill").foregroundStyle(.secondary)
       }
@@ -355,11 +386,11 @@ struct CardSettingsEditor: View {
       if m.applying { ProgressView().controlSize(.small) }
       Button("再読込") { if m.unapplied { confirmReload = true } else { m.reload() } }
       Button("適用") { Task { _ = await m.apply() } }
-        .disabled(!m.unapplied || m.applying || !session.isEditable || m.readOnly)
+        .disabled(!m.unapplied || m.applying || !session.isEditable)
         .keyboardShortcut("s", modifiers: .command)
       Button("閉じる") {
         Task {
-          if m.unapplied && !m.readOnly {
+          if m.unapplied {
             guard await m.apply() else { return }
           }
           dismiss()
@@ -451,8 +482,7 @@ private struct GeneralCategory: View {
         HStack {
           TextField("名前", text: $name)
             .onSubmit(rename)
-            .disabled(model.readOnly)
-          if name != model.session.displayName(model.cardKey) && !model.readOnly {
+          if name != model.session.displayName(model.cardKey) {
             Button("名前を変更") { rename() }.disabled(renaming || !model.session.isEditable)
           }
           if renaming { ProgressView().controlSize(.small) }
@@ -465,16 +495,13 @@ private struct GeneralCategory: View {
                                        set: { model.definition?["symbol"] = $0.map { .string($0) } }),
                        inherited: model.kind.symbol)
         }
-        .disabled(model.readOnly)
         TextField("概要", text: string("description"), axis: .vertical)
           .lineLimit(2...5)
-          .disabled(model.readOnly)
       }
       if let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }
-        .disabled(model.readOnly)
       }
       if model.kind != .subgraph && model.kind != .draft {
         Section("実行") {
@@ -495,7 +522,6 @@ private struct GeneralCategory: View {
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
           }
         }
-        .disabled(model.readOnly)
         if model.kind == .code {
           Section {
             toggle("network", label: "ネットワークへのアクセスを許可する", fallback: false)
@@ -504,7 +530,6 @@ private struct GeneralCategory: View {
           } header: {
             Label("Experimental", systemImage: "flask")
           }
-          .disabled(model.readOnly)
         }
       }
       let diags = model.session.resolution[model.cardKey]?.diagnostics ?? []
@@ -728,7 +753,6 @@ private struct PortsCategory: View {
       }
     }
     .formStyle(.grouped)
-    .disabled(model.readOnly)
   }
 
   /// Port purpose kept in _meta.json (also after a Draft is implemented).
@@ -782,7 +806,7 @@ private struct OutputPortsSection: View {
           Text(p.name).font(.body.monospaced()).frame(maxWidth: 120, alignment: .leading)
           TextField("用途", text: portNote(model, "outputs", p.name), prompt: Text("用途（何を出すか）"))
             .textFieldStyle(.roundedBorder).labelsHidden()
-          if model.readOnly || types.isEmpty || model.outputsPath == nil {
+          if types.isEmpty || model.outputsPath == nil {
             Text((p.rootType ?? String(localized: "未解決")) + (p.optional ? String(localized: "（省略可）") : ""))
               .font(.caption).foregroundStyle(.secondary)
           } else {
@@ -848,7 +872,7 @@ private struct OutputPortsSection: View {
 }
 
 /// Inputs and outputs of a Card in Card: its external project's boundary
-/// (each outer port maps to a port of a Card inside), read-only here.
+/// (each outer port maps to a port of a Card inside).
 private struct BoundaryCategory: View {
   @Bindable var model: CardEditorModel
 
@@ -859,7 +883,7 @@ private struct BoundaryCategory: View {
       side(b?["outputs"]?.object ?? [], title: "出力ポート", output: true)
       Section {
         LabeledContent("external", value: model.session.cardExternal(model.cardKey) ?? "")
-        Text("Card in Card は externals のプロジェクトです。ポートの対応はその tsugumi.json の boundary にあり、そのプロジェクトを単体で開いて変更します。外側からは通常の Card と同じように接続・実行できます。")
+        Text("Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。")
           .font(.caption).foregroundStyle(.secondary)
       }
     }
@@ -1057,7 +1081,7 @@ private struct SourceCategory: View {
         }
       }
       .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-      if generatedFile || model.readOnly { ReadOnlyMark(why: generatedFile ? String(localized: "接続から生成されるファイルです（手で編集しません）") : String(localized: "Card in Card の中のファイルです（external プロジェクトを単体で開いて編集します）")) }
+      if generatedFile { ReadOnlyMark(why: String(localized: "接続から生成されるファイルです（手で編集しません）")) }
       if model.created.contains(path) { Text("新規").font(.caption2).foregroundStyle(.orange) }
       else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
       Spacer()

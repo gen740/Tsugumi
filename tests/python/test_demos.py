@@ -57,14 +57,15 @@ def edit_card(env, c, card: str, fn, raw=lambda s: s):
 
 
 def edit_external_card(env, c, external: str, card: str, fn):
-    """A Card inside a Card in Card: its external is read-only here, so the
-    file changes where the external is kept, and the project reloads."""
-    from test_cards_container import reload
-    f = env.project / "externals" / external / "definitions" / card / "_card.json"
-    body = json.loads(f.read_text())
+    """A Card inside a Card in Card: its _card.json is a file of the
+    external (this project's copy), changed with PutSource."""
+    p = f"externals/{external}/definitions/{card}/_card.json"
+    snap = c.call("ProjectInspectRequest")
+    src = next(s for s in snap.sources if text(s.path) == p)
+    body = json.loads(bytes(c.call("ProjectFileReadRequest", path=p, atRev=snap.rev).bytes))
     fn(body)
-    f.write_text(json.dumps(body))
-    reload(c)
+    return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
+                  changes=[change("PutSource", path=p, bytes=list(json.dumps(body).encode()), baseHash=text(src.hash))])
 
 
 def set_param(body: dict, name: str, value):

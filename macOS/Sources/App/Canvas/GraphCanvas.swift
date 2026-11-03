@@ -61,16 +61,6 @@ struct GraphCanvas: View {
           }
         }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
-        if !tab.scope.isEmpty {
-          // Inside a Card in Card: the external project, shown but not edited here.
-          Label(String(localized: "external プロジェクト \(session.cardExternal(scopeKey) ?? "")（読み取り専用。単体で開いて編集します）"),
-                systemImage: "link")
-            .font(.caption).padding(.horizontal, 10).padding(.vertical, 4)
-            .background(.regularMaterial, in: Capsule())
-            .padding(.top, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .allowsHitTesting(false)
-        }
         if let p = pending {
           Path { path in
             path.move(to: screen(portWorld(p.from.0, p.from.1, output: true)))
@@ -146,14 +136,13 @@ struct GraphCanvas: View {
         return .handled
       }
       .dropDestination(for: String.self) { items, loc in
-        // Cards are added to this project's canvas only (a Card in Card is read-only).
-        guard session.isEditable, tab.scope.isEmpty else { return false }
+        guard session.isEditable else { return false }
         var placed: [CardKey] = []
         for (i, item) in items.enumerated() {
           let w = world(loc)
           let at = CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)
           if let t = DefinitionDrag.template(item) {
-            placed.append(session.addCard(template: t, in: [], at: at))
+            placed.append(session.addCard(template: t, in: tab.scope, at: at))
           } else if let id = DefinitionDrag.id(item) {
             placed.append(session.placeDefinition(id, at: at))
           }
@@ -197,7 +186,7 @@ struct GraphCanvas: View {
   }
 
   private var noteIds: [String] {
-    (session.layout["notes"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == scopeKey }.compactMap { $0["id"]?.string }
+    session.notes(in: tab.scope).compactMap { $0["id"]?.string }
   }
 
   func origin(_ k: CardKey) -> CGPoint {
@@ -330,9 +319,7 @@ struct GraphCanvas: View {
     // Placed above / below the inner Cards unless moved (layout.json "boundaries").
     func placed(_ side: String, _ auto: CGPoint) -> CGPoint {
       var p = auto
-      if let v = session.layout["boundaries"]?[scopeKey]?[side], let px = v["x"]?.double, let py = v["y"]?.double {
-        p = CGPoint(x: px, y: py)
-      }
+      if let v = session.boundaryPosition(tab.scope, side) { p = v }
       if let d = boundaryDrag, d.input == (side == "inputs") {
         p.x += d.offset.width / camera.zoom
         p.y += d.offset.height / camera.zoom
@@ -387,15 +374,8 @@ struct GraphCanvas: View {
           x = (x / prefs.gridSize).rounded() * prefs.gridSize
           y = (y / prefs.gridSize).rounded() * prefs.gridSize
         }
-        let scope = scopeKey
-        // Layout only.
-        session.edit { s in
-          var all = s.layout["boundaries"] ?? .object([])
-          var bars = all[scope] ?? .object([])
-          bars[input ? "inputs" : "outputs"] = .object([("x", .real(x.rounded())), ("y", .real(y.rounded()))])
-          all[scope] = bars
-          s.layout["boundaries"] = all
-        }
+        // Layout only (the external's layout.json).
+        session.setBoundaryPosition(tab.scope, input ? "inputs" : "outputs", CGPoint(x: x.rounded(), y: y.rounded()))
       }
   }
 
@@ -469,7 +449,7 @@ struct GraphCanvas: View {
   }
 
   private func noteView(_ id: String) -> some View {
-    let n = (session.layout["notes"]?.array ?? []).first { $0["id"]?.string == id } ?? .object([])
+    let n = session.note(id) ?? .object([])
     let r = noteRect(n)
     return StickyNoteView(note: n, onResize: { d in
       session.updateNote(id) { v in
@@ -578,8 +558,7 @@ struct GraphCanvas: View {
   /// E: a new Draft Card in the middle of the canvas, its editor open.
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
-    if !tab.scope.isEmpty { tab.enter([]) }
-    let k = session.addCard(template: .draft, in: [], at: world(CGPoint(x: size.width / 2, y: size.height / 2)))
+    let k = session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)))
     tab.selection = [k]
     openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
   }
@@ -831,7 +810,6 @@ struct GraphCanvas: View {
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String) {
     guard session.isEditable,
-          session.isOwnCard(k),
           let type = session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string else { return }
     session.setParam(k, name, parseParam(text, type))
   }
@@ -902,7 +880,7 @@ struct GraphCanvas: View {
   func fitAll() {
     var rect = cardKeys.reduce(CGRect.null) { $0.union(cardRect($1)) }
     for k in outputKeys { rect = rect.union(frameRect(k)) }
-    for n in session.layout["notes"]?.array ?? [] where (n["scope"]?.string ?? "") == scopeKey { rect = rect.union(noteRect(n)) }
+    for n in session.notes(in: tab.scope) { rect = rect.union(noteRect(n)) }
     for g in session.groups(in: tab.scope) {
       let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
       for m in members { rect = rect.union(cardRect(m).insetBy(dx: -18, dy: -40)) }

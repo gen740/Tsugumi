@@ -333,13 +333,13 @@ final class ChatController {
     let list = cards.map { k -> String in
       // A Card's definition folder is named by its id.
       let def = path(k).last ?? "-"
-      let meta = session.isOwnCard(k) ? session.definitionMeta[def] : nil
-      return "- \(k) (definition \(def)): \(meta?["description"]?.string ?? "")\n  plan: \(meta?["plan"]?.string ?? "")"
+      let meta = session.cardMeta(k)
+      return "- \(k) (definition \(def)): \(meta?["description"]?.string ?? "")\n  content: \(meta?["content"]?.string ?? "")"
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? "the root workflow" : "the child workflow \(scope.joined(separator: "/"))"
     send("""
     Implement these Draft Cards in \(where_). For each one, turn its definition into a working Card (language, \
-    default.nix, sources and _outputs.fbs) that matches its description, plan, provisional ports and the existing \
+    default.nix, sources and _outputs.fbs) that matches its description, content, provisional ports and the existing \
     connections, keeping the instance ids and wiring. Save with project_save, then validate and report what you changed.
     \(list)
     """)

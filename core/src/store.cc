@@ -413,18 +413,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         if (!Document::is_source_area(c.path))
           throw Failed(FailureKind::permission_denied,
                        c.path + " cannot be changed through source operations", {{"path", c.path}});
-        // An external is edited where it is opened on its own; here only a
-        // new one can be written (a Card in Card made from selected Cards).
-        if (c.path.starts_with("externals/")) {
-          auto name = c.path.substr(10, c.path.find('/', 10) - 10);
-          std::string prefix = "externals/" + name + "/";
-          bool existing = false;
-          for (auto s = base->sources.lower_bound(prefix); s != base->sources.end() && s->first.starts_with(prefix); ++s)
-            existing = true;
-          if (existing)
-            throw Failed(FailureKind::permission_denied,
-                         prefix + " is an external project: open it on its own to change it", {{"path", c.path}});
-        }
         if (!fs::resolves_inside(opts_.root, opts_.root / c.path))
           throw Failed(FailureKind::invalid_path, c.path + " leaves the project", {{"path", c.path}});
         auto it = doc->sources.find(c.path);

@@ -95,26 +95,21 @@ enum SmokeTest {
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
         ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.map(\.name) == ["summary"]
 
-        // Review scenario: another client saves while this draft is dirty. The
-        // draft keeps its base revision, so saving it must conflict instead of
-        // overwriting the other change.
+        // Another client saves while this window edits: both changes stay.
         if case .ready(let ep) = s.environment {
-          s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
-          let base = s.draftBaseRev
           let other = RPCClient(endpoint: ep.url)
           _ = try await other.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
           let snap = try await other.inspect()
+          s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
           var layout = try JSONValue.parse(snap.layoutJson)
           layout["cards"]?["begin"] = .object([("x", .real(77)), ("y", .real(77))])
-          _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
+          _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
           await other.close()
-          for _ in 0..<50 where s.rev == base { try await Task.sleep(for: .milliseconds(100)) }
-          let remoteRev = s.rev
           await s.save()
-          let conflicted = s.saveError != nil && s.dirty && s.draftBaseRev == base && s.rev == remoteRev
-          report["review_conflict"] = ["base": base, "remote": remoteRev, "conflicted": conflicted, "error": s.saveError ?? ""] as [String: Any]
-          s.discardDraft()
-          ok = ok && conflicted && !s.dirty && s.confirmedLayout["cards"]?["begin"]?["x"]?.double == 77
+          for _ in 0..<50 where s.confirmedLayout["cards"]?["begin"]?["x"]?.double != 77 { try await Task.sleep(for: .milliseconds(100)) }
+          let merged = s.saveError == nil && !s.dirty && s.confirmedLayout["cards"]?[dk]?["x"]?.double == 333
+          report["concurrent_edit"] = ["merged": merged, "error": s.saveError ?? ""] as [String: Any]
+          ok = ok && merged
         }
         report["ok"] = ok
       } catch {

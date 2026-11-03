@@ -159,7 +159,7 @@ def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
     assert st.failure.kind == 18 and "saved" in text(st.failure.diagnostic)
 
 
-def test_start_wired_to_input_and_drafts_block_only_their_dependents(env):
+def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     defs = dict(BASE_DEFS)
     defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
     c = env([card("begin", "trigger"), card("src", "msg"), card("out", "log"), card("plan", "plan"), card("after", "log")],
@@ -177,11 +177,18 @@ def test_start_wired_to_input_and_drafts_block_only_their_dependents(env):
     plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
     assert [text(p.name) for p in plan.outputs] == ["summary"]
     run_id, st = run_and_wait(c, "begin")
-    # The implemented part ran; the Draft did not; its dependent is blocked with the reason.
+    # The implemented part ran; the Draft and the Card that needs its output did not.
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert states(c, run_id, "src") == [CardState.succeeded]
     assert states(c, run_id, "out") == [CardState.succeeded]
-    assert states(c, run_id, "after") == [CardState.blocked]
-    assert st.state == RunState.failed and "Draft plan" in text(st.failure.diagnostic)
+    assert states(c, run_id, "plan") == [] and states(c, run_id, "after") == []
+    # Step by step: running from the implemented Card leaves the Draft out too.
+    run_id, st = run_and_wait(c, "src")
+    assert st.state == RunState.succeeded and states(c, run_id, "out") == [CardState.succeeded]
+    # A Draft itself cannot be run.
+    snap = c.call("ProjectInspectRequest")
+    with pytest.raises(RpcFailure):
+        c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("plan"), propagate=True)
 
 
 def test_merges_nested_several_levels_deep(env):

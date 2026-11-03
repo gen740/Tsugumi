@@ -15,7 +15,7 @@ extension ProjectSession {
 
   func portData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
     let def = definition ?? cardDefinition(k)
-    let m = meta ?? (isOwnCard(k) ? path(k).first.flatMap { definitionMeta[$0] } : nil)
+    let m = meta ?? cardMeta(k)
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
@@ -55,8 +55,41 @@ extension ProjectSession {
 
   func cardDescription(_ k: CardKey) -> String? {
     if let d = cardDefinition(k)?["description"]?.string, !d.isEmpty { return d }
-    if isOwnCard(k), let id = path(k).first, let d = definitionMeta[id]?["description"]?.string, !d.isEmpty { return d }
+    if let d = cardMeta(k)?["description"]?.string, !d.isEmpty { return d }
     return nil
+  }
+
+  /// Whether a Card does not run because it needs a Draft's output: a
+  /// required input fed only by Drafts or Cards waiting on one (the core
+  /// leaves the same Cards out of a run).
+  func waitsOnDraft(_ k: CardKey) -> Bool {
+    let scope = Array(path(k).dropLast())
+    return draftWaiting(in: scope).contains(path(k).last ?? k)
+  }
+
+  /// Card ids of a scope that do not run because of a Draft.
+  func draftWaiting(in scope: [String]) -> Set<String> {
+    let ids = cards(in: scope).compactMap { $0["id"]?.string }
+    var waits = Set(ids.filter { kind(key(scope + [$0])) == .draft })
+    guard !waits.isEmpty else { return [] }
+    let conns = connections(in: scope)
+    var changed = true
+    while changed {
+      changed = false
+      for id in ids where !waits.contains(id) {
+        let k = key(scope + [id])
+        for p in resolution[k]?.inputs ?? [] where !p.optional {
+          let from = conns.filter { $0["to"]?["card"]?.string == id && $0["to"]?["port"]?.string == p.name }
+            .compactMap { $0["from"]?["card"]?.string }
+          if !from.isEmpty && from.allSatisfy(waits.contains) {
+            waits.insert(id)
+            changed = true
+            break
+          }
+        }
+      }
+    }
+    return waits
   }
 
   /// One line describing the latest result of a Card.
@@ -126,7 +159,7 @@ extension ProjectSession {
     // The name is the Card's id.
     let title = path(k).last ?? k
     var summary = def?["description"]?.string
-    if summary?.isEmpty ?? true { summary = (meta ?? (isOwnCard(k) ? definitionMeta[title] : nil))?["description"]?.string }
+    if summary?.isEmpty ?? true { summary = (meta ?? cardMeta(k))?["description"]?.string }
     if summary?.isEmpty ?? true { summary = nil }
     let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
@@ -134,7 +167,8 @@ extension ProjectSession {
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: ports.inputs, outputs: outputs ?? ports.outputs,
       params: inlineParams(k, definition: definition),
-      result: displays[k]?.summary, resultFailed: false,
+      result: displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
+      resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : state?.state, stage: stageProgress(k),
       invocation: state?.invocation ?? 0, runContinues: runActive,
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },

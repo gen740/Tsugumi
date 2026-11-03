@@ -6,7 +6,7 @@ import TsugumiRPC
 /// Commands whose keys can be reassigned in Settings > Shortcuts.
 enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
   // The app and the project
-  case newProject, openProject, home, save, duplicateProject, find, run, stop
+  case newProject, openProject, home, duplicateProject, find, run, stop
   // The canvas, while it has the focus (single keys; never while typing)
   case openSettings, openArtifacts, openLog, toggleCollapse, duplicate, fitAll, actualSize, zoomIn, zoomOut, arrange, group
   case addDraft, generateDrafts
@@ -19,7 +19,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .newProject: return String(localized: "新しいプロジェクト")
     case .openProject: return String(localized: "プロジェクトを開く")
     case .home: return String(localized: "Home へ戻る")
-    case .save: return String(localized: "保存")
     case .duplicateProject: return String(localized: "プロジェクトを複製")
     case .find: return String(localized: "テキスト検索")
     case .run: return String(localized: "ワークフローを実行")
@@ -62,7 +61,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .newProject: return KeyBinding(key: "n", command: true)
     case .openProject: return KeyBinding(key: "o", command: true)
     case .home: return KeyBinding(key: "h", command: true, shift: true)
-    case .save: return KeyBinding(key: "s", command: true)
     case .duplicateProject: return KeyBinding(key: "s", command: true, shift: true)
     case .find: return KeyBinding(key: "f", command: true)
     case .run: return KeyBinding(key: "r", command: true)

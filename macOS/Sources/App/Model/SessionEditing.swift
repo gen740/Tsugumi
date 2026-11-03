@@ -95,7 +95,7 @@ extension ProjectSession {
     }
   }
 
-  /// Whether a Card can be changed here (not inside a Card in Card).
+  /// Whether a Card is one of this project's own (not inside a Card in Card).
   func isOwnCard(_ k: CardKey) -> Bool { path(k).count == 1 }
 
   /// Definition folders of this project that no Card uses (copied from
@@ -130,24 +130,28 @@ extension ProjectSession {
     return String(decoding: try await rpc.readFile(path: p, atRev: rev), as: UTF8.self)
   }
 
-  func collapsed(_ k: CardKey) -> Bool { layout["cards"]?[k]?["collapsed"]?.bool ?? false }
-
-  /// The Card's settings as last confirmed by the core (not the draft).
-  func confirmedCardDefinition(_ k: CardKey) -> JSONValue? {
-    guard isOwnCard(k), let id = path(k).first else { return nil }
-    return confirmedDefinitions[id]
+  func collapsed(_ k: CardKey) -> Bool {
+    layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?["collapsed"]?.bool ?? false
   }
 
   // MARK: - Cards and connections
 
-  /// A free Card name: not a Card, nor a definition folder, of this project.
+  /// A free Card name in a scope's project: not a Card, a definition folder
+  /// or an external there.
   func uniqueId(_ base: String, in scope: [String] = []) -> String {
+    let prefix = projectPrefix(scope) ?? ""
     var existing = Set(cards(in: scope).compactMap { $0["id"]?.string })
-    existing.formUnion(definitions.keys)
-    existing.formUnion(links.keys)
-    existing.formUnion(confirmedDefinitions.keys)
-    existing.formUnion(confirmedLinks.keys)
-    existing.formUnion(sourcePaths.filter { $0.hasPrefix("externals/") }.compactMap { $0.split(separator: "/").dropFirst().first.map(String.init) })
+    if prefix.isEmpty {
+      existing.formUnion(definitions.keys)
+      existing.formUnion(links.keys)
+      existing.formUnion(confirmedDefinitions.keys)
+      existing.formUnion(confirmedLinks.keys)
+    } else {
+      existing.formUnion(external(prefix).map { Array($0.definitions.keys) } ?? [])
+    }
+    let ext = prefix + "externals/"
+    existing.formUnion(sourcePaths.filter { $0.hasPrefix(ext) }.compactMap { $0.dropFirst(ext.count).split(separator: "/").first.map(String.init) })
+    existing.formUnion(effectiveExternals.keys.filter { $0.hasPrefix(ext) }.compactMap { $0.dropFirst(ext.count).split(separator: "/").first.map(String.init) })
     let clean = base.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" }
     var stem = String(clean).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     if stem.isEmpty { stem = "card" }
@@ -157,52 +161,89 @@ extension ProjectSession {
     return id
   }
 
+  /// Adds a Card instance to a scope's canvas.
+  func appendCard(_ id: String, in scope: [String]) {
+    updateGraph(scope) { g in
+      var cards = g["cards"]?.array ?? []
+      cards.append(.object([("id", .string(id))]))
+      g["cards"] = .array(cards)
+    }
+  }
+
   /// A new Card from a template, with its own definition folder.
   @discardableResult
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil) -> CardKey {
-    let id = uniqueId(name ?? t.baseName)
-    let k = key([id])
+    let id = uniqueId(name ?? t.baseName, in: scope)
+    let k = key(scope + [id])
     edit { s in
-      s.writeTemplate(t, id: id)
-      s.updateGraph([]) { g in
-        var cards = g["cards"]?.array ?? []
-        cards.append(.object([("id", .string(id))]))
-        g["cards"] = .array(cards)
-      }
+      s.appendCard(id, in: scope)
+      s.writeTemplate(t, card: k)
       s.setPosition(k, point)
     }
     return k
   }
 
+  /// Copies a Card's definition folder (settings and every file) into a
+  /// scope as a new Card. A Card in Card brings its own copy of the external.
+  func copyDefinition(from k: CardKey, to scope: [String], name: String? = nil) async -> (id: String, apply: (ProjectSession) -> Void)? {
+    guard let d = cardDefinitionDraft(k), let dir = definitionDir(k) else { return nil }
+    let newId = uniqueId(name ?? path(k).last ?? "card", in: scope)
+    let toPrefix = projectPrefix(scope) ?? ""
+    var files: [String: Data] = [:]
+    for p in sourcePaths where p.hasPrefix(dir) {
+      let rel = String(p.dropFirst(dir.count))
+      if ["_card.json", "_link.json", "_meta.json"].contains(rel) { continue }
+      if let t = try? await sourceText(p) { files[toPrefix + "definitions/\(newId)/" + rel] = Data(t.utf8) }
+    }
+    // A Card in Card's external is copied along (a copy of its own).
+    var link = d.link
+    var extFiles: [String: Data] = [:]
+    var extDocs: (String, ExternalProject)?
+    if let from = cardExternal(k), let name = link?["external"]?.string, let e = external(from) {
+      let extName = uniqueId(name, in: scope)
+      let to = toPrefix + "externals/\(extName)/"
+      for p in sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(from.count))) {
+        if let t = try? await sourceText(p) { extFiles[to + p.dropFirst(from.count)] = Data(t.utf8) }
+      }
+      // Externals nested in it come along as files.
+      for (q, inner) in effectiveExternals where q.hasPrefix(from) && q != from {
+        for (rel, text) in inner.files { extFiles[to + q.dropFirst(from.count) + rel] = Data(text.utf8) }
+      }
+      extDocs = (to, e)
+      link = .object([("external", .string(extName))])
+    }
+    let draft = DefinitionDraft(card: d.card, meta: d.meta, link: link)
+    let newKey = key(scope + [newId])
+    return (newId, { s in
+      s.setCardDefinition(newKey, draft)
+      for (p, bytes) in files.merging(extFiles, uniquingKeysWith: { a, _ in a }) {
+        s.sourceRemovals.remove(p)
+        s.sourceEdits[p] = bytes
+      }
+      if let (to, e) = extDocs { s.createExternal(to, e) }
+    })
+  }
+
   /// Copies Cards with their definition folders (settings, sources) under new
   /// names; connections between the copied Cards are copied too.
   func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
-    guard scope.isEmpty else { return [] }
     var map: [String: String] = [:]
-    var files: [String: String] = [:]  // new path -> text
+    var applies: [(ProjectSession) -> Void] = []
     var taken: Set<String> = []
     for k in keys.sorted() {
-      guard let id = path(k).first else { continue }
-      var newId = uniqueId(id)
-      var n = 2
-      while taken.contains(newId) { newId = uniqueId("\(id)-\(n)"); n += 1 }
-      taken.insert(newId)
-      map[id] = newId
-      for p in sourcePaths where p.hasPrefix("definitions/\(id)/") {
-        if let text = try? await sourceText(p) { files["definitions/\(newId)/" + p.dropFirst("definitions/\(id)/".count)] = text }
-      }
+      guard let id = path(k).last else { continue }
+      var n = 1
+      var want = id
+      while taken.contains(uniqueId(want, in: scope)) { n += 1; want = "\(id)-\(n)" }
+      guard let c = await copyDefinition(from: k, to: scope, name: uniqueId(want, in: scope)) else { continue }
+      taken.insert(c.id)
+      map[id] = c.id
+      applies.append(c.apply)
     }
     var made: Set<CardKey> = []
     edit { s in
-      for (old, new) in map {
-        if let link = s.links[old] {
-          s.definitionEdits[new] = DefinitionDraft(card: .object([]), meta: s.definitionMeta[old], link: link)
-        } else if let card = s.definitions[old] {
-          s.setDefinition(new, card: card, meta: s.definitionMeta[old])
-        }
-      }
-      for (p, text) in files { s.putSource(p, text) }
-      s.updateGraph([]) { g in
+      for a in applies { a(s) }
+      s.updateGraph(scope) { g in
         var cards = g["cards"]?.array ?? []
         var conns = g["connections"]?.array ?? []
         for (_, new) in map.sorted(by: { $0.key < $1.key }) { cards.append(.object([("id", .string(new))])) }
@@ -218,82 +259,140 @@ extension ProjectSession {
         g["connections"] = .array(conns)
       }
       for (old, new) in map {
-        let p = s.position(key([old]))
-        s.setPosition(key([new]), CGPoint(x: p.x + 30, y: p.y + 30))
-        made.insert(key([new]))
+        let p = s.position(key(scope + [old]))
+        s.setPosition(key(scope + [new]), CGPoint(x: p.x + 30, y: p.y + 30))
+        made.insert(key(scope + [new]))
       }
     }
     return made
   }
 
   /// Renames a Card (its id, its definition folder): saved at once, with its
-  /// connections, positions and run history following.
+  /// connections and positions following (and, for this project's Cards, its
+  /// run history).
   func renameCard(_ k: CardKey, to raw: String) async throws {
-    guard isOwnCard(k), let old = path(k).first else { return }
+    guard let old = path(k).last else { return }
+    let scope = Array(path(k).dropLast())
     let new = raw.trimmingCharacters(in: .whitespaces)
     guard new != old else { return }
     guard !new.isEmpty, new.count <= 128, new != ".", new != "..",
           new.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else {
       throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "名前に使えるのは英数字と - _ . だけです（128 文字まで）。"))
     }
-    if uniqueId(new) != new { throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "「\(new)」はすでに使われています。")) }
+    if uniqueId(new, in: scope) != new { throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "「\(new)」はすでに使われています。")) }
     if dirty { await save() }
     if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
     guard let rpc else { throw RPCError.disconnected }
-    var proj = confirmedProject
-    var lay = confirmedLayout
-    var canvas = proj["canvas"] ?? .object([])
-    canvas["cards"] = .array((canvas["cards"]?.array ?? []).map { $0["id"]?.string == old ? .object([("id", .string(new))]) : $0 })
-    canvas["connections"] = .array((canvas["connections"]?.array ?? []).map { c in
-      var c = c
-      for side in ["from", "to"] where c[side]?["card"]?.string == old { c[side]?["card"] = .string(new) }
-      return c
-    })
-    proj["canvas"] = canvas
-    func rk(_ s: String) -> String { s == old ? new : s.hasPrefix(old + "/") ? new + s.dropFirst(old.count) : s }
-    for field in ["cards", "displays", "boundaries"] {
-      if let o = lay[field]?.object { lay[field] = .object(o.map { (rk($0.0), $0.1) }) }
+    func renamedGraph(_ g: JSONValue) -> JSONValue {
+      var g = g
+      g["cards"] = .array((g["cards"]?.array ?? []).map { $0["id"]?.string == old ? .object([("id", .string(new))]) : $0 })
+      g["connections"] = .array((g["connections"]?.array ?? []).map { c in
+        var c = c
+        for side in ["from", "to"] where c[side]?["card"]?.string == old { c[side]?["card"] = .string(new) }
+        return c
+      })
+      return g
     }
-    for field in ["notes", "groups"] {
-      if let arr = lay[field]?.array {
-        lay[field] = .array(arr.map { item in
-          var item = item
-          if let sc = item["scope"]?.string { item["scope"] = .string(rk(sc)) }
-          if (item["scope"]?.string ?? "") == "", let cs = item["cards"]?.array { item["cards"] = .array(cs.map { $0.string == old ? .string(new) : $0 }) }
-          if let outs = item["outputs"]?.array {
-            item["outputs"] = .array(outs.map { o in var o = o; if o["card"]?.string == old { o["card"] = .string(new) }; return o })
+    func renamedLayout(_ l: JSONValue) -> JSONValue {
+      var lay = l
+      func rk(_ s: String) -> String { s == old ? new : s.hasPrefix(old + "/") ? new + s.dropFirst(old.count) : s }
+      for field in ["cards", "displays"] {
+        if let o = lay[field]?.object { lay[field] = .object(o.map { (rk($0.0), $0.1) }) }
+      }
+      for field in ["notes", "groups"] {
+        if let arr = lay[field]?.array {
+          lay[field] = .array(arr.map { item in
+            var item = item
+            if let cs = item["cards"]?.array { item["cards"] = .array(cs.map { $0.string == old ? .string(new) : $0 }) }
+            if let outs = item["outputs"]?.array {
+              item["outputs"] = .array(outs.map { o in var o = o; if o["card"]?.string == old { o["card"] = .string(new) }; return o })
+            }
+            return item
+          })
+        }
+      }
+      return lay
+    }
+    guard let prefix = projectPrefix(scope) else { return }
+    if prefix.isEmpty {
+      var proj = confirmedProject
+      proj["canvas"] = renamedGraph(proj["canvas"] ?? .object([]))
+      let lay = renamedLayout(confirmedLayout)
+      var changes = [Change.setProject(proj.serialized()), Change.renameDefinition(id: old, to: new)]
+      if lay != confirmedLayout { changes.append(Change.setLayout(lay.serialized())) }
+      _ = try await rpc.save(baseRev: rev, opId: UUID(), origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+      return
+    }
+    // Inside a Card in Card: the external's documents and files are rewritten.
+    let from = prefix + "definitions/\(old)/", to = prefix + "definitions/\(new)/"
+    var files: [String: Data] = [:]
+    for p in sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(prefix.count))) {
+      files[to + p.dropFirst(from.count)] = Data(try await sourceText(p).utf8)
+    }
+    edit { s in
+      s.updateExternal(prefix) { e in
+        e.project["canvas"] = renamedGraph(e.project["canvas"] ?? .object([]))
+        e.project["boundary"] = e.project["boundary"].map { b in
+          var b = b
+          for side in ["inputs", "outputs"] {
+            if let o = b[side]?.object {
+              b[side] = .object(o.map { n, v in var v = v; if v["card"]?.string == old { v["card"] = .string(new) }; return (n, v) })
+            }
           }
-          return item
-        })
+          return b
+        }
+        e.layout = renamedLayout(e.layout)
+        e.definitions[new] = e.definitions[old]
+        e.definitions[old] = nil
+      }
+      for p in s.sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(prefix.count))) { s.removeSource(p) }
+      for (p, d) in files {
+        s.sourceRemovals.remove(p)
+        s.sourceEdits[p] = d
       }
     }
-    var changes = [Change.setProject(proj.serialized()), Change.renameDefinition(id: old, to: new)]
-    if lay != confirmedLayout { changes.append(Change.setLayout(lay.serialized())) }
-    _ = try await rpc.save(baseRev: rev, opId: UUID(), origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+    await save()
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty, scope.isEmpty else { return }
+    guard !ids.isEmpty else { return }
+    let prefix = projectPrefix(scope) ?? ""
     edit { s in
-      // Each Card's definition folder goes with it.
-      for id in ids { s.removeDefinition(id) }
+      // Each Card's definition folder goes with it, and a Card in Card's own external copy.
+      for k in keys {
+        if let ext = s.cardExternal(k) { s.removeExternal(ext) }
+        s.removeCardDefinition(k)
+      }
       s.updateGraph(scope) { g in
         g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
         g["connections"] = .array((g["connections"]?.array ?? []).filter {
           !ids.contains($0["from"]?["card"]?.string ?? "") && !ids.contains($0["to"]?["card"]?.string ?? "")
         })
       }
-      for k in keys {
-        // Layout entries of the Card and of anything inside it.
-        if var cards = s.layout["cards"]?.object {
-          cards.removeAll { $0.0 == k || $0.0.hasPrefix(k + "/") }
-          s.layout["cards"] = .object(cards)
+      if !prefix.isEmpty {
+        // Boundary ports of removed Cards go too.
+        s.updateExternal(prefix) { e in
+          for side in ["inputs", "outputs"] {
+            if let o = e.project["boundary"]?[side]?.object {
+              e.project["boundary"]?[side] = .object(o.filter { !ids.contains($0.1["card"]?.string ?? "") })
+            }
+          }
         }
-        s.layout["displays"]?[k] = nil
       }
-      s.updateGroups { groups in
-        for i in groups.indices where (groups[i]["scope"]?.string ?? "") == key(scope) {
+      s.updateLayout(of: scope) { l in
+        for k in keys {
+          // Layout entries of the Card and of anything inside it.
+          let lk = s.layoutKey(k)
+          if var cards = l["cards"]?.object {
+            cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
+            l["cards"] = .object(cards)
+          }
+          l["displays"]?[lk] = nil
+        }
+      }
+      s.updateGroups(in: scope) { groups in
+        for i in groups.indices {
           groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
         }
       }
@@ -326,6 +425,16 @@ extension ProjectSession {
     }
   }
 
+  /// Removes connections (as they are in the scope's canvas).
+  func removeConnections(_ list: [JSONValue], in scope: [String]) {
+    guard !list.isEmpty else { return }
+    edit { s in
+      s.updateGraph(scope) { g in
+        g["connections"] = .array((g["connections"]?.array ?? []).filter { !list.contains($0) })
+      }
+    }
+  }
+
   func disconnect(_ k: CardKey, inputs: Bool, in scope: [String]) {
     guard let id = path(k).last else { return }
     edit { s in
@@ -340,11 +449,14 @@ extension ProjectSession {
   func setCollapsed(_ keys: Set<CardKey>, _ value: Bool) {
     edit { s in
       for k in keys {
-        var cards = s.layout["cards"] ?? .object([])
-        var entry = cards[k] ?? .object([("x", .real(0)), ("y", .real(0))])
-        entry["collapsed"] = value ? .bool(true) : nil
-        cards[k] = entry
-        s.layout["cards"] = cards
+        let lk = s.layoutKey(k)
+        s.updateLayout(of: Array(path(k).dropLast())) { l in
+          var cards = l["cards"] ?? .object([])
+          var entry = cards[lk] ?? .object([("x", .real(0)), ("y", .real(0))])
+          entry["collapsed"] = value ? .bool(true) : nil
+          cards[lk] = entry
+          l["cards"] = cards
+        }
       }
     }
   }
@@ -366,14 +478,25 @@ extension ProjectSession {
   @discardableResult
   func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty, scope.isEmpty else { return nil }
-    let newId = uniqueId(name)
-    let newKey = key([newId])
-    let ext = "externals/\(newId)/"
-    var files: [String: String] = [:]
-    for id in ids {
-      for p in sourcePaths where p.hasPrefix("definitions/\(id)/") {
-        if let text = try? await sourceText(p) { files[ext + p] = text }
+    guard !ids.isEmpty, let scopePrefix = projectPrefix(scope) else { return nil }
+    let newId = uniqueId(name, in: scope)
+    let newKey = key(scope + [newId])
+    let ext = scopePrefix + "externals/\(newId)/"
+    // Files of the Cards' definition folders, and of their own externals.
+    var files: [String: Data] = [:]
+    var moved: [String: ExternalProject] = [:]
+    for k in keys {
+      guard let dir = definitionDir(k), let id = path(k).last else { continue }
+      for p in sourcePaths where p.hasPrefix(dir) && !ExternalProject.isDocument(String(p.dropFirst(scopePrefix.count))) {
+        if let t = try? await sourceText(p) { files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = Data(t.utf8) }
+      }
+      if let inner = cardExternal(k), let e = external(inner), let name = cardDefinitionDraft(k)?.link?["external"]?.string {
+        let to = ext + "externals/\(name)/"
+        for p in sourcePaths where p.hasPrefix(inner) && !ExternalProject.isDocument(String(p.dropFirst(inner.count))) {
+          if let t = try? await sourceText(p) { files[to + p.dropFirst(inner.count)] = Data(t.utf8) }
+        }
+        moved[to] = e
+        moved[inner] = nil
       }
     }
     edit { s in
@@ -383,7 +506,7 @@ extension ProjectSession {
       center.y /= CGFloat(keys.count)
       var inner: [JSONValue] = [], innerConns: [JSONValue] = []
       var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
-      s.updateGraph([]) { g in
+      s.updateGraph(scope) { g in
         let all = g["cards"]?.array ?? []
         let conns = g["connections"]?.array ?? []
         var outer: [JSONValue] = [], outerConns: [JSONValue] = []
@@ -421,33 +544,42 @@ extension ProjectSession {
         g["cards"] = .array(outer)
         g["connections"] = .array(outerConns)
       }
-      // The external: a project of its own, opened on its own to edit.
-      let extProject: JSONValue = .object([
-        ("name", .string(newId)), ("pkgsPath", s.project["pkgsPath"] ?? .string("tsugumi:default")),
+      // The external: a project of its own (it also opens on its own).
+      let root = scopePrefix.isEmpty ? s.project : (s.external(scopePrefix)?.project ?? .object([]))
+      var e = ExternalProject(project: .object([
+        ("name", .string(newId)), ("pkgsPath", root["pkgsPath"] ?? .string("tsugumi:default")),
         ("databaseConnections", .array([])),
         ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
         ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
-      ])
+      ]), layout: .object([]), definitions: [:])
       var extCards: [(String, JSONValue)] = []
-      for id in ids.sorted() {
-        let p = s.position(key([id]))
+      for k in keys.sorted() {
+        guard let id = path(k).last else { continue }
+        let p = s.position(k)
         extCards.append((id, .object([("x", .real(p.x - center.x)), ("y", .real(p.y - center.y))])))
-        if let card = s.definitions[id] { s.putSource(ext + "definitions/\(id)/_card.json", card.serialized() + "\n") }
-        if let link = s.links[id] { s.putSource(ext + "definitions/\(id)/_link.json", link.serialized() + "\n") }
-        if let meta = s.definitionMeta[id] { s.putSource(ext + "definitions/\(id)/_meta.json", meta.serialized() + "\n") }
+        e.definitions[id] = s.cardDefinitionDraft(k)
       }
-      for (p, text) in files { s.putSource(p, text) }
-      s.putSource(ext + "tsugumi.json", extProject.serialized() + "\n")
-      s.putSource(ext + "layout.json", JSONValue.object([("cards", .object(extCards))]).serialized() + "\n")
-      for id in ids { s.removeDefinition(id) }
-      s.definitionEdits[newId] = DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(newId))]))
-      if var cards = s.layout["cards"]?.object {
-        cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
-        s.layout["cards"] = .object(cards)
+      e.layout = .object([("cards", .object(extCards))])
+      for k in keys {
+        if let inner = s.cardExternal(k) { s.removeExternal(inner) }
+        s.removeCardDefinition(k)
+      }
+      for (p, d) in files {
+        s.sourceRemovals.remove(p)
+        s.sourceEdits[p] = d
+      }
+      for (to, inner) in moved { s.createExternal(to, inner) }
+      s.createExternal(ext, e)
+      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(newId))])))
+      s.updateLayout(of: scope) { l in
+        if var cards = l["cards"]?.object {
+          cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
+          l["cards"] = .object(cards)
+        }
       }
       s.setPosition(newKey, center)
-      s.updateGroups { groups in
-        for i in groups.indices where (groups[i]["scope"]?.string ?? "") == "" {
+      s.updateGroups(in: scope) { groups in
+        for i in groups.indices {
           groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
         }
       }
@@ -457,47 +589,77 @@ extension ProjectSession {
 
   // MARK: - Layout: notes, groups, output frames
 
+  func notes(in scope: [String]) -> [JSONValue] {
+    (layout(of: scope)["notes"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == "" }
+  }
+
   func addNote(in scope: [String], at p: CGPoint) -> String {
     let id = "note-" + UUID().uuidString.prefix(8).lowercased()
     edit { s in
-      var notes = s.layout["notes"]?.array ?? []
-      notes.append(.object([
-        ("id", .string(id)), ("scope", .string(key(scope))), ("text", .string("メモ")), ("color", .string("yellow")),
-        ("x", .real(p.x)), ("y", .real(p.y)), ("width", .real(240)), ("height", .real(120)),
-      ]))
-      s.layout["notes"] = .array(notes)
+      s.updateLayout(of: scope) { l in
+        var notes = l["notes"]?.array ?? []
+        notes.append(.object([
+          ("id", .string(id)), ("scope", .string("")), ("text", .string("メモ")), ("color", .string("yellow")),
+          ("x", .real(p.x)), ("y", .real(p.y)), ("width", .real(240)), ("height", .real(120)),
+        ]))
+        l["notes"] = .array(notes)
+      }
     }
     return id
   }
 
+  /// The scope whose layout holds a note or group (ids are unique).
+  private func scopeHolding(_ field: String, _ id: String) -> [String]? {
+    func has(_ l: JSONValue) -> Bool { (l[field]?.array ?? []).contains { $0["id"]?.string == id } }
+    if has(layout) { return [] }
+    var queue: [[String]] = childScopes(of: [])
+    while let sc = queue.first {
+      queue.removeFirst()
+      if has(layout(of: sc)) { return sc }
+      queue += childScopes(of: sc)
+    }
+    return nil
+  }
+
+  func note(_ id: String) -> JSONValue? {
+    guard let sc = scopeHolding("notes", id) else { return nil }
+    return (layout(of: sc)["notes"]?.array ?? []).first { $0["id"]?.string == id }
+  }
+
   func updateNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
+    guard let sc = scopeHolding("notes", id) else { return }
     edit { s in
-      guard var notes = s.layout["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
-      fn(&notes[i])
-      s.layout["notes"] = .array(notes)
+      s.updateLayout(of: sc) { l in
+        guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
+        fn(&notes[i])
+        l["notes"] = .array(notes)
+      }
     }
   }
 
   func removeNote(_ id: String) {
-    edit { s in s.layout["notes"] = .array((s.layout["notes"]?.array ?? []).filter { $0["id"]?.string != id }) }
+    guard let sc = scopeHolding("notes", id) else { return }
+    edit { s in s.updateLayout(of: sc) { $0["notes"] = .array(($0["notes"]?.array ?? []).filter { $0["id"]?.string != id }) } }
   }
 
   func groups(in scope: [String]) -> [JSONValue] {
-    (layout["groups"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == key(scope) }
+    (layout(of: scope)["groups"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == "" }
   }
 
-  func updateGroups(_ fn: (inout [JSONValue]) -> Void) {
-    var groups = layout["groups"]?.array ?? []
-    fn(&groups)
-    layout["groups"] = groups.isEmpty ? nil : .array(groups)
+  func updateGroups(in scope: [String], _ fn: (inout [JSONValue]) -> Void) {
+    updateLayout(of: scope) { l in
+      var groups = l["groups"]?.array ?? []
+      fn(&groups)
+      l["groups"] = groups.isEmpty ? nil : .array(groups)
+    }
   }
 
   func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = "グループ") -> String {
     let id = "group-" + UUID().uuidString.prefix(8).lowercased()
     edit { s in
-      s.updateGroups { g in
+      s.updateGroups(in: scope) { g in
         g.append(.object([
-          ("id", .string(id)), ("scope", .string(key(scope))), ("name", .string(name)), ("color", .string("blue")),
+          ("id", .string(id)), ("scope", .string("")), ("name", .string(name)), ("color", .string("blue")),
           ("cards", .array(keys.compactMap { path($0).last }.sorted().map { .string($0) })),
         ]))
       }
@@ -506,8 +668,9 @@ extension ProjectSession {
   }
 
   func updateGroup(_ id: String, _ fn: (inout JSONValue) -> Void) {
+    guard let sc = scopeHolding("groups", id) else { return }
     edit { s in
-      s.updateGroups { g in
+      s.updateGroups(in: sc) { g in
         guard let i = g.firstIndex(where: { $0["id"]?.string == id }) else { return }
         fn(&g[i])
       }
@@ -516,18 +679,38 @@ extension ProjectSession {
 
   /// Removes the group frame only; its Cards stay where they are.
   func ungroup(_ id: String) {
-    edit { s in s.updateGroups { $0.removeAll { $0["id"]?.string == id } } }
+    guard let sc = scopeHolding("groups", id) else { return }
+    edit { s in s.updateGroups(in: sc) { $0.removeAll { $0["id"]?.string == id } } }
   }
 
-  func displayFrame(_ k: CardKey) -> JSONValue? { layout["displays"]?[k] }
+  func displayFrame(_ k: CardKey) -> JSONValue? { layout(of: Array(path(k).dropLast()))["displays"]?[layoutKey(k)] }
 
   func updateDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
+    let lk = layoutKey(k)
     edit { s in
-      var displays = s.layout["displays"] ?? .object([])
-      var d = displays[k] ?? .object([])
-      fn(&d)
-      displays[k] = d
-      s.layout["displays"] = displays
+      s.updateLayout(of: Array(path(k).dropLast())) { l in
+        var displays = l["displays"] ?? .object([])
+        var d = displays[lk] ?? .object([])
+        fn(&d)
+        displays[lk] = d
+        l["displays"] = displays
+      }
+    }
+  }
+
+  /// Where a scope's boundary ports are drawn (inside a Card in Card).
+  func boundaryPosition(_ scope: [String], _ side: String) -> CGPoint? {
+    guard let v = layout(of: scope)["boundary"]?[side], let x = v["x"]?.double, let y = v["y"]?.double else { return nil }
+    return CGPoint(x: x, y: y)
+  }
+
+  func setBoundaryPosition(_ scope: [String], _ side: String, _ p: CGPoint) {
+    edit { s in
+      s.updateLayout(of: scope) { l in
+        var b = l["boundary"] ?? .object([])
+        b[side] = .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10))])
+        l["boundary"] = b
+      }
     }
   }
 
@@ -568,11 +751,15 @@ extension ProjectSession {
     definitionEdits[id] = DefinitionDraft(card: card, meta: meta)
   }
 
-  func removeDefinition(_ id: String) {
-    definitionEdits[id] = DefinitionDraft(card: .object([]), meta: nil, removed: true)
-    for p in sourcePaths where p.hasPrefix("definitions/\(id)/") {
-      sourceEdits[p] = nil
-      if sources[p] != nil { sourceRemovals.insert(p) }
+  func removeDefinition(_ id: String) { removeCardDefinition(key([id])) }
+
+  /// Removes a Card's definition folder (its documents and every file in it).
+  func removeCardDefinition(_ k: CardKey) {
+    guard let dir = definitionDir(k) else { return }
+    setCardDefinition(k, nil)
+    let prefix = projectPrefix(Array(path(k).dropLast())) ?? ""
+    for p in sourcePaths where p.hasPrefix(dir) && !(prefix.isEmpty ? false : ExternalProject.isDocument(String(p.dropFirst(prefix.count)))) {
+      removeSource(p)
     }
   }
 
@@ -587,29 +774,27 @@ extension ProjectSession {
   }
 
   /// The definition folder of a new Card made from a template (in the draft).
-  func writeTemplate(_ t: DefinitionTemplate, id: String) {
+  func writeTemplate(_ t: DefinitionTemplate, card k: CardKey) {
+    guard let dir = definitionDir(k), let id = path(k).last else { return }
     let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
-    let dir = "definitions/\(id)/"
+    func set(_ card: JSONValue, meta: JSONValue? = nil) { setCardDefinition(k, DefinitionDraft(card: card, meta: meta)) }
     switch t {
     case .draft:
-      setDefinition(id, card: .object([("template", .string("draft"))]),
-                    meta: .object([("description", .string("")), ("plan", .string(""))]))
+      set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
     case .trigger, .fork, .branch, .logger:
-      setDefinition(id, card: .object([("template", .string(t.rawValue))]), meta: nil)
+      set(.object([("template", .string(t.rawValue))]))
     case .merge:
-      setDefinition(id, card: .object([
+      set(.object([
         ("template", .string("merge")), ("inputs", .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])])),
-      ]), meta: nil)
+      ]))
     case .input:
-      setDefinition(id, card: .object([
+      set(.object([
         ("template", .string("input")),
         ("params", .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])),
-      ]), meta: nil)
+      ]))
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
     case .python:
-      setDefinition(id, card: .object([
-        ("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])])),
-      ]), meta: nil)
+      set(.object([("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
       putSource(dir + "src/main.py", """
@@ -625,9 +810,7 @@ extension ProjectSession {
 
       """)
     case .cpp:
-      setDefinition(id, card: .object([
-        ("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])])),
-      ]), meta: nil)
+      set(.object([("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
       putSource(dir + "src/card.cc", """

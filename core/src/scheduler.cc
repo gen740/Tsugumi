@@ -1239,20 +1239,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!n.in_targets || n.node->is_virtual) continue;
       final[n.idx] = n.invocations > 0 || n.halted ? n.last : CardState::skipped;
     }
-    // Never invoked because a Draft upstream is not implemented yet: blocked,
-    // with the Draft named as the reason (Drafts never run or succeed).
-    std::map<size_t, std::string> draft_reason;
-    for (auto& n : nodes_) {
-      if (!n.in_targets || n.node->is_virtual || n.invocations > 0 || n.halted) continue;
-      for (const auto& e : res.edges) {
-        if (e.to != n.idx || nodes_[e.from].in_targets || res.nodes[e.from].kind != Template::Draft) continue;
-        const auto* port = n.node->input(e.to_port);
-        if (port && !port->optional) {
-          final[n.idx] = cancel_ ? CardState::cancelled : CardState::blocked;
-          draft_reason[n.idx] = path_key(res.nodes[e.from].path);
-        }
-      }
-    }
     // Never invoked: blocked when an upstream failed/blocked, or partial inputs arrived.
     for (bool changed = true; changed;) {
       changed = false;
@@ -1286,16 +1272,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             if (e.to == n.idx && e.to_port == port) wi.upstream.push_back({res.nodes[e.from].path, e.from_port});
           waiting[n.idx].push_back(std::move(wi));
         }
-        if (!blocked_failure) {
-          auto d = draft_reason.find(n.idx);
-          blocked_failure =
-              d != draft_reason.end()
-                  ? FailureData::make(FailureKind::input_missing,
-                                      path_key(n.node->path) + " depends on Draft " + d->second + ", which is not implemented yet",
-                                      {{"card", path_key(n.node->path)}, {"draft", d->second}})
-                  : FailureData::make(FailureKind::input_missing, path_key(n.node->path) + " is missing inputs",
-                                      {{"card", path_key(n.node->path)}});
-        }
+        if (!blocked_failure)
+          blocked_failure = FailureData::make(FailureKind::input_missing, path_key(n.node->path) + " is missing inputs",
+                                              {{"card", path_key(n.node->path)}});
       }
       if (cancel_ && st == CardState::skipped) continue;  // never reached before the cancel
       InvocationRecordData rec;
@@ -1440,6 +1419,33 @@ void Scheduler::recover_interrupted() {
   }
 }
 
+std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
+  std::set<size_t> waits;
+  for (size_t i = 0; i < res.nodes.size(); ++i)
+    if (res.nodes[i].kind == Template::Draft) waits.insert(i);
+  for (bool changed = !waits.empty(); changed;) {
+    changed = false;
+    for (size_t i = 0; i < res.nodes.size(); ++i) {
+      if (res.nodes[i].is_virtual || waits.count(i)) continue;
+      for (const auto& p : res.nodes[i].inputs) {
+        if (p.optional) continue;
+        bool fed = false, only_waiting = true;
+        for (const auto& e : res.edges)
+          if (e.to == i && e.to_port == p.name) {
+            fed = true;
+            only_waiting &= waits.count(e.from) > 0;
+          }
+        if (fed && only_waiting) {
+          waits.insert(i);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return waits;
+}
+
 RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool propagate) {
   RunPlanData out;
   const Node* target = res.find(card);
@@ -1504,6 +1510,17 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
     }
     starts.push_back(t);
   }
+  // A Draft is not implemented yet: it does not run, nor do the Cards that
+  // need its outputs (a required input fed only by Drafts or by Cards waiting
+  // on one). Everything else runs as usual; a Card started on its own keeps
+  // its saved inputs.
+  std::set<size_t> waits = draft_waiting(res);
+  for (size_t i : waits)
+    if (i != t || target->kind == Template::Draft) targets.erase(i);
+  if (target->kind == Template::Draft)
+    throw Failed(FailureKind::invalid_request, path_key(card) + " is a Draft and is not implemented yet", {{"card", path_key(card)}});
+  std::erase_if(starts, [&](size_t i) { return !targets.count(i); });
+  std::erase_if(seeds, [&](size_t i) { return !targets.count(i); });
   for (size_t i : targets) {
     out.targets.push_back(res.nodes[i].path);
     if (res.nodes[i].kind == Template::Code) out.build_candidates.push_back(res.nodes[i].path);

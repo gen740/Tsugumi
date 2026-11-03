@@ -34,7 +34,7 @@ struct CanvasWorkspace: View {
     .overlay(alignment: .bottomLeading) { viewControls.padding(10) }
   }
 
-  /// Open another project, save, chat: beside the run control, the same look.
+  /// Open another project, chat: beside the run control, the same look.
   private var projectActions: some View {
     HStack(spacing: 10) {
       if let onSwitchProject {
@@ -43,10 +43,6 @@ struct CanvasWorkspace: View {
           .disabled(session.runActive)
           .accessibilityLabel("開く")
       }
-      Button { Task { await session.save() } } label: { Image(systemName: "square.and.arrow.down") }
-        .disabled(!session.dirty || !session.connected || session.saving)
-        .help(session.dirty ? "変更を保存（\(AppPreferences.shared.shortcut(.save).label)）" : "未保存の変更はありません")
-        .accessibilityLabel("保存")
       Button { workspace.showChat.toggle() } label: {
         Label("チャット", systemImage: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
       }

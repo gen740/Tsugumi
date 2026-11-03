@@ -99,7 +99,9 @@ public actor Agent {
     never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
     SetProject (connections) in the same save.
   - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
-    own tsugumi.json (boundary: outer ports to inner Card ports) and definitions. Externals are read-only here.
+    own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
+    project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
+    under externals/<name>/ (base_hash of the file you read).
   - Run with {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}; then poll run_status with the run_id until
     succeeded/failed/cancelled and read results with run_record. Cancelling runs requires an explicit run_cancel.
   - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",

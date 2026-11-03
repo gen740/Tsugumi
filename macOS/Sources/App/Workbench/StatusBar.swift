@@ -29,13 +29,10 @@ struct StatusBar: View {
     .padding(.horizontal, 10).padding(.vertical, 5)
     .background(.bar)
     .overlay(alignment: .top) { Divider() }
-    .confirmationDialog("未保存の変更を破棄して最新の内容を読み込みますか？", isPresented: $confirmDiscard) {
-      Button("変更を破棄して読み込む", role: .destructive) {
-        session.discardDraft()
-        Task { await session.reloadExternal() }
-      }
+    .confirmationDialog("保存できない変更を破棄して、保存済みの内容に戻しますか？", isPresented: $confirmDiscard) {
+      Button("変更を破棄", role: .destructive) { session.discardDraft() }
       Button("キャンセル", role: .cancel) {}
-    } message: { Text("破棄した変更は取り消せません。必要なら先に「変更をコピー」してください。") }
+    } message: { Text("破棄した変更は取り消せません。") }
   }
 
   private func bar(compact: Bool) -> some View {
@@ -43,15 +40,6 @@ struct StatusBar: View {
       runState(short: compact).fixedSize()
       Divider().frame(height: 14)
       syncState(short: compact).fixedSize()
-      if session.remoteChangePending && session.dirty {
-        Group {
-          if compact { Image(systemName: "arrow.triangle.2.circlepath") } else {
-            Label("他の場所で更新されました", systemImage: "arrow.triangle.2.circlepath")
-          }
-        }
-          .foregroundStyle(.orange)
-          .help("変更は revision \(session.draftBaseRev) を基準にしています。保存すると競合として検出されます。")
-      }
       if !compact {
         Divider().frame(height: 14)
         counts.fixedSize()
@@ -110,9 +98,9 @@ struct StatusBar: View {
         case .saved:
           Image(systemName: "checkmark.icloud").foregroundStyle(.green)
           Text(short ? String(localized: "保存済み") : String(localized: "保存済み · rev \(session.rev)"))
-        case .unsaved:
-          Image(systemName: "pencil.circle.fill").foregroundStyle(.orange)
-          Text(short ? String(localized: "未保存") : String(localized: "未保存の変更"))
+        case .waitingForRun:
+          Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
+          Text(short ? String(localized: "実行後に保存") : String(localized: "実行が終わったら保存します"))
         case .saving:
           ProgressView().controlSize(.mini)
           Text("保存中…")
@@ -135,26 +123,19 @@ struct StatusBar: View {
       Text("保存・同期").font(.headline)
       LabeledContent("確定 revision", value: "\(session.rev)")
       LabeledContent("実行 revision", value: "\(session.executionRev)")
-      if session.dirty { LabeledContent("変更の基準", value: "rev \(session.draftBaseRev)") }
       if case .failed(let m) = session.syncState {
         Text(m).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
       }
-      if session.dirty {
-        Text("未保存の変更は保持しています。").font(.callout).foregroundStyle(.secondary)
-      }
+      Text("変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。")
+        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
-        Button("保存") { Task { await session.save() } }.disabled(!session.dirty || !session.connected)
-        Button("変更をコピー") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(session.draftSummary(), forType: .string)
+        if session.saveError != nil {
+          Button("もう一度保存") { Task { await session.save() } }.disabled(!session.connected)
+          Button("変更を破棄…", role: .destructive) { confirmDiscard = true }
         }
-        .disabled(!session.dirty)
         Button("外部の変更を再読込") { Task { await session.reloadExternal() } }
           .disabled(!session.connected)
-          .help("Tsugumi の外で編集されたファイルを取り込みます（未保存の変更は保持）")
-        Button("最新を読み込む…", role: .destructive) { confirmDiscard = true }
-          .disabled(!session.dirty)
-          .help("未保存の変更を破棄します（確認があります）")
+          .help("Tsugumi の外で編集されたファイルを取り込みます")
       }
     }
     .padding(14)
