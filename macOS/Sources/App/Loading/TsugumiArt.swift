@@ -12,6 +12,7 @@ enum TsugumiPalette {
   static let cream = hex(0xf6ead2), mist = hex(0xa9c4bf)
   static let rufous = hex(0xc97d3d), olive = hex(0xa9b77a), oliveDark = hex(0x7d9148)
   static let bark = hex(0x7d5834), barkDark = hex(0x5c3e24), barkShade = hex(0x4e341e)
+  static let thread = hex(0xefe0c3)
 }
 
 /// Fixes the animation clock (snapshots, previews); nil follows real time.
@@ -44,6 +45,10 @@ enum TsugumiBird {
   static let tailTip: CGFloat = 160
   static let shoulder = CGPoint(x: 545, y: 402)
   static let eyeCenter = CGPoint(x: 628, y: 368)
+  /// Where the thread crosses the bill (on the gape line).
+  static let gape = CGPoint(x: 752, y: 388)
+  private static let upperBill = [CGPoint(x: 694, y: 356), CGPoint(x: 776, y: 394), CGPoint(x: 728, y: 384)]
+  private static let billColor = TsugumiPalette.hex(0x2e2117)
 
   // Copied from tsugumi-icon.svg #tsugumi-bird in draw order: legs, tail,
   // body, spots, head, supercilium, eye, beak, wing.
@@ -85,8 +90,19 @@ enum TsugumiBird {
     return Facet(part: part, points: points, color: TsugumiPalette.hex(hex, a))
   }
 
+  /// Where a point of the bird (SVG units) lands when drawn with `draw`.
+  static func point(_ p: CGPoint, at: CGPoint, scale: CGFloat, pose: BirdPose) -> CGPoint {
+    let x = (p.x - feet.x) * scale * (1 + pose.squash * 0.5), y = (p.y - feet.y) * scale * (1 - pose.squash)
+    let c = CGFloat(cos(pose.tilt)), s = CGFloat(sin(pose.tilt))
+    return CGPoint(x: at.x + x * c - y * s, y: at.y - pose.hop + x * s + y * c)
+  }
+
   /// Draws with the feet at `at`; `scale` maps SVG units (~616 × 410) to points.
-  static func draw(_ g: GraphicsContext, at: CGPoint, scale: CGFloat, pose: BirdPose) {
+  /// `holding` draws (in the caller's coordinates) over the bird and under
+  /// its upper bill, so a thread through `gape` is held in the bill.
+  static func draw(_ g: GraphicsContext, at: CGPoint, scale: CGFloat, pose: BirdPose,
+                   holding: ((GraphicsContext) -> Void)? = nil) {
+    let scene = g
     var g = g
     g.translateBy(x: at.x, y: at.y - pose.hop)
     g.rotate(by: .radians(pose.tilt))
@@ -117,6 +133,12 @@ enum TsugumiBird {
       // a same-colour hairline hides the seams between facets
       if f.part != .highlight { ctx.stroke(p, with: .color(f.color), lineWidth: 1.2) }
     }
+    guard let holding else { return }
+    holding(scene)
+    // the upper bill again, over the thread: held between the bills
+    var bill = Path(); bill.addLines(upperBill); bill.closeSubpath()
+    g.fill(bill, with: .color(billColor))
+    g.stroke(bill, with: .color(billColor), lineWidth: 1.2)
   }
 }
 
@@ -280,8 +302,200 @@ struct WorkflowBackdrop: View {
   }
 }
 
+/// The thread the bird holds: up from its temari below the picture, over the
+/// picture's edge, hanging slack across into the bill, with a short end out
+/// of the bill. The scattered tries spun into one line, left to right.
+enum TsugumiThread {
+  /// The turn over the edge between the panel (front) and the picture
+  /// (behind): a quarter circle from straight up to straight right whose
+  /// middle lies on the edge `y`, so half of it is on each side.
+  static let bendRadius: CGFloat = 9
+  static func bend(x: CGFloat, edge y: CGFloat) -> (start: CGPoint, end: CGPoint, path: Path) {
+    let r = bendRadius, k: CGFloat = 0.5523
+    let cy = y + r / 2.squareRoot()
+    let start = CGPoint(x: x, y: cy), end = CGPoint(x: x + r, y: cy - r)
+    var p = Path()
+    p.move(to: start)
+    p.addCurve(to: end, control1: CGPoint(x: x, y: cy - k * r), control2: CGPoint(x: x + r - k * r, y: cy - r))
+    return (start, end, p)
+  }
+
+  /// In front, on the light panel below the picture (the panel's top edge at
+  /// y = 0): straight up from the ball `a` into the bend over the edge at `x`,
+  /// lying on the panel (a soft shadow beside it).
+  static func near(_ g: GraphicsContext, from a: CGPoint, x: CGFloat, size: CGSize) {
+    var g = g
+    g.clip(to: Path(CGRect(origin: .zero, size: size)))
+    let turn = bend(x: x, edge: 0)
+    var p = Path()
+    p.move(to: a)
+    p.addLine(to: turn.start)
+    p.addPath(turn.path)
+    var shadow = g
+    shadow.addFilter(.blur(radius: 1.2))
+    shadow.stroke(p.offsetBy(dx: 2.5, dy: 1), with: .color(.black.opacity(0.25)), style: StrokeStyle(lineWidth: 2.4))
+    g.stroke(p, with: .color(TsugumiPalette.hex(0x9c8460, 0.85)), style: StrokeStyle(lineWidth: 3.6))
+    g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2.4))
+  }
+
+  /// Behind the panel (its top edge at the picture's bottom, `edge`): the
+  /// rest of the bend over the edge at `x`, then hanging slack across to
+  /// `back`. One width throughout: a stylised thread.
+  static func receding(_ g: GraphicsContext, x: CGFloat, edge: CGFloat, to back: CGPoint) {
+    let turn = bend(x: x, edge: edge)
+    let from = turn.end
+    // the slack: the lowest point sits below the straight line between the ends
+    let sag = min(26, max(8, hypot(back.x - from.x, back.y - from.y) * 0.12))
+    var p = turn.path
+    p.addCurve(to: back, control1: CGPoint(x: from.x + (back.x - from.x) * 0.3, y: from.y + (back.y - from.y) * 0.3 + sag * 1.6),
+               control2: CGPoint(x: from.x + (back.x - from.x) * 0.75, y: from.y + (back.y - from.y) * 0.75 + sag))
+    var shadow = g
+    shadow.addFilter(.blur(radius: 1.2))
+    shadow.stroke(p.offsetBy(dx: 1.5, dy: 2.5), with: .color(.black.opacity(0.3)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+    g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+  }
+
+  /// A short loose end out of the bill `s`, swaying lightly.
+  static func loose(_ g: GraphicsContext, from s: CGPoint, time: Double) {
+    let w = CGFloat(sin(time * 1.3)) * 3
+    var p = Path()
+    p.move(to: s)
+    p.addCurve(to: CGPoint(x: s.x + 26, y: s.y - 8 + w), control1: CGPoint(x: s.x + 6, y: s.y - 12),
+               control2: CGPoint(x: s.x + 16, y: s.y - 2 + w))
+    g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+  }
+
+  private static func line(_ a: CGPoint, _ b: CGPoint) -> Path {
+    var p = Path()
+    p.move(to: a)
+    p.addLine(to: b)
+    return p
+  }
+}
+
+/// The temari (巻きかがり) the bird unwinds, low-poly like the bird: a ball
+/// of 若草 thread with four wound bands in two tones, each facet shaded by
+/// how it faces the light. The same ball as the key visual
+/// (docs/assets/tsugumi-icon.svg #temari).
+enum TsugumiTemari {
+  struct Facet { let points: [CGPoint]; let color: Color }
+
+  /// Where the thread leaves the ball: its top.
+  static func lead(center: CGPoint, radius: CGFloat) -> CGPoint {
+    CGPoint(x: center.x, y: center.y - radius)
+  }
+
+  /// Draws the ball resting on `center.y + radius`; `spin` (radians) turns
+  /// it clockwise as thread comes off its top.
+  static func draw(_ g: GraphicsContext, center: CGPoint, radius: CGFloat, spin: Double) {
+    var g = g
+    g.fill(Path(ellipseIn: CGRect(x: center.x - radius * 0.95, y: center.y + radius * 0.82, width: radius * 1.9, height: radius * 0.3)),
+           with: .color(.black.opacity(0.28)))
+    g.translateBy(x: center.x, y: center.y)
+    g.scaleBy(x: radius, y: radius)
+    let shape = build(spin: spin)
+    var outline = Path(); outline.addLines(shape.outline); outline.closeSubpath()
+    g.clip(to: outline)
+    for f in shape.facets {
+      var p = Path(); p.addLines(f.points); p.closeSubpath()
+      g.fill(p, with: .color(f.color))
+      g.stroke(p, with: .color(f.color), lineWidth: 1 / radius)
+    }
+  }
+
+  private typealias V = SIMD3<Double>
+
+  /// Facets of the unit ball (centre at the origin, y down).
+  private static func build(spin: Double) -> (facets: [Facet], outline: [CGPoint]) {
+    func norm(_ v: V) -> V { v / (v * v).sum().squareRoot() }
+    func cross(_ a: V, _ b: V) -> V { V(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x) }
+    let ry = 38.0 * .pi / 180, rx = -28.0 * .pi / 180
+    func view(_ v: V) -> V {
+      let x = v.x * cos(ry) + v.z * sin(ry), z = -v.x * sin(ry) + v.z * cos(ry)
+      let y = v.y * cos(rx) - z * sin(rx), z2 = v.y * sin(rx) + z * cos(rx)
+      // the spin, clockwise on screen (the top moves toward the bird)
+      return V(x * cos(spin) + y * sin(spin), -x * sin(spin) + y * cos(spin), z2)
+    }
+    func screen(_ v: V) -> CGPoint { CGPoint(x: v.x, y: -v.y) }
+    func shade(_ hex: UInt32, _ k: Double) -> Color {
+      func c(_ shift: UInt32) -> Double { min(1, Double(hex >> shift & 0xff) / 255 * k) }
+      return Color(.sRGB, red: c(16), green: c(8), blue: c(0))
+    }
+    let light = norm(V(-0.45, 0.6, 0.66))
+    var rng = SeededRandom(seed: 5)
+    var facets: [Facet] = []
+    func tri(_ a: V, _ b: V, _ c: V, _ hex: UInt32) {
+      guard (a.z + b.z + c.z) / 3 > 0.02 else { return }  // the far side
+      var n = norm(cross(b - a, c - a))
+      if n.z < 0 { n = -n }
+      let k = 0.62 + 0.5 * max(0, (n * light).sum()) + rng.next(-0.04, 0.04)
+      facets.append(Facet(points: [screen(a), screen(b), screen(c)], color: shade(hex, k)))
+    }
+
+    // the ball: an icosahedron subdivided once
+    let t = (1 + 5.0.squareRoot()) / 2
+    var vs: [V] = [V(-1, t, 0), V(1, t, 0), V(-1, -t, 0), V(1, -t, 0), V(0, -1, t), V(0, 1, t),
+                   V(0, -1, -t), V(0, 1, -t), V(t, 0, -1), V(t, 0, 1), V(-t, 0, -1), V(-t, 0, 1)].map(norm)
+    var faces = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6),
+                 (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11), (6, 2, 10),
+                 (8, 6, 7), (9, 8, 1)]
+    var mids: [Int: Int] = [:]
+    func mid(_ a: Int, _ b: Int) -> Int {
+      let key = min(a, b) * 1000 + max(a, b)
+      if let m = mids[key] { return m }
+      vs.append(norm((vs[a] + vs[b]) / 2))
+      mids[key] = vs.count - 1
+      return vs.count - 1
+    }
+    faces = faces.flatMap { a, b, c -> [(Int, Int, Int)] in
+      let ab = mid(a, b), bc = mid(b, c), ca = mid(c, a)
+      return [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+    }
+    let seen = vs.map(view)
+    for (a, b, c) in faces { tri(seen[a], seen[b], seen[c], 0x9fb070) }
+
+    // the bands: strips along great circles, two tones (two groups of threads)
+    let bands: [(V, UInt32, UInt32)] = [(V(1, 0, 0), 0xf6ecd8, 0xd8c49e), (V(0, 1, 0), 0xd58b49, 0xa35c29),
+                                        (V(0, 0, 1), 0xf6ecd8, 0xd8c49e), (V(1, 1, 1), 0xd58b49, 0xa35c29)]
+    let steps = 14, spread = 0.15, lift = 1.025
+    for (n0, lightHex, darkHex) in bands {
+      let n = norm(n0)
+      let u = norm(cross(n, abs(n.z) < 0.9 ? V(0, 0, 1) : V(1, 0, 0))), w = cross(n, u)
+      func at(_ i: Int, _ d: Double) -> V {
+        let a = 2 * Double.pi * Double(i) / Double(steps), r = (1 - d * d).squareRoot() * lift
+        return view(n * d * lift + (u * cos(a) + w * sin(a)) * r)
+      }
+      for i in 0..<steps {
+        for (lo, hi, hex) in [(-spread, 0.0, lightHex), (0.0, spread, darkHex)] {
+          tri(at(i, lo), at(i + 1, lo), at(i + 1, hi), hex)
+          tri(at(i, lo), at(i + 1, hi), at(i, hi), hex)
+        }
+      }
+    }
+    return (facets, hull(seen.map(screen)))
+  }
+
+  /// Convex hull (monotone chain): the ball's silhouette.
+  private static func hull(_ points: [CGPoint]) -> [CGPoint] {
+    let ps = points.sorted { ($0.x, $0.y) < ($1.x, $1.y) }
+    func half(_ seq: [CGPoint]) -> [CGPoint] {
+      var h: [CGPoint] = []
+      for p in seq {
+        while h.count >= 2 {
+          let a = h[h.count - 2], b = h[h.count - 1]
+          if (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) > 0 { break }
+          h.removeLast()
+        }
+        h.append(p)
+      }
+      return h
+    }
+    return Array(half(ps).dropLast() + half(ps.reversed()).dropLast())
+  }
+}
+
 /// A faceted branch from x0 to x1; `grown` (0…1) is the part with bark,
-/// leaves and olives. The rest is a faint outline.
+/// leaves. The rest is a faint outline.
 enum TsugumiBranch {
   static func draw(_ g: GraphicsContext, x0: CGFloat, x1: CGFloat, y: CGFloat, grown: Double, time: Double) {
     let segs = 14
@@ -298,30 +512,32 @@ enum TsugumiBranch {
         poly(g, top + bot.reversed(), .white.opacity(0.08))
       }
     }
-    // leaves sprout at fixed slots once the bark reaches them
-    let slots = 11
-    for i in 0..<slots {
-      let sx = x0 + 18 + (x1 - x0 - 36) * CGFloat(i) / CGFloat(slots - 1)
-      let grow = min(1, max(0, (fx - sx) / 22))
-      guard grow > 0 else { continue }
-      let up = i % 2 == 0
-      var l = g
-      l.translateBy(x: sx, y: yAt(sx) + (up ? -3 : 3))
-      l.rotate(by: .radians((up ? -0.9 : 0.9) + sin(time * 2 + Double(i)) * 0.08))
-      l.scaleBy(x: grow, y: grow)
-      poly(l, [.zero, CGPoint(x: 18, y: 0), CGPoint(x: 9, y: -5)], TsugumiPalette.olive)
-      poly(l, [.zero, CGPoint(x: 18, y: 0), CGPoint(x: 9, y: 4)], TsugumiPalette.oliveDark)
-      if i % 3 == 1 {
-        var o = g
-        o.translateBy(x: sx + 6, y: yAt(sx) + 10)
-        o.scaleBy(x: grow, y: grow)
-        let hexagon = (0..<6).map { k in
-          let a = Double(k) * .pi / 3 + .pi / 6
-          return CGPoint(x: 5 * cos(a), y: 5 * sin(a))
-        }
-        poly(o, hexagon, i % 2 == 0 ? TsugumiPalette.hex(0x55661f) : TsugumiPalette.hex(0x3a2a3e))
-        poly(o, [CGPoint(x: -2, y: -3), CGPoint(x: 1, y: -4), CGPoint(x: 0, y: -1)], .white.opacity(0.6))
+    // leaves sprout once the bark reaches them, scattered: seeded spacing,
+    // side, angle, size and shade, sometimes two from one spot
+    var rng = SeededRandom(seed: 23)
+    var sx = x0 + rng.next(8, 20)
+    var i = 0
+    while sx < x1 - 6 {
+      let count = rng.next(0, 1) < 0.3 ? 2 : 1
+      for _ in 0..<count {
+        let up = rng.next(0, 1) < 0.55
+        let angle = (up ? -1 : 1) * rng.next(0.35, 1.35)
+        let size = rng.next(0.7, 1.25)
+        let shade = rng.next(0, 1)
+        let grow = min(1, max(0, (fx - sx) / 22))
+        defer { i += 1 }
+        guard grow > 0 else { continue }
+        var l = g
+        l.translateBy(x: sx, y: yAt(sx) + (up ? -2.5 : 2.5))
+        l.rotate(by: .radians(angle + sin(time * 2 + Double(i)) * 0.08))
+        l.scaleBy(x: grow * size, y: grow * size)
+        let (light, dark) = shade < 0.4 ? (TsugumiPalette.olive, TsugumiPalette.oliveDark)
+          : shade < 0.75 ? (TsugumiPalette.hex(0xb6c28c), TsugumiPalette.hex(0x879b52))
+          : (TsugumiPalette.hex(0x9fb070), TsugumiPalette.hex(0x6d8240))
+        poly(l, [.zero, CGPoint(x: 18, y: 0), CGPoint(x: 9, y: -5)], light)
+        poly(l, [.zero, CGPoint(x: 18, y: 0), CGPoint(x: 9, y: 4)], dark)
       }
+      sx += rng.next(10, 34)
     }
   }
 

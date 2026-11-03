@@ -14,11 +14,19 @@ struct LoadingContent: Equatable {
 
 /// The loading Card, drawn as one Card of a workflow inside the window: an
 /// input (square) above and an output (circle) below with wires running off
-/// the edges. The bird scene is the Card's picture; with a fraction the
-/// branch grows as the bar, without it the bird hops and pecks.
+/// the edges. The bird scene is the Card's picture: the bird holds a thread
+/// unwound from the temari beside the words below; with a fraction the
+/// branch grows as the bar and the temari unwinds, without it the bird hops
+/// and pecks.
 struct TsugumiLoadingCard: View {
   let content: LoadingContent
   var onCancel: (() -> Void)?
+  /// The temari's column left of the words, and its centre (from the card's
+  /// left edge): its thread runs straight up and hooks over the panel's top
+  /// edge there, into the picture behind.
+  static let spoolWidth: CGFloat = 56
+  static let spoolX: CGFloat = 22 + spoolWidth / 2
+  static let catchX: CGFloat = spoolX
   @Environment(\.colorScheme) private var scheme
   @Environment(\.openWindow) private var openWindow
 
@@ -34,8 +42,11 @@ struct TsugumiLoadingCard: View {
             .opacity(0.5)
             .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.5),
                                          .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+          // the picture sits behind the panel below: the panel's edge shades it
+          LinearGradient(colors: [.black.opacity(0), .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
+            .frame(height: 14).frame(maxHeight: .infinity, alignment: .bottom)
           Group {
-            if let f { TsugumiProgressScene(fraction: f) } else { TsugumiIdleScene() }
+            if let f { TsugumiProgressScene(fraction: f, catchX: Self.catchX) } else { TsugumiIdleScene(catchX: Self.catchX) }
           }
         }
         .frame(height: 150)
@@ -68,8 +79,14 @@ struct TsugumiLoadingCard: View {
             Button("キャンセル", action: onCancel).controlSize(.regular).padding(.top, 2)
           }
         }
+        // room for the temari on the left, the same on the right: the words stay centred
+        .padding(.horizontal, Self.spoolWidth - 8)
         .padding(.horizontal, 22).padding(.vertical, 16)
         .frame(maxWidth: .infinity)
+        // the temari beside the words; its thread catches on the picture's edge
+        .overlay {
+          TsugumiSpool(fraction: f, x: Self.spoolX, catchX: Self.catchX).allowsHitTesting(false)
+        }
       }
       .frame(width: 380)
       .background(Color(nsColor: .controlBackgroundColor))
@@ -105,8 +122,11 @@ struct TsugumiLoadingCard: View {
   }
 }
 
-/// Indeterminate: the bird hops and pecks on a short perch.
+/// Indeterminate: the bird hops and pecks on a short perch, holding the
+/// thread that catches on the lower edge at `catchX` (nil: only the loose
+/// end, as on home where nothing is below).
 struct TsugumiIdleScene: View {
+  var catchX: CGFloat? = nil
   var birdScale: CGFloat = 0.22
   @Environment(\.tsugumiClock) private var clock
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -123,17 +143,29 @@ struct TsugumiIdleScene: View {
         let fx = mid + (TsugumiBird.feet.x - (TsugumiBird.tailTip + TsugumiBird.beakTip) / 2) * birdScale
         let s = 1 - pose.hop / 40
         g.fill(Path(ellipseIn: CGRect(x: fx - 30 * s, y: y - 6, width: 60 * s, height: 6)), with: .color(.black.opacity(0.2)))
-        TsugumiBird.draw(g, at: CGPoint(x: fx, y: y - 3), scale: birdScale, pose: pose)
+        let feet = CGPoint(x: fx, y: y - 3)
+        let bill = TsugumiBird.point(TsugumiBird.gape, at: feet, scale: birdScale, pose: pose)
+        // over the lower edge and away into the picture, in front of the bird
+        TsugumiBird.draw(g, at: feet, scale: birdScale, pose: pose) { g in
+          if let catchX { TsugumiThread.receding(g, x: catchX, edge: size.height, to: bill) }
+          TsugumiThread.loose(g, from: bill, time: t)
+        }
       }
     }
     .accessibilityHidden(true)
   }
 }
 
-/// Determinate: the branch is the bar; the bird hops along the growing tip.
+/// Determinate: the branch is the bar; the bird hops along the growing tip
+/// (it moves only while hopping, a step at a time), drawing out the thread
+/// that catches on the lower edge at `catchX`.
 struct TsugumiProgressScene: View {
   let fraction: Double
+  var catchX: CGFloat
   var birdScale: CGFloat = 0.2
+  /// How far one hop goes along the branch.
+  var stride: CGFloat = 18
+  @State private var walker = HopWalker()
   @Environment(\.tsugumiClock) private var clock
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
   private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
@@ -144,20 +176,98 @@ struct TsugumiProgressScene: View {
       Canvas { g, size in
         let x0: CGFloat = 24, x1 = size.width - 24, y = size.height - 22
         TsugumiBranch.draw(g, x0: x0, x1: x1, y: y, grown: fraction, time: t)
-        var pose: BirdPose
+        // beak at the growing tip, but keep the tail inside the card; the bird
+        // keeps to steps along the branch and hops from one to the next
+        let tip = x0 + (x1 - x0) * fraction
+        let lo = x0 + (TsugumiBird.feet.x - TsugumiBird.tailTip) * birdScale - 8
+        let want = max(lo, tip - (TsugumiBird.beakTip - TsugumiBird.feet.x) * birdScale + 6)
+        let step = lo + (((want - lo) / stride).rounded(.down)) * stride
+        let moving = clock == nil && !reduceMotion
+        var (fx, pose) = walker.position(step: step, time: t, animated: moving)
         if fraction >= 1 {
           pose = BirdMotion.hop(t.truncatingRemainder(dividingBy: 0.7) / 0.7, height: 18)
           pose.flap = 1
-        } else {
-          let u = t.truncatingRemainder(dividingBy: 1.1)
-          pose = u < 0.4 ? BirdMotion.hop(u / 0.4, height: 9) : BirdPose()
-          pose.blink = BirdMotion.blink(t, every: 2.7)
+          fx = step
         }
-        // beak at the growing tip, but keep the tail inside the card
-        let tip = x0 + (x1 - x0) * fraction
-        let fx = max(x0 + (TsugumiBird.feet.x - TsugumiBird.tailTip) * birdScale - 8,
-                     tip - (TsugumiBird.beakTip - TsugumiBird.feet.x) * birdScale + 6)
-        TsugumiBird.draw(g, at: CGPoint(x: fx, y: y - 3), scale: birdScale, pose: pose)
+        pose.blink = max(pose.blink, BirdMotion.blink(t, every: 2.7))
+        let feet = CGPoint(x: fx, y: y - 3)
+        let bill = TsugumiBird.point(TsugumiBird.gape, at: feet, scale: birdScale, pose: pose)
+        // over the lower edge and away into the picture, in front of the bird
+        TsugumiBird.draw(g, at: feet, scale: birdScale, pose: pose) { g in
+          TsugumiThread.receding(g, x: catchX, edge: size.height, to: bill)
+          TsugumiThread.loose(g, from: bill, time: t)
+        }
+      }
+    }
+    .accessibilityHidden(true)
+  }
+}
+
+/// Where the bird of the progress scene stands: it stays on its step and,
+/// when the step moves on, hops there (a hop longer for a longer way). A
+/// class so the drawing can move it on without invalidating the view.
+final class HopWalker {
+  private var from: CGFloat?
+  private var to: CGFloat = 0
+  private var start: Double = 0
+  private var length: Double = 0.36
+
+  func position(step: CGFloat, time t: Double, animated: Bool) -> (CGFloat, BirdPose) {
+    guard animated, let from else {
+      self.from = step
+      to = step
+      return (step, BirdPose())
+    }
+    if step != to {
+      // from wherever it is now (mid-hop included) to the new step
+      let here = current(t, from: from)
+      self.from = here
+      to = step
+      start = t
+      length = min(0.6, 0.3 + Double(abs(step - here)) / 400)
+    }
+    let u = (t - start) / length
+    guard u < 1 else {
+      self.from = to
+      return (to, BirdPose())
+    }
+    let height = min(16, 7 + abs(to - (self.from ?? to)) * 0.12)
+    return (current(t, from: self.from ?? to), BirdMotion.hop(u, height: height))
+  }
+
+  private func current(_ t: Double, from: CGFloat) -> CGFloat {
+    let u = min(1, max(0, (t - start) / length))
+    let eased = CGFloat(u * u * (3 - 2 * u))
+    return from + (to - from) * eased
+  }
+}
+
+/// The temari beside the loading words, over the whole lower part of the
+/// card: its thread runs straight up from the top of the ball to `catchX` on
+/// the top edge, where it hooks over the edge into the picture behind. With a
+/// fraction the ball turns and shrinks as the bird draws the thread out;
+/// without, it rocks a little with each hop.
+struct TsugumiSpool: View {
+  let fraction: Double?
+  /// The ball's centre and the catch, from the left edge.
+  var x: CGFloat
+  var catchX: CGFloat
+  var radius: CGFloat = 15
+  /// The ball's centre from the top (beside the first lines).
+  var centerY: CGFloat = 46
+  @Environment(\.tsugumiClock) private var clock
+  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+  private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
+
+  var body: some View {
+    TimelineView(.animation(paused: clock != nil || reduceMotion || fraction != nil)) { ctx in
+      let t = clock ?? (reduceMotion ? 2.8 : ctx.date.timeIntervalSinceReferenceDate)
+      Canvas { g, size in
+        let r = radius * CGFloat(1 - 0.35 * (fraction ?? 0))
+        let ball = CGPoint(x: x, y: centerY)
+        let spin = fraction.map { $0 * 5 * .pi } ?? 0.25 * sin(t * 2 * .pi / 3.2)
+        TsugumiTemari.draw(g, center: ball, radius: r, spin: spin)
+        TsugumiThread.near(g, from: TsugumiTemari.lead(center: ball, radius: r), x: catchX, size: size)
       }
     }
     .accessibilityHidden(true)
