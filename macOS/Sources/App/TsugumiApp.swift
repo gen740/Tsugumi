@@ -161,13 +161,28 @@ struct DetailHost<Content: View>: View {
   }
 }
 
-/// Menu commands routed to the focused window's project and tab.
+/// Menu commands routed to the focused window's project and tab. Single-key
+/// shortcuts (S, A, L, …) are enabled only while the canvas has the focus,
+/// so typing in a text field never triggers them.
 struct WorkbenchCommands: Commands {
   @FocusedValue(\.projectSession) private var session
   @FocusedValue(\.workspace) private var workspace
   @FocusedValue(\.workflowTab) private var tab
+  @FocusedValue(\.canvasFocused) private var canvasFocused
+  @Environment(\.openWindow) private var openWindow
+
+  private var onCanvas: Bool { canvasFocused ?? false }
+  private var selected: CardKey? { tab?.selection.sorted().first }
+  private func post(_ n: Notification.Name, _ info: [String: Any]? = nil) {
+    NotificationCenter.default.post(name: n, object: n.rawValue.hasPrefix("tsugumi.app.") ? nil : tab?.id, userInfo: info)
+  }
 
   var body: some Commands {
+    CommandGroup(replacing: .newItem) {
+      Button("新しいプロジェクト…") { post(.appNewProject) }.shortcut(.newProject)
+      Button("プロジェクトを開く…") { post(.appOpenProject) }.shortcut(.openProject)
+      Button("Home へ戻る") { post(.appHome) }.shortcut(.home).disabled(session == nil)
+    }
     CommandGroup(replacing: .undoRedo) {
       Button("取り消す") { session?.undo() }
         .keyboardShortcut("z")
@@ -180,39 +195,69 @@ struct WorkbenchCommands: Commands {
       Button("保存") { if let s = session { Task { await s.save() } } }
         .shortcut(.save)
         .disabled(!(session?.dirty ?? false))
+      Button("プロジェクトを複製…") { post(.appDuplicateProject) }
+        .shortcut(.duplicateProject)
+        .disabled(session == nil)
+    }
+    // ⌘F searches what is shown: the file in a code editor, Card names on the canvas.
+    CommandGroup(replacing: .textEditing) {
+      Button("テキスト検索…") { if !TextFind.showInFocusedEditor() { post(.canvasFind) } }
+        .shortcut(.find)
     }
     CommandMenu("Workflow") {
-      Button("実行") { if let s = session, let t = tab { RunActions.runAll(s, scope: t.scope) } }
+      Button("ワークフローを実行") { if let s = session, let t = tab { RunActions.runAll(s, scope: t.scope) } }
         .shortcut(.run)
         .disabled(!(session?.connected ?? false) || (session?.runActive ?? true))
-      Button("停止") { if let s = session { Task { await s.cancelRun() } } }
+      Button("実行を停止") { if let s = session { Task { await s.cancelRun() } } }
         .shortcut(.stop)
         .disabled(!(session?.runActive ?? false))
       Divider()
-      Button("Card を検索…") { NotificationCenter.default.post(name: .canvasFind, object: tab?.id) }
-        .shortcut(.find)
-      Divider()
-      Button("全体表示") { NotificationCenter.default.post(name: .canvasFitAll, object: tab?.id) }
-        .shortcut(.fitAll)
-      Button("100% 表示") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 0.0]) }
-        .shortcut(.actualSize)
-      Button("拡大") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 1.2]) }
-        .shortcut(.zoomIn)
-      Button("縮小") { NotificationCenter.default.post(name: .canvasZoom, object: tab?.id, userInfo: ["zoom": 1 / 1.2]) }
-        .shortcut(.zoomOut)
-      Button("整列") { if let s = session, let t = tab { s.arrange(t.scope) } }
-        .shortcut(.arrange)
-        .disabled(!(session?.connected ?? false))
-      Button("付箋を追加") { NotificationCenter.default.post(name: .canvasAddNote, object: tab?.id) }
-        .shortcut(.addNote)
-      Button("複製") {
-        if let s = session, let t = tab, s.isEditable {
-          Task { t.selection = await s.duplicate(t.selection, in: t.scope) }
+      Section("Canvas（フォーカスがあるとき）") {
+        Button("Card 設定を開く") {
+          if let s = session, let k = selected { openWindow(id: "card", value: CardRef(path: s.identity.url.path, card: k)) }
         }
+        .shortcut(.openSettings).disabled(!onCanvas || selected == nil)
+        Button("成果物を開く") {
+          if let s = session, let k = selected { openWindow(id: "artifacts", value: CardRef(path: s.identity.url.path, card: k)) }
+        }
+        .shortcut(.openArtifacts).disabled(!onCanvas || selected == nil)
+        Button("実行ログを開く") { if let k = selected { workspace?.showLog(for: k) } }
+          .shortcut(.openLog).disabled(!onCanvas || selected == nil)
+        Button("折りたたみを切り替える") {
+          if let s = session, let t = tab { s.setCollapsed(t.selection, !t.selection.allSatisfy { s.collapsed($0) }) }
+        }
+        .shortcut(.toggleCollapse).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
+        Button("Card を複製") {
+          if let s = session, let t = tab, s.isEditable { Task { t.selection = await s.duplicate(t.selection, in: t.scope) } }
+        }
+        .shortcut(.duplicate).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
+        Button("選択対象を削除") { post(.canvasDelete) }
+          .keyboardShortcut(.delete, modifiers: [])
+          .disabled(!onCanvas || ((tab?.selection.isEmpty ?? true) && tab?.selectedConnection == nil))
+        Divider()
+        Button("全体表示") { post(.canvasFitAll) }.shortcut(.fitAll).disabled(!onCanvas)
+        Button("100% で表示") { post(.canvasZoom, ["zoom": 0.0]) }.shortcut(.actualSize).disabled(!onCanvas)
+        Button("拡大") { post(.canvasZoom, ["zoom": 1.2]) }.shortcut(.zoomIn).disabled(!onCanvas)
+        Button("縮小") { post(.canvasZoom, ["zoom": 1 / 1.2]) }.shortcut(.zoomOut).disabled(!onCanvas)
+        Button("整列") { if let s = session, let t = tab { s.arrange(t.scope) } }
+          .shortcut(.arrange).disabled(!onCanvas || !(session?.connected ?? false))
+        Button("グループ操作") { post(.canvasGroup) }
+          .shortcut(.group).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
+        Divider()
+        Button("Draft Card を追加") { post(.canvasAddDraft) }
+          .shortcut(.addDraft).disabled(!onCanvas || !(session?.isEditable ?? false))
+        Button("Draft から Card を生成") {
+          guard let s = session, let t = tab else { return }
+          let drafts = s.cards(in: t.scope).compactMap { $0["id"]?.string }.map { key(t.scope + [$0]) }.filter { s.kind($0) == .draft }
+          let chosen = drafts.filter { t.selection.contains($0) }
+          workspace?.showChat = true
+          AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: chosen.isEmpty ? drafts : chosen)
+        }
+        .shortcut(.generateDrafts).disabled(!onCanvas || (session?.dirty ?? true) || (session?.runActive ?? true))
       }
-      .shortcut(.duplicate)
-      .disabled(tab?.selection.isEmpty ?? true)
       Divider()
+      Button("付箋を追加") { post(.canvasAddNote) }
+        .shortcut(.addNote)
       Button("チャットの表示切替") { workspace?.showChat.toggle() }
         .shortcut(.toggleChat)
       Button("ログの表示切替") { workspace?.togglePanel(.log) }
@@ -228,7 +273,28 @@ struct WorkbenchCommands: Commands {
   }
 }
 
+/// ⌘F in a code editor: its own find bar (the canvas searches Card names).
+@MainActor
+enum TextFind {
+  static func showInFocusedEditor() -> Bool {
+    guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.usesFindBar else { return false }
+    let item = NSMenuItem()
+    item.tag = NSTextFinder.Action.showFindInterface.rawValue
+    tv.performTextFinderAction(item)
+    return true
+  }
+}
+
 extension Notification.Name {
+  /// Home and project commands of the menu (handled by the main window).
+  static let appNewProject = Notification.Name("tsugumi.app.newProject")
+  static let appOpenProject = Notification.Name("tsugumi.app.openProject")
+  static let appHome = Notification.Name("tsugumi.app.home")
+  static let appDuplicateProject = Notification.Name("tsugumi.app.duplicateProject")
+  /// Canvas commands (object: tab id).
+  static let canvasDelete = Notification.Name("tsugumi.canvas.delete")
+  static let canvasGroup = Notification.Name("tsugumi.canvas.group")
+  static let canvasAddDraft = Notification.Name("tsugumi.canvas.addDraft")
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
@@ -246,6 +312,7 @@ extension Notification.Name {
 struct ProjectSessionKey: FocusedValueKey { typealias Value = ProjectSession }
 struct WorkspaceKey: FocusedValueKey { typealias Value = Workspace }
 struct WorkflowTabKey: FocusedValueKey { typealias Value = WorkflowTab }
+struct CanvasFocusedKey: FocusedValueKey { typealias Value = Bool }
 
 extension FocusedValues {
   var projectSession: ProjectSession? {
@@ -259,5 +326,10 @@ extension FocusedValues {
   var workflowTab: WorkflowTab? {
     get { self[WorkflowTabKey.self] }
     set { self[WorkflowTabKey.self] = newValue }
+  }
+  /// The canvas has the keyboard focus (not a text field).
+  var canvasFocused: Bool? {
+    get { self[CanvasFocusedKey.self] }
+    set { self[CanvasFocusedKey.self] = newValue }
   }
 }

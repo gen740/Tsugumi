@@ -5,50 +5,88 @@ import TsugumiRPC
 
 /// Commands whose keys can be reassigned in Settings > Shortcuts.
 enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
-  case save, run, stop, find, toggleChat, toggleLog, toggleTimeline, toggleTerminal, showDetails, fitAll, actualSize, zoomIn, zoomOut, arrange, addNote, duplicate, openSettings
+  // The app and the project
+  case newProject, openProject, home, save, duplicateProject, find, run, stop
+  // The canvas, while it has the focus (single keys; never while typing)
+  case openSettings, openArtifacts, openLog, toggleCollapse, duplicate, fitAll, actualSize, zoomIn, zoomOut, arrange, group
+  case addDraft, generateDrafts
+  // Panels and the rest
+  case toggleChat, toggleLog, toggleTimeline, toggleTerminal, showDetails, addNote, formatSource
   var id: String { rawValue }
 
   var title: String {
     switch self {
+    case .newProject: return String(localized: "新しいプロジェクト")
+    case .openProject: return String(localized: "プロジェクトを開く")
+    case .home: return String(localized: "Home へ戻る")
     case .save: return String(localized: "保存")
-    case .run: return String(localized: "実行")
-    case .stop: return String(localized: "停止")
-    case .toggleChat: return String(localized: "チャットの表示切替")
-    case .find: return String(localized: "Card を検索")
-    case .actualSize: return String(localized: "100% 表示")
+    case .duplicateProject: return String(localized: "プロジェクトを複製")
+    case .find: return String(localized: "テキスト検索")
+    case .run: return String(localized: "ワークフローを実行")
+    case .stop: return String(localized: "実行を停止")
+    case .openSettings: return String(localized: "Card 設定を開く")
+    case .openArtifacts: return String(localized: "成果物を開く")
+    case .openLog: return String(localized: "実行ログを開く")
+    case .toggleCollapse: return String(localized: "折りたたみを切り替える")
+    case .duplicate: return String(localized: "Card を複製")
+    case .fitAll: return String(localized: "全体表示")
+    case .actualSize: return String(localized: "100% で表示")
     case .zoomIn: return String(localized: "拡大")
     case .zoomOut: return String(localized: "縮小")
+    case .arrange: return String(localized: "整列")
+    case .group: return String(localized: "グループ操作")
+    case .addDraft: return String(localized: "Draft Card を追加")
+    case .generateDrafts: return String(localized: "Draft から Card を生成")
+    case .toggleChat: return String(localized: "チャットの表示切替")
     case .toggleLog: return String(localized: "ログの表示切替")
     case .toggleTimeline: return String(localized: "タイムラインの表示切替")
     case .toggleTerminal: return String(localized: "ターミナルの表示切替")
     case .showDetails: return String(localized: "選択した Card の詳細")
-    case .fitAll: return String(localized: "全体表示")
-    case .arrange: return String(localized: "整列")
     case .addNote: return String(localized: "付箋を追加")
-    case .duplicate: return String(localized: "複製")
-    case .openSettings: return String(localized: "Card 設定を開く")
+    case .formatSource: return String(localized: "ソースコードを整形")
+    }
+  }
+
+  /// Works only while the canvas has the focus (a key without ⌘ would
+  /// otherwise be taken from a text field).
+  var canvasOnly: Bool {
+    switch self {
+    case .openSettings, .openArtifacts, .openLog, .toggleCollapse, .duplicate, .fitAll, .actualSize, .zoomIn, .zoomOut,
+         .arrange, .group, .addDraft, .generateDrafts: return true
+    default: return false
     }
   }
 
   var defaultKey: KeyBinding {
     switch self {
+    case .newProject: return KeyBinding(key: "n", command: true)
+    case .openProject: return KeyBinding(key: "o", command: true)
+    case .home: return KeyBinding(key: "h", command: true, shift: true)
     case .save: return KeyBinding(key: "s", command: true)
-    case .run: return KeyBinding(key: "\r", command: true)
-    case .stop: return KeyBinding(key: "\r", command: true, shift: true)
+    case .duplicateProject: return KeyBinding(key: "s", command: true, shift: true)
     case .find: return KeyBinding(key: "f", command: true)
-    case .actualSize: return KeyBinding(key: "0", command: true)
-    case .zoomIn: return KeyBinding(key: "=", command: true)
-    case .zoomOut: return KeyBinding(key: "-", command: true)
+    case .run: return KeyBinding(key: "r", command: true)
+    case .stop: return KeyBinding(key: ".", command: true)
+    case .openSettings: return KeyBinding(key: "s")
+    case .openArtifacts: return KeyBinding(key: "a")
+    case .openLog: return KeyBinding(key: "l")
+    case .toggleCollapse: return KeyBinding(key: "f")
+    case .duplicate: return KeyBinding(key: "c")
+    case .fitAll: return KeyBinding(key: "0")
+    case .actualSize: return KeyBinding(key: "1")
+    case .zoomIn: return KeyBinding(key: "=", shift: true)
+    case .zoomOut: return KeyBinding(key: "-")
+    case .arrange: return KeyBinding(key: "a", shift: true)
+    case .group: return KeyBinding(key: "g")
+    case .addDraft: return KeyBinding(key: "e")
+    case .generateDrafts: return KeyBinding(key: "d", shift: true)
     case .toggleChat: return KeyBinding(key: "j", command: true, option: true)
     case .toggleLog: return KeyBinding(key: "l", command: true, option: true)
     case .toggleTimeline: return KeyBinding(key: "t", command: true, option: true)
     case .toggleTerminal: return KeyBinding(key: "`", control: true)
     case .showDetails: return KeyBinding(key: "i", command: true, option: true)
-    case .fitAll: return KeyBinding(key: "1", command: true, shift: true)
-    case .arrange: return KeyBinding(key: "a", command: true, option: true, shift: true)
     case .addNote: return KeyBinding(key: "n", command: true, option: true)
-    case .duplicate: return KeyBinding(key: "d", command: true)
-    case .openSettings: return KeyBinding(key: "i", command: true)
+    case .formatSource: return KeyBinding(key: "f", option: true, shift: true)
     }
   }
 }
@@ -114,6 +152,19 @@ final class AppPreferences {
     var label: String { self == .system ? "システムに従う" : (self == .light ? "ライト" : "ダーク") }
   }
 
+  /// Whether the Tsugumi bird (Home, loading) moves.
+  enum Motion: String, CaseIterable, Identifiable {
+    case system, on, off
+    var id: String { rawValue }
+    var label: String {
+      switch self {
+      case .system: return String(localized: "システムに従う（視差効果を減らす）")
+      case .on: return String(localized: "動かす")
+      case .off: return String(localized: "動かさない")
+      }
+    }
+  }
+
   enum SendKey: String, CaseIterable, Identifiable {
     case returnKey, commandReturn
     var id: String { rawValue }
@@ -132,6 +183,16 @@ final class AppPreferences {
   var editorFontSize: Double { didSet { d.set(editorFontSize, forKey: "editor.fontSize") } }
   var editorTheme: EditorTheme { didSet { d.set(editorTheme.rawValue, forKey: "editor.theme") } }
   var flowDirection: FlowDirection { didSet { d.set(flowDirection.rawValue, forKey: "canvas.flow") } }
+  var tsugumiMotion: Motion { didSet { d.set(tsugumiMotion.rawValue, forKey: "app.tsugumiMotion") } }
+
+  /// The bird stays still: as set here, or by default as macOS "Reduce motion" (視差効果を減らす).
+  func tsugumiStill(reduceMotion: Bool) -> Bool {
+    switch tsugumiMotion {
+    case .system: return reduceMotion
+    case .on: return false
+    case .off: return true
+    }
+  }
   var shortcuts: [ShortcutAction: KeyBinding] { didSet { saveShortcuts() } }
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
@@ -148,6 +209,7 @@ final class AppPreferences {
     editorFontSize = d.object(forKey: "editor.fontSize") as? Double ?? 12
     editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
     flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
+    tsugumiMotion = Motion(rawValue: d.string(forKey: "app.tsugumiMotion") ?? "") ?? .system
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })
     } else {

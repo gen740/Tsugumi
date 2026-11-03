@@ -122,6 +122,8 @@ public actor Agent {
     them in SetProject).
     Keep the intent and the port descriptions in _meta.json. Then project_validate, fix what it reports, run the
     workflow and check the result. If something fails, report it; never leave a half-written save.
+  - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
+    "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
   - 64 bit integers are decimal strings. Explain results briefly in the user's language.
   """
 

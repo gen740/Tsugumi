@@ -126,8 +126,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     for (const auto& p : sp.ro_paths) argv.insert(argv.end(), {"--ro-bind", p, p});
     argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string()});
     for (const auto& b : sp.binds) argv.insert(argv.end(), {b.write ? "--bind" : "--ro-bind", b.source, b.target});
-    if (sp.network)
-      // Name resolution and the CA bundle of the environment.
+    if (sp.network && sp.sandbox)
+      // Name resolution and the CA bundle of the environment (a sandbox
+      // starts without /etc; unsandboxed, the real one is there).
       for (const char* f : {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
         argv.insert(argv.end(), {"--ro-bind-try", f, f});
   };

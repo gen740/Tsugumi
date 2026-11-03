@@ -143,11 +143,21 @@ public actor EnvironmentManager {
     // project (/run/tsugumi/host/<tag>); read-only unless a Card writes there.
     var entries: [String: URL] = ["project": p.url, "control": control]
     var readOnly: Set<String> = []
-    for f in HostFolders.wanted(project: p.url, extra: extraFolders[p.id] ?? []) {
+    for f in HostFolders.wanted(project: p.url, extra: []) {
       let name = "host-" + HostFolders.tag(f.path)
       entries[name] = URL(fileURLWithPath: f.path, isDirectory: true)
       if !f.write { readOnly.insert(name) }
     }
+    // A chat's folders: read-only, apart from the Cards' (only the Agent reads them).
+    for path in extraFolders[p.id] ?? [] {
+      var isDir: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
+      let name = "chat-" + HostFolders.tag(path)
+      entries[name] = URL(fileURLWithPath: path, isDirectory: true)
+      readOnly.insert(name)
+    }
+    let shared = entries.keys.filter { $0.hasPrefix("host-") || $0.hasPrefix("chat-") }.sorted()
+    if !shared.isEmpty { vm.console.note("\(p.id): \(shared.count) folder(s) of the Mac shared (\(shared.joined(separator: ", ")))") }
     let slot = try await vm.attach(p.id, entries, readOnly: readOnly)
     // The share may take a moment to show new folders in the VM.
     var started = false

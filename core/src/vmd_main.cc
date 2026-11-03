@@ -251,7 +251,8 @@ std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, its run history at /history, the folders of the Mac it was
-// given (share entries host-<tag>) at /run/tsugumi/host/<tag>, nothing of the
+// given (share entries host-<tag>) at /run/tsugumi/host/<tag> and those
+// attached to its chats (chat-<tag>) at /run/tsugumi/chat/<tag>, nothing of the
 // share, the store disk or other projects.
 void enter_project_view(int slot, const std::string& id) {
   if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) die("make / private");
@@ -262,15 +263,21 @@ void enter_project_view(int slot, const std::string& id) {
   if (::mount(h.c_str(), "/history", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /history");
   if (::mount("tmpfs", "/run/tsugumi", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755") != 0) die("private /run/tsugumi");
   ::mkdir("/run/tsugumi/host", 0755);
+  ::mkdir("/run/tsugumi/chat", 0755);
   std::error_code ec;
   for (const auto& e : fs::directory_iterator(dir, ec)) {
     std::string name = e.path().filename().string();
-    if (!name.starts_with("host-") || !valid_id(name)) continue;
-    std::string target = "/run/tsugumi/host/" + name.substr(5);
+    bool host = name.starts_with("host-"), chat = name.starts_with("chat-");
+    // host-<tag> / chat-<tag>: the tag is 16 hex digits, like a project id.
+    if (!(host || chat) || !valid_id(name.substr(5))) continue;
+    std::string target = std::string(host ? "/run/tsugumi/host/" : "/run/tsugumi/chat/") + name.substr(5);
     ::mkdir(target.c_str(), 0755);
     if (::mount(e.path().c_str(), target.c_str(), nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0)
       std::fprintf(stderr, "vmd child: bind %s: %s\n", name.c_str(), std::strerror(errno));
+    else
+      std::fprintf(stderr, "vmd child: folder of the Mac %s at %s\n", name.c_str(), target.c_str());
   }
+  if (ec) std::fprintf(stderr, "vmd child: cannot list %s: %s\n", dir.c_str(), ec.message().c_str());
   // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
   if (::umount2(fs::path(opt.host).parent_path().c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
@@ -357,7 +364,7 @@ int project_main(void* arg) {
                                    "--listen", "127.0.0.1:" + std::to_string(a->port), "--control-dir", "/control",
                                    "--cpus", std::to_string(a->cpus), "--allow-missing-origin",
                                    "--gcroots-dir", roots, "--history-dir", "/history",
-                                   "--host-folders", "/run/tsugumi/host"};
+                                   "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat"};
   std::vector<std::string> env = project_env(a->id);
   auto av = cstrings(argv), ev = cstrings(env);
   ::chdir("/project");

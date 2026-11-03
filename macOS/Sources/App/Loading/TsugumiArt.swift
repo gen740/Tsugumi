@@ -203,7 +203,8 @@ struct SeededRandom {
 struct WorkflowBackdrop: View {
   var fraction: Double?
   @Environment(\.tsugumiClock) private var clock
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+  private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
 
   // unit position (card top-centre) and completion threshold
   private static let nodes: [(x: Double, y: Double, done: Double)] = [

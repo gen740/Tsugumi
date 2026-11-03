@@ -34,6 +34,14 @@ struct MainWindow: View {
       }
       UIScript.shared.request = nil
     }
+    // The app's menu commands (⌘N, ⌘O, ⌘⇧H, ⌘⇧S).
+    .onReceive(NotificationCenter.default.publisher(for: .appHome)) { _ in leaveProject() }
+    .onReceive(NotificationCenter.default.publisher(for: .appNewProject)) { _ in
+      if workspace.session != nil { leaveProject() }
+      model.requestNewProject = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .appOpenProject)) { _ in openFromPanel() }
+    .onReceive(NotificationCenter.default.publisher(for: .appDuplicateProject)) { _ in duplicateProject() }
     .tsugumiLoading(model.preparing)
     .task {
       UIScript.shared.workspace = workspace
@@ -51,6 +59,49 @@ struct MainWindow: View {
       workspace.open(try model.session(for: url))
     } catch {
       model.error = "\(error)"
+    }
+  }
+
+  private func openFromPanel() {
+    let p = NSOpenPanel()
+    p.canChooseDirectories = true
+    p.canChooseFiles = false
+    p.message = String(localized: "tsugumi.json を含むフォルダを選んでください")
+    guard p.runModal() == .OK, let url = p.url else { return }
+    if workspace.session != nil {
+      leaveProject()
+      Task {
+        // Opens once the current project has been left (saved first when needed).
+        for _ in 0..<50 where workspace.session != nil { try? await Task.sleep(for: .milliseconds(100)) }
+        if workspace.session == nil { open(url) }
+      }
+    } else {
+      open(url)
+    }
+  }
+
+  /// A copy of the open project (its saved document and sources), then opened.
+  private func duplicateProject() {
+    guard let s = workspace.session else { return }
+    let p = NSSavePanel()
+    p.nameFieldStringValue = s.identity.url.lastPathComponent + " copy"
+    p.message = String(localized: "複製を作る場所を選んでください（保存済みの内容を複製します）")
+    guard p.runModal() == .OK, let url = p.url else { return }
+    Task {
+      do {
+        try await s.duplicate(to: url)
+        openFromCopy(url)
+      } catch {
+        switchError = String(localized: "複製できませんでした: ") + "\(error)"
+      }
+    }
+  }
+
+  private func openFromCopy(_ url: URL) {
+    leaveProject()
+    Task {
+      for _ in 0..<50 where workspace.session != nil { try? await Task.sleep(for: .milliseconds(100)) }
+      if workspace.session == nil { open(url) }
     }
   }
 

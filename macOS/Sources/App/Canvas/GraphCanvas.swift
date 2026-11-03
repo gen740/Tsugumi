@@ -24,11 +24,16 @@ struct GraphCanvas: View {
   @State private var editingGroup: String?
   @State private var hover: HoverTarget?
   @State private var hoverAt: CGPoint = .zero
+  @State private var bubbleSize = CGSize(width: 300, height: 120)
   @State private var hoverTask: Task<Void, Never>?
   @State private var findText: String?
   @FocusState private var findFocused: Bool
+  /// The canvas has the keyboard focus: its single-key shortcuts work.
+  @FocusState private var canvasFocused: Bool
 
   private var scopeKey: CardKey { key(tab.scope) }
+  /// An output frame being dragged (screen translation).
+  @State private var frameDrag: (card: CardKey, by: CGSize)?
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -45,6 +50,16 @@ struct GraphCanvas: View {
         if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
         ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
+        // The link's ports, where the link meets the Card and the frame.
+        ForEach(outputKeys, id: \.self) { k in
+          let ends = displayLinkEnds(card: outlineRect(k), frame: frameRect(k))
+          ForEach([ends.a, ends.b], id: \.x) { p in
+            Circle().fill(Color.purple.opacity(0.75))
+              .frame(width: 7, height: 7)
+              .position(screen(p))
+              .allowsHitTesting(false)
+          }
+        }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
         if !tab.scope.isEmpty {
           // Inside a Card in Card: the external project, shown but not edited here.
@@ -81,6 +96,7 @@ struct GraphCanvas: View {
         if let hover, !interacting {
           HoverBubble(content: hoverContent(hover))
             .fixedSize()
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
             .position(bubblePosition(in: geo.size))
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -118,6 +134,17 @@ struct GraphCanvas: View {
         saveView()
       })
       .onDeleteCommand { deleteSelection() }
+      // Keyboard focus for the single-key shortcuts (S, A, L, …): taken by a
+      // click on the canvas, given up to any text field.
+      .focusable()
+      .focusEffectDisabled()
+      .focused($canvasFocused)
+      .focusedSceneValue(\.canvasFocused, canvasFocused)
+      .simultaneousGesture(TapGesture().onEnded { canvasFocused = true })
+      .onKeyPress(.deleteForward) {
+        deleteSelection()
+        return .handled
+      }
       .dropDestination(for: String.self) { items, loc in
         // Cards are added to this project's canvas only (a Card in Card is read-only).
         guard session.isEditable, tab.scope.isEmpty else { return false }
@@ -192,6 +219,12 @@ struct GraphCanvas: View {
     return CGPoint(x: o.x + p.x, y: o.y + p.y)
   }
 
+  /// A Card's outline in world units (routing Cards are smaller than their box).
+  private func outlineRect(_ k: CardKey) -> CGRect {
+    let o = origin(k), r = session.geometry(k).outlineRect
+    return r.offsetBy(dx: o.x, dy: o.y)
+  }
+
   /// Output frame of a Card (world units): saved place, or beside the Card.
   private func frameRect(_ k: CardKey) -> CGRect {
     let o = origin(k)
@@ -245,9 +278,7 @@ struct GraphCanvas: View {
     }
     // Display links: which Card a result frame belongs to (not a computation).
     for k in outputKeys {
-      let o = origin(k), a = session.geometry(k).displayAnchor
-      out.append(RoutedWire(connection: nil, path: displayLink(from: CGPoint(x: o.x + a.x, y: o.y + a.y), to: frameRect(k), flow: session.flow),
-                            style: .display))
+      out.append(RoutedWire(connection: nil, path: displayLink(card: outlineRect(k), frame: frameRect(k)), style: .display))
     }
     return out
   }
@@ -478,7 +509,12 @@ struct GraphCanvas: View {
                              }
                            })
       .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
-      .gesture(DragGesture(minimumDistance: 3).onEnded { v in
+      // Follows the pointer while dragged; the layout changes once, on release.
+      .offset(frameDrag?.card == k ? frameDrag!.by : .zero)
+      .gesture(DragGesture(minimumDistance: 3).onChanged { v in
+        frameDrag = (k, v.translation)
+      }.onEnded { v in
+        frameDrag = nil
         session.updateDisplayFrame(k) { d in
           d["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
           d["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
@@ -520,6 +556,32 @@ struct GraphCanvas: View {
       tab.selection = [k]
       showDetailsForSelection()
     }
+  }
+
+  func handleDelete(_ n: Notification) {
+    if (n.object as? UUID) == tab.id { deleteSelection() }
+  }
+
+  /// G: the selected Cards become a group; a selection that is one group's
+  /// Cards is ungrouped.
+  func handleGroup(_ n: Notification) {
+    guard (n.object as? UUID) == tab.id, !tab.selection.isEmpty else { return }
+    let ids = Set(tab.selection.compactMap { path($0).last })
+    if let g = session.groups(in: tab.scope).first(where: { Set(($0["cards"]?.array ?? []).compactMap(\.string)) == ids }),
+       let gid = g["id"]?.string {
+      session.ungroup(gid)
+    } else {
+      _ = session.addGroup(tab.selection, in: tab.scope)
+    }
+  }
+
+  /// E: a new Draft Card in the middle of the canvas, its editor open.
+  func handleAddDraft(_ n: Notification) {
+    guard (n.object as? UUID) == tab.id, session.isEditable else { return }
+    if !tab.scope.isEmpty { tab.enter([]) }
+    let k = session.addCard(template: .draft, in: [], at: world(CGPoint(x: size.width / 2, y: size.height / 2)))
+    tab.selection = [k]
+    openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
   }
 
   func handleReveal(_ n: Notification) {
@@ -619,11 +681,18 @@ struct GraphCanvas: View {
     hover = .card(k)
   }
 
+  /// Right below the pointer (its top-left corner just past it), flipped to
+  /// the other side where the canvas ends, and kept inside the canvas.
   private func bubblePosition(in size: CGSize) -> CGPoint {
-    // Beside the pointer, kept inside the canvas (the bubble is at most 340 wide).
-    let x = min(max(hoverAt.x + 180, 176), max(176, size.width - 176))
-    let y = min(max(hoverAt.y + 70, 64), max(64, size.height - 90))
-    return CGPoint(x: x, y: y)
+    let (w, h) = (bubbleSize.width, bubbleSize.height)
+    let gap: CGFloat = 14
+    var left = hoverAt.x + gap
+    if left + w > size.width - 6 { left = hoverAt.x - gap - w }
+    var top = hoverAt.y + gap
+    if top + h > size.height - 6 { top = hoverAt.y - gap - h }
+    left = min(max(6, left), max(6, size.width - w - 6))
+    top = min(max(6, top), max(6, size.height - h - 6))
+    return CGPoint(x: left + w / 2, y: top + h / 2)
   }
 
   private func hoverContent(_ t: HoverTarget) -> HoverBubble.Content {
@@ -859,6 +928,9 @@ private struct CommandHandlers: ViewModifier {
       .onExitCommand { canvas.escape() }
       .onReceive(NotificationCenter.default.publisher(for: .canvasShowDetails)) { n in canvas.handleDetails(n) }
       .onReceive(NotificationCenter.default.publisher(for: .canvasReveal)) { n in canvas.handleReveal(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasDelete)) { n in canvas.handleDelete(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasGroup)) { n in canvas.handleGroup(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasAddDraft)) { n in canvas.handleAddDraft(n) }
   }
 }
 

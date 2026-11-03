@@ -279,7 +279,7 @@ void Service::export_now() {
 std::vector<std::string> Service::capabilities() {
   return {"SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
           "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
-          "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes",
+          "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
           "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
           "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
           "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -364,6 +364,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
+    case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
     case P::RunPlanRequest: return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest: return on_lane(r, std::move(req), &Service::run_cancel);
@@ -1397,6 +1398,39 @@ uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
 
 // Formatting never changes the document: the text comes and goes in the
 // request/reply only. Formatters are external tools of the environment.
+void Service::attached_folder_read(RequestIn& req) {
+  const auto* r = req.request()->value_as_AttachedFolderReadRequest();
+  std::string folder = r->folder()->str(), rel = r->path()->str();
+  if (folder.empty() || folder.front() != '/') throw Failed(FailureKind::invalid_path, "folder must be an absolute path");
+  if (!rel.empty() && !fs::valid_relative_path(rel)) throw Failed(FailureKind::invalid_path, "invalid path " + rel, {{"path", rel}});
+  stdfs::path root = opts_.chat_folders.empty() ? stdfs::path(folder)
+                                                : opts_.chat_folders / crypto::sha256_hex(folder).substr(0, 16);
+  std::error_code ec;
+  auto base = stdfs::canonical(root, ec);
+  if (ec) throw Failed(FailureKind::not_found, "the folder " + folder + " is not attached here (attach it in the chat)", {{"path", folder}});
+  auto target = stdfs::canonical(rel.empty() ? base : base / rel, ec);
+  if (ec) throw Failed(FailureKind::not_found, rel + " does not exist", {{"path", rel}});
+  // Never outside the attached folder (links included).
+  auto t = target.string(), b = base.string();
+  if (t != b && !t.starts_with(b + "/")) throw Failed(FailureKind::permission_denied, rel + " leaves the attached folder", {{"path", rel}});
+  uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
+  std::string bytes;
+  if (stdfs::is_directory(target, ec)) {
+    std::vector<std::string> names;
+    for (const auto& e : stdfs::directory_iterator(target, ec)) {
+      if (names.size() >= 5000) break;
+      names.push_back(e.path().filename().string() + (e.is_directory(ec) ? "/" : ""));
+    }
+    std::sort(names.begin(), names.end());
+    for (const auto& n : names) bytes += n + "\n";
+  } else {
+    auto data = fs::read_file(target);
+    if (!data) throw Failed(FailureKind::not_found, rel + " cannot be read", {{"path", rel}});
+    bytes = std::move(*data);
+  }
+  reply(req, file_content_reply(req.request_id, target.filename().string(), bytes, r->offset().value_or(0), limit));
+}
+
 void Service::output_types(RequestIn& req) {
   const auto* r = req.request()->value_as_OutputTypesRequest();
   std::string text = r->text()->str(), root, err;

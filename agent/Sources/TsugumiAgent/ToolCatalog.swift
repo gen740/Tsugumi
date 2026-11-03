@@ -20,7 +20,7 @@ public struct ToolCatalog {
     "ProjectInspectRequest", "ProjectValidateRequest", "ProjectSaveRequest", "ProjectFileListRequest",
     "ProjectFileReadRequest", "RunPlanRequest", "RunRequest", "RunCancelRequest", "RunStatusRequest",
     "RunHistoryRequest", "RunInvocationsRequest", "RunRecordRequest", "LogRangeRequest", "ArtifactListRequest",
-    "ArtifactReadRequest", "OperationGetRequest",
+    "ArtifactReadRequest", "OperationGetRequest", "AttachedFolderReadRequest",
   ]
   /// Filled by the Agent, never by the model.
   static let agentFields: Set<String> = ["op_id", "origin"]

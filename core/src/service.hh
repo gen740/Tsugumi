@@ -52,6 +52,10 @@ struct ServiceOptions {
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
   std::filesystem::path host_folders;
+  // Folders attached to a chat, the same way (<chat_folders>/<tag>); read
+  // only through AttachedFolderRead, never by a Card. Empty: the paths as
+  // they are.
+  std::filesystem::path chat_folders;
   Limits limits;
 };
 
@@ -106,6 +110,7 @@ class Service : public RequestSink {
   void file_read(RequestIn& req);
   void file_format(RequestIn& req);
   void output_types(RequestIn& req);
+  void attached_folder_read(RequestIn& req);
   void sdk_status(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);

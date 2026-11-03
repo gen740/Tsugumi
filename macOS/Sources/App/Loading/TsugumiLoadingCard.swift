@@ -109,7 +109,8 @@ struct TsugumiLoadingCard: View {
 struct TsugumiIdleScene: View {
   var birdScale: CGFloat = 0.22
   @Environment(\.tsugumiClock) private var clock
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+  private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
 
   var body: some View {
     TimelineView(.animation(paused: clock != nil || reduceMotion)) { ctx in
@@ -134,7 +135,8 @@ struct TsugumiProgressScene: View {
   let fraction: Double
   var birdScale: CGFloat = 0.2
   @Environment(\.tsugumiClock) private var clock
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+  private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
 
   var body: some View {
     TimelineView(.animation(paused: clock != nil || reduceMotion)) { ctx in

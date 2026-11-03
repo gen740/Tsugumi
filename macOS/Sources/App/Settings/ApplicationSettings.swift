@@ -44,7 +44,6 @@ struct ApplicationSettings: View {
                       title: \.title, symbol: \.symbol, width: 180)
       Divider()
       VStack(alignment: .leading, spacing: 0) {
-        Text(category.title).font(.title2.bold()).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
         Group {
           switch category {
           case .general: GeneralSettings()
@@ -60,6 +59,11 @@ struct ApplicationSettings: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       }
     }
+    // The category is the window's title, on the window's own background,
+    // like the Card and Workflow settings windows.
+    .navigationTitle(category.title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    .containerBackground(Color(nsColor: .windowBackgroundColor), for: .window)
   }
 }
 
@@ -69,16 +73,20 @@ private struct GeneralSettings: View {
   var body: some View {
     @Bindable var prefs = prefs
     Form {
+      // Explanations on hover, not as text under each control.
       Picker("言語", selection: $prefs.language) {
         ForEach(AppPreferences.Language.allCases) { Text($0.label).tag($0) }
       }
-      Text("言語の変更はアプリの再起動後に反映されます。").font(.caption).foregroundStyle(.secondary)
+      .help("言語の変更はアプリの再起動後に反映されます。")
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
-      Text("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
-        .font(.caption).foregroundStyle(.secondary)
+        .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {
         ForEach(AppPreferences.SendKey.allCases) { Text($0.label).tag($0) }
       }
+      Picker("Tsugumi のアニメーション", selection: $prefs.tsugumiMotion) {
+        ForEach(AppPreferences.Motion.allCases) { Text($0.label).tag($0) }
+      }
+      .help("Home と読み込み中の Tsugumi を動かすかどうか。既定は macOS の「視差効果を減らす」に合わせます。")
     }
     .formStyle(.grouped)
   }
@@ -98,6 +106,8 @@ private struct AppearanceSettings: View {
         Picker("流れの向き", selection: $prefs.flowDirection) {
           ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
         }
+        Label("変えると、Card の配置が崩れることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.orange)
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
@@ -162,11 +172,10 @@ private struct EditorSettings: View {
     # A Python Card with one extra package
     { pkgs, inputs, params }:
     {
-      package = inputs.tsugumi.pythonCard {
+      run = inputs.tsugumi.pythonCard {
         src = ./src;
         packages = ps: [ ps.numpy ];
       };
-      reuseWorker = true;
       exports = { scale = x: x * 2; };
     }
 

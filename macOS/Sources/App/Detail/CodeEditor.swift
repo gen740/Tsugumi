@@ -111,6 +111,8 @@ struct CodeEditor: NSViewRepresentable {
     tv.delegate = context.coordinator
     tv.isRichText = false
     tv.allowsUndo = true
+    // ⌘F finds in the file shown (the app's Find command opens this bar).
+    tv.usesFindBar = true
     tv.isAutomaticQuoteSubstitutionEnabled = false
     tv.isAutomaticDashSubstitutionEnabled = false
     tv.isAutomaticTextReplacementEnabled = false
@@ -123,8 +125,7 @@ struct CodeEditor: NSViewRepresentable {
     // number column would otherwise reach under the title bar).
     scroll.automaticallyAdjustsContentInsets = false
     scroll.contentInsets = NSEdgeInsetsZero
-    scroll.drawsBackground = true
-    scroll.backgroundColor = .textBackgroundColor
+    scroll.clipsToBounds = true
     scroll.hasVerticalRuler = true
     scroll.rulersVisible = true
     let ruler = LineNumberRuler(textView: tv)
@@ -301,6 +302,9 @@ final class LineNumberRuler: NSRulerView {
     self.textView = textView
     super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
     ruleThickness = 38
+    // Views draw outside their bounds unless told otherwise (macOS 14 and
+    // later): the gutter would cover the editor and reach the title bar.
+    clipsToBounds = true
     NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView, queue: .main) { [weak self] _ in
       self?.needsDisplay = true
     }
@@ -313,8 +317,8 @@ final class LineNumberRuler: NSRulerView {
 
   override func drawHashMarksAndLabels(in rect: NSRect) {
     guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
-    // Only inside the editor's own area (never beyond the scroll view).
-    let area = visibleRect.intersection(rect)
+    // Only inside the gutter itself (never beyond the scroll view).
+    let area = bounds.intersection(visibleRect).intersection(rect)
     guard !area.isEmpty else { return }
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }

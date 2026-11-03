@@ -111,6 +111,27 @@ final class ChatController {
   private(set) var usage = Usage()
   private(set) var skills: [Skill] = []
   var references: [Reference] = []
+  /// Folders of the Mac attached to this chat: shared read-only with the
+  /// project's environment, read by the Agent (attached_folder_read) only.
+  private(set) var folders: [String] = []
+  private(set) var attaching = false
+
+  /// Attaches a folder; the environment starts again to share it.
+  func attach(folder url: URL) async {
+    let path = url.standardizedFileURL.path
+    guard !folders.contains(path) else { return }
+    attaching = true
+    defer { attaching = false }
+    folders.append(path)
+    await session.environments.setExtraFolders(session.identity, folders)
+    await session.restartEnvironment()
+  }
+
+  /// No longer offered to the Agent (the share goes when the environment next starts).
+  func detach(folder path: String) {
+    folders.removeAll { $0 == path }
+    Task { await session.environments.setExtraFolders(session.identity, folders) }
+  }
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
   @ObservationIgnored private var catalog: ToolCatalog?
@@ -204,10 +225,6 @@ final class ChatController {
         }
       }
     }
-    if conv.summary != nil {
-      let at = out.firstIndex { !$0.archived } ?? out.count
-      out.insert(Item(role: "note", text: "ここまでの会話は要約してモデルに渡しています（全文は残っています）。"), at: at)
-    }
     items = out
   }
 
@@ -299,6 +316,9 @@ final class ChatController {
     for s in used { prompt += "\n\n[Skill \(s.name)]\n\(s.content)" }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
     if !refs.isEmpty { prompt += "\n\n[References]\n" + refs.map(describe).joined(separator: "\n") }
+    if !folders.isEmpty {
+      prompt += "\n\n[Attached folders]\n" + folders.map { "\($0) (read with attached_folder_read, folder: \"\($0)\")" }.joined(separator: "\n")
+    }
     items.append(Item(role: "user", text: text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))))
     references = []
     begin()
@@ -372,7 +392,8 @@ final class ChatController {
         items[i].text += "\n→ " + summary
       }
     case .compacted:
-      status = "古いメッセージを要約しました（全文の履歴は残っています）。"
+      // Earlier messages were summarized for the model; the whole text stays
+      // in the conversation, so nothing is announced.
       reloadCurrent()
     case .retrying(let s): status = "再試行中: \(s)"
     case .error(let s):

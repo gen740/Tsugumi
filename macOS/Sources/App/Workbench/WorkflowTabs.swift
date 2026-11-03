@@ -23,7 +23,7 @@ struct WorkflowTabs: View {
       VStack(spacing: 0) {
         if workspace.tabs.count > 1 { tabBar }
         if let tab = workspace.active {
-          Workbench(workspace: workspace, session: session, tab: tab)
+          Workbench(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
             .id(tab.id)
             .focusedSceneValue(\.workflowTab, tab)
             .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
@@ -39,24 +39,12 @@ struct WorkflowTabs: View {
     .tsugumiLoading(EnvironmentOverlay.loading(session))
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
+    // The title bar stays quiet: the project's name and where the canvas is
+    // float on the canvas (CanvasWorkspace); the window keeps its title for
+    // the Window menu and Mission Control.
     .navigationTitle(session.scopeName([]))
-    .navigationSubtitle(workspace.active.map { $0.scope.isEmpty ? "" : session.scopeName($0.scope) } ?? "")
-    .toolbar { toolbar }
-  }
-
-  @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-    ToolbarItemGroup(placement: .primaryAction) {
-      if let onSwitchProject {
-        Button(action: onSwitchProject) { Label("開く", systemImage: "folder") }
-          .help(session.runActive ? "実行中は切り替えられません" : "別のプロジェクトを開く（必要な保存の後に切り替えます）")
-          .disabled(session.runActive)
-      }
-      Button { Task { await session.save() } } label: { Label("保存", systemImage: "square.and.arrow.down") }
-        .disabled(!session.dirty || !session.connected || session.saving)
-        .help(session.dirty ? "変更を保存（\(AppPreferences.shared.shortcut(.save).label)）" : "未保存の変更はありません")
-      Button { workspace.showChat.toggle() } label: { Label("チャット", systemImage: "bubble.left.and.text.bubble.right") }
-        .help("チャットの表示切替")
-    }
+    .toolbar(removing: .title)
+    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
   }
 
   private var tabBar: some View {
@@ -94,18 +82,19 @@ struct Workbench: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
+  var onSwitchProject: (() -> Void)? = nil
 
   var body: some View {
     VStack(spacing: 0) {
       if workspace.showBottom {
         VSplitView {
-          CanvasWorkspace(workspace: workspace, session: session, tab: tab)
+          CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
             .frame(minHeight: 240)
           LogTimelinePanel(workspace: workspace, session: session, tab: tab)
             .frame(minHeight: 140, idealHeight: 220)
         }
       } else {
-        CanvasWorkspace(workspace: workspace, session: session, tab: tab)
+        CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .frame(minHeight: 240, maxHeight: .infinity)
       }
       StatusBar(workspace: workspace, session: session, tab: tab)

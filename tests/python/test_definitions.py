@@ -221,3 +221,27 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path):
         assert bad.text is None and bad.error
     finally:
         d.cleanup()
+
+
+def test_attached_folder_is_read_only_inside_it(tmp_path):
+    """A folder attached to a chat: listed and read, never outside it."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    folder = tmp_path / "attached"
+    (folder / "sub").mkdir(parents=True)
+    (folder / "notes.txt").write_text("日本語のメモ")
+    (tmp_path / "secret.txt").write_text("outside")
+    (folder / "escape").symlink_to(tmp_path / "secret.txt")
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        listing = bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="").bytes).decode()
+        assert listing.splitlines() == ["escape", "notes.txt", "sub/"]
+        assert bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="notes.txt").bytes).decode() == "日本語のメモ"
+        for bad in ("../secret.txt", "escape"):
+            with pytest.raises(RpcFailure) as err:
+                c.call("AttachedFolderReadRequest", folder=str(folder), path=bad)
+            assert err.value.kind in ("invalid_path", "permission_denied"), bad
+    finally:
+        d.cleanup()

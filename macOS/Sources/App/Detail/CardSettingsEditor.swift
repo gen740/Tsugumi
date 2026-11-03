@@ -1064,6 +1064,8 @@ private struct SourceCategory: View {
       if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
       if !generatedFile {
         Button("整形") { format(path) }.disabled(formatting || model.loadedText(path) == nil).controlSize(.small)
+          .shortcut(.formatSource)
+          .help(tip("ソースコードを整形", .formatSource))
       }
     }
     .padding(.horizontal, 10).padding(.vertical, 6)

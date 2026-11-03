@@ -18,6 +18,9 @@ struct ChatPanel: View {
   @State private var model = UserDefaults.standard.string(forKey: "agent.model") ?? ProviderConfig.anthropic.model
   @State private var models: [String] = []
   @State private var skillQuery: String?
+  /// The highlighted Skill candidate (↑ / ↓, Return or Tab takes it).
+  @State private var skillIndex = 0
+  @State private var folderToAttach: URL?
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
   @FocusState private var inputFocused: Bool
@@ -44,7 +47,11 @@ struct ChatPanel: View {
       Button { chat.newSession(); showList = false } label: { Image(systemName: "square.and.pencil") }
         .buttonStyle(.borderless).help("新しい会話")
       Menu {
-        Button("会話を圧縮") { chat.compact() }.disabled(chat.busy || chat.items.count < 6)
+        // Only for the conversation that is open, never from the list.
+        if !showList {
+          Button("会話を圧縮") { chat.compact() }.disabled(chat.busy || chat.items.count < 6)
+          Divider()
+        }
         Button("Skill を再読込") { chat.reloadSkills() }
         if !detached {
           Button("別ウインドウで開く") { openWindow(id: "chat", value: ProjectRef(path: session.identity.url.path)) }
@@ -159,6 +166,25 @@ struct ChatPanel: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 6) {
+      if !chat.folders.isEmpty {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack {
+            ForEach(chat.folders, id: \.self) { f in
+              HStack(spacing: 3) {
+                Image(systemName: "folder").font(.caption2)
+                Text((f as NSString).lastPathComponent).font(.caption)
+                ReadOnlyMark(why: String(localized: "読み取り専用で共有しています。Agent だけが読みます。"))
+                Button { chat.detach(folder: f) } label: { Image(systemName: "xmark.circle.fill") }
+                  .buttonStyle(.borderless).font(.caption)
+                  .help("添付を外す")
+              }
+              .help(f)
+              .padding(.horizontal, 6).padding(.vertical, 2)
+              .background(Color.secondary.opacity(0.12), in: Capsule())
+            }
+          }
+        }
+      }
       if !chat.references.isEmpty {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack {
@@ -176,14 +202,14 @@ struct ChatPanel: View {
           }
         }
       }
-      if let q = skillQuery {
-        let matches = chat.skills.filter { q.isEmpty || $0.name.localizedCaseInsensitiveContains(q) }
+      if skillQuery != nil {
+        let matches = skillMatches
         VStack(alignment: .leading, spacing: 0) {
           if matches.isEmpty {
             Text(chat.skills.isEmpty ? "Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）" : "一致する Skill はありません")
               .font(.caption).foregroundStyle(.secondary).padding(6)
           }
-          ForEach(matches.prefix(8)) { s in
+          ForEach(Array(matches.enumerated()), id: \.element.id) { i, s in
             Button { insertSkill(s) } label: {
               VStack(alignment: .leading) {
                 Text("$" + s.name).font(.callout.monospaced())
@@ -194,6 +220,7 @@ struct ChatPanel: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(i == skillIndex ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 4))
           }
         }
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
@@ -201,7 +228,9 @@ struct ChatPanel: View {
       VStack(spacing: 4) {
         // Starts one line high and grows with the text (up to a limit).
         ZStack(alignment: .topLeading) {
-          if input.isEmpty {
+          // Gone while typing (and while an input method composes, which the
+          // text binding does not see yet).
+          if input.isEmpty && !inputFocused {
             Text("メッセージ（\(prefs.sendKey == .returnKey ? "Return" : "⌘Return") で送信）")
               .foregroundStyle(.tertiary).padding(.leading, 5).padding(.top, 1)
               .allowsHitTesting(false)
@@ -215,25 +244,66 @@ struct ChatPanel: View {
             .onChange(of: input) { updateSkillQuery() }
             .onKeyPress(.return, phases: .down) { press in
               let cmd = press.modifiers.contains(.command), shift = press.modifiers.contains(.shift)
-              let sends = prefs.sendKey == .returnKey ? (!shift && !cmd) : cmd
+              if !cmd && !shift, let s = highlightedSkill {
+                insertSkill(s)
+                return .handled
+              }
+              // ⌘Return always sends; Return too with the standard setting; ⇧Return is a new line.
+              let sends = cmd || (prefs.sendKey == .returnKey && !shift)
               if sends {
                 send()
                 return .handled
               }
               return .ignored
             }
+            .onKeyPress(.tab) {
+              guard let s = highlightedSkill else { return .ignored }
+              insertSkill(s)
+              return .handled
+            }
+            .onKeyPress(.upArrow) {
+              guard skillQuery != nil, !skillMatches.isEmpty else { return .ignored }
+              skillIndex = (skillIndex + skillMatches.count - 1) % skillMatches.count
+              return .handled
+            }
+            .onKeyPress(.downArrow) {
+              guard skillQuery != nil, !skillMatches.isEmpty else { return .ignored }
+              skillIndex = (skillIndex + 1) % skillMatches.count
+              return .handled
+            }
+            .onKeyPress(.escape) {
+              guard skillQuery != nil else { return .ignored }
+              skillQuery = nil
+              return .handled
+            }
         }
         HStack(spacing: 8) {
-          if let tab, !tab.selection.isEmpty {
-            Button { for k in tab.selection.sorted() { chat.addReference(.card(k)) } } label: { Image(systemName: "paperclip") }
-              .buttonStyle(.borderless)
-              .help("選択した Card を参照に追加")
+          Menu {
+            Button("選択した Card を参照に追加") { if let tab { for k in tab.selection.sorted() { chat.addReference(.card(k)) } } }
+              .disabled(tab?.selection.isEmpty ?? true)
+            Button("フォルダを添付…") { chooseFolder() }
+              .disabled(chat.attaching || !session.connected)
+          } label: { Image(systemName: chat.attaching ? "hourglass" : "paperclip") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("参照・フォルダを添付")
+          // The model, as quiet text under the input (a menu, not a pop-up box).
+          Menu {
+            ForEach(Array(Set(models + [model])).sorted(), id: \.self) { m in
+              Button { model = m } label: {
+                if m == model { Label(m, systemImage: "checkmark") } else { Text(m) }
+              }
+            }
+          } label: {
+            HStack(spacing: 3) {
+              Text(model).lineLimit(1)
+              Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
           }
-          Picker("", selection: $model) {
-            ForEach(Array(Set(models + [model])).sorted(), id: \.self) { Text($0).tag($0) }
-          }
-          .labelsHidden().fixedSize()
-          .controlSize(.small)
+          .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+          .tint(.secondary)
+          .foregroundStyle(.secondary)
           .onChange(of: model) {
             UserDefaults.standard.set(model, forKey: chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model")
           }
@@ -262,6 +332,22 @@ struct ChatPanel: View {
     }
     .padding(10)
     .task { await loadModels() }
+    .confirmationDialog("フォルダを添付しますか？", isPresented: Binding(get: { folderToAttach != nil }, set: { if !$0 { folderToAttach = nil } }),
+                        presenting: folderToAttach) { url in
+      Button("添付（環境を再起動）") { Task { await chat.attach(folder: url) } }
+      Button("キャンセル", role: .cancel) {}
+    } message: { url in
+      Text("「\(url.lastPathComponent)」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（\(chat.provider.name)）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。")
+    }
+  }
+
+  private func chooseFolder() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.message = String(localized: "チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）")
+    if panel.runModal() == .OK, let url = panel.url { folderToAttach = url }
   }
 
   /// Rough text height for the growing input (17 pt per line).
@@ -286,7 +372,11 @@ struct ChatPanel: View {
       Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
     default:
-      MarkdownBlocks(text: item.text).opacity(item.archived ? 0.6 : 1)
+      if chat.busy && item.id == chat.items.last?.id {
+        StreamingText(text: item.text)
+      } else {
+        MarkdownBlocks(text: item.text).opacity(item.archived ? 0.6 : 1)
+      }
     }
   }
 
@@ -298,8 +388,19 @@ struct ChatPanel: View {
     skillQuery = nil
   }
 
+  private var skillMatches: [Skill] {
+    guard let q = skillQuery else { return [] }
+    return Array(chat.skills.filter { q.isEmpty || $0.name.localizedCaseInsensitiveContains(q) }.prefix(8))
+  }
+
+  private var highlightedSkill: Skill? {
+    let m = skillMatches
+    return m.isEmpty ? nil : m[min(skillIndex, m.count - 1)]
+  }
+
   /// `$` at the start of the word being typed opens the Skill picker.
   private func updateSkillQuery() {
+    skillIndex = 0
     guard let last = input.split(separator: " ", omittingEmptySubsequences: false).last?
       .split(separator: "\n", omittingEmptySubsequences: false).last, last.hasPrefix("$") else {
       skillQuery = nil
@@ -401,6 +502,35 @@ private struct ToolRow: View {
 
 /// Markdown of an answer: paragraphs, headings, lists and code blocks (with
 /// copy). Very long answers are folded.
+/// The answer being written: shown at a steady pace that catches up with
+/// what arrived (no jumps of whole chunks), new blocks fading in.
+struct StreamingText: View {
+  let text: String
+  @State private var shown = 0
+
+  var body: some View {
+    let visible = String(text.prefix(shown))
+    let blocks = MarkdownBlocks.blocks(visible)
+    VStack(alignment: .leading, spacing: 8) {
+      ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
+        MarkdownBlocks.view(b).transition(.opacity.animation(.easeOut(duration: 0.25)))
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .textSelection(.enabled)
+    .animation(.easeOut(duration: 0.25), value: blocks.count)
+    .task(id: text.count) {
+      // About 0.25 s to catch up with whatever arrived, a few characters per frame at least.
+      while shown < text.count {
+        let behind = text.count - shown
+        shown = min(text.count, shown + max(2, behind / 15))
+        try? await Task.sleep(for: .milliseconds(16))
+        if Task.isCancelled { break }
+      }
+    }
+  }
+}
+
 struct MarkdownBlocks: View {
   let text: String
   @State private var expanded = false
@@ -469,7 +599,11 @@ struct MarkdownBlocks: View {
     (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
   }
 
-  @ViewBuilder private func block(_ b: Block) -> some View {
+  @ViewBuilder static func view(_ b: Block) -> some View {
+    MarkdownBlocks(text: "").block(b)
+  }
+
+  @ViewBuilder fileprivate func block(_ b: Block) -> some View {
     switch b {
     case .paragraph(let s): Text(inline(s)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
     case .heading(let s, let level): Text(inline(s)).font(level <= 1 ? .title3.bold() : .headline)

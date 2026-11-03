@@ -72,21 +72,27 @@ extension ProjectSession {
   func stageProgress(_ k: CardKey) -> StageProgress? {
     guard let s = cardStates[k], s.invocation > 0 else { return nil }
     let ended = [.succeeded, .failed, .cancelled, .skipped, .blocked].contains(s.state)
-    let items = Stage.applicable(code: kind(k) == .code).map { st -> StageProgress.Item in
-      guard let r = s.stages.last(where: { $0.stage == st }) else {
-        return .init(stage: st, status: ended ? .notRun : .pending)
+    // One shown stage covers several of the core's (build: SDK, Nix
+    // evaluation, build; validate: check and save).
+    let items = Stage.applicable(code: kind(k) == .code).map { shown -> StageProgress.Item in
+      var parts: [StageProgress.Status] = []
+      var seconds: Double?
+      for st in shown.parts {
+        guard let r = s.stages.last(where: { $0.stage == st }) else {
+          parts.append(ended ? .notRun : .pending)
+          continue
+        }
+        switch r.outcome {
+        case .running: parts.append(ended ? .notRun : .running)
+        case .cached: parts.append(.cached)
+        case .reused: parts.append(.reused)
+        case .failed: parts.append(.failed)
+        case .cancelled: parts.append(.cancelled)
+        default: parts.append(.done)
+        }
+        if let e = r.end, let b = r.start { seconds = (seconds ?? 0) + Double(max(0, e - b)) / 1000 }
       }
-      let status: StageProgress.Status
-      switch r.outcome {
-      case .running: status = ended ? .notRun : .running
-      case .cached: status = .cached
-      case .reused: status = .reused
-      case .failed: status = .failed
-      case .cancelled: status = .cancelled
-      default: status = .done
-      }
-      let sec = r.end.flatMap { e in r.start.map { Double(max(0, e - $0)) / 1000 } }
-      return .init(stage: st, status: status, seconds: sec)
+      return .init(stage: shown, status: StageProgress.merge(parts, ended: ended), seconds: seconds)
     }
     return StageProgress(items: items, workerReused: s.workerReused)
   }

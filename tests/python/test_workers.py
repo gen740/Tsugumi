@@ -270,7 +270,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
                 hostFolders=[{"path": str(shared), "name": "data"}])
     write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
                   hostFolders=[{"path": str(shared), "name": "out", "write": True}])
-    other = bash('ls /host 2>&1; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
+    other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
     load(env, {"trigger": {"template": "trigger"}, "read": read, "write": write_, "other": other},
          [card("begin", "trigger"), card("read", "read"), card("write", "write"), card("other", "other")],
          [conn("begin", "out", n, "go") for n in ("read", "write", "other")])

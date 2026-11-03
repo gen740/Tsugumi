@@ -345,6 +345,16 @@ final class ProjectSession {
     }
   }
 
+  /// Starts the environment again (folders shared with it are set when it
+  /// starts); unsaved edits stay in the draft.
+  func restartEnvironment() async {
+    await client?.close()
+    client = nil
+    connected = false
+    try? await environments.stop(identity)
+    await connect()
+  }
+
   func stopEnvironment() {
     Task {
       await client?.close()
@@ -852,7 +862,11 @@ final class ProjectSession {
       for d in snap.definitions.compactMap({ $0 }) {
         let dir = dest.appendingPathComponent("definitions/\(d.id)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data(d.cardJson.utf8).write(to: dir.appendingPathComponent("_card.json"))
+        if let l = d.linkJson {
+          try Data(l.utf8).write(to: dir.appendingPathComponent("_link.json"))
+        } else {
+          try Data(d.cardJson.utf8).write(to: dir.appendingPathComponent("_card.json"))
+        }
         if let m = d.metaJson { try Data(m.utf8).write(to: dir.appendingPathComponent("_meta.json")) }
       }
       for src in snap.sources.compactMap({ $0 }) {

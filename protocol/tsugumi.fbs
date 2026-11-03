@@ -323,6 +323,17 @@ table ProjectFileFormatRequest {
   language:Tsugumi.Data.FormatLanguage (id: 2);
 }
 
+/// -> FileContent. Reads a folder of the Mac attached to a chat (read-only,
+/// shared with this project only): a file's bytes, or for a folder its
+/// entries as text, one per line (folders end with "/"). `folder` is the
+/// attached folder's path on the Mac; `path` is relative to it ("" = itself).
+table AttachedFolderReadRequest {
+  folder:string (id: 0, required);
+  path:string (id: 1, required);
+  offset:uint64 = null (id: 2);
+  limit_bytes:uint32 = null (id: 3);
+}
+
 /// -> OutputTypesResult. Compiles an _outputs.fbs text (nothing is saved):
 /// its reflection schema (bfbs), from which a client lists the types. With
 /// port and type_name, also the text with that port's type and kind set
@@ -480,6 +491,7 @@ union RequestPayload {
   ViewSaveRequest = 29,
   RunHistoryDeleteRequest = 30,
   OutputTypesRequest = 31,
+  AttachedFolderReadRequest = 32,
 }
 
 // ---- Replies -----------------------------------------------------------------

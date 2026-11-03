@@ -2,39 +2,79 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// The canvas with its floating controls.
+/// The canvas with its floating controls. The canvas reaches the top of the
+/// window; the project's title (with where the canvas is), the run control
+/// and the project's actions float on it with the same look.
 struct CanvasWorkspace: View {
   @Environment(AppModel.self) private var model
   @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
+  var onSwitchProject: (() -> Void)? = nil
 
   var body: some View {
-    GraphCanvas(workspace: workspace, session: session, tab: tab)
-      .overlay(alignment: .top) {
-        // One row so the controls never overlap; the run control stays centered when there is room.
-        HStack(alignment: .top, spacing: 8) {
-          breadcrumbs.layoutPriority(0)
-          Spacer(minLength: 0)
-          CanvasRunControl(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(2)
-          Spacer(minLength: 0)
-          CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-        }
-        .padding(10)
+    ZStack {
+      GraphCanvas(workspace: workspace, session: session, tab: tab)
+        .ignoresSafeArea(.container, edges: .top)
+    }
+    .overlay(alignment: .top) {
+      // One row so the controls never overlap; the run control stays centered when there is room.
+      HStack(alignment: .top, spacing: 8) {
+        // The title keeps its room; only very long names are cut.
+        breadcrumbs.layoutPriority(3)
+        Spacer(minLength: 0)
+        CanvasRunControl(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(2)
+        Spacer(minLength: 0)
+        CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
+        projectActions.fixedSize().layoutPriority(2)
       }
-      .overlay(alignment: .bottomLeading) { viewControls.padding(10) }
+      .padding(10)
+    }
+    .overlay(alignment: .bottomLeading) { viewControls.padding(10) }
   }
 
+  /// Open another project, save, chat: beside the run control, the same look.
+  private var projectActions: some View {
+    HStack(spacing: 10) {
+      if let onSwitchProject {
+        Button(action: onSwitchProject) { Image(systemName: "folder") }
+          .help(session.runActive ? "実行中は切り替えられません" : "別のプロジェクトを開く（必要な保存の後に切り替えます）")
+          .disabled(session.runActive)
+          .accessibilityLabel("開く")
+      }
+      Button { Task { await session.save() } } label: { Image(systemName: "square.and.arrow.down") }
+        .disabled(!session.dirty || !session.connected || session.saving)
+        .help(session.dirty ? "変更を保存（\(AppPreferences.shared.shortcut(.save).label)）" : "未保存の変更はありません")
+        .accessibilityLabel("保存")
+      Button { workspace.showChat.toggle() } label: {
+        Label("チャット", systemImage: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
+      }
+      .help("チャットの表示切替")
+    }
+    .buttonStyle(.borderless)
+    .font(.callout)
+    .padding(.horizontal, 12).padding(.vertical, 7)
+    .background(.regularMaterial, in: Capsule())
+  }
+
+  /// The project's title and where the canvas is (Card in Card), in one place.
   private var breadcrumbs: some View {
     HStack(spacing: 4) {
-      Button { goUp() } label: { Image(systemName: "chevron.backward") }
-        .buttonStyle(.borderless)
-        .disabled(tab.scope.isEmpty && tab.back.isEmpty)
-        .help("戻る")
-      Button { tab.enter([]) } label: { Text(session.scopeName([])).lineLimit(1).truncationMode(.middle) }
-        .buttonStyle(.link)
-        .help(session.scopeName([]))
+      if !(tab.scope.isEmpty && tab.back.isEmpty) {
+        Button { goUp() } label: { Image(systemName: "chevron.backward") }
+          .buttonStyle(.borderless)
+          .help("戻る")
+      }
+      Button { tab.enter([]) } label: {
+        // The whole name when it fits; cut in the middle only when it does not.
+        ViewThatFits(in: .horizontal) {
+          Text(session.scopeName([])).fontWeight(.semibold).fixedSize()
+          Text(session.scopeName([])).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
+        }
+      }
+        .buttonStyle(.plain)
+        .help(session.identity.url.path)
       ForEach(Array(tab.scope.enumerated()), id: \.offset) { i, _ in
         Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
         Button { tab.enter(Array(tab.scope.prefix(i + 1))) } label: {
@@ -43,10 +83,11 @@ struct CanvasWorkspace: View {
         .buttonStyle(.link)
       }
     }
-    .frame(maxWidth: 320, alignment: .leading)
+    .frame(maxWidth: 360, alignment: .leading)
     .fixedSize(horizontal: false, vertical: true)
-    .padding(.horizontal, 8).padding(.vertical, 5)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    .font(.callout)
+    .padding(.horizontal, 12).padding(.vertical, 7)
+    .background(.regularMaterial, in: Capsule())
   }
 
   private func goUp() {
@@ -104,40 +145,40 @@ struct CanvasRunControl: View {
   let session: ProjectSession
   let tab: WorkflowTab
   @State private var showIssues = false
+  /// Shown as running: from the start, and for a moment after a quick run,
+  /// so a short run reads as one step instead of a flicker.
+  @State private var shownActive = false
+  @State private var activeSince = Date.distantPast
 
   var body: some View {
     let state = session.runStatus?.state ?? .idle
     let problems = session.diagnostics.filter(\.error).count + session.cardStates.values.filter { $0.state == .failed }.count
     HStack(spacing: 10) {
-      if session.runActive {
-        Button { Task { await session.cancelRun() } } label: { Label("停止", systemImage: "stop.fill") }
-          .buttonStyle(.borderedProminent).tint(.red)
-          .disabled(state == .cancelling)
-          .help(tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop))
-      } else {
-        Button { RunActions.runAll(session, scope: tab.scope) } label: { Label("実行", systemImage: "play.fill") }
-          .buttonStyle(.borderedProminent)
-          .disabled(!session.connected)
-          .help(tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
-        Menu {
-          Button("選択した Card から下流を実行") { if let k = tab.selection.first { RunActions.run(session, card: k, propagate: true) } }
-          Button("選択した Card だけ実行（最後の入力）") { if let k = tab.selection.first { RunActions.run(session, card: k, propagate: false) } }
-        } label: { Image(systemName: "chevron.down") }
-          .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-          .disabled(!session.connected || tab.selection.count != 1)
+      // One button of a fixed size: its title and color change, nothing moves.
+      Button {
+        if session.runActive { Task { await session.cancelRun() } } else { RunActions.runAll(session, scope: tab.scope) }
+      } label: {
+        Label(shownActive ? "停止" : "実行", systemImage: shownActive ? "stop.fill" : "play.fill")
+          .frame(minWidth: 52)
       }
+      .buttonStyle(.borderedProminent)
+      .tint(shownActive ? .red : .accentColor)
+      .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
+      .help(shownActive ? tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop)
+                        : tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
       HStack(spacing: 4) {
-        Image(systemName: state.symbol).foregroundStyle(state.color)
-        Text(state.label)
-        if session.runActive, let now = activity { Text("· " + now).foregroundStyle(.secondary).lineLimit(1) }
+        Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
+          .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
+        Text(shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
+        if shownActive, let now = activity { Text("· " + now).foregroundStyle(.secondary).lineLimit(1) }
       }
+      .frame(width: 210, alignment: .leading)
       .accessibilityElement(children: .combine)
-      if session.runStatus != nil {
-        SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-          Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
-            .help("Run の受付から（準備を含む）の経過時間。実行環境の時計で計ります。")
-        }
+      SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+        Text(elapsed).monospacedDigit().foregroundStyle(.secondary)
+          .help("Run の受付から（準備を含む）の経過時間。実行環境の時計で計ります。")
       }
+      .frame(width: 52, alignment: .trailing)
       Button { showIssues.toggle() } label: {
         HStack(spacing: 3) {
           Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")
@@ -150,13 +191,25 @@ struct CanvasRunControl: View {
       .popover(isPresented: $showIssues) {
         IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
       }
-      if session.runActive {
-        Image(systemName: "lock.fill").foregroundStyle(.secondary).help("実行中は Card を変更できません")
-      }
+      Image(systemName: "lock.fill").foregroundStyle(.secondary)
+        .opacity(shownActive ? 1 : 0)
+        .help(shownActive ? "実行中は Card を変更できません" : "")
     }
     .font(.callout)
     .padding(.horizontal, 10).padding(.vertical, 6)
     .background(.regularMaterial, in: Capsule())
+    .onChange(of: session.runActive, initial: true) { _, active in
+      if active {
+        shownActive = true
+        activeSince = Date()
+      } else {
+        let wait = max(0, 0.8 - Date().timeIntervalSince(activeSince))
+        Task {
+          try? await Task.sleep(for: .seconds(wait))
+          if !session.runActive { shownActive = false }
+        }
+      }
+    }
   }
 
   /// What the run is doing now: the stage of a running Card, or how many run.

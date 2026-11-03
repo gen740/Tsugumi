@@ -104,22 +104,16 @@ final class UIScript {
       case "edit":
         if let s = session { s.setParam(w[1], w[2], parseParam(w[3], "uint64")) }
       case "external":
-        // Another client changes the Card while this window holds edits.
-        if let s = session, let rpc = s.rpc {
-          var doc = s.confirmedProject
-          func patch(_ g: inout JSONValue, _ p: ArraySlice<String>) {
-            guard var cards = g["cards"]?.array, let i = cards.firstIndex(where: { $0["id"]?.string == p.first }) else { return }
-            if p.count == 1 { cards[i][w[2]] = .string(w.dropFirst(3).joined(separator: " ")) } else if var inner = cards[i]["canvas"] {
-              patch(&inner, p.dropFirst())
-              cards[i]["canvas"] = inner
-            }
-            g["cards"] = .array(cards)
-          }
-          var canvas = doc["canvas"] ?? .object([])
-          patch(&canvas, path(w[1])[...])
-          doc["canvas"] = canvas
-          _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other", changes: [Change.setProject(doc.serialized())])
+        // Another client changes a Card's settings (its _card.json) while this window holds edits.
+        if let s = session, let rpc = s.rpc, var card = s.confirmedDefinitions[w[1]] {
+          card[w[2]] = .string(w.dropFirst(3).joined(separator: " "))
+          _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other",
+                                  changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
         }
+      case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "focus":
+        // Gives the canvas the keyboard focus (as a click on it does).
+        if let win = mainWindow { win.makeFirstResponder(win.contentView) }
       case "editor":
         // editor <card> set <field> <value> | category <name> | apply
         guard let m = editors[w[1]] else { say("no editor for \(w[1])"); break }

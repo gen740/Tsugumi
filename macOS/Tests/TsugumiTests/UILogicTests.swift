@@ -6,8 +6,14 @@ import Testing
 @testable import TsugumiRPC
 
 @Test func stagesOfCodeAndBuiltinCards() {
-  #expect(Stage.applicable(code: true) == [.prepare, .evaluate, .build, .execute, .validate, .save])
-  #expect(Stage.applicable(code: false) == [.execute, .validate, .save])
+  // Shown as build → run → validate (SDK and Nix inside build, saving inside validate).
+  #expect(Stage.applicable(code: true) == [.build, .execute, .validate])
+  #expect(Stage.applicable(code: false) == [.execute, .validate])
+  #expect(Stage.build.parts == [.prepare, .evaluate, .build] && Stage.validate.parts == [.validate, .save])
+  #expect(StageProgress.merge([.cached, .cached, .cached], ended: true) == .cached)
+  #expect(StageProgress.merge([.done, .pending, .pending], ended: false) == .running)
+  #expect(StageProgress.merge([.done, .failed, .notRun], ended: true) == .failed)
+  #expect(StageProgress.merge([.reused, .reused, .reused], ended: true) == .reused)
   #expect(Stage(phase: .evaluate) == .evaluate && Stage(phase: .save) == .save && Stage(phase: .unspecified) == nil)
   // Stages run in the order the core reports them.
   #expect(Stage.allCases.map(\.rawValue) == Array(0..<Stage.allCases.count))

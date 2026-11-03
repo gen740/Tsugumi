@@ -29,9 +29,9 @@ enum Stage: Int, CaseIterable, Identifiable {
     case .waiting: return String(localized: "入力待ち")
     case .prepare: return String(localized: "SDK 準備")
     case .evaluate: return String(localized: "Nix 評価")
-    case .build: return String(localized: "build")
-    case .execute: return String(localized: "実行")
-    case .validate: return String(localized: "出力検証")
+    case .build: return "build"
+    case .execute: return "run"
+    case .validate: return "validate"
     case .save: return String(localized: "保存")
     case .done: return String(localized: "完了")
     }
@@ -99,10 +99,20 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
   }
 
-  /// Stages that apply to a Card: code Cards prepare the SDK and build with
-  /// Nix; builtin Cards only execute, validate and save.
+  /// Stages shown for a Card, in order: build (SDK preparation, Nix
+  /// evaluation and build), run, validate (output check and saving).
+  /// Builtin Cards do not build.
   static func applicable(code: Bool) -> [Stage] {
-    code ? [.prepare, .evaluate, .build, .execute, .validate, .save] : [.execute, .validate, .save]
+    code ? [.build, .execute, .validate] : [.execute, .validate]
+  }
+
+  /// The core's stages a shown stage stands for.
+  var parts: [Stage] {
+    switch self {
+    case .build: return [.prepare, .evaluate, .build]
+    case .validate: return [.validate, .save]
+    default: return [self]
+    }
   }
 }
 
@@ -144,6 +154,19 @@ struct StageProgress: Equatable {
   var workerReused = false
 
   var current: Item? { items.first { $0.status == .running } }
+
+  /// The status of a shown stage from the core's stages it covers.
+  static func merge(_ parts: [Status], ended: Bool) -> Status {
+    if parts.contains(.failed) { return .failed }
+    if parts.contains(.cancelled) { return .cancelled }
+    if parts.contains(.running) { return .running }
+    let reached = parts.filter { $0 != .pending && $0 != .notRun }
+    if reached.isEmpty { return parts.first ?? .pending }
+    // Part of it done, the rest still to come: in progress while the call runs.
+    if reached.count < parts.count { return ended ? (reached.contains(.done) ? .done : reached[0]) : .running }
+    if reached.contains(.done) { return .done }
+    return reached.allSatisfy { $0 == .reused } ? .reused : .cached
+  }
   var failed: Item? { items.first { $0.status == .failed || $0.status == .cancelled } }
 }
 
@@ -744,8 +767,14 @@ struct StageStrip: View {
   private func s(_ v: CGFloat) -> CGFloat { v * CGFloat(zoom) }
 
   var body: some View {
-    HStack(spacing: s(3)) {
-      ForEach(progress.items) { item in
+    HStack(spacing: s(2)) {
+      // The stages in order, joined by arrows: build → run → validate.
+      ForEach(Array(progress.items.enumerated()), id: \.element.id) { i, item in
+        if i > 0 {
+          Image(systemName: "arrow.right").font(.system(size: max(4, s(6)), weight: .semibold))
+            .foregroundStyle(.secondary.opacity(0.6))
+            .accessibilityHidden(true)
+        }
         Button { onTap?(item.stage) } label: { icon(item) }
           .buttonStyle(.plain)
           .disabled(onTap == nil)
@@ -982,16 +1011,38 @@ struct WireLayer: View {
 }
 
 /// Path (world units) from a Card's display anchor to its output frame.
-func displayLink(from a: CGPoint, to frame: CGRect, flow: FlowDirection) -> Path {
+/// The ends of the link between a Card and its result frame: on the edges
+/// that face each other (where the two are closest), each in the middle of
+/// the stretch the two share, or toward the other when they share none.
+/// Returns the points and whether the link runs across (left/right).
+func displayLinkEnds(card: CGRect, frame: CGRect) -> (a: CGPoint, b: CGPoint, horizontal: Bool) {
+  let gx = max(frame.minX - card.maxX, card.minX - frame.maxX)
+  let gy = max(frame.minY - card.maxY, card.minY - frame.maxY)
+  func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { lo > hi ? (lo + hi) / 2 : min(max(v, lo), hi) }
+  if gx >= gy {
+    let right = frame.midX >= card.midX
+    let lo = max(card.minY, frame.minY), hi = min(card.maxY, frame.maxY)
+    let ay = lo <= hi ? (lo + hi) / 2 : clamp(frame.midY, card.minY + 10, card.maxY - 10)
+    let by = lo <= hi ? (lo + hi) / 2 : clamp(card.midY, frame.minY + 10, frame.maxY - 10)
+    return (CGPoint(x: right ? card.maxX : card.minX, y: ay), CGPoint(x: right ? frame.minX : frame.maxX, y: by), true)
+  }
+  let down = frame.midY >= card.midY
+  let lo = max(card.minX, frame.minX), hi = min(card.maxX, frame.maxX)
+  let ax = lo <= hi ? (lo + hi) / 2 : clamp(frame.midX, card.minX + 10, card.maxX - 10)
+  let bx = lo <= hi ? (lo + hi) / 2 : clamp(card.midX, frame.minX + 10, frame.maxX - 10)
+  return (CGPoint(x: ax, y: down ? card.maxY : card.minY), CGPoint(x: bx, y: down ? frame.minY : frame.maxY), false)
+}
+
+/// The link itself: a short curve leaving and entering straight.
+func displayLink(card: CGRect, frame: CGRect) -> Path {
+  let (a, b, horizontal) = displayLinkEnds(card: card, frame: frame)
   var p = Path()
   p.move(to: a)
-  if flow == .topToBottom {
-    let b = CGPoint(x: frame.minX, y: min(max(a.y, frame.minY + 14), frame.maxY - 14))
-    let dx = max(16, (b.x - a.x) / 2)
+  if horizontal {
+    let dx = (b.x - a.x) / 2
     p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
   } else {
-    let b = CGPoint(x: min(max(a.x, frame.minX + 14), frame.maxX - 14), y: frame.minY)
-    let dy = max(16, (b.y - a.y) / 2)
+    let dy = (b.y - a.y) / 2
     p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
   }
   return p
@@ -1182,8 +1233,7 @@ enum PreviewSamples {
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],
                             state: .running, invocation: 3, runContinues: true)
     step.stage = StageProgress(items: [
-      .init(stage: .prepare, status: .reused), .init(stage: .evaluate, status: .reused), .init(stage: .build, status: .reused),
-      .init(stage: .execute, status: .running), .init(stage: .validate, status: .pending), .init(stage: .save, status: .pending),
+      .init(stage: .build, status: .reused), .init(stage: .execute, status: .running), .init(stage: .validate, status: .pending),
     ], workerReused: true)
     let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
                             inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])

@@ -30,6 +30,8 @@ final class AppModel {
   private(set) var recents: [RecentProject] = []
   private(set) var sessions: [String: ProjectSession] = [:]
   var error: String?
+  /// "New project" asked from the menu: Home opens its sheet.
+  var requestNewProject = false
   let demosRoot: URL?
   private(set) var setup: EnvironmentManager.SetupStatus?
   private(set) var checkingSetup = false
@@ -115,6 +117,12 @@ final class AppModel {
     guard let data = try? Data(contentsOf: recentsURL),
           let list = try? JSONDecoder().decode([RecentProject].self, from: data) else { return }
     recents = list.filter { FileManager.default.fileExists(atPath: $0.path) }
+  }
+
+  /// Takes projects off the recent list (their folders stay).
+  func forgetRecents(_ paths: Set<String>) {
+    recents.removeAll { paths.contains($0.path) }
+    try? JSONEncoder().encode(recents).write(to: recentsURL, options: .atomic)
   }
 
   private func remember(_ url: URL, name: String) {

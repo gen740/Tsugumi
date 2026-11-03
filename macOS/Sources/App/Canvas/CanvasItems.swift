@@ -178,10 +178,6 @@ struct OutputFrameView: View {
     .padding(8)
     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.purple.opacity(0.45)))
-    .overlay(alignment: .leading) {
-      // Anchor of the display link from the Card (not a computation port).
-      Circle().fill(Color.purple.opacity(0.75)).frame(width: 7, height: 7).offset(x: -3.5)
-    }
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
   }
 }
@@ -252,32 +248,28 @@ struct DisplayContent: View {
 }
 
 /// A 3D point cloud: drag to rotate, scroll or pinch to zoom.
+///
+/// Each frame writes the projected points straight into a bitmap (about
+/// 5 ms for 100 000 points); drawing every point as a SwiftUI path took
+/// about 120 ms a frame, which made dragging crawl.
 struct PointCloudView: View {
   let x: [Float], y: [Float], z: [Float], colors: [UInt32]
   @State private var yaw = 0.6
   @State private var pitch = 0.4
   @State private var scale = 1.0
   @State private var dragStart: (Double, Double)?
+  @State private var cloud: PreparedCloud?
+  @Environment(\.displayScale) private var displayScale
+
+  /// Cheap identity of the data: the cloud is prepared again only when it changes.
+  private var dataKey: [Float] {
+    [Float(x.count), x.first ?? 0, x.last ?? 0, y.last ?? 0, z.last ?? 0, Float(colors.count)]
+  }
 
   var body: some View {
     Canvas { ctx, size in
-      guard !x.isEmpty else { return }
-      let cx = Double(x.reduce(0, +)) / Double(x.count), cy = Double(y.reduce(0, +)) / Double(y.count), cz = Double(z.reduce(0, +)) / Double(z.count)
-      var extent = 1e-9
-      for i in x.indices { extent = max(extent, abs(Double(x[i]) - cx), abs(Double(y[i]) - cy), abs(Double(z[i]) - cz)) }
-      let s = min(size.width, size.height) * 0.42 / extent * scale
-      let (cyw, syw, cp, sp) = (cos(yaw), sin(yaw), cos(pitch), sin(pitch))
-      let step = max(1, x.count / 200_000)
-      for i in stride(from: 0, to: x.count, by: step) {
-        let px = Double(x[i]) - cx, py = Double(y[i]) - cy, pz = Double(z[i]) - cz
-        let rx = px * cyw + pz * syw
-        let rz = -px * syw + pz * cyw
-        let ry = py * cp - rz * sp
-        let sx = size.width / 2 + rx * s, sy = size.height / 2 - ry * s
-        let c = i < colors.count ? colors[i] : 0x4A90E2
-        let color = Color(red: Double((c >> 16) & 0xFF) / 255, green: Double((c >> 8) & 0xFF) / 255, blue: Double(c & 0xFF) / 255)
-        ctx.fill(Path(ellipseIn: CGRect(x: sx - 1.5, y: sy - 1.5, width: 3, height: 3)), with: .color(color))
-      }
+      guard let cloud, let img = cloud.render(yaw: yaw, pitch: pitch, zoom: scale, size: size, pixelScale: displayScale) else { return }
+      ctx.draw(Image(decorative: img, scale: displayScale), in: CGRect(origin: .zero, size: size))
     }
     .background(Color(nsColor: .textBackgroundColor))
     .contentShape(Rectangle())
@@ -291,6 +283,70 @@ struct PointCloudView: View {
       Text("\(x.count) 点 · ドラッグで回転").font(.caption2).foregroundStyle(.secondary).padding(4)
     }
     .accessibilityLabel(String(localized: "点群 \(x.count) 点"))
+    .onAppear { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
+    .onChange(of: dataKey) { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
+  }
+}
+
+/// A point cloud centered and measured once, projected per frame into an
+/// RGBA bitmap (3×3 pixels per point at the screen's scale).
+final class PreparedCloud {
+  let x: [Float], y: [Float], z: [Float]
+  let colors: [UInt32]
+  let extent: Float
+
+  init(x: [Float], y: [Float], z: [Float], colors: [UInt32]) {
+    let n = min(x.count, y.count, z.count)
+    var cx: Double = 0, cy: Double = 0, cz: Double = 0
+    for i in 0..<n { cx += Double(x[i]); cy += Double(y[i]); cz += Double(z[i]) }
+    let d = Double(max(n, 1))
+    let (mx, my, mz) = (Float(cx / d), Float(cy / d), Float(cz / d))
+    var e: Float = 1e-9
+    var px = [Float](repeating: 0, count: n), py = px, pz = px
+    for i in 0..<n {
+      px[i] = x[i] - mx; py[i] = y[i] - my; pz[i] = z[i] - mz
+      e = max(e, abs(px[i]), abs(py[i]), abs(pz[i]))
+    }
+    self.x = px; self.y = py; self.z = pz
+    self.colors = colors
+    extent = e
+  }
+
+  func render(yaw: Double, pitch: Double, zoom: Double, size: CGSize, pixelScale: CGFloat) -> CGImage? {
+    let w = Int(size.width * pixelScale), h = Int(size.height * pixelScale)
+    guard w > 2, h > 2, !x.isEmpty else { return nil }
+    var pixels = [UInt32](repeating: 0, count: w * h)
+    let s = Float(Double(min(w, h)) * 0.42 * zoom) / extent
+    let (cyw, syw, cp, sp) = (Float(cos(yaw)), Float(sin(yaw)), Float(cos(pitch)), Float(sin(pitch)))
+    let (hw, hh) = (Float(w) / 2, Float(h) / 2)
+    let n = x.count, nc = colors.count
+    pixels.withUnsafeMutableBufferPointer { out in
+      guard let buf = out.baseAddress else { return }
+      x.withUnsafeBufferPointer { xs in y.withUnsafeBufferPointer { ys in z.withUnsafeBufferPointer { zs in
+        colors.withUnsafeBufferPointer { cs in
+          for i in 0..<n {
+            let rx = xs[i] * cyw + zs[i] * syw
+            let rz = -xs[i] * syw + zs[i] * cyw
+            let ry = ys[i] * cp - rz * sp
+            let sx = Int(hw + rx * s), sy = Int(hh - ry * s)
+            guard sx >= 1, sy >= 1, sx < w - 1, sy < h - 1 else { continue }
+            let c = i < nc ? cs[i] : 0x4A90E2
+            // Premultiplied little-endian BGRA, opaque.
+            let px: UInt32 = 0xFF00_0000 | (c & 0x00FF_FFFF)
+            var p = buf + (sy - 1) * w + sx - 1
+            for _ in 0..<3 {
+              p[0] = px; p[1] = px; p[2] = px
+              p += w
+            }
+          }
+        }
+      } } }
+    }
+    let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    guard let provider = CGDataProvider(data: Data(bytes: pixels, count: pixels.count * 4) as CFData) else { return nil }
+    return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider, decode: nil,
+                   shouldInterpolate: false, intent: .defaultIntent)
   }
 }
 

@@ -13,6 +13,8 @@ struct ProjectChooser: View {
   @State private var showNew = false
   @State private var tag: String?
   @State private var search = ""
+  /// Choosing recent projects to take off the list (nil: not choosing).
+  @State private var picking: Set<String>?
 
   var body: some View {
     HStack(spacing: 0) {
@@ -39,11 +41,35 @@ struct ProjectChooser: View {
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .ignoresSafeArea(.container, edges: .top)
     .sheet(isPresented: $showNew) { newProjectSheet }
+    .onChange(of: model.requestNewProject, initial: true) { _, asked in
+      if asked {
+        showNew = true
+        model.requestNewProject = false
+      }
+    }
   }
 
   private var recents: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("最近のプロジェクト").font(.headline).padding(.top, 44)
+      HStack {
+        Text("最近のプロジェクト").font(.headline)
+        Spacer()
+        if let chosen = picking {
+          Toggle("すべて選択", isOn: Binding(get: { !model.recents.isEmpty && chosen.count == model.recents.count },
+                                          set: { picking = $0 ? Set(model.recents.map(\.path)) : [] }))
+            .toggleStyle(.checkbox)
+          Button("一覧から削除") {
+            model.forgetRecents(chosen)
+            picking = nil
+          }
+          .disabled(chosen.isEmpty)
+          .help("一覧から外すだけで、フォルダは削除しません")
+          Button("完了") { picking = nil }
+        } else if !model.recents.isEmpty {
+          Button("編集") { picking = [] }.help("一覧から外すプロジェクトを選ぶ")
+        }
+      }
+      .padding(.top, 44)
       if model.recents.isEmpty {
         ContentUnavailableView("最近開いたプロジェクトはありません", systemImage: "clock",
                                description: Text("新規作成するか、既存のフォルダを開いてください。"))
@@ -67,8 +93,20 @@ struct ProjectChooser: View {
   }
 
   private func recentRow(_ p: RecentProject, now: Date) -> some View {
-    Button { onOpen(URL(fileURLWithPath: p.path)) } label: {
+    Button {
+      if var chosen = picking {
+        if chosen.contains(p.path) { chosen.remove(p.path) } else { chosen.insert(p.path) }
+        picking = chosen
+      } else {
+        onOpen(URL(fileURLWithPath: p.path))
+      }
+    } label: {
       HStack {
+        if let chosen = picking {
+          Image(systemName: chosen.contains(p.path) ? "checkmark.square.fill" : "square")
+            .foregroundStyle(chosen.contains(p.path) ? Color.accentColor : .secondary)
+            .accessibilityLabel(chosen.contains(p.path) ? "選択済み" : "未選択")
+        }
         Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary)
         VStack(alignment: .leading) {
           Text(p.name).font(.headline).lineLimit(1)
@@ -83,6 +121,7 @@ struct ProjectChooser: View {
     .buttonStyle(.plain)
     .contextMenu {
       Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p.path)]) }
+      Button("一覧から削除") { model.forgetRecents([p.path]) }
     }
   }
 
