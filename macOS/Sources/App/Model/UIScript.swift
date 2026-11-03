@@ -134,6 +134,35 @@ final class UIScript {
           AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: drafts)
           say("generate \(drafts)")
         }
+      case "presence":
+        // presence [thought]: plays the Agent's scenes over the shown scope's
+        // Cards along the flow (read, write out, thread the next wire), as
+        // a save by the Agent would; `thought` adds sample thought lines.
+        if let s = session, let t = workspace?.active {
+          let ids = s.cards(in: t.scope).compactMap { $0["id"]?.string }
+          let across = s.flow == .leftToRight
+          let order = ids.sorted { let a = s.position(key(t.scope + [$0])), b = s.position(key(t.scope + [$1])); return across ? a.x < b.x : a.y < b.y }
+          let p = s.presence
+          p.name = { [weak s] k in s?.nodeData(k).title ?? k }
+          p.turnStarted()
+          for id in order where s.kind(key(t.scope + [id])) != .trigger {
+            let k = key(t.scope + [id])
+            p.enqueue(.visit(k))
+            p.enqueue(.write(k, reveal: true))
+            for c in s.connections(in: t.scope) where c["from"]?["card"]?.string == id {
+              if let to = c["to"]?["card"]?.string, let fp = c["from"]?["port"]?.string, let tp = c["to"]?["port"]?.string {
+                p.enqueue(.thread(AgentPresence.Wire(from: k, fromPort: fp, to: key(t.scope + [to]), toPort: tp)))
+              }
+            }
+          }
+          if w.count > 1 && w[1] == "thought" { p.think(String(localized: "上流から順に Card を書いて、糸でつないでいく")) }
+          let end = p.beats.last?.end ?? Date()
+          Task { @MainActor in
+            try? await Task.sleep(for: .seconds(max(0, end.timeIntervalSinceNow)))
+            p.turnEnded()
+          }
+          say("presence \(p.beats.count) scenes, \(String(format: "%.1f", end.timeIntervalSinceNow)) s")
+        }
       case "waitchat":
         // waitchat <minutes>: until the Agent's turn ends
         if let s = session {

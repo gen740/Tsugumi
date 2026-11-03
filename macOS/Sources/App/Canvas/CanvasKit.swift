@@ -969,6 +969,9 @@ struct WireDraw {
   enum Style { case normal, carried, active, selected, display }
   var path: Path
   var style: Style
+  /// The connection, when the Agent may be threading it (drawn by the
+  /// presence layer meanwhile).
+  var thread: AgentPresence.Wire? = nil
 }
 
 /// Routes wires in world units around the Cards. Forward wires (downstream)
@@ -1063,6 +1066,7 @@ struct WireLayer: View {
   let wires: [WireDraw]
   var animate = false
   var zoom: Double = 1
+  var presence: AgentPresence?
 
   /// The active wires' dashes, and how fast they flow (points per second).
   static let dash: [CGFloat] = [8, 6]
@@ -1070,15 +1074,19 @@ struct WireLayer: View {
 
   var body: some View {
     let anyActive = animate && wires.contains { $0.style == .active }
+    let _ = presence?.revision
+    let threading = presence?.animating(at: Date()) ?? false
     // At the display's frame rate, the phase wrapping at exactly one dash
     // period, so the dashes flow without a jump.
-    SwiftUI.TimelineView(.animation(paused: !anyActive)) { t in
+    SwiftUI.TimelineView(.animation(paused: !anyActive && !threading)) { t in
       Canvas { ctx, _ in
         let period = Self.dash.reduce(0, +)
         let phase = anyActive
           ? -CGFloat((t.date.timeIntervalSinceReferenceDate * Self.flow).truncatingRemainder(dividingBy: Double(period))) : 0
         let w = max(1, 1.6 * min(1.4, zoom))
         for wire in wires {
+          // A wire the Agent is threading is drawn by the presence layer.
+          if let th = wire.thread, let presence, presence.thread(th, at: t.date) != .plain { continue }
           let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
           switch wire.style {
           case .normal:

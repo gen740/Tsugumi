@@ -190,6 +190,8 @@ final class ProjectSession {
   private(set) var confirmedDefinitions: [String: JSONValue] = [:]
   private(set) var confirmedDefinitionMeta: [String: JSONValue] = [:]
   private(set) var confirmedLinks: [String: JSONValue] = [:]
+  /// The Agent on the canvas: what it reads, writes and threads.
+  let presence = AgentPresence()
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
   @ObservationIgnored private var externalsKey = ""
@@ -567,6 +569,8 @@ final class ProjectSession {
     // The Cards that send displays, before this change (definitions and
     // resolution are replaced below).
     let shown = displayedCards
+    // What the Agent's save changed, seen against the document before it.
+    let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -590,6 +594,7 @@ final class ProjectSession {
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     refreshExternals()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
+    if let presenceBefore { notePresence(d, before: presenceBefore) }
     // A Draft implemented (or any Card that became code or a logger) sends its displays too.
     if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     if wasClean {

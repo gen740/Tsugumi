@@ -102,6 +102,8 @@ final class ChatController {
   }
 
   let session: ProjectSession
+  /// "思考の過程を描く": the Agent's thinking in one line for the canvas.
+  let thoughts: ThoughtSummarizer
   private(set) var items: [Item] = []
   /// The last turn stopped at the step limit and can go on.
   private(set) var stoppedAtLimit = false
@@ -166,6 +168,7 @@ final class ChatController {
 
   init(session: ProjectSession) {
     self.session = session
+    thoughts = ThoughtSummarizer(presence: session.presence)
     dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Tsugumi/agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
@@ -395,6 +398,7 @@ final class ChatController {
   func cancel() {
     Task { await agent?.cancel() }
     busy = false
+    session.presence.turnEnded()
     status = "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。"
   }
 
@@ -433,11 +437,24 @@ final class ChatController {
     failed = false
     stoppedAtLimit = false
     status = nil
+    session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
+    session.presence.turnStarted()
+    thoughts.turnStarted()
+  }
+
+  /// The tsugumi on the canvas follows what the Agent looks at and runs.
+  private func showOnCanvas(tool: String, arguments: String) {
+    switch PresenceEvents.look(tool: tool, arguments: arguments) {
+    case .visit(let p)?: if session.instance(key(p)) != nil { session.presence.enqueue(.visit(key(p))) }
+    case .run(let p)?: if session.instance(key(p)) != nil { session.presence.enqueue(.run(key(p))) }
+    case nil: break
+    }
   }
 
   private func handle(_ e: AgentEvent) {
     switch e {
     case .text(let t):
+      thoughts.note(text: t)
       if let last = items.last, last.role == "assistant", last.tool == nil {
         items[items.count - 1].text += t
       } else {
@@ -445,7 +462,10 @@ final class ChatController {
       }
     case .toolStarted(_, let name, let args):
       items.append(Item(role: "tool", text: args, tool: (name, nil)))
+      showOnCanvas(tool: name, arguments: args)
+      thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
+      thoughts.note(tool: name, ok: ok, summary: summary)
       if let i = items.lastIndex(where: { $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
@@ -457,14 +477,17 @@ final class ChatController {
     case .retrying(let s): status = "再試行中: \(s)"
     case .error(let s):
       busy = false
+      session.presence.turnEnded()
       failed = s != "cancelled"
       status = s == "cancelled" ? "回答を停止しました（Workflow の実行は止めていません）。" : "エラー: \(s)"
       refreshAfterTurn()
     case .finished:
       busy = false
+      session.presence.turnEnded()
       refreshAfterTurn()
     case .stepLimit(let steps, let run):
       busy = false
+      session.presence.turnEnded()
       stoppedAtLimit = true
       status = String(localized: "\(steps) 手の上限で中断しました。「続ける」で続きから再開できます。")
         + (run.map { String(localized: " 実行 \(String($0.prefix(8))) の結果はまだ確かめていません。") } ?? "")

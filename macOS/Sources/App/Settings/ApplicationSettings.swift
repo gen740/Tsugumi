@@ -215,6 +215,10 @@ private struct AppearanceSettings: View {
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
+        Picker("作業中の Agent", selection: $prefs.agentAvatar) {
+          ForEach(AgentAvatar.allCases) { Text($0.label).tag($0) }
+        }
+        .help("Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。")
       }
       .formStyle(.grouped)
       .frame(width: 300)

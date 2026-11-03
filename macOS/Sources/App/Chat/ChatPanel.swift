@@ -17,6 +17,10 @@ struct ChatPanel: View {
   @State private var input = ""
   @State private var model = UserDefaults.standard.string(forKey: "agent.model") ?? ProviderConfig.anthropic.model
   @State private var models: [String] = []
+  /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
+  @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
+  @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
+  @State private var askThoughts = false
   @State private var skillQuery: String?
   /// The highlighted Skill candidate (↑ / ↓, Return or Tab takes it).
   @State private var skillIndex = 0
@@ -310,6 +314,7 @@ struct ChatPanel: View {
           }
           .disabled(!chat.provider.usesKeychain)
           .help("モデル（接続先: \(chat.provider.name)）")
+          thoughtsToggle
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
             .help("直近の入力トークン数（上限に近づくと自動で圧縮）")
@@ -333,6 +338,12 @@ struct ChatPanel: View {
     }
     .padding(10)
     .task { await loadModels() }
+    .confirmationDialog("思考の過程を描きますか？", isPresented: $askThoughts) {
+      Button("描く") { drawThoughtsAsked = true; drawThoughts = true }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("Agent の発言とツールの結果を、数秒ごとに小さなモデル（\(ThoughtSummarizer.config()?.model ?? "なし")、接続先: \(chat.provider.name)）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。")
+    }
     .confirmationDialog("フォルダを添付しますか？", isPresented: Binding(get: { folderToAttach != nil }, set: { if !$0 { folderToAttach = nil } }),
                         presenting: folderToAttach) { url in
       Button("添付（環境を再起動）") { Task { await chat.attach(folder: url) } }
@@ -420,6 +431,24 @@ struct ChatPanel: View {
   /// Models listed earlier in Settings > API (no network request from here).
   private func loadModels() async {
     models = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
+  }
+
+  /// "思考の過程を描く": on, a small model writes what the Agent is thinking
+  /// for the tsugumi's bubble (asks once before the first time).
+  private var thoughtsToggle: some View {
+    Button {
+      if drawThoughts { drawThoughts = false } else if drawThoughtsAsked { drawThoughts = true } else { askThoughts = true }
+    } label: {
+      Image(systemName: drawThoughts ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
+        .font(.caption)
+        .foregroundStyle(drawThoughts ? Color.accentColor : .secondary)
+    }
+    .buttonStyle(.borderless)
+    .disabled(ThoughtSummarizer.config() == nil)
+    .help(drawThoughts
+      ? String(localized: "思考の過程を描く: オン（使った token: 入力 \(chat.thoughts.usage.inputTokens)、出力 \(chat.thoughts.usage.outputTokens)）")
+      : String(localized: "思考の過程を描く: Agent の考えを要約して Canvas に出します（追加の token を使います）"))
+    .accessibilityLabel("思考の過程を描く")
   }
 }
 

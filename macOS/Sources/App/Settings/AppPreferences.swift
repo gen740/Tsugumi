@@ -176,6 +176,8 @@ final class AppPreferences {
   var showGrid: Bool { didSet { d.set(showGrid, forKey: "canvas.grid") } }
   var gridSize: Double { didSet { d.set(gridSize, forKey: "canvas.gridSize") } }
   var animateLines: Bool { didSet { d.set(animateLines, forKey: "canvas.animateLines") } }
+  /// How the Agent shows itself on the canvas while it works.
+  var agentAvatar: AgentAvatar { didSet { d.set(agentAvatar.rawValue, forKey: "canvas.agentAvatar") } }
   var indentWidth: Int { didSet { d.set(indentWidth, forKey: "editor.indent") } }
   var showIndentGuides: Bool { didSet { d.set(showIndentGuides, forKey: "editor.guides") } }
   var editorFontSize: Double { didSet { d.set(editorFontSize, forKey: "editor.fontSize") } }
@@ -202,6 +204,7 @@ final class AppPreferences {
     showGrid = d.object(forKey: "canvas.grid") as? Bool ?? true
     gridSize = d.object(forKey: "canvas.gridSize") as? Double ?? 20
     animateLines = d.object(forKey: "canvas.animateLines") as? Bool ?? true
+    agentAvatar = AgentAvatar(rawValue: d.string(forKey: "canvas.agentAvatar") ?? "") ?? .bird
     indentWidth = d.object(forKey: "editor.indent") as? Int ?? 4
     showIndentGuides = d.object(forKey: "editor.guides") as? Bool ?? true
     editorFontSize = d.object(forKey: "editor.fontSize") as? Double ?? 12
@@ -297,6 +300,20 @@ enum EditorTheme: String, CaseIterable, Identifiable {
     case (.muted, .type): return .labelColor
     case (.muted, .constant): return .systemBrown
     case (.muted, .property): return .secondaryLabelColor
+    }
+  }
+}
+
+/// The Agent on the canvas: the tsugumi of the icon, a small dot, or nothing
+/// (the Cards and wires still show what it wrote).
+enum AgentAvatar: String, CaseIterable, Identifiable {
+  case bird, dot, none
+  var id: String { rawValue }
+  var label: String {
+    switch self {
+    case .bird: String(localized: "鶫")
+    case .dot: String(localized: "点（控えめ）")
+    case .none: String(localized: "表示しない")
     }
   }
 }

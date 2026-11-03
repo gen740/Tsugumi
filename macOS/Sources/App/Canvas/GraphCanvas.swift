@@ -49,8 +49,8 @@ struct GraphCanvas: View {
         ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
           groupFrame(id)
         }
-        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style) },
-                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom)
+        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, thread: $0.thread) },
+                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presence: session.presence)
         if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
         ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
@@ -65,6 +65,8 @@ struct GraphCanvas: View {
           }
         }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
+        // The Agent at work: threads being drawn and the tsugumi.
+        PresenceLayer(presence: session.presence, geometry: presenceGeometry(routed), avatar: prefs.agentAvatar)
         if let p = pending {
           Path { path in
             path.move(to: screen(portWorld(p.from.0, p.from.1, output: p.fromOutput)))
@@ -256,6 +258,15 @@ struct GraphCanvas: View {
     var connection: Int?   // index in the scope's connections (nil: boundary wire or display link)
     var path: Path         // world units
     var style: WireDraw.Style
+    var thread: AgentPresence.Wire? = nil  // a connection, as the Agent's thread knows it
+  }
+
+  /// Where Cards and wires are, for the Agent's presence on this canvas.
+  private func presenceGeometry(_ routed: [RoutedWire]) -> PresenceGeometry {
+    let shown = Set(cardKeys)
+    return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
+                            wire: { w in routed.first { $0.thread == w }?.path },
+                            screen: { screen($0) }, zoom: camera.zoom)
   }
 
   /// Every wire of the scope, routed once per update and used for drawing,
@@ -273,7 +284,8 @@ struct GraphCanvas: View {
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
       let path = router.route(portWorld(fk, fp, output: true), portWorld(tk, tp, output: false))
       out.append(RoutedWire(connection: i, path: path,
-                            style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk)))
+                            style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
+                            thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
@@ -450,6 +462,7 @@ struct GraphCanvas: View {
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil)
+      .modifier(CardWriting(presence: session.presence, card: k, title: data.title, zoom: camera.zoom))
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }
