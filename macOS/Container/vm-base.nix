@@ -1,10 +1,17 @@
-# The shared Tsugumi VM (one per app, run with Virtualization.framework).
+# The base of the shared Tsugumi VM (one per app, run with
+# Virtualization.framework): only nixpkgs, nothing of Tsugumi, so it is
+# published prebuilt (gen740/tsugumi-vm) and changes only with nixpkgs.
+# Tsugumi itself comes on top as the layer disk (vm-layer.nix).
 #
 #   $out/vmlinux        guest kernel (kernel.nix)
 #   $out/rootfs.erofs   read-only root file system: /init, this closure, /etc
 #
 # Disks and shares the app gives the VM:
 #   /dev/vda    rootfs.erofs (read-only)
+#   /dev/vdd    tsugumi.erofs, the layer (read-only), mounted as /layer:
+#               /layer/nix/store  the layer's store paths not in this closure
+#               /layer/registration, /layer/store-paths  its closure (closureInfo)
+#               /layer/supervisor  started under tini as the VM's service
 #   /dev/vdb    the Nix store disk (sparse file in the app's support folder),
 #               formatted on first boot and mounted as /persist; /nix is the
 #               image's store (lower) + /persist/nix (upper) as an overlay
@@ -18,16 +25,16 @@
 #   vsock       1024 control, 1025 RPC (tsugumi-vmd)
 #
 # Contents and why each is needed:
-#   tsugumid, tsugumi-vmd  core daemon (one per project) and its supervisor
 #   nix            the one nix-daemon of the shared store, and the clients
 #   cacert         TLS for cache.nixos.org and the pinned nixpkgs archive
 #   bash/coreutils/util-linux/e2fsprogs  /init (store disk, overlay)
 #   busybox        udhcpc and ip for the NAT network
 #   tini           PID 1 of the VM and of each project
 #   astyle, ruff, nixfmt, shfmt  source formatting (ProjectFileFormat)
-{ lib, runCommand, writeShellScript, writeTextDir, closureInfo, buildEnv, erofs-utils, tsugumid, kernel, nix
+#   bubblewrap, sqlite, jq  what tsugumid uses at run time, so the layer stays small
+{ lib, runCommand, writeShellScript, writeTextDir, closureInfo, buildEnv, erofs-utils, kernel, nix
 , cacert, bashInteractive, coreutils, util-linux, e2fsprogs, busybox, tini, findutils, gnugrep, gnused, gawk
-, gnutar, gzip, astyle, ruff, nixfmt-rfc-style, shfmt }:
+, gnutar, gzip, astyle, ruff, nixfmt-rfc-style, shfmt, bubblewrap, sqlite, jq }:
 let
   nixbld = map toString (lib.range 1 16);
   nixConf = writeTextDir "etc/nix/nix.conf" ''
@@ -121,21 +128,29 @@ let
     mount -t ext4 -o noatime,nosuid,nodev /dev/vdc /history-disk || fail "cannot mount the run history disk"
     chmod 0700 /history-disk
 
-    # The image's store is the lower layer; builds land on the store disk.
+    # Tsugumi itself: the layer disk (vm-layer.nix).
+    mount -t erofs -o ro /dev/vdd /layer || fail "cannot mount the Tsugumi layer disk"
+    # (supervisor links into the layer's store, seen once /nix is stacked below)
+    [ -f /layer/registration ] && [ -L /layer/supervisor ] || fail "the layer disk is not a Tsugumi layer"
+
+    # The base's store and then the layer's are the lower layers; builds land
+    # on the store disk.
     stage nix
     mkdir -p /persist/nix/upper /persist/nix/work
     if [ -d /persist/nix/upper/store ]; then
       for f in /persist/nix/upper/store/*; do
-        if [ -c "$f" ] && [ -e "/nix/store/''${f##*/}" ]; then rm -f "$f"; fi
+        if [ -c "$f" ] && { [ -e "/nix/store/''${f##*/}" ] || [ -e "/layer/nix/store/''${f##*/}" ]; }; then rm -f "$f"; fi
       done
     fi
-    mount -t overlay overlay -o lowerdir=/nix,upperdir=/persist/nix/upper,workdir=/persist/nix/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix \
+    mount -t overlay overlay -o lowerdir=/layer/nix:/nix,upperdir=/persist/nix/upper,workdir=/persist/nix/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix \
       || fail "cannot mount the Nix store overlay"
-    # /registration and /store-paths: this closure (closureInfo), copied by the image build.
+    # /registration and /store-paths: this closure (closureInfo), copied by the
+    # image build; the same files of the layer for its closure.
     nix-store --load-db < /registration || fail "cannot register the image store"
+    nix-store --load-db < /layer/registration || fail "cannot register the layer's store"
     mkdir -p /nix/var/nix/gcroots/tsugumi/projects /nix/var/nix/daemon-socket
-    # The VM's own closure is a GC root: CacheClear removes Card builds only.
-    while read -r p; do ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"; done < /store-paths
+    # The VM's own closures are GC roots: CacheClear removes Card builds only.
+    cat /store-paths /layer/store-paths | while read -r p; do ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"; done
     chmod 0755 /nix/var/nix/gcroots/tsugumi/projects
     nix-daemon --daemon >/persist/nix-daemon.log 2>&1 &
     for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
@@ -152,16 +167,19 @@ let
     ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
 
     stage supervisor
-    exec ${tini}/bin/tini -- ${tsugumid}/bin/tsugumi-vmd \
-      --tsugumid ${tsugumid}/bin/tsugumid --tini ${tini}/bin/tini --bash ${bashInteractive}/bin/bash \
-      --path ${lib.makeBinPath projectTools} --cert-file ${cacert}/etc/ssl/certs/ca-bundle.crt
+    exec ${tini}/bin/tini -- /layer/supervisor
   '';
-  runtime = [ tsugumid nix cacert bashInteractive coreutils util-linux e2fsprogs busybox tini etc init ] ++ projectTools;
+  runtime = [ nix cacert bashInteractive coreutils util-linux e2fsprogs busybox tini etc init bubblewrap sqlite jq ]
+    ++ projectTools;
   registration = closureInfo { rootPaths = runtime; };
 in
-runCommand "tsugumi-vm-${tsugumid.version}" { nativeBuildInputs = [ erofs-utils ]; } ''
+runCommand "tsugumi-vm-base-1" {
+  nativeBuildInputs = [ erofs-utils ];
+  # For the layer: what this closure already holds, and the tools it starts with.
+  passthru = { inherit runtime projectTools; };
+} ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,var/empty,bin,mnt}
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,var/empty,bin,mnt,layer}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

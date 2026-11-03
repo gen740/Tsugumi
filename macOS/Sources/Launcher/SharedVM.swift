@@ -2,18 +2,23 @@ import Darwin
 import Foundation
 import Virtualization
 
-/// Kernel and root file system of the shared VM (macOS/Container/vm.nix):
-/// from the app bundle, or dist/tsugumi-vm when run from the source tree.
+/// Kernel and root file system of the shared VM's base
+/// (macOS/Container/vm-base.nix) and Tsugumi's layer on top of it
+/// (vm-layer.nix): from the app bundle, or dist/tsugumi-vm when run from the
+/// source tree.
 public struct VMImage: Sendable, Equatable {
+  static let files = ["vmlinux", "rootfs.erofs", "tsugumi.erofs"]
   public let kernel: URL
   public let rootfs: URL
+  public let layer: URL
   public let version: String
 
   public init?(directory: URL) {
-    let k = directory.appendingPathComponent("vmlinux"), r = directory.appendingPathComponent("rootfs.erofs")
-    guard FileManager.default.fileExists(atPath: k.path), FileManager.default.fileExists(atPath: r.path) else { return nil }
-    kernel = k
-    rootfs = r
+    let urls = Self.files.map { directory.appendingPathComponent($0) }
+    guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
+    kernel = urls[0]
+    rootfs = urls[1]
+    layer = urls[2]
     version = (try? String(contentsOf: directory.appendingPathComponent("vm-version"), encoding: .utf8))?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
   }
@@ -306,7 +311,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     console.note("installing the VM image \(image.version)")
     try? FileManager.default.removeItem(at: dest)
     try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-    for (src, name) in [(image.kernel, "vmlinux"), (image.rootfs, "rootfs.erofs")] {
+    for (src, name) in zip([image.kernel, image.rootfs, image.layer], VMImage.files) {
       let to = dest.appendingPathComponent(name)
       if copyfile(src.path, to.path, nil, copyfile_flags_t(COPYFILE_CLONE)) != 0 {
         throw LauncherError.startFailed(reason: "cannot copy \(name) into \(dest.path)", log: String(cString: strerror(errno)))
@@ -341,11 +346,12 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     c.memorySize = max(VZVirtualMachineConfiguration.minimumAllowedMemorySize,
                        min(UInt64(resources.memoryGiB) << 30, VZVirtualMachineConfiguration.maximumAllowedMemorySize))
     let root = try VZDiskImageStorageDeviceAttachment(url: files.rootfs, readOnly: true)
+    let layer = try VZDiskImageStorageDeviceAttachment(url: files.layer, readOnly: true)
     let store = try VZDiskImageStorageDeviceAttachment(url: storeImage, readOnly: false,
                                                        cachingMode: .automatic, synchronizationMode: .full)
     let history = try VZDiskImageStorageDeviceAttachment(url: historyImage, readOnly: false,
                                                          cachingMode: .automatic, synchronizationMode: .fsync)
-    c.storageDevices = [root, store, history].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
+    c.storageDevices = [root, store, history, layer].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
     let net = VZVirtioNetworkDeviceConfiguration()
     net.attachment = VZNATNetworkDeviceAttachment()
     c.networkDevices = [net]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the Dawn renderer, the bundled
-# demos and the shared VM (kernel + root file system, macOS/Container/vm.nix).
+# demos and the shared VM (kernel, base and Tsugumi layer: macOS/Container/vm-base.nix, vm-layer.nix).
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
@@ -13,7 +13,7 @@ renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 
 [ -f "$renderer" ] || "$repo/ui/renderer/build.sh"
 vm="$dist/tsugumi-vm"
-[ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
+[ -f "$vm/rootfs.erofs" ] && [ -f "$vm/tsugumi.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
