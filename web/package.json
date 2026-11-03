@@ -1,0 +1,29 @@
+{
+  "name": "tsugumi-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Tsugumi web UI: a browser client of tsugumid and a small host launcher",
+  "type": "module",
+  "scripts": {
+    "gen": "sh scripts/gen.sh",
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "flatbuffers": "25.9.23",
+    "katex": "0.19.0",
+    "marked": "18.1.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "18.3.27",
+    "@types/react-dom": "18.3.7",
+    "@webgpu/types": "^0.1.66",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
+}

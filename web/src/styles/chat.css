@@ -1,0 +1,87 @@
+/* Chat, Markdown with math, and the application settings window. */
+
+/* ---- Markdown (MarkdownView) ---- */
+.markdown { white-space: normal; word-break: break-word; display: flex; flex-direction: column; gap: 0.55em; min-width: 0; }
+.markdown p { margin: 0; }
+.markdown .md-heading { margin: 0; font-weight: 600; line-height: 1.25; }
+.markdown h1.md-heading { font-size: 1.5em; padding-top: 0.35em; }
+.markdown h2.md-heading { font-size: 1.3em; padding-top: 0.35em; }
+.markdown h3.md-heading { font-size: 1.15em; padding-top: 0.15em; }
+.markdown h4.md-heading, .markdown h5.md-heading, .markdown h6.md-heading { font-size: 1em; padding-top: 0.15em; }
+.markdown .md-code { white-space: pre; overflow-x: auto; font-size: 0.9em; padding: 0.55em; border-radius: 0.35em; background: color-mix(in srgb, var(--secondary) 10%, transparent); }
+.markdown blockquote { margin: 0; padding-left: 0.6em; border-left: max(2px, 0.2em) solid color-mix(in srgb, var(--secondary) 40%, transparent); color: var(--secondary); display: flex; flex-direction: column; gap: 0.4em; }
+.markdown .md-list { display: flex; flex-direction: column; gap: 0.3em; }
+.markdown .md-item { display: flex; align-items: baseline; gap: 0.45em; }
+.markdown .md-marker { color: var(--secondary); font-variant-numeric: tabular-nums; flex: none; min-width: 0.8em; }
+.markdown .md-item-body { display: flex; flex-direction: column; gap: 0.3em; min-width: 0; flex: 1; }
+.markdown .md-check { display: inline-block; width: 0.85em; height: 0.85em; border: 1.2px solid currentColor; border-radius: 0.15em; vertical-align: -0.1em; position: relative; }
+.markdown .md-check.on::after { content: ""; position: absolute; left: 0.22em; top: 0.02em; width: 0.25em; height: 0.48em; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.markdown .md-table-wrap { overflow-x: auto; }
+.markdown .md-table { border-collapse: collapse; }
+.markdown .md-table th { font-weight: 600; text-align: left; border-bottom: 1px solid var(--separator-strong); }
+.markdown .md-table th, .markdown .md-table td { padding: 0.15em 1em 0.15em 0; vertical-align: top; }
+.markdown hr { border: 0; border-top: 1px solid var(--separator); margin: 0; width: 100%; }
+.markdown .md-math math { font-size: 1.05em; }
+.markdown .md-math-block { text-align: center; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; font-size: 1.15em; }
+.markdown .md-tex { font-family: var(--mono); font-size: 0.85em; color: var(--secondary); background: none; white-space: pre-wrap; }
+.markdown math { font-family: "STIX Two Math", "Latin Modern Math", "Cambria Math", math; }
+.md-fade > * { animation: md-fade-in 0.25s ease-out; }
+@keyframes md-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- Chat ---- */
+.chat-panel { background: var(--window-bg); min-width: 0; }
+.chat-panel .tertiary { color: color-mix(in srgb, var(--secondary) 60%, transparent); }
+.chat-scroll { padding: 12px 14px; display: block; }
+.chat-column { max-width: 720px; display: flex; flex-direction: column; gap: 12px; }
+.chat-intro { padding-top: 16px; }
+.chat-user-row { display: flex; justify-content: flex-end; padding-left: 40px; }
+.chat-user { background: var(--accent-soft); border-radius: 12px; padding: 7px 11px; white-space: pre-wrap; word-break: break-word; }
+.chat-assistant { font-size: 13px; line-height: 1.45; }
+.chat-activity { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.chat-activity .spinner, .chat-tool .spinner { width: 12px; height: 12px; border-width: 1.5px; }
+.chat-tool { display: flex; flex-direction: column; gap: 4px; color: var(--secondary); min-width: 0; }
+.chat-tool .tool-mark { width: 14px; display: inline-flex; justify-content: center; flex: none; }
+.chat-tool .link { padding: 0; }
+.tool-detail { font-size: 11px; white-space: pre-wrap; word-break: break-all; padding: 6px; border-radius: 6px; background: var(--control-bg); color: var(--label); max-height: 40em; overflow: auto; }
+.chat-more { align-self: flex-start; padding: 0; }
+.chat-code { border-radius: 8px; background: var(--control-bg); overflow: hidden; }
+.chat-code-head { display: flex; align-items: center; padding: 4px 8px; }
+.chat-code-copy { border: 0; background: none; color: var(--secondary); padding: 0 2px; cursor: pointer; }
+.chat-code-copy:hover { color: var(--label); }
+.chat-code-text { font-size: 11.5px; white-space: pre; overflow-x: auto; padding: 0 8px 6px; }
+.chat-code-more { padding: 0 8px 8px; }
+.chat-status { display: flex; align-items: center; gap: 6px; padding: 5px 12px; flex: none; }
+.composer { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-top: 0; flex: none; }
+.chip-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.chip-row .chip { flex: none; white-space: nowrap; }
+.chip-folder { background: color-mix(in srgb, var(--secondary) 12%, transparent); }
+.skill-picker { background: var(--control-bg); border-radius: 6px; border: 0; padding: 2px; }
+.skill-item { border-radius: 4px; padding: 3px 6px; width: 100%; }
+.skill-item.highlighted { background: var(--accent-soft); }
+.composer-box { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--text-bg); border-radius: 12px; border: 1px solid color-mix(in srgb, var(--secondary) 25%, transparent); }
+.composer-box.focused { border-color: color-mix(in srgb, var(--secondary) 50%, transparent); }
+.composer-input { position: relative; display: flex; }
+.composer-placeholder { position: absolute; left: 5px; top: 1px; color: color-mix(in srgb, var(--secondary) 60%, transparent); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 10px); }
+.chat-input { flex: 1; font: inherit; font-size: 13px; line-height: 17px; color: var(--label); background: transparent; border: 0; outline: none; resize: none; padding: 1px 5px; min-height: 22px; max-height: 160px; height: 22px; overflow-y: hidden; user-select: text; }
+.composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-menu { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 0 2px; color: var(--secondary); font-size: 11px; min-width: 0; max-width: 55%; cursor: default; }
+.model-menu:not(:disabled):hover { color: var(--label); }
+.model-menu:disabled { opacity: 0.6; }
+.send-button { border: 0; background: none; padding: 0; display: inline-flex; color: var(--accent); cursor: default; }
+.send-button:disabled { color: color-mix(in srgb, var(--secondary) 50%, transparent); }
+
+/* ---- Application settings ---- */
+.settings-window { display: flex; height: 100%; min-height: 0; }
+.settings-nav { width: 210px; flex: none; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--separator); background: var(--bar-bg); }
+.settings-nav-header { font-size: 11px; font-weight: 600; color: var(--secondary); padding: 8px 8px 3px; display: flex; flex-direction: column; gap: 1px; }
+.settings-nav-header .caption { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.settings-title { font-weight: 600; font-size: 13px; padding: 10px 20px 0; }
+.storage-note { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--secondary); padding: 4px 20px 0; }
+.settings-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.settings-body > .form { max-width: 640px; }
+.settings-split { display: flex; align-items: flex-start; min-height: 0; flex: 1; }
+.settings-preview { flex: 1; min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.shortcut-table .table-row.three, .shortcut-table .table-head.three { grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) auto; }
+.shortcut-scope { font-size: 10px; color: var(--secondary); margin-left: 6px; }
+.skill-folder-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
