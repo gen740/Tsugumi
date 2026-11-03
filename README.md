@@ -4,7 +4,7 @@
 
 # Tsugumi
 
-**AI との試行錯誤を、見て、確かめて、いつでも手を入れられる形にする——macOS の研究ワークベンチです。**
+**AI との試行錯誤を、見て、確かめて、いつでも手を入れられる形にする macOS の研究ワークベンチです。**
 計算やデータ処理を Card のグラフとして描き、AI とともに実装して、Nix で固定した環境で実行します。
 すべての Card に入力・コード・出力・実行履歴が残るため、気になった箇所へいつでも立ち戻り、条件を変えて試すことができます。
 
@@ -14,9 +14,11 @@
 
 ## AI を研究に積極的に活用できていますか？
 
-数学の分野ではいま、AI が未解決問題そのものに挑み始めています。
-2026 年 8 月、OpenAI は数学と理論計算機科学における **[10 件の長年の未解決問題について、AI による解決または大幅な前進を発表](https://openai.com/index/ten-advances-in-mathematics/)**しました。注目すべきは、その議論の一つひとつを証明支援系 **Lean** で形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
-AI が生み出した議論を、独立した検証器で確かめられる形にする——その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。
+数学や科学の分野ではいま、AI が長年の難問そのものに挑み始めています。
+2026 年 8 月から 9 月にかけて、OpenAI による **[10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)**や、Anthropic の Claude による**[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)**・**[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)**が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 **Lean** などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
+さらに 10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かすことで、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
+
+AI が生み出した議論や計算を、独立した仕組みで確かめられる形にする。その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。
 
 **AI に仕事を任せるには、その仕事を確かめられる仕組みが必要です。**
 
@@ -130,7 +132,7 @@ AI と仕事をするうえで常に立ちはだかるのは、**「何をして
 - [操作ガイド](docs/Usage.md)：画面ごとの操作とデモの試し方
 - [主要機能](docs/features.md)：Card、実行環境、記録、Agent の仕組み
 - [セキュリティと隔離](docs/security.md)：隔離の境界、データの置き場所、外部モデルに送られる内容
-- [他のツールとの違い](docs/novelty.md)：n8n・KNIME との比較と Tsugumi が向いている用途
+- [他のツールとの違い](docs/novelty.md)：既存のツールやアプローチとの比較と、なぜ今 Tsugumi なのか
 - [開発資料](docs/Development.md)：実行基盤、設計上の決定、テスト、計測、実装状況
 - [固定しているバージョン](docs/Lock.md)：実行環境と依存ライブラリの固定値
 
