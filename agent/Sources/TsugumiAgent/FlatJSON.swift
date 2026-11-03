@@ -160,10 +160,32 @@ public struct FlatJSON {
       return b.createVector(ofOffsets: offs)
     default:
       guard let a = v as? [Any] else { throw AgentError.invalidArguments("\(where_) must be an array") }
+      // Every element checked against its own type's range.
+      func signed<T: FixedWidthInteger & SignedInteger>(_: T.Type) throws -> [T] {
+        try a.enumerated().map { i, x in
+          guard let v = try integer(x, "\(where_)[\(i)]").0, let r = T(exactly: v) else {
+            throw AgentError.invalidArguments("\(where_)[\(i)] is out of range for \(T.self)")
+          }
+          return r
+        }
+      }
+      func unsigned<T: FixedWidthInteger & UnsignedInteger>(_: T.Type) throws -> [T] {
+        try a.enumerated().map { i, x in
+          guard let v = try integer(x, "\(where_)[\(i)]").1, let r = T(exactly: v) else {
+            throw AgentError.invalidArguments("\(where_)[\(i)] is out of range for \(T.self)")
+          }
+          return r
+        }
+      }
       switch f.type.element {
       case .double: return b.createVector(try a.map { try number($0, where_) })
-      case .ulong: return b.createVector(try a.map { guard let u = try integer($0, where_).1 else { throw AgentError.invalidArguments(where_) }; return u })
-      case .long: return b.createVector(try a.map { guard let i = try integer($0, where_).0 else { throw AgentError.invalidArguments(where_) }; return i })
+      case .float: return b.createVector(try a.map { Float(try number($0, where_)) })
+      case .short: return b.createVector(try signed(Int16.self))
+      case .ushort: return b.createVector(try unsigned(UInt16.self))
+      case .int: return b.createVector(try signed(Int32.self))
+      case .uint: return b.createVector(try unsigned(UInt32.self))
+      case .long: return b.createVector(try signed(Int64.self))
+      case .ulong: return b.createVector(try unsigned(UInt64.self))
       case .bool: return b.createVector(try a.map { guard let x = $0 as? Bool else { throw AgentError.invalidArguments(where_) }; return x })
       default: throw AgentError.invalidArguments("\(where_) has an unsupported element type")
       }
@@ -243,6 +265,11 @@ public struct FlatJSON {
         return json(Int(f.type.index), Table(bb: t.bb, position: p), depth: depth + 1)
       }
     case .double: return (0..<n).map { t.bb.read(def: Double.self, position: start + $0 * 8) }
+    case .float: return (0..<n).map { Double(t.bb.read(def: Float.self, position: start + $0 * 4)) }
+    case .short: return (0..<n).map { t.bb.read(def: Int16.self, position: start + $0 * 2) }
+    case .ushort: return (0..<n).map { t.bb.read(def: UInt16.self, position: start + $0 * 2) }
+    case .int: return (0..<n).map { t.bb.read(def: Int32.self, position: start + $0 * 4) }
+    case .uint: return (0..<n).map { t.bb.read(def: UInt32.self, position: start + $0 * 4) }
     case .ulong: return (0..<n).map { bigU(t.bb.read(def: UInt64.self, position: start + $0 * 8)) }
     case .long: return (0..<n).map { big(t.bb.read(def: Int64.self, position: start + $0 * 8)) }
     case .bool: return (0..<n).map { t.bb.read(def: Bool.self, position: start + $0) }
@@ -255,6 +282,8 @@ public struct FlatJSON {
     return schema.enums[Int(f.type.index)].values.first { $0.value == raw }?.name ?? raw
   }
 
-  private func big(_ v: Int64) -> Any { abs(v) > 9_007_199_254_740_991 ? String(v) : v }
+  /// Beyond JSON's exact integers (±2^53 - 1) a 64 bit value is a decimal
+  /// string; compared with both bounds (abs(Int64.min) does not exist).
+  private func big(_ v: Int64) -> Any { v > 9_007_199_254_740_991 || v < -9_007_199_254_740_991 ? String(v) : v }
   private func bigU(_ v: UInt64) -> Any { v > 9_007_199_254_740_991 ? String(v) : v }
 }

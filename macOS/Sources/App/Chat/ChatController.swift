@@ -180,7 +180,6 @@ final class ChatController {
     if let e = schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" }) {
       for v in e.values { replyNames[UInt8(v.value)] = v.name }
     }
-    migrateLegacy()
     refreshSessions()
     select(sessions.first?.id ?? UUID().uuidString.lowercased())
     reloadSkills()
@@ -191,14 +190,6 @@ final class ChatController {
   private func url(_ id: String) -> URL { dir.appendingPathComponent("sessions/\(id).json") }
 
   /// The single conversation.json of earlier versions becomes the first session.
-  private func migrateLegacy() {
-    let old = dir.appendingPathComponent("conversation.json")
-    guard FileManager.default.fileExists(atPath: old.path) else { return }
-    let c = Conversation.load(old)
-    try? c.save(url(c.id))
-    try? FileManager.default.removeItem(at: old)
-  }
-
   func refreshSessions() {
     let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     sessions = files.filter { $0.pathExtension == "json" }.map { f in

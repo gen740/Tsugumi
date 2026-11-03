@@ -64,9 +64,13 @@ public struct Conversation: Codable, Equatable {
   /// Everything said in this conversation, including compacted messages.
   public var fullHistory: [ChatMessage] { archive + messages }
 
-  public static func load(_ url: URL) -> Conversation {
-    (try? JSONDecoder().decode(Conversation.self, from: Data(contentsOf: url))) ?? Conversation()
+  /// A saved conversation; throws when the file is missing or unreadable.
+  public static func read(_ url: URL) throws -> Conversation {
+    try JSONDecoder().decode(Conversation.self, from: Data(contentsOf: url))
   }
+
+  /// A saved conversation, or a new one when there is none (or it is unreadable).
+  public static func load(_ url: URL) -> Conversation { (try? read(url)) ?? Conversation() }
 
   public func save(_ url: URL) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
