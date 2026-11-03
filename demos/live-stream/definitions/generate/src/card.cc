@@ -38,8 +38,5 @@ static Card::Output step(const S& s) {
 
 // The loop delivers a merge union tagged with the arrival port.
 auto run(Card::Input& input) -> Card::Output {
-  const auto& u = input.state.value;
-  if (const auto* s = u.Asinit()) return step(*s);
-  if (const auto* s = u.Asnext()) return step(*s);
-  throw tsugumi::Failure("output_invalid", "unexpected arrival");
+  return Card::visit(input.state.value, [](const auto& s) { return step(s); });
 }

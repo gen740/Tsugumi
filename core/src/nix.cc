@@ -285,9 +285,16 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
         if (!p.type) continue;
         std::string scratch;
         std::string root = types::render_closure(*p.type, side + "." + p.name, scratch);
+        std::string unions = "[";
+        for (const auto& u : types::root_unions(*p.type, side + "." + p.name)) {
+          unions += std::string(unions.size() > 1 ? "," : "") + "{\"field\":" + json_quote(u.field) +
+                    ",\"type\":" + json_quote(u.type) + ",\"members\":[";
+          for (size_t i = 0; i < u.members.size(); ++i) unions += (i ? "," : "") + json_quote(u.members[i]);
+          unions += "]}";
+        }
         out += std::string(first ? "" : ",") + "{\"name\":" + json_quote(p.name) +
                ",\"type\":" + json_quote(root) + ",\"kind\":\"" + kind_name(p.kind) +
-               "\",\"required\":" + (p.optional ? "false" : "true") + "}";
+               "\",\"required\":" + (p.optional ? "false" : "true") + ",\"unions\":" + unions + "]}";
         first = false;
       }
       return out + "]";

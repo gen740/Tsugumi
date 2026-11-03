@@ -84,6 +84,13 @@ Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`,
 "directory")`, a table with `value:string`, `"filesystem": true`, and the files written under
 `ctx.output_directory` (Python) / `$TSUGUMI_OUTPUT_DIR` (bash).
 
+### Reading a merge output
+
+The input is a table whose `value` is a union with one member per merge input. C++:
+`Card::visit(input.arrival.value, [](const auto& v) { return v.value; })` calls the lambda
+with whichever member arrived (`input.arrival.value.type` says which port). Python:
+`demos/collatz/externals/collatz-py/definitions/check/src/main.py`.
+
 ### Python (`src/main.py`)
 
 ```python

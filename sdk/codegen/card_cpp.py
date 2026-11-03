@@ -45,7 +45,17 @@ def main(contract_path, out):
         hh.append(f"  std::optional<{cxx(p['type'])}T> {member(p['name'])};"
                   + ("" if p["required"] else "  // optional")
                   + (f"  // {p['kind']}: .value is a path under tsugumi::context().output_directory" if p["kind"] != "flatbuffer" else ""))
-    hh += ["};", "", "using Params = ::params::ParamsT;", "// This invocation's params.", "const Params& params();", "",
+    hh.append("};")
+    for p in c["inputs"]:
+        for u in p.get("unions", []):
+            t, members = cxx(u["type"]), [member(m) for m in u["members"]]
+            hh += ["", f"// Calls f with the member input.{member(p['name'])}.{member(u['field'])} holds,",
+                   "// e.g. visit(u, [](const auto& v) { return v.value; }).",
+                   "template <class F>", f"auto visit(const {t}Union& u, F&& f) {{", "  switch (u.type) {"]
+            hh += [f"    case {t}::{m}: return f(*u.As{m}());" for m in members]
+            hh += ["    default: break;", "  }",
+                   f'  throw ::tsugumi::Failure("output_invalid", "{p["name"]}.{u["field"]} holds no member");', "}"]
+    hh += ["", "using Params = ::params::ParamsT;", "// This invocation's params.", "const Params& params();", "",
            "}  // namespace Card", "", "// Implemented by the Card.", "auto run(Card::Input& input) -> Card::Output;", "",
            "// Optional: called before the first invocation of each run. A worker with",
            "// reuseWorker stays across runs, so state kept in statics outlives a run;",

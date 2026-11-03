@@ -3,13 +3,10 @@
 #include <string>
 #include <vector>
 
-// The loop delivers a merge union tagged with the arrival port.
+// The loop delivers a merge union tagged with the arrival port; every port
+// carries a Number.
 static uint64_t arrival_value(const Card::Input& input) {
-  const auto& u = input.arrival.value;
-  if (const auto* v = u.Asinit()) return v->value;
-  if (const auto* v = u.Ashalf()) return v->value;
-  if (const auto* v = u.Astriple()) return v->value;
-  throw tsugumi::Failure("output_invalid", "unexpected arrival");
+  return Card::visit(input.arrival.value, [](const auto& v) { return v.value; });
 }
 
 // The worker stays across runs (reuseWorker); each run starts empty.

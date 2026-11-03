@@ -554,6 +554,23 @@ std::string render_closure(const Type& t, const std::string& prefix, std::string
   return r.qualified(s->root_table()->name()->str());
 }
 
+std::vector<UnionField> root_unions(const Type& t, const std::string& prefix) {
+  const auto* s = t.schema();
+  const auto* root = s->root_table();
+  std::vector<UnionField> out;
+  if (!root) return out;
+  Renderer r(*s, prefix);
+  for (const auto* f : *root->fields()) {
+    if (f->type()->base_type() != BaseType::Union) continue;
+    const auto* e = s->enums()->Get(f->type()->index());
+    UnionField u{f->name()->str(), r.qualified(e->name()->str()), {}};
+    for (const auto* v : *e->values())
+      if (v->value() != 0) u.members.push_back(v->name()->str());
+    out.push_back(std::move(u));
+  }
+  return out;
+}
+
 TypeRef empty_type() {
   static TypeRef t = make_builtin("namespace tsugumi.builtin; table Empty {}", "tsugumi.builtin.Empty");
   return t;
