@@ -26,7 +26,9 @@ struct CardWriting: ViewModifier {
           DraftGhost(title: title, zoom: z).opacity(1 - r * r)
         }
         content
-          .mask(WritingMask(progress: w?.reveal ?? 1, soft: reduceMotion ? 0 : 26 * z, crossfade: reduceMotion))
+          // Wider than the Card: its ports sit on the edge, half outside.
+          .mask(WritingMask(progress: w?.reveal ?? 1, soft: reduceMotion ? 0 : 26 * z, crossfade: reduceMotion)
+            .padding(-24 * z))
           .overlay(alignment: .leading) {
             if let r = w?.reveal, !reduceMotion {
               // The line where it is being written, thin and quiet.
