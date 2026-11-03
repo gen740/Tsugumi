@@ -79,7 +79,9 @@ struct TsugumiApp: App {
     .defaultSize(width: 460, height: 720)
 
     Settings {
+      // The connection and storage panes read the open projects from the model.
       ApplicationSettings()
+        .environment(model)
         .environment(prefs)
         .frame(width: 760, height: 520)
     }
