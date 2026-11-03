@@ -139,13 +139,6 @@ let
     # /registration and /store-paths: this closure (closureInfo), copied by the
     # image build.
     nix-store --load-db < /registration || fail "cannot register the image store"
-    # Another boot disk (an app update): the database may still list paths of
-    # the previous one's store, which are gone with it.
-    boot=$(sha256sum < /store-paths | cut -c1-32)
-    if [ "$(cat /persist/boot-closure 2>/dev/null)" != "$boot" ]; then
-      nix-store --verify 2>&1 | tail -3 || true
-      echo "$boot" > /persist/boot-closure
-    fi
     mkdir -p /nix/var/nix/gcroots/tsugumi/projects /nix/var/nix/daemon-socket
     # The VM's own closures are GC roots: CacheClear removes Card builds only.
     while read -r p; do ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"; done < /store-paths
@@ -163,6 +156,18 @@ let
     ip() { ${busybox}/bin/ip "$@"; }
     ip link set lo up
     ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
+
+    # Another boot disk (an app update): the database may still list paths of
+    # the previous one's store, which are gone with it. Those nothing refers
+    # to are dropped; the others (inputs of earlier Card builds) are fetched
+    # again from cache.nixos.org. Once per boot disk.
+    boot=$(sha256sum < /store-paths | cut -c1-32)
+    if [ "$(cat /persist/boot-closure 2>/dev/null)" != "$boot" ]; then
+      echo "checking the store against this boot disk"
+      NIX_REMOTE=daemon NO_COLOR=1 nix-store --verify --repair 2>&1 | tail -20
+      sync
+      echo "$boot" > /persist/boot-closure
+    fi
 
     # Tsugumi itself, built by Nix from the source the app shares
     # (vm-system.nix): once per content of the source, then reused from the
