@@ -82,6 +82,33 @@ Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`,
   `inputs.tsugumi.cppCard { inherit sdk; src = ./src; buildInputs = [ pkgs.cfitsio ]; }`.
 - bash: `demos/report/externals/archive/definitions/copy/default.nix` (`run` is the script text).
 
+### Data fixed by Nix
+
+Large public data (an observation, a reference genome, a simulation's result) can be fixed like a
+package: fetched once into the Nix store by its hash, never during a run. A param with `"nix":
+true` is readable in `default.nix` as `params.<name>` (changing it rebuilds the Card):
+
+```nix
+{ pkgs, inputs, params }:
+let
+  raw = pkgs.fetchurl {
+    url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
+    curlOptsList = [ "--ssl-reqd" ];           # --ssl-reqd (often faster than https)
+    hash = params.hash;                        # "sha256-..." (nix hash file <file>)
+  };
+  data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
+in
+{
+  run = ''
+    printf '{"events": {"path": "%s"}}' "${data}" > "$TSUGUMI_OUTPUT"
+  '';
+}
+```
+
+The store path goes on as a plain string (a FlatBuffer table `{ path:string; }`, not a File port,
+whose files must be in the Card's output folder); every Card can read `/nix/store`. A long build
+step (a simulation) is fixed the same way with `pkgs.runCommand` or `stdenv.mkDerivation`.
+
 ### File and Directory outputs
 
 `demos/report/definitions/generate` (File) and `demos/report/definitions/render` (Directory):

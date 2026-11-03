@@ -99,7 +99,7 @@ public actor Agent {
   /// Replies cut at the output limit in this turn.
   private var cutReplies = 0
   /// How long run_status waits for a run to end before it answers.
-  public var statusWait: TimeInterval = 30
+  public var statusWait: TimeInterval = 300
 
   /// The rules and working examples the model gets. The default.nix and
   /// _outputs.fbs examples are the bundled demos' own files (a test keeps
@@ -136,7 +136,8 @@ public actor Agent {
   - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
     Card alone (propagate false) only works on the inputs saved by an earlier whole run. Poll run_status with the
     run_id until succeeded/failed/cancelled; read what each Card produced with run_record and its stderr with
-    log_range (stream 2). run_status waits up to 30 s for a run to end, so call it again only when it still runs.
+    log_range (stream 2). run_status waits up to 5 minutes for a run to end (a long download or computation is one
+    call, not many), so call it again only when it still runs.
     Cancelling runs requires an explicit run_cancel.
   - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
     content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
@@ -511,8 +512,8 @@ public actor Agent {
         try codec.build(spec.object, full, into: &b)
       }
       var json = renderReply(replyType, table)
-      // A run still building or running: wait here (up to 30 s) instead of
-      // the model spending a reply on each look.
+      // A run still building or running: wait here (up to statusWait) instead
+      // of the model spending a reply on each look.
       if name == "run_status" {
         let deadline = Date().addingTimeInterval(statusWait)
         while replyType == "RunStatus", ["\"queued\"", "\"preparing\"", "\"running\"", "\"cancelling\""].contains(where: json.contains),
