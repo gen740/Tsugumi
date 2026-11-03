@@ -91,6 +91,57 @@ bool write_full(int fd, const char* p, size_t n) {
   return true;
 }
 
+#ifdef __APPLE__
+// Seatbelt profile for sandbox: true Cards when tsugumid runs directly on a
+// macOS host (sandbox-exec is deprecated but still the system's process
+// sandbox). As under bubblewrap: no network unless the Card allows it,
+// /nix/store, the run/input trees and the system libraries read-only, writes
+// only to the worker's own folder (scripts excepted) and to the output
+// folders of runs (a call's out/ is passed by path here, not as a
+// descriptor). Paths are matched after symlink resolution (/tmp -> /private/tmp).
+std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, const std::string& scripts) {
+  auto real = [](const std::string& p) {
+    std::error_code ec;
+    auto c = std::filesystem::weakly_canonical(p, ec);
+    return ec ? p : c.string();
+  };
+  auto quote = [&](const std::string& p) {
+    std::string out = "\"";
+    for (char ch : real(p)) {
+      if (ch == '"' || ch == '\\') out += '\\';
+      out += ch;
+    }
+    return out + "\"";
+  };
+  auto regex_quote = [&](const std::string& p) {
+    std::string out;
+    for (char ch : real(p)) {
+      if (std::strchr("\\.^$|?*+()[]{}\"", ch)) out += '\\';
+      out += ch;
+    }
+    return out;
+  };
+  std::string read = "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") (subpath \"/usr/share\")"
+                     " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") (subpath \"/private/etc\")"
+                     " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+  read += " (literal " + quote(sp.worker_binary) + ") (subpath " + quote(scratch) + ")";
+  if (!sp.bash.empty()) read += " (literal " + quote(sp.bash) + ")";
+  std::string write = "(literal \"/dev/null\") (literal \"/dev/tty\") (subpath " + quote(scratch) + ")";
+  for (const auto& p : sp.ro_paths) {
+    read += " (subpath " + quote(p) + ")";
+    if (std::filesystem::path(p).filename() == "runs")
+      write += " (regex #\"^" + regex_quote(p) + "/[^/]+/work/.+/[0-9]+/out(/|$)\")";
+  }
+  return "(version 1)\n(deny default)\n"
+         "(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n"
+         "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n"
+         "(allow file-read* " + read + ")\n(allow file-write* " + write + ")\n"
+         "(deny file-write* (subpath " + quote(scripts) + "))\n"
+         "(allow file-ioctl (subpath \"/dev\"))\n" +
+         (sp.network ? "(allow network*)\n(allow mach-lookup)\n" : "");
+}
+#endif
+
 }  // namespace
 
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
@@ -135,6 +186,14 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
     throw Failed(FailureKind::unsupported, "folders of the Mac need the shared VM (bubblewrap)");
   if (sp.sandbox) {
+#ifdef __APPLE__
+    if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
+      throw Failed(FailureKind::permission_denied,
+                   "sandbox: true needs /usr/bin/sandbox-exec, which this host does not provide; refusing to run unsandboxed");
+    spec.argv = {"/usr/bin/sandbox-exec", "-p", seatbelt_profile(sp, scratch_, scripts.string()), sp.worker_binary};
+    spec.uid = sp.uid;
+    spec.gid = sp.gid;
+#else
     std::string bwrap = TSUGUMI_BWRAP;
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
@@ -149,6 +208,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
     passes_dirs_ = true;
+#endif
   } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
     // sandbox: false lifts the file access limits only. The worker still gets
     // its own PID namespace, so every descendant ends with it, and its own
