@@ -564,6 +564,9 @@ final class ProjectSession {
       return
     }
     let wasClean = !dirty
+    // The Cards that send displays, before this change (definitions and
+    // resolution are replaced below).
+    let shown = displayedCards
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -586,7 +589,6 @@ final class ProjectSession {
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     refreshExternals()
-    let shown = displayedCards
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     // A Draft implemented (or any Card that became code or a logger) sends its displays too.
     if displayedCards != shown { Task { await refreshVisibleDisplays() } }
