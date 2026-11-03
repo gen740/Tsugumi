@@ -66,6 +66,11 @@ The next Card reads it as a path: `ctx.input("events", EventsFile).Value().decod
 `_card.json`: `{"language": "python", "inputs": [{"name": "events"}], "params": [...]}`; add
 `"filesystem": true` when the Card writes files (File or Directory outputs).
 
+A Card has no internet unless its `_card.json` has `"network": true` (Experimental); then it can
+download, for example public data by an id given as a param. TLS uses the environment's CA bundle
+(`SSL_CERT_FILE`), so Python's `urllib.request` works as is. Show where the data came from (URL,
+size, SHA-256) in the display or the log.
+
 Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`, `uint64`, `double`,
 `string` and their arrays (`double[]`, ...). Python reads them with `ctx.params().Low()`.
 
