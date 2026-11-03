@@ -10,7 +10,7 @@ Read with `reference_read`. Every example named here is a working file under
 | File | What it is |
 | --- | --- |
 | `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
-| `_meta.json` | The intent: `description`, `content`, port descriptions (kept when a Draft is implemented) |
+| `_meta.json` | The intent: `description`, `content`, port descriptions (kept when a Draft is implemented: `PutDefinition` with `"keep_meta": true`) |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` |
 | `src/` | Code Cards only: the sources |

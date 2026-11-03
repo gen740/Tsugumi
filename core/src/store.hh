@@ -31,6 +31,7 @@ struct ChangeIn {
   std::optional<std::string> link_json;
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
+  bool keep_meta = false;  // PutDefinition without meta_json keeps the current _meta.json
   std::string path;   // sources
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;

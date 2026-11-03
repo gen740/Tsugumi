@@ -10,7 +10,7 @@ from pathlib import Path
 
 from conftest import Daemon
 from test_regressions import put, run_and_wait
-from tsugumi_client import change, path, text
+from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; }\n' \
@@ -84,5 +84,26 @@ def test_input_card_hands_a_project_file_on(tmp_path):
         log = text(c.call("LogRangeRequest", runId=rid, card=path("show"), invocation=1, stream=1, limitBytes=65536).text)
         shown = json.loads(log)["value"]
         assert shown.endswith("/events.txt") and "definitions/load/data" not in shown, shown
+    finally:
+        d.cleanup()
+
+
+def test_put_definition_can_keep_the_meta(tmp_path):
+    """Settings change without writing the intent (_meta.json) again."""
+    root = tmp_path / "p"
+    make(root)
+    meta = {"description": "観測データを読む", "content": "露光補正はしない"}
+    put(root / "definitions" / "load" / "_meta.json", json.dumps(meta, ensure_ascii=False))
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        snap = c.call("ProjectInspectRequest")
+        card = {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/load/data/events.txt"}],
+                "maxRuns": 2}
+        c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+               changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepMeta=True)])
+        assert json.loads((root / "definitions" / "load" / "_meta.json").read_text()) == meta
+        assert json.loads((root / "definitions" / "load" / "_card.json").read_text())["maxRuns"] == 2
     finally:
         d.cleanup()

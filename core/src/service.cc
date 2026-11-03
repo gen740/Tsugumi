@@ -756,6 +756,7 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         ch.json = p->card_json()->str();
         if (p->meta_json()) ch.meta_json = p->meta_json()->str();
         if (p->link_json()) ch.link_json = p->link_json()->str();
+        ch.keep_meta = p->keep_meta();
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:

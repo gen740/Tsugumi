@@ -358,6 +358,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
           if (c.meta_json) {
             d.meta = parse_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
+          } else if (c.keep_meta) {
+            if (auto old = doc->definitions.find(c.id); old != doc->definitions.end() && old->second.meta_json) {
+              d.meta = old->second.meta;
+              d.meta_json = old->second.meta_json;
+            }
           }
         });
         doc->definitions[c.id] = std::move(d);
