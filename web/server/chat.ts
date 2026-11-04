@@ -44,7 +44,8 @@ interface Settings {
   chatGPTModel: string
   fixturePort: number
   /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
-  models: string[]
+  /** Models listed with "モデル一覧を取得", per connection (no request from the chat). */
+  models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   /** Their display names (the ChatGPT account's catalog has them). */
   modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
@@ -63,7 +64,7 @@ export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', '
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
-  models: [], modelNames: {}, allowedPermissions: [],
+  models: {}, modelNames: {}, allowedPermissions: [],
   guide: { setupDone: false, demoAnswered: false, tour: null },
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
@@ -79,7 +80,11 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
-  if (Array.isArray(b.models)) out.models = b.models.filter((m): m is string => typeof m === 'string')
+  if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
+    const m = b.models as Record<string, unknown>
+    out.models = Object.fromEntries((['anthropic', 'openai', 'chatgpt'] as const).filter((k) => Array.isArray(m[k]))
+      .map((k) => [k, (m[k] as unknown[]).filter((x): x is string => typeof x === 'string')]))
+  }
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
   return out
@@ -163,7 +168,12 @@ const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(path.join(ctx.support, 'c
 let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
 
 async function provider(): Promise<ProviderConfig> {
-  const s = settings()
+  return providerFor(settings().provider)
+}
+
+/** A connection with its chosen model (each keeps its own); its key or token when it has one. */
+async function providerFor(id: ProviderId): Promise<ProviderConfig> {
+  const s = { ...settings(), provider: id }
   if (s.provider === 'fixture') {
     return { name: 'Local fixture', baseURL: `http://127.0.0.1:${s.fixturePort}`, model: 'fixture', api: 'anthropicMessages', auth: 'none', maxTokens: 32768, contextLimit: 6000 }
   }
@@ -249,12 +259,12 @@ async function guide(): Promise<Agent> {
  *  its newest luna (the plan refuses models it does not offer). */
 async function guideProvider(): Promise<ProviderConfig> {
   const p = await provider()
-  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models, p.model) } : p
+  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) } : p
 }
 
 export function speechModel(offered: string[], fallback: string): string {
   const preferred = 'gpt-6.1-luna'
-  if (!offered.length || offered.includes(preferred)) return preferred
+  if (offered.includes(preferred)) return preferred
   const version = (m: string) => (m.match(/\d+/g) ?? []).map(Number)
   const newer = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) > (b[i] ?? -1); return false }
   return offered.filter((m) => m.includes('luna')).reduce<string | undefined>((best, m) => (!best || newer(version(m), version(best)) ? m : best), undefined) ?? fallback
@@ -550,13 +560,23 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
-  'POST /api/settings/models': async () => {
-    const list = await listModels(await provider())
+  /** Lists a connection's models (the one in use unless `provider` names another). */
+  'POST /api/settings/models': async (b) => {
+    const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
+    if (id === 'fixture') throw ctx.httpError(400, 'fixture にはモデル一覧がありません。')
+    const list = await listModels(await providerFor(id))
     const models = list.map((m) => m.id)
-    const modelNames = Object.fromEntries(list.map((m) => [m.id, m.label]))
-    ctx.writeJSON(settingsFile(), { ...settings(), models, modelNames })
+    const s = settings()
+    const modelNames = id === 'chatgpt' ? Object.fromEntries(list.map((m) => [m.id, m.label])) : s.modelNames
+    ctx.writeJSON(settingsFile(), { ...s, models: { ...s.models, [id]: models }, modelNames })
     return { models, modelNames }
   },
+  /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
+  'GET /api/settings/connections': async () => ({
+    anthropic: !!(await keySource('anthropic')),
+    openai: !!(await keySource('openai')),
+    chatgpt: chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled),
+  }),
   'GET /api/chatgpt': () => chatGPTState(),
   // Starts a sign-in: the page opens the URL in a tab; the outcome is read back with GET /api/chatgpt.
   'POST /api/chatgpt/signin': async (b) => {

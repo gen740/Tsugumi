@@ -703,13 +703,14 @@ enum AgentSettings {
   static var chatGPTSpeechModel: String {
     let d = UserDefaults.standard
     if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
-    return speechModel(offered: d.stringArray(forKey: "agent.models") ?? [], fallback: current().model)
+    return speechModel(offered: d.stringArray(forKey: modelsKey("chatgpt")) ?? [], fallback: config(for: "chatgpt").model)
   }
 
-  /// gpt-6.1-luna if offered (or nothing is listed yet), else the newest luna offered, else `fallback`.
+  /// gpt-6.1-luna if offered, else the newest luna offered, else `fallback`
+  /// (the chat's model, which the plan takes, when nothing is listed yet).
   nonisolated static func speechModel(offered: [String], fallback: String) -> String {
     let preferred = "gpt-6.1-luna"
-    if offered.isEmpty || offered.contains(preferred) { return preferred }
+    if offered.contains(preferred) { return preferred }
     let version = { (m: String) -> [Int] in m.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) } }
     return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
   }
@@ -721,23 +722,37 @@ enum AgentSettings {
     return c
   }
 
-  static func current() -> ProviderConfig {
+  /// The connection chosen in Settings > API ("anthropic", "openai", "chatgpt" or "fixture").
+  static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
+
+  static func current() -> ProviderConfig { config(for: provider) }
+
+  /// A connection with its chosen model (each keeps its own).
+  static func config(for provider: String) -> ProviderConfig {
     let d = UserDefaults.standard
-    if d.string(forKey: "agent.provider") == "fixture" {
+    switch provider {
+    case "fixture":
       return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
-    }
-    if d.string(forKey: "agent.provider") == "chatgpt" {
+    case "chatgpt":
       var c = ProviderConfig.chatGPT
       if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
       return c
-    }
-    if d.string(forKey: "agent.provider") == "openai" {
+    case "openai":
       var c = ProviderConfig.openAI
       if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
       return c
+    default:
+      var c = ProviderConfig.anthropic
+      if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
+      return c
     }
-    var c = ProviderConfig.anthropic
-    if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
-    return c
   }
+
+  /// Where a connection keeps its chosen model.
+  static func modelKey(_ provider: String) -> String {
+    provider == "chatgpt" ? "agent.model.chatgpt" : provider == "openai" ? "agent.model.openai" : "agent.model"
+  }
+
+  /// Where a connection keeps the models listed in Settings > API.
+  static func modelsKey(_ provider: String) -> String { "agent.models.\(provider)" }
 }

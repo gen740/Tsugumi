@@ -51,11 +51,13 @@
 "API の設定を開く" = "Open API Settings";
 "API キー" = "API key";
 "API キーが未設定のため表示していません" = "Not shown: no API key is set";
+"API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
+"Anthropic API キー" = "Anthropic API Key";
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
@@ -124,6 +126,7 @@
 "Nix 評価" = "Nix evaluation";
 "Nix 評価中" = "Evaluating Nix";
 "Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。" = "Nixpkgs is not pinned: updating the app also changes the packages of this project's Cards.";
+"OpenAI API キー" = "OpenAI API Key";
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "OpenAI の API キー" = "OpenAI API key";
 "Python の処理" = "Python step";
@@ -176,6 +179,7 @@
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
+"macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
 "root_type がありません" = "There is no root_type";
@@ -317,6 +321,7 @@
 "ガイドのツグミに聞く（%@）" = "Ask Tsugumi the Guide (%@)";
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
+"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
 "キャンセル" = "Cancel";
@@ -544,6 +549,8 @@
 "作業中の Agent" = "The Agent at work";
 "使い方の質問に答えます" = "Answers your questions about the app";
 "使うモデル" = "Model provider";
+"使う接続先" = "Connection in Use";
+"使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: numbers" = "e.g. numbers";
 "例: summary" = "e.g. summary";

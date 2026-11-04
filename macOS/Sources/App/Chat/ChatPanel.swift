@@ -18,7 +18,13 @@ struct ChatPanel: View {
   @State private var model = AgentSettings.current().model
   /// The connection chosen in Settings > API: the model menu follows it when it changes.
   @AppStorage("agent.provider") private var providerSetting = "anthropic"
-  @State private var models: [String] = []
+  /// The connections set up (keys stored, ChatGPT signed in) with their models.
+  @State private var connections: [Connection] = []
+  struct Connection: Identifiable {
+    let id: String
+    let name: String
+    let models: [String]
+  }
   /// Display names of the ChatGPT account's models (Settings > API).
   @State private var modelNames: [String: String] = [:]
   /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
@@ -325,9 +331,14 @@ struct ChatPanel: View {
             .help("参照・フォルダを添付")
           // The model, as quiet text under the input (a menu, not a pop-up box).
           Menu {
-            ForEach(Array(Set(models + [model])).sorted(), id: \.self) { m in
-              Button { model = m } label: {
-                if m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
+            // Every connection set up, with its models: choosing one switches to it.
+            ForEach(connections) { c in
+              Section(c.name) {
+                ForEach(c.models, id: \.self) { m in
+                  Button { choose(c.id, m) } label: {
+                    if c.id == providerSetting && m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
+                  }
+                }
               }
             }
           } label: {
@@ -341,21 +352,9 @@ struct ChatPanel: View {
           .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
           .tint(.secondary)
           .foregroundStyle(.secondary)
-          .onChange(of: model) {
-            let key = chat.provider.auth == .chatGPT ? "agent.model.chatgpt" : chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model"
-            UserDefaults.standard.set(model, forKey: key)
-          }
           .disabled(!chat.provider.isRemote)
           .help("モデル（接続先: \(chat.provider.name)）")
           thoughtsToggle
-          if chat.provider.auth == .chatGPT {
-            // Requests use the ChatGPT plan: said beside the model, with its usage page.
-            Link(destination: ChatGPTAuth.usageURL) {
-              // One line however narrow the chat is (it never squeezes the model menu).
-              Text("Using ChatGPT plan").font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-            }
-            .help("Manage usage（chatgpt.com/settings/usage）")
-          }
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
             .help(String(localized: "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 \(chat.usage.cacheReadTokens)、キャッシュに書いた量 \(chat.usage.cacheWriteTokens)"))
@@ -475,9 +474,29 @@ struct ChatPanel: View {
 
   /// Models listed earlier in Settings > API (no network request from here).
   private func loadModels() async {
+    let d = UserDefaults.standard
     model = AgentSettings.current().model
-    models = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
-    modelNames = chat.provider.auth == .chatGPT ? UserDefaults.standard.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:] : [:]
+    modelNames = d.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:]
+    // The connections set up (checked without reading any secret), each with its models.
+    var out: [Connection] = []
+    func add(_ id: String, _ name: String) {
+      let chosen = AgentSettings.config(for: id).model
+      let listed = d.stringArray(forKey: AgentSettings.modelsKey(id)) ?? []
+      out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen])).sorted()))
+    }
+    if Keychain.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
+    if Keychain.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
+    if await ChatGPTAuth.shared().accounts().contains(where: { $0.active && $0.signedIn && $0.planEnabled }) { add("chatgpt", "ChatGPT プラン") }
+    if providerSetting == "fixture" { add("fixture", "Local fixture") }
+    connections = out
+  }
+
+  /// A model of a connection chosen in the menu: that connection is used from now on.
+  private func choose(_ provider: String, _ m: String) {
+    UserDefaults.standard.set(m, forKey: AgentSettings.modelKey(provider))
+    providerSetting = provider
+    model = m
+    GuideController.shared.refreshAvailability()
   }
 
   private func modelName(_ m: String) -> String { modelNames[m] ?? m }

@@ -1129,6 +1129,13 @@ EN = {
 "回答の全文を表示します": "Shows the whole answer",
 "ドラッグで動かせます": "Drag to move",
 "設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。": "Done. Back on Home, Tsugumi will ask what you are interested in.",
+"API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。": "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.",
+"Anthropic API キー": "Anthropic API Key",
+"OpenAI API キー": "OpenAI API Key",
+"macOS Keychain（このデバイスのみ・ロック解除中に使用）": "macOS Keychain (this device only, used while unlocked)",
+"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。": "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.",
+"使う接続先": "Connection in Use",
+"使用中": "In use",
 }
 
 

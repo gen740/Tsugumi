@@ -211,17 +211,28 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
   /** The highlighted Skill candidate (↑ / ↓, Return or Tab takes it). */
   const [skillIndex, setSkillIndex] = useState(0)
-  const [models, setModels] = useState<string[]>([])
+  /** The connections set up, each with its chosen model and the models listed in Settings > API. */
+  const [connections, setConnections] = useState<{ id: string; name: string; models: string[] }[]>([])
   const [picking, setPicking] = useState(false)
   const [toAttach, setToAttach] = useState<string>()
   const [attaching, setAttaching] = useState(false)
   const [attachError, setAttachError] = useState<string>()
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Models listed earlier in Settings > API (no request to the provider from here).
+  // Models listed earlier in Settings > API (no request to the provider from here), per connection set up.
   useEffect(() => {
-    void api<{ models: string[] }>('/api/settings').then((s) => setModels(s.models ?? [])).catch(() => {})
-  }, [chat.provider.name])
+    void Promise.all([
+      api<{ provider: string; model: string; openAIModel: string; chatGPTModel: string; models: Record<string, string[] | undefined> }>('/api/settings'),
+      api<{ anthropic: boolean; openai: boolean; chatgpt: boolean }>('/api/settings/connections'),
+    ]).then(([s, on]) => {
+      const list = (id: string, name: string, chosen: string) => ({ id, name, models: [...new Set([...(s.models?.[id] ?? []), chosen])].sort() })
+      setConnections([
+        ...(on.anthropic ? [list('anthropic', 'Anthropic API', s.model)] : []),
+        ...(on.openai ? [list('openai', 'OpenAI API', s.openAIModel)] : []),
+        ...(on.chatgpt ? [list('chatgpt', 'ChatGPT プラン', s.chatGPTModel)] : []),
+      ])
+    }).catch(() => {})
+  }, [chat.provider.name, chat.provider.model])
 
   // Starts one line high and grows with the text (up to a limit).
   useLayoutEffect(() => {
@@ -262,8 +273,10 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
     inputRef.current?.focus()
   }
 
-  const setModel = (m: string) => {
-    void api('/api/settings', chat.provider.plan ? { chatGPTModel: m } : chat.provider.api === 'openAIResponses' ? { openAIModel: m } : { model: m }).then(() => chat.refreshProvider())
+  /** A model of a connection chosen in the menu: that connection is used from now on. */
+  const choose = (provider: string, m: string) => {
+    const key = provider === 'chatgpt' ? 'chatGPTModel' : provider === 'openai' ? 'openAIModel' : 'model'
+    void api('/api/settings', { provider, [key]: m }).then(() => { void chat.refreshProvider(); void guide.refresh() })
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -346,13 +359,17 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           <button type="button" className="model-menu" disabled={!chat.provider.remote} title={`モデル（接続先: ${chat.provider.name}）`}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
-              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [...new Set([...models, model])].sort().map((m) => ({ label: modelName(m), checked: m === model, action: () => setModel(m) })))
+              // Every connection set up, with its models: choosing one switches to it.
+              const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
+              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, connections.flatMap((c, i) => [
+                i > 0 ? 'divider' as const : null,
+                { label: c.name, disabled: true },
+                ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === model, action: () => choose(c.id, m) })),
+              ]))
             }}>
             <span className="ellipsis">{modelName(model)}</span>
             <Icon name="chevron.down" size={8} />
           </button>
-          {/* Requests use the ChatGPT plan: said beside the model, with its usage page. */}
-          {chat.provider.plan && <a className="caption2 secondary" href={USAGE_URL} target="_blank" rel="noopener noreferrer" title="Manage usage（chatgpt.com/settings/usage）">Using ChatGPT plan</a>}
           <span className="spacer" />
           <span className="caption2 tertiary" title={`直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 ${chat.usage.cacheReadTokens ?? 0}、キャッシュに書いた量 ${chat.usage.cacheWriteTokens ?? 0}`}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
