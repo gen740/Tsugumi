@@ -54,11 +54,13 @@
     ],
     "showTool": {
       "name": "guide_show",
-      "description": "Points at a part of the screen and/or offers the user buttons under your reply. Nothing happens until the user presses a button; the app then does it with its own controls.",
+      "description": "The bird flies to a part of the screen and speaks there: it points at it (highlight), says one line beside it (say), and offers choices the user can tap as their reply and buttons that act. Nothing happens until the user presses a button; the app then does it with its own controls.",
       "inputSchema": {
         "type": "object", "additionalProperties": false,
         "properties": {
-          "highlight": { "type": "string", "description": "what to point at: run (the run / stop button), chat (the Agent chat button), logs (the log button), demos (Home's demo list button), new_project (Home's new project button), settings, or card:<Card id> (a Card of the workflow on the screen)" },
+          "highlight": { "type": "string", "description": "where the bird flies and what it points at: run (the run / stop button), chat (the Agent chat button), logs (the log button), demos (Home's demo list button), new_project (Home's new project button), settings, card:<Card id> (a Card of the workflow on the screen) or demo:<demo id> (its card in Home's demo list, which opens)" },
+          "say": { "type": "string", "description": "one short sentence the bird says in its speech bubble (your reply text is the full answer)" },
+          "choices": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "short replies the user can tap in the bubble (e.g. 次へ, もっと詳しく); the one tapped comes back to you as the user's message" },
           "actions": {
             "type": "array", "maxItems": 3,
             "items": {

@@ -12,6 +12,7 @@ import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
+import chatPrompt from '../../agent/Shared/chat-prompt.md'
 import { planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
@@ -678,13 +679,14 @@ export class Agent {
   get tools(): ToolSpec[] {
     const reference = Object.keys(this.references).length ? [REFERENCE_TOOL] : []
     if (this.role === 'guide') return [...this.catalog.tools.filter((t) => GUIDE_TOOLS.has(t.name)), ...reference, GUIDE_SHOW_TOOL]
-    return [...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL])]
+    return [...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL, GUIDE_SHOW_TOOL])]
   }
 
   /** The rules, and for a helper its task. */
   get system(): string {
     if (this.role === 'guide') return GUIDE_PROMPT
-    if (!this.helper) return SYSTEM_PROMPT
+    // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
+    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + chatPrompt
     return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
   }
@@ -1049,8 +1051,8 @@ export class Agent {
       const [text, isError] = this.readReference(p)
       return this.finish(record, text, isError, events)
     }
+    if (name === GUIDE_SHOW_TOOL.name && (this.role === 'guide' || !this.helper)) return this.finish(record, AGENT.guide.shown, false, events)
     if (this.role === 'guide') {
-      if (name === GUIDE_SHOW_TOOL.name) return this.finish(record, AGENT.guide.shown, false, events)
       if (!GUIDE_TOOLS.has(name)) return this.finish(record, guideText('readOnly', { tool: name }), true, events)
     }
     if (name === DELEGATE_TOOL.name && !this.helper && this.role === 'worker') {

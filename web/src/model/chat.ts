@@ -5,6 +5,7 @@ import { draftRequest } from '../shared/agentShared'
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
+import { guide, GuideAction, parseShow } from './guide'
 import { Observable } from './observable'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
 
@@ -359,7 +360,37 @@ export class ChatController extends Observable {
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
+  /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
+  choices: string[] = []
+  offered: GuideAction[] = []
+  /** Notes of the app (a demo tour's runs) that came while it answered. */
+  private notes: { prompt: string; display: string }[] = []
+
+  /** Something the app tells Tsugumi (a tour step, a run that ended); one that
+   *  comes while it answers waits for the answer to end. */
+  tell(prompt: string, display: string) {
+    if (this.busy) {
+      this.notes.push({ prompt, display })
+      return
+    }
+    this.sendRequest(display, prompt)
+  }
+
+  private flushNotes() {
+    if (!this.notes.length) return
+    const n = this.notes
+    this.notes = []
+    this.sendRequest(n[n.length - 1].display, n.map((x) => x.prompt).join('\n'))
+  }
+
+  private get lastReply() {
+    return [...this.items].reverse().find((x) => x.role === 'assistant')?.text ?? ''
+  }
+
   private begin() {
+    this.choices = []
+    this.offered = []
+    guide.chatTurnBegan(this)
     this.busy = true
     this.failed = false
     this.usageLimited = false
@@ -408,6 +439,14 @@ export class ChatController extends Observable {
         break
       }
       case 'toolStarted':
+        if (e.name === 'guide_show') {
+          // The bird flies and speaks; the chat keeps the choices under the answer.
+          const shown = parseShow(e.arguments)
+          this.choices = shown.choices
+          this.offered = shown.actions
+          guide.chatShow(this, e.arguments)
+          break
+        }
         this.items = [...this.items, { id: uuid(), role: 'tool', text: e.arguments, tool: { name: e.name } }]
         if (e.name === 'delegate') this.startHelpers(e.arguments)
         break
@@ -431,6 +470,8 @@ export class ChatController extends Observable {
         this.status = `再試行中: ${e.message}`
         break
       case 'error':
+        guide.chatTurnEnded(this, this.lastReply)
+        if (e.message === 'cancelled') this.notes = []
         this.busy = false
         this.failed = e.message !== 'cancelled'
         this.usageLimited = e.message === USAGE_LIMIT_TEXT
@@ -439,12 +480,15 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         break
       case 'finished':
+        guide.chatTurnEnded(this, this.lastReply)
         this.busy = false
         // A note left by a retry (e.g. a reply cut at the output limit) is no longer current.
         if (this.status?.startsWith('再試行中')) this.status = undefined
         this.refreshAfterTurn()
+        queueMicrotask(() => this.flushNotes())
         break
       case 'stepLimit':
+        guide.chatTurnEnded(this, this.lastReply)
         this.busy = false
         this.stoppedAtLimit = true
         this.status = `${e.steps} 手の上限で中断しました。「続ける」で続きから再開できます。`

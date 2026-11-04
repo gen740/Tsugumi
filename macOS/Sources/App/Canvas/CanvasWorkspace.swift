@@ -67,7 +67,12 @@ struct CanvasWorkspace: View {
           .accessibilityLabel("開く")
       }
       Button { workspace.showChat.toggle() } label: {
-        Image(systemName: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
+        // While the chat is closed, Tsugumi waits on its button.
+        if !workspace.showChat && onSwitchProject != nil && GuideController.shared.available {
+          GuideNest(busy: AppModel.shared.chat(for: session).busy, size: 22)
+        } else {
+          Image(systemName: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
+        }
       }
       .help(workspace.showChat ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
                                : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")

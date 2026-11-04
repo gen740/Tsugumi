@@ -218,15 +218,28 @@ struct ProjectChooser: View {
           }
         }
       }
+      ScrollViewReader { proxy in
       ScrollView {
         if shownDemos.isEmpty {
           ContentUnavailableView(model.demos.isEmpty ? "デモが見つかりません" : "条件に合うデモはありません", systemImage: "questionmark.folder")
             .padding(.top, 40)
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
-          ForEach(shownDemos) { demo in DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } } }
+          ForEach(shownDemos) { demo in
+            DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } }
+              .guideTarget("demo:\(demo.id)", radius: 12)
+              .id(demo.id)
+          }
         }
         .padding(.bottom, 20)
+      }
+      // Tsugumi points at a demo: it is shown (whatever the filter) and scrolled to.
+      .onChange(of: GuideController.shared.highlight) { _, h in
+        guard let h, h.hasPrefix("demo:") else { return }
+        tag = nil
+        search = ""
+        withAnimation { proxy.scrollTo(String(h.dropFirst(5)), anchor: .center) }
+      }
       }
     }
     .padding(.horizontal, 24)

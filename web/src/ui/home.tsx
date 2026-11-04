@@ -383,9 +383,15 @@ function Recents({ onOpen }: { onOpen: (path: string) => void }) {
 }
 
 function Demos({ onOpen }: { onOpen: (path: string) => void }) {
-  useObserve(app)
+  useObserve(app, guide)
   const [tag, setTag] = useState<string>()
   const [search, setSearch] = useState('')
+  // Tsugumi points at a demo: it is shown, whatever the filter.
+  useEffect(() => {
+    if (!guide.highlight?.startsWith('demo:')) return
+    setTag(undefined)
+    setSearch('')
+  }, [guide.highlight])
   const demos = app.status?.demos ?? []
   const q = search.toLowerCase()
   const shown = demos.filter((d) => (tag === undefined || d.tags.includes(tag)) &&
@@ -429,7 +435,7 @@ function TagChip({ label, selected, onClick }: { label: string; selected: boolea
 /** A demo with a thumbnail drawn from its own Workflow (Cards and wires). */
 function DemoCard({ demo, onOpen }: { demo: Demo; onOpen: () => void }) {
   return (
-    <div className="demo-card">
+    <div className="demo-card" data-guide={`demo:${demo.id}`}>
       <DemoThumbnailView mini={demo.thumbnail} />
       <div className="headline">{demo.title}</div>
       <div className="callout secondary clamp3">{demo.description}</div>

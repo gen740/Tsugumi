@@ -59,6 +59,7 @@
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
+"C++ と Python" = "C++ and Python";
 "C++ の処理" = "C++ step";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
@@ -211,6 +212,7 @@
 "くわえている手毬の糸は「紡ぐ」から。この糸が Card をつなぐ配線になるよ" = "The thread from my temari is that spun thread. It becomes the wires between Cards.";
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
+"ここです" = "Here";
 "この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。" = "After this Card runs, each invocation's inputs, outputs, logs and details are kept here.";
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
@@ -259,9 +261,12 @@
 "この版から始める" = "Start from This Version";
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
+"この返事を送ります" = "Sends this reply";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
+"こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。" = "Hello, I'm Tsugumi. What are you interested in? I'll find a demo that fits and show you around.";
+"こんにちは、ツグミです。動くデモを一緒に見てみますか？" = "Hello, I'm Tsugumi. Shall we look at a working demo together?";
 "すべて" = "All";
 "すべての入力が揃ったとき" = "When every input has arrived";
 "すべての実行" = "All runs";
@@ -385,10 +390,14 @@
 "チャットを閉じる（%@）" = "Close the chat (%@)";
 "チャットを開く（%@）" = "Open the chat (%@)";
 "ツグミ" = "Tsugumi";
+"ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。" = "I'm Tsugumi. Ask me to plan, build or edit a workflow, or how to use the app.";
 "ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and the chat's Agent use an OpenAI or Anthropic model with your API key. A key for either one is enough. It is kept only in this Mac's keychain, never in projects, conversation records or logs.";
 "ツグミに質問" = "Ask Tsugumi";
+"ツグミに返事" = "Reply to Tsugumi";
+"ツグミの吹き出し" = "Tsugumi's speech bubble";
 "ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ" = "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.";
 "ツグミへの質問" = "Question for Tsugumi";
+"ツグミへの返事" = "Reply to Tsugumi";
 "ツールの詳細" = "Tool details";
 "テキスト検索" = "Text search";
 "テキスト検索…" = "Text Search…";
@@ -405,6 +414,7 @@
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
 "デモを見る…" = "Show Demos…";
+"データの集計とレポート" = "Aggregating data into reports";
 "データベース接続先" = "Database Connections";
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
@@ -475,6 +485,7 @@
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
+"ライブ表示" = "Live display";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
@@ -701,10 +712,12 @@
 "外部の変更を再読込" = "Reload External Changes";
 "外部接続" = "External Connections";
 "大きく" = "Larger";
+"天文・地震・タンパク質のデータ" = "Astronomy, seismic and protein data";
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
 "失敗の種類" = "Failure kind";
 "完了" = "Done";
+"定番のデモを見る" = "See the Standard Demo";
 "定義" = "Definition";
 "定義とソースを削除" = "Delete the definition and its sources";
 "定義をこのプロジェクトの definitions にコピーして Card を置きます" = "Copies the definition into this project's definitions and places the Card";
@@ -969,6 +982,7 @@
 "縮小" = "Zoom Out";
 "考えています" = "Thinking";
 "考えています…" = "Thinking…";
+"興味のあること（例: 画像処理）" = "What interests you (e.g. image processing)";
 "色" = "Color";
 "英数字と - _ .（Card の ID とフォルダ名）" = "Letters, digits and - _ . (the Card's ID and folder name)";
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
@@ -1038,6 +1052,7 @@
 "配色" = "Colors";
 "閉じる" = "Close";
 "閉じる（Esc）。ツグミは右下に残ります" = "Close (Esc). Tsugumi stays at the bottom right";
+"閉じる（ツグミは元の場所に戻ります）" = "Close (Tsugumi goes back to its place)";
 "閉じる（下部のアイコンでも開閉できます）" = "Close (the icon below also opens and closes it)";
 "開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。" = "Endpoints of tsugumid for the open projects, published on 127.0.0.1 only. Other clients (another UI or Agent) connect with the same RPC contract; the auth token is kept only in server.ready (0600) in the control folder.";
 "開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。" = "Stops the open projects' runs and the VM, then deletes the shared Nix store, the unpacked VM image and every project's control folder (and environments an earlier version made with Apple container). The run history in the VM (its own disk), projects' documents and artifacts, and the host's /nix/store are kept. Everything is made again on the next open. The run history in the VM can be deleted under “Run history in the VM” below.";

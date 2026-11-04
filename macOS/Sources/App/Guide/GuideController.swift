@@ -19,18 +19,42 @@ struct GuideAction: Identifiable, Hashable {
   var demo: String?
   var card: String?
 
-  /// What a guide_show call points at and offers.
-  static func parse(_ arguments: String) -> (highlight: String?, actions: [GuideAction]) {
-    guard let v = try? JSONValue.parse(arguments) else { return (nil, []) }
+  /// What a guide_show call points at, says and offers.
+  static func parse(_ arguments: String) -> GuideShow {
+    guard let v = try? JSONValue.parse(arguments) else { return GuideShow() }
     let actions = (v["actions"]?.array ?? []).compactMap { a -> GuideAction? in
       guard let kind = a["kind"]?.string.flatMap(Kind.init(rawValue:)) else { return nil }
       let label = a["label"]?.string?.trimmingCharacters(in: .whitespaces) ?? ""
       return GuideAction(kind: kind, label: label.isEmpty ? kind.rawValue : label, demo: a["demo"]?.string, card: a["card"]?.string)
     }
     let highlight = v["highlight"]?.string?.trimmingCharacters(in: .whitespaces)
-    // Unknown kinds are dropped first; at most three buttons.
-    return (highlight?.isEmpty == false ? highlight : nil, Array(actions.prefix(3)))
+    let say = v["say"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let choices = (v["choices"]?.array ?? []).compactMap { $0.string?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    // Unknown kinds are dropped first; at most three buttons and four choices.
+    return GuideShow(highlight: highlight?.isEmpty == false ? highlight : nil, say: say?.isEmpty == false ? say : nil,
+                     choices: Array(choices.prefix(4)), actions: Array(actions.prefix(3)))
   }
+}
+
+/// A guide_show call: where the bird flies, what it says there, the replies
+/// it offers to tap and the buttons that act.
+struct GuideShow: Equatable {
+  var highlight: String?
+  var say: String?
+  var choices: [String] = []
+  var actions: [GuideAction] = []
+}
+
+/// What the bird says in its speech bubble, where it is (target: what it
+/// points at; nil: in its corner), and what can be tapped there.
+struct GuideBubble: Equatable {
+  let id = UUID()
+  var say: String?
+  var choices: [String] = []
+  var actions: [GuideAction] = []
+  var target: String?
+  /// The guide is answering (the bubble shows that it thinks).
+  var thinking = false
 }
 
 /// The guide reads the project on the user's screen; on Home there is none.
@@ -65,6 +89,8 @@ final class GuideController {
     var role: String
     var text: String
     var actions: [GuideAction] = []
+    /// Replies to tap (guide_show "choices"), under the newest reply only.
+    var choices: [String] = []
   }
 
   /// The demo being shown: its id and title and the copy's folder. Kept
@@ -89,8 +115,10 @@ final class GuideController {
   private(set) var activity: String?
   /// The panel is open (in every main window; each shows its own).
   var open = false
-  /// The part of the screen the guide points at (guide_show), for a while.
+  /// The part of the screen the guide points at and the bird flies to (guide_show).
   private(set) var highlight: String?
+  /// The bird's speech bubble (nil: it sits quietly in its corner).
+  private(set) var bubble: GuideBubble?
   private(set) var tour: Tour?
   /// Home's demo list asked for by the guide (show_demos).
   var demosRequested = false
@@ -116,8 +144,13 @@ final class GuideController {
   @ObservationIgnored private weak var tourTab: WorkflowTab?
   /// Notes for the guide that came while it answered: sent when it is done.
   @ObservationIgnored private var queued: [(prompt: String, display: String)] = []
-  /// Actions of the reply being written (shown when it ends).
+  /// Actions and choices of the reply being written (shown when it ends).
   @ObservationIgnored private var pending: [GuideAction] = []
+  @ObservationIgnored private var pendingChoices: [String] = []
+  /// What the window the user last looked from shows (choices are asked with it).
+  @ObservationIgnored private var contextScreen: Screen = .home
+  @ObservationIgnored private weak var contextSession: ProjectSession?
+  @ObservationIgnored private weak var contextTab: WorkflowTab?
   /// The last run state seen in the tour's project, and whether a run was active then.
   @ObservationIgnored private var seen: String?
   @ObservationIgnored private var seenActive = false
@@ -175,7 +208,6 @@ final class GuideController {
     setupDone = true
     UserDefaults.standard.set(true, forKey: "guide.setupDone")
     refreshAvailability()
-    if offersDemo { open = true }
   }
 
   /// Asks the first start's questions again (Settings).
@@ -185,7 +217,60 @@ final class GuideController {
     UserDefaults.standard.set(false, forKey: "guide.setupDone")
     UserDefaults.standard.set(false, forKey: "guide.demoAnswered")
     refreshAvailability()
-    if offersDemo { open = true }
+  }
+
+  /// The screen a window shows (its corner reports it), for choices tapped in a bubble.
+  func setContext(_ screen: Screen, session: ProjectSession?, tab: WorkflowTab?) {
+    contextScreen = screen
+    contextSession = session
+    contextTab = tab
+  }
+
+  /// A choice tapped in the bubble or under a reply: the user's answer, to
+  /// whichever Tsugumi offered it (a project's chat, or the guide on Home).
+  func choose(_ choice: String) {
+    if let chat = speakingChat {
+      chat.send(choice)
+    } else {
+      ask(choice, screen: contextScreen, session: contextSession, tab: contextTab)
+    }
+  }
+
+  // MARK: - Tsugumi of a project's chat
+
+  /// The project chat whose bubble is out (nil: the guide's own on Home).
+  @ObservationIgnored private(set) weak var speakingChat: ChatController?
+  /// The project and workflow the flying bird's buttons act on.
+  var flyerSession: ProjectSession? { speakingChat?.session ?? contextSession }
+  var flyerTab: WorkflowTab? { contextTab }
+
+  /// The chat's Tsugumi called guide_show: the bird flies and speaks for it.
+  func chatShow(_ chat: ChatController, arguments: String) {
+    guard available else { return }
+    speakingChat = chat
+    let shown = GuideAction.parse(arguments)
+    point(at: shown.highlight)
+    bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight)
+  }
+
+  /// The chat answers: a bubble that is out shows that it thinks.
+  func chatTurnBegan(_ chat: ChatController) {
+    guard speakingChat === chat, let b = bubble else { return }
+    bubble = GuideBubble(target: b.target, thinking: true)
+  }
+
+  /// The chat's answer ended: a bubble still thinking says its first sentence.
+  func chatTurnEnded(_ chat: ChatController, reply: String) {
+    guard speakingChat === chat, var b = bubble else { return }
+    if b.thinking { b = GuideBubble(target: b.target) }
+    if b.say == nil { b.say = Self.firstSentence(reply) }
+    bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty ? nil : b
+  }
+
+  /// The bubble is closed: the bird flies back to its corner.
+  func dismissBubble() {
+    bubble = nil
+    clearHighlight()
   }
 
   /// "デモを見ますか？": either answer is kept, so it is never asked again.
@@ -222,14 +307,23 @@ final class GuideController {
     return a
   }
 
+  /// What the user is interested in (the first question on Home): the guide
+  /// picks a demo for it and flies to it in the demo list.
+  func answerInterest(_ text: String) {
+    let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return }
+    answerDemoOffer()
+    demosRequested = true
+    ask(text, screen: .demos, session: nil, tab: nil, note: "[Interest] The user answered what interests them; pick a demo for it.")
+  }
+
   /// A question of the user, with what their window shows.
-  func ask(_ text: String, screen: Screen, session: ProjectSession?, tab: WorkflowTab?) {
+  func ask(_ text: String, screen: Screen, session: ProjectSession?, tab: WorkflowTab?, note: String? = nil) {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard available, !busy, !text.isEmpty, let agent = makeAgent() else { return }
     readSession = session
-    clearHighlight()
     items.append(Item(role: "user", text: text))
-    let prompt = text + "\n\n" + screenNote(screen, session: session, tab: tab)
+    let prompt = (note.map { $0 + "\n" } ?? "") + text + "\n\n" + screenNote(screen, session: session, tab: tab)
     begin()
     Task {
       await agent.setProvider(AgentSettings.current())
@@ -240,6 +334,11 @@ final class GuideController {
   /// Something the app tells the guide (a tour step, a run that ended); one
   /// that comes while it answers waits for the answer to end.
   private func tell(_ prompt: String, display: String, session: ProjectSession?) {
+    // In the demo's copy, Tsugumi of its chat leads the tour.
+    if let session {
+      AppModel.shared.chat(for: session).tell(prompt: prompt, display: display)
+      return
+    }
     guard available, let agent = makeAgent() else { return }
     if busy {
       queued.append((prompt, display))
@@ -281,6 +380,7 @@ final class GuideController {
     status = nil
     failed = false
     clearHighlight()
+    bubble = nil
   }
 
   private func begin() {
@@ -288,7 +388,10 @@ final class GuideController {
     failed = false
     status = nil
     pending = []
+    pendingChoices = []
     activity = String(localized: "考えています")
+    // The bird stays where it is and thinks.
+    bubble = GuideBubble(target: highlight, thinking: true)
   }
 
   private func handle(_ e: AgentEvent) {
@@ -302,9 +405,12 @@ final class GuideController {
       }
     case .toolStarted(_, let name, let args):
       if name == "guide_show" {
+        speakingChat = nil
         let shown = GuideAction.parse(args)
-        if let h = shown.highlight { point(at: h) }
+        point(at: shown.highlight)
         pending += shown.actions
+        pendingChoices += shown.choices
+        bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight)
       } else {
         activity = name.hasPrefix("run") || name == "log_range" ? String(localized: "実行の様子を見ています")
           : String(localized: "プロジェクトを読んでいます")
@@ -327,6 +433,7 @@ final class GuideController {
       status = String(localized: "答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。")
     case .error(let s):
       ended()
+      bubble = nil
       queued = []
       failed = s != "cancelled"
       status = s == "cancelled" ? String(localized: "回答を止めました。") : String(localized: "うまく答えられませんでした: \(s)")
@@ -336,15 +443,34 @@ final class GuideController {
   private func ended() {
     busy = false
     activity = nil
-    guard !pending.isEmpty else { return }
-    // Only the newest buttons are offered.
-    for i in items.indices { items[i].actions = [] }
+    // The bird says the answer's first sentence where it is, when guide_show gave no line.
+    let reply = items.last.flatMap { $0.role == "assistant" ? $0.text : nil } ?? ""
+    if var b = bubble {
+      if b.thinking { b = GuideBubble(target: b.target) }
+      if b.say == nil { b.say = Self.firstSentence(reply) }
+      bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty && b.target == nil ? nil : b
+    }
+    guard !pending.isEmpty || !pendingChoices.isEmpty else { return }
+    // Only the newest buttons and choices are offered.
+    for i in items.indices { items[i].actions = []; items[i].choices = [] }
     if let i = items.lastIndex(where: { $0.role == "assistant" }), i == items.count - 1 {
       items[i].actions = pending
+      items[i].choices = pendingChoices
     } else {
-      items.append(Item(role: "assistant", text: "", actions: pending))
+      items.append(Item(role: "assistant", text: "", actions: pending, choices: pendingChoices))
     }
     pending = []
+    pendingChoices = []
+  }
+
+  /// The first sentence of a reply, short enough for the bubble.
+  nonisolated static func firstSentence(_ text: String) -> String? {
+    let plain = text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+      .split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " #-•*>")) }.first { !$0.isEmpty } ?? ""
+    guard !plain.isEmpty else { return nil }
+    let end = plain.firstIndex { "。！？!?".contains($0) }.map { plain.index(after: $0) } ?? plain.endIndex
+    let s = String(plain[..<end])
+    return s.count > 80 ? String(s.prefix(78)) + "…" : s
   }
 
   private func flush() {
@@ -358,11 +484,14 @@ final class GuideController {
     var out: [Item] = []
     // The buttons of a guide_show go under the reply that follows it; only the newest stay.
     var shown: [GuideAction] = []
+    var choices: [String] = []
     for m in conv.fullHistory {
       if m.role == "user" {
         let isNote = m.content.contains { if case .text(let t) = $0 { return t.hasPrefix("[Tour]") || t.hasPrefix("[Event]") }; return false }
         if let d = m.display {
-          if !shown.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown)); shown = [] }
+          if !shown.isEmpty || !choices.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown, choices: choices)) }
+          shown = []
+          choices = []
           out.append(Item(role: isNote ? "note" : "user", text: d))
         }
         continue
@@ -370,37 +499,41 @@ final class GuideController {
       for b in m.content {
         switch b {
         case .text(let t):
-          out.append(Item(role: "assistant", text: t, actions: shown))
+          out.append(Item(role: "assistant", text: t, actions: shown, choices: choices))
           shown = []
+          choices = []
         case .toolUse(_, let n, let a) where n == "guide_show":
-          shown = GuideAction.parse(a).actions
+          let g = GuideAction.parse(a)
+          shown = g.actions
+          choices = g.choices
         default: break
         }
       }
     }
-    if !shown.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown)) }
-    if let newest = out.lastIndex(where: { !$0.actions.isEmpty }) {
-      for i in out.indices where i != newest { out[i].actions = [] }
+    if !shown.isEmpty || !choices.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown, choices: choices)) }
+    if let newest = out.lastIndex(where: { !$0.actions.isEmpty || !$0.choices.isEmpty }) {
+      for i in out.indices where i != newest { out[i].actions = []; out[i].choices = [] }
     }
     items = out
   }
 
   // MARK: - Pointing
 
-  private func point(at target: String) {
-    highlight = target
+  /// Where the bird flies and the ring is drawn, until the bubble is closed or it moves on.
+  private func point(at target: String?) {
     highlightTask?.cancel()
-    highlightTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .seconds(12))
-      guard !Task.isCancelled else { return }
-      self?.highlight = nil
-    }
+    highlight = target
+    // A demo's card is in Home's demo list: it opens to show it.
+    if target?.hasPrefix("demo:") == true { demosRequested = true }
   }
 
   func clearHighlight() {
     highlightTask?.cancel()
     highlight = nil
   }
+
+  /// Whether a project is the copy of the demo being shown.
+  func touring(_ s: ProjectSession) -> Bool { tour.map { Self.same($0.path, s.identity.url) } ?? false }
 
   /// Whether the guide points at `target` (the run button is also "stop").
   func points(at target: String) -> Bool {
@@ -438,7 +571,10 @@ final class GuideController {
     if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
       lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")
     }
-    lines.append("demos: " + AppModel.shared.demos.map { "\($0.id) \"\($0.title)\"" }.joined(separator: ", "))
+    lines.append("demos (id, title, tags: description):")
+    for d in AppModel.shared.demos {
+      lines.append("- \(d.id) \"\(d.title)\", \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+    }
     return lines.joined(separator: "\n")
   }
 
@@ -461,7 +597,7 @@ final class GuideController {
     tour = Tour(demo: demo.id, title: demo.title, path: copy.path)
     seen = nil
     saveTour()
-    open = true
+    open = false
   }
 
   func endTour() {

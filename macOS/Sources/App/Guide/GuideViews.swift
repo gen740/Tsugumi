@@ -20,17 +20,35 @@ extension EnvironmentValues {
   }
 }
 
+// MARK: - The stage
+
+/// Where things are in one main window, for the bird that flies in it: the
+/// frame of what the guide points at, and of its corner (window coordinates).
+@MainActor
+@Observable
+final class GuideStage {
+  /// The pointed-at view and its frame, while it is on the screen.
+  var perch: (id: String, frame: CGRect)?
+  var corner: CGRect = .zero
+  /// The bird has left its corner (the corner shows no avatar meanwhile).
+  var away = false
+}
+
 // MARK: - Pointing
 
-/// A ring the guide draws around a part of the screen it talks about.
+/// A ring the guide draws around a part of the screen it talks about; the
+/// bird flies to it (its frame goes to the window's stage).
 private struct GuideTarget: ViewModifier {
   let id: String
   let radius: CGFloat
+  @Environment(GuideStage.self) private var stage: GuideStage?
 
   func body(content: Content) -> some View {
     content.overlay {
       if GuideController.shared.points(at: id) {
         GuideRing(radius: radius).allowsHitTesting(false).accessibilityHidden(true)
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.perch = (id, $0) }
+          .onDisappear { if stage?.perch?.id == id { stage?.perch = nil } }
       }
     }
   }
@@ -56,64 +74,71 @@ private struct GuideRing: View {
 }
 
 extension View {
-  /// Lets the guide point at this view (guide_show "highlight").
+  /// Lets the guide point at this view (guide_show "highlight") and fly to it.
   func guideTarget(_ id: String, radius: CGFloat = 8) -> some View { modifier(GuideTarget(id: id, radius: radius)) }
 }
 
 // MARK: - The corner
 
-/// The guide bird in the bottom-right corner, with its panel above it. Shown
-/// only with a model connection; the screen it is on is what it explains.
+/// Tsugumi on Home, in the bottom-right corner (in a project it is the chat's,
+/// GuideNest). It speaks in a bubble beside it (the demo offer, short answers,
+/// choices to tap), flies out to what it talks about (GuideFlyer), and a click
+/// opens its conversation above it. Shown only with a model connection.
 struct GuideCorner: View {
   let screen: GuideController.Screen
   var session: ProjectSession? = nil
   var tab: WorkflowTab? = nil
-  /// In a project the panel is docked in the inspector column (GuideDock),
-  /// so it never covers the canvas; on Home it floats above the bird.
-  var docked = false
   @Environment(AppModel.self) private var model
   @Environment(\.guideWindow) private var window
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(GuideStage.self) private var stage: GuideStage?
 
   private var guide: GuideController { .shared }
 
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
       if guide.available, window != nil {
-        if guide.open && !docked {
+        if guide.open {
           GuidePanel(screen: screen, session: session, tab: tab, perform: perform)
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
-        }
-        HStack(alignment: .bottom, spacing: 6) {
-          if !guide.open, let line = bubble {
-            Text(line).font(.caption).lineLimit(2)
+        } else if !(stage?.away ?? false) {
+          if guide.offersDemo {
+            GuideOfferBubble(perform: perform)
+          } else if let b = guide.bubble, guide.speakingChat == nil {
+            GuideBubbleView(bubble: b, perform: perform)
+          } else if guide.failed, !guide.open {
+            Text("うまく答えられませんでした").font(.caption)
               .padding(.horizontal, 9).padding(.vertical, 5)
               .background(.regularMaterial, in: Capsule())
-              .transition(.opacity)
           }
-          Button {
-            withAnimation(.easeOut(duration: 0.2)) { guide.open.toggle() }
-          } label: {
-            GuideAvatar(mood: mood, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
-          }
-          .buttonStyle(.plain)
-          .help(String(localized: "ガイドのツグミに聞く（\(AppPreferences.shared.shortcut(.toggleGuide).label)）"))
-          .accessibilityLabel(String(localized: "ガイドのツグミ"))
-          .accessibilityValue(guide.activity ?? (guide.open ? String(localized: "会話を表示中") : ""))
-          .accessibilityHint(guide.open ? String(localized: "会話を閉じます") : String(localized: "質問できる会話を開きます"))
         }
+        Button {
+          withAnimation(.easeOut(duration: 0.2)) { guide.open.toggle() }
+        } label: {
+          GuideAvatar(mood: mood, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
+        }
+        .buttonStyle(.plain)
+        .opacity(stage?.away ?? false ? 0 : 1)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
+        .help(String(localized: "ガイドのツグミに聞く（\(AppPreferences.shared.shortcut(.toggleGuide).label)）"))
+        .accessibilityLabel(String(localized: "ガイドのツグミ"))
+        .accessibilityValue(guide.activity ?? (guide.open ? String(localized: "会話を表示中") : ""))
+        .accessibilityHint(guide.open ? String(localized: "会話を閉じます") : String(localized: "質問できる会話を開きます"))
       }
     }
     .animation(.easeOut(duration: 0.2), value: guide.open)
+    .animation(.easeOut(duration: 0.2), value: guide.bubble)
     .onChange(of: runKey, initial: true) { if let session { guide.observe(session, tab: tab) } }
-    .onChange(of: guide.offersDemo, initial: true) { _, offers in if offers, window != nil { guide.open = true } }
+    .onChange(of: contextKey, initial: true) { guide.setContext(screen, session: session, tab: tab) }
   }
 
   private var perform: GuidePerformer {
     GuidePerformer(model: model, window: window, session: session, tab: tab, openWindow: openWindow, openSettings: openSettings)
   }
+
+  private var contextKey: String { "\(screen)|\(session?.identity.id ?? "")|\(tab?.id.uuidString ?? "")" }
 
   /// What changes in the project that the guide follows during a tour.
   private var runKey: String {
@@ -127,12 +152,343 @@ struct GuideCorner: View {
     if let s = session, s.runActive, let t = guide.tour, GuideController.same(t.path, s.identity.url) { return .watching }
     return .idle
   }
+}
 
-  /// A word under the closed panel: what the guide does now.
-  private var bubble: String? {
-    if let a = guide.activity { return a + "…" }
-    if guide.failed { return String(localized: "うまく答えられませんでした") }
-    return nil
+// MARK: - The bubble
+
+/// What the bird says, with the replies to tap and the buttons that act.
+struct GuideBubbleView: View {
+  let bubble: GuideBubble
+  let perform: GuidePerformer
+  @State private var reply = ""
+  private var guide: GuideController { .shared }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 6) {
+        if bubble.thinking {
+          HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(guide.activity.map { $0 + "…" } ?? String(localized: "考えています…")).foregroundStyle(.secondary)
+          }
+        } else {
+          Text(bubble.say ?? String(localized: "ここです")).fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+        Button { guide.dismissBubble() } label: { Image(systemName: "xmark").font(.caption2.bold()).foregroundStyle(.secondary) }
+          .buttonStyle(.plain).help("閉じる（ツグミは元の場所に戻ります）").accessibilityLabel("閉じる")
+      }
+      .font(.callout)
+      if !bubble.thinking && (!bubble.choices.isEmpty || !bubble.actions.isEmpty) {
+        GuideChoices(choices: bubble.choices, actions: bubble.actions, perform: perform)
+      }
+      if !bubble.thinking {
+        GuideReplyField(text: $reply) { guide.choose($0) }
+      }
+    }
+    .padding(10)
+    .frame(width: 270, alignment: .leading)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(TsugumiPalette.rufous.opacity(0.45)))
+    .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(String(localized: "ツグミの吹き出し"))
+  }
+}
+
+/// Replies to tap (they are sent as the user's message) and buttons that act.
+struct GuideChoices: View {
+  let choices: [String]
+  let actions: [GuideAction]
+  let perform: GuidePerformer
+  /// Where a tapped choice goes (default: whichever Tsugumi offered the bubble).
+  var onChoice: ((String) -> Void)? = nil
+  private var guide: GuideController { .shared }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      if !actions.isEmpty {
+        HStack(spacing: 6) {
+          ForEach(Array(actions.enumerated()), id: \.element.id) { i, a in
+            if i == 0 {
+              Button(a.label) { perform(a) }.buttonStyle(.borderedProminent).disabled(!perform.enabled(a))
+            } else {
+              Button(a.label) { perform(a) }.disabled(!perform.enabled(a))
+            }
+          }
+        }
+        .controlSize(.small)
+      }
+      if !choices.isEmpty {
+        GuideFlow(spacing: 6) {
+          ForEach(choices, id: \.self) { c in
+            Button { if let onChoice { onChoice(c) } else { guide.choose(c) } } label: { GuideChip(text: c) }
+            .buttonStyle(.plain).disabled(guide.busy || (guide.speakingChat?.busy ?? false))
+            .accessibilityHint("この返事を送ります")
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Choices wrap onto as many lines as they need.
+struct GuideFlow: Layout {
+  var spacing: CGFloat = 6
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let width = proposal.width ?? 260
+    var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
+    for v in subviews {
+      let s = v.sizeThatFits(.unspecified)
+      if x > 0 && x + s.width > width { y += line + spacing; x = 0; line = 0 }
+      x += s.width + spacing
+      line = max(line, s.height)
+      widest = max(widest, x - spacing)
+    }
+    return CGSize(width: min(width, widest), height: y + line)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
+    for v in subviews {
+      let s = v.sizeThatFits(.unspecified)
+      if x > bounds.minX && x + s.width > bounds.maxX { y += line + spacing; x = bounds.minX; line = 0 }
+      v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+      x += s.width + spacing
+      line = max(line, s.height)
+    }
+  }
+}
+
+/// The first greeting: what are you interested in? The answer (typed, or a
+/// suggestion tapped) has Tsugumi pick a demo and fly to it.
+private struct GuideOfferBubble: View {
+  let perform: GuidePerformer
+  @State private var text = ""
+  @FocusState private var focused: Bool
+  private var guide: GuideController { .shared }
+  static let suggestions = [String(localized: "データの集計とレポート"), String(localized: "ライブ表示"),
+                            String(localized: "C++ と Python"), String(localized: "天文・地震・タンパク質のデータ")]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。").fixedSize(horizontal: false, vertical: true)
+      GuideFlow(spacing: 6) {
+        ForEach(Self.suggestions, id: \.self) { s in
+          Button { guide.answerInterest(s) } label: { GuideChip(text: s) }.buttonStyle(.plain)
+        }
+      }
+      GuideReplyField(text: $text, placeholder: String(localized: "興味のあること（例: 画像処理）")) { guide.answerInterest($0) }
+        .focused($focused)
+      HStack {
+        Button("定番のデモを見る") { perform(GuideAction(kind: .openDemo, label: "", demo: "report")) }
+        Button("あとで") { guide.answerDemoOffer() }
+      }
+      .controlSize(.small)
+    }
+    .font(.callout)
+    .padding(10)
+    .frame(width: 280, alignment: .leading)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(TsugumiPalette.rufous.opacity(0.45)))
+    .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+    .onAppear { focused = true }
+  }
+}
+
+/// A reply to tap, as a small capsule.
+struct GuideChip: View {
+  let text: String
+  var body: some View {
+    Text(text).font(.callout).padding(.horizontal, 10).padding(.vertical, 4)
+      .background(Capsule().fill(TsugumiPalette.rufous.opacity(0.14)))
+      .overlay(Capsule().strokeBorder(TsugumiPalette.rufous.opacity(0.5)))
+  }
+}
+
+/// A one-line answer to Tsugumi in its bubble (Return sends it).
+struct GuideReplyField: View {
+  @Binding var text: String
+  var placeholder = String(localized: "ツグミに返事")
+  let send: (String) -> Void
+
+  var body: some View {
+    HStack(spacing: 4) {
+      TextField(placeholder, text: $text)
+        .textFieldStyle(.roundedBorder).controlSize(.small)
+        .onSubmit(go)
+        .accessibilityLabel("ツグミへの返事")
+      Button(action: go) { Image(systemName: "arrow.up.circle.fill").foregroundStyle(TsugumiPalette.rufous) }
+        .buttonStyle(.plain).disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+        .help("送信").accessibilityLabel("送信")
+    }
+  }
+
+  private func go() {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    text = ""
+    send(t)
+  }
+}
+
+// MARK: - Tsugumi of the chat
+
+/// Where Tsugumi waits in a project: at the top left of the chat (or on the
+/// chat button while the chat is closed). It flies out from here (GuideFlyer)
+/// and comes back; it thinks while the chat answers.
+struct GuideNest: View {
+  var busy = false
+  var size: CGFloat = 30
+  @Environment(GuideStage.self) private var stage: GuideStage?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    TimelineView(.animation(minimumInterval: 1 / 30, paused: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))) { ctx in
+      let t = AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion) ? 0 : ctx.date.timeIntervalSinceReferenceDate
+      Canvas { g, s in
+        var pose = BirdPose()
+        pose.blink = t.truncatingRemainder(dividingBy: 4.2) < 0.12 ? 1 : 0
+        if busy { pose.tilt = 0.12 * sin(t * 3.2) } else { pose.squash = CGFloat(sin(t * 1.6) * 0.02) }
+        TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 2), scale: size / 640, pose: pose)
+      }
+    }
+    .frame(width: size * 1.05, height: size * 0.75)
+    .opacity(stage?.away ?? false ? 0 : 1)
+    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
+    .help("ツグミ")
+    .accessibilityLabel("ツグミ")
+    .accessibilityValue(busy ? String(localized: "考えています") : "")
+  }
+}
+
+/// The replies and buttons Tsugumi offered with the chat's last answer.
+struct ChatChoices: View {
+  @Bindable var chat: ChatController
+  var tab: WorkflowTab?
+  @Environment(AppModel.self) private var model
+  @Environment(\.guideWindow) private var window
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+
+  var body: some View {
+    if !chat.busy && (!chat.choices.isEmpty || !chat.offered.isEmpty) {
+      GuideChoices(choices: chat.choices, actions: chat.offered,
+                   perform: GuidePerformer(model: model, window: window, session: chat.session, tab: tab,
+                                           openWindow: openWindow, openSettings: openSettings),
+                   onChoice: { chat.send($0) })
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+}
+
+// MARK: - The flight
+
+/// The bird away from its corner, over the whole window: it flies to what the
+/// guide points at, perches beside it with its bubble, and flies home when
+/// the bubble is closed. Without motion it appears there instead of flying.
+struct GuideFlyer: View {
+  @Environment(GuideStage.self) private var stage
+  @Environment(AppModel.self) private var model
+  @Environment(\.guideWindow) private var window
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var feet: CGPoint?
+  @State private var flyingUntil = Date.distantPast
+  @State private var arrived = false
+  @State private var bubbleSize = CGSize(width: 260, height: 90)
+
+  private var guide: GuideController { .shared }
+  private var still: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion) }
+
+  /// The pointed-at frame while the bubble stands there (window coordinates).
+  private var perch: CGRect? {
+    guard guide.available, let b = guide.bubble, let t = b.target, let p = stage.perch, p.id == t || (t == "stop" && p.id == "run") else { return nil }
+    return p.frame
+  }
+
+  var body: some View {
+    GeometryReader { geo in
+      let o = geo.frame(in: .global).origin
+      let size = geo.size
+      ZStack(alignment: .topLeading) {
+        if stage.away, let f = feet {
+          let left = perch.map { $0.midX > o.x + size.width / 2 } ?? true
+          TimelineView(.animation(minimumInterval: 1 / 30, paused: still)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let flying = ctx.date < flyingUntil
+            Canvas { g, s in
+              var pose = BirdPose()
+              if flying { pose.flap = (sin(t * 22) + 1) / 2; pose.tilt = -0.1 }
+              else if !still { pose.hop = CGFloat(max(0, sin(t * 2.4)) * 2); pose.blink = t.truncatingRemainder(dividingBy: 4.2) < 0.12 ? 1 : 0 }
+              TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 4), scale: 0.1, pose: pose)
+            }
+            .scaleEffect(x: left ? -1 : 1, y: 1)
+          }
+          .frame(width: 90, height: 64)
+          .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
+          .position(x: f.x - o.x, y: f.y - o.y - 30)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+          if arrived, let b = guide.bubble {
+            GuideBubbleView(bubble: b, perform: GuidePerformer(model: model, window: window, session: guide.flyerSession,
+                                                               tab: guide.flyerTab, openWindow: openWindow, openSettings: openSettings))
+              .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
+              .position(bubbleCenter(feet: CGPoint(x: f.x - o.x, y: f.y - o.y), left: left, in: size))
+              .transition(.opacity.combined(with: .scale(scale: 0.9)))
+          }
+        }
+      }
+      .frame(width: size.width, height: size.height, alignment: .topLeading)
+      .onChange(of: perch.map { feetPoint($0, origin: o, size: size) }, initial: true) { _, p in fly(to: p) }
+    }
+  }
+
+  /// Where the bird stands: on the top edge of the target, at its right end
+  /// (its left end near the window's right edge), inside the window.
+  private func feetPoint(_ r: CGRect, origin o: CGPoint, size: CGSize) -> CGPoint {
+    let right = r.maxX + 40 < o.x + size.width - 40
+    let x = right ? r.maxX + 18 : r.minX - 18
+    return CGPoint(x: min(max(x, o.x + 40), o.x + size.width - 40), y: min(max(r.minY + 10, o.y + 70), o.y + size.height - 10))
+  }
+
+  private func bubbleCenter(feet f: CGPoint, left: Bool, in size: CGSize) -> CGPoint {
+    let w = bubbleSize.width, h = bubbleSize.height
+    var x = f.x + (left ? w / 2 - 30 : -w / 2 + 30)
+    var y = f.y + 14 + h / 2
+    if y + h / 2 > size.height - 8 { y = f.y - 70 - h / 2 }
+    x = min(max(x, w / 2 + 8), size.width - w / 2 - 8)
+    y = min(max(y, h / 2 + 8), size.height - h / 2 - 8)
+    return CGPoint(x: x, y: y)
+  }
+
+  private func fly(to target: CGPoint?) {
+    let home = CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 6)
+    let duration = still ? 0 : 0.9
+    if let target {
+      if !stage.away {
+        feet = home
+        stage.away = true
+      }
+      arrived = false
+      flyingUntil = Date().addingTimeInterval(duration)
+      withAnimation(still ? nil : .easeInOut(duration: duration)) { feet = target }
+      Task { @MainActor in
+        try? await Task.sleep(for: .seconds(duration))
+        if feet == target { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
+      }
+    } else if stage.away {
+      arrived = false
+      flyingUntil = Date().addingTimeInterval(duration)
+      withAnimation(still ? nil : .easeInOut(duration: duration)) { feet = home }
+      Task { @MainActor in
+        try? await Task.sleep(for: .seconds(duration))
+        if feet == home { stage.away = false }
+      }
+    }
   }
 }
 
@@ -173,6 +529,17 @@ struct GuidePerformer {
       window?.newProject()
     case .home:
       window?.home()
+    }
+  }
+
+  /// A button that cannot do anything now is shown but disabled (a run while one runs, ...).
+  func enabled(_ a: GuideAction) -> Bool {
+    switch a.kind {
+    case .run: return session.map { $0.connected && !$0.runActive } ?? false
+    case .stop: return session?.runActive ?? false
+    case .openCard: return session != nil
+    case .openDemo, .home, .newProject: return !(session?.runActive ?? false)
+    default: return true
     }
   }
 
@@ -238,24 +605,6 @@ struct GuideAvatar: View {
 }
 
 // MARK: - The panel
-
-/// The guide's panel in a project's inspector column: above the Agent chat
-/// when it is open (`split`), the whole column otherwise.
-struct GuideDock: View {
-  let session: ProjectSession
-  let tab: WorkflowTab?
-  @Environment(AppModel.self) private var model
-  @Environment(\.guideWindow) private var window
-  @Environment(\.openWindow) private var openWindow
-  @Environment(\.openSettings) private var openSettings
-
-  var body: some View {
-    GuidePanel(screen: .project, session: session, tab: tab,
-               perform: GuidePerformer(model: model, window: window, session: session, tab: tab,
-                                       openWindow: openWindow, openSettings: openSettings),
-               docked: true)
-  }
-}
 
 /// The conversation with the guide: its greeting and demo offer, the tour
 /// being shown, the replies with their buttons, and a field to ask in.

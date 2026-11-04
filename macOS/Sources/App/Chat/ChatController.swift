@@ -385,6 +385,31 @@ final class ChatController {
     }
   }
 
+  /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
+  private(set) var choices: [String] = []
+  private(set) var offered: [GuideAction] = []
+  /// Notes of the app (a demo tour's runs) that came while it answered.
+  @ObservationIgnored private var notes: [(prompt: String, display: String)] = []
+
+  /// Something the app tells Tsugumi (a tour step, a run that ended); one that
+  /// comes while it answers waits for the answer to end.
+  func tell(prompt: String, display: String) {
+    if busy {
+      notes.append((prompt, display))
+      return
+    }
+    sendRequest(display: display, prompt: prompt)
+  }
+
+  private func flushNotes() {
+    guard !notes.isEmpty else { return }
+    let n = notes
+    notes = []
+    sendRequest(display: n.last!.display, prompt: n.map(\.prompt).joined(separator: "\n"))
+  }
+
+  private var lastReply: String { items.last { $0.role == "assistant" }?.text ?? "" }
+
   /// Sends a request the app wrote for the model; the chat shows `display`.
   private func sendRequest(display: String, prompt: String) {
     guard let agent else { return }
@@ -484,6 +509,9 @@ final class ChatController {
   }
 
   private func begin() {
+    choices = []
+    offered = []
+    GuideController.shared.chatTurnBegan(self)
     busy = true
     failed = false
     usageLimited = false
@@ -575,6 +603,14 @@ final class ChatController {
       }
     case .helper(let name, let event):
       handleHelper(name, event)
+    case .toolStarted(_, "guide_show", let args):
+      // The bird flies and speaks; the chat keeps the choices under the answer.
+      let shown = GuideAction.parse(args)
+      choices = shown.choices
+      offered = shown.actions
+      GuideController.shared.chatShow(self, arguments: args)
+    case .toolFinished(_, "guide_show", _, _):
+      break
     case .toolStarted(_, let name, let args):
       items.append(Item(role: "tool", text: args, tool: (name, nil)))
       if name == "delegate" { startHelpers(args) }
@@ -597,6 +633,8 @@ final class ChatController {
       // The reply is asked again: what it had streamed goes.
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
+      if s == "cancelled" { notes = [] }
       busy = false
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
@@ -606,11 +644,14 @@ final class ChatController {
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
       session.presence.turnEnded()
       refreshAfterTurn()
       tidySoon()
+      flushNotes()
     case .stepLimit(let steps, let run):
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
       session.presence.turnEnded(.limit)
       stoppedAtLimit = true

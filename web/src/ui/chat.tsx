@@ -13,6 +13,8 @@ import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { ChatChoices, GuideNest } from './guide'
+import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
 
 export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSession; chat: ChatController; detached: boolean; tab?: WorkflowTab }) {
@@ -22,6 +24,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
   return (
     <div className="chat-panel">
       <div className="chat-header">
+        {!detached && <GuideNest busy={chat.busy} />}
         <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? '会話に戻る' : '会話の一覧と検索'} onClick={() => setShowList(!showList)} />
         <b className="ellipsis flex1">{showList ? '会話' : chat.sessions.find((x) => x.id === chat.currentId)?.title ?? '新しい会話'}</b>
         <Button kind="borderless" iconOnly icon="square.and.pencil" help="新しい会話" onClick={() => { chat.newSession(); setShowList(false) }} />
@@ -132,7 +135,7 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
         <div className="chat-column">
           {chat.items.length === 0 && (
             <div className="chat-intro">
-              <div className="callout">Workflow の相談・生成・編集を依頼できます。</div>
+              <div className="callout">{guide.available ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
               <div className="caption secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</div>
             </div>
           )}
@@ -157,6 +160,7 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
           {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>続ける</Button>}
         </div>
       )}
+      <ChatChoices chat={chat} session={session} tab={tab} />
       <Composer session={session} chat={chat} tab={tab} />
     </>
   )

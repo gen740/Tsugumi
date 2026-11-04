@@ -1108,6 +1108,21 @@ EN = {
 "見る": "Show Me",
 "質問できる会話を開きます": "Opens a conversation to ask questions",
 "閉じる（Esc）。ツグミは右下に残ります": "Close (Esc). Tsugumi stays at the bottom right",
+"ここです": "Here",
+"この返事を送ります": "Sends this reply",
+"こんにちは、ツグミです。動くデモを一緒に見てみますか？": "Hello, I'm Tsugumi. Shall we look at a working demo together?",
+"ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。": "I'm Tsugumi. Ask me to plan, build or edit a workflow, or how to use the app.",
+"ツグミの吹き出し": "Tsugumi's speech bubble",
+"閉じる（ツグミは元の場所に戻ります）": "Close (Tsugumi goes back to its place)",
+"C++ と Python": "C++ and Python",
+"こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。": "Hello, I'm Tsugumi. What are you interested in? I'll find a demo that fits and show you around.",
+"ツグミに返事": "Reply to Tsugumi",
+"ツグミへの返事": "Reply to Tsugumi",
+"データの集計とレポート": "Aggregating data into reports",
+"ライブ表示": "Live display",
+"天文・地震・タンパク質のデータ": "Astronomy, seismic and protein data",
+"定番のデモを見る": "See the Standard Demo",
+"興味のあること（例: 画像処理）": "What interests you (e.g. image processing)",
 }
 
 

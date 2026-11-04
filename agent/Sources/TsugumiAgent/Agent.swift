@@ -408,7 +408,7 @@ public actor Agent {
     if role == .guide {
       return catalog.tools.filter { Shared.data.guide.tools.contains($0.name) } + reference + [Self.guideShowTool]
     }
-    return catalog.tools + reference + (helper == nil ? [Self.delegateTool] : [])
+    return catalog.tools + reference + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
   }
 
   static let guideShowTool = ToolSpec(
@@ -497,8 +497,10 @@ public actor Agent {
       let (text, isError) = readReference(path)
       return try finish(&record, text, isError: isError, events)
     }
+    if name == Self.guideShowTool.name, role == .guide || helper == nil {
+      return try finish(&record, Shared.data.guide.text("shown"), isError: false, events)
+    }
     if role == .guide {
-      if name == Self.guideShowTool.name { return try finish(&record, Shared.data.guide.text("shown"), isError: false, events) }
       guard Shared.data.guide.tools.contains(name) else {
         return try finish(&record, Self.guideText("readOnly", ["tool": name]), isError: true, events)
       }

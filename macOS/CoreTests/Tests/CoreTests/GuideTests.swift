@@ -19,6 +19,16 @@ import TsugumiRPC
     }
     #expect(!offered.contains("project_save") && !offered.contains("run") && !offered.contains("run_cancel"))
     #expect(Agent.guidePrompt.hasPrefix("You are Tsugumi, the guide bird"))
+    // The chat's Agent is the same Tsugumi: it can fly and offer choices too; its helpers cannot.
+    let chat = try Agent(catalog: catalog, transport: NoTransport(), provider: .localFixture(port: 1),
+                         storage: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID()).json"))
+    let chatTools = Set(await chat.tools.map(\.name))
+    #expect(chatTools.contains("guide_show") && chatTools.contains("project_save"))
+    let helper = try Agent(catalog: catalog, transport: NoTransport(), provider: .localFixture(port: 1),
+                           storage: FileManager.default.temporaryDirectory.appendingPathComponent("helper-\(UUID()).json"),
+                           helper: .init(name: "a", cards: ["a"], instruction: "x"))
+    let helperTools = Set(await helper.tools.map(\.name))
+    #expect(!helperTools.contains("guide_show"))
   }
 
   /// With the local model and a real tsugumid: the guide reads the project,

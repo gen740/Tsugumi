@@ -94,6 +94,10 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
   assert.deepEqual(offered, [...AGENT.guide.tools, 'guide_show'])
   for (const t of AGENT.guide.tools) assert.equal(catalog.tool(t)?.mutating, false, `${t} changes the project`)
   assert.ok(g.system.startsWith('You are Tsugumi, the guide bird'))
+  // The chat's Agent is the same Tsugumi: it can fly and offer choices too.
+  const chat = new Agent(catalog, async () => { throw new Error('no rpc') },
+    { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never, path.join(tmp, 'c.json'), 'c', {})
+  assert.ok(chat.tools.some((t) => t.name === 'guide_show') && chat.system.includes('You are Tsugumi: the bird of this chat'))
   fs.rmSync(tmp, { recursive: true, force: true })
 }
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

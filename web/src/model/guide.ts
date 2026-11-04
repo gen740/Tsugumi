@@ -10,6 +10,7 @@ import { app } from './app'
 import { Observable } from './observable'
 import { get, str } from '../shared/json'
 import { CardKey, cardState, KIND_LABEL, key, ProjectSession, runState } from './session'
+import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
@@ -24,6 +25,8 @@ export interface GuideItem {
   role: 'user' | 'assistant' | 'note'
   text: string
   actions?: GuideAction[]
+  /** Replies to tap (guide_show "choices"), under the newest reply only. */
+  choices?: string[]
 }
 
 /** The demo being shown: its id and title, the copy's folder, and whether the guide began it. */
@@ -32,13 +35,30 @@ export interface GuideTour { demo: string; title: string; path: string; started:
 /** What the screen the user asks from shows. */
 export type GuideScreen = 'home' | 'demos' | 'project'
 
-/** What a guide_show call points at and offers. */
-export function parseShow(args: string): { highlight?: string; actions: GuideAction[] } {
+/** A guide_show call: where the bird flies, what it says there, the replies
+ *  it offers to tap and the buttons that act. */
+export interface GuideShow { highlight?: string; say?: string; choices: string[]; actions: GuideAction[] }
+
+/** What the bird says in its bubble, where it is (target; undefined: at
+ *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
+export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean }
+
+/** The first sentence of a reply, short enough for the bubble. */
+export function firstSentence(text: string): string | undefined {
+  const line = text.replace(/\*\*|`/g, '').split('\n').map((l) => l.replace(/^[\s#>*•-]+/, '').trim()).find((l) => l) ?? ''
+  if (!line) return undefined
+  const m = line.match(/^.*?[。！？!?]/)
+  const s = m ? m[0] : line
+  return s.length > 80 ? s.slice(0, 78) + '…' : s
+}
+
+/** What a guide_show call points at, says and offers. */
+export function parseShow(args: string): GuideShow {
   let v: any
   try {
     v = JSON.parse(args)
   } catch {
-    return { actions: [] }
+    return { choices: [], actions: [] }
   }
   const actions = (Array.isArray(v?.actions) ? v.actions : []).flatMap((a: any): GuideAction[] => {
     if (!KINDS.includes(a?.kind)) return []
@@ -46,7 +66,10 @@ export function parseShow(args: string): { highlight?: string; actions: GuideAct
     return [{ kind: a.kind, label, demo: typeof a.demo === 'string' ? a.demo : undefined, card: typeof a.card === 'string' ? a.card : undefined }]
   }).slice(0, 3) // unknown kinds are dropped first; at most three buttons
   const h = typeof v?.highlight === 'string' ? v.highlight.trim() : ''
-  return { highlight: h || undefined, actions }
+  const say = typeof v?.say === 'string' ? v.say.trim() : ''
+  const choices = (Array.isArray(v?.choices) ? v.choices : []).filter((c: unknown): c is string => typeof c === 'string' && !!c.trim())
+    .map((c: string) => c.trim()).slice(0, 4)
+  return { highlight: h || undefined, say: say || undefined, choices, actions }
 }
 
 const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
@@ -71,12 +94,23 @@ export class GuideController extends Observable {
   /** What the guide is doing now, in a few words. */
   activity?: string
   open = false
-  /** The part of the screen the guide points at (guide_show), for a while. */
+  /** The part of the screen the guide points at and the bird flies to (guide_show). */
   highlight?: string
+  /** The bird's speech bubble (undefined: it sits quietly at home). */
+  bubble?: GuideBubble
+  /** The project chat whose bubble is out (undefined: the guide's own on Home). */
+  speakingChat?: ChatController
+  /** The project and workflow on the screen (choices and buttons act there). */
+  contextScreen: GuideScreen = 'home'
+  contextSession?: ProjectSession
+  contextTab?: WorkflowTab
+  /** The bird has left home (its home shows no bird meanwhile). */
+  away = false
   /** Home's demo list asked for by the guide (show_demos). */
   demosRequested = false
   private n = 0
   private pending: GuideAction[] = []
+  private pendingChoices: string[] = []
   private queued: { prompt: string; display: string }[] = []
   private highlightTimer?: ReturnType<typeof setTimeout>
   private readSession?: ProjectSession
@@ -123,7 +157,8 @@ export class GuideController extends Observable {
       if (!this.available) {
         this.open = false
         this.highlight = undefined
-      } else if (this.offersDemo && !wasOffered) this.open = true
+      }
+      void wasOffered
     } catch {}
     this.changed()
   }
@@ -147,7 +182,6 @@ export class GuideController extends Observable {
     await this.saveState({ setupDone: false, demoAnswered: false })
     this.demoAnswered = false
     await this.refresh()
-    if (this.offersDemo) this.set('open', true)
   }
 
   answerDemoOffer() {
@@ -158,19 +192,32 @@ export class GuideController extends Observable {
 
   // ---- Conversation ----------------------------------------------------------------
 
+  /** What the user is interested in (the first question on Home): the guide
+   *  picks a demo for it and flies to it in the demo list. */
+  answerInterest(q: string) {
+    if (!q.trim()) return
+    this.answerDemoOffer()
+    this.demosRequested = true
+    this.ask(q, 'demos', undefined, undefined, "[Interest] The user answered what interests them; pick a demo for it.")
+  }
+
   /** A question of the user, with what their screen shows. */
-  ask(q: string, screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab) {
+  ask(q: string, screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab, note?: string) {
     const t = q.trim()
     if (!this.available || this.busy || !t) return
     this.readSession = session
-    this.clearHighlight()
     this.items.push({ id: ++this.n, role: 'user', text: t })
-    void this.send(t + '\n\n' + this.screenNote(screen, session, tab), t, session)
+    void this.send((note ? note + '\n' : '') + t + '\n\n' + this.screenNote(screen, session, tab), t, session)
   }
 
   /** Something the app tells the guide (a tour step, a run that ended); one
    *  that comes while it answers waits for the answer to end. */
   private tell(prompt: string, display: string, session?: ProjectSession) {
+    // In the demo's copy, Tsugumi of its chat leads the tour.
+    if (session) {
+      app.chat(session).tell(prompt, display)
+      return
+    }
     if (!this.available) return
     if (this.busy) {
       this.queued.push({ prompt, display })
@@ -225,6 +272,10 @@ export class GuideController extends Observable {
     this.failed = false
     this.status = undefined
     this.pending = []
+    this.pendingChoices = []
+    // The bird stays where it is and thinks.
+    this.speakingChat = undefined
+    this.bubble = { id: ++this.n, choices: [], actions: [], target: this.highlight, thinking: true }
     this.activity = '考えています'
     this.changed()
   }
@@ -241,8 +292,11 @@ export class GuideController extends Observable {
       case 'toolStarted':
         if (e.name === 'guide_show') {
           const shown = parseShow(e.arguments)
-          if (shown.highlight) this.point(shown.highlight)
+          this.point(shown.highlight)
           this.pending.push(...shown.actions)
+          this.pendingChoices.push(...shown.choices)
+          this.speakingChat = undefined
+          this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight }
         } else {
           this.activity = e.name.startsWith('run') || e.name === 'log_range' ? '実行の様子を見ています' : 'プロジェクトを読んでいます'
         }
@@ -263,6 +317,7 @@ export class GuideController extends Observable {
         break
       case 'error':
         this.ended()
+        this.bubble = undefined
         this.queued = []
         this.failed = e.message !== 'cancelled'
         this.status = e.message === 'cancelled' ? '回答を止めました。' : `うまく答えられませんでした: ${e.message}`
@@ -276,13 +331,76 @@ export class GuideController extends Observable {
   private ended() {
     this.busy = false
     this.activity = undefined
-    if (!this.pending.length) return
-    // Only the newest buttons are offered.
-    for (const i of this.items) i.actions = undefined
+    // The bird says the answer's first sentence where it is, when guide_show gave no line.
     const last = this.items[this.items.length - 1]
-    if (last?.role === 'assistant') last.actions = this.pending
-    else this.items.push({ id: ++this.n, role: 'assistant', text: '', actions: this.pending })
+    const reply = last?.role === 'assistant' ? last.text : ''
+    if (this.bubble) {
+      let b = this.bubble
+      if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
+      if (!b.say) b = { ...b, say: firstSentence(reply) }
+      this.bubble = !b.say && !b.choices.length && !b.actions.length && !b.target ? undefined : b
+    }
+    if (!this.pending.length && !this.pendingChoices.length) return
+    // Only the newest buttons and choices are offered.
+    for (const i of this.items) { i.actions = undefined; i.choices = undefined }
+    if (last?.role === 'assistant') { last.actions = this.pending; last.choices = this.pendingChoices }
+    else this.items.push({ id: ++this.n, role: 'assistant', text: '', actions: this.pending, choices: this.pendingChoices })
     this.pending = []
+    this.pendingChoices = []
+  }
+
+  // ---- Bubbles and Tsugumi of a project's chat ----------------------------------------
+
+  /** The screen the page shows, for choices tapped in a bubble. */
+  setContext(screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab) {
+    this.contextScreen = screen
+    this.contextSession = session
+    this.contextTab = tab
+  }
+
+  /** A choice tapped in a bubble: the user's answer, to whichever Tsugumi offered it. */
+  choose(c: string) {
+    if (this.speakingChat) this.speakingChat.send(c)
+    else this.ask(c, this.contextScreen, this.contextSession, this.contextTab)
+  }
+
+  /** The bubble is closed: the bird flies back home. */
+  dismissBubble() {
+    this.bubble = undefined
+    this.highlight = undefined
+    this.changed()
+  }
+
+  /** The chat's Tsugumi called guide_show: the bird flies and speaks for it. */
+  chatShow(chat: ChatController, args: string) {
+    if (!this.available) return
+    const shown = parseShow(args)
+    this.speakingChat = chat
+    this.highlight = shown.highlight
+    this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight }
+    this.changed()
+  }
+
+  /** The chat answers: a bubble that is out shows that it thinks. */
+  chatTurnBegan(chat: ChatController) {
+    if (this.speakingChat !== chat || !this.bubble) return
+    this.bubble = { id: ++this.n, choices: [], actions: [], target: this.bubble.target, thinking: true }
+    this.changed()
+  }
+
+  /** The chat's answer ended: a bubble still thinking says its first sentence. */
+  chatTurnEnded(chat: ChatController, reply: string) {
+    if (this.speakingChat !== chat || !this.bubble) return
+    let b = this.bubble
+    if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
+    if (!b.say) b = { ...b, say: firstSentence(reply) }
+    this.bubble = !b.say && !b.choices.length && !b.actions.length ? undefined : b
+    this.changed()
+  }
+
+  /** Whether a project is the copy of the demo being shown. */
+  touring(s: ProjectSession) {
+    return !!this.tour && this.same(this.tour.path, s)
   }
 
   private flush() {
@@ -296,9 +414,11 @@ export class GuideController extends Observable {
     const out: GuideItem[] = []
     // The buttons of a guide_show go under the reply that follows it; only the newest stay.
     let shown: GuideAction[] = []
+    let choices: string[] = []
     const flush = () => {
-      if (shown.length) out.push({ id: ++this.n, role: 'assistant', text: '', actions: shown })
+      if (shown.length || choices.length) out.push({ id: ++this.n, role: 'assistant', text: '', actions: shown, choices })
       shown = []
+      choices = []
     }
     for (const m of messages) {
       if (m.role === 'user') {
@@ -311,24 +431,31 @@ export class GuideController extends Observable {
       }
       for (const b of m.content) {
         if (b.type === 'text' && b.text) {
-          out.push({ id: ++this.n, role: 'assistant', text: b.text, actions: shown.length ? shown : undefined })
+          out.push({ id: ++this.n, role: 'assistant', text: b.text, actions: shown.length ? shown : undefined, choices: choices.length ? choices : undefined })
           shown = []
+          choices = []
         }
-        if (b.type === 'tool_use' && b.name === 'guide_show') shown = parseShow(b.input ?? '{}').actions
+        if (b.type === 'tool_use' && b.name === 'guide_show') {
+          const g = parseShow(b.input ?? '{}')
+          shown = g.actions
+          choices = g.choices
+        }
       }
     }
     flush()
-    const newest = out.map((x) => !!x.actions?.length).lastIndexOf(true)
-    out.forEach((x, i) => { if (i !== newest) x.actions = undefined })
+    const newest = out.map((x) => !!x.actions?.length || !!x.choices?.length).lastIndexOf(true)
+    out.forEach((x, i) => { if (i !== newest) { x.actions = undefined; x.choices = undefined } })
     this.items = out
   }
 
   // ---- Pointing --------------------------------------------------------------------
 
-  private point(target: string) {
-    this.highlight = target
+  /** Where the bird flies and the ring is drawn, until the bubble is closed or it moves on. */
+  private point(target?: string) {
     clearTimeout(this.highlightTimer)
-    this.highlightTimer = setTimeout(() => this.clearHighlight(), 12_000)
+    this.highlight = target
+    // A demo's card is in Home's demo list: it opens to show it.
+    if (target?.startsWith('demo:')) this.demosRequested = true
   }
 
   clearHighlight() {
@@ -361,7 +488,8 @@ export class GuideController extends Observable {
       lines.push('screen: Home (recent projects, new project, open, デモを見る)')
     }
     if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
-    lines.push('demos: ' + (app.status?.demos ?? []).map((d) => `${d.id} "${d.title}"`).join(', '))
+    lines.push('demos (id, title, tags: description):')
+    for (const d of app.status?.demos ?? []) lines.push(`- ${d.id} "${d.title}", ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
     return lines.join('\n')
   }
 
@@ -385,7 +513,7 @@ export class GuideController extends Observable {
     this.answerDemoOffer()
     this.tour = { demo: demo.id, title: demo.title, path: copy, started: false }
     this.seen = undefined
-    this.open = true
+    this.open = false
     this.changed()
     void this.saveState({ tour: this.tour })
   }

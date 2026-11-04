@@ -47,6 +47,7 @@ struct ChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 8) {
+      if !detached && GuideController.shared.available { GuideNest(busy: chat.busy) }
       Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "list.bullet") }
         .buttonStyle(.borderless)
         .help(showList ? "会話に戻る" : "会話の一覧と検索")
@@ -123,7 +124,8 @@ struct ChatPanel: View {
           LazyVStack(alignment: .leading, spacing: 12) {
             if chat.items.isEmpty {
               VStack(alignment: .leading, spacing: 6) {
-                Text("Workflow の相談・生成・編集を依頼できます。").font(.callout)
+                Text(GuideController.shared.available ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
+                                                       : String(localized: "Workflow の相談・生成・編集を依頼できます。")).font(.callout)
                 Text("Card を右クリックして参照に追加、$ で Skill を選べます。").font(.caption).foregroundStyle(.secondary)
               }
               .padding(.top, 16)
@@ -152,6 +154,7 @@ struct ChatPanel: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
       }
+      if !detached { ChatChoices(chat: chat, tab: tab) }
       composer
     }
   }

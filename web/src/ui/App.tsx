@@ -12,7 +12,7 @@ import { errorText } from '../model/session'
 import { Workspace } from '../model/workspace'
 import { runAll } from './actions'
 import { Button, Empty, MenuHost, Sheet, Spinner, TextField } from './controls'
-import { GuideSetupSheet, setGuideWindow } from './guide'
+import { GuideFlyer, GuideSetupSheet, setGuideWindow } from './guide'
 import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
@@ -155,7 +155,10 @@ export function App() {
           if (s && !detached) setDuplicating(true)
           return
         case 'toggleGuide':
-          if (!detached && guide.available) guide.set('open', !guide.open)
+          // In a project Tsugumi is the chat; on Home, its panel in the corner.
+          if (detached || !guide.available) return
+          if (workspace.session) workspace.set('showChat', !workspace.showChat)
+          else guide.set('open', !guide.open)
           return
       }
       if (!s || !tab) return
@@ -200,6 +203,7 @@ export function App() {
       {body}
       <WindowHost />
       <MenuHost />
+      {!detached && <GuideFlyer />}
       {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
       {app.requestOpenProject && (
         <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject

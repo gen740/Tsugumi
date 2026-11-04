@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
-import { guide, GuideAction, GuideItem, GuideScreen, GuideTour } from '../model/guide'
+import type { ChatController } from '../model/chat'
+import { guide, GuideAction, GuideBubble, GuideItem, GuideScreen, GuideTour } from '../model/guide'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
@@ -36,45 +37,231 @@ function GuideRings() {
   return <style>{`${sel} { outline: 2.5px solid ${PALETTE.rufous}; outline-offset: 4px; border-radius: 8px; animation: guide-ring 1.6s ease-in-out infinite; }`}</style>
 }
 
-/** The bird in the corner and its panel. Shown only with a model connection.
- *  In a project the panel is `docked` in the right column (GuideDock), so it
- *  never covers the canvas; on Home it floats above the bird. */
-export function GuideCorner({ screen, session, tab, docked }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; docked?: boolean }) {
-  useObserve(guide, session, prefs)
-  const runKey = session ? guide.runKey(session) : ''
-  useEffect(() => {
-    if (session) guide.observe(session, tab)
-  }, [runKey, session, tab])
-  useEffect(() => {
-    if (guide.offersDemo && !guide.open) guide.set('open', true)
-  }, [guide.offersDemo])
+/** Tsugumi on Home, in the bottom-right corner (in a project it is the
+ *  chat's, GuideNest). It speaks in a bubble beside it (the demo offer, short
+ *  answers, choices to tap), flies out to what it talks about (GuideFlyer),
+ *  and a click opens its conversation above it. Shown only with a model connection. */
+export function GuideCorner({ screen }: { screen: GuideScreen }) {
+  useObserve(guide, prefs)
+  useEffect(() => guide.setContext(screen), [screen])
   if (!guide.available) return null
-  const tourHere = !!(session && guide.tour && guide.same(guide.tour.path, session))
-  const mood = guide.busy ? 'thinking' : guide.failed ? 'worried' : session?.runActive && tourHere ? 'watching' : 'idle'
-
-  const perform = makePerform(session, tab)
-
+  const mood = guide.busy ? 'thinking' : guide.failed ? 'worried' : 'idle'
+  const perform = makePerform()
   return (
-    <div className={`guide-corner${screen === 'project' ? ' in-project' : ''}`}>
-      <GuideRings />
-      {guide.open && !docked && <GuidePanel screen={screen} session={session} tab={tab} perform={perform} />}
-      <div className="guide-corner-row">
-        {!guide.open && (guide.activity || guide.failed) && (
-          <span className="guide-bubble material" aria-hidden>{guide.activity ? guide.activity + '…' : 'うまく答えられませんでした'}</span>
-        )}
-        <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}`}
-          title={`ガイドのツグミに聞く（${prefs.label('toggleGuide')}）`}
-          aria-label="ガイドのツグミ" aria-expanded={guide.open}
-          onClick={() => guide.set('open', !guide.open)}>
-          <GuideBird />
-        </button>
+    <div className="guide-corner">
+      {guide.open && <GuidePanel screen={screen} perform={perform} />}
+      {!guide.open && !guide.away && (guide.offersDemo ? <OfferBubble perform={perform} />
+        : guide.bubble && !guide.speakingChat ? <BubbleView bubble={guide.bubble} perform={perform} />
+          : guide.failed ? <span className="guide-bubble material">うまく答えられませんでした</span> : null)}
+      <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
+        data-guide-home="" title={`ガイドのツグミに聞く（${prefs.label('toggleGuide')}）`}
+        aria-label="ガイドのツグミ" aria-expanded={guide.open}
+        onClick={() => guide.set('open', !guide.open)}>
+        <GuideBird />
+      </button>
+    </div>
+  )
+}
+
+/** Where Tsugumi waits in a project: at the top left of the chat (or on the
+ *  chat button while the chat is closed). It flies out from here and back. */
+export function GuideNest({ busy, small }: { busy: boolean; small?: boolean }) {
+  useObserve(guide, prefs)
+  if (!guide.available) return null
+  return (
+    <span className={`guide-nest${small ? ' small' : ''}${busy ? ' thinking' : ''}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
+      data-guide-home="" title="ツグミ" aria-label={busy ? 'ツグミ（考えています）' : 'ツグミ'} role="img">
+      <GuideBird />
+    </span>
+  )
+}
+
+/** What the bird says, with the replies to tap and the buttons that act. */
+function BubbleView({ bubble, perform, style }: { bubble: GuideBubble; perform: (a: GuideAction) => void; style?: React.CSSProperties }) {
+  return (
+    <div className="guide-speech material" style={style} role="dialog" aria-label="ツグミの吹き出し">
+      <div className="row gap6">
+        {bubble.thinking ? <span className="secondary flex1">{guide.activity ? guide.activity + '…' : '考えています…'}</span>
+          : <span className="flex1">{bubble.say ?? 'ここです'}</span>}
+        <Button kind="borderless" small iconOnly icon="xmark" help="閉じる（ツグミは元の場所に戻ります）" onClick={() => guide.dismissBubble()} />
+      </div>
+      {!bubble.thinking && <Choices choices={bubble.choices} actions={bubble.actions} perform={perform} onChoice={(c) => guide.choose(c)} />}
+      {!bubble.thinking && <ReplyField onSend={(t) => guide.choose(t)} />}
+    </div>
+  )
+}
+
+/** Replies to tap (sent as the user's message) and buttons that act. */
+function Choices({ choices, actions, perform, onChoice, busy }: { choices: string[]; actions: GuideAction[]; perform: (a: GuideAction) => void; onChoice: (c: string) => void; busy?: boolean }) {
+  if (!choices.length && !actions.length) return null
+  return (
+    <div className="col gap6">
+      {!!actions.length && (
+        <div className="row gap6 wrap">
+          {actions.map((a, i) => <Button key={i} small kind={i === 0 ? 'prominent' : 'bordered'} disabled={!actionEnabled(a)} onClick={() => perform(a)}>{a.label}</Button>)}
+        </div>
+      )}
+      {!!choices.length && (
+        <div className="row gap6 wrap">
+          {choices.map((c) => <button key={c} type="button" className="guide-choice" disabled={busy ?? (guide.busy || !!guide.speakingChat?.busy)} onClick={() => onChoice(c)}>{c}</button>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The replies and buttons Tsugumi offered with the chat's last answer. */
+export function ChatChoices({ chat, session, tab }: { chat: ChatController; session: ProjectSession; tab?: WorkflowTab }) {
+  useObserve(chat, guide)
+  if (chat.busy || (!chat.choices.length && !chat.offered.length)) return null
+  return (
+    <div className="chat-choices">
+      <Choices choices={chat.choices} actions={chat.offered} perform={makePerform(session, tab)} onChoice={(c) => chat.send(c)} busy={chat.busy} />
+    </div>
+  )
+}
+
+const SUGGESTIONS = ['データの集計とレポート', 'ライブ表示', 'C++ と Python', '天文・地震・タンパク質のデータ']
+
+/** The first greeting: what are you interested in? The answer (typed, or a
+ *  suggestion tapped) has Tsugumi pick a demo and fly to it. */
+function OfferBubble({ perform }: { perform: (a: GuideAction) => void }) {
+  return (
+    <div className="guide-speech material" role="dialog" aria-label="ツグミの吹き出し">
+      <span>こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。</span>
+      <div className="row gap6 wrap">
+        {SUGGESTIONS.map((c) => <button key={c} type="button" className="guide-choice" onClick={() => guide.answerInterest(c)}>{c}</button>)}
+      </div>
+      <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
+      <div className="row gap8">
+        <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
+        <Button small onClick={() => guide.answerDemoOffer()}>あとで</Button>
       </div>
     </div>
   )
 }
 
+/** A one-line answer to Tsugumi in its bubble (Return sends it). */
+function ReplyField({ onSend, placeholder = 'ツグミに返事', autoFocus }: { onSend: (t: string) => void; placeholder?: string; autoFocus?: boolean }) {
+  const [text, setText] = useState('')
+  const go = () => {
+    const t = text.trim()
+    if (!t) return
+    setText('')
+    onSend(t)
+  }
+  return (
+    <form className="guide-reply-field" onSubmit={(e) => { e.preventDefault(); go() }}>
+      <input className="field" value={text} placeholder={placeholder} aria-label="ツグミへの返事" autoFocus={autoFocus}
+        onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+      <Button kind="borderless" small iconOnly icon="arrow.up.circle.fill" help="送信" type="submit" disabled={!text.trim()} />
+    </form>
+  )
+}
+
+function actionEnabled(a: GuideAction): boolean {
+  const session = guide.speakingChat?.session ?? guide.contextSession
+  switch (a.kind) {
+    case 'run': return !!session && session.connected && !session.runActive
+    case 'stop': return !!session?.runActive
+    case 'open_card': return !!session
+    case 'open_demo': case 'home': case 'new_project': return !session?.runActive
+    default: return true
+  }
+}
+
+/** The bird away from home, over the whole page: it flies to what Tsugumi
+ *  points at, perches beside it with its bubble, and flies home when the
+ *  bubble is closed. Without motion it appears there instead of flying. */
+export function GuideFlyer() {
+  useObserve(guide, prefs)
+  const [feet, setFeet] = useState<{ x: number; y: number; left: boolean }>()
+  const [arrived, setArrived] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const bubbleRef = useRef<HTMLDivElement>(null)
+  const target = guide.available && guide.bubble?.target ? guide.bubble.target : undefined
+  const still = prefs.tsugumiStill
+  // Where the target and home are now (Cards move with the canvas).
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!target && !guide.away) return
+    const t = setInterval(() => setTick((n) => n + 1), 250)
+    return () => clearInterval(t)
+  }, [target, guide.away])
+  const home = () => {
+    const el = [...document.querySelectorAll('[data-guide-home]')].find((e) => (e as HTMLElement).offsetParent !== null)
+    const r = el?.getBoundingClientRect()
+    return r ? { x: r.left + r.width / 2, y: r.bottom - 6, left: true } : undefined
+  }
+  const scrolled = useRef<string>()
+  const perch = () => {
+    if (!target) return undefined
+    const el = document.querySelector(`[data-guide="${CSS.escape(target === 'stop' ? 'run' : target)}"]`)
+    // A demo card or a control out of view is brought into view once.
+    if (el && scrolled.current !== target) {
+      scrolled.current = target
+      const r0 = el.getBoundingClientRect()
+      if (r0.bottom < 0 || r0.top > window.innerHeight) el.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' })
+    }
+    const r = el?.getBoundingClientRect()
+    if (!r || r.width === 0) return undefined
+    const right = r.right + 300 < window.innerWidth
+    const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
+    const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
+    return { x, y, left: right }
+  }
+  const goal = perch()
+  const goalKey = goal ? `${Math.round(goal.x)},${Math.round(goal.y)}` : ''
+  useEffect(() => {
+    const ms = still ? 0 : 900
+    if (goal) {
+      if (!guide.away) {
+        setFeet(home())
+        guide.away = true
+        guide.changed()
+      }
+      setArrived(false)
+      setMoving(true)
+      // The next frame starts the flight from home.
+      requestAnimationFrame(() => setFeet(goal))
+      const t = setTimeout(() => { setMoving(false); setArrived(true) }, ms)
+      return () => clearTimeout(t)
+    }
+    if (guide.away) {
+      setArrived(false)
+      setMoving(true)
+      setFeet(home())
+      const t = setTimeout(() => { setMoving(false); guide.away = false; guide.changed() }, ms)
+      return () => clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalKey, target])
+  void tick
+  if (!guide.away || !feet) return <GuideRings />
+  const bw = bubbleRef.current?.offsetWidth ?? 270, bh = bubbleRef.current?.offsetHeight ?? 100
+  let bx = feet.left ? feet.x - 30 : feet.x - bw + 30
+  let by = feet.y + 12
+  if (by + bh > window.innerHeight - 8) by = feet.y - 70 - bh
+  bx = Math.min(Math.max(bx, 8), window.innerWidth - bw - 8)
+  by = Math.min(Math.max(by, 8), window.innerHeight - bh - 8)
+  return (
+    <div className="guide-flyer" aria-live="polite">
+      <GuideRings />
+      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${feet.left ? ' left' : ''}`}
+        style={{ left: feet.x - 45, top: feet.y - 64, transition: still ? 'none' : undefined }} aria-hidden>
+        <GuideBird />
+      </div>
+      {arrived && guide.bubble && (
+        <div ref={bubbleRef} className="guide-flyer-bubble" style={{ left: bx, top: by }}>
+          <BubbleView bubble={guide.bubble} perform={makePerform(guide.speakingChat?.session ?? guide.contextSession, guide.contextTab)} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** What a button of the guide does, with the app's own controls. */
-function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
+export function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
   return (a: GuideAction) => {
     switch (a.kind) {
       case 'open_demo':
@@ -140,14 +327,7 @@ const HINTS: Record<'project' | 'home', string[]> = {
   home: ['Tsugumi で何ができる？', 'デモを見せて', '新しいプロジェクトの作り方は？'],
 }
 
-/** The guide's panel in a project's right column: above the Agent chat
- *  when it is open (`split`), the whole column otherwise. */
-export function GuideDock({ session, tab, split }: { session: ProjectSession; tab?: WorkflowTab; split: boolean }) {
-  useObserve(guide, session)
-  return <GuidePanel screen="project" session={session} tab={tab} perform={makePerform(session, tab)} docked split={split} />
-}
-
-function GuidePanel({ screen, session, tab, perform, docked, split }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void; docked?: boolean; split?: boolean }) {
+function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void }) {
   const [text, setText] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -174,7 +354,7 @@ function GuidePanel({ screen, session, tab, perform, docked, split }: { screen: 
     }
   }
   return (
-    <div className={`guide-panel ${docked ? `docked${split ? ' split' : ''}` : 'material'}`} role="dialog" aria-label="ガイドのツグミとの会話"
+    <div className="guide-panel material" role="dialog" aria-label="ガイドのツグミとの会話"
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()
@@ -269,6 +449,7 @@ function Row({ item, perform, enabled }: { item: GuideItem; perform: (a: GuideAc
   return (
     <div className="guide-reply">
       {item.text && <Markdown text={item.text} className="callout" />}
+      {!!item.choices?.length && <Choices choices={item.choices} actions={[]} perform={perform} onChoice={(c) => guide.choose(c)} />}
       {!!item.actions?.length && (
         <div className="row gap8 wrap">
           {item.actions.map((a, i) => (

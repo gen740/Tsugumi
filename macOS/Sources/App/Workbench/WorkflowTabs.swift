@@ -13,8 +13,10 @@ struct WorkflowTabs: View {
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
 
-  /// The guide's panel is open in this main window (docked in the inspector).
-  private var guideDocked: Bool { guideWindow != nil && GuideController.shared.available && GuideController.shared.open }
+  /// What changes in the project that a demo tour follows.
+  private var runKey: String {
+    "\(session.connected)|\(session.currentRunId ?? "")|\(session.runStatus.map { String(describing: $0.state) } ?? "")"
+  }
 
   var body: some View {
     // Sidebar, title and toolbar come from the split view so they never overlap,
@@ -39,32 +41,24 @@ struct WorkflowTabs: View {
             .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
         }
       }
-      .overlay(alignment: .bottomTrailing) {
-        GuideCorner(screen: .project, session: session, tab: workspace.active, docked: true)
-          .padding(.trailing, 14).padding(.bottom, 58)
-      }
-      // The chat, and the guide's panel docked above it: never over the canvas.
-      .inspector(isPresented: Binding(get: { workspace.showChat || guideDocked },
-                                      set: { if !$0 { workspace.showChat = false; GuideController.shared.open = false } })) {
-        VStack(spacing: 0) {
-          if guideDocked {
-            GuideDock(session: session, tab: workspace.active)
-              .frame(maxHeight: workspace.showChat ? 420 : .infinity)
-            if workspace.showChat { Divider() }
+      .inspector(isPresented: $workspace.showChat) {
+        // Wider by default; the width the user gives it is kept (per Mac).
+        // The chat is Tsugumi: the bird waits at its top left (GuideNest).
+        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
+          .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+            if w >= 320 { chatWidth = Double(w.rounded()) }
           }
-          if workspace.showChat {
-            // Wider by default; the width the user gives it is kept (per Mac).
-            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
-          }
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
-          if w >= 320 { chatWidth = Double(w.rounded()) }
-        }
-        .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
+          .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
       }
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
+    // A demo tour: Tsugumi of this chat leads it, following the real runs.
+    .onChange(of: runKey, initial: true) { if guideWindow != nil { GuideController.shared.observe(session, tab: workspace.active) } }
+    .onChange(of: workspace.active?.id, initial: true) {
+      if guideWindow != nil { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
+    }
+    .onAppear { if guideWindow != nil, GuideController.shared.touring(session) { workspace.showChat = true } }
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
     // The title bar stays quiet: the project's name and where the canvas is

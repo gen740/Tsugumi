@@ -21,6 +21,7 @@ def swift() -> str:
         "enum Shared {\n"
         f"  static let systemPrompt = {raw('system-prompt.md')}\n\n"
         f"  static let guidePrompt = {raw('guide-prompt.md')}\n\n"
+        f"  static let chatPrompt = {raw('chat-prompt.md')}\n\n"
         f"  static let agentJSON = {raw('agent.json')}\n"
         "}\n"
     )

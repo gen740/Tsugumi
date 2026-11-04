@@ -13,6 +13,17 @@ import Testing
   #expect(shown.actions[1].demo == "live-stream" && shown.actions[1].label == "open_demo")
   #expect(shown.actions[2].card == "summarize")
   #expect(GuideAction.parse("{").actions.isEmpty && GuideAction.parse("{}").highlight == nil)
+  // What the bird says and the replies to tap (empty ones dropped, at most four).
+  let spoken = GuideAction.parse(#"{"highlight": "card:generate", "say": " CSV を作ります。 ", "choices": ["次へ", " ", "もっと詳しく", "a", "b", "c"]}"#)
+  #expect(spoken.say == "CSV を作ります。" && spoken.choices == ["次へ", "もっと詳しく", "a", "b"])
+}
+
+/// The bubble says the first sentence of an answer that gave it no line.
+@Test func theBubbleSaysTheFirstSentence() {
+  #expect(GuideController.firstSentence("**実行は成功**しました。全 Card が動きました。") == "実行は成功しました。")
+  #expect(GuideController.firstSentence("\n## 見方\n- `heading` が見出しです") == "見方")
+  #expect(GuideController.firstSentence("   ") == nil)
+  #expect((GuideController.firstSentence(String(repeating: "あ", count: 200)) ?? "").count == 79)
 }
 
 /// The tour's copy is recognised whichever spelling of its folder a window has.

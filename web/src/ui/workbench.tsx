@@ -14,7 +14,6 @@ import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel } from './chat'
 import { guide } from '../model/guide'
-import { GuideCorner, GuideDock } from './guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
@@ -69,8 +68,17 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
     document.title = session.scopeName([])
   })
   const problem = hasProblem(session)
-  useObserve(guide)
-  const guideDocked = !!onSwitchProject && guide.available && guide.open
+  // A demo tour: Tsugumi of this chat leads it, following the real runs.
+  const runKey = guide.runKey(session)
+  useEffect(() => {
+    if (onSwitchProject) guide.observe(session, tab)
+  }, [runKey, session, tab])
+  useEffect(() => {
+    if (onSwitchProject) guide.setContext('project', session, tab)
+  }, [session, tab])
+  useEffect(() => {
+    if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)
+  }, [session])
   return (
     <div className="window workflow-window">
       {workspace.showSidebar && tab && (
@@ -99,12 +107,11 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
           </>
         )}
       </div>
-      {!problem && (workspace.showChat || guideDocked) && (
+      {!problem && workspace.showChat && (
         // Wider by default; the width the user gives it is kept (per browser).
-        // The guide's panel docks here, above the chat, never over the canvas.
+        // The chat is Tsugumi: the bird waits at its top left (GuideNest).
         <SidePane side="right" storageKey="chat.width" initial={480} min={320} max={900} className="chat-pane">
-          {guideDocked && <GuideDock session={session} tab={tab} split={workspace.showChat} />}
-          {workspace.showChat && <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />}
+          <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />
         </SidePane>
       )}
       <LoadingOverlay content={loadingContent(session)} />
@@ -135,7 +142,6 @@ export function Workbench({ workspace, session, tab }: { workspace: Workspace; s
       <div className="workbench-canvas">
         <CanvasWorkspace workspace={workspace} session={session} tab={tab} onSwitchProject={workspace.switchProject}
           bottomTrailing={<StatusBar workspace={workspace} session={session} tab={tab} />} />
-        {workspace.switchProject && <GuideCorner screen="project" session={session} tab={tab} docked />}
       </div>
       {workspace.showBottom && <LogTimelinePanel workspace={workspace} session={session} tab={tab} />}
     </div>
