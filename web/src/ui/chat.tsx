@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
-import { ChatController, ChatItem, refLabel, SearchHit, Skill } from '../model/chat'
+import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
 import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
@@ -151,7 +151,9 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
         <div className="chat-status">
           <Icon name={chat.failed ? 'exclamationmark.triangle.fill' : 'info.circle'} style={{ color: chat.failed ? 'var(--red)' : 'var(--secondary)' }} />
           <span className="caption clamp3 selectable flex1" style={{ color: chat.failed ? 'var(--red)' : 'var(--secondary)' }}>{chat.status}</span>
-          {chat.failed && <Button small onClick={() => chat.retry()}>再試行</Button>}
+          {chat.usageLimited
+            ? <Button small kind="prominent" onClick={() => window.open(USAGE_URL, '_blank', 'noopener,noreferrer')}>Manage usage</Button>
+            : chat.failed && <Button small onClick={() => chat.retry()}>再試行</Button>}
           {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>続ける</Button>}
         </div>
       )}
@@ -214,6 +216,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const matches: Skill[] = skillQuery === null ? [] : chat.skills.filter((x) => !skillQuery || x.name.toLowerCase().includes(skillQuery.toLowerCase())).slice(0, 8)
   const highlighted = matches.length ? matches[Math.min(skillIndex, matches.length - 1)] : undefined
   const model = chat.provider.model
+  const modelName = (m: string) => chat.provider.modelNames?.[m] ?? m
   const cmd = isMac ? '⌘' : 'Ctrl+'
 
   const send = () => {
@@ -241,7 +244,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   }
 
   const setModel = (m: string) => {
-    void api('/api/settings', chat.provider.api === 'openAIResponses' ? { openAIModel: m } : { model: m }).then(() => chat.refreshProvider())
+    void api('/api/settings', chat.provider.plan ? { chatGPTModel: m } : chat.provider.api === 'openAIResponses' ? { openAIModel: m } : { model: m }).then(() => chat.refreshProvider())
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -321,14 +324,16 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
             { label: 'フォルダを添付…', disabled: attaching || !session.connected, action: () => setPicking(true) },
           ]} />
           {/* The model, as quiet text under the input (a menu, not a pop-up box). */}
-          <button type="button" className="model-menu" disabled={!chat.provider.usesKey} title={`モデル（接続先: ${chat.provider.name}）`}
+          <button type="button" className="model-menu" disabled={!chat.provider.remote} title={`モデル（接続先: ${chat.provider.name}）`}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
-              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [...new Set([...models, model])].sort().map((m) => ({ label: m, checked: m === model, action: () => setModel(m) })))
+              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [...new Set([...models, model])].sort().map((m) => ({ label: modelName(m), checked: m === model, action: () => setModel(m) })))
             }}>
-            <span className="ellipsis">{model}</span>
+            <span className="ellipsis">{modelName(model)}</span>
             <Icon name="chevron.down" size={8} />
           </button>
+          {/* Requests use the ChatGPT plan: said beside the model, with its usage page. */}
+          {chat.provider.plan && <a className="caption2 secondary" href={USAGE_URL} target="_blank" rel="noopener noreferrer" title="Manage usage（chatgpt.com/settings/usage）">Using ChatGPT plan</a>}
           <span className="spacer" />
           <span className="caption2 tertiary" title={`直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 ${chat.usage.cacheReadTokens ?? 0}、キャッシュに書いた量 ${chat.usage.cacheWriteTokens ?? 0}`}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy

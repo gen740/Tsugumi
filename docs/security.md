@@ -177,9 +177,24 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 - HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
 - 設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。
 
+### ChatGPT プラン（Sign in with ChatGPT）
+
+API キーの代わりに、利用者の ChatGPT（Plus・Pro）プランで Agent を使えます。OpenAI が[オープンソースのツール向けに公開している手順](https://developers.openai.com/siwc/token-sharing-open-source)（ChatGPT plan usage）に従っています（`agent/Sources/TsugumiAgent/ChatGPT.swift`、Web UI は `web/server/chatgpt.ts`）。
+
+- サインインは既定のブラウザで行います。Tsugumi は `127.0.0.1` の空いたポートで `/auth/callback` を待ち、結果を受け取るとすぐに閉じます。毎回新しい `state`・`nonce`・PKCE（S256）を使い、`state` が合わない応答は捨てます。client secret や開発者の API キーは使いません（初回は `dynamic_agent_client` で Tsugumi を登録し、発行された `client_id` を以後のサインインに使います）。
+- ID トークンは OpenAI の JWKS（`https://auth.openai.com/.well-known/jwks.json`）で RS256 の署名を確かめ、発行者・audience（発行された `client_id`）・期限・`nonce` を検査します。以前のアカウントに入り直すときは、同じアカウント（`sub`）であることも確かめます。プランを使う許可（`chatgpt.tokens.use.direct`）が付与されなかったときは、Agent はプランを使わず、許可し直すか API キーを使うよう案内します。
+- ホスト ID（`ext_agent_host_id`）は最初のサインインの前に作る `urn:uuid:`（UUIDv4）で、利用者を識別する情報を含みません。
+- アプリでは、ホスト ID・登録（アカウント）ごとの `client_id`・メールアドレス・ID / アクセス / リフレッシュトークンを、API キーと同じサービスの **ログインキーチェーン** の 1 項目（アカウント名 `ChatGPT`）に置きます。開発版とリリース版は同じ項目を使い、トークンの更新（リフレッシュトークンは更新のたびに替わります）は `~/Library/Caches/app.tsugumi.agent/ChatGPT.lock` で 1 つずつ行い、更新の前に項目を読み直します。
+- Web UI のサーバーは別の agent host です。`security -i` では長い記録を書けないため、ホスト ID と登録・トークンをデータフォルダの `chatgpt.json`（0600、書き換えは一時ファイルから rename）に置きます。アプリでサインインしていても、Web UI では別にサインインします。サインインはサーバーと同じマシンのブラウザで行ってください（`127.0.0.1` の受け口に届く必要があります）。
+- アクセストークン（1 時間）は期限の 5 分前から更新し、API に拒まれた（401）ときは 1 度だけ更新して送り直します。更新が `invalid_grant` などで終わったセッションのトークンは消し、同じ登録でのサインインを求めます。通信やサーバーの一時的な失敗ではトークンを消しません。
+- サインアウトは OpenAI の取り消し口（revocation endpoint）でリフレッシュトークンを取り消してから、手元のトークンを消します（登録とホスト ID は残ります）。取り消しを確かめられなかったときは、ChatGPT の設定から Tsugumi の接続を解除できることを伝えます。
+- トークンは API キーと同じく、`tsugumid`・Linux VM・Card worker・ページへ渡さず、プロジェクトファイル・設定・ログ・会話履歴にも記録しません。リクエストのヘッダー（`Authorization: Bearer`）にだけ載せ、送り先は `https://api.openai.com/v1/responses` と `/v1/models` だけです。
+- プランでのリクエストは `store: false`・`stream: true` で送り（会話は OpenAI 側に保存されません）、`max_output_tokens` を付けず、tool は名前空間 `tsugumi` にまとめます。利用上限（`subscription_sharing_usage_limit_exceeded`）では再試行せずに止め、チャットに「Manage usage」（`https://chatgpt.com/settings/usage`）を出します。別の課金方法へ黙って切り替えることはありません。Plus の 5 時間ごとの上限は、ほかのアプリと共有です。
+- 吹き出しの「思考の過程」の要約は、プランの利用枠を使わないよう、ChatGPT プランでは作りません（決まった文だけを出します）。
+
 ### モデルに送られるもの
 
-Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI）には以下の情報が送信されます。
+Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI。ChatGPT プランも OpenAI）には以下の情報が送信されます。
 - チャットの会話本文
 - チャットに参照として追加した Card や可視化の情報
 - Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから `AttachedFolderRead` で読み取ったファイル内容など）

@@ -554,15 +554,19 @@ private struct APISettings: View {
   @State private var message: String?
 
   private var config: ProviderConfig { provider == "openai" ? .openAI : .anthropic }
+  private var keyed: Bool { provider == "anthropic" || provider == "openai" }
 
   var body: some View {
     Form {
       Picker("接続先", selection: $provider) {
         Text("Anthropic API（API キー）").tag("anthropic")
         Text("OpenAI API（API キー）").tag("openai")
+        Text("ChatGPT プラン（Sign in with ChatGPT）").tag("chatgpt")
         Text("ローカル fixture（テスト用・通信なし）").tag("fixture")
       }
-      if provider == "anthropic" || provider == "openai" {
+      if provider == "chatgpt" {
+        ChatGPTSettings()
+      } else if keyed {
         Section("API キー") {
           TextField("モデル", text: provider == "openai" ? $openAIModel : $anthropicModel)
           LabeledContent("保存先", value: stored.contains(config.name) ? "macOS Keychain（このデバイスのみ・ロック解除中に使用）" : "未設定")
@@ -617,11 +621,7 @@ private struct APISettings: View {
         Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
           .font(.caption).foregroundStyle(.secondary)
       }
-      Section("ChatGPT アカウントでの接続") {
-        Text("未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      }
-      if let message { Text(message).font(.caption) }
+      if keyed, let message { Text(message).font(.caption) }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
     }
     .formStyle(.grouped)

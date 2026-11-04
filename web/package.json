@@ -13,7 +13,8 @@
     "watch": "node scripts/build.mjs --watch",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p .",
-    "contract": "node scripts/contract.mjs"
+    "contract": "node scripts/contract.mjs",
+    "check:chatgpt": "node scripts/contract.mjs chatgpt"
   },
   "dependencies": {
     "flatbuffers": "25.9.23",

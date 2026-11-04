@@ -46,9 +46,17 @@ export interface ProviderInfo {
   name: string
   model: string
   api: 'anthropicMessages' | 'openAIResponses'
-  /** A real provider (with a key and a model choice), not the local fixture. */
-  usesKey: boolean
+  /** A real provider (with a model choice), not the local fixture. */
+  remote: boolean
+  /** Requests use the user's ChatGPT plan (Sign in with ChatGPT). */
+  plan: boolean
+  /** Display names of the models (the ChatGPT account's catalog). */
+  modelNames: Record<string, string>
 }
+
+/** The Agent's error at the ChatGPT plan's usage limit (web/server/chatgpt.ts). */
+export const USAGE_LIMIT_TEXT = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
+export const USAGE_URL = 'https://chatgpt.com/settings/usage'
 
 interface ContentBlock {
   type: string
@@ -79,6 +87,8 @@ export class ChatController extends Observable {
   permission?: { id: string; asked: string[] }
   status?: string
   failed = false
+  /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
+  usageLimited = false
   /** The last turn stopped at the step limit and can go on. */
   stoppedAtLimit = false
   sessions: SessionInfo[] = []
@@ -90,7 +100,7 @@ export class ChatController extends Observable {
    *  (attached_folder_read) only, read only. */
   folders: string[] = []
   available: boolean
-  provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', usesKey: true }
+  provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
   constructor(readonly session: ProjectSession, private readonly app: AppModel) {
     super()
@@ -141,6 +151,7 @@ export class ChatController extends Observable {
     if (this.currentId && this.busy) void api('/api/chat/cancel', this.base).catch(() => {})
     this.busy = false
     this.failed = false
+    this.usageLimited = false
     this.stoppedAtLimit = false
     if (this.available) this.status = undefined
     this.currentId = id
@@ -347,6 +358,7 @@ export class ChatController extends Observable {
   private begin() {
     this.busy = true
     this.failed = false
+    this.usageLimited = false
     this.stoppedAtLimit = false
     this.status = undefined
     this.changed()
@@ -413,7 +425,9 @@ export class ChatController extends Observable {
       case 'error':
         this.busy = false
         this.failed = e.message !== 'cancelled'
-        this.status = e.message === 'cancelled' ? '回答を停止しました（Workflow の実行は止めていません）。' : `エラー: ${e.message}`
+        this.usageLimited = e.message === USAGE_LIMIT_TEXT
+        this.status = e.message === 'cancelled' ? '回答を停止しました（Workflow の実行は止めていません）。'
+          : this.usageLimited ? 'Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。' : `エラー: ${e.message}`
         this.refreshAfterTurn()
         break
       case 'finished':
