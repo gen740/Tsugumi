@@ -1,12 +1,10 @@
 import Foundation
 import TsugumiRPC
 
-/// Three-way merge of JSON documents: what `ours` changed from `base` is
-/// applied on top of `theirs`. Objects merge key by key; arrays of objects
-/// with an "id" merge element by element; other arrays merge as sets of
-/// elements (a wire added on each side keeps both). When both sides changed
-/// the same value differently, ours wins.
-func merge3(base: JSONValue?, ours: JSONValue?, theirs: JSONValue?) -> JSONValue? {
+/// Three-way merge. Named records merge by identity; only graph connections
+/// and Card membership use set semantics. Ordered values stay ordered, with
+/// the local value winning a same-field conflict.
+func merge3(base: JSONValue?, ours: JSONValue?, theirs: JSONValue?, field: String = "") -> JSONValue? {
   if ours == base { return theirs }
   if theirs == base || theirs == ours { return ours }
   guard let base, let ours, let theirs else { return ours }
@@ -17,34 +15,34 @@ func merge3(base: JSONValue?, ours: JSONValue?, theirs: JSONValue?) -> JSONValue
     func value(_ list: [(String, JSONValue)], _ k: String) -> JSONValue? { list.first { $0.0 == k }?.1 }
     for (k, tv) in t {
       seen.insert(k)
-      if let v = merge3(base: value(b, k), ours: value(o, k), theirs: tv) { out.append((k, v)) }
+      if let v = merge3(base: value(b, k), ours: value(o, k), theirs: tv, field: k) { out.append((k, v)) }
     }
     for (k, ov) in o where !seen.contains(k) {
-      seen.insert(k)
-      if let v = merge3(base: value(b, k), ours: ov, theirs: nil) { out.append((k, v)) }
+      if let v = merge3(base: value(b, k), ours: ov, theirs: nil, field: k) { out.append((k, v)) }
     }
     return .object(out)
   case (.array(let b), .array(let o), .array(let t)):
-    let ids = { (a: [JSONValue]) -> [String]? in
-      let list = a.compactMap { $0["id"]?.string }
+    let identity = ["params", "inputs", "hostFolders"].contains(field) ? "name" : "id"
+    func ids(_ a: [JSONValue]) -> [String]? {
+      let list = a.compactMap { $0[identity]?.string }
       return list.count == a.count && Set(list).count == list.count ? list : nil
     }
     if let bi = ids(b), let oi = ids(o), let ti = ids(t) {
       let bm = Dictionary(uniqueKeysWithValues: zip(bi, b)), om = Dictionary(uniqueKeysWithValues: zip(oi, o))
-      var out: [JSONValue] = []
-      for (i, tv) in zip(ti, t) {
-        if let v = merge3(base: bm[i], ours: om[i], theirs: tv) { out.append(v) }
-      }
-      for (i, ov) in zip(oi, o) where !ti.contains(i) {
-        if let v = merge3(base: bm[i], ours: ov, theirs: nil) { out.append(v) }
-      }
+      let tm = Dictionary(uniqueKeysWithValues: zip(ti, t))
+      // Preserve a local reorder; otherwise follow the remote order. Include
+      // additions from both sides, then let merge3 decide deletions and edits.
+      let first = oi == bi ? ti : oi, second = oi == bi ? oi : ti
+      let order = first + second.filter { !first.contains($0) }
+      return .array(order.compactMap { merge3(base: bm[$0], ours: om[$0], theirs: tm[$0]) })
+    }
+    if field == "connections" || (field == "cards" && (b + o + t).allSatisfy { $0.string != nil }) {
+      let removed = b.filter { !o.contains($0) }
+      var out = t.filter { !removed.contains($0) }
+      for v in o where !b.contains(v) && !out.contains(v) { out.append(v) }
       return .array(out)
     }
-    // Set semantics: their elements, without what ours removed, plus what ours added.
-    let removed = b.filter { !o.contains($0) }
-    var out = t.filter { !removed.contains($0) }
-    for v in o where !b.contains(v) && !out.contains(v) { out.append(v) }
-    return .array(out)
+    return ours
   default:
     return ours
   }
