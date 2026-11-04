@@ -2,7 +2,7 @@
 # tests against a host tsugumid (Cards sandboxed with bubblewrap); the web UI
 # built and checked. On macOS: the Swift packages' tests against a host
 # tsugumid. The shared VM (Virtualization.framework) is not available on
-# hosted runners; vm.yml runs it on an opt-in dedicated Mac.
+# hosted runners and is tested on a Mac (TSUGUMI_TEST_CONTAINER=1).
 name: CI
 on:
   push:
