@@ -67,7 +67,23 @@ struct AgentHarness {
     f.standardOutput = FileHandle.nullDevice
     try f.run()
     fixture = f
-    usleep(500_000)
+    // Python starts slowly on a CI runner: wait until the fixture accepts
+    // connections (a fixed pause let the first requests fail there).
+    let deadline = Date().addingTimeInterval(30)
+    while !Self.accepts(port: fixturePort) && Date() < deadline && f.isRunning { usleep(50_000) }
+  }
+
+  /// Something listens on 127.0.0.1:port.
+  static func accepts(port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in()
+    a.sin_family = sa_family_t(AF_INET)
+    a.sin_addr.s_addr = inet_addr("127.0.0.1")
+    a.sin_port = UInt16(port).bigEndian
+    return withUnsafePointer(to: &a) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+    } == 0
   }
 
   /// Ends the daemon and the fixture, polled with a deadline (waitUntilExit
