@@ -386,6 +386,23 @@ final class ProjectSession {
     }
   }
 
+  /// Closed for good (the last window left it): the connection ends, the
+  /// project's tsugumid stops and its folders are no longer shared with the
+  /// VM, so its slot is free. Unsaved edits were saved before (the caller
+  /// does not close a dirty session).
+  func close() async {
+    listenTask?.cancel()
+    await client?.close()
+    client = nil
+    connected = false
+    if let t = observerToken {
+      await environments.stopObserving(identity, t)
+      observerToken = nil
+    }
+    if endpointOverride == nil { try? await environments.stop(identity) }
+    environment = .stopped
+  }
+
   /// A tsugumid to use instead of starting the environment (tests).
   @ObservationIgnored var endpointOverride: Endpoint?
 

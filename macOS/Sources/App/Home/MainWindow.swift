@@ -46,6 +46,14 @@ struct MainWindow: View {
     .onReceive(NotificationCenter.default.publisher(for: .appOpenProject)) { _ in openFromPanel() }
     .onReceive(NotificationCenter.default.publisher(for: .appDuplicateProject)) { _ in duplicateProject() }
     .tsugumiLoading(model.preparing)
+    // A window closed with a project: saved, then given back like leaving it.
+    .onDisappear {
+      guard let s = workspace.session else { return }
+      Task {
+        if s.dirty { await s.save() }
+        if !s.dirty { await model.release(s) }
+      }
+    }
     .task {
       UIScript.shared.workspace = workspace
       if model.setup == nil { await model.refreshSetup() }
@@ -59,7 +67,9 @@ struct MainWindow: View {
 
   private func open(_ url: URL) {
     do {
-      workspace.open(try model.session(for: url))
+      let s = try model.session(for: url)
+      model.hold(s)
+      workspace.open(s)
     } catch {
       model.error = "\(error)"
     }
@@ -122,6 +132,7 @@ struct MainWindow: View {
         return
       }
       workspace.close()
+      await model.release(s)
     }
   }
 }

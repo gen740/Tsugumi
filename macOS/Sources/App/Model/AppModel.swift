@@ -133,6 +133,23 @@ final class AppModel {
     try? JSONEncoder().encode(recents).write(to: recentsURL, options: .atomic)
   }
 
+  /// Main windows showing each project: when the last one leaves it, the
+  /// project's environment is given back (ProjectSession.close).
+  private var holders: [String: Int] = [:]
+
+  func hold(_ s: ProjectSession) { holders[s.identity.id, default: 0] += 1 }
+
+  func release(_ s: ProjectSession) async {
+    let id = s.identity.id
+    holders[id, default: 1] -= 1
+    guard holders[id] ?? 0 <= 0 else { return }
+    holders[id] = nil
+    chats[id]?.cancel()
+    chats[id] = nil
+    sessions[id] = nil
+    await s.close()
+  }
+
   func session(for url: URL) throws -> ProjectSession {
     let identity = try ProjectIdentity(url: url)
     if let s = sessions[identity.id] { return s }
