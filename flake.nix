@@ -60,7 +60,7 @@
             jq
             # Source formatters used by ProjectFileFormat (also in the image).
             ruff
-            nixfmt-rfc-style
+            nixfmt
             shfmt
             # The web UI (web/) and its contract test with the Swift Agent.
             nodejs

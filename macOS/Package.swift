@@ -72,7 +72,8 @@ let package = Package(
     .target(
       name: "TreeSitterPython", path: "Sources/Grammars/TreeSitterPython",
       exclude: ["LICENSE"], sources: ["src/parser.c", "src/scanner.c"],
-      publicHeadersPath: "include", cSettings: [.headerSearchPath("src")]),
+      // (the grammar's scanner as upstream wrote it: its size_t to uint32_t is intended)
+      publicHeadersPath: "include", cSettings: [.headerSearchPath("src"), .unsafeFlags(["-Wno-shorten-64-to-32"])]),
     .target(
       name: "TreeSitterFBS", path: "Sources/Grammars/TreeSitterFBS",
       exclude: ["grammar.js", "src/grammar.json", "src/node-types.json"], sources: ["src/parser.c"],

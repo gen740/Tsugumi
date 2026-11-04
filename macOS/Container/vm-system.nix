@@ -10,9 +10,9 @@
 # formatters (ProjectFileFormat). tsugumid's own run time tools (bubblewrap,
 # sqlite, jq) come with its closure.
 { lib, runCommand, writeShellScript, tsugumid, tini, bashInteractive, cacert, coreutils, findutils, gnugrep
-, gnused, gawk, gnutar, gzip, nix, astyle, ruff, nixfmt-rfc-style, shfmt }:
+, gnused, gawk, gnutar, gzip, nix, astyle, ruff, nixfmt, shfmt }:
 let
-  formatters = [ astyle ruff nixfmt-rfc-style shfmt ];
+  formatters = [ astyle ruff nixfmt shfmt ];
   projectTools = [ bashInteractive coreutils findutils gnugrep gnused gawk gnutar gzip nix ] ++ formatters;
   supervisor = writeShellScript "tsugumi-supervisor" ''
     exec ${tsugumid}/bin/tsugumi-vmd \

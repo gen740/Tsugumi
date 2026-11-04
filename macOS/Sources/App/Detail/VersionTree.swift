@@ -255,8 +255,8 @@ struct VersionTreeView: View {
         if let last = runs.last {
           let ok = runs.filter { $0.state == "succeeded" }.count
           let ng = runs.filter { $0.state == "failed" }.count
-          Text("実行 \(runs.count) 回（成功 \(ok)・失敗 \(ng)）· 最後: \(Self.stateLabel(last.state ?? ""))")
-            .font(.caption).foregroundStyle(Self.stateColor(last.state ?? ""))
+          Text("実行 \(runs.count) 回（成功 \(ok)・失敗 \(ng)）· 最後: \(Self.stateLabel(last.state))")
+            .font(.caption).foregroundStyle(Self.stateColor(last.state))
         }
         if !c.changedList.isEmpty {
           Text(Self.changedText(c.changedList)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -290,8 +290,8 @@ struct VersionTreeView: View {
             Text("実行の結果").font(.subheadline.weight(.semibold))
             ForEach(Array(c.runList.enumerated()), id: \.offset) { _, r in
               HStack {
-                Circle().fill(Self.stateColor(r.state ?? "")).frame(width: 8, height: 8)
-                Text(Self.stateLabel(r.state ?? ""))
+                Circle().fill(Self.stateColor(r.state)).frame(width: 8, height: 8)
+                Text(Self.stateLabel(r.state))
                 Text(String(format: "%.1f 秒", r.seconds)).foregroundStyle(.secondary)
                 Spacer()
                 Text(r.ended ?? "").font(.caption2.monospaced()).foregroundStyle(.secondary)

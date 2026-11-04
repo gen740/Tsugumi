@@ -229,7 +229,7 @@ final class ChatController {
     // The conversation left behind stops first: it changes nothing after the
     // new one starts (the new one waits for it).
     let previous = agent
-    previous.map { a in Task { await a.cancel() } }
+    if let previous { Task { await previous.cancel() } }
     busy = false
     failed = false
     usageLimited = false
@@ -249,9 +249,11 @@ final class ChatController {
     }
     self.agent = agent
     items = []
+    // (the approver holds the controller weakly: the Agent outlives no window)
+    let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
     Task {
       await previous?.cancelAndWait()
-      await agent.setApprover { [weak self] asked in await self?.approve(asked) ?? [] }
+      await agent.setApprover(approver)
       let conv = await agent.conversation
       usage = conv.usage
       load(conv)

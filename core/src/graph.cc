@@ -1,11 +1,11 @@
 #include "graph.hh"
+#include "nix_refs.hh"
 
 #include <map>
 #include <mutex>
 
 #include <deque>
 #include <limits>
-#include <regex>
 #include <set>
 #include <tuple>
 
@@ -781,9 +781,11 @@ class Builder {
   // Code Card's default.nix, so a reference to a Card that is not always
   // upstream is reported before any evaluation. Paths are relative to the
   // project the Card is written in (the same as when that project is opened
-  // on its own).
+  // on its own); `local` names a Card of the same level only. This is early
+  // feedback for the written form (nix_references: not in comments or the
+  // text of strings); the guarantee is what entry.nix offers, so a reference
+  // it cannot see (through an alias, say) fails at evaluation instead.
   void check_nix_references() {
-    static const std::regex re(R"re(\b(upstream|local)\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_'-]*)))re");
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       Node& n = res_->nodes[i];
       if (n.kind != Template::Code) continue;
@@ -793,14 +795,17 @@ class Builder {
       if (!text) continue;
       auto allowed = res_->nix_upstream(i);
       CardPath scope_path(n.path.begin(), n.path.end() - 1);
-      for (auto it = std::sregex_iterator(text->begin(), text->end(), re); it != std::sregex_iterator(); ++it) {
-        const auto& m = *it;
-        std::string name = m[2].matched ? m[2].str() : m[3].str();
+      for (const auto& [local, name] : nix_references(*text)) {
         CardPath target = scope_path;
         for (const auto& part : path_from_key(name)) target.push_back(part);
         std::string key = path_key(target);
         auto found = res_->index.find(key);
-        if (target == n.path) {
+        if (local && target.size() != n.path.size()) {
+          n.diags.push_back(diag(n.path, "nix_reference_unknown",
+                                 "default.nix references local." + name + ", but local names a Card of this level only (use upstream.\"" +
+                                     name + "\")",
+                                 true, rel));
+        } else if (target == n.path) {
           n.diags.push_back(diag(n.path, "nix_reference_self", "default.nix references this Card itself (" + key + ")", true, rel));
         } else if (found == res_->index.end()) {
           n.diags.push_back(diag(n.path, "nix_reference_unknown", "default.nix references unknown Card " + key, true, rel));

@@ -246,13 +246,6 @@ final class UIScript {
       case "chatsend":
         // chatsend <text>: sends to the configured model (real provider)
         if let s = session { AppModel.shared.chat(for: s).send(w.dropFirst().joined(separator: " ")) }
-      case "waitchat":
-        try? await Task.sleep(for: .seconds(1))
-        if let s = session {
-          let chat = AppModel.shared.chat(for: s)
-          for _ in 0..<3000 where chat.busy { try? await Task.sleep(for: .milliseconds(200)) }
-        }
-        say("chat done")
       case "focus":
         // Gives the canvas the keyboard focus (as a click on it does).
         if let win = mainWindow { win.makeFirstResponder(win.contentView) }
