@@ -96,6 +96,13 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ![各 Card の実行を時間軸で確認するタイムライン](docs/assets/screenshots/timeline.png)
 
+### ツグミに案内してもらう
+
+はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選んで案内します。
+プロジェクトではチャットがツグミです。`$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。
+
+![ツグミが compare の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
+
 ## 使ってみる
 
 Apple silicon Mac / macOS 26 以降に対応しています。[GitHub Releases](https://github.com/gen740/Tsugumi/releases) のアプリを入れると、以後は新しいリリースに自動で更新されます。アプリには計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
