@@ -7,6 +7,7 @@ worker per call, and nothing of a call's descriptors is left over."""
 from __future__ import annotations
 
 import os
+import json
 import re
 
 import pytest
@@ -17,6 +18,7 @@ from projects import put, run_and_wait, write
 from test_cards_container import NUM, bash, load, log
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
@@ -143,6 +145,10 @@ def test_resident_worker_serves_later_runs(env):
     assert pa == pb and a.endswith("runs 1 calls 1") and b.endswith("runs 2 calls 1"), (a, b)
     assert not invocations(c, first, "count")[0].workerReused
     assert invocations(c, second, "count")[0].workerReused
+    for run_id in [first, second]:
+        mode = [json.loads(line)["message"] for line in log(c, run_id, "count", LogStream.journal).splitlines()
+                if json.loads(line).get("event") == "worker_mode"]
+        assert mode == ["resident"]
 
 
 def test_file_inputs_keep_the_worker_and_stay_read_only(env):
@@ -196,6 +202,10 @@ def test_fresh_worker_per_call(env):
         assert m and m.group(2) == "1", line
         workers.add(m.group(1))
     assert len(workers) == 4 and not any(r.workerReused for r in recs)
+    for inv in range(1, 5):
+        mode = [json.loads(line)["message"] for line in log(c, run_id, "fresh", LogStream.journal, inv).splitlines()
+                if json.loads(line).get("event") == "worker_mode"]
+        assert mode == ["fresh"]
 
 
 def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):

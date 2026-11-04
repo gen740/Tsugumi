@@ -16,6 +16,7 @@ struct StageLogView: View {
   @State private var stages: [StageRecord] = []
   @State private var state: Tsugumi_Data_CardState?
   @State private var failure: String?
+  @State private var workerReused: Bool?
   @State private var shownInvocation: UInt64?
   @State private var logs: [Tsugumi_Data_LogStream: String] = [:]
   @State private var open: Set<String> = []
@@ -129,6 +130,13 @@ struct StageLogView: View {
         case "build":
           logText(logs[.build] ?? "", empty: String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）"))
         case "execute":
+          if let mode = workerMode {
+            LabeledContent("実行モード", value: mode == "resident" ? String(localized: "状態を保持（常駐 worker）") : String(localized: "呼び出しごとに初期化"))
+          }
+          if let workerReused {
+            Text(workerReused ? String(localized: "この呼び出しは常駐 worker を再利用しました") : String(localized: "この呼び出しは新しい worker で実行しました"))
+              .font(.caption).foregroundStyle(.secondary)
+          }
           Text("stdout").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
           logText(logs[.stdout] ?? "", empty: String(localized: "stdout への出力はありません"))
           Text("stderr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -169,6 +177,14 @@ struct StageLogView: View {
     }.joined(separator: "\n")
   }
 
+  private var workerMode: String? {
+    (logs[.journal] ?? "").split(separator: "\n").compactMap { line -> String? in
+      guard let v = try? JSONValue.parse(String(line)), v["event"]?.string == "worker_mode",
+            let mode = v["message"]?.string, ["resident", "fresh"].contains(mode) else { return nil }
+      return mode
+    }.last
+  }
+
   private func load() async {
     defer { loaded = true }
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
@@ -178,6 +194,7 @@ struct StageLogView: View {
       let rec = try? await rpc.record(runId: runId, card: card, invocation: inv, followLatest: inv == nil)
       inv = inv ?? rec?.selectedInvocation
       shownInvocation = inv
+      workerReused = rec?.record?.summary.workerReused
       if runId == session.currentRunId, let s = session.cardStates[key(card)], s.invocation == inv {
         stages = s.stages
         state = s.state

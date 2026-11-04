@@ -613,8 +613,12 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', 'ビルドの期限（秒）')}
-              {toggle('reuseWorker', 'worker の状態を残す', true,
-                'オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。')}
+              <Row label="実行モード">
+                <Select value={(bool(get(def, 'reuseWorker')) ?? true) ? 'resident' : 'fresh'}
+                  onChange={(v) => model.setSetting('reuseWorker', v === 'resident' ? undefined : false)}
+                  options={[{ value: 'resident', label: '状態を保持（常駐 worker）' }, { value: 'fresh', label: '呼び出しごとに初期化' }]} />
+              </Row>
+              <p className="caption secondary">初期化はプロセス内の状態が対象です。ファイル・乱数・外部サービスの状態は固定しません。</p>
               {toggle('filesystem', '作業・出力領域を使う', false)}
               <Row label="ファイルアクセスを制限">
                 <Toggle checked={bool(get(def, 'sandbox')) ?? true}

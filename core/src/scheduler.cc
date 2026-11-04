@@ -1175,6 +1175,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                       (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-");
     for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
     std::string card_key = path_key(node.path);
+    journal("execute", "worker_mode", node.path, s.invocation, node.settings.reuse_worker ? "resident" : "fresh");
     auto lease = svc_.workers().acquire(card_key, key, sp, rt.node->settings.reuse_worker);
     auto& worker = *lease.worker;
     s.worker_reused = lease.reused;

@@ -520,8 +520,13 @@ private struct GeneralCategory: View {
           }
           if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
-            toggle("reuseWorker", label: "worker の状態を残す", fallback: true)
-              .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
+            Picker("実行モード", selection: Binding(get: { model.definition?["reuseWorker"]?.bool ?? true },
+                                                  set: { model.definition?["reuseWorker"] = $0 ? nil : .bool(false) })) {
+              Text("状態を保持（常駐 worker）").tag(true)
+              Text("呼び出しごとに初期化").tag(false)
+            }
+            Text("初期化はプロセス内の状態が対象です。ファイル・乱数・外部サービスの状態は固定しません。")
+              .font(.caption).foregroundStyle(.secondary)
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
           }
