@@ -36,6 +36,7 @@ struct MainWindow: View {
           ProjectSettingsPane.open(s, with: openSettings)
         }
       case .settings: openSettings()
+      case .explainer: openWindow(id: "explainer")
       }
       UIScript.shared.request = nil
     }
