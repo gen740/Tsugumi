@@ -8,7 +8,7 @@
 計算やデータ処理を Card のグラフとして描き、AI とともに実装して、Nix で固定した環境で実行します。
 すべての Card に入力・コード・出力・実行履歴が残るため、気になった箇所へいつでも立ち戻り、条件を変えて試すことができます。
 
-> GitHub のリポジトリ名は Tsumugi ですが、アプリと文書での名前は **Tsugumi**（鳥のツグミ。由来は[名前の由来](docs/Name.md)）です。
+名前は **Tsugumi**。鳥のツグミに由来します（[名前の由来](docs/Name.md)）。
 
 ![C++ と Python の処理を並べ、実行結果を比較する Canvas](docs/assets/screenshots/workflow.png)
 
@@ -135,6 +135,7 @@ AI と仕事をするうえで常に立ちはだかるのは、**「何をして
 研究を出発点に、その可能性を広げていきます（[Tsugumi の構想と応用](docs/Vision.md)）。
 
 また、研究者が自らの判断を手放さないための問題意識と、1 週間のハッカソンでこの基盤を作り上げた体験を **[AI に使われないために、何を作るか](docs/Philosophy.md)** にまとめました。
+事前に用意した自作 JSON parser の hosq と仕様プロンプト、Tsugumi として実装した部分、利用した OSS の区分は **[制作範囲と事前準備](docs/Provenance.md)** に記載しています。
 「継ぐ・積む・組む」「紡ぐ」、そして冬に口を噤む鳥・ツグミに重ねた思いについては、**[名前の由来](docs/Name.md)** をご覧ください。
 
 ## ドキュメント
@@ -147,7 +148,9 @@ AI と仕事をするうえで常に立ちはだかるのは、**「何をして
 - [Web UI](docs/WebUI.md)：ブラウザから使うクライアントと、tsugumid をホストで直接動かす構成
 - [版の管理](docs/Versions.md)：プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」
 - [固定しているバージョン](docs/Lock.md)：実行環境と依存ライブラリの固定値
+- [制作範囲と事前準備](docs/Provenance.md)：ハッカソン前の準備、アプリ固有の実装、OSS・生成物の境界
+- [ライセンス調査](docs/LicenseAudit.md)：Tree-sitter・フォント・VM などの確認結果と、配布に向けて残っている対応
 
 ## ライセンス
 
-MIT License（[LICENSE](LICENSE)）。同梱するサードパーティ製ソフトウェアのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にまとめています。
+Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物へのライセンス同梱や VM の対応ソース提供など、残っている対応は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
