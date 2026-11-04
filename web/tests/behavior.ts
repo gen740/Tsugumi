@@ -15,3 +15,5 @@ await import("./recovery")
 await import("./approval")
 
 await import("./compaction")
+
+await import("./storage")

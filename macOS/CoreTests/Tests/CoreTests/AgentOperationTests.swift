@@ -40,10 +40,10 @@ struct AgentOperationTests {
     let schema = try BFBS(data: try #require(RPCSchema.bfbs()))
     let storage = dir.appendingPathComponent("chat.json")
     let transport = ApprovalTransport(schema: schema, storage: storage)
-    let agent = Agent(catalog: try ToolCatalog(schema: schema), transport: transport,
+    let agent = try Agent(catalog: try ToolCatalog(schema: schema), transport: transport,
                       provider: .localFixture(port: 1), storage: storage)
     await agent.setApprover { Set($0) }
-    _ = await agent.runTool(id: "tool-1", name: "project_save", input: "{\"base_rev\":\"0\",\"changes\":[]}") { _ in }
+    _ = try await agent.runTool(id: "tool-1", name: "project_save", input: "{\"base_rev\":\"0\",\"changes\":[]}") { _ in }
     #expect(transport.calls == 2)
   }
 }
