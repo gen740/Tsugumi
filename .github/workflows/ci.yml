@@ -1,6 +1,8 @@
 # The core and its tests on Linux: tsugumid, the C++ tests and the Python
-# tests against a host tsugumid (Cards sandboxed with bubblewrap). The macOS
-# app and the shared VM need Apple silicon and are tested on a Mac.
+# tests against a host tsugumid (Cards sandboxed with bubblewrap); the web UI
+# built and checked. On macOS: the Swift packages' tests against a host
+# tsugumid. The shared VM (Virtualization.framework) is not available on
+# hosted runners and is tested on a Mac (TSUGUMI_TEST_CONTAINER=1).
 name: CI
 on:
   push:
@@ -26,7 +28,35 @@ jobs:
               -DTSUGUMI_BASH="$(command -v bash)" -DTSUGUMI_CARD_PATH="$PATH"
             ninja -C build
             ctest --test-dir build --output-on-failure'
-      - name: Web UI typecheck and bindings (the Python tests run its Agent contract)
-        run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck'
+      - name: Web UI typecheck, bindings and build (the Python tests run its Agent contract and server)
+        run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm run build'
       - name: Python tests
         run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
+
+  macos:
+    name: Swift tests (macOS, no VM)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build the host tsugumid (the Swift tests talk to it)
+        run: nix develop -c bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid'
+      # Swift and its SDK are Xcode's; only flatc comes from the flake.
+      - name: Model, RPC, Agent and launcher (macOS/CoreTests)
+        run: |
+          TSUGUMI_FLATC="$(nix develop -c which flatc)"
+          export TSUGUMI_FLATC
+          cd macOS/CoreTests && swift test
+      - name: Cache the Dawn renderer
+        uses: actions/cache@v4
+        with:
+          path: build-renderer
+          key: renderer-${{ runner.os }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt') }}
+      - name: Build the Dawn renderer (the app package links it)
+        run: '[ -f build-renderer/ui/renderer/libtsugumi_renderer.dylib ] || ui/renderer/build.sh'
+      - name: App logic (macOS/Tests)
+        run: |
+          TSUGUMI_FLATC="$(nix develop -c which flatc)"
+          export TSUGUMI_FLATC
+          cd macOS && swift test

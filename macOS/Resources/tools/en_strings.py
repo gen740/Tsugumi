@@ -31,6 +31,7 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"クリックでスキップ": "Click to skip",
 "できました": "Done",
 "考えています": "Thinking",
 "%@ を読んでいます": "Reading %@",
