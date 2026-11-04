@@ -177,6 +177,7 @@ void Service::open() {
   auto history_db = (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) / "history.sqlite";
   if (!opts_.history_dir.empty()) stdfs::create_directories(opts_.history_dir);
   history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
+  versions_ = std::make_unique<Versions>(opts_.root);
   // Runs kept in the project and missing here (a copied or moved project).
   try {
     if (auto n = history_->import_runs(runs_copy())) log::info("history: " + std::to_string(n) + " runs from .tsugumi/runs.sqlite");
@@ -261,7 +262,8 @@ std::vector<std::string> Service::capabilities() {
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
-      "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave"};
+      "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
+      "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
@@ -342,6 +344,10 @@ void Service::dispatch(RequestIn req) {
     case P::RunHistoryDeleteRequest: return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest: return on_lane(m, std::move(req), &Service::run);
     case P::CardSDKPrepareRequest: return on_lane(m, std::move(req), &Service::sdk_prepare);
+    case P::VersionInitRequest: return on_lane(m, std::move(req), &Service::version_init);
+    case P::VersionMarkRequest: return on_lane(m, std::move(req), &Service::version_mark);
+    case P::VersionCheckoutRequest: return on_lane(m, std::move(req), &Service::version_checkout);
+    case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
@@ -386,6 +392,7 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
     case R::ReceiptValue::ProjectCacheClearResult: type = R::ReplyPayload::ProjectCacheClearResult; tname = "Tsugumi.RPC.ProjectCacheClearResult"; break;
     case R::ReceiptValue::CardSDKPrepareResult: type = R::ReplyPayload::CardSDKPrepareResult; tname = "Tsugumi.RPC.CardSDKPrepareResult"; break;
     case R::ReceiptValue::RunHistoryDeleteResult: type = R::ReplyPayload::RunHistoryDeleteResult; tname = "Tsugumi.RPC.RunHistoryDeleteResult"; break;
+    case R::ReceiptValue::VersionResult: type = R::ReplyPayload::VersionResult; tname = "Tsugumi.RPC.VersionResult"; break;
     default: type = R::ReplyPayload::Failure; tname = "Tsugumi.Data.Failure"; break;
   }
   value = wire::copy_table(b, tname, reinterpret_cast<const flatbuffers::Table*>(rc->result()));
@@ -908,6 +915,140 @@ void Service::reload(RequestIn& req) {
     store_failure_receipt(op_id, "reload", digest, f);
     throw Failed(f);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Versions (git): core/src/versions.cc
+
+namespace {
+std::string version_receipt(const std::string& op_id, const std::string& commit, const std::string& branch) {
+  FBB b;
+  auto vr = R::CreateVersionResult(b, b.CreateString(commit), branch.empty() ? 0 : b.CreateString(branch));
+  auto rc = R::CreateOperationReceipt(b, b.CreateString(op_id), R::ReceiptValue::VersionResult, vr.Union());
+  b.Finish(rc);
+  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+}
+}  // namespace
+
+void Service::note_run_end(const RunStatusData& s) {
+  if (!s.commit || !s.run_id || !s.terminal()) return;
+  VersionRunNote n;
+  n.run_id = *s.run_id;
+  n.state = Tsugumi::Data::EnumNameRunState(s.state);
+  int64_t end = s.ended_at.value_or(0), start = s.started_at.value_or(s.accepted_at.value_or(end));
+  n.ended = Versions::iso_utc(end);
+  n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
+  try {
+    versions_->note_run(*s.commit, n);
+  } catch (const std::exception& e) {
+    log::warn(std::string("versions: no note for run ") + *s.run_id + ": " + e.what());
+  }
+}
+
+void Service::version_init(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionInitRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "version", digest)) return;
+  try {
+    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    auto commit = versions_->init();
+    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "version", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "version", digest, f);
+    throw Failed(f);
+  }
+}
+
+void Service::version_mark(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionMarkRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "version", digest)) return;
+  try {
+    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
+    auto commit = versions_->mark(r->name()->str(), r->message() ? r->message()->str() : "");
+    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "version", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "version", digest, f);
+    throw Failed(f);
+  }
+}
+
+void Service::version_checkout(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionCheckoutRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "reload", digest)) return;
+  try {
+    require_mutation(r->base_rev(), r->op_id());
+    auto base = store_->current();
+    if (*r->base_rev() != base->rev) {
+      FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
+      f.current_rev = base->rev;
+      throw Failed(f);
+    }
+    if (auto active = scheduler_->active_status())
+      throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
+    if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
+    versions_->checkout(r->commit()->str());
+    // The files are those of the version now: read them like a reload.
+    auto staged = store_->stage_reload(op_id, r->origin()->str());
+    std::string receipt;
+    store_->commit(staged, "reload", digest, [&](const Delta* d) {
+      FBB b(1 << 14);
+      auto sr = save_result(b, d, *base);
+      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
+      return receipt;
+    });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    if (staged.delta.doc) publish_delta(staged.delta);
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "reload", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "reload", digest, f);
+    throw Failed(f);
+  }
+}
+
+void Service::version_graph(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionGraphRequest();
+  auto g = versions_->graph(std::min<uint32_t>(r->limit().value_or(500), 5000));
+  FBB b(1 << 16);
+  auto strings = [&](const std::vector<std::string>& v) {
+    std::vector<flatbuffers::Offset<flatbuffers::String>> o;
+    for (const auto& s : v) o.push_back(b.CreateString(s));
+    return b.CreateVector(o);
+  };
+  std::vector<flatbuffers::Offset<R::VersionCommit>> commits;
+  for (const auto& c : g.commits) {
+    std::vector<flatbuffers::Offset<R::VersionRun>> runs;
+    for (const auto& n : c.runs)
+      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds));
+    commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
+                                             b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
+                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
+  }
+  auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
 }
 
 void Service::import_definitions(RequestIn& req) {

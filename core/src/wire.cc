@@ -145,6 +145,7 @@ Off<R::Definition> definition(FBB& b, const std::string& id, const DefinitionDoc
 Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {
   auto id = s.run_id ? b.CreateString(*s.run_id) : Off<flatbuffers::String>();
   auto f = s.failure ? failure(b, *s.failure) : Off<D::Failure>();
+  auto commit = s.commit ? b.CreateString(*s.commit) : Off<flatbuffers::String>();
   R::RunStatusBuilder rb(b);
   if (s.run_id) rb.add_run_id(id);
   rb.add_state(s.state);
@@ -154,6 +155,7 @@ Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {
   if (s.started_at) rb.add_started_at(*s.started_at);
   if (s.ended_at) rb.add_ended_at(*s.ended_at);
   if (s.failure) rb.add_failure(f);
+  if (s.commit) rb.add_commit(commit);
   return rb.Finish();
 }
 

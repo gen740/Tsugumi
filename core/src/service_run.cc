@@ -8,6 +8,7 @@
 #include "service.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
+#include "util/log.hh"
 
 namespace tsugumi {
 
@@ -82,6 +83,13 @@ void Service::run(RequestIn& req) {
       throw Failed(f);
     }
     if (store_->halted()) throw Failed(FailureKind::persistence_failed, "changes are halted after a persistence failure");
+    // The version it runs: what is saved, committed when it changed. A git
+    // problem never stops a run (it then records no version).
+    try {
+      p.commit = versions_->commit_all("実行: " + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
+    } catch (const std::exception& e) {
+      log::warn(std::string("versions: no commit for this run: ") + e.what());
+    }
     std::string receipt = scheduler_->accept(doc, p);
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);

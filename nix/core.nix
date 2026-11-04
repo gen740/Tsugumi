@@ -1,5 +1,5 @@
 # tsugumid, tsugumi-worker and the installed Card SDK.
-{ lib, clangStdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, nix, openssl, bash, coreutils, findutils, gnugrep
+{ lib, clangStdenv, cmake, ninja, pkg-config, flatbuffers, sqlite, libgit2, nix, openssl, bash, coreutils, findutils, gnugrep
 , gnused, gawk, gnutar, gzip, jq, bubblewrap, self, cardNixpkgs, hosq }:
 let
   # Tools on PATH for Card bash steps (preRun, a bash run, postRun).
@@ -16,7 +16,7 @@ clangStdenv.mkDerivation {
   };
   nativeBuildInputs = [ cmake ninja pkg-config flatbuffers ];
   # The embedded Nix evaluator: the same Nix as the environment's daemon.
-  buildInputs = [ flatbuffers sqlite nix.libs.nix-expr nix.libs.nix-store nix.libs.nix-fetchers nix.libs.nix-util ]
+  buildInputs = [ flatbuffers sqlite libgit2 nix.libs.nix-expr nix.libs.nix-store nix.libs.nix-fetchers nix.libs.nix-util ]
     # SHA-256 on Linux (macOS has CommonCrypto).
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ openssl ];
   cmakeFlags = [

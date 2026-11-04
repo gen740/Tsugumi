@@ -79,6 +79,9 @@ table RunStatus {
   started_at:int64 = null (id: 5);
   ended_at:int64 = null (id: 6);
   failure:Tsugumi.Data.Failure (id: 7);
+  /// The project's version (git commit) the run started from; absent when
+  /// the project is not versioned.
+  commit:string (id: 8);
 }
 
 table ProjectSnapshot {
@@ -223,6 +226,7 @@ union ReceiptValue {
   CardSDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
   RunHistoryDeleteResult = 7,
+  VersionResult = 8,
 }
 
 table OperationReceipt {
@@ -314,6 +318,36 @@ table RunHistoryDeleteRequest {
   op_id:string (id: 0, required);
   ended_before:int64 = null (id: 1);
 }
+
+/// -> VersionResult. Makes the project a git repository: a first commit of
+/// what is saved (a demo's history file becomes its versions). Nothing
+/// happens when it already is one.
+table VersionInitRequest {
+  op_id:string (id: 0, required);
+  origin:string (id: 1, required);
+}
+
+/// -> VersionResult. Names the current version: what is saved is committed
+/// (when it changed) and gets an annotated tag `name` with `message`.
+table VersionMarkRequest {
+  op_id:string (id: 0, required);
+  origin:string (id: 1, required);
+  name:string (id: 2, required);
+  message:string (id: 3);
+}
+
+/// -> SaveResult. Starts from a version: what is saved now is committed, then
+/// the project's files become those of `commit` and the document is read
+/// again (like ProjectReload). Only while no run is active.
+table VersionCheckoutRequest {
+  base_rev:uint64 = null (id: 0);
+  op_id:string (id: 1, required);
+  origin:string (id: 2, required);
+  commit:string (id: 3, required);
+}
+
+/// -> VersionGraph, newest first.
+table VersionGraphRequest { limit:uint32 = null (id: 0); }
 
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); }
@@ -522,9 +556,50 @@ union RequestPayload {
   RunHistoryDeleteRequest = 30,
   OutputTypesRequest = 31,
   AttachedFolderReadRequest = 32,
+  VersionInitRequest = 33,
+  VersionMarkRequest = 34,
+  VersionCheckoutRequest = 35,
+  VersionGraphRequest = 36,
 }
 
 // ---- Replies -----------------------------------------------------------------
+
+table VersionResult {
+  commit:string (id: 0, required);
+  branch:string (id: 1);
+}
+
+/// A run's result as its commit's note records it (refs/notes/tsugumi).
+table VersionRun {
+  run_id:string (id: 0, required);
+  state:string (id: 1, required);
+  ended:string (id: 2);
+  seconds:double (id: 3);
+}
+
+table VersionCommit {
+  id:string (id: 0, required);
+  parents:[string] (id: 1);
+  summary:string (id: 2);
+  message:string (id: 3);
+  author:string (id: 4);
+  time:int64 = null (id: 5);
+  branches:[string] (id: 6);
+  tags:[string] (id: 7);
+  runs:[VersionRun] (id: 8);
+  /// Card keys whose files changed from the first parent ("" for the
+  /// project's own documents).
+  changed:[string] (id: 9);
+}
+
+table VersionGraph {
+  enabled:bool (id: 0);
+  head:string (id: 1);
+  branch:string (id: 2);
+  /// Saved changes not committed yet.
+  dirty:bool (id: 3);
+  commits:[VersionCommit] (id: 4);
+}
 
 table HelloResult {
   protocol:uint32 = null (id: 0);
@@ -750,6 +825,8 @@ union ReplyPayload {
   Failure: Tsugumi.Data.Failure = 24,
   RunHistoryDeleteResult = 25,
   OutputTypesResult = 26,
+  VersionResult = 27,
+  VersionGraph = 28,
 }
 
 // ---- Notifications -----------------------------------------------------------

@@ -377,6 +377,35 @@ struct Grants {
   t::Mapping<"grants", v::String, v::String> grants;
 };
 
+// ---- .tsugumi-history.json (a demo's versions, core/src/versions.cc) ------------
+
+
+// (A struct's fields are all required or all optional: these are optional,
+// and versions.cc checks the ones it needs.)
+struct HistoryRun {
+  Opt<"run_id", v::String> run_id;
+  Opt<"state", v::String> state;
+  Opt<"ended", v::String> ended;
+  Opt<"seconds", Number> seconds;
+};
+struct HistoryCommit {
+  Opt<"id", v::String> id;
+  Opt<"parents", v::Array<v::String>> parents;
+  Opt<"message", v::String> message;
+  Opt<"time", v::Uint64> time;  // seconds since the epoch
+  // What differs from the files on disk: their content, and files left out.
+  Opt<"files", v::Mapping<v::String, v::String>> files;
+  Opt<"removed", v::Array<v::String>> removed;
+  Opt<"runs", v::Array<Obj<HistoryRun>>> runs;
+  Opt<"tag", v::String> tag;
+  Opt<"tagMessage", v::String> tag_message;
+};
+struct HistoryFile {
+  t::Array<"commits", Obj<HistoryCommit>> commits;
+  t::Mapping<"branches", v::String, v::String> branches;  // name -> commit id
+  t::String<"head"> head;                                  // a branch name
+};
+
 // attached.json in the control folder: the folders of this host attached to
 // a chat, written by the launcher (a tsugumid on the host reads only these).
 struct Attached {

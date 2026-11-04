@@ -30,6 +30,7 @@ struct RunPlanData {
 
 struct RunParams {
   std::string op_id;
+  std::string commit;  // the project's version it starts from ("" when not versioned)
   std::string digest;
   CardPath card;
   bool propagate = true;

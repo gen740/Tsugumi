@@ -130,12 +130,13 @@ RunSummaryData run_row(const sql::Stmt& st) {
   s.source_hash = st.text(8);
   s.target = unkey(st.text(9));
   s.propagate = st.i64(10) != 0;
+  if (!st.is_null(11)) s.status.commit = st.text(11);
   return s;
 }
 
 constexpr const char* kRunCols =
     "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
-    "target, propagate";
+    "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id)";
 
 InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
                               int detail_col = -1) {
@@ -169,6 +170,7 @@ std::string run_tables(const std::string& p) {
   source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
   has_artifacts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
@@ -396,6 +398,8 @@ void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string
       .bind_null(9)
       .bind(10, s.source_hash).bind(11, key(s.target)).bind(12, s.propagate)
       .run();
+  if (s.status.commit)
+    db.prepare("INSERT OR REPLACE INTO run_commits(run_id, commit_id) VALUES(?,?)").bind(1, *s.status.run_id).bind(2, *s.status.commit).run();
   if (s.status.failure) update_run(db, s.status);
 }
 
@@ -863,7 +867,7 @@ std::vector<RunSummaryData> History::runs_page(sql::Db& db, std::optional<CardPa
   std::vector<RunSummaryData> out;
   while (st.step()) {
     out.push_back(run_row(st));
-    if (seqs) seqs->push_back(st.i64(11));
+    if (seqs) seqs->push_back(st.i64(12));  // after kRunCols
   }
   return out;
 }

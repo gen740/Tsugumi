@@ -60,6 +60,7 @@ struct RunStatusData {
   std::optional<uint64_t> rev, execution_rev;
   std::optional<int64_t> accepted_at, started_at, ended_at;
   std::optional<FailureData> failure;
+  std::optional<std::string> commit;  // the project's version the run started from
   bool active() const {
     return state == RunState::queued || state == RunState::preparing ||
            state == RunState::running || state == RunState::cancelling;

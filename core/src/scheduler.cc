@@ -1595,6 +1595,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   s.status.rev = doc->rev;
   s.status.execution_rev = doc->execution_rev;
   s.status.accepted_at = now_ms();
+  if (!p.commit.empty()) s.status.commit = p.commit;
   s.source_hash = doc->execution_fingerprint;
   s.target = p.card;
   s.propagate = p.propagate;
@@ -1671,7 +1672,10 @@ void Scheduler::finished(RunExec* exec) {
   if (done) {
     // The run thread finishes on its own; reap it off the callback thread.
     std::lock_guard<std::mutex> l(mu_);
-    reapers_.emplace_back([done] { done->join(); });
+    reapers_.emplace_back([this, done] {
+      done->join();
+      svc_.note_run_end(done->status());
+    });
   }
 }
 

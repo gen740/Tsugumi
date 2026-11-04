@@ -20,6 +20,7 @@
 #include "schema.hh"
 #include "server.hh"
 #include "store.hh"
+#include "versions.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -87,6 +88,8 @@ class Service : public RequestSink {
   WorkerPool& workers() { return *workers_; }
   // A run finished: its record goes to the project's copy soon.
   void schedule_export();
+  // A run ended: its result goes to the note of the version it started from.
+  void note_run_end(const RunStatusData& s);
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -103,7 +106,11 @@ class Service : public RequestSink {
   void history_delete(RequestIn& req);
   void run(RequestIn& req);
   void sdk_prepare(RequestIn& req);
+  void version_init(RequestIn& req);
+  void version_mark(RequestIn& req);
+  void version_checkout(RequestIn& req);
   // Read pool handlers.
+  void version_graph(RequestIn& req);
   void close_project(RequestIn& req);
   void inspect(RequestIn& req);
   void validate(RequestIn& req);
@@ -156,6 +163,7 @@ class Service : public RequestSink {
   ServiceOptions opts_;
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
+  std::unique_ptr<Versions> versions_;
   // Artifact files whose content was checked against their hash, by path:
   // (size, modification time) when checked. Later pages read their range only.
   std::mutex verified_mu_;

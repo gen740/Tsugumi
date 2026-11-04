@@ -47,6 +47,7 @@
             ninja
             flatbuffers
             sqlite
+            libgit2
             pkg-config
             # The embedded Nix evaluator (headers and libraries of the Nix in use).
             nix.libs.nix-expr
