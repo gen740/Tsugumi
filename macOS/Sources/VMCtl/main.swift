@@ -16,6 +16,8 @@
 import Foundation
 import TsugumiLauncher
 
+signal(SIGPIPE, SIG_IGN)  // a closed socket is an error, never the end of the process
+
 var support: URL?
 var echoConsole = false
 var resources = VMResources.default

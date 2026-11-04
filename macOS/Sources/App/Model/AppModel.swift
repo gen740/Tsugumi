@@ -179,6 +179,14 @@ final class AppModel {
 
   /// Creates an empty project; the initial documents are placed before the environment starts.
   func createProject(at url: URL, name: String) throws {
+    try Self.writeNewProject(at: url, name: name, flow: AppPreferences.shared.flowDirection.rawValue)
+  }
+
+  /// A new project's documents in `url`: never over an existing project or
+  /// other files (the save panel allows choosing a folder that exists).
+  static func writeNewProject(at url: URL, name: String, flow: String) throws {
+    let existing = (try? FileManager.default.contentsOfDirectory(atPath: url.path))?.filter { $0 != ".DS_Store" } ?? []
+    if !existing.isEmpty { throw FolderNotEmpty(path: url.path) }
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     let project: JSONValueLiteral = """
     {
@@ -191,7 +199,7 @@ final class AppModel {
     """
     try Data(project.utf8).write(to: url.appendingPathComponent("tsugumi.json"))
     // The direction the new project's Cards are laid out in (the app's default).
-    try Data("{\"flow\": \"\(AppPreferences.shared.flowDirection.rawValue)\"}\n".utf8).write(to: url.appendingPathComponent("layout.json"))
+    try Data("{\"flow\": \"\(flow)\"}\n".utf8).write(to: url.appendingPathComponent("layout.json"))
   }
 }
 
@@ -201,4 +209,10 @@ extension String {
     let data = try! JSONSerialization.data(withJSONObject: [s], options: [.fragmentsAllowed])
     return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
   }
+}
+
+/// A new project goes into an empty folder only.
+struct FolderNotEmpty: Error, CustomStringConvertible {
+  let path: String
+  var description: String { String(localized: "\(path) は空ではありません。空のフォルダか新しい名前を選んでください。") }
 }

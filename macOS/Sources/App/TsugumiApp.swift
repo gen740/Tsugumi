@@ -12,6 +12,9 @@ struct TsugumiApp: App {
     // (AppModel.takeLaunchProject). AppKit must not take it as a file to open:
     // then SwiftUI would not create the main window at all.
     UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    // Sockets to the VM and to tsugumid: a peer that went away is an error
+    // to handle, never the end of the app (sockets also set SO_NOSIGPIPE).
+    signal(SIGPIPE, SIG_IGN)
   }
 
   var body: some Scene {
@@ -93,11 +96,15 @@ struct OpenConsoleButton: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var shuttingDown = false
+  /// Unsaved edits were saved (or the user chose to drop them) for this quit.
+  private var editsSettled = false
 
   /// Quitting stops every project (runs are recorded as interrupted) and
-  /// powers the shared VM off before the app exits.
+  /// powers the shared VM off before the app exits. Unsaved edits are saved
+  /// first, or dropped only when the user says so.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard !shuttingDown else { return .terminateLater }
+    if !editsSettled, let reply = MainActor.assumeIsolated({ settleEdits(sender) }) { return reply }
     guard case .stopped = AppModel.shared.environments.vm.state else {
       shuttingDown = true
       // Off the main actor, and the reply through the run loop: terminate
@@ -114,6 +121,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return .terminateLater
     }
     return .terminateNow
+  }
+
+  /// Asks about unsaved edits; nil when there are none (the quit goes on).
+  @MainActor private func settleEdits(_ sender: NSApplication) -> NSApplication.TerminateReply? {
+    let dirty = AppModel.shared.sessions.values.filter(\.dirty)
+    if dirty.isEmpty { return nil }
+    let alert = NSAlert()
+    alert.messageText = String(localized: "保存されていない変更があります")
+    alert.informativeText = dirty.map { $0.scopeName([]) }.sorted().joined(separator: "、")
+    alert.addButton(withTitle: String(localized: "保存して終了"))
+    alert.addButton(withTitle: String(localized: "キャンセル"))
+    alert.addButton(withTitle: String(localized: "保存せずに終了"))
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      Task { @MainActor in
+        for s in dirty { await s.save() }
+        if let failed = dirty.first(where: \.dirty) {
+          let a = NSAlert()
+          a.messageText = String(localized: "保存できなかったため終了しませんでした")
+          a.informativeText = "\(failed.scopeName([])): \(failed.saveError ?? "")"
+          a.runModal()
+          return
+        }
+        self.editsSettled = true
+        NSApp.terminate(nil)
+      }
+      return .terminateCancel
+    case .alertThirdButtonReturn:
+      editsSettled = true
+      return nil
+    default:
+      return .terminateCancel
+    }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {

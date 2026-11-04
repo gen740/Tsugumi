@@ -98,6 +98,8 @@ export class ChatController extends Observable {
     if (!this.available) this.status = app.status?.chatError ?? 'RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。'
     onServerEvent((e) => {
       if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
+      // Progress sent while the stream was down: the conversation is read again.
+      if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
     })
     void this.init()
   }
@@ -119,6 +121,20 @@ export class ChatController extends Observable {
       this.sessions = await api<SessionInfo[]>('/api/chat/sessions', { path: this.session.dir })
     } catch {}
     this.changed()
+  }
+
+  /** Reads the open conversation again (its turn keeps running on the server). */
+  private async reread(id: string) {
+    try {
+      const r = await api<{ conversation: Conversation; busy: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
+        '/api/chat/conversation', { ...this.base, folders: this.folders })
+      if (this.currentId !== id) return
+      this.busy = r.busy
+      this.permission = r.permission ?? undefined
+      this.usage = r.conversation.usage
+      this.load(r.conversation)
+      this.changed()
+    } catch {}
   }
 
   select(id: string) {
@@ -354,6 +370,12 @@ export class ChatController extends Observable {
 
   private handle(e: any) {
     switch (e.kind) {
+      case 'discardText': {
+        // The reply is asked again: what it had streamed goes.
+        const last = this.items[this.items.length - 1]
+        if (last && last.role === 'assistant' && !last.tool) this.items = this.items.slice(0, -1)
+        break
+      }
       case 'permission':
         this.permission = { id: e.id, asked: e.asked }
         break

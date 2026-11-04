@@ -86,6 +86,9 @@ public enum AgentEvent: Sendable {
   case toolFinished(id: String, name: String, ok: Bool, summary: String)
   case compacted
   case retrying(String)
+  /// The text streamed so far in this reply is dropped: the reply is asked
+  /// again (a connection or provider error in the middle of it).
+  case discardText
   case error(String)
   case finished
   /// The turn used its steps (model replies with tool calls) without
@@ -146,7 +149,24 @@ public actor Agent {
   /// core keep running; cancelling them needs an explicit run_cancel.
   public func cancel() {
     turn?.cancel()
-    turn = nil
+  }
+
+  /// Cancels and returns once the turn has ended (nothing of it changes the
+  /// conversation afterwards).
+  public func cancelAndWait() async {
+    turn?.cancel()
+    await turn?.value
+  }
+
+  /// Starts a turn once the previous one has ended: a cancelled turn's last
+  /// steps never interleave with the next one's.
+  private func startTurn(_ body: @escaping @Sendable () async -> Void) {
+    let previous = turn
+    previous?.cancel()
+    turn = Task {
+      await previous?.value
+      await body()
+    }
   }
 
   public func send(_ text: String, context: [String], events: @escaping @Sendable (AgentEvent) -> Void) {
@@ -163,7 +183,7 @@ public actor Agent {
     conversation.messages.append(ChatMessage(role: "user", content: [.text(prompt)], display: display))
     conversation.updatedAt = Date()
     try? conversation.save(storage)
-    turn = Task { await self.loop(events) }
+    startTurn { await self.loop(events) }
   }
 
   /// Retries after a failed or stopped answer. A turn whose model reply never
@@ -172,7 +192,7 @@ public actor Agent {
   public func retry(events: @escaping @Sendable (AgentEvent) -> Void) {
     turn?.cancel()
     if let last = conversation.messages.last, last.role == "user" {
-      turn = Task { await self.loop(events) }
+      startTurn { await self.loop(events) }
       return
     }
     let lastText = conversation.messages.last { m in
@@ -182,7 +202,7 @@ public actor Agent {
     conversation.messages.append(lastText)
     conversation.updatedAt = Date()
     try? conversation.save(storage)
-    turn = Task { await self.loop(events) }
+    startTurn { await self.loop(events) }
   }
 
   /// Goes on after the step limit stopped a turn.
@@ -194,13 +214,12 @@ public actor Agent {
     conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: "（止まったところから続けます）"))
     conversation.updatedAt = Date()
     try? conversation.save(storage)
-    turn = Task { await self.loop(events) }
+    startTurn { await self.loop(events) }
   }
 
   /// Compacts the context now (the full history stays in the archive).
   public func compact(events: @escaping @Sendable (AgentEvent) -> Void) {
-    turn?.cancel()
-    turn = Task {
+    startTurn {
       do {
         try await self.compactIfNeeded(events, force: true)
         events(.finished)
@@ -215,7 +234,7 @@ public actor Agent {
   public func resume(events: @escaping @Sendable (AgentEvent) -> Void) {
     guard conversation.tools.contains(where: { $0.state == .sent || $0.state == .pending }) ||
           conversation.messages.last?.role == "user" else { return }
-    turn = Task { await self.loop(events) }
+    startTurn { await self.loop(events) }
   }
 
   private func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
@@ -259,6 +278,9 @@ public actor Agent {
           try Task.checkCancellation()
           results.append(await runTool(id: id, name: name, input: input, events))
         }
+        // Cancelled meanwhile: the results are in the tool records; the next
+        // turn answers the tool calls from them (never this cancelled one).
+        try Task.checkCancellation()
         conversation.messages.append(ChatMessage(role: "user", content: results))
         try? conversation.save(storage)
       }
@@ -319,11 +341,13 @@ public actor Agent {
         attempt += 1
         // The provider's retry-after when it gave one (rate limits), else backoff.
         let wait = min(120, max(e.retryAfter ?? 0, 0.5 * Double(1 << attempt)))
+        if !text.isEmpty { events(.discardText) }
         events(.retrying("provider returned \(e.status); retry \(attempt) in \(Int(wait.rounded(.up))) s"))
         try await Task.sleep(for: .seconds(wait))
         continue
       } catch let e as URLError where attempt < 3 && e.code != .cancelled {
         attempt += 1
+        if !text.isEmpty { events(.discardText) }
         events(.retrying("connection to the model failed (\(e.code.rawValue)); retry \(attempt)"))
       }
       try await Task.sleep(for: .milliseconds(500 * (1 << attempt)))

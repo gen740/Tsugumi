@@ -188,6 +188,8 @@ export type AgentEvent =
   | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
   | { kind: 'compacted' }
   | { kind: 'retrying'; message: string }
+  /** The text streamed so far in this reply is dropped: it is asked again. */
+  | { kind: 'discardText' }
   | { kind: 'error'; message: string }
   | { kind: 'finished' }
   /** The turn used its steps (model replies with tool calls) without
@@ -512,11 +514,14 @@ export class Agent {
     this.abort?.abort()
   }
 
+  /** Starts a turn once the previous one has ended: a cancelled turn's last
+   *  steps never interleave with the next one's. */
   private start(fn: (signal: AbortSignal) => Promise<void>) {
     this.abort?.abort()
     const ac = new AbortController()
     this.abort = ac
-    const t = fn(ac.signal).finally(() => {
+    const previous = this.turn ?? Promise.resolve()
+    const t = previous.catch(() => {}).then(() => fn(ac.signal)).finally(() => {
       if (this.turn === t) this.turn = undefined
     })
     this.turn = t
@@ -613,8 +618,11 @@ export class Agent {
         const results: ContentBlock[] = []
         for (const u of uses) {
           if (signal.aborted) throw new Cancelled()
-          results.push(await this.runTool(u.id, u.name, u.input, events))
+          results.push(await this.runTool(u.id, u.name, u.input, events, signal))
         }
+        // Cancelled meanwhile: the results are in the tool records; the next
+        // turn answers the tool calls from them (never this cancelled one).
+        if (signal.aborted) throw new Cancelled()
         this.conversation.messages.push({ role: 'user', content: results })
         this.save()
       }
@@ -672,6 +680,8 @@ export class Agent {
         if (signal.aborted) throw new Cancelled()
         const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost
         if (!retryable || attempt >= 3) throw e
+        // The reply is asked again: what it had streamed goes.
+        if (text) events({ kind: 'discardText' })
         // The provider's retry-after when it gave one (rate limits), else backoff.
         const wait = Math.min(120, Math.max(e instanceof HTTPStatusError ? e.retryAfter ?? 0 : 0, 0.5 * (1 << (attempt + 1))))
         events({ kind: 'retrying', message: e instanceof HTTPStatusError
@@ -759,7 +769,7 @@ export class Agent {
   }
 
   /** Validates arguments, executes the RPC and records the result. */
-  private async runTool(id: string, name: string, input: string, events: (e: AgentEvent) => void): Promise<ContentBlock> {
+  private async runTool(id: string, name: string, input: string, events: (e: AgentEvent) => void, signal?: AbortSignal): Promise<ContentBlock> {
     events({ kind: 'toolStarted', id, name, arguments: input })
     const record: ToolRecord = this.conversation.tools.find((t) => t.id === id) ?? { id, name, arguments: input, state: 'pending', isError: false }
     this.conversation.tools = this.conversation.tools.filter((t) => t.id !== id)
@@ -833,7 +843,7 @@ export class Agent {
         const deadline = Date.now() + this.statusWait
         while (replyType === 'RunStatus' && RUN_ACTIVE.has(runReply(json).state ?? '') && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 1000))
-          if (this.abort?.signal.aborted) break
+          if (signal?.aborted) break
           ;({ type: replyType, json } = await call())
         }
       }

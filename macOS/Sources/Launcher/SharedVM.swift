@@ -178,7 +178,11 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var fileSystems: [VZVirtioFileSystemDevice] = []
   private var socket: VZVirtioSocketDevice?
   private var slots: [String: Int] = [:]  // project id -> slot
+  /// Held while this app has the VM (under `lock`).
   private var hostLock: HostLock?
+  /// The VM that runs now (under `lock`): a stop reported for an earlier one
+  /// changes nothing.
+  private var current: ObjectIdentifier?
   private var _state: State = .stopped
   private var stateObservers: [UUID: @Sendable (State) -> Void] = [:]
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
@@ -257,6 +261,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       try await waitReady()
       return
     }
+    // A VM of a failed start may still be going down: never two on the same disks.
+    if queue.sync(execute: { self.vm != nil }) { await forceStop() }
+    lock.withLock { _state = .starting(.image) }
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       console.open(console: consoleURL)
@@ -265,21 +272,21 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       do { try hl.lock(wait: false) } catch {
         throw LauncherError.startFailed(reason: "another Tsugumi is using the execution environment", log: "")
       }
-      hostLock = hl
+      lock.withLock { hostLock = hl }
       setState(.starting(.image))
       let files = try installImage(image)
       setState(.starting(.disk))
       try ensureDisk(storeImage, gib: resources.storeGiB, what: "store")
       try ensureDisk(historyImage, gib: Self.historyGiB, what: "run history")
       setState(.starting(.boot))
-      bootCount += 1
+      lock.withLock { _bootCount += 1 }
       console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version))")
       let config = try configuration(files: files, resources: resources)
       try await boot(config)
     } catch {
       console.note("start failed: \(error)")
+      await forceStop()
       setState(.failed("\(error)"))
-      hostLock = nil
       throw error
     }
     // A guest that never reports in (kernel or console trouble) fails the
@@ -292,7 +299,15 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       self.setState(.failed("the VM did not report within 240 s"))
     }
     defer { watchdog.cancel() }
-    try await waitReady()
+    do {
+      try await waitReady()
+    } catch {
+      // A failed start leaves no VM behind (a retry starts one afresh).
+      let state = self.state
+      await forceStop()
+      if case .failed = state { setState(state) }
+      throw error
+    }
   }
 
   private func waitReady() async throws {
@@ -411,7 +426,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     return c
   }
 
-  private var bootCount = 0
+  private var _bootCount = 0
+  private var bootCount: Int { lock.withLock { _bootCount } }
 
   /// The VM's clock follows the Mac's (it drifts, e.g. across sleep), so
   /// times recorded by tsugumid agree with the app's clock.
@@ -472,6 +488,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         let vm = VZVirtualMachine(configuration: config, queue: self.queue)
         vm.delegate = self
         self.vm = vm
+        self.lock.withLock { self.current = ObjectIdentifier(vm) }
         self.fileSystems = vm.directorySharingDevices.compactMap { $0 as? VZVirtioFileSystemDevice }
         self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
         vm.start { result in
@@ -504,22 +521,34 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   }
 
   private func forceStop() async {
-    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+    let vm: VZVirtualMachine? = await withCheckedContinuation { (c: CheckedContinuation<VZVirtualMachine?, Never>) in
       queue.async {
-        guard let vm = self.vm, vm.canStop else { c.resume(); return }
-        vm.stop { _ in c.resume() }
+        guard let vm = self.vm else { c.resume(returning: nil); return }
+        guard vm.canStop else { c.resume(returning: vm); return }
+        vm.stop { _ in c.resume(returning: vm) }
       }
     }
-    stopped(nil)
+    if let vm { stopped(vm, nil) }
+    else { lock.withLock { hostLock = nil } }
   }
 
-  private func stopped(_ error: Error?) {
-    queue.async {
-      self.vm = nil
-      self.fileSystems = []
-      self.socket = nil
+  /// `which` stopped: the state follows only when it is the current VM.
+  private func stopped(_ which: VZVirtualMachine, _ error: Error?) {
+    let id = ObjectIdentifier(which)
+    let isCurrent: Bool = lock.withLock {
+      guard current == id else { return false }
+      current = nil
+      hostLock = nil
+      return true
     }
-    hostLock = nil
+    guard isCurrent else { return }
+    queue.async {
+      if self.vm === which {
+        self.vm = nil
+        self.fileSystems = []
+        self.socket = nil
+      }
+    }
     if let error {
       console.note("the VM stopped with an error: \(error.localizedDescription)")
       setState(.failed("the VM stopped: \(error.localizedDescription)"))
@@ -529,9 +558,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     }
   }
 
-  public func guestDidStop(_ virtualMachine: VZVirtualMachine) { stopped(nil) }
+  public func guestDidStop(_ virtualMachine: VZVirtualMachine) { stopped(virtualMachine, nil) }
 
-  public func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) { stopped(error) }
+  public func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) { stopped(virtualMachine, error) }
 
   // MARK: - Shared folders
 
@@ -585,6 +614,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
           case .success(let conn):
             let fd = dup(conn.fileDescriptor)
             conn.close()
+            if fd >= 0 { noSigPipe(fd) }
             if fd < 0 { c.resume(throwing: LauncherError.notReady("vsock dup failed")) } else { c.resume(returning: fd) }
           case .failure(let e):
             c.resume(throwing: LauncherError.notReady("vsock port \(port): \(e.localizedDescription)"))
@@ -687,6 +717,7 @@ public final class LoopbackBridge: @unchecked Sendable {
   private func acceptLoop() {
     while true {
       let c = accept(listener, nil, nil)
+      if c >= 0 { noSigPipe(c) }
       if c < 0 {
         stopFlag.lock()
         let done = closed
@@ -734,4 +765,11 @@ public final class LoopbackBridge: @unchecked Sendable {
       Darwin.close(up)
     }
   }
+}
+
+/// A write to a socket whose peer went away fails (EPIPE) instead of
+/// killing the process with SIGPIPE.
+public func noSigPipe(_ fd: Int32) {
+  var one: Int32 = 1
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
 }

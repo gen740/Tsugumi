@@ -210,7 +210,10 @@ final class ChatController {
 
   func select(_ id: String) {
     guard let catalog else { return }
-    Task { await agent?.cancel() }
+    // The conversation left behind stops first: it changes nothing after the
+    // new one starts (the new one waits for it).
+    let previous = agent
+    previous.map { a in Task { await a.cancel() } }
     busy = false
     failed = false
     status = nil
@@ -220,6 +223,7 @@ final class ChatController {
     self.agent = agent
     items = []
     Task {
+      await previous?.cancelAndWait()
       await agent.setApprover { [weak self] asked in await self?.approve(asked) ?? [] }
       let conv = await agent.conversation
       usage = conv.usage
@@ -494,6 +498,9 @@ final class ChatController {
       // in the conversation, so nothing is announced.
       reloadCurrent()
     case .retrying(let s): status = "再試行中: \(s)"
+    case .discardText:
+      // The reply is asked again: what it had streamed goes.
+      if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       busy = false
       session.presence.turnEnded()

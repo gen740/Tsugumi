@@ -246,3 +246,15 @@ import Testing
                            size: 13, display: true) != nil)
   #expect(MathImages.image("a \\quad b \\bmod 2", size: 13, display: false) != nil)
 }
+
+/// A new project goes into a new or empty folder, never over another.
+@MainActor
+@Test func aNewProjectNeverOverwritesAFolder() throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-new-\(UUID().uuidString)")
+  defer { try? FileManager.default.removeItem(at: dir) }
+  try AppModel.writeNewProject(at: dir, name: "first", flow: "leftToRight")
+  #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("tsugumi.json").path))
+  #expect(throws: FolderNotEmpty.self) { try AppModel.writeNewProject(at: dir, name: "second", flow: "leftToRight") }
+  let doc = try String(contentsOf: dir.appendingPathComponent("tsugumi.json"), encoding: .utf8)
+  #expect(doc.contains("first") && !doc.contains("second"))
+}

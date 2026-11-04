@@ -279,6 +279,36 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// A new request while a turn runs: the old turn ends first and adds
+  /// nothing afterwards, so the conversation stays well formed (the fixture
+  /// answers 400 to a tool_use without its result, as the Messages API does).
+  @Test func aNewRequestWaitsForTheCancelledTurn() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--slow", "0.05"])
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let first = EventLog(), second = EventLog()
+    await agent.send("set src.text to first and run", context: []) { first.add($0) }
+    try await Task.sleep(for: .milliseconds(300))
+    await agent.send("set src.text to second and run, then report out", context: []) { second.add($0) }
+    await waitFinished(second)
+    #expect(second.text.contains("succeeded"), "\(second.all)")
+    let conv = await agent.conversation
+    let i = try #require(conv.messages.lastIndex { m in m.content.contains { if case .text(let t) = $0 { return t.contains("to second") }; return false } })
+    // After the second request only its own turn: every tool result answers
+    // a tool call made after it.
+    var asked = Set<String>()
+    for m in conv.messages[(i + 1)...] {
+      for b in m.content {
+        if case .toolUse(let id, _, _) = b { asked.insert(id) }
+        if case .toolResult(let id, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
+      }
+    }
+    await client.close()
+  }
+
   /// A turn stopped while a tool ran leaves a tool_use without its result;
   /// a retry sends the recorded result (or "not run") first, so the request is
   /// valid (the fixture answers 400 otherwise, as the Messages API does).

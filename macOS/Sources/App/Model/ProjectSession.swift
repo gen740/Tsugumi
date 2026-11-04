@@ -179,6 +179,9 @@ final class ProjectSession {
   @ObservationIgnored private var subscription: String?
   @ObservationIgnored private var lastSeq: UInt64 = 0
   @ObservationIgnored private var listenTask: Task<Void, Never>?
+  /// The one reconnection in progress (a gap and a lost connection reported
+  /// together start it once).
+  @ObservationIgnored private var reconnectTask: Task<Void, Never>?
   @ObservationIgnored private var observerToken: UUID?
   private(set) var projectId: String?
 
@@ -392,6 +395,8 @@ final class ProjectSession {
   /// does not close a dirty session).
   func close() async {
     listenTask?.cancel()
+    reconnectTask?.cancel()
+    reconnectTask = nil
     await client?.close()
     client = nil
     connected = false
@@ -430,25 +435,37 @@ final class ProjectSession {
   }
 
   /// Reconnects after a lost connection: Hello -> Open -> re-read state.
-  /// Uncommitted edits are kept and never saved automatically.
+  /// Uncommitted edits are kept and saved once connected again (the save is
+  /// checked against the revision it was based on, so a change made
+  /// elsewhere meanwhile is a conflict, never overwritten).
   func reconnect() {
+    guard reconnectTask == nil else { return }
     environment = .reconnecting
     listenTask?.cancel()
-    Task {
+    reconnectTask = Task {
+      defer { reconnectTask = nil }
       await client?.close()
       client = nil
       connected = false
       for attempt in 0..<20 {
+        if Task.isCancelled { return }
         await connect()
         if connected { return }
         try? await Task.sleep(for: .milliseconds(min(5000, 250 * (attempt + 1))))
       }
+      // Given up: a problem page with its retry, never a loading card forever.
+      environment = .failed(message: String(localized: "tsugumid に再接続できませんでした") + (connectionMessage.map { ": \($0)" } ?? ""),
+                            recovery: String(localized: "「再試行」で接続し直します。未保存の変更は保持しています。"), log: "")
     }
   }
 
   /// Starts the environment again (folders shared with it are set when it
   /// starts); unsaved edits stay in the draft.
   func restartEnvironment() async {
+    // The old connection's end is not a loss to reconnect from.
+    listenTask?.cancel()
+    reconnectTask?.cancel()
+    reconnectTask = nil
     await client?.close()
     client = nil
     connected = false
@@ -478,7 +495,8 @@ final class ProjectSession {
         let (batch, finished) = await inbox.take()
         guard let self else { receiver.cancel(); return }
         if !batch.isEmpty { self.notificationBatches += 1 }
-        for event in batch { await self.handle(event) }
+        // A gap ends the batch: the rest is read again after reconnecting.
+        for event in batch where await self.handle(event) == false { break }
         if finished { break }
         // Let the frame that shows this batch happen before the next one.
         try? await Task.sleep(for: .milliseconds(16))
@@ -494,13 +512,15 @@ final class ProjectSession {
   private(set) var notificationCount = 0
   private(set) var notificationBatches = 0
 
-  private func handle(_ e: NotificationEvent) async {
+  /// False when the state cannot be trusted any more (the caller stops).
+  @discardableResult
+  private func handle(_ e: NotificationEvent) async -> Bool {
     notificationCount += 1
-    guard e.subscriptionId == subscription else { return }  // stale subscription
+    guard e.subscriptionId == subscription else { return true }  // stale subscription
     if e.seq != lastSeq + 1 {
       // A gap means we cannot trust our state: open again.
       reconnect()
-      return
+      return false
     }
     lastSeq = e.seq
     switch e.payload.type {
@@ -515,6 +535,7 @@ final class ProjectSession {
     default:
       break
     }
+    return true
   }
 
   // MARK: - Applying core state

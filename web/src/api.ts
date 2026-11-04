@@ -21,6 +21,17 @@ export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
   if (!source) {
     source = new EventSource('/api/events')
+    // Events sent while the stream was down are lost: after it comes back,
+    // every listener reads its state again ({ type: 'reconnected' }).
+    let lost = false
+    source.onerror = () => {
+      lost = true
+    }
+    source.onopen = () => {
+      if (!lost) return
+      lost = false
+      for (const l of [...listeners]) l({ type: 'reconnected' })
+    }
     source.onmessage = (m) => {
       let v: unknown
       try {

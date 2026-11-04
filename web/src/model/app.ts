@@ -50,7 +50,7 @@ export class AppModel extends Observable {
   constructor() {
     super()
     onServerEvent((e) => {
-      if (e.type === 'setup') void this.refresh()
+      if (e.type === 'setup' || e.type === 'reconnected') void this.refresh()
     })
   }
 

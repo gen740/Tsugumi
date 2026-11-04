@@ -354,6 +354,16 @@ export class ProjectSession extends Observable {
     this.viewId = v
     this.origin = `ui:${v}`
     this.offEvents = onServerEvent((e) => {
+      if (e.type === 'reconnected' && !this.connected) {
+        // The environment's progress may have been missed while the stream was down.
+        void api<{ key: string; state: EnvPublicState }[]>('/api/env/list').then((list) => {
+          const mine = list.find((x) => x.key === this.key)
+          if (mine && !this.connected) {
+            this.environment = mine.state
+            this.changed()
+          }
+        }).catch(() => {})
+      }
       if (e.type === 'env' && e.key === this.key && !this.connected) {
         this.environment = e.state
         this.changed()
@@ -1099,13 +1109,20 @@ export class ProjectSession extends Observable {
     }
     this.saveTask = (async () => {
       let attempts = 0
-      do {
-        this.saveAgain = false
-        attempts++
-        await this.saveOnce()
-      } while (this.saveAgain && attempts < 50)
-      this.saveTask = undefined
-      this.changed()
+      try {
+        do {
+          this.saveAgain = false
+          attempts++
+          await this.saveOnce()
+        } while (this.saveAgain && attempts < 50)
+      } catch (e) {
+        // An unexpected error ends this save (the edits stay in the draft),
+        // never every later one.
+        this.saveError = errorText(e)
+      } finally {
+        this.saveTask = undefined
+        this.changed()
+      }
     })()
   }
 
