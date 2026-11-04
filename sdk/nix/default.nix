@@ -125,6 +125,26 @@ rec {
       '';
     };
 
+  # The Python of Python Cards: nixpkgs' python3, except that the plotting
+  # packages below are built without their test suites. They are often not in
+  # the binary cache for the VM (aarch64-linux), and their tests pull large
+  # builds (narwhals: duckdb; plotly: nodejs, bokeh, xarray): a Card using
+  # plotly or altair took over half an hour to build the first time, against
+  # a minute or two without the tests.
+  cardPython =
+    let
+      noCheck = p: p.overridePythonAttrs { doCheck = false; };
+      python = pkgs.python3.override {
+        self = python;
+        packageOverrides = _: super: {
+          narwhals = noCheck super.narwhals;
+          plotly = noCheck super.plotly;
+          altair = noCheck super.altair;
+        };
+      };
+    in
+    python;
+
   # A Python Card: `src/main.py` defines `main(ctx)`. The package contains the
   # interpreter, the requested packages and a main.so that embeds Python.
   # `fonts`: font packages matplotlib falls back to for glyphs its own fonts
@@ -134,7 +154,7 @@ rec {
       src,
       sdk,
       name ? "tsugumi-python-card",
-      python ? pkgs.python3,
+      python ? cardPython,
       packages ? (ps: [ ]),
       fonts ? null,
     }:

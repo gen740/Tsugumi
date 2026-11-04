@@ -177,7 +177,60 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
 
 /** Data for a UI Canvas module. Known modules are drawn natively; any other
  *  module shows its data as formatted JSON. */
+/** The modules the viewer (/modules/viewer.html, ui/modules) draws. */
+const VIEWER_MODULES = new Set(['plotly', 'vega-lite'])
+/** The libraries the viewer may ask for (it is sandboxed and loads nothing itself). */
+const VIEWER_LIBS = new Set(['plotly.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js'])
+const libCode = new Map<string, Promise<string | undefined>>()
+function viewerLib(lib: string): Promise<string | undefined> {
+  if (!libCode.has(lib)) libCode.set(lib, fetch(`/modules/${lib}`).then((r) => (r.ok ? r.text() : undefined), () => undefined))
+  return libCode.get(lib)!
+}
+
+/** A Plotly figure or a Vega-Lite chart, drawn by the module viewer in a
+ *  sandboxed frame: interactive in the expanded view, still on the canvas
+ *  (where the mouse moves the canvas). */
+function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== ref.current?.contentWindow) return
+      if (e.data?.tsugumi === 'ready') setReady(true)
+      if (e.data?.tsugumi === 'need' && VIEWER_LIBS.has(e.data.lib)) {
+        const lib = String(e.data.lib)
+        void viewerLib(lib).then((code) => ref.current?.contentWindow?.postMessage({ tsugumi: 'lib', lib, code }, '*'))
+      }
+      if (e.data?.tsugumi === 'state') setError(e.data.state === 'error' ? String(e.data.message) : '')
+      if (e.data?.tsugumi === 'key' && e.data.key === 'Escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+  useEffect(() => {
+    // The frame has an opaque origin (sandbox): '*' is the only target that reaches it.
+    if (ready) ref.current?.contentWindow?.postMessage({ name, json, interactive: large }, '*')
+  }, [ready, name, json, large])
+  return (
+    <div className="display-viewer" style={{ pointerEvents: large ? 'auto' : 'none' }}>
+      {/* Laid out at the display's own size and scaled with the canvas, like the other displays.
+          Sandboxed by the server's policy for /modules/ (CSP sandbox allow-scripts). */}
+      <div className="display-viewer-frame" style={{ borderRadius: 4 * zoom }}>
+        <iframe ref={ref} src="/modules/viewer.html" title={name === 'plotly' ? 'Plotly' : 'Vega-Lite'}
+          style={{ width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})` }} />
+      </div>
+      {error && <div className="secondary" style={{ fontSize: 10 * zoom }}>{error}</div>}
+    </div>
+  )
+}
+
 function ModuleDisplayView({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
+  if (VIEWER_MODULES.has(name)) return <ViewerFrame name={name} json={json} large={large} zoom={zoom} />
+  return <JSONModuleView name={name} json={json} large={large} zoom={zoom} />
+}
+
+function JSONModuleView({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
   const value = useMemo(() => tryParse(json), [json])
   const bins = name === 'histogram' ? (arr(get(value, 'bins')) ?? []).map(dbl).filter((b): b is number => b !== undefined) : []
   if (bins.length) {

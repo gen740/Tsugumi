@@ -149,7 +149,12 @@ through the SDK's backend (`sdk/python/tsugumi/mpl.py`), so code written for a w
 display live while the Card runs (an endless animation ends when the run is stopped).
 `ctx.display_figure(fig)` shows a figure with any backend. Japanese labels draw as they are (a
 Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Do not call `matplotlib.use("Agg")` and
-`savefig` just to display. Example: `demos/matplotlib` (a static figure and a live animation).
+`savefig` just to display. Example: `demos/plots` (a static figure, a live animation, Plotly and Altair).
+
+Plotly (`ps.plotly`) and Altair (`ps.altair`) are interactive plots in the display (zoom, hover,
+legend in the expanded view): `fig.show()` / `chart.show()` as written anywhere, or
+`ctx.display_figure(fig_or_chart)`. The figure's JSON (Altair: its data inline) is at most 1 MiB;
+beyond that, plot fewer points or use matplotlib (an image). Charts cannot load data from URLs.
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.
 

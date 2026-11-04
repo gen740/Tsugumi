@@ -140,7 +140,8 @@ in
 
 - Card のコードから `tsugumi::visualization::text(...)` などの API を呼ぶことで、text・scalar・折れ線・表・画像・3D 点群・Canvas module の出力表示を行えます。
 - 折れ線グラフは Dawn（WebGPU 実装、Metal バックエンド）で高速に描画され、Live Stream デモのように実行中もリアルタイムに更新されます。
-- Python Card の matplotlib は、SDK の backend（`tsugumi.mpl`）を通じてそのまま Card の出力表示に描かれます。ウィンドウ向けに書いたコードがそのまま動く、X 転送のような仕組みです。`plt.show()` で図を表示し（開いたままの図も呼び出しの終わりに表示）、`plt.pause()` のループや `FuncAnimation` は実行中にライブで更新されます。matplotlib を使う Card には日本語フォント（IPAex）が入り、日本語のラベルもそのまま描けます。Matplotlib デモを参照してください。
+- Python Card の matplotlib は、SDK の backend（`tsugumi.mpl`）を通じてそのまま Card の出力表示に描かれます。ウィンドウ向けに書いたコードがそのまま動く、X 転送のような仕組みです。`plt.show()` で図を表示し（開いたままの図も呼び出しの終わりに表示）、`plt.pause()` のループや `FuncAnimation` は実行中にライブで更新されます。matplotlib を使う Card には日本語フォント（IPAex）が入り、日本語のラベルもそのまま描けます。
+- Plotly の `fig.show()` と Altair の `chart.show()` は、Card の出力表示に対話できるグラフとして出ます（拡大表示でズーム・ホバー・凡例の操作）。描画には同梱の plotly.js / Vega を使い、ネットワークには出ません（Card のグラフは外部からデータを読めません）。Plots デモを参照してください。Plots デモを参照してください。
 - 出力表示は Canvas 上の独立した枠として自由に配置・拡大でき、そのレイアウトは `layout.json` に保存されます。
 
 ## 8. UI（ワークベンチ）

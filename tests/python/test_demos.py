@@ -325,22 +325,24 @@ def test_status_and_cancel_during_nix_preparation(report):
 
 
 @pytest.fixture
-def mpl_demo(tmp_path):
-    env = demo_environment(tmp_path, "matplotlib")
+def plots_demo(tmp_path):
+    env = demo_environment(tmp_path, "plots")
     yield env
     env.cleanup()
 
 
-def test_matplotlib_draws_into_the_displays(mpl_demo):
+def test_plots_draw_into_the_displays(plots_demo):
     """Plain matplotlib (plt.show(), a FuncAnimation) reaches the Cards'
     displays through the SDK's backend: the animation live, frame by frame,
     and each Card's last image sharp (2x) and named after its title; the
-    Japanese in a title draws with the Card's fallback font."""
-    c = connect(mpl_demo)
-    edit_card(mpl_demo, c, "settings", lambda b: (set_param(b, "walkers", 200), set_param(b, "steps", 80)))
-    edit_card(mpl_demo, c, "diffusion", lambda b: set_param(b, "frames", 12))
+    Japanese in a title draws with the Card's fallback font. Plotly's
+    fig.show() and Altair's chart.show() send interactive plots (module
+    displays) with the figure's JSON and the chart's inline data."""
+    c = connect(plots_demo)
+    edit_card(plots_demo, c, "settings", lambda b: (set_param(b, "walkers", 200), set_param(b, "steps", 80)))
+    edit_card(plots_demo, c, "diffusion", lambda b: set_param(b, "frames", 12))
     opened = c.open()
-    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("summary"), path("diffusion")])
+    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path(c) for c in ("summary", "diffusion", "explore", "spread")])
     rid = start_run(c, ["start"])
     frames = []
     first_display(c, rid)
@@ -365,3 +367,13 @@ def test_matplotlib_draws_into_the_displays(mpl_demo):
         assert data[:8] == b"\x89PNG\r\n\x1a\n"
         width = int.from_bytes(data[16:20], "big")
         assert width >= 1200, width  # 2x of a 9-inch figure at 100 dpi (cropped to its content for summary)
+    d = c.call("RunRecordRequest", runId=rid, card=path("explore")).record.display
+    assert d.valueType == 7 and text(d.value.name) == "plotly"  # DisplayModule
+    fig = json.loads(text(d.value.dataJson))
+    assert fig["data"][0]["type"] == "scatter" and "200 walkers" in fig["layout"]["title"]["text"]
+    d = c.call("RunRecordRequest", runId=rid, card=path("spread")).record.display
+    assert d.valueType == 7 and text(d.value.name) == "vega-lite"
+    spec = json.loads(text(d.value.dataJson))
+    assert spec["$schema"].startswith("https://vega.github.io/schema/vega-lite/v6")
+    assert len(spec["layer"]) == 2
+    assert spec.get("datasets") or spec.get("data", {}).get("values")  # the data is in the spec

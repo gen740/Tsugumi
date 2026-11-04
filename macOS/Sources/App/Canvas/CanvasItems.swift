@@ -280,6 +280,8 @@ struct DisplayContent: View {
       }
     case .points(let x, let y, let z, let colors)?:
       PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
+    case .module(let name, let json)? where ModuleViewer.modules.contains(name):
+      ModuleViewer(name: name, json: json, interactive: large, zoom: zoom)
     case .module(let name, let json)?:
       ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
     case nil where large:

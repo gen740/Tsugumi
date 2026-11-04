@@ -39,13 +39,15 @@
       ]
     },
     {
-      "id": "matplotlib",
-      "title": "Matplotlib",
-      "description": "Random walks drawn by plain matplotlib code: plt.show() puts a figure in the Card's display and a FuncAnimation of diffusion plays there live, with no Tsugumi-specific plotting calls.",
-      "path": "matplotlib",
+      "id": "plots",
+      "title": "Plots (matplotlib, Plotly, Altair)",
+      "description": "Random walks drawn by plotting code written as it would be anywhere else: matplotlib's plt.show() and a FuncAnimation that plays live, Plotly's fig.show() and Altair's chart.show() as interactive plots (zoom, hover). No Tsugumi-specific plotting calls.",
+      "path": "plots",
       "tags": [
         "Python",
         "matplotlib",
+        "Plotly",
+        "Altair",
         "ライブ表示",
         "分岐・分配・合流"
       ]

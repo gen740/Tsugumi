@@ -1,5 +1,5 @@
 {
-  "name": "Matplotlib",
+  "name": "Plots",
   "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
   "databaseConnections": [],
   "canvas": {
@@ -21,6 +21,12 @@
       },
       {
         "id": "diffusion"
+      },
+      {
+        "id": "explore"
+      },
+      {
+        "id": "spread"
       }
     ],
     "connections": [
@@ -71,6 +77,26 @@
         },
         "to": {
           "card": "diffusion",
+          "port": "walks"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "explore"
+        },
+        "to": {
+          "card": "explore",
+          "port": "walks"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "spread"
+        },
+        "to": {
+          "card": "spread",
           "port": "walks"
         }
       }

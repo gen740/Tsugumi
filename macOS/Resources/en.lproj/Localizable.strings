@@ -129,6 +129,7 @@
 "OpenAI API キー" = "OpenAI API Key";
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "OpenAI の API キー" = "OpenAI API key";
+"Plotly のグラフ" = "Plotly chart";
 "Python の処理" = "Python step";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で名前を変えます（定義のフォルダ・接続・配置が新しい名前に移ります）" = "Return renames (the definition folder, connections and layout move to the new name)";
@@ -164,6 +165,7 @@
 "VM イメージを展開しています" = "Unpacking the VM image";
 "VM 内の実行履歴" = "Run history in the VM";
 "VM 内の実行履歴を削除しますか？" = "Delete the run history in the VM?";
+"Vega-Lite のグラフ" = "Vega-Lite chart";
 "Workflow の実行を停止（チャットの回答停止とは別の操作です）" = "Stop the workflow run (separate from stopping a chat answer)";
 "Workflow の相談・生成・編集を依頼できます。" = "Ask for advice, generation or edits of the workflow.";
 "Workflow 階層" = "Workflow Hierarchy";
@@ -239,6 +241,7 @@
 "このアプリ（この Mac。API キーは macOS のキーチェーン）" = "This app (this Mac; API keys in the macOS Keychain)";
 "このタブで開く" = "Open in This Tab";
 "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。" = "The tokens on this device were removed, but the revocation at OpenAI could not be confirmed. You can disconnect Tsugumi in ChatGPT settings.";
+"このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。" = "Deletes the registrations of this project's Card builds (Nix GC roots) and the build work files. What is in the shared Nix store stays and is deleted, as unregistered, by “Clean shared store” in the app settings. Documents, the run history and kept artifacts are not deleted. The next run evaluates again and uses what is still in the store without building.";

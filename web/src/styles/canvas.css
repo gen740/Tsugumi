@@ -135,3 +135,6 @@ pre.display-text.display-scroll { overflow: auto; flex: 1; min-height: 0; }
 .display-histogram { flex: 1; min-height: 0; display: flex; align-items: flex-end; gap: 2px; }
 .display-histogram > div { flex: 1; border-radius: 2px; background: color-mix(in srgb, var(--accent) 70%, transparent); min-height: 1px; }
 .display-module { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.display-viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.display-viewer-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: white; }
+.display-viewer-frame > iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; }

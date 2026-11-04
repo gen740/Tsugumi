@@ -13,8 +13,30 @@ if (!fs.existsSync(gen)) {
   process.exit(1)
 }
 fs.mkdirSync(path.join(out, 'public'), { recursive: true })
+// The module viewer (ui/modules) and the plot libraries the page sends it,
+// served from /modules/. The viewer is sandboxed and loads nothing itself, so
+// its script goes inline.
+const viewer = path.join(root, '..', 'ui', 'modules')
+const MODULE_FILES = {
+  'plotly.min.js': path.join(root, 'node_modules', 'plotly.js-dist-min', 'plotly.min.js'),
+  'vega.min.js': path.join(root, 'node_modules', 'vega', 'build', 'vega.min.js'),
+  'vega-lite.min.js': path.join(root, 'node_modules', 'vega-lite', 'build', 'vega-lite.min.js'),
+  'vega-embed.min.js': path.join(root, 'node_modules', 'vega-embed', 'build', 'vega-embed.min.js'),
+  // Their licenses travel with them (THIRD_PARTY_NOTICES.md).
+  'LICENSE.plotly.js.txt': path.join(root, 'node_modules', 'plotly.js-dist-min', 'LICENSE'),
+  'LICENSE.vega.txt': path.join(root, 'node_modules', 'vega', 'LICENSE'),
+  'LICENSE.vega-lite.txt': path.join(root, 'node_modules', 'vega-lite', 'LICENSE'),
+  'LICENSE.vega-embed.txt': path.join(root, 'node_modules', 'vega-embed', 'LICENSE'),
+}
 const copy = () => {
   fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(out, 'public', 'index.html'))
+  fs.mkdirSync(path.join(out, 'public', 'modules'), { recursive: true })
+  for (const [name, from] of Object.entries(MODULE_FILES)) fs.copyFileSync(from, path.join(out, 'public', 'modules', name))
+  const script = fs.readFileSync(path.join(viewer, 'viewer.js'), 'utf8')
+  if (script.includes('</script')) throw new Error('viewer.js cannot be inlined: it contains </script')
+  const page = fs.readFileSync(path.join(viewer, 'viewer.html'), 'utf8').replace('<script src="viewer.js"></script>', () => `<script>\n${script}</script>`)
+  if (!page.includes(script)) throw new Error('viewer.html has no <script src="viewer.js"></script> to inline')
+  fs.writeFileSync(path.join(out, 'public', 'modules', 'viewer.html'), page)
   fs.copyFileSync(path.join(root, '..', 'docs', 'assets', 'tsugumi-icon.svg'), path.join(out, 'public', 'icon.svg'))
   fs.copyFileSync(gen, path.join(out, 'tsugumi.bfbs'))
 }

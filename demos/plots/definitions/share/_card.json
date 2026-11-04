@@ -6,7 +6,9 @@
       "type": "string[]",
       "data": [
         "summary",
-        "diffusion"
+        "diffusion",
+        "explore",
+        "spread"
       ]
     }
   ]

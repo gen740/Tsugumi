@@ -82,3 +82,24 @@ def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(
     # The page reaches its project's tsugumid over a loopback WebSocket.
     assert "ws://127.0.0.1:*" in r.getheader("content-security-policy")
     assert r.getheader("x-content-type-options") == "nosniff"
+
+
+def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
+    """/modules/ (a Card's Plotly figure or Vega-Lite chart) may be framed by the
+    page alone, always runs sandboxed (an opaque origin: no cookie, no /api/),
+    loads nothing (its script is inline; the page sends it the libraries) and
+    connects nowhere; every other answer still forbids framing."""
+    p, port, key = web
+    r, data = request(port, "GET", "/modules/viewer.html")
+    assert r.status == 200 and b"tsugumiRender" in data and b'src="viewer.js"' not in data
+    csp = r.getheader("content-security-policy")
+    directives = {d.strip().split(" ", 1)[0]: d.strip() for d in csp.split(";")}
+    assert directives["sandbox"] == "sandbox allow-scripts"  # no allow-same-origin
+    assert directives["default-src"] == "default-src 'none'" and directives["connect-src"] == "connect-src 'none'"
+    assert "'self'" not in directives["script-src"] and directives["frame-ancestors"] == "frame-ancestors 'self'"
+    assert r.getheader("x-frame-options") == "SAMEORIGIN"
+    for lib in ("plotly.min.js", "vega.min.js", "vega-lite.min.js", "vega-embed.min.js", "LICENSE.plotly.js.txt"):
+        r, data = request(port, "GET", f"/modules/{lib}")
+        assert r.status == 200 and len(data) > 1000, lib
+    r, _ = request(port, "GET", "/")
+    assert r.getheader("x-frame-options") == "DENY" and "frame-ancestors 'none'" in r.getheader("content-security-policy")

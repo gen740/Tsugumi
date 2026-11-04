@@ -42,7 +42,7 @@ ui/renderer/       Dawn 描画層（C API, dylib）
 agent/             Agent（SwiftPM パッケージ: provider, 会話, BFBS 由来の tool, JSON⇄FlatBuffers）
 web/               ブラウザ UI とホストサーバー（Agent の契約は agent/Shared と共通）
 tests/cpp, tests/python, tests/fixtures   契約・デモ・計測・ローカル model provider fixture
-demos/             UI の Demos 一覧（index.json）、基本・科学・Matplotlib のデモと科学デモの Draft 版
+demos/             UI の Demos 一覧（index.json）、基本・科学・Plots（matplotlib・Plotly・Altair）のデモと科学デモの Draft 版
 docs/assets/       アイコン・キービジュアル、実画面のスクリーンショット
 ```
 
@@ -127,7 +127,8 @@ docs/assets/       アイコン・キービジュアル、実画面のスクリ�
 | `tests/python/test_shared_vm.py` | 共通 VM: 履歴が VM のディスク（`/history`）にあり共有フォルダにないこと・`.tsugumi/runs.sqlite` への書き出し・再起動後も残り、データ削除後は `.tsugumi/runs.sqlite` から戻ること、2 プロジェクトが 1 つの Nix store を共有しつつ uid・見えるファイル・プロセス（PID 名前空間）が分かれていること、片方を止めてももう片方の実行が成功し、止めた方も同じ VM で再開できること、ビルド結果が開き直し・共有 store の掃除・プロジェクトのコピー（コピー元のデータ削除後も）でビルドし直さずに使えること、GC root のフォルダを他のプロジェクトが作れないこと、閉じたプロジェクトがフォルダの slot を返すこと（slot 数より多く順に開閉）、VM の中で落とした tsugumid が次の起動で同じ文書のまま立ち上がること、vmd が不正な要求（パスを含む ID・語数違い・未知の語・長い行）を 1 つずつ拒否して動き続けること |
 | `tests/python/test_workers.py` | 共通 VM: 常駐 worker が次の実行でも同じプロセスで動き `onRunStart` で実行が始まること、File 入力の Card が worker を使い回して状態（stream）を保ち、入力に書き込めないこと（出力は FD のフォルダに書け、渡していない FD はないこと）、`reuseWorker = false` が呼び出しごとに新しい worker になること、評価の無限再帰・`buildTimeoutSeconds` の後も tsugumid が動き続けること、`network` を許可しない Card は sandbox の有無にかかわらず preRun・run・postRun のどこからも外へ通信できないこと、`hostFolders` のフォルダが指定した Card にだけ見え `write: true` 以外は読み取り専用であること |
 | `tests/python/test_mpl_backend.py` | Python SDK の matplotlib backend（代わりのホスト module で）: backend の既定、`plt.show()` の 1 枚の画像と図を閉じること、開いたままの図、複数の図の縦積み、`plt.pause()` のライブフレーム（等倍）と最後の 2 倍の画像、`FuncAnimation`（blit なし）の再生、停止で終わる無限アニメーション、失敗した呼び出しで図が残らないこと、Card 自身の表示を閉じ忘れの図で上書きしないこと、Card が選んだ backend を尊重すること |
-| `tests/python/test_demos.py` | 一覧（`demos/index.json`）のすべてのデモが開いて解決できること（実装済みは診断なし、Draft 版は Draft だけ）、Matplotlib デモの図がライブと最後の画像で表示に届くこと、3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
+| `tests/python/test_plots.py` | Python SDK の Plotly / Altair（代わりのホスト module で）: `fig.show()` が図の JSON を `plotly` の module 表示で送ること、`plotly.io` が先に import されていても設定されること、`chart.show()` がデータ込みの Vega-Lite を `vega-lite` で送ること（IPython もブラウザも要らない）、`ctx.display_figure` が両方を受けること、1 MiB を超える図は理由付きで失敗すること、開いたままの matplotlib の図で上書きしないこと |
+| `tests/python/test_demos.py` | 一覧（`demos/index.json`）のすべてのデモが開いて解決できること（実装済みは診断なし、Draft 版は Draft だけ）、Plots デモの図がライブと最後の画像で表示に届くこと・Plotly と Altair の図が module 表示（図の JSON・データ込みの Vega-Lite）で届くこと、3 デモの完成条件（Collatz は独立実装の参照値と照合、子 Workflow の単体実行を含む）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
 | `tests/python/test_agent_contract.py` | Swift と Web の Agent が共有する `agent/Shared/`（system prompt・tool にする RPC・Agent 自身の tool と Draft 依頼文）から Swift 側の `Shared.swift` が生成済みであること、Web 側が契約（`tests/fixtures/agent-tools.json` の tool 一覧、`agent-contract.json` の FlatJSON 境界値と Draft 依頼文）を満たすこと（`web/scripts/contract.mjs`。node・`web/node_modules`・`web/src/gen` がなければ skip。tool 一覧のスナップショットは RPC を変えたら `cd web && npm run contract -- --update`）、Web UI のサーバーが ChatGPT にサインインしてプランを使うこと（`web/server/chatgptCheck.ts`、`npm run check:chatgpt`: テスト用モデルが OAuth の発行者も務め、ループバックの受け口・ID トークンの検査・0600 の記録・プランの規則・トークンの更新・利用上限・サインアウト） |
 | `tests/python/test_agent_tools.py` | Agent が頼る RPC の振る舞い: `at_rev` なしの読み取りは最新、`""` はプロジェクトのフォルダ、`project_validate` は保存せずに検証、入力 Card がプロジェクトのファイルを File として渡すこと |
 | `tests/python/test_definitions.py` | 定義は Card ごとに 1 つ（名前 = ID = 定義フォルダ）、改名でフォルダと実行履歴が移ること、Card in Card は `externals/` の単独でも開けるプロジェクトで外側から編集すること、trigger |
@@ -135,7 +136,7 @@ docs/assets/       アイコン・キービジュアル、実画面のスクリ�
 | `tests/python/test_permissions.py` | モデル（origin `agent`）の保存が Card の権限（ネットワーク・sandbox off・ホストのフォルダ、Card in Card の中も）を広げるときは `approval_required` で拒否され、その広がりを承認として付けたときだけ通ること。利用者自身の保存には承認が要らないこと |
 | `tests/python/test_untrusted_project.py` | 他人から来たプロジェクトの `.tsugumi/`（保存 journal・実行履歴のコピー）を使う前に検査し、プロジェクトの外を書き・読み・消しできないこと |
 | `tests/python/test_host_sandbox.py` | Mac 上の tsugumid（Web UI）が sandbox の Card を Seatbelt で隔離し、ネットワークを許した Card でもこのホストの tsugumid・Web サーバーに届かず、自分の出力フォルダにだけ書けること |
-| `tests/python/test_web_server.py` | Web UI のホストサーバー: 表示した URL の key（その後は cookie）を持つページだけが `/api/`（`/api/settings` を含む）に届くこと、変更には cross-origin から送れないヘッダーが要ること、不正な要求はそれだけが失敗しページの外のファイルを返さないこと（node と `web/dist` が必要） |
+| `tests/python/test_web_server.py` | Web UI のホストサーバー: 表示した URL の key（その後は cookie）を持つページだけが `/api/`（`/api/settings` を含む）に届くこと、変更には cross-origin から送れないヘッダーが要ること、不正な要求はそれだけが失敗しページの外のファイルを返さないこと（node と `web/dist` が必要）。グラフの表示部品（`/modules/`）だけがこのページからの埋め込みを許され、常に sandbox（opaque origin）で、何も読み込まず（スクリプトは埋め込み、ライブラリはページが渡す）どこにも接続しないこと |
 | `tests/python/test_frame_fuzz.py` | 固定 seed の fuzz: Unix と WebSocket のフレーム（任意のバイト列・偽の長さ・任意のヘッダー bit・マスクなし・順不同の fragment と制御フレーム・Hello の前後でバイトを書き換えた要求）で tsugumid が落ちず止まらず、ほかの接続に正しく答え続けること（`TSUGUMI_FUZZ_CASES` で件数、既定 300） |
 | `tests/python/test_en_strings.py` | 英語 UI の訳が原文と同じ引数を同じ順に取ること（順を変える訳は `%2$llu` のような位置指定）、同梱の `Localizable.strings` が生成済みであること。ビルドが出す文字列のうち訳のないものは `en_strings.py --check <stringsdata のフォルダ>` で一覧できる |
 | `tests/python/test_release.py` | 版番号が `VERSION` 1 つから core・Nix・CMake・アプリに入ること、アプリが Swift Build でビルドされ、ビルドしたマシンのパス（パッケージのリソースの場所）を含まないこと、ビルドしたマシンのパス（`#filePath`）が debug ビルドの中にしかないこと、アプリと Web UI が API キーに同じ Keychain 項目を使うこと |

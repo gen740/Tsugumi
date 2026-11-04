@@ -16,7 +16,9 @@ Input and output classes are generated from the Card's ``_inputs.fbs`` and
 parameters are ``params.Params``.
 
 matplotlib draws into the Card's display (``tsugumi.mpl``): ``plt.show()``,
-``plt.pause()`` and animations work as they would in a window.
+``plt.pause()`` and animations work as they would in a window. Plotly's
+``fig.show()`` and Altair's ``chart.show()`` show interactive plots there
+(``tsugumi.plots``).
 """
 
 from __future__ import annotations
@@ -36,6 +38,10 @@ os.environ.setdefault("MPLBACKEND", "module://tsugumi.mpl")
 
 _in_call = False
 """Inside an invocation or a run-start hook (the host's functions can be called)."""
+
+from tsugumi import plots as _plots  # noqa: E402 - after the module's state, which plots does not read
+
+_plots.install()
 
 _card_displayed = False
 """The Card sent a display itself (ctx.display_*) during this call."""
@@ -150,10 +156,16 @@ class Context:
                              None if colors is None else [int(c) for c in colors])
 
     def display_figure(self, *figures) -> None:
-        """matplotlib figures as the Card's image (several are stacked), whatever the backend."""
+        """matplotlib figures as the Card's image (several are stacked), whatever the
+        backend; a Plotly figure or an Altair chart as an interactive plot."""
+        _shown_by_card()
+        if any(_plots.is_plotly(f) or _plots.is_altair(f) for f in figures):
+            if len(figures) != 1:
+                raise Failure("output_invalid", "display_figure shows one Plotly figure or Altair chart at a time")
+            (_plots.show_plotly if _plots.is_plotly(figures[0]) else _plots.show_altair)(figures[0])
+            return
         from tsugumi import mpl
 
-        _shown_by_card()
         mpl.display(list(figures))
 
     def display_module(self, name: str, data) -> None:

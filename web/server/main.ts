@@ -431,6 +431,17 @@ function authorized(req: http.IncomingMessage): boolean {
   return !!got && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
 }
 
+// The module viewer (/modules/: a Card's Plotly figure or Vega-Lite chart) is
+// framed by the page, always sandboxed (an opaque origin: no cookie, no /api/),
+// loads nothing (its script is inline, the page posts it the libraries' code,
+// which it evaluates: 'unsafe-eval', also for Vega's expressions) and
+// connects nowhere.
+const MODULE_HEADERS = {
+  'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; " +
+    "img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+  'x-frame-options': 'SAMEORIGIN',
+}
+
 // Every response: no framing, no type sniffing, only this origin's code.
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
@@ -502,6 +513,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   let file = path.normalize(path.join(publicDir, decodeURIComponent(url.pathname)))
   if (file !== publicDir && !file.startsWith(publicDir + path.sep)) return void res.writeHead(403).end()
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(publicDir, 'index.html')
+  else if (file.startsWith(path.join(publicDir, 'modules') + path.sep)) for (const [k, v] of Object.entries(MODULE_HEADERS)) res.setHeader(k, v)
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' })
   fs.createReadStream(file).pipe(res)
 }

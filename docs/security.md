@@ -120,6 +120,14 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 - キャンセルやタイムアウト期限切れの際は、worker が起動した子孫プロセスまで残さず終了させます（sandbox の on / off 両方で自動テスト済み）。
 - 常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時には即座に破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。
 
+### Card のグラフ（Plotly・Vega-Lite）の表示
+
+Card が送る Plotly の図と Vega-Lite の仕様は信頼しないデータとして扱い、同梱の plotly.js / Vega で描く表示部品（`ui/modules`）の中だけで動かします。
+
+- Web UI: `/modules/viewer.html` を iframe に入れます。応答の CSP は `sandbox allow-scripts`（`allow-same-origin` なし）です。そのため表示部品は opaque origin で動き、cookie も `/api/` も使えません。`default-src 'none'`・`connect-src 'none'` なので何も読み込まず、どこにも接続しません。スクリプトはページに埋め込み、ライブラリのコードは親ページが postMessage で渡します。埋め込みを許すのはこの経路だけ（`frame-ancestors 'self'`）で、ほかの応答は従来どおり埋め込みを禁じます。
+- macOS アプリ: 表示部品を WKWebView（保存しないデータストア）で開き、content rule で `file:` 以外の読み込みをすべて遮断します。
+- どちらでも、Vega のデータ読み込み（`data.url`）は loader で拒否します。グラフのデータは仕様に含めるよう SDK が送ります。
+
 ## 5. Nix 評価の制限
 
 Card の `default.nix` には任意の Nix 式を書けますが、評価時には以下の制限を強制しています（`core/src/nix_eval.cc`、`macOS/Container/vm-boot.nix`）。

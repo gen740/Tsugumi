@@ -82,6 +82,25 @@ only code reachable from the server and browser entry points.
 | commander | 15.0.0 | MIT; KaTeX CLI dependency, not an app import |
 | FlatBuffers | 25.9.23 | Apache-2.0 |
 
+### Plot viewer (web UI and macOS app)
+
+Plotly figures and Altair (Vega-Lite) charts of Cards are drawn by the
+module viewer (`ui/modules`) with these minified browser builds, pinned in
+`web/package-lock.json`. The web build serves them from `/modules/` and
+`macOS/build-app.sh` copies them to `Contents/Resources/modules/`, each with
+its license file (`LICENSE.<package>.txt`).
+
+| Component | Version | License |
+| --- | --- | --- |
+| plotly.js (`plotly.js-dist-min`) | 3.6.0 | MIT; the bundle includes its dependencies (d3 modules and others), whose notices are in the file's header comments |
+| Vega (`vega`) | 6.4.0 | BSD-3-Clause; the build includes d3 modules (ISC, BSD-3-Clause) |
+| Vega-Lite (`vega-lite`) | 6.4.3 | BSD-3-Clause |
+| vega-embed | 7.3.0 | BSD-3-Clause |
+
+The Python packages a Card asks for (`matplotlib`, `plotly`, `altair`, …)
+come from nixpkgs when the Card is built; a Card that uses matplotlib also
+gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.
+
 Each installed package contains its license text. Keeping these only in
 `web/node_modules/` does not make them part of the separately distributed
 `web/dist/`; the build must preserve the notices for the emitted code.
