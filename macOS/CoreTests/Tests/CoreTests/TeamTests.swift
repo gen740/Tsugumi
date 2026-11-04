@@ -39,6 +39,9 @@ import TsugumiRPC
 
   @Test func helpersImplementDraftsAtTheSameTime() async throws {
     var h = AgentHarness()
+    // The helpers' Cards run, so the worker must be built (not only tsugumid).
+    try #require(FileManager.default.fileExists(atPath: h.root.appendingPathComponent("build/sdk/tsugumi-worker").path),
+                 "build/sdk/tsugumi-worker is missing: ninja -C build tsugumi-worker")
     try h.start()
     defer { h.stop() }
     let client = RPCClient(endpoint: h.endpoint!)

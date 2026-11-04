@@ -322,3 +322,44 @@ def test_status_and_cancel_during_nix_preparation(report):
     final = wait_run(other, rid, timeout=60)
     print(f"cancel during preparation took {time.time() - t0:.2f}s (seen preparing: {seen_preparing})")
     assert final.state in (RunState.cancelled, RunState.succeeded)
+
+
+@pytest.fixture
+def mpl_demo(tmp_path):
+    env = demo_environment(tmp_path, "matplotlib")
+    yield env
+    env.cleanup()
+
+
+def test_matplotlib_draws_into_the_displays(mpl_demo):
+    """Plain matplotlib (plt.show(), a FuncAnimation) reaches the Cards'
+    displays through the SDK's backend: the animation live, frame by frame,
+    and each Card's last image sharp (2x) and named after its title."""
+    c = connect(mpl_demo)
+    edit_card(mpl_demo, c, "settings", lambda b: (set_param(b, "walkers", 200), set_param(b, "steps", 80)))
+    edit_card(mpl_demo, c, "diffusion", lambda b: set_param(b, "frames", 12))
+    opened = c.open()
+    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("summary"), path("diffusion")])
+    rid = start_run(c, ["start"])
+    frames = []
+    first_display(c, rid)
+    while True:
+        try:
+            n = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
+                                    text(n.value.display.runId) == rid, timeout=5)
+            frames.append(text(n.value.display.card.segments[-1]))
+        except TimeoutError:
+            if c.call("RunStatusRequest", runId=rid).state in ENDED:
+                break
+    st = wait_run(c, rid)
+    assert st.state == RunState.succeeded, (stderr(c, rid, "summary"), stderr(c, rid, "diffusion"))
+    assert frames.count("diffusion") >= 3, frames  # the animation was seen while it played
+    for card, alt in (("summary", "Random walks spread as √t"), ("diffusion", "step 80 of 80")):
+        d = c.call("RunRecordRequest", runId=rid, card=path(card)).record.display
+        assert d.valueType == 5, card  # DisplayImage
+        img = d.value
+        assert text(img.mediaType) == "image/png" and text(img.alt) == alt
+        data = bytes(img.data)
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        width = int.from_bytes(data[16:20], "big")
+        assert width >= 1200, width  # 2x of a 9-inch figure at 100 dpi (cropped to its content for summary)

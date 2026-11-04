@@ -1,0 +1,52 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "settings": {
+      "x": 0.0,
+      "y": 190.0
+    },
+    "simulate": {
+      "x": 0.0,
+      "y": 380.0
+    },
+    "share": {
+      "x": 0.0,
+      "y": 570.0
+    },
+    "summary": {
+      "x": -180.0,
+      "y": 760.0
+    },
+    "diffusion": {
+      "x": 180.0,
+      "y": 760.0
+    }
+  },
+  "displays": {
+    "summary": {
+      "x": -720.0,
+      "y": 900.0,
+      "width": 620.0,
+      "height": 250.0
+    },
+    "diffusion": {
+      "x": 100.0,
+      "y": 900.0,
+      "width": 620.0,
+      "height": 250.0
+    }
+  },
+  "notes": [
+    {
+      "id": "n1",
+      "scope": "",
+      "text": "Both figure Cards are plain matplotlib, written as for a window: summary calls plt.show(), diffusion plays a FuncAnimation. Python Cards draw into the Card's display (Tsugumi's matplotlib backend), live while an animation or plt.pause() loop runs. Change walkers, steps or seed on settings, or frames on diffusion, and run again.",
+      "x": -520.0,
+      "y": 0.0
+    }
+  ]
+}

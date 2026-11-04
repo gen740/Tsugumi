@@ -55,7 +55,7 @@
             nix.libs.nix-fetchers
             nix.libs.nix-util
             git
-            (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ]))
+            (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ps.matplotlib ]))
             # Card shell steps use jq (the package gives them the same tools).
             jq
             # Source formatters used by ProjectFileFormat (also in the image).

@@ -39,6 +39,18 @@
       ]
     },
     {
+      "id": "matplotlib",
+      "title": "Matplotlib",
+      "description": "Random walks drawn by plain matplotlib code: plt.show() puts a figure in the Card's display and a FuncAnimation of diffusion plays there live, with no Tsugumi-specific plotting calls.",
+      "path": "matplotlib",
+      "tags": [
+        "Python",
+        "matplotlib",
+        "ライブ表示",
+        "分岐・分配・合流"
+      ]
+    },
+    {
       "id": "casa",
       "title": "Cas A · Chandra RGB",
       "description": "Chandra X-ray events of the supernova remnant Cassiopeia A, fixed by Nix (fetched once by hash from the HEASARC archive), split into three energy bands on a sky grid centred on Cas A and composed into an RGB image. ObsID 25628 (13 MB) by default; 114 is the deep 50 ks observation.",

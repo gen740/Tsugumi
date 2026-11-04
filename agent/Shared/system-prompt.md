@@ -120,6 +120,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
         ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
     raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
+    matplotlib (packages = ps: [ ps.matplotlib ]) draws into the Card's display: write it as for a window
+    (plt.show(), or leave the figures open; plt.pause() loops and FuncAnimation update it live; never
+    matplotlib.use or savefig for display), or ctx.display_figure(fig).
     HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
     matplotlib need nothing more).
   * C++: sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per
