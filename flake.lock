@@ -3,17 +3,17 @@
     "hosq": {
       "flake": false,
       "locked": {
-        "lastModified": 1792770762,
-        "narHash": "sha256-hwqkpP10SipanSOWffGruEKWByFb0R4YDYiFiRM5eX0=",
+        "lastModified": 1793724295,
+        "narHash": "sha256-YlvfuUHoBYMzCTVLEHQMLVK5GJ4ca4A6jR1K5XgpUnQ=",
         "owner": "CLI20-dev",
         "repo": "hosq",
-        "rev": "38c3c8e21f570a9698006c361fc58bf0365896e0",
+        "rev": "1eb894224b0feffbb5b81d075d3e2c76160f99a1",
         "type": "github"
       },
       "original": {
         "owner": "CLI20-dev",
         "repo": "hosq",
-        "rev": "38c3c8e21f570a9698006c361fc58bf0365896e0",
+        "rev": "1eb894224b0feffbb5b81d075d3e2c76160f99a1",
         "type": "github"
       }
     },

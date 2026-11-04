@@ -9,6 +9,6 @@
 | VM イメージ生成用ビルダー | `docker.io/nixos/nix:2.31.2` を Apple container 0.6.0 上で実行（開発時の起動ディスクのビルドのみ。アプリ実行時には不使用） |
 | nixpkgs | `1c89083e451e891152365b799595cf7790a43325`（`flake.lock`、Card のデフォルト `tsugumi:default` も同一リビジョン） |
 | FlatBuffers | 25.12.19（C++ / Python は nixpkgs、Swift は SwiftPM で同一バージョンを固定） |
-| hosq（C++ JSON） | `CLI20-dev/hosq@38c3c8e`（flake input） |
+| hosq（C++ JSON） | `CLI20-dev/hosq@1eb8942`（flake input） |
 | Dawn（WebGPU） | `v20261023.194543`（`ui/renderer/CMakeLists.txt`、Metal バックエンド） |
 | SwiftTerm（ターミナル表示、MIT） | 1.11.2（以降のバージョンはシェーダーコンパイルに Xcode Metal Toolchain の追加取得が必要となるため固定） |
