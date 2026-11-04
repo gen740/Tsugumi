@@ -4,7 +4,8 @@ import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from '
 import type { DisplaySnapshot } from '../model/session'
 import { arr, dbl, get, serialize, tryParse } from '../shared/json'
 import { DawnLineChart } from './chart'
-import { Empty } from './controls'
+import { Button, Empty } from './controls'
+import { tablePage } from '../model/tablePage'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 
@@ -43,15 +44,7 @@ export function DisplayContent({ display, large = false, zoom = 1 }: { display?:
         </div>
       )
     case 'table':
-      return scrolling(
-        <table className="display-table" style={{ fontSize: size(10, 12), borderSpacing: `${12 * zoom}px ${3 * zoom}px`, padding: 4 * zoom }}>
-          <thead><tr>{v.columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
-          <tbody>
-            {v.rows.slice(0, 2000).map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j} className={large ? 'mono selectable' : 'mono'}>{cell}</td>)}</tr>)}
-          </tbody>
-        </table>,
-        true,
-      )
+      return <TableDisplay key={`${display?.runId}:${display?.invocation}:${display?.revision}`} columns={v.columns} rows={v.rows} large={large} zoom={zoom} />
     case 'image':
       return <ImageDisplay data={v.data} type={v.mediaType} alt={v.alt} fontSize={size(10, 12)} />
     case 'points':
@@ -59,6 +52,28 @@ export function DisplayContent({ display, large = false, zoom = 1 }: { display?:
     case 'module':
       return <ModuleDisplayView name={v.name} json={v.json} large={large} zoom={zoom} />
   }
+}
+
+function TableDisplay({ columns, rows, large, zoom }: { columns: string[]; rows: string[][]; large: boolean; zoom: number }) {
+  const [requested, setPage] = useState(0)
+  const page = tablePage(rows.length, large ? requested : 0)
+  return <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', gap: 4 * zoom }}>
+    {large ? <div className="row gap6 caption" style={{ flexShrink: 0 }}>
+      <span>{page.start === page.end ? 0 : page.start + 1}–{page.end} / {rows.length} 行</span>
+      <span className="spacer" />
+      <Button disabled={page.index === 0} onClick={() => setPage(page.index - 1)}>前へ</Button>
+      <select aria-label="ページ" value={page.index} onChange={(e) => setPage(Number(e.target.value))}>
+        {Array.from({ length: page.count }, (_, i) => <option key={i} value={i}>{i + 1} / {page.count}</option>)}
+      </select>
+      <Button disabled={page.index + 1 >= page.count} onClick={() => setPage(page.index + 1)}>次へ</Button>
+    </div> : <div className="secondary" style={{ fontSize: 9 * zoom }}>全 {rows.length} 行・先頭 {page.end} 行のプレビュー（拡大して全行表示）</div>}
+    <div key={page.index} className={`display-body${large ? ' display-scroll display-both' : ''}`}>
+      <table className="display-table" style={{ fontSize: (large ? 12 : 10) * zoom, borderSpacing: `${12 * zoom}px ${3 * zoom}px`, padding: 4 * zoom }}>
+        <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+        <tbody>{rows.slice(page.start, page.end).map((r, i) => <tr key={page.start + i}>{r.map((cell, j) => <td key={j} className={large ? 'mono selectable' : 'mono'}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  </div>
 }
 
 function ImageDisplay({ data, type, alt, fontSize }: { data: Uint8Array; type: string; alt: string; fontSize: number }) {

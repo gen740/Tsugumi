@@ -8,7 +8,7 @@ import TsugumiRPC
 @Suite(.serialized) struct GuideTests {
   @Test func theGuideIsOfferedOnlyReadsAndItsOwnTool() async throws {
     let catalog = try ToolCatalog(schema: try BFBS(data: try #require(RPCSchema.bfbs())))
-    let guide = Agent(catalog: catalog, transport: NoTransport(), provider: .localFixture(port: 1),
+    let guide = try Agent(catalog: catalog, transport: NoTransport(), provider: .localFixture(port: 1),
                       storage: FileManager.default.temporaryDirectory.appendingPathComponent("guide-\(UUID()).json"), role: .guide)
     let names = Set(guide.catalog.tools.map(\.name))
     let offered = Set(await guide.tools.map(\.name))

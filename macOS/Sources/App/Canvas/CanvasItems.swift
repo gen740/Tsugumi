@@ -194,6 +194,8 @@ struct DisplayContent: View {
   var large = false
   var zoom: CGFloat = 1
 
+  @State private var tablePage = 0
+
   private func size(_ small: CGFloat, _ big: CGFloat) -> CGFloat { (large ? big : small) * zoom }
 
   /// Scrolls in the large viewer; on the canvas (where the wheel moves the
@@ -235,22 +237,39 @@ struct DisplayContent: View {
         }
       }
     case .table(let columns, let rows)?:
-      scrolling(axes: [.horizontal, .vertical]) {
-        Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
-          GridRow {
-            ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
-          }
-          Divider()
-          ForEach(Array(rows.prefix(2000).enumerated()), id: \.offset) { _, r in
+      let page = TablePage(count: rows.count, requested: large ? tablePage : 0)
+      VStack(alignment: .leading, spacing: 4 * zoom) {
+        if large {
+          HStack {
+            Text("\(page.start == page.end ? 0 : page.start + 1)–\(page.end) / \(rows.count) 行").font(.caption.monospacedDigit())
+            Spacer()
+            Button("前へ") { tablePage = page.index - 1 }.disabled(page.index == 0)
+            Picker("ページ", selection: Binding(get: { page.index }, set: { tablePage = $0 })) {
+              ForEach(0..<page.count, id: \.self) { Text("\($0 + 1)").tag($0) }
+            }.frame(maxWidth: 130)
+            Button("次へ") { tablePage = page.index + 1 }.disabled(page.index + 1 >= page.count)
+          }.controlSize(.small)
+        } else {
+          Text("全 \(rows.count) 行・先頭 \(page.end) 行のプレビュー（拡大して全行表示）")
+            .font(.system(size: size(9, 11))).foregroundStyle(.secondary)
+        }
+        scrolling(axes: [.horizontal, .vertical]) {
+          Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
             GridRow {
-              ForEach(Array(r.enumerated()), id: \.offset) { _, cell in
-                Text(cell).font(.system(size: size(10, 12), design: .monospaced)).textSelection(.enabled)
+              ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
+            }
+            Divider()
+            ForEach(page.start..<page.end, id: \.self) { i in
+              GridRow {
+                ForEach(Array(rows[i].enumerated()), id: \.offset) { _, cell in
+                  Text(cell).font(.system(size: size(10, 12), design: .monospaced)).textSelection(.enabled)
+                }
               }
             }
-          }
-        }
-        .padding(4 * zoom)
+          }.padding(4 * zoom)
+        }.id(page.index)
       }
+      .onChange(of: display?.identity) { tablePage = 0 }
     case .image(_, let data, let alt)?:
       if let img = NSImage(data: data) {
         Image(nsImage: img).resizable().interpolation(.none).scaledToFit()
@@ -260,7 +279,7 @@ struct DisplayContent: View {
         Text("画像を表示できません").font(.system(size: size(10, 12))).foregroundStyle(.secondary)
       }
     case .points(let x, let y, let z, let colors)?:
-      PointCloudView(x: x, y: y, z: z, colors: colors)
+      PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
     case .module(let name, let json)?:
       ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
     case nil where large:
@@ -279,6 +298,7 @@ struct DisplayContent: View {
 /// 5 ms for 100 000 points); drawing every point as a SwiftUI path took
 /// about 120 ms a frame, which made dragging crawl.
 struct PointCloudView: View {
+  let identity: DisplaySnapshot.Identity?
   let x: [Float], y: [Float], z: [Float], colors: [UInt32]
   @State private var yaw = 0.6
   @State private var pitch = 0.4
@@ -286,11 +306,6 @@ struct PointCloudView: View {
   @State private var dragStart: (Double, Double)?
   @State private var cloud: PreparedCloud?
   @Environment(\.displayScale) private var displayScale
-
-  /// Cheap identity of the data: the cloud is prepared again only when it changes.
-  private var dataKey: [Float] {
-    [Float(x.count), x.first ?? 0, x.last ?? 0, y.last ?? 0, z.last ?? 0, Float(colors.count)]
-  }
 
   var body: some View {
     Canvas { ctx, size in
@@ -310,7 +325,7 @@ struct PointCloudView: View {
     }
     .accessibilityLabel(String(localized: "点群 \(x.count) 点"))
     .onAppear { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
-    .onChange(of: dataKey) { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
+    .onChange(of: identity) { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
   }
 }
 

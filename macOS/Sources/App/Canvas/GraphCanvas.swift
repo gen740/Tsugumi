@@ -868,7 +868,7 @@ struct GraphCanvas: View {
       let g = session.geometry(k)
       for port in output ? g.outputs : g.inputs {
         let p = portWorld(k, port, output: output)
-        let d = hypot(p.x - w.x, p.y - w.y)
+        let d = Double(hypot(p.x - w.x, p.y - w.y))
         if d < 18 / camera.zoom + 6, d < (best?.1 ?? .infinity) { best = ((k, port), d) }
       }
     }

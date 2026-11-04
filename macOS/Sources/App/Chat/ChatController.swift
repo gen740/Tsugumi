@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import SwiftUI
 import TsugumiAgent
+import TsugumiLauncher
 import TsugumiRPC
 
 /// Bridges the Agent's tool calls to this project's authenticated RPC client.
@@ -121,6 +122,8 @@ final class ChatController {
   private(set) var busy = false
   private(set) var status: String?
   private(set) var failed = false
+  /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
+  private(set) var usageLimited = false
   private(set) var sessions: [SessionInfo] = []
   private(set) var currentId: String = ""
   private(set) var usage = Usage()
@@ -180,8 +183,7 @@ final class ChatController {
   init(session: ProjectSession) {
     self.session = session
     thoughts = ThoughtSummarizer(presence: session.presence)
-    dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("Tsugumi/agent/\(session.identity.id)", isDirectory: true)
+    dir = AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
       status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
       available = false
@@ -204,7 +206,10 @@ final class ChatController {
   func refreshSessions() {
     let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     sessions = files.filter { $0.pathExtension == "json" }.map { f in
-      let c = Conversation.load(f)
+      guard let c = try? Conversation.read(f) else {
+        return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: f.lastPathComponent,
+                           updatedAt: .distantPast, messages: 0)
+      }
       return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: c.title ?? firstText(c) ?? String(localized: "新しい会話"),
                          updatedAt: c.updatedAt, messages: c.fullHistory.count)
     }
@@ -227,10 +232,20 @@ final class ChatController {
     previous.map { a in Task { await a.cancel() } }
     busy = false
     failed = false
+    usageLimited = false
     status = nil
     currentId = id
-    let agent = Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
+    let agent: Agent
+    do {
+      agent = try Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
                       provider: provider, storage: url(id), references: Self.references)
+    } catch {
+      self.agent = nil
+      items = []
+      failed = true
+      status = String(describing: error)
+      return
+    }
     self.agent = agent
     items = []
     Task {
@@ -285,7 +300,7 @@ final class ChatController {
     guard !text.isEmpty else { return [] }
     var hits: [SearchHit] = []
     for s in sessions {
-      let c = Conversation.load(url(s.id))
+      guard let c = try? Conversation.read(url(s.id)) else { continue }
       for m in c.fullHistory {
         for b in m.content {
           guard case .text(let t) = b, let r = t.range(of: text, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
@@ -471,6 +486,7 @@ final class ChatController {
   private func begin() {
     busy = true
     failed = false
+    usageLimited = false
     stoppedAtLimit = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
@@ -584,7 +600,10 @@ final class ChatController {
       busy = false
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
-      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。") : String(localized: "エラー: \(s)")
+      usageLimited = s == ChatGPTError.usageLimitText
+      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
+        : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+        : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       busy = false
@@ -620,6 +639,11 @@ enum AgentSettings {
     let d = UserDefaults.standard
     if d.string(forKey: "agent.provider") == "fixture" {
       return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
+    }
+    if d.string(forKey: "agent.provider") == "chatgpt" {
+      var c = ProviderConfig.chatGPT
+      if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
+      return c
     }
     if d.string(forKey: "agent.provider") == "openai" {
       var c = ProviderConfig.openAI

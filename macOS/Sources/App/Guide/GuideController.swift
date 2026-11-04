@@ -138,16 +138,30 @@ final class GuideController {
       }
     }
     refreshAvailability()
-    load(Conversation.load(storage))
+    // An unreadable history is never replaced: the guide says so when asked.
+    if let c = try? Conversation.load(storage) { load(c) }
   }
 
   // MARK: - Connection
 
-  /// Reads whether the chosen provider has a key (after Settings or the first
-  /// start changed it). A key already there answers the first start's question.
+  /// Reads whether the chosen provider can be used: a key (Anthropic, OpenAI),
+  /// a signed-in ChatGPT plan, or the local fixture (after Settings or the
+  /// first start changed it). One already there answers the first start's question.
   func refreshAvailability() {
     let config = AgentSettings.current()
-    available = catalog != nil && (!config.usesKeychain || Keychain.load(account: config.name) != nil)
+    switch config.auth {
+    case .none: apply(true)
+    case .apiKey: apply(Keychain.load(account: config.name) != nil)
+    case .chatGPT:
+      Task {
+        let accounts = await ChatGPTAuth.shared(endpoints: config.chatGPTEndpoints, store: config.chatGPTStore).accounts()
+        apply(accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
+      }
+    }
+  }
+
+  private func apply(_ usable: Bool) {
+    available = catalog != nil && usable
     if available && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
     if !available {
       open = false
@@ -190,8 +204,15 @@ final class GuideController {
   private func makeAgent() -> Agent? {
     if let agent { return agent }
     guard let catalog else { return nil }
-    let a = Agent(catalog: catalog, transport: GuideTransport(replyNames: replyNames), provider: AgentSettings.current(),
-                  storage: storage, references: ChatController.references, role: .guide)
+    let a: Agent
+    do {
+      a = try Agent(catalog: catalog, transport: GuideTransport(replyNames: replyNames), provider: AgentSettings.current(),
+                    storage: storage, references: ChatController.references, role: .guide)
+    } catch {
+      failed = true
+      status = String(localized: "うまく答えられませんでした: \(String(describing: error))")
+      return nil
+    }
     Task {
       // A guide answers in a few steps and never waits on a run.
       await a.setMaxSteps(12)
@@ -254,7 +275,8 @@ final class GuideController {
   /// A new conversation (the old one is gone; the tour stays).
   func newConversation() {
     guard !busy else { return }
-    Task { await agent?.reset() }
+    let a = agent
+    Task { try? await a?.reset() }
     items = []
     status = nil
     failed = false

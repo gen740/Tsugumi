@@ -32,6 +32,10 @@ public struct ToolRecord: Codable, Equatable {
   }
 }
 
+public struct ConversationStorageError: Error, CustomStringConvertible {
+  public let description: String
+}
+
 /// Conversation persisted per project on the host (messages, tool trace, usage).
 public struct Conversation: Codable, Equatable {
   public var id = UUID().uuidString.lowercased()
@@ -69,14 +73,21 @@ public struct Conversation: Codable, Equatable {
     try JSONDecoder().decode(Conversation.self, from: Data(contentsOf: url))
   }
 
-  /// A saved conversation, or a new one when there is none (or it is unreadable).
-  public static func load(_ url: URL) -> Conversation { (try? read(url)) ?? Conversation() }
+  /// Only a missing file starts a new conversation. Never replace an unreadable history.
+  public static func load(_ url: URL) throws -> Conversation {
+    do { return try read(url) }
+    catch let error as CocoaError where error.code == .fileReadNoSuchFile { return Conversation() }
+  }
 
   public func save(_ url: URL) throws {
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try enc.encode(self).write(to: url, options: .atomic)
+    do {
+      try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      let enc = JSONEncoder()
+      enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try enc.encode(self).write(to: url, options: .atomic)
+    } catch {
+      throw ConversationStorageError(description: "Cannot save conversation at \(url.path): \(error)")
+    }
   }
 }
 
@@ -142,7 +153,7 @@ public actor Agent {
   public static let guidePrompt = Shared.guidePrompt
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
-              references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) {
+              references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) throws {
     self.references = references
     self.helper = helper
     self.role = role
@@ -152,7 +163,7 @@ public actor Agent {
     self.transport = transport
     self.provider = MessagesProvider(config: provider)
     self.storage = storage
-    self.conversation = Conversation.load(storage)
+    self.conversation = try Conversation.load(storage)
   }
 
   public func setProvider(_ config: ProviderConfig) {
@@ -163,10 +174,10 @@ public actor Agent {
   public func setStatusWait(_ seconds: TimeInterval) { statusWait = max(0, seconds) }
   public func models() async throws -> [String] { try await provider.models() }
 
-  public func reset() {
+  public func reset() throws {
     turn?.cancel()
     conversation = Conversation()
-    try? conversation.save(storage)
+    try conversation.save(storage)
   }
 
   /// Stops model streaming and tools not yet sent. Runs already accepted by the
@@ -206,7 +217,7 @@ public actor Agent {
     if conversation.title == nil { conversation.title = String(title.prefix(60)) }
     conversation.messages.append(ChatMessage(role: "user", content: [.text(prompt)], display: display))
     conversation.updatedAt = Date()
-    try? conversation.save(storage)
+    guard saveBeforeTurn(events) else { return }
     startTurn { await self.loop(events) }
   }
 
@@ -225,7 +236,7 @@ public actor Agent {
     guard let lastText else { return }
     conversation.messages.append(lastText)
     conversation.updatedAt = Date()
-    try? conversation.save(storage)
+    guard saveBeforeTurn(events) else { return }
     startTurn { await self.loop(events) }
   }
 
@@ -237,8 +248,13 @@ public actor Agent {
     note += ", then finish the remaining work."
     conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: "（止まったところから続けます）"))
     conversation.updatedAt = Date()
-    try? conversation.save(storage)
+    guard saveBeforeTurn(events) else { return }
     startTurn { await self.loop(events) }
+  }
+
+  private func saveBeforeTurn(_ events: @escaping @Sendable (AgentEvent) -> Void) -> Bool {
+    do { try conversation.save(storage); return true }
+    catch { events(.error("\(error)")); return false }
   }
 
   /// Compacts the context now (the full history stays in the archive).
@@ -264,7 +280,7 @@ public actor Agent {
   func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
     do {
       try await reconcilePending(events)
-      closeDanglingToolUses()
+      try closeDanglingToolUses()
       cutReplies = 0
       var done = false
       for _ in 0..<maxSteps {
@@ -284,11 +300,11 @@ public actor Agent {
             + "change in smaller steps: one Card per project_save, and long source files in saves of their own.")],
             display: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）"))
           events(.retrying("the reply was cut at the output limit; asking for smaller steps"))
-          try? conversation.save(storage)
+          try conversation.save(storage)
           continue
         }
         conversation.messages.append(ChatMessage(role: "assistant", content: blocks))
-        try? conversation.save(storage)
+        try conversation.save(storage)
         let uses = blocks.compactMap { b -> (String, String, String)? in
           if case .toolUse(let id, let name, let input) = b { return (id, name, input) }
           return nil
@@ -300,13 +316,13 @@ public actor Agent {
         var results: [ContentBlock] = []
         for (id, name, input) in uses {
           try Task.checkCancellation()
-          results.append(await runTool(id: id, name: name, input: input, events))
+          results.append(try await runTool(id: id, name: name, input: input, events))
         }
         // Cancelled meanwhile: the results are in the tool records; the next
         // turn answers the tool calls from them (never this cancelled one).
         try Task.checkCancellation()
         conversation.messages.append(ChatMessage(role: "user", content: results))
-        try? conversation.save(storage)
+        try conversation.save(storage)
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? .finished : .stepLimit(steps: maxSteps, unconfirmedRun: unconfirmedRun))
@@ -315,7 +331,8 @@ public actor Agent {
       for i in conversation.tools.indices where conversation.tools[i].state == .pending {
         conversation.tools[i].state = .skipped
       }
-      try? conversation.save(storage)
+      do { try conversation.save(storage) }
+      catch { events(.error("\(error)")); return }
       events(.error("cancelled"))
     } catch {
       events(.error("\(error)"))
@@ -471,38 +488,38 @@ public actor Agent {
   }
 
   /// Validates arguments, executes the RPC and records the result.
-  private func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async -> ContentBlock {
+  func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ContentBlock {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
     if name == Self.referenceTool.name, !references.isEmpty {
       let path = (try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any])?["path"] as? String ?? ""
       let (text, isError) = readReference(path)
-      return finish(&record, text, isError: isError, events)
+      return try finish(&record, text, isError: isError, events)
     }
     if role == .guide {
-      if name == Self.guideShowTool.name { return finish(&record, Shared.data.guide.text("shown"), isError: false, events) }
+      if name == Self.guideShowTool.name { return try finish(&record, Shared.data.guide.text("shown"), isError: false, events) }
       guard Shared.data.guide.tools.contains(name) else {
-        return finish(&record, Self.guideText("readOnly", ["tool": name]), isError: true, events)
+        return try finish(&record, Self.guideText("readOnly", ["tool": name]), isError: true, events)
       }
     }
     if name == Self.delegateTool.name, helper == nil, role == .worker {
-      let (text, isError) = await delegate(input, events)
-      return finish(&record, text, isError: isError, events)
+      let (text, isError) = try await delegate(input, events)
+      return try finish(&record, text, isError: isError, events)
     }
     guard let spec = catalog.tool(named: name) else {
-      return finish(&record, "unknown tool \(name)", isError: true, events)
+      return try finish(&record, "unknown tool \(name)", isError: true, events)
     }
     // Incomplete or invalid arguments are never executed.
     guard let data = input.data(using: .utf8), let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-      return finish(&record, "the arguments are not a complete JSON object", isError: true, events)
+      return try finish(&record, "the arguments are not a complete JSON object", isError: true, events)
     }
     var full = args
     // Fields the Agent fills itself: never the model's.
     for f in ToolCatalog.agentFields { full.removeValue(forKey: f) }
     // A helper saves only its own Cards.
     if let helper, name == "project_save", let outside = helper.outside(full["changes"]) {
-      return finish(&record, Shared.fill(Shared.data.helper.outside,
+      return try finish(&record, Shared.fill(Shared.data.helper.outside,
                                          ["name": helper.name, "cards": helper.cards.joined(separator: ", "), "what": outside]),
                     isError: true, events)
     }
@@ -516,11 +533,11 @@ public actor Agent {
       var probe = FlatBufferBuilder()
       _ = try codec.build(spec.object, full, into: &probe)
     } catch {
-      return finish(&record, "\(error)", isError: true, events)
+      return try finish(&record, "\(error)", isError: true, events)
     }
     record.state = .sent
     conversation.tools.append(record)
-    try? conversation.save(storage)
+    try conversation.save(storage)
     do {
       let codec = self.codec
       var (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
@@ -534,11 +551,17 @@ public actor Agent {
         let approved = await approver?(asked) ?? []
         guard Set(asked).isSubset(of: approved) else {
           let declined = asked.filter { !approved.contains($0) }.joined(separator: ", ")
-          return finish(&record, Shared.fill(Shared.data.permissionDeclined, ["permissions": declined]), isError: true, events)
+          return try finish(&record, Shared.fill(Shared.data.permissionDeclined, ["permissions": declined]), isError: true, events)
         }
         record.opId = UUID().uuidString.lowercased()
         full["op_id"] = record.opId
         full["approved_permissions"] = asked
+        // Recovery must look up the approved operation, even if the process
+        // exits between sending it and receiving its reply.
+        conversation.tools.removeAll { $0.id == record.id }
+        conversation.tools.append(record)
+        try conversation.save(storage)
+        try Task.checkCancellation()
         (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
           try codec.build(spec.object, full, into: &b)
         }
@@ -593,14 +616,16 @@ public actor Agent {
       }
       noteRun(tool: name, reply: replyType, json: json)
       noteDefinitions(reply: replyType, json: json)
-      return finish(&record, json, isError: replyType == "Failure", events)
+      return try finish(&record, json, isError: replyType == "Failure", events)
+    } catch let error as ConversationStorageError {
+      throw error
     } catch {
       // Unknown outcome: keep the record as sent so a resume asks OperationGet.
       if spec.mutating {
-        return finish(&record, "the connection failed after sending; outcome unknown (op_id \(record.opId ?? "")). Use operation_get.",
+        return try finish(&record, "the connection failed after sending; outcome unknown (op_id \(record.opId ?? "")). Use operation_get.",
                       isError: true, events, keepSent: true)
       }
-      return finish(&record, "\(error)", isError: true, events)
+      return try finish(&record, "\(error)", isError: true, events)
     }
   }
 
@@ -645,7 +670,7 @@ public actor Agent {
   /// turn stopped between them (cancelled during a tool, a crash) gets the
   /// results recorded so far and "not run" for the rest, so the next request
   /// (a retry, a new message) is valid.
-  func closeDanglingToolUses() {
+  func closeDanglingToolUses() throws {
     var i = 0
     var changed = false
     while i < conversation.messages.count {
@@ -688,7 +713,7 @@ public actor Agent {
       }
       i += 1
     }
-    if changed { try? conversation.save(storage) }
+    if changed { try conversation.save(storage) }
   }
 
   /// How much of a tool's result the model gets; a longer one says it was cut.
@@ -700,13 +725,13 @@ public actor Agent {
   }
 
   private func finish(_ record: inout ToolRecord, _ result: String, isError: Bool,
-                      _ events: @escaping @Sendable (AgentEvent) -> Void, keepSent: Bool = false) -> ContentBlock {
+                      _ events: @escaping @Sendable (AgentEvent) -> Void, keepSent: Bool = false) throws -> ContentBlock {
     record.state = keepSent ? .sent : .completed
     record.result = result
     record.isError = isError
     conversation.tools.removeAll { $0.id == record.id }
     conversation.tools.append(record)
-    try? conversation.save(storage)
+    try conversation.save(storage)
     events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: String(result.prefix(400))))
     return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
   }
@@ -721,7 +746,7 @@ public actor Agent {
 
   /// Tool calls left "sent" (disconnect or restart) are checked with
   /// OperationGet; nothing non-idempotent is re-sent blindly.
-  private func reconcilePending(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws {
+  func reconcilePending(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws {
     guard let opSpec = catalog.tool(named: "operation_get") else { return }
     for i in conversation.tools.indices where conversation.tools[i].state == .sent {
       guard let op = conversation.tools[i].opId else { continue }
@@ -729,13 +754,50 @@ public actor Agent {
       if let (type, table) = try? await transport.call(payloadType: opSpec.payloadType, build: { b in
         try codec.build(opSpec.object, ["op_id": op], into: &b)
       }) {
-        conversation.tools[i].state = .completed
-        conversation.tools[i].result = renderReply(type, table)
-        events(.toolFinished(id: conversation.tools[i].id, name: conversation.tools[i].name, ok: true,
-                             summary: "reconciled with operation_get"))
+        let json = renderReply(type, table)
+        conversation.tools[i].result = json
+        let error = Self.recoveredOperationError(json)
+        if let error {
+          conversation.tools[i].state = .completed
+          conversation.tools[i].isError = error
+          events(.toolFinished(id: conversation.tools[i].id, name: conversation.tools[i].name, ok: !error,
+                               summary: "reconciled with operation_get"))
+        }
+        let id = conversation.tools[i].id
+        // A previous turn may already contain an "outcome unknown" result.
+        // Replace that result too, so the next model request sees the receipt.
+        for m in conversation.messages.indices {
+          conversation.messages[m].content = conversation.messages[m].content.map { block in
+            if case .toolResult(let toolId, _, _) = block, toolId == id {
+              return .toolResult(toolUseId: id, content: Self.clip(json), isError: error ?? true)
+            }
+            return block
+          }
+        }
       }
     }
-    try? conversation.save(storage)
+    try conversation.save(storage)
+  }
+
+  /// nil means the original operation has no terminal receipt yet.
+  static func recoveredOperationError(_ json: String) -> Bool? {
+    guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+          obj["reply"] as? String == "OperationResult",
+          let value = obj["value"] as? [String: Any], value["state"] as? String == "completed",
+          let receipt = value["receipt"] as? [String: Any],
+          let kind = receipt["result_type"] as? String, kind != "NONE", !kind.isEmpty,
+          receipt["result"] is [String: Any] else { return nil }
+    return kind == "Failure"
+  }
+
+  /// Keep recent tool calls together with their results. The summary is the
+  /// leading user message, so the tail may safely start with an assistant.
+  static func compactionBoundary(_ messages: [ChatMessage], keep: Int = 4) -> Int {
+    var cut = max(0, messages.count - keep)
+    while cut > 0 && messages[cut].content.contains(where: { if case .toolResult = $0 { return true }; return false }) {
+      cut -= 1
+    }
+    return cut
   }
 
   /// Context compaction: older turns are replaced by a model-written summary
@@ -743,9 +805,11 @@ public actor Agent {
   private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false) async throws {
     let limit = provider.config.contextLimit
     guard force || conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > (force ? 4 : 6) else { return }
-    let keep = 4
-    let old = Array(conversation.messages.dropLast(keep))
-    var transcript = ""
+    let messages = conversation.messages
+    let cut = Self.compactionBoundary(messages)
+    guard cut > 0 else { return }
+    let old = Array(messages.prefix(cut))
+    var transcript = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
     for m in old {
       for b in m.content {
         switch b {
@@ -760,16 +824,16 @@ public actor Agent {
     for try await e in try provider.stream(system: "You summarize conversations.", messages: ask, tools: []) {
       if case .text(let t) = e { summary += t }
     }
-    // The kept tail must start with a user message that is not a tool result.
-    var tail = Array(conversation.messages.suffix(keep))
-    while let first = tail.first, first.role != "user" || first.content.contains(where: { if case .toolResult = $0 { return true }; return false }) {
-      tail.removeFirst()
+    try Task.checkCancellation()
+    guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw AgentError.provider("the context summary was empty; the conversation was kept")
     }
-    conversation.summary = [conversation.summary, summary].compactMap { $0 }.joined(separator: "\n")
-    conversation.archive += conversation.messages.dropLast(tail.count)
-    conversation.messages = tail
+    guard conversation.messages == messages else { return }
+    conversation.summary = summary
+    conversation.archive += old
+    conversation.messages = Array(messages.dropFirst(cut))
     conversation.usage.inputTokens = 0
-    try? conversation.save(storage)
+    try conversation.save(storage)
     events(.compacted)
   }
 }

@@ -32,6 +32,15 @@ struct ProjectChooser: View {
         .frame(width: 250)
       VStack(spacing: 0) {
         if showDemos { demos } else { recents }
+        if case .ready(let v) = Updater.shared.state {
+          HStack {
+            Label("Tsugumi \(v) の準備ができました。次に終了したときに更新します。", systemImage: "arrow.down.circle")
+            Spacer()
+            Button("再起動して更新") { Updater.shared.installAndRelaunch() }
+          }
+          .padding(10)
+          .background(TsugumiPalette.rufous.opacity(0.08))
+        }
         if let e = model.error {
           HStack {
             Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)

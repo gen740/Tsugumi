@@ -27,3 +27,14 @@ def test_swift_copy_of_the_shared_files_is_current():
 def test_web_agent_keeps_the_contract():
     r = subprocess.run(["node", "scripts/contract.mjs"], cwd=WEB, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.skipif(not shutil.which("node") or not (WEB / "node_modules").is_dir()
+                    or not (WEB / "src/gen/tsugumi.bfbs").exists(),
+                    reason="needs node, web/node_modules and web/src/gen (npm ci; npm run gen)")
+def test_web_server_signs_in_with_chatgpt_and_uses_the_plan():
+    """Sign in with ChatGPT in the web server against the model fixture (also
+    the OAuth issuer): sign-in, the 0600 record, the plan's request rules,
+    refreshes, the usage limit and the sign-out (web/server/chatgptCheck.ts)."""
+    r = subprocess.run(["node", "scripts/contract.mjs", "chatgpt"], cwd=WEB, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr

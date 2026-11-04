@@ -58,7 +58,7 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
   assert.deepEqual(Object.keys(refs).sort(), ['demos/collatz', 'demos/live-stream', 'demos/report'])
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-ref-'))
   const agent = new Agent(new ToolCatalog(schema), async () => { throw new Error('no rpc') },
-    { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never, path.join(tmp, 'c.json'), 'c', refs)
+    { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', auth: 'none' } as never, path.join(tmp, 'c.json'), 'c', refs)
   assert.deepEqual(agent.readReference('demos'), ['collatz/\nlive-stream/\nreport/', false])
   assert.equal(agent.readReference('demos/report/tsugumi.json')[1], false)
   for (const hidden of ['demos/casa', 'demos/casa/definitions/bands/src/main.py', 'demos/casa-draft', 'demos/../core']) {

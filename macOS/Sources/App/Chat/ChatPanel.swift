@@ -15,8 +15,10 @@ struct ChatPanel: View {
   @State private var showList = false
   @State private var query = ""
   @State private var input = ""
-  @State private var model = UserDefaults.standard.string(forKey: "agent.model") ?? ProviderConfig.anthropic.model
+  @State private var model = AgentSettings.current().model
   @State private var models: [String] = []
+  /// Display names of the ChatGPT account's models (Settings > API).
+  @State private var modelNames: [String: String] = [:]
   /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
   @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
   @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
@@ -143,7 +145,9 @@ struct ChatPanel: View {
             .foregroundStyle(chat.failed ? .red : .secondary)
           Text(s).font(.caption).foregroundStyle(chat.failed ? .red : .secondary).lineLimit(3).textSelection(.enabled)
           Spacer()
-          if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
+          if chat.usageLimited {
+            Button("Manage usage") { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }.controlSize(.small).buttonStyle(.borderedProminent)
+          } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
           if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -298,12 +302,12 @@ struct ChatPanel: View {
           Menu {
             ForEach(Array(Set(models + [model])).sorted(), id: \.self) { m in
               Button { model = m } label: {
-                if m == model { Label(m, systemImage: "checkmark") } else { Text(m) }
+                if m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
               }
             }
           } label: {
             HStack(spacing: 3) {
-              Text(model).lineLimit(1)
+              Text(modelName(model)).lineLimit(1)
               Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.caption)
@@ -313,11 +317,19 @@ struct ChatPanel: View {
           .tint(.secondary)
           .foregroundStyle(.secondary)
           .onChange(of: model) {
-            UserDefaults.standard.set(model, forKey: chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model")
+            let key = chat.provider.auth == .chatGPT ? "agent.model.chatgpt" : chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model"
+            UserDefaults.standard.set(model, forKey: key)
           }
-          .disabled(!chat.provider.usesKeychain)
+          .disabled(!chat.provider.isRemote)
           .help("モデル（接続先: \(chat.provider.name)）")
           thoughtsToggle
+          if chat.provider.auth == .chatGPT {
+            // Requests use the ChatGPT plan: said beside the model, with its usage page.
+            Link(destination: ChatGPTAuth.usageURL) {
+              Text("Using ChatGPT plan").font(.caption2).foregroundStyle(.secondary)
+            }
+            .help("Manage usage（chatgpt.com/settings/usage）")
+          }
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
             .help(String(localized: "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 \(chat.usage.cacheReadTokens)、キャッシュに書いた量 \(chat.usage.cacheWriteTokens)"))
@@ -435,8 +447,12 @@ struct ChatPanel: View {
 
   /// Models listed earlier in Settings > API (no network request from here).
   private func loadModels() async {
+    model = AgentSettings.current().model
     models = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
+    modelNames = chat.provider.auth == .chatGPT ? UserDefaults.standard.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:] : [:]
   }
+
+  private func modelName(_ m: String) -> String { modelNames[m] ?? m }
 
   /// "思考の過程を描く": on, a small model writes what the Agent is thinking
   /// for the tsugumi's bubble (asks once before the first time).
