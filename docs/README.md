@@ -3,7 +3,7 @@
 | 文書 | 内容 |
 | --- | --- |
 | [QA.md](QA.md) | 課題意識、Draft、再現性、記録と再実行についての Q&A と、Nix 上流参照の検証の補足 |
-| [INSTALL.md](../INSTALL.md) | ソースからのビルドと起動の手順（ビルド済みのアプリは配布していません） |
+| [INSTALL.md](../INSTALL.md) | GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順 |
 | [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
 | [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
@@ -15,7 +15,7 @@
 | [security.md](security.md) | 4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
 | [novelty.md](novelty.md) | 同じ Workflow で設計・実装・検証をつなぐ独自性と、なぜ今この設計なのか |
 | [AgentRun.md](AgentRun.md) | 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録 |
-| [Development.md](Development.md) | 実行基盤の設計決定、ディレクトリ構成、テストスイート、パフォーマンス計測、実装状況 |
+| [Development.md](Development.md) | 実行基盤の設計決定、テストと確認範囲、構成ごとの計測、現在の実装状況と解決済みの記録 |
 | [Lock.md](Lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
 
 プロジェクトのコンセプトと実画面によるウォークスルーは [README](../README.md) を参照してください。
