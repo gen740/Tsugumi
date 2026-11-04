@@ -96,13 +96,17 @@ def test_backpressure_stall_ends_the_run(env):
                      reuseWorker=True),
         "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
         "branch": {"template": "branch"},
+        # (an output feeds one wire: a value goes to two inputs through a fork)
+        "fork": {"template": "fork", "maxRuns": 1000},
     }
     c = load(env, defs,
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
-              card("never", "flag"), card("gate", "branch"), card("wait", "branch")],
-             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "loop", "again"),
-              conn("step", "out", "wait", "value"), conn("never", "flag", "gate", "value"),
-              conn("never", "flag", "gate", "condition"), conn("gate", "a", "wait", "condition")])
+              card("each", "fork"), card("never", "flag"), card("both", "fork"), card("gate", "branch"),
+              card("wait", "branch")],
+             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "each", "in"),
+              conn("each", "out1", "loop", "again"), conn("each", "out2", "wait", "value"),
+              conn("never", "flag", "both", "in"), conn("both", "out1", "gate", "value"),
+              conn("both", "out2", "gate", "condition"), conn("gate", "a", "wait", "condition")])
     run_id, st = run_and_wait(c, "start", timeout=600)
     assert st.state == RunState.failed
     assert "cannot progress" in text(st.failure.diagnostic)
@@ -585,12 +589,12 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
               "_nix": "{ pkgs, inputs, params }:\n{ run = builtins.throw \"must never be evaluated\"; }\n"}
     defs = {"trigger": {"template": "trigger"}, "sleepy": sleepy,
             "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
-            "branch": {"template": "branch"}, "broken": broken}
+            "branch": {"template": "branch"}, "broken": broken, "fork": {"template": "fork"}}
     c = load(env, defs,
              [card("start", "trigger"), *[card(f"s{i}", "sleepy") for i in range(4)],
-              card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
-             [conn("cond", "flag", "gate", "value"), conn("cond", "flag", "gate", "condition"),
-              conn("gate", "a", "never", "in")])
+              card("cond", "flag"), card("both", "fork"), card("gate", "branch"), card("never", "broken")],
+             [conn("cond", "flag", "both", "in"), conn("both", "out1", "gate", "value"),
+              conn("both", "out2", "gate", "condition"), conn("gate", "a", "never", "in")])
     snap = c.call("ProjectInspectRequest")
     t0 = time.time()
     acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"), maxConcurrency=2)

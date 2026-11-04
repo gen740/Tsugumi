@@ -15,10 +15,18 @@ import TsugumiRPC
     var doc = try JSONValue.parse(snap.projectJson)
     var cards = doc["canvas"]?["cards"]?.array ?? []
     var conns = doc["canvas"]?["connections"]?.array ?? []
-    var changes: [Tsugumi_RPC_DocumentChangeT] = []
+    // The message goes to the three Drafts through a fork (an output has one wire).
+    let branches = (["out"] + Self.drafts).map { "\"\($0)\"" }.joined(separator: ",")
+    var changes: [Tsugumi_RPC_DocumentChangeT] = [
+      Change.putDefinition(id: "share", cardJSON: #"{"template":"fork","params":[{"name":"branches","type":"string[]","data":[\#(branches)]}]}"#, metaJSON: nil)]
+    cards.append(.object([("id", .string("share"))]))
+    // (the logger it already fed is fed by the fork too)
+    conns = conns.filter { $0["from"]?["card"]?.string != "src" }
+    conns.append(try JSONValue.parse(#"{"from":{"card":"src","port":"msg"},"to":{"card":"share","port":"in"}}"#))
+    conns.append(try JSONValue.parse(#"{"from":{"card":"share","port":"out"},"to":{"card":"out","port":"in"}}"#))
     for d in Self.drafts {
       cards.append(.object([("id", .string(d))]))
-      conns.append(try JSONValue.parse(#"{"from":{"card":"src","port":"msg"},"to":{"card":"\#(d)","port":"data"}}"#))
+      conns.append(try JSONValue.parse(#"{"from":{"card":"share","port":"\#(d)"},"to":{"card":"\#(d)","port":"data"}}"#))
       let meta = #"{"description":"\#(d)","content":"Say done.","inputs":[{"name":"data"}],"outputs":[{"name":"result"}]}"#
       changes.append(Change.putDefinition(id: d, cardJSON: #"{"template":"draft","inputs":[{"name":"data"}]}"#, metaJSON: meta))
     }

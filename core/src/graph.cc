@@ -7,6 +7,7 @@
 #include <limits>
 #include <regex>
 #include <set>
+#include <tuple>
 
 namespace tsugumi {
 
@@ -550,6 +551,20 @@ class Builder {
         ok = false;
       }
       if (ok) res_->edges.push_back({src->first, src->second, dst->first, dst->second});
+    }
+    // One output feeds one wire: a value goes to several Cards through a
+    // fork Card (one way to write it, drawn as a hub on the canvas).
+    std::map<std::tuple<CardPath, std::string, std::string>, size_t> wires;
+    for (const auto& e : raw_) ++wires[{e.scope, e.from, e.from_port}];
+    for (const auto& [k, count] : wires) {
+      if (count < 2) continue;
+      CardPath from = std::get<0>(k);
+      from.push_back(std::get<1>(k));
+      std::string msg = "output " + std::get<2>(k) + " has " + std::to_string(count) +
+                        " wires; an output feeds one input (send a value to several Cards through a fork Card)";
+      auto it = res_->index.find(path_key(from));
+      if (it != res_->index.end()) res_->nodes[it->second].diags.push_back(diag(from, "fan_out", msg));
+      else res_->diags.push_back(diag(from, "fan_out", msg));
     }
   }
 

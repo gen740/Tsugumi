@@ -25,7 +25,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   setting with PutDefinition of that Card. What a Card may do beyond computing (network, sandbox, hostFolders)
   is the user's: a save that widens it waits for the user's approval, so do it only when the task needs it, say
   why, and if it is declined do not try another way around it. A new Card needs both its {"id"} in SetProject and
-  its definition; never point two Cards at one definition. Renaming is RenameDefinition {"id": old, "to": new} with the matching
+  its definition; never point two Cards at one definition. An output port has one wire (fan_out otherwise): to
+  send a value to several Cards, wire it to a fork Card ({"template": "fork", "params": [{"name": "branches",
+  "type": "string[]", "data": ["<a name per output>"]}]}) and one fork output to each. Renaming is RenameDefinition {"id": old, "to": new} with the matching
   SetProject (connections) in the same save.
 - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
   own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this

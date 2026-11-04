@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from conftest import Daemon
-from projects import MSG_FBS, builtin_project, conn, put, run_and_wait
+from projects import MSG_FBS, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -293,5 +293,30 @@ def test_rename_inside_a_card_in_card_keeps_the_history(tmp_path):
         assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "talk")).records
         with pytest.raises(RpcFailure):
             c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say"))
+    finally:
+        d.cleanup()
+
+
+def test_an_output_feeds_one_wire(tmp_path):
+    """Sending a value to several Cards is a fork Card's job: an output with
+    two wires is reported (fan_out) on its Card; through a fork it runs."""
+    root = tmp_path / "p"
+    builtin_project(root, extra_cards=[card("out2", "log")], extra_conns=[conn("src", "msg", "out2", "in")])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        assert "fan_out" in diagnostics(c, ["src"])
+        # Through a fork, each output has one wire.
+        rev, project = project_json(c)
+        project["canvas"]["cards"].append({"id": "share"})
+        project["canvas"]["connections"] = [
+            conn("src", "msg", "share", "in"), conn("share", "out1", "out", "in"), conn("share", "out2", "out2", "in")]
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test", changes=[
+            change("PutDefinition", id="share", cardJson=json.dumps({"template": "fork"})),
+            change("SetProject", json=json.dumps(project))])
+        assert "fan_out" not in diagnostics(c, ["src"])
+        _, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded
     finally:
         d.cleanup()

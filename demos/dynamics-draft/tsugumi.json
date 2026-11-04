@@ -11,6 +11,9 @@
         "id": "settings"
       },
       {
+        "id": "share"
+      },
+      {
         "id": "lorenz"
       },
       {
@@ -46,14 +49,24 @@
           "port": "config"
         },
         "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "lorenz"
+        },
+        "to": {
           "card": "lorenz",
           "port": "settings"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "share",
+          "port": "mandelbrot"
         },
         "to": {
           "card": "mandelbrot",
@@ -62,8 +75,8 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "share",
+          "port": "logistic"
         },
         "to": {
           "card": "logistic",
@@ -72,8 +85,8 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "share",
+          "port": "life"
         },
         "to": {
           "card": "life",
@@ -82,8 +95,8 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "share",
+          "port": "grayscott"
         },
         "to": {
           "card": "grayscott",
@@ -92,8 +105,8 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "share",
+          "port": "pendulum"
         },
         "to": {
           "card": "pendulum",
