@@ -1128,6 +1128,7 @@ EN = {
 "続きは会話に書きました": "More in the conversation",
 "回答の全文を表示します": "Shows the whole answer",
 "ドラッグで動かせます": "Drag to move",
+"設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。": "Done. Back on Home, Tsugumi will ask what you are interested in.",
 }
 
 

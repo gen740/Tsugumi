@@ -493,7 +493,7 @@ final class GuideController {
     if var b = bubble {
       if b.thinking { b = GuideBubble(target: b.target) }
       if b.say == nil { b.say = Self.firstSentence(reply) }
-      b.more = Self.saysMore(reply, than: b.say)
+      // On Home the bubble is the conversation: it points nowhere else.
       bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty && b.target == nil ? nil : b
       leaveAfterFarewell()
     }

@@ -625,7 +625,13 @@ private struct APISettings: View {
         LabeledContent("状態", value: GuideController.shared.available
                        ? String(localized: "右下に表示中（\(AgentSettings.current().name)）")
                        : String(localized: "API キーが未設定のため表示していません"))
+        // Pressed, it says what happens next and waits until it has happened.
         Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
+          .disabled(GuideController.shared.offersDemo)
+        if GuideController.shared.offersDemo {
+          Label("設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
+            .font(.callout).foregroundStyle(.green)
+        }
       } header: {
         Text("ガイドのツグミ")
       } footer: {

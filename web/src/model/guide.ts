@@ -359,7 +359,7 @@ export class GuideController extends Observable {
       let b = this.bubble
       if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
       if (!b.say) b = { ...b, say: firstSentence(reply) }
-      b = { ...b, more: saysMore(reply, b.say) }
+      // On Home the bubble is the conversation: it points nowhere else.
       this.bubble = !b.say && !b.choices.length && !b.actions.length && !b.target ? undefined : b
       this.leaveAfterFarewell()
     }
