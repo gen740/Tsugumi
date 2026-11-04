@@ -1,0 +1,5 @@
+{
+  "description": "スペクトルを描く",
+  "content": "bands と同じイベント（provenance.json の events_file）と同じ格子の範囲の光子を、エネルギー（eV）のヒストグラムにして matplotlib で描く（範囲 300–8000 eV、20 eV 刻み、縦軸は対数。範囲と刻みはパラメータ）。bands の 3 帯域を赤・緑・青で塗り、帯域ごとの光子数を凡例に出す。残骸の放出線（Mg 1.35、Si 1.86、S 2.45、Ar 3.12、Ca 3.88、Fe 6.68 keV）に印を付け、どの元素がどの色に入るかを見せる。plt.show() で Card の表示に出す。",
+  "outputs": []
+}

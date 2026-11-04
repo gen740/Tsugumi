@@ -68,7 +68,7 @@ def main(ctx):
             bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum())})
         selected = int((inside & (energy >= limits[0]) & (energy <= limits[-1])).sum())
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
-        manifest = {"obsid": obsid, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
+        manifest = {"obsid": obsid, "events_file": source, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
                     "centre_pixel": [round(cx, 2), round(cy, 2)], "grid": {"step": step, "pixels": size},
                     "selected": selected, "bands": bands}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))

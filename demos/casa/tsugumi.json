@@ -14,7 +14,13 @@
         "id": "bands"
       },
       {
+        "id": "share"
+      },
+      {
         "id": "rgb"
+      },
+      {
+        "id": "spectrum"
       }
     ],
     "connections": [
@@ -44,7 +50,27 @@
           "port": "images"
         },
         "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "rgb"
+        },
+        "to": {
           "card": "rgb",
+          "port": "input"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "spectrum"
+        },
+        "to": {
+          "card": "spectrum",
           "port": "input"
         }
       }
