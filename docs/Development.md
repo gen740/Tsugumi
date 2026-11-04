@@ -133,7 +133,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 | `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: 段階とフロー方向の幾何、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出 |
 | `macOS/Tests/TsugumiBenchmarks`（`TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks`） | 描画のベンチマーク（3D 点群の 1 フレーム）。通常のテストでは動かない |
 | 実際の API（任意、`cd macOS/CoreTests && TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
-| CI（`.github/workflows/ci.yml`、GitHub Actions） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`） |
+| CI（`.github/workflows/ci.yml`、GitHub Actions） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は専用 Mac の [定期・手動 CI](VM-CI.md) で確認する（runner 登録と `TSUGUMI_VM_CI=1` が必要） |
 | `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 
 ## 計測（2026-11-03、高速化後・共通 VM）
