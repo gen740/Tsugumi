@@ -136,7 +136,8 @@ def test_a_demo_history_becomes_its_versions(tmp_path):
 
 def test_the_casa_demo_carries_its_trials(tmp_path):
     """The Cas A demo's copy becomes a repository with how it came to be:
-    branches tried, a failed run, the adopted version tagged."""
+    branches tried, a failed run, the adopted version tagged, and the
+    spectrum added on top of it."""
     root = tmp_path / "casa"
     shutil.copytree(ROOT / "demos" / "casa", root)
     d = Daemon(root).start()
@@ -149,8 +150,11 @@ def test_the_casa_demo_carries_its_trials(tmp_path):
         assert {text(b) for x in g.commits for b in (x.branches or [])} == {"main", "try-hard-blue", "try-soft-green"}
         states = [text(r.state) for x in g.commits for r in (x.runs or [])]
         assert "failed" in states and states.count("succeeded") >= 5
-        head = next(x for x in g.commits if text(x.id) == text(g.head))
-        assert [text(t) for t in head.tags] == ["rgb-v1"]
+        by_id = {text(x.id): x for x in g.commits}
+        head = by_id[text(g.head)]
+        assert text(head.message).startswith("spectrum を追加") and not (head.tags or [])
+        adopted = by_id[text(head.parents[0])]
+        assert [text(t) for t in adopted.tags] == ["rgb-v1"]
         assert "failed" not in git(root, "log", "--notes=tsugumi", "--format=%N", "main", "-1")
         assert git(root, "log", "--notes=tsugumi", "--grep=failed", "--all", "--format=%s").startswith("青の帯域")
         # Going back to the plan gives the Drafts.
