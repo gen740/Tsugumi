@@ -194,6 +194,8 @@ struct DisplayContent: View {
   var large = false
   var zoom: CGFloat = 1
 
+  @State private var tablePage = 0
+
   private func size(_ small: CGFloat, _ big: CGFloat) -> CGFloat { (large ? big : small) * zoom }
 
   /// Scrolls in the large viewer; on the canvas (where the wheel moves the
@@ -235,22 +237,39 @@ struct DisplayContent: View {
         }
       }
     case .table(let columns, let rows)?:
-      scrolling(axes: [.horizontal, .vertical]) {
-        Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
-          GridRow {
-            ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
-          }
-          Divider()
-          ForEach(Array(rows.prefix(2000).enumerated()), id: \.offset) { _, r in
+      let page = TablePage(count: rows.count, requested: large ? tablePage : 0)
+      VStack(alignment: .leading, spacing: 4 * zoom) {
+        if large {
+          HStack {
+            Text("\(page.start == page.end ? 0 : page.start + 1)–\(page.end) / \(rows.count) 行").font(.caption.monospacedDigit())
+            Spacer()
+            Button("前へ") { tablePage = page.index - 1 }.disabled(page.index == 0)
+            Picker("ページ", selection: Binding(get: { page.index }, set: { tablePage = $0 })) {
+              ForEach(0..<page.count, id: \.self) { Text("\($0 + 1)").tag($0) }
+            }.frame(maxWidth: 130)
+            Button("次へ") { tablePage = page.index + 1 }.disabled(page.index + 1 >= page.count)
+          }.controlSize(.small)
+        } else {
+          Text("全 \(rows.count) 行・先頭 \(page.end) 行のプレビュー（拡大して全行表示）")
+            .font(.system(size: size(9, 11))).foregroundStyle(.secondary)
+        }
+        scrolling(axes: [.horizontal, .vertical]) {
+          Grid(alignment: .leading, horizontalSpacing: 12 * zoom, verticalSpacing: 3 * zoom) {
             GridRow {
-              ForEach(Array(r.enumerated()), id: \.offset) { _, cell in
-                Text(cell).font(.system(size: size(10, 12), design: .monospaced)).textSelection(.enabled)
+              ForEach(Array(columns.enumerated()), id: \.offset) { _, c in Text(c).font(.system(size: size(10, 12), weight: .bold)) }
+            }
+            Divider()
+            ForEach(page.start..<page.end, id: \.self) { i in
+              GridRow {
+                ForEach(Array(rows[i].enumerated()), id: \.offset) { _, cell in
+                  Text(cell).font(.system(size: size(10, 12), design: .monospaced)).textSelection(.enabled)
+                }
               }
             }
-          }
-        }
-        .padding(4 * zoom)
+          }.padding(4 * zoom)
+        }.id(page.index)
       }
+      .onChange(of: display?.identity) { tablePage = 0 }
     case .image(_, let data, let alt)?:
       if let img = NSImage(data: data) {
         Image(nsImage: img).resizable().interpolation(.none).scaledToFit()
