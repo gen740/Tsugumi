@@ -184,13 +184,13 @@ export function loadConversation(file: string, id: string): Conversation {
       b && (b.type === 'text' ? typeof b.text === 'string'
         : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
         : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
-  if (!c || typeof c.id !== 'string' || !messages(c.messages) || !messages(c.archive ?? []) ||
+  if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
       !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
         ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
       !c.usage || !Number.isFinite(c.usage.inputTokens) || !Number.isFinite(c.usage.outputTokens)) {
     throw new Error(`Invalid conversation file: ${file}`)
   }
-  return { ...newConversation(id), ...c }
+  return c
 }
 
 const isDir = (p: string) => {
