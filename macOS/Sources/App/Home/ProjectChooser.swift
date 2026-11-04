@@ -244,7 +244,9 @@ private struct HomeSidebar: View {
       TsugumiTemariScene(birdScale: 0.19)
         .frame(height: 150)
         .padding(.top, -6)
-      Text("Tsugumi").font(.largeTitle.bold()).foregroundStyle(TsugumiPalette.cream)
+      // small here: a thicker thread than the key visual's, to read as well
+      TsugumiWordmark(weight: 6.5)
+        .frame(width: 190, alignment: .leading)
         .padding(.horizontal, 18)
       VStack(alignment: .leading, spacing: 8) {
         Button(action: onNew) { Label("新規プロジェクト…", systemImage: "plus.square").frame(maxWidth: .infinity, alignment: .leading) }
