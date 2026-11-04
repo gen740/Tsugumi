@@ -34,7 +34,15 @@ xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 
 ソースからビルドしたアプリは**開発版（Tsugumi Dev）**です。リリース版とは別のアプリとして扱われ（bundle id `app.tsugumi.Tsugumi.dev`）、VM・Nix store・control フォルダ・会話履歴を `~/Library/Application Support/Tsugumi-dev/` に置きます（リリース版は `Tsugumi/`）。そのため、開発版や開発版で回すテストがリリース版の VM を止めたり初期化したりすることはなく、両方を同時に起動できます。開発版は自動更新しません。
 
-最小の手順:
+### 前提環境
+
+- Nix（flakes 有効）
+- Xcode または Command Line Tools
+- VM の起動ディスクをビルドするとき（[公開版](https://github.com/gen740/tsugumi-vm)がないとき）のみ、Apple container 0.6.0（`container system start` 済み）
+
+依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
+
+### 最小の手順
 
 ```bash
 ui/renderer/build.sh
@@ -47,9 +55,10 @@ macOS/build-app.sh
 ```bash
 open dist/Tsugumi.app
 ```
-依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
 
-前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM の起動ディスクをビルドするとき（公開版がないとき）のみ Apple container 0.6.0（`container system start` 済み）を使用します。
+### 各段階の詳細
+
+開発シェルに入り、core（tsugumid）と SDK をビルドします：
 
 ```bash
 nix develop
@@ -93,4 +102,4 @@ VM の起動には virtualization entitlement 付きのコード署名が必要�
 (cd tests/python && python -m pytest -q test_contract.py)
 ```
 
-テストスイートの詳細、パフォーマンス計測結果、開発時の既知の問題については[開発資料](docs/Development.md)を参照してください。
+テストスイートと確認範囲は[開発資料のテスト](docs/Development.md#テスト)、パフォーマンスの計測結果は[計測](docs/Development.md#計測2026-11-03高速化後共通-vm)、以前の構成で直した不具合は[解決済みの記録](docs/Development.md#解決済みの記録)を参照してください。

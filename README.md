@@ -10,11 +10,21 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
-> GitHub のリポジトリ名は Tsumugi ですが、アプリと文書での名前は **Tsugumi**（鳥のツグミ。由来は[名前の由来](docs/Name.md)）です。
-
 ![C++ と Python の処理を並べ、実行結果を比較する Canvas](docs/assets/screenshots/workflow.png)
 
-[使ってみる](#使ってみる) · [画面でたどる](#画面でたどる実験と検証) · [ドキュメント](#ドキュメント) · [なぜ作ったか](docs/Philosophy.md)
+<p align="center">
+  <a href="#使ってみる"><b>使ってみる</b></a> ·
+  <a href="#画面でたどる実験と検証">画面でたどる</a> ·
+  <a href="#ドキュメント">ドキュメント</a> ·
+  <a href="docs/Philosophy.md">なぜ作ったか</a> ·
+  <a href="docs/Name.md">名前の由来</a>
+</p>
+
+- **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
+- **気になった Card だけを、すぐ試す。** 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。
+- **環境ごと固定して、確かめ直せる。** Card ごとの依存関係を Nix で固定し、実行は git の版と結びつけて記録します。
+- **計算は Mac の中の隔離された VM で。** Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](docs/security.md#モデルに送られるもの)しています。
+- **完成した Workflow に LLM は要らない。** 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。
 
 ## AI を研究に積極的に活用できていますか？
 
@@ -143,9 +153,11 @@ Agent を使う場合は、設定の「API」で Anthropic または OpenAI の 
 | データからレポートへ | データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する |
 | Collatz (C++ / Python) | 二つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する |
 | Live Stream | 時系列の出力をリアルタイムにグラフで描画し、停止・再実行する |
+| Matplotlib | ウィンドウ向けに書いた matplotlib のコード（`plt.show()`・`FuncAnimation`）が、そのまま Card の表示に描かれる |
 | Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分け、RGB 画像にする。帯域や伸長を変えてその Card だけ再実行する |
 | GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面 | 公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する |
 | 各科学デモの Draft 版 | 計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる |
+| 力学系ギャラリー（Draft） | 互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する |
 
 ## 処理の流れそのものを、人と AI の共通言語にする
 
@@ -171,15 +183,14 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 
 ## ドキュメント
 
-- [Q&A](docs/QA.md)：課題意識、Draft、再現性、記録と再実行についての設計意図
-- [操作ガイド](docs/Usage.md)：画面ごとの操作とデモの試し方
-- [主要機能](docs/features.md)：Card、実行環境、記録、Agent の仕組み
-- [セキュリティと隔離](docs/security.md)：隔離の境界、データの置き場所、外部モデルに送られる内容
-- [設計の独自性](docs/novelty.md)：同じ Workflow で設計・実装・検証をつなぐ理由と、なぜ今この設計なのか
-- [開発資料](docs/Development.md)：実行基盤、設計上の決定、テスト、計測、実装状況
-- [Web UI](docs/WebUI.md)：ブラウザから使うクライアントと、tsugumid をホストで直接動かす構成
-- [版の管理](docs/Versions.md)：プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」
-- [固定しているバージョン](docs/Lock.md)：実行環境と依存ライブラリの固定値
+| 目的 | 文書 |
+| --- | --- |
+| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [Web UI](docs/WebUI.md)（ブラウザから使う） |
+| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) |
+| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) |
+| **記録と開発** | [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) |
+
+すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
 
 ## ライセンス
 
