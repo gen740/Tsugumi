@@ -1,0 +1,14 @@
+{
+  "name": "tsugumi",
+  "owner": {
+    "name": "gen740"
+  },
+  "description": "Tsugumi, the Card graph workflow tool, for Claude Code.",
+  "plugins": [
+    {
+      "name": "tsugumi",
+      "source": "./plugins/tsugumi",
+      "description": "Work on Tsugumi projects from Claude Code: open them in the Tsugumi web UI and edit, run and read them with the core's tools while the user watches."
+    }
+  ]
+}

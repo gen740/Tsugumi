@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { Agent, externalTools, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { EnvironmentManager, projectKey } from './env'
 
@@ -21,6 +21,8 @@ export interface ChatContext {
   writeJSON: (file: string, v: unknown) => void
   /** Folder of the server bundle (tsugumi.bfbs is next to it). */
   here: string
+  /** How many pages are connected (their event streams). */
+  listeners: () => number
 }
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
@@ -393,17 +395,22 @@ const permissionWaits = new Map<string, PermissionWait>()
 
 /** The widenings the user approves: the kinds allowed without asking at
  *  once, the others when the page asks (nothing when declined or cancelled). */
-function approve(project: string, session: string, asked: string[]): Promise<Set<string>> {
+function approve(project: string, session: string, asked: string[], from?: string): Promise<Set<string>> {
   const allowed = new Set(settings().allowedPermissions)
   const approved = new Set(asked.filter((p) => allowed.has(p.split(' ')[0])))
   const ask = asked.filter((p) => !approved.has(p))
   if (!ask.length) return Promise.resolve(approved)
+  // An agent outside the web UI asks the page; with no page open nobody can answer.
+  if (from && !ctx.listeners()) return Promise.resolve(approved)
   return new Promise((resolve) => {
     const id = randomUUID()
     permissionWaits.set(id, { project, session, asked: ask, resolve: (a) => resolve(new Set([...approved, ...a])) })
-    ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked: ask } })
+    ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked: ask, from } })
   })
 }
+
+/** The session id under which Claude Code's calls (the plugin) ask for approvals. */
+const EXTERNAL_SESSION = 'external'
 
 function answerPermission(id: string, allow: boolean, always: string[] = []) {
   const w = permissionWaits.get(id)
@@ -468,6 +475,28 @@ class ChatHost {
 
   events(id: string) {
     return (e: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event: e })
+  }
+
+  /** The Agent that runs Claude Code's tool calls (the plugin): no model of
+   *  its own, the same checks and approvals as the chat's. Its records stay
+   *  out of the chat's sessions. */
+  private outside?: Agent
+  async external(): Promise<Agent> {
+    if (!this.outside) {
+      const file = path.join(ctx.support, 'agent', this.key, 'external.json')
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      const a = new Agent(catalog!, () => this.rpc(), await provider(), file, EXTERNAL_SESSION, references())
+      a.approver = (asked) => approve(this.project, EXTERNAL_SESSION, asked, 'Claude Code')
+      this.outside = a
+    }
+    return this.outside
+  }
+
+  /** Claude Code's tool calls, for the page (Tsugumi flies to the Card it works on). */
+  externalEvents() {
+    return (e: AgentEvent) => {
+      if (e.kind === 'toolStarted' || e.kind === 'toolFinished') ctx.broadcast({ type: 'agentWork', project: this.project, from: 'Claude Code', event: e })
+    }
   }
 
   sessions() {
@@ -672,6 +701,24 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { folder: f, name: path.basename(f) }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
+  // Claude Code (the plugin's MCP server) works on a project through these:
+  // the chat's tools, run here with the same checks, and shown on the page.
+  'POST /api/agent/tools': () => {
+    if (!catalog) throw ctx.httpError(503, catalogError!)
+    return externalTools(catalog).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+  },
+  /** Claude Code opened a project: the open page shows it (none open: the plugin opens one). */
+  'POST /api/agent/open': (b) => {
+    const project = chatFor(projectDir(b.path)).project
+    ctx.broadcast({ type: 'agentOpen', project })
+    return { project, pages: ctx.listeners() }
+  },
+  'POST /api/agent/call': async (b) => {
+    if (!catalog) throw ctx.httpError(503, catalogError!)
+    const host = chatFor(projectDir(b.path))
+    const input = typeof b.arguments === 'string' ? b.arguments : JSON.stringify(b.arguments ?? {})
+    return (await host.external()).call(String(b.name), input, host.externalEvents())
+  },
   'POST /api/guide': async () => {
     const state = await guideState()
     const a = state.available ? await guide() : undefined

@@ -39,22 +39,23 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
         ]} />
       </div>
       {showList ? <SessionList chat={chat} onPick={() => setShowList(false)} /> : <Conversation session={session} chat={chat} tab={tab} />}
-      {chat.permission && <PermissionPrompt key={chat.permission.id} asked={chat.permission.asked} onAnswer={(allow, always) => chat.answerPermission(allow, always)} />}
+      {chat.permission && <PermissionPrompt key={chat.permission.id} asked={chat.permission.asked} from={chat.permission.from} onAnswer={(allow, always) => chat.answerPermission(allow, always)} />}
     </div>
   )
 }
 
 /** Asks whether the Agent may give Cards what its save needs; each kind can
  *  be allowed without asking from now on (as in the settings). */
-function PermissionPrompt({ asked, onAnswer }: { asked: string[]; onAnswer: (allow: boolean, always: string[]) => void }) {
+function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: string; onAnswer: (allow: boolean, always: string[]) => void }) {
+  const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
   const kinds = PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> Agent が Card の権限を広げようとしています</div>
-        <p className="secondary">許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。</p>
+        <div className="title2"><Icon name="hand.raised" /> {who} が Card の権限を広げようとしています</div>
+        <p className="secondary">許可すると、この保存が行われます。許可しなければ何も保存されず、{who} には理由を説明するよう伝えます。</p>
         <ul className="permission-list">
           {requests.map((r) => (
             <li key={r.raw}>

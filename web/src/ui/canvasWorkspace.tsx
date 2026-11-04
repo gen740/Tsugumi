@@ -60,7 +60,7 @@ function ProjectActions({ workspace, session, onSwitchProject }: { workspace: Wo
         <Button kind="borderless" iconOnly icon="folder" disabled={session.runActive} onClick={onSwitchProject}
           help={session.runActive ? '実行中は切り替えられません' : '別のプロジェクトを開く（必要な保存の後に切り替えます）'} />
       )}
-      {!workspace.showChat && onSwitchProject && guide.available ? (
+      {!workspace.showChat && onSwitchProject && guide.present ? (
         // While the chat is closed, Tsugumi waits on its button.
         <button type="button" className="btn btn-borderless btn-icon guide-nest-button" data-guide="chat" title={tip('チャットを開く', 'toggleChat')}
           aria-label={tip('チャットを開く', 'toggleChat')} onClick={() => workspace.set('showChat', true)}>

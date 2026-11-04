@@ -3,6 +3,7 @@
 // are routed here to the active project and tab (the macOS menu commands);
 // the canvas handles its own single-key shortcuts while it has the focus.
 import { useEffect, useRef, useState } from 'react'
+import { onServerEvent } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { canvasFor } from '../model/canvas'
@@ -99,6 +100,16 @@ export function App() {
   // The latest handlers, for the one keydown listener.
   const commands = useRef({ leaveProject, openReplacing })
   commands.current = { leaveProject, openReplacing }
+
+  // Claude Code (the plugin) opened a project: this page shows it. When it
+  // asks to widen what Cards may do, the chat (where that is approved) opens.
+  useEffect(() => {
+    if (detached) return
+    return onServerEvent((e) => {
+      if (e.type === 'agentOpen' && workspace.session?.dir !== e.project) void commands.current.openReplacing(e.project)
+      if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'permission' && workspace.session?.dir === e.project) workspace.set('showChat', true)
+    })
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
