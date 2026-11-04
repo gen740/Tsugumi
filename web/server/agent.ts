@@ -872,6 +872,9 @@ export class Agent {
         record.opId = randomUUID()
         full.op_id = record.opId
         full.approved_permissions = asked
+        // The persisted record must name the operation we are about to send.
+        this.save()
+        if (signal?.aborted) throw new Cancelled()
         ;({ type: replyType, json } = await call())
       }
       // A run still building or running: wait here (up to statusWait) instead
