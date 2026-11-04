@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, AgentEvent, listModels, loadConversation, ProviderConfig, ToolCatalog } from './agent'
+import { Agent, AgentEvent, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { EnvironmentManager, projectKey } from './env'
 
 export interface ChatContext {
@@ -157,14 +157,15 @@ async function providerInfo() {
 }
 
 /** The references the Agent may read (reference_read): the repository's
- *  demos, the Python SDK and the Card guide (dist/ is two levels below). */
+ *  demos that are not Draft tasks or their answers, the Python SDK and the Card guide (dist/ is two levels below). */
 function references(): Record<string, string> {
   const repo = path.resolve(ctx.here, '..', '..')
   const out: Record<string, string> = {}
   const add = (name: string, p: string) => {
     if (fs.existsSync(p)) out[name] = p
   }
-  add('demos', path.join(repo, 'demos'))
+  // Not the Draft demos nor their answers (referenceDemos).
+  Object.assign(out, referenceDemos(path.join(repo, 'demos')))
   add('sdk/python/tsugumi/__init__.py', path.join(repo, 'sdk', 'python', 'tsugumi', '__init__.py'))
   add('card-guide.md', path.join(repo, 'agent', 'Reference', 'card-guide.md'))
   return out

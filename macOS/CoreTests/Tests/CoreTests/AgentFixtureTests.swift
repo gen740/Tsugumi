@@ -537,9 +537,9 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   }
 
   @Test func referenceReadListsAndReadsOnlyTheReferences() async throws {
-    let refs = ["demos": root.appendingPathComponent("demos", isDirectory: true),
-                "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
-                "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]
+    let refs = Agent.referenceDemos(in: root.appendingPathComponent("demos", isDirectory: true)).merging([
+      "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
+      "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     let bfbs = try #require(RPCSchema.bfbs())
     let agent = try Agent(catalog: try ToolCatalog(schema: try BFBS(data: bfbs)), transport: NoTransport(), provider: .localFixture(port: 1),
                       storage: FileManager.default.temporaryDirectory.appendingPathComponent("ref-\(UUID()).json"), references: refs)
@@ -552,6 +552,14 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(!e3 && sdk.contains("def display_table"))
     let (_, e4) = await agent.readReference("demos/../../core/src/store.cc")
     #expect(e4)
+    // The Draft demos are tasks and the finished demo of each is its answer:
+    // neither is listed nor read (implementing casa-draft must not copy casa).
+    let (demos, e5) = await agent.readReference("demos")
+    #expect(!e5 && demos.split(separator: "\n") == ["collatz/", "live-stream/", "report/"])
+    for hidden in ["demos/casa", "demos/casa/definitions/bands/src/main.py", "demos/casa-draft", "demos/gw150914/tsugumi.json"] {
+      let (_, e) = await agent.readReference(hidden)
+      #expect(e, "\(hidden) is readable")
+    }
   }
 }
 

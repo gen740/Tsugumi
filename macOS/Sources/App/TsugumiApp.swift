@@ -90,6 +90,19 @@ struct TsugumiApp: App {
   }
 }
 
+/// Application menu: check for an update, or restart into the one downloaded.
+struct UpdateMenuItem: View {
+  private let updater = Updater.shared
+  var body: some View {
+    if case .ready(let v) = updater.state {
+      Button("再起動して \(v) に更新") { updater.installAndRelaunch() }
+    } else {
+      Button("アップデートを確認…") { Task { await updater.check(manual: true) } }
+        .disabled(updater.busy)
+    }
+  }
+}
+
 /// Window menu: the shared VM's console.
 struct OpenConsoleButton: View {
   @Environment(\.openWindow) private var openWindow
@@ -176,7 +189,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       AppPreferences.shared.applyTheme()
       SmokeTest.runIfRequested(AppModel.shared)
       UIScript.runIfRequested()
+      Updater.shared.start()
     }
+  }
+
+  /// The VM is off by now: a downloaded update takes the app's place.
+  func applicationWillTerminate(_ notification: Notification) {
+    MainActor.assumeIsolated { Updater.shared.installIfReady() }
   }
 }
 
@@ -315,6 +334,9 @@ struct WorkbenchCommands: Commands {
     }
     CommandGroup(after: .windowList) {
       OpenConsoleButton()
+    }
+    CommandGroup(after: .appInfo) {
+      UpdateMenuItem()
     }
   }
 }

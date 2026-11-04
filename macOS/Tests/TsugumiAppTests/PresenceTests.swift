@@ -11,6 +11,63 @@ import Testing
   #expect(PresenceEvents.look(tool: "project_file_read", arguments: #"{"path": "tsugumi.json"}"#) == nil)
   #expect(PresenceEvents.look(tool: "reference_read", arguments: #"{"path": "card-guide.md"}"#) == nil)
   #expect(PresenceEvents.look(tool: "run", arguments: "not json") == nil)
+  // The CardPath as the model writes it (the tools' schema), also in Card.
+  #expect(PresenceEvents.look(tool: "run", arguments: #"{"base_rev": "3", "card": {"segments": ["start"]}}"#) == .run(["start"]))
+  #expect(PresenceEvents.look(tool: "run_record", arguments: #"{"run_id": "r", "card": {"segments": ["collatz-cpp", "check"]}}"#) == .visit(["collatz-cpp", "check"]))
+  #expect(PresenceEvents.look(tool: "log_range", arguments: #"{"run_id": "r", "card": {"segments": []}}"#) == nil)
+}
+
+@MainActor @Test func betweenScenesTheBubbleSaysWhatTheAgentDoesNow() {
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  p.turnStarted(now: t0)
+  #expect(p.line(at: t0)?.text == "考えています")
+  p.enqueue(.write("load", reveal: true), now: t0)
+  let end = p.beats[0].end
+  // Looking something up while the scene still plays: the scene is said.
+  p.doing(PresenceEvents.activity(tool: "reference_read"), now: t0.addingTimeInterval(0.5))
+  #expect(p.line(at: t0.addingTimeInterval(0.6))?.text == "load を書いています")
+  // Once it has played, what the Agent does now, not the old scene.
+  #expect(p.line(at: end.addingTimeInterval(0.1))?.text == "書き方を調べています")
+  p.doing(PresenceEvents.activity(tool: "run_status"), now: end.addingTimeInterval(1))
+  #expect(p.line(at: end.addingTimeInterval(1.1))?.text == "実行の終わりを待っています")
+  // A tool the scenes show says nothing of its own; text streaming keeps its time.
+  #expect(PresenceEvents.activity(tool: "run") == nil)
+  p.doing("考えています", now: end.addingTimeInterval(2))
+  p.doing("考えています", now: end.addingTimeInterval(3))
+  #expect(p.line(at: end.addingTimeInterval(3.5))?.since == end.addingTimeInterval(2))
+  // A thought summary is said over the activity, until a later scene starts.
+  p.think("bands の検証が通ったことを確かめています", now: end.addingTimeInterval(4))
+  #expect(p.line(at: end.addingTimeInterval(4.5))?.text == "bands の検証が通ったことを確かめています")
+  p.enqueue(.write("rgb", reveal: true), now: end.addingTimeInterval(5))
+  #expect(p.line(at: end.addingTimeInterval(5.5))?.text == "rgb を書いています")
+}
+
+@MainActor @Test func theLastWordsSayHowTheTurnEnded() {
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  for (outcome, words) in [(AgentPresence.Outcome.done, "できました"), (.failed, "うまくいきませんでした"),
+                           (.stopped, "止めました"), (.limit, "途中で止まっています")] {
+    let p = AgentPresence()
+    p.turnStarted(now: t0)
+    p.enqueue(.visit("load"), now: t0)
+    p.turnEnded(outcome, now: t0.addingTimeInterval(0.5))
+    let end = p.beats.last!.end
+    #expect(p.line(at: end.addingTimeInterval(0.5))?.text == words)
+    // A thought summary that comes after the end is not shown.
+    p.think("帯域を分けています", now: end.addingTimeInterval(0.6))
+    #expect(p.line(at: end.addingTimeInterval(0.7))?.text == words)
+  }
+  // A turn without scenes (a question answered) ends with its words too.
+  let q = AgentPresence()
+  q.turnStarted(now: t0)
+  q.turnEnded(now: t0.addingTimeInterval(2))
+  #expect(q.line(at: t0.addingTimeInterval(2.5))?.text == "できました")
+}
+
+@Test func thoughtSummariesSpeakInTheVoiceOfThePlainLines() {
+  #expect(ThoughtSummarizer.system(english: false).contains("〜しています"))
+  #expect(ThoughtSummarizer.system(english: true).contains("one line of English"))
+  #expect(ThoughtSummarizer.system(english: false).contains("never the tools"))
 }
 
 @Test func aSaveWritesOutDraftsUpstreamFirstAndThreadsTheirWires() {

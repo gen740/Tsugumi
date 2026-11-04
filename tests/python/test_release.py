@@ -15,6 +15,13 @@ def test_every_part_takes_the_version_from_one_file():
     assert "VERSION" in (ROOT / "macOS/build-app.sh").read_text()
 
 
+def test_the_app_finds_its_resources_on_any_mac():
+    # the native build system's Bundle.module looks in the build folder, not in Contents/Resources
+    script = (ROOT / "macOS/build-app.sh").read_text()
+    assert "build_opts=(-c release --build-system swiftbuild)" in script
+    assert 'grep -F "$repo/"' in script
+
+
 def test_paths_of_the_build_machine_stay_in_debug_builds():
     outside = []
     for path in list((ROOT / "macOS/Sources").rglob("*.swift")) + list((ROOT / "agent/Sources").rglob("*.swift")):

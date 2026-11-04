@@ -5,9 +5,30 @@
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
-#   macOS/build-app.sh            # release build
+#   macOS/build-app.sh            # dev build (optimized; "Tsugumi Dev")
+#   macOS/build-app.sh --release  # the build the release workflow publishes
+#
+# The two are different apps to macOS (AppChannel.swift): the dev build has
+# the bundle id app.tsugumi.Tsugumi.dev, keeps its VM and store in
+# ~/Library/Application Support/Tsugumi-dev and never updates itself; the
+# release (app.tsugumi.Tsugumi, Application Support/Tsugumi) updates itself
+# from the GitHub releases (Updater.swift). Checks with a dev build never
+# touch the VM of the release in use.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+channel=dev
+case "${1:-}" in
+  --release) channel=release ;;
+  "") ;;
+  *) sed -n '8,9s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac
+if [ "$channel" = release ]; then
+  bundle_id=app.tsugumi.Tsugumi
+  name=Tsugumi
+else
+  bundle_id=app.tsugumi.Tsugumi.dev
+  name="Tsugumi Dev"
+fi
 dist="$repo/dist"
 # The version (VERSION, see docs/Development.md) and a build number that only grows.
 version="$(cat "$repo/VERSION")"
@@ -22,12 +43,22 @@ vm="$dist/tsugumi-vm"
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
 swiftenv=(env -i HOME="$HOME" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
-(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --product Tsugumi)
-bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --show-bin-path)"
+# Swift Build, also where it is not the default yet (Xcode 26.6 of the release
+# runner): its Bundle.module finds the packages' resource bundles in
+# Contents/Resources. The native build system's looks only next to the app
+# and in the build folder, so its app crashes on any other Mac.
+build_opts=(-c release --build-system swiftbuild)
+(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product Tsugumi)
+bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
+# Nothing may look for files where this machine built them (that only works here).
+if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$' | head -3 | grep .; then
+  echo "the app refers to paths of this build (above)" >&2
+  exit 1
+fi
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
@@ -55,9 +86,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Tsugumi</string>
-  <key>CFBundleDisplayName</key><string>Tsugumi</string>
-  <key>CFBundleIdentifier</key><string>app.tsugumi.Tsugumi</string>
+  <key>CFBundleName</key><string>$name</string>
+  <key>CFBundleDisplayName</key><string>$name</string>
+  <key>CFBundleIdentifier</key><string>$bundle_id</string>
+  <key>TsugumiChannel</key><string>$channel</string>
   <key>CFBundleExecutable</key><string>Tsugumi</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -71,7 +103,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Local use only: ad-hoc signature (no notarization), with the
+# Ad-hoc signature (no Developer ID, no notarization), with the
 # virtualization entitlement the shared VM needs. Nested code first, each by
 # itself (not --deep, which signs whatever it finds the same way).
 # Rpaths of the machine it was built on (where the renderer was built) are not

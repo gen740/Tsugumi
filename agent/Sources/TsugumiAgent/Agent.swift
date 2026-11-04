@@ -395,6 +395,23 @@ public actor Agent {
     return Shared.fill(t.text, ["where": where_, "list": list])
   }
 
+  /// The bundled demos the Agent may read, as references
+  /// ("demos/<path>"): not the Draft demos (tasks to implement) nor the
+  /// finished demo of each, which is that task's answer: an Agent that read
+  /// it would copy it, and implementing the Draft would show nothing.
+  public static func referenceDemos(in demos: URL) -> [String: URL] {
+    guard let data = try? Data(contentsOf: demos.appendingPathComponent("index.json")),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let list = obj["demos"] as? [[String: Any]] else { return [:] }
+    let paths = list.compactMap { $0["path"] as? String }
+    let tasks = Set(paths.filter { $0.hasSuffix("-draft") })
+    var out: [String: URL] = [:]
+    for p in paths where !tasks.contains(p) && !tasks.contains(p + "-draft") {
+      out["demos/" + p] = demos.appendingPathComponent(p, isDirectory: true)
+    }
+    return out
+  }
+
   /// Reads a bundled reference file or lists a folder.
   public func readReference(_ raw: String) -> (String, Bool) {
     let rel = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).replacingOccurrences(of: "./", with: "")
@@ -403,6 +420,12 @@ public actor Agent {
     }
     guard !rel.split(separator: "/").contains(".."),
           let (top, base) = references.first(where: { rel == $0.key || rel.hasPrefix($0.key + "/") }) else {
+      // A folder that only holds references ("demos"): its entries.
+      let inside = references.keys.filter { $0.hasPrefix(rel + "/") }.map { k in
+        let rest = k.dropFirst(rel.count + 1)
+        return rest.contains("/") || references[k]!.hasDirectoryPath ? String(rest.prefix { $0 != "/" }) + "/" : String(rest)
+      }
+      if !rel.split(separator: "/").contains(".."), !inside.isEmpty { return (Set(inside).sorted().joined(separator: "\n"), false) }
       return ("not found: \(rel) (reference_read \"\" lists what there is)", true)
     }
     let rest = rel == top ? "" : String(rel.dropFirst(top.count + 1))

@@ -457,6 +457,24 @@ function wire(b: ContentBlock): unknown {
  *  demos' own files). */
 export const SYSTEM_PROMPT = systemPrompt
 
+/** The bundled demos the Agent may read, as references ("demos/<path>"):
+ *  not the Draft demos (tasks to implement) nor the finished demo of each,
+ *  which is that task's answer: an Agent that read it would copy it, and
+ *  implementing the Draft would show nothing. */
+export function referenceDemos(demos: string): Record<string, string> {
+  let list: { path?: string }[]
+  try {
+    list = JSON.parse(fs.readFileSync(path.join(demos, 'index.json'), 'utf8')).demos ?? []
+  } catch {
+    return {}
+  }
+  const paths = list.map((d) => d.path).filter((p): p is string => typeof p === 'string')
+  const tasks = new Set(paths.filter((p) => p.endsWith('-draft')))
+  const out: Record<string, string> = {}
+  for (const p of paths) if (!tasks.has(p) && !tasks.has(p + '-draft')) out['demos/' + p] = path.join(demos, p)
+  return out
+}
+
 /** reference_read: Tsugumi's bundled references, read only. */
 const REFERENCE_TOOL: ToolSpec = { ...AGENT.referenceTool, payloadType: -1, object: -1, mutating: false }
 
@@ -738,6 +756,14 @@ export class Agent {
     const names = Object.keys(this.references).sort()
     if (!rel || rel === '.') return [names.map((n) => (isDir(this.references[n]) ? n + '/' : n)).join('\n'), false]
     const top = names.find((n) => rel === n || rel.startsWith(n + '/'))
+    if (!top && !rel.split('/').includes('..')) {
+      // A folder that only holds references ("demos"): its entries.
+      const inside = names.filter((n) => n.startsWith(rel + '/')).map((n) => {
+        const rest = n.slice(rel.length + 1)
+        return rest.includes('/') || isDir(this.references[n]) ? rest.split('/')[0] + '/' : rest
+      })
+      if (inside.length) return [[...new Set(inside)].sort().join('\n'), false]
+    }
     if (rel.split('/').includes('..') || !top) return [`not found: ${rel} (reference_read "" lists what there is)`, true]
     const base = this.references[top]
     const target = rel === top ? base : path.join(base, rel.slice(top.length + 1))
