@@ -136,3 +136,28 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path):
         assert received.endswith("/a/report.txt") and Path(received).read_text() == "quarterly numbers\n"
     finally:
         d.cleanup()
+
+
+def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
+    """Cancelling as a run starts, runs or ends: callbacks of a run that has
+    ended still find it (they hold it), so tsugumid answers throughout."""
+    from projects import builtin_project, start_run, wait_run
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        for i in range(30):
+            rid = start_run(c, "start")
+            if i % 3:
+                time.sleep(0.001 * i)
+            try:
+                c.call("RunCancelRequest", runId=rid)
+            except RpcFailure:
+                pass  # it had already ended
+            wait_run(c, rid, timeout=60)
+        assert d.proc.poll() is None
+        c.call("ProjectInspectRequest")
+    finally:
+        d.cleanup()

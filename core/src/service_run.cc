@@ -88,6 +88,11 @@ void Service::run(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "run", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "run", digest, f);
+    throw Failed(f);
   }
 }
 
@@ -117,6 +122,11 @@ void Service::sdk_prepare(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "sdk", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "sdk", digest, f);
+    throw Failed(f);
   }
 }
 

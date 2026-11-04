@@ -115,7 +115,7 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir) : svc_(svc), eval_dir_(
   // SDK jobs left pending by a previous process were interrupted.
   auto dir = svc_.store().state_dir() / "sdk";
   if (stdfs::is_directory(dir, ec)) {
-    for (const auto& e : stdfs::directory_iterator(dir)) {
+    for (const auto& e : stdfs::directory_iterator(dir, ec)) {
       auto text = fs::read_file(e.path() / "job.json");
       if (!text) continue;
       schema::SdkJobJson j;
@@ -592,7 +592,8 @@ CacheClearOutcome NixRunner::clear_cache() {
   remove(state / "sdk", "sdk");
   std::error_code ec;
   if (stdfs::is_directory(state / "runs", ec)) {
-    for (const auto& run : stdfs::directory_iterator(state / "runs")) {
+    // A folder going away meanwhile (a run's files deleted) ends the listing, never the clearing.
+    for (const auto& run : stdfs::directory_iterator(state / "runs", ec)) {
       remove(run.path() / "build", "runs/" + run.path().filename().string() + "/build");
       remove(run.path() / "defs", "runs/" + run.path().filename().string() + "/defs");
       remove(run.path() / "work", "runs/" + run.path().filename().string() + "/work");

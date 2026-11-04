@@ -342,9 +342,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void persist_status_locked() {
     auto s = summary_.status;
     svc_.history().submit([s](sql::Db& db) { History::update_run(db, s); },
-                          [this, s](bool ok) {
-                            if (!ok) persistence_lost("run status");
-                            svc_.server()->broadcast(status_note(s, false));
+                          [self = shared_from_this(), s](bool ok) {
+                            if (!ok) self->persistence_lost("run status");
+                            self->svc_.server()->broadcast(status_note(s, false));
                           });
   }
 
@@ -362,9 +362,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void card_status(const InvocationSummaryData& s, bool persist = false) {
     svc_.history().set_live(s);
     svc_.history().submit([s, persist](sql::Db& db) { if (persist) History::put_status(db, s); },
-                          [this, s, persist](bool ok) {
-                            if (!ok && persist) persistence_lost("progress of " + path_key(s.card));
-                            svc_.server()->broadcast(card_note(s));
+                          [self = shared_from_this(), s, persist](bool ok) {
+                            if (!ok && persist) self->persistence_lost("progress of " + path_key(s.card));
+                            self->svc_.server()->broadcast(card_note(s));
                           });
   }
 
@@ -374,14 +374,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [this, line, card, inv, run, ends](sql::Db& db) {
-          if (card) *ends = svc_.history().append_log(db, run, *card, *inv, LogStream::journal, line);
-          *ends = card ? *ends : svc_.history().append_run_journal(db, run, line);
+        [&h = svc_.history(), line, card, inv, run, ends](sql::Db& db) {
+          if (card) *ends = h.append_log(db, run, *card, *inv, LogStream::journal, line);
+          *ends = card ? *ends : h.append_run_journal(db, run, line);
         },
-        [this, ends](bool ok) {
-          if (!ok) persistence_lost("journal");
+        [self = shared_from_this(), ends](bool ok) {
+          if (!ok) self->persistence_lost("journal");
           if (ok)
-            for (const auto& e : *ends) svc_.server()->broadcast(log_note(e));
+            for (const auto& e : *ends) self->svc_.server()->broadcast(log_note(e));
         });
   }
 
@@ -389,13 +389,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [this, card, inv, stream, text, run, ends](sql::Db& db) {
-          *ends = svc_.history().append_log(db, run, card, inv, stream, text);
+        [&h = svc_.history(), card, inv, stream, text, run, ends](sql::Db& db) {
+          *ends = h.append_log(db, run, card, inv, stream, text);
         },
-        [this, ends](bool ok) {
-          if (!ok) persistence_lost("log");
+        [self = shared_from_this(), ends](bool ok) {
+          if (!ok) self->persistence_lost("log");
           if (ok)
-            for (const auto& e : *ends) svc_.server()->broadcast(log_note(e));
+            for (const auto& e : *ends) self->svc_.server()->broadcast(log_note(e));
         });
   }
 
@@ -863,9 +863,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                             History::put_last_input(db, card, run, inv, saved);
                             for (const auto& [i, v] : per_port) History::put_last_port_input(db, card, run, i, v);
                           },
-                          [this, base, dir, card, copied](bool ok) {
+                          [self = shared_from_this(), base, dir, card, copied](bool ok) {
                             if (!ok) {
-                              persistence_lost("saved inputs of " + path_key(card));
+                              self->persistence_lost("saved inputs of " + path_key(card));
                               return;
                             }
                             if (!copied) return;
@@ -1323,9 +1323,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.waiting = waiting[n.idx];
       History& h = svc_.history();
       h.submit([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); },
-               [this, s = rec.summary](bool ok) {
-                 if (!ok) persistence_lost("final state of " + path_key(s.card));
-                 svc_.server()->broadcast(card_note(s));
+               [self = shared_from_this(), s = rec.summary](bool ok) {
+                 if (!ok) self->persistence_lost("final state of " + path_key(s.card));
+                 self->svc_.server()->broadcast(card_note(s));
                });
     }
     for (auto& n : nodes_)

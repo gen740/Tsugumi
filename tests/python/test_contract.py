@@ -693,3 +693,23 @@ def test_layout_keeps_flow_note_size_and_boundary_bars(client):
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                       changes=[change("SetLayout", json=json.dumps(layout))])
     assert json.loads(text(res.delta.layoutJson))["notes"][0]["fontSize"] == 20
+
+
+def test_an_unexpected_error_still_ends_the_operation(project):
+    """A save failing with an error other than a Failed (an exception from a
+    library) answers and ends its operation: the same op_id can be sent again
+    and is answered, never left waiting on an operation that never ends."""
+    d = Daemon(project, env={"TSUGUMI_ENABLE_FAULTS": "1", "TSUGUMI_FAULT": "save_throws"}).start()
+    doc = json.loads((project / "tsugumi.json").read_text())
+    doc["name"] = "again"
+    try:
+        c = d.client()
+        c.hello()
+        op = new_id()
+        for _ in range(2):
+            with pytest.raises(RpcFailure) as err:
+                c.call("ProjectSaveRequest", baseRev=0, opId=op, origin="t", changes=[change("SetProject", json=json.dumps(doc))],
+                       timeout=10)
+            assert err.value.kind == "internal_error"
+    finally:
+        d.cleanup()

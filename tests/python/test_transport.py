@@ -230,12 +230,12 @@ def test_a_peer_without_hello_cannot_make_tsugumid_buffer(tmp_path):
             s.sendall(struct.pack("<I", 8 << 20))
             for _ in range(64):
                 s.sendall(b"\0" * 65536)
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:  # broken pipe, reset or aborted, as the OS reports the drop
             dropped = True
         if not dropped:
             try:
                 dropped = s.recv(1) == b""
-            except (ConnectionResetError, socket.timeout):
+            except (ConnectionError, socket.timeout):
                 dropped = True
         s.close()
         assert dropped

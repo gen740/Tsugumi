@@ -802,6 +802,7 @@ void Service::save(RequestIn& req) {
       throw Failed(f);
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
+    if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");
     // A model may not widen what Cards may do on its own: the user approves
     // each widening (the client asks, then lists them).
     if (r->origin()->str() == "agent" && staged.effective) {
@@ -853,6 +854,11 @@ void Service::save(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "save", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "save", digest, f);
+    throw Failed(f);
   }
 }
 
@@ -885,6 +891,11 @@ void Service::reload(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "reload", digest, f);
+    throw Failed(f);
   }
 }
 
@@ -976,6 +987,11 @@ void Service::import_definitions(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "import", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "import", digest, f);
+    throw Failed(f);
   }
 }
 
@@ -1001,6 +1017,11 @@ void Service::cache_clear(RequestIn& req) {
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "cache_clear", digest, f.failure);
     throw;
+  } catch (const std::exception& e) {
+    // Any other error ends the operation too (retryable under the same id).
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "cache_clear", digest, f);
+    throw Failed(f);
   }
 }
 
