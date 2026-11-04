@@ -52,6 +52,13 @@ struct GuideWindowLayer: ViewModifier {
 
   func body(content: Content) -> some View {
     content.overlay { GuideFlyer() }.environment(stage)
+      // The window closes with the bird in it (a Card's settings): it is back at
+      // its home in the project's window, and what it said there is done.
+      .onDisappear {
+        if let p = stage.perch, GuideController.shared.points(at: p.id) { GuideController.shared.dismissBubble() }
+        stage.perch = nil
+        stage.away = false
+      }
   }
 }
 
