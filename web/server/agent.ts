@@ -35,6 +35,17 @@ export function approvalRequired(json: string): string[] | undefined {
   return asked.length ? asked : undefined
 }
 
+/** Undefined means the original operation has no terminal receipt yet. */
+export function recoveredOperationError(json: string): boolean | undefined {
+  try {
+    const o = JSON.parse(json), v = o.value, r = v?.receipt
+    if (o.reply !== 'OperationResult' || v?.state !== 'completed' ||
+        typeof r?.result_type !== 'string' || !r.result_type || r.result_type === 'NONE' ||
+        !r.result || typeof r.result !== 'object' || Array.isArray(r.result)) return undefined
+    return r.result_type === 'Failure'
+  } catch { return undefined }
+}
+
 export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
 
 export class ToolCatalog {
@@ -883,9 +894,16 @@ export class Agent {
       try {
         const rpc = await this.rpc()
         const r = await rpc.callRaw(op.payloadType, (b) => this.codec.build(op.object, { op_id: t.opId }, b))
-        t.state = 'completed'
         t.result = this.renderReply(this.catalog.replyNames.get(r.type) ?? 'Unknown', r.bb, r.table)
-        events({ kind: 'toolFinished', id: t.id, name: t.name, ok: true, summary: 'reconciled with operation_get' })
+        const error = recoveredOperationError(t.result)
+        if (error !== undefined) {
+          t.state = 'completed'
+          t.isError = error
+          events({ kind: 'toolFinished', id: t.id, name: t.name, ok: !error, summary: 'reconciled with operation_get' })
+        }
+        for (const m of this.conversation.messages) m.content = m.content.map((b) =>
+          b.type === 'tool_result' && b.tool_use_id === t.id
+            ? { ...b, content: clip(t.result!), is_error: error ?? true } : b)
       } catch {}
     }
     this.save()
