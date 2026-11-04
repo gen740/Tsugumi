@@ -75,49 +75,7 @@ extension Explainer {
     private var figureWidth: CGFloat { min(pageWidth - 40, DocMetrics.figureMax) }
 
     @ViewBuilder private func block(_ b: MDBlock, _ i: Int) -> some View {
-      switch b {
-      case .h1(let s):
-        Text(MarkdownText.inline(s, accent: DocInk.heading)).font(.system(size: 34, weight: .bold)).foregroundStyle(DocInk.heading)
-          .lineSpacing(6).column().anchored(i).padding(.bottom, 26)
-      case .h2(let s):
-        Text(MarkdownText.inline(s, accent: DocInk.heading)).font(.system(size: 25, weight: .bold)).foregroundStyle(DocInk.heading)
-          .lineSpacing(5).column().anchored(i).padding(.top, 46).padding(.bottom, 16)
-      case .h3(let s):
-        Text(MarkdownText.inline(s)).font(.system(size: 20, weight: .semibold)).foregroundStyle(DocInk.heading)
-          .column().anchored(i).padding(.top, 28).padding(.bottom, 10)
-      case .paragraph(let s):
-        Text(MarkdownText.inline(s)).font(.system(size: 17)).foregroundStyle(DocInk.text).lineSpacing(10)
-          .textSelection(.enabled).column().anchored(i).padding(.bottom, 18)
-      case .list(let items, let ordered):
-        VStack(alignment: .leading, spacing: 12) {
-          ForEach(Array(items.enumerated()), id: \.offset) { n, item in
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-              Text(ordered ? "\(n + 1)." : "•").font(.system(size: 17, weight: .semibold)).foregroundStyle(TsugumiPalette.rufous)
-                .frame(width: 22, alignment: .trailing)
-              Text(MarkdownText.inline(item)).font(.system(size: 17)).foregroundStyle(DocInk.text).lineSpacing(9)
-                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            }
-            .transformAnchorPreference(key: BlockFrames.self, value: .bounds) { $0[BlockID(index: i, item: n)] = $1 }
-          }
-        }
-        .column().anchored(i).padding(.bottom, 20)
-      case .table(let rows):
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 0) {
-          ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
-            GridRow {
-              ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                Text(MarkdownText.inline(cell)).font(.system(size: 15, weight: r == 0 ? .semibold : .regular))
-                  .foregroundStyle(r == 0 ? DocInk.heading : DocInk.text).lineSpacing(5)
-                  .padding(.vertical, 9)
-              }
-            }
-            if r < rows.count - 1 { Divider().overlay(DocInk.rule) }
-          }
-        }
-        .column().anchored(i).padding(.bottom, 22)
-      case .rule:
-        Rectangle().fill(DocInk.rule).frame(height: 1).column().padding(.vertical, 24)
-      case .figure(let f):
+      if case .figure(let f) = b {
         // the figure is drawn by the page's layers; here is only its place, and its caption
         VStack(spacing: 6) {
           Color.clear.frame(width: figureWidth, height: figureWidth * f.crop.height / f.crop.width).anchored(i)
@@ -125,10 +83,73 @@ extension Explainer {
             .multilineTextAlignment(.center).frame(width: DocMetrics.column)
         }
         .padding(.top, 4).padding(.bottom, 34)
+      } else {
+        BlockView(block: b, index: i)
       }
     }
   }
 
+  /// One block of a document as text (headings, paragraphs, lists, tables,
+  /// rules), at a width and a size (cards set it larger).
+  struct BlockView: View {
+    let block: MDBlock
+    let index: Int
+    var width: CGFloat = DocMetrics.column
+    var scale: CGFloat = 1
+    /// Text can be selected (not in cards, where a click moves on).
+    var selectable = true
+
+    private func size(_ v: CGFloat) -> CGFloat { v * scale }
+
+    var body: some View {
+      let i = index
+      switch block {
+      case .h1(let s):
+        Text(MarkdownText.inline(s, accent: DocInk.heading)).font(.system(size: size(34), weight: .bold)).foregroundStyle(DocInk.heading)
+          .lineSpacing(6).column(width).anchored(i).padding(.bottom, 26)
+      case .h2(let s):
+        Text(MarkdownText.inline(s, accent: DocInk.heading)).font(.system(size: size(25), weight: .bold)).foregroundStyle(DocInk.heading)
+          .lineSpacing(5).column(width).anchored(i).padding(.top, 46 * scale).padding(.bottom, 16)
+      case .h3(let s):
+        Text(MarkdownText.inline(s)).font(.system(size: size(20), weight: .semibold)).foregroundStyle(DocInk.heading)
+          .column(width).anchored(i).padding(.top, 28).padding(.bottom, 10)
+      case .paragraph(let s):
+        Text(MarkdownText.inline(s)).font(.system(size: size(17))).foregroundStyle(DocInk.text).lineSpacing(10 * scale)
+          .selectable(selectable).column(width).anchored(i).padding(.bottom, 18)
+      case .list(let items, let ordered):
+        VStack(alignment: .leading, spacing: 12) {
+          ForEach(Array(items.enumerated()), id: \.offset) { n, item in
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+              Text(ordered ? "\(n + 1)." : "•").font(.system(size: size(17), weight: .semibold)).foregroundStyle(TsugumiPalette.rufous)
+                .frame(width: 22 * scale, alignment: .trailing)
+              Text(MarkdownText.inline(item)).font(.system(size: size(17))).foregroundStyle(DocInk.text).lineSpacing(9 * scale)
+                .selectable(selectable).fixedSize(horizontal: false, vertical: true)
+            }
+            .transformAnchorPreference(key: BlockFrames.self, value: .bounds) { $0[BlockID(index: i, item: n)] = $1 }
+          }
+        }
+        .column(width).anchored(i).padding(.bottom, 20)
+      case .table(let rows):
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 0) {
+          ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
+            GridRow {
+              ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                Text(MarkdownText.inline(cell)).font(.system(size: size(15), weight: r == 0 ? .semibold : .regular))
+                  .foregroundStyle(r == 0 ? DocInk.heading : DocInk.text).lineSpacing(5)
+                  .padding(.vertical, 9)
+              }
+            }
+            if r < rows.count - 1 { Divider().overlay(DocInk.rule) }
+          }
+        }
+        .column(width).anchored(i).padding(.bottom, 22)
+      case .rule:
+        Rectangle().fill(DocInk.rule).frame(height: 1).column(width).padding(.vertical, 24)
+      case .figure:
+        EmptyView()
+      }
+    }
+  }
 
   // MARK: - The thread
 
@@ -174,18 +195,9 @@ extension Explainer {
             legs.append(Leg(points: pts, times: pts.map { Double(($0.y - c0.y) / max(1, e.y - c0.y)) }, y0: c0.y, y1: e.y, figure: nil))
           }
           // through it, smoothly, each point at its time
-          var pts: [CGPoint] = [], times: [Double] = []
-          let way = f.route.map { (map($0.0), $0.1) }
-          for k in 0..<(way.count - 1) {
-            let (a, ta) = way[k], (d, td) = way[k + 1]
-            let prev = k > 0 ? way[k - 1].0 : a, next = k + 2 < way.count ? way[k + 2].0 : d
-            let b = pt(a.x + (d.x - prev.x) / 6, a.y + (d.y - prev.y) / 6), c = pt(d.x - (next.x - a.x) / 6, d.y - (next.y - a.y) / 6)
-            let seg = Polyline.curve(a, b, c, d, n: 16)
-            for (j, q) in seg.enumerated() where k == 0 || j > 0 {
-              pts.append(q); times.append(ta + (td - ta) * Double(j) / 16)
-            }
-          }
-          legs.append(Leg(points: pts, times: times, y0: r.minY, y1: r.maxY, figure: i))
+          let path = f.path
+          let pts = path.points.map(map)
+          legs.append(Leg(points: pts, times: path.times, y0: r.minY, y1: r.maxY, figure: i))
           cursor = pts.last ?? cursor
         case .list:
           var n = 0
@@ -407,29 +419,11 @@ extension Explainer {
     }
 
     private func drawFigure(_ g: GraphicsContext, _ f: FigureSpec, _ r: CGRect, _ p: Double, _ t: Double) {
-      // a faint ground of the key visual's teal, fading into the page
-      var glow = g
-      glow.addFilter(.blur(radius: 60))
-      glow.fill(Path(ellipseIn: r.insetBy(dx: r.width * 0.08, dy: r.height * 0.12)), with: .color(TsugumiPalette.tealTop.opacity(0.45)))
-      var s = g
-      s.clip(to: Path(r))
-      // soft edges all round: no frame, the drawing fades into the page
-      s.clipToLayer { m in
-        m.fill(Path(r), with: .linearGradient(Gradient(stops: [.init(color: .clear, location: 0), .init(color: .white, location: 0.05),
-                                                              .init(color: .white, location: 0.95), .init(color: .clear, location: 1)]),
-                                              startPoint: pt(r.minX, r.midY), endPoint: pt(r.maxX, r.midY)))
-      }
-      s.clipToLayer { m in
-        m.fill(Path(r), with: .linearGradient(Gradient(stops: [.init(color: .clear, location: 0), .init(color: .white, location: 0.04),
-                                                              .init(color: .white, location: 0.9), .init(color: .clear, location: 1)]),
-                                              startPoint: pt(r.midX, r.minY), endPoint: pt(r.midX, r.maxY)))
-      }
-      let k = r.width / f.crop.width
       // a figure's moment: time since its trigger point crossed the reading line
       SceneOptions.since = -1
       if let trig = f.trigger {
         let key = "\(doc.id)-\(r.minY)"
-        if r.minY + (trig.y - f.crop.minY) * k <= readingY {
+        if r.minY + (trig.y - f.crop.minY) * (r.width / f.crop.width) <= readingY {
           let t0 = triggers.times[key] ?? t
           triggers.times[key] = t0
           SceneOptions.since = t - t0
@@ -437,17 +431,43 @@ extension Explainer {
           triggers.times[key] = nil
         }
       }
-      s.translateBy(x: r.minX, y: r.minY)
-      s.scaleBy(x: k, y: k)
-      s.translateBy(x: -f.crop.minX, y: -f.crop.minY)
-      f.draw(s, p, t)
+      Explainer.drawFigure(g, f, in: r, p: p, t: t)
     }
+  }
+
+  /// A figure on the page, frameless: a faint teal ground fading into the
+  /// page, the scene with soft edges, at story position p.
+  static func drawFigure(_ g: GraphicsContext, _ f: FigureSpec, in r: CGRect, p: Double, t: Double) {
+    // a faint ground of the key visual's teal, fading into the page
+    var glow = g
+    glow.addFilter(.blur(radius: 60))
+    glow.fill(Path(ellipseIn: r.insetBy(dx: r.width * 0.08, dy: r.height * 0.12)), with: .color(TsugumiPalette.tealTop.opacity(0.45)))
+    var s = g
+    s.clip(to: Path(r))
+    // soft edges all round: no frame, the drawing fades into the page
+    s.clipToLayer { m in
+      m.fill(Path(r), with: .linearGradient(Gradient(stops: [.init(color: .clear, location: 0), .init(color: .white, location: 0.05),
+                                                            .init(color: .white, location: 0.95), .init(color: .clear, location: 1)]),
+                                            startPoint: pt(r.minX, r.midY), endPoint: pt(r.maxX, r.midY)))
+    }
+    s.clipToLayer { m in
+      m.fill(Path(r), with: .linearGradient(Gradient(stops: [.init(color: .clear, location: 0), .init(color: .white, location: 0.04),
+                                                            .init(color: .white, location: 0.9), .init(color: .clear, location: 1)]),
+                                            startPoint: pt(r.midX, r.minY), endPoint: pt(r.midX, r.maxY)))
+    }
+    let k = r.width / f.crop.width
+    s.translateBy(x: r.minX, y: r.minY)
+    s.scaleBy(x: k, y: k)
+    s.translateBy(x: -f.crop.minX, y: -f.crop.minY)
+    f.draw(s, p, t)
   }
 
   // MARK: - The list of documents
 
   struct DocSidebar: View {
     let selected: String
+    /// Read as a page, or a card at a time.
+    @Binding var cards: Bool
     var onPick: (String) -> Void = { _ in }
 
     var body: some View {
@@ -456,7 +476,14 @@ extension Explainer {
           Image(systemName: "book.closed").foregroundStyle(TsugumiPalette.rufous)
           Text("Tsugumi を知る").font(.system(size: 15, weight: .bold)).foregroundStyle(DocInk.heading)
         }
-        .padding(.horizontal, 14).padding(.top, 44).padding(.bottom, 16)
+        .padding(.horizontal, 14).padding(.top, 44).padding(.bottom, 12)
+        Picker("", selection: $cards) {
+          Text("読む").tag(false)
+          Text("カード").tag(true)
+        }
+        .pickerStyle(.segmented).labelsHidden()
+        .frame(width: 160)
+        .padding(.leading, 12).padding(.bottom, 14)
         ForEach(Docs.all) { d in
           let on = d.id == selected
           Button { onPick(d.id) } label: {
@@ -491,19 +518,24 @@ extension Explainer {
     @State private var selected = Docs.all[0].id
     @State private var offset: CGFloat = 0
     @State private var moments = TriggerClock()
+    @State private var cards = false
 
     var body: some View {
       HStack(spacing: 0) {
-        DocSidebar(selected: selected) { selected = $0; offset = 0 }
+        DocSidebar(selected: selected, cards: $cards) { selected = $0; offset = 0 }
         GeometryReader { geo in
-          ScrollView {
-            if let d = Docs.all.first(where: { $0.id == selected }) {
-              DocContent(doc: d, pageWidth: geo.size.width, scrollY: offset, viewport: geo.size.height)
+          if let d = Docs.all.first(where: { $0.id == selected }) {
+            if cards {
+              CardDeck(doc: d).id(selected)
+            } else {
+              ScrollView {
+                DocContent(doc: d, pageWidth: geo.size.width, scrollY: offset, viewport: geo.size.height)
+              }
+              .id(selected)  // a fresh page (scrolled to the top) per document
+              .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in offset = y }
+              .environment(\.explainerMoments, moments)
             }
           }
-          .id(selected)  // a fresh page (scrolled to the top) per document
-          .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in offset = y }
-          .environment(\.explainerMoments, moments)
         }
         .background(DocInk.page)
       }
@@ -521,6 +553,9 @@ extension EnvironmentValues {
 }
 
 private extension View {
-  func column() -> some View { fixedSize(horizontal: false, vertical: true).frame(width: Explainer.DocMetrics.column, alignment: .leading) }
+  @ViewBuilder func selectable(_ on: Bool) -> some View {
+    if on { textSelection(.enabled) } else { self }
+  }
+  func column(_ width: CGFloat) -> some View { fixedSize(horizontal: false, vertical: true).frame(width: width, alignment: .leading) }
   func anchored(_ i: Int) -> some View { transformAnchorPreference(key: Explainer.BlockFrames.self, value: .bounds) { $0[Explainer.BlockID(index: i)] = $1 } }
 }

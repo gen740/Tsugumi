@@ -82,7 +82,7 @@ cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsu
 # Help > Tsugumi を知る: the documents it reads as they are, its font (with
 # the OFL text) and the Cas A image (macOS/Resources/explainer/SOURCES.md).
 mkdir -p "$app/Contents/Resources/explainer"
-cp "$repo/README.md" "$repo/docs/Philosophy.md" "$repo/docs/Name.md" \
+cp "$repo/README.md" "$repo/docs/Author.md" "$repo/docs/Philosophy.md" "$repo/docs/Name.md" \
   "$repo/macOS/Resources/explainer/YuseiMagic-Regular.ttf" "$repo/macOS/Resources/explainer/YuseiMagic-OFL.txt" \
   "$repo/macOS/Resources/explainer/casa-rgb-25628.png" "$app/Contents/Resources/explainer/"
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.

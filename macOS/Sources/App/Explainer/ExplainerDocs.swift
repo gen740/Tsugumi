@@ -143,10 +143,34 @@ extension Explainer {
     /// A point of the scene (scene coordinates) whose crossing of the reading line starts a moment that plays in time.
     var trigger: CGPoint? = nil
 
+    /// In card mode (no reading line): the story position that starts the moment instead.
+    var triggerAt: Double? = nil
+
     func u(ofStory p: Double) -> Double { clamp01((p - from) / (to - from)) }
+
+    /// The route as a smooth line (scene coordinates), each point with the
+    /// share of the figure at which the thread gets there.
+    var path: (points: [CGPoint], times: [Double]) {
+      var pts: [CGPoint] = [], times: [Double] = []
+      for k in 0..<max(0, route.count - 1) {
+        let (a, ta) = route[k], (d, td) = route[k + 1]
+        let prev = k > 0 ? route[k - 1].0 : a, next = k + 2 < route.count ? route[k + 2].0 : d
+        let b = pt(a.x + (d.x - prev.x) / 6, a.y + (d.y - prev.y) / 6), c = pt(d.x - (next.x - a.x) / 6, d.y - (next.y - a.y) / 6)
+        for (j, q) in Polyline.curve(a, b, c, d, n: 16).enumerated() where k == 0 || j > 0 {
+          pts.append(q); times.append(ta + (td - ta) * Double(j) / 16)
+        }
+      }
+      return (pts, times)
+    }
+    /// Whether the thread does something here (not only passing down the edge).
+    var threadActs: Bool { route.count > 2 }
   }
 
   enum Figures {
+    static let author = FigureSpec(
+      draw: AuthorScene.draw, from: 0, to: 1, crop: CGRect(x: 0, y: 90, width: 1000, height: 620),
+      caption: "東京大学・安田講堂。星をつなぐように、AI で宇宙を読み解く研究をしています。",
+      route: [(pt(40, 90), 0), (pt(40, 710), 1)])
     static let wallCrop = CGRect(x: 0, y: 150, width: 1000, height: 610)
     static let wall = FigureSpec(
       draw: WallScene.draw, from: 0.15, to: 3.3, crop: wallCrop,
@@ -169,7 +193,7 @@ extension Explainer {
       draw: CasAScene.draw, from: 0.1, to: 2.5, crop: casaCrop,
       caption: "もし、書いた通りのものが、そのまま形になったら？　紙に描いた三つの箱が、そのまま Draft になる。",
       route: [(pt(10, 95), 0), (pt(10, 815), 1)],
-      trigger: pt(792, 224))
+      trigger: pt(792, 224), triggerAt: 0.6)
     static let run = FigureSpec(
       draw: CasAScene.draw, from: 2.6, to: 5.5, crop: casaCrop,
       caption: "Agent が Draft を実装し、実行すると、帯域ごとの光子数と RGB 画像がそのまま Canvas に並ぶ（同梱の Cas A · Chandra RGB デモ）。",
@@ -238,6 +262,8 @@ extension Explainer {
     }
 
     static let all: [Doc] = [
+      page(id: "author", title: "この道具を作った人", source: "docs/Author.md",
+           figures: [("AI for astrophysics", Figures.author)]),
       page(id: "problem", title: "Tsugumi が解決しようとしている課題", source: "README.md",
            sections: ["AI を研究に積極的に活用できていますか？",
                       "処理の流れそのものを、人と AI の共通言語にする",
