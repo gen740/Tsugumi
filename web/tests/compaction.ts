@@ -4,6 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { Agent, compactionBoundary } from '../server/agent'
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-compaction-'))
+const cases = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/agent-behavior.json'), 'utf8')).compaction
+for (const c of cases) {
+  const cut = compactionBoundary(c.messages)
+  assert.equal(cut, c.cut, c.name)
+  assert.deepEqual([...c.messages.slice(0, cut), ...c.messages.slice(cut)], c.messages, c.name)
+  if (cut < c.messages.length) assert.ok(!c.messages[cut].content.some((b: any) => b.type === 'tool_result'), c.name)
+}
 const originalFetch = globalThis.fetch
 try {
   let input = ''
@@ -14,11 +21,8 @@ try {
   const a = Object.create(Agent.prototype) as any
   a.storage = path.join(dir, 'chat.json')
   a.provider = { api: 'anthropicMessages', baseURL: 'http://fixture.invalid', auth: 'none', contextLimit: 10 }
-  a.conversation = { messages: [{ role: 'user', content: [{ type: 'text', text: 'task' }] }], archive: [], summary: 'EARLIER', usage: { inputTokens: 100 } }
-  for (let i = 1; i <= 3; i++) {
-    a.conversation.messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'run', input: '{}' }] })
-    a.conversation.messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: `RESULT_${i}`, is_error: false }] })
-  }
+  a.conversation = { messages: structuredClone(cases.find((c: any) => c.name === 'complete_pairs').messages),
+    archive: [], summary: 'EARLIER', usage: { inputTokens: 100 } }
   const original = structuredClone(a.conversation.messages)
   assert.equal(compactionBoundary(original), 3)
   await a.compactIfNeeded(() => {}, new AbortController().signal, true)

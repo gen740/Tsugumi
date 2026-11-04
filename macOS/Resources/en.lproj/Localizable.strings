@@ -41,6 +41,7 @@
 "%lld 時間前" = "%lld h ago";
 "%lld 枚が実行中" = "%lld running";
 "%lld 点 · ドラッグで回転" = "%lld points · drag to rotate";
+"%lld–%lld / %lld 行" = "%lld–%lld of %lld rows";
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
 "0 秒" = "0 s";
 "100% で表示" = "Actual Size";
@@ -427,6 +428,7 @@
 "プロジェクトを開くと実行環境が起動し、その記録がここに表示されます。" = "When a project opens, the environment starts and its log appears here.";
 "プロジェクトを開けません" = "Cannot open the project";
 "プロジェクト名" = "Project name";
+"ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
 "ホーム" = "Home";
 "ポート名は英字・数字・_ で、英字か _ で始めてください。" = "Port names use letters, digits and _, starting with a letter or _.";
@@ -540,6 +542,7 @@
 "入力値" = "Input value";
 "入力元" = "Input sources";
 "入力待ち" = "Waiting";
+"全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）" = "%lld rows · preview of the first %lld (expand to view all)";
 "全体" = "All";
 "全体 " = "Whole ";
 "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。" = "To run the whole Workflow, place a start Card (trigger) at its top level. A selected Card can also be run by itself.";
@@ -595,6 +598,7 @@
 "削除…" = "Delete…";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
+"前へ" = "Previous";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
 "動かす" = "Animate";
@@ -842,6 +846,7 @@
 "概要" = "Description";
 "構文エラーがあります（テキストは変更していません）" = "Syntax errors (the text was not changed)";
 "標準" = "Standard";
+"次へ" = "Next";
 "止めました" = "Stopped";
 "残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";

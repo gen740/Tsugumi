@@ -31,6 +31,11 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"%lld–%lld / %lld 行": "%lld–%lld of %lld rows",
+"全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）": "%lld rows · preview of the first %lld (expand to view all)",
+"ページ": "Page",
+"前へ": "Previous",
+"次へ": "Next",
 "クリックでスキップ": "Click to skip",
 "できました": "Done",
 "考えています": "Thinking",

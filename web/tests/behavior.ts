@@ -17,3 +17,5 @@ await import("./approval")
 await import("./compaction")
 
 await import("./storage")
+
+await import("./table")
