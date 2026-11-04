@@ -17,6 +17,7 @@
 
 #include "graph.hh"
 #include "history.hh"
+#include "nix_refs.hh"
 #include "scheduler.hh"
 #include "server.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -285,6 +286,40 @@ TEST(upstream_linear_chain) {
   CHECK_EQ(guaranteed(*r, "c"), (std::set<std::string>{"a", "b"}));
   CHECK_EQ(nix_refs(*r, "c"), (std::set<std::string>{"a", "b"}));
   CHECK(codes(*r, "c").empty());
+}
+
+// The written references: not in comments, not in the text of strings (an
+// interpolation is code again), not an attribute of something else.
+TEST(nix_references_are_read_from_code_only) {
+  using Refs = std::vector<std::pair<bool, std::string>>;
+  CHECK(nix_references(R"NIX({ pkgs, inputs, params }: {
+    # upstream.ghost in a comment
+    /* local.ghost in a block comment */
+    run = ''
+      cp local.conf "$out"            # a shell script's text
+      echo ${inputs.upstream."a/b".run} ${inputs.local.c.exports.x}
+      echo ''${upstream.escaped} '''
+    '';
+    note = "upstream.d \" ${inputs.upstream.e} \${upstream.notInterpolated}";
+    other = pkgs.upstream.f;
+    plain = with inputs; upstream.g;
+    spaced = inputs . upstream . "h";
+    dynamic = inputs.upstream."${"i"}";
+  })NIX") == (Refs{{false, "a/b"}, {true, "c"}, {false, "e"}, {false, "g"}, {false, "h"}}));
+}
+
+// `local` names a Card of the same level only (entry.nix offers no other).
+TEST(nix_local_names_a_card_of_this_level) {
+  Project p;
+  p.code("a", {});
+  p.code("b", {"x"}, "{ run = \"${inputs.local.a.run} ${inputs.local.\"a/deeper\".run}\"; }");
+  p.code("c", {"x"}, "{ run = ''\n  cp local.conf $out # upstream.ghost\n''; }");
+  auto r = p.resolve(c("a", "a") + "," + c("b", "b") + "," + c("c", "c"), e("a", "out", "b", "x") + "," + e("a", "out", "c", "x"));
+  bool deeper = false;
+  for (const auto& d : r->nodes[r->index.at("b")].diags)
+    deeper |= d.code == "nix_reference_unknown" && d.message.find("local.a/deeper") != std::string::npos;
+  CHECK(deeper);
+  CHECK(!codes(*r, "c").count("nix_reference_unknown"));
 }
 
 TEST(upstream_branch_sides_do_not_survive_any_merge) {
