@@ -956,12 +956,12 @@ extension ProjectSession {
     }
   }
 
-  func clearBuildCache() async throws -> Tsugumi_RPC_CacheClearResultT {
+  func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.clearCache(opId: UUID())
   }
 
-  func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_HistoryDeleteResultT {
+  func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.deleteHistory(opId: UUID(), endedBefore: endedBefore)
   }

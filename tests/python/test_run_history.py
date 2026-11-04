@@ -13,6 +13,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
+
 from conftest import Daemon
 from test_history import BIG, project, read_all
 from projects import run_and_wait
@@ -162,23 +164,46 @@ def test_delete_runs_here_in_the_copy_and_their_files(tmp_path):
         d.cleanup()
 
 
-def test_a_history_of_another_layout_is_started_over(tmp_path):
+def test_an_older_history_is_migrated_and_a_newer_one_kept(tmp_path):
+    """A history of an earlier version is brought up to date with its runs
+    (a copy of it kept beside it); one of a later version is refused and left
+    as it is."""
     root = tmp_path / "p"
     project(root, True, True)
     hist = tmp_path / "h"
-    hist.mkdir()
-    # An earlier layout (no version, an older ivalues without hash).
-    with sqlite3.connect(hist / "history.sqlite") as db:
-        db.execute("CREATE TABLE ivalues(run_id TEXT, bytes BLOB)")
-        db.execute("INSERT INTO ivalues VALUES('old', x'00')")
     d = start(root, hist)
     try:
         c = d.client()
         c.hello()
         rid, _ = run_and_wait(c, "src")
+    finally:
+        d.cleanup()
+    # The same runs in the version 1 layout: no value hashes, no build flag or detail.
+    with sqlite3.connect(hist / "history.sqlite") as db:
+        for table, column in (("ivalues", "hash"), ("invocations", "build_cached"), ("invocations", "detail")):
+            db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        db.execute("PRAGMA user_version=1")
+    d = start(root, hist)
+    try:
+        c = d.client()
+        c.hello()
         assert listed(c) == [rid]
+        record = c.call("RunRecordRequest", runId=rid, card=path("src")).record
+        assert record is not None
     finally:
         d.cleanup()
     with sqlite3.connect(hist / "history.sqlite") as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert "hash" in [r[1] for r in db.execute("PRAGMA table_info(ivalues)")]
+        hashes = [h for (h,) in db.execute("SELECT hash FROM ivalues")]
+        assert hashes and all(len(h) == 64 for h in hashes)
+    assert (hist / "history.sqlite.v1").exists()
+    # A later Tsugumi's history: refused, never deleted.
+    with sqlite3.connect(hist / "history.sqlite") as db:
+        db.execute("PRAGMA user_version=99")
+    d = Daemon(root, args=["--history-dir", str(hist)])
+    with pytest.raises(Exception):
+        d.start()
+    d.cleanup()
+    with sqlite3.connect(hist / "history.sqlite") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 99
+        assert db.execute("SELECT count(*) FROM runs").fetchone()[0] == 1

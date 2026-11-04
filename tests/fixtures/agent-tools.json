@@ -13,7 +13,7 @@
  {
   "name": "project_validate",
   "payloadType": 7,
-  "description": "ProjectValidate: -> ValidationResult. targets = [] means everything; mode = executable.  With `changes` (the same as project_save's), the document as it would be  after them is checked and nothing is saved: try definitions, _outputs.fbs  and default.nix text here instead of saving trial versions.",
+  "description": "ProjectValidate: -> ProjectValidateResult. targets = [] means everything; mode = executable.  With `changes` (the same as project_save's), the document as it would be  after them is checked and nothing is saved: try definitions, _outputs.fbs  and default.nix text here instead of saving trial versions.",
   "inputSchema": {
    "type": "object",
    "properties": {

@@ -20,6 +20,10 @@ namespace stdfs = std::filesystem;
 namespace {
 
 constexpr char kMagic[4] = {'T', 'S', 'J', '1'};
+// The journal is compacted past this size, keeping this many receipts (a
+// client retrying an operation within them gets its answer again).
+constexpr uintmax_t kCompactBytes = 8u << 20;
+constexpr size_t kKeepReceipts = 2000;
 
 bool utf8_boundary(const std::string& s, uint64_t off) {
   if (off == 0 || off == s.size()) return true;
@@ -161,6 +165,7 @@ void Store::recover_journal() {
   };
   std::vector<Txn> txns;
   std::map<std::string, Receipt> receipts;
+  std::deque<std::string> order;
   uint64_t rev = 0, exec_rev = 0;
   auto to_receipt = [](const schema::JournalRecord& r) {
     Receipt rc;
@@ -182,12 +187,17 @@ void Store::recover_journal() {
     if (schema::decode(payload, rec)) break;
     pos += 12 + len;
     good = pos;
-    if (*rec.type == "txn") {
+    if (*rec.type == "base") {
+      // A compacted journal starts from these revisions.
+      rev = *rec.rev;
+      exec_rev = *rec.execution_rev;
+    } else if (*rec.type == "txn") {
       txns.push_back({rec, false});
     } else if (*rec.type == "commit") {
       for (auto& tx : txns)
         if (*tx.rec.rev == *rec.rev) tx.committed = true;
     } else if (*rec.type == "receipt") {
+      if (!receipts.count(*rec.op)) order.push_back(*rec.op);
       receipts[*rec.op] = to_receipt(rec);
     }
   }
@@ -226,6 +236,7 @@ void Store::recover_journal() {
     }
     rev = *rec.rev;
     exec_rev = *rec.execution_rev;
+    if (!receipts.count(*rec.op)) order.push_back(*rec.op);
     receipts[*rec.op] = to_receipt(rec);
   }
   auto doc = std::make_shared<Document>();
@@ -234,6 +245,51 @@ void Store::recover_journal() {
   std::lock_guard<std::mutex> l(mu_);
   doc_ = doc;  // placeholder carrying only the revision numbers
   receipts_ = std::move(receipts);
+  receipt_order_ = std::move(order);
+}
+
+void Store::remember_receipt(Receipt r) {
+  if (!receipts_.count(r.op_id)) receipt_order_.push_back(r.op_id);
+  receipts_[r.op_id] = std::move(r);
+}
+
+void Store::compact_journal() {
+  std::error_code ec;
+  auto path = state_dir() / "document.journal";
+  if (stdfs::file_size(path, ec) < kCompactBytes || ec) return;
+  std::vector<Receipt> keep;
+  uint64_t rev = 0, exec_rev = 0;
+  {
+    std::lock_guard<std::mutex> l(mu_);
+    while (receipt_order_.size() > kKeepReceipts) {
+      receipts_.erase(receipt_order_.front());
+      receipt_order_.pop_front();
+    }
+    for (const auto& id : receipt_order_) keep.push_back(receipts_.at(id));
+    if (doc_) {
+      rev = doc_->rev;
+      exec_rev = doc_->execution_rev;
+    }
+  }
+  auto record = [](const std::string& payload) {
+    std::string r(kMagic, 4);
+    uint32_t len = static_cast<uint32_t>(payload.size()), crc = crypto::crc32(payload.data(), payload.size());
+    r.append(reinterpret_cast<const char*>(&len), 4);
+    r.append(reinterpret_cast<const char*>(&crc), 4);
+    return r + payload;
+  };
+  std::string data = record(journal_payload("base", rev, exec_rev, "", "", "", "", {}));
+  for (const auto& r : keep) data += record(journal_payload("receipt", rev, exec_rev, r.op_id, r.kind, r.digest, r.bytes, {}));
+  // One rename: a crash leaves the old journal or the new one, both complete.
+  fs::write_atomic(path, data, 0600);
+  int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_APPEND);
+  if (fd < 0) {
+    halted_ = true;
+    throw Failed(FailureKind::persistence_failed, "reopening the compacted journal failed");
+  }
+  ::close(journal_fd_);
+  journal_fd_ = fd;
+  log::info("journal: compacted to " + std::to_string(data.size()) + " bytes (" + std::to_string(keep.size()) + " receipts)");
 }
 
 void Store::append_record(const std::string& payload) {
@@ -699,17 +755,23 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
     halted_ = true;
     throw Failed(FailureKind::persistence_failed, std::string("applying the transaction failed: ") + e.what());
   }
-  std::lock_guard<std::mutex> l(mu_);
-  doc_ = doc;
-  receipts_[st.delta.op_id] = Receipt{st.delta.op_id, kind, digest, receipt};
+  {
+    std::lock_guard<std::mutex> l(mu_);
+    doc_ = doc;
+    remember_receipt(Receipt{st.delta.op_id, kind, digest, receipt});
+  }
+  compact_journal();
 }
 
 void Store::record_receipt(const Receipt& r) {
   auto base = current();
   append_record(journal_payload("receipt", base ? base->rev : 0, base ? base->execution_rev : 0, r.op_id, r.kind,
                                 r.digest, r.bytes, {}));
-  std::lock_guard<std::mutex> l(mu_);
-  receipts_[r.op_id] = r;
+  {
+    std::lock_guard<std::mutex> l(mu_);
+    remember_receipt(r);
+  }
+  compact_journal();
 }
 
 }  // namespace tsugumi

@@ -551,7 +551,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
 }
 
 function CacheSettings({ session }: { session: ProjectSession }) {
-  const [result, setResult] = useState<R.CacheClearResultT>()
+  const [result, setResult] = useState<R.ProjectCacheClearResultT>()
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
   const [confirm, setConfirm] = useState(false)

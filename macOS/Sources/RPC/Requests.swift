@@ -44,7 +44,7 @@ public extension RPCClient {
     return try await call(.projectreloadrequest, r)
   }
 
-  func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ValidationResultT {
+  func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ProjectValidateResultT {
     let r = Tsugumi_RPC_ProjectValidateRequestT()
     r.atRev = atRev
     r.targets = targets.map { cardPath($0) }
@@ -205,7 +205,7 @@ public extension RPCClient {
   }
 
   /// Copies definitions (and their sources) from a granted project snapshot.
-  func importDefinitions(baseRev: UInt64, opId: UUID, origin: String, grant: String, definitions: [String]) async throws -> Tsugumi_RPC_ImportResultT {
+  func importDefinitions(baseRev: UInt64, opId: UUID, origin: String, grant: String, definitions: [String]) async throws -> Tsugumi_RPC_ProjectImportResultT {
     let r = Tsugumi_RPC_ProjectImportRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
@@ -222,7 +222,7 @@ public extension RPCClient {
     r.card = cardPath(card)
     r.atRev = atRev
     r.opId = UUID().uuidString.lowercased()
-    var res: Tsugumi_RPC_SDKPrepareResultT = try await call(.cardsdkpreparerequest, r)
+    var res: Tsugumi_RPC_CardSDKPrepareResultT = try await call(.cardsdkpreparerequest, r)
     for _ in 0..<100 where res.state == .pending {
       try await Task.sleep(for: .milliseconds(100))
       let s = Tsugumi_RPC_CardSDKStatusRequestT()
@@ -233,7 +233,7 @@ public extension RPCClient {
   }
 
   /// Deletes the project's build caches; documents and history are kept.
-  func clearCache(opId: UUID) async throws -> Tsugumi_RPC_CacheClearResultT {
+  func clearCache(opId: UUID) async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()
     r.opId = opId.uuidString.lowercased()
     return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
@@ -241,7 +241,7 @@ public extension RPCClient {
 
   /// Deletes finished runs (all, or those that ended before the date) with
   /// their files, in the VM and in the project's copy.
-  func deleteHistory(opId: UUID, endedBefore: Date?) async throws -> Tsugumi_RPC_HistoryDeleteResultT {
+  func deleteHistory(opId: UUID, endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {
     let r = Tsugumi_RPC_RunHistoryDeleteRequestT()
     r.opId = opId.uuidString.lowercased()
     r.endedBefore = endedBefore.map { Int64($0.timeIntervalSince1970 * 1000) }
@@ -260,7 +260,7 @@ public extension RPCClient {
     return try await call(.outputtypesrequest, r)
   }
 
-  func format(path: String, text: String) async throws -> Tsugumi_RPC_FormatResultT {
+  func format(path: String, text: String) async throws -> Tsugumi_RPC_ProjectFileFormatResultT {
     let r = Tsugumi_RPC_ProjectFileFormatRequestT()
     r.path = path
     r.text = text

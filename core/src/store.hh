@@ -3,6 +3,7 @@
 #pragma once
 
 #include <filesystem>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -114,6 +115,10 @@ class Store {
  private:
   void recover_journal();
   void append_record(const std::string& payload);
+  void remember_receipt(Receipt r);  // under mu_
+  // Rewrites the journal as the revisions and the newest receipts once it is
+  // large (committed transactions are in the files already).
+  void compact_journal();
   void apply_ops(const std::vector<FileOp>& ops, bool inject);
   // Resolves the document. `pending` holds the transaction's file writes,
   // which are read instead of the disk (they are applied after resolution).
@@ -129,6 +134,7 @@ class Store {
   mutable std::mutex mu_;
   DocumentPtr doc_;
   std::map<std::string, Receipt> receipts_;
+  std::deque<std::string> receipt_order_;  // op ids, oldest first (the compaction keeps the newest)
   int journal_fd_ = -1;
   bool halted_ = false;
 };

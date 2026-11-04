@@ -560,7 +560,7 @@ private struct RunHistorySettings: View {
 
 private struct CacheSettings: View {
   let session: ProjectSession
-  @State private var result: Tsugumi_RPC_CacheClearResultT?
+  @State private var result: Tsugumi_RPC_ProjectCacheClearResultT?
   @State private var working = false
   @State private var message: String?
   @State private var confirm = false

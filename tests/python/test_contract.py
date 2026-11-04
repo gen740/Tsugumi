@@ -269,6 +269,15 @@ def test_hello_rules(daemon):
     with pytest.raises(RpcFailure) as e:
         c2.call("SessionHelloRequest", protocol=2, clientId=new_id())
     assert e.value.kind == "protocol_mismatch"
+    # A client speaking a range gets the newest version both speak.
+    r = Client(unix=daemon.unix).call("SessionHelloRequest", protocol=3, minProtocol=1, clientId=new_id())
+    assert r.protocol == 1
+    caps = {c.decode() if isinstance(c, bytes) else c for c in r.capabilities}
+    assert {f"display:Display{k}" for k in ("Text", "Scalar", "LineChart", "Table", "Image", "PointCloud", "Module")} <= caps
+    assert {f"format:{k}" for k in ("json", "cpp", "python", "nix", "bash")} <= caps
+    with pytest.raises(RpcFailure) as e:
+        Client(unix=daemon.unix).call("SessionHelloRequest", protocol=3, minProtocol=2, clientId=new_id())
+    assert e.value.kind == "protocol_mismatch"
     c3 = Client(unix=daemon.unix)
     with pytest.raises(RpcFailure) as e:
         c3.hello(project=new_id())
@@ -711,5 +720,37 @@ def test_an_unexpected_error_still_ends_the_operation(project):
                 c.call("ProjectSaveRequest", baseRev=0, opId=op, origin="t", changes=[change("SetProject", json=json.dumps(doc))],
                        timeout=10)
             assert err.value.kind == "internal_error"
+    finally:
+        d.cleanup()
+
+
+def test_the_journal_is_compacted_and_keeps_answers(project):
+    """Past 8 MiB the save journal is rewritten as the revisions and the
+    latest receipts: smaller, the same revision after a restart, and a
+    retried save still answered from its receipt."""
+    d = Daemon(project).start()
+    journal = project / ".tsugumi" / "document.journal"
+    body = bytes(range(256)) * 4096  # 1 MiB, base64 in the journal
+    try:
+        c = d.client()
+        c.hello()
+        rel, h, last = "skills/big.bin", None, None
+        for i in range(12):
+            rev = c.call("ProjectInspectRequest").rev
+            last = {"baseRev": rev, "opId": new_id(), "origin": "t", "changes": [
+                change("PutSource", path=rel, bytes=list(body[i:] + body[:i]), **({"baseHash": h} if h else {}))]}
+            c.call("ProjectSaveRequest", **last)
+            h = hashlib.sha256(body[i:] + body[:i]).hexdigest()
+        last_rev = c.call("ProjectInspectRequest").rev
+        assert journal.stat().st_size < 8 << 20
+    finally:
+        d.cleanup()
+    d = Daemon(project).start()
+    try:
+        c = d.client()
+        c.hello()
+        assert c.call("ProjectInspectRequest").rev == last_rev
+        again = c.call("ProjectSaveRequest", **last)
+        assert again.replayed is True and again.rev == last_rev
     finally:
         d.cleanup()

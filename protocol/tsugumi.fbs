@@ -180,18 +180,18 @@ table IdMapping {
   to:string (id: 1, required);
 }
 
-table ImportResult {
+table ProjectImportResult {
   save:SaveResult (id: 0, required);
   id_map:[IdMapping] (id: 1, required);
 }
 
-table CacheClearResult {
+table ProjectCacheClearResult {
   deleted:[string] (id: 0, required);
   retained:[string] (id: 1, required);
   freed_bytes:uint64 = null (id: 2);
 }
 
-table HistoryDeleteResult {
+table RunHistoryDeleteResult {
   deleted_runs:uint64 = null (id: 0);
   freed_bytes:uint64 = null (id: 1);
 }
@@ -202,7 +202,7 @@ table SDKFile {
   size_bytes:uint64 = null (id: 2);
 }
 
-table SDKPrepareResult {
+table CardSDKPrepareResult {
   op_id:string (id: 0, required);
   rev:uint64 = null (id: 1);
   state:Tsugumi.Data.SDKState (id: 2);
@@ -217,12 +217,12 @@ table RunAccepted {
 
 union ReceiptValue {
   SaveResult = 1,
-  ImportResult = 2,
+  ProjectImportResult = 2,
   RunAccepted = 3,
-  CacheClearResult = 4,
-  SDKPrepareResult = 5,
+  ProjectCacheClearResult = 4,
+  CardSDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
-  HistoryDeleteResult = 7,
+  RunHistoryDeleteResult = 7,
 }
 
 table OperationReceipt {
@@ -234,11 +234,15 @@ table OperationReceipt {
 
 /// -> HelloResult. token is required on WebSocket. Project mismatch is
 /// permission_denied. Must be the first request, within 5 s of connecting.
+/// `protocol` is the newest version the client speaks and `min_protocol`
+/// the oldest (default: protocol); the server answers with the newest
+/// version both speak (HelloResult.protocol), or protocol_mismatch.
 table SessionHelloRequest {
   protocol:uint32 = null (id: 0);
   client_id:string (id: 1, required);
   expected_project_id:string (id: 2);
   token:string (id: 3);
+  min_protocol:uint32 = null (id: 4);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
@@ -278,7 +282,7 @@ table ProjectReloadRequest {
   origin:string (id: 2, required);
 }
 
-/// -> ValidationResult. targets = [] means everything; mode = executable.
+/// -> ProjectValidateResult. targets = [] means everything; mode = executable.
 /// With `changes` (the same as project_save's), the document as it would be
 /// after them is checked and nothing is saved: try definitions, _outputs.fbs
 /// and default.nix text here instead of saving trial versions.
@@ -291,7 +295,7 @@ table ProjectValidateRequest {
   changes:[DocumentChange] (id: 3);
 }
 
-/// -> ImportResult. definitions = [] imports every definition of the grant.
+/// -> ProjectImportResult. definitions = [] imports every definition of the grant.
 table ProjectImportRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -300,10 +304,10 @@ table ProjectImportRequest {
   definitions:[string] (id: 4);
 }
 
-/// -> CacheClearResult. Only while no run or SDK job is active.
+/// -> ProjectCacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
-/// -> HistoryDeleteResult. Deletes finished runs (all, or those that ended
+/// -> RunHistoryDeleteResult. Deletes finished runs (all, or those that ended
 /// before ended_before, Unix ms) with their records, values, logs and files,
 /// here and in the project's copy. Only while no run is active.
 table RunHistoryDeleteRequest {
@@ -342,7 +346,7 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-/// -> FormatResult. Never changes the document.
+/// -> ProjectFileFormatResult. Never changes the document.
 table ProjectFileFormatRequest {
   path:string (id: 0, required);
   text:string (id: 1, required);
@@ -371,14 +375,14 @@ table OutputTypesRequest {
   kind:Tsugumi.Data.PortKind (id: 3);
 }
 
-/// -> SDKPrepareResult. Accepted asynchronously.
+/// -> CardSDKPrepareResult. Accepted asynchronously.
 table CardSDKPrepareRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   at_rev:uint64 = null (id: 1);
   op_id:string (id: 2, required);
 }
 
-/// -> SDKPrepareResult or Failure.
+/// -> CardSDKPrepareResult or Failure.
 table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
 /// -> RunPlanResult. propagate = true.
@@ -536,7 +540,7 @@ table OpenResult {
   seq:uint64 = null (id: 2);
 }
 
-table ValidationResult {
+table ProjectValidateResult {
   rev:uint64 = null (id: 0);
   valid:bool = null (id: 1);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 2, required);
@@ -563,7 +567,7 @@ table FileContent {
   eof:bool = null (id: 6);
 }
 
-table FormatResult {
+table ProjectFileFormatResult {
   text:string (id: 0, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 1, required);
 }
@@ -725,15 +729,15 @@ union ReplyPayload {
   Ack = 3,
   ProjectSnapshot = 4,
   SaveResult = 5,
-  ValidationResult = 6,
-  ImportResult = 7,
-  CacheClearResult = 8,
+  ProjectValidateResult = 6,
+  ProjectImportResult = 7,
+  ProjectCacheClearResult = 8,
   OperationResult = 9,
   SourcePage = 10,
   SourceInfo = 11,
   FileContent = 12,
-  FormatResult = 13,
-  SDKPrepareResult = 14,
+  ProjectFileFormatResult = 13,
+  CardSDKPrepareResult = 14,
   RunPlanResult = 15,
   RunAccepted = 16,
   RunStatus = 17,
@@ -744,7 +748,7 @@ union ReplyPayload {
   LogSlice = 22,
   ViewSaveResult = 23,
   Failure: Tsugumi.Data.Failure = 24,
-  HistoryDeleteResult = 25,
+  RunHistoryDeleteResult = 25,
   OutputTypesResult = 26,
 }
 

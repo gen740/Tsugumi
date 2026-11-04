@@ -34,12 +34,12 @@ uint64_t content_limit(std::optional<uint32_t> limit_arg) {
   return limit;
 }
 
-std::string sdk_result(FBB& b, const SDKJob& job, flatbuffers::Offset<R::SDKPrepareResult>* out) {
+std::string sdk_result(FBB& b, const SDKJob& job, flatbuffers::Offset<R::CardSDKPrepareResult>* out) {
   std::vector<flatbuffers::Offset<R::SDKFile>> files;
   if (job.state == SDKJob::State::Ready)
     for (const auto& [p, h, s] : job.files)
       files.push_back(R::CreateSDKFile(b, b.CreateString(p), b.CreateString(h), s));
-  *out = R::CreateSDKPrepareResult(b, b.CreateString(job.op_id), job.rev,
+  *out = R::CreateCardSDKPrepareResult(b, b.CreateString(job.op_id), job.rev,
                                    job.state == SDKJob::State::Ready ? D::SDKState::ready : D::SDKState::pending,
                                    b.CreateVector(files));
   return {};
@@ -111,9 +111,9 @@ void Service::sdk_prepare(RequestIn& req) {
       throw Failed(FailureKind::invalid_request, "SDKs are generated for code and input Cards only");
     auto job = nix_->prepare_sdk(op_id, *node, doc->rev);
     FBB b;
-    flatbuffers::Offset<R::SDKPrepareResult> res;
+    flatbuffers::Offset<R::CardSDKPrepareResult> res;
     sdk_result(b, job, &res);
-    auto rc = R::CreateOperationReceipt(b, b.CreateString(op_id), R::ReceiptValue::SDKPrepareResult, res.Union());
+    auto rc = R::CreateOperationReceipt(b, b.CreateString(op_id), R::ReceiptValue::CardSDKPrepareResult, res.Union());
     b.Finish(rc);
     std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "sdk", digest, receipt); });
@@ -140,9 +140,9 @@ void Service::sdk_status(RequestIn& req) {
   if (!job) throw Failed(FailureKind::not_found, "unknown SDK job");
   if (job->state == SDKJob::State::Failed) throw Failed(*job->failure);
   FBB b;
-  flatbuffers::Offset<R::SDKPrepareResult> res;
+  flatbuffers::Offset<R::CardSDKPrepareResult> res;
   sdk_result(b, *job, &res);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::SDKPrepareResult, res.Union()));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardSDKPrepareResult, res.Union()));
 }
 
 void Service::run_plan(RequestIn& req) {

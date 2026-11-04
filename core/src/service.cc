@@ -26,6 +26,8 @@ namespace D = Tsugumi::Data;
 using FBB = flatbuffers::FlatBufferBuilder;
 namespace stdfs = std::filesystem;
 
+// The protocol versions this server speaks (SessionHello negotiates).
+constexpr uint32_t kMinProtocol = 1;
 constexpr uint32_t kProtocol = 1;
 
 // ---------------------------------------------------------------------------
@@ -253,13 +255,18 @@ void Service::export_now() {
 }
 
 std::vector<std::string> Service::capabilities() {
-  return {"SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
-          "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
-          "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
-          "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
-          "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
-          "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
-          "display:Text", "display:Scalar", "display:LineChart", "format:json"};
+  std::vector<std::string> caps = {
+      "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
+      "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
+      "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
+      "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave"};
+  // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
+  for (auto v : D::EnumValuesDisplayValue())
+    if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
+  for (const char* f : {"json", "cpp", "python", "nix", "bash"}) caps.push_back(std::string("format:") + f);
+  return caps;
 }
 
 void Service::reply(const RequestIn& req, std::string bytes) { server_->reply(req.conn, std::move(bytes)); }
@@ -274,8 +281,12 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
     return std::make_pair(wire::failure_reply(in.request_id, FailureData::make(k, std::move(msg))), false);
   };
   if (!h->protocol()) return failure(FailureKind::invalid_request, "protocol is required");
-  if (*h->protocol() != kProtocol)
-    return failure(FailureKind::protocol_mismatch, "server speaks protocol 1 only");
+  // The newest version both speak.
+  uint32_t client_max = *h->protocol(), client_min = h->min_protocol().value_or(client_max);
+  uint32_t chosen = std::min(client_max, kProtocol);
+  if (client_min > client_max || chosen < std::max(client_min, kMinProtocol))
+    return failure(FailureKind::protocol_mismatch, "server speaks protocol " + std::to_string(kMinProtocol) + " to " +
+                                                       std::to_string(kProtocol));
   if (!crypto::is_uuid(h->client_id()->str())) return failure(FailureKind::invalid_request, "client_id must be a UUID");
   if (in.websocket) {
     if (!h->token() || !crypto::equal_secret(h->token()->str(), opts_.token))
@@ -293,7 +304,7 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   auto limits = R::CreateLimits(b, l.max_frame_bytes, l.max_connections, l.max_inflight,
                                 l.mutation_queue_limit, l.queue_wait_ms, l.outbox_messages,
                                 l.outbox_bytes, l.page_limit, l.file_chunk_bytes, l.log_chunk_bytes);
-  auto r = R::CreateHelloResult(b, kProtocol, b.CreateString(store_->project_id()),
+  auto r = R::CreateHelloResult(b, chosen, b.CreateString(store_->project_id()),
                                 b.CreateString(opts_.server_instance_id), limits, b.CreateVector(cv));
   return {wire::reply(b, in.request_id, R::ReplyPayload::HelloResult, r.Union()), true};
 }
@@ -370,11 +381,11 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
   const char* tname = nullptr;
   switch (rc->result_type()) {
     case R::ReceiptValue::SaveResult: type = R::ReplyPayload::SaveResult; tname = "Tsugumi.RPC.SaveResult"; break;
-    case R::ReceiptValue::ImportResult: type = R::ReplyPayload::ImportResult; tname = "Tsugumi.RPC.ImportResult"; break;
+    case R::ReceiptValue::ProjectImportResult: type = R::ReplyPayload::ProjectImportResult; tname = "Tsugumi.RPC.ProjectImportResult"; break;
     case R::ReceiptValue::RunAccepted: type = R::ReplyPayload::RunAccepted; tname = "Tsugumi.RPC.RunAccepted"; break;
-    case R::ReceiptValue::CacheClearResult: type = R::ReplyPayload::CacheClearResult; tname = "Tsugumi.RPC.CacheClearResult"; break;
-    case R::ReceiptValue::SDKPrepareResult: type = R::ReplyPayload::SDKPrepareResult; tname = "Tsugumi.RPC.SDKPrepareResult"; break;
-    case R::ReceiptValue::HistoryDeleteResult: type = R::ReplyPayload::HistoryDeleteResult; tname = "Tsugumi.RPC.HistoryDeleteResult"; break;
+    case R::ReceiptValue::ProjectCacheClearResult: type = R::ReplyPayload::ProjectCacheClearResult; tname = "Tsugumi.RPC.ProjectCacheClearResult"; break;
+    case R::ReceiptValue::CardSDKPrepareResult: type = R::ReplyPayload::CardSDKPrepareResult; tname = "Tsugumi.RPC.CardSDKPrepareResult"; break;
+    case R::ReceiptValue::RunHistoryDeleteResult: type = R::ReplyPayload::RunHistoryDeleteResult; tname = "Tsugumi.RPC.RunHistoryDeleteResult"; break;
     default: type = R::ReplyPayload::Failure; tname = "Tsugumi.Data.Failure"; break;
   }
   value = wire::copy_table(b, tname, reinterpret_cast<const flatbuffers::Table*>(rc->result()));
@@ -386,8 +397,8 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
       case R::ReplyPayload::SaveResult:
         static_cast<R::SaveResult*>(rep->mutable_value())->mutate_replayed(true);
         break;
-      case R::ReplyPayload::ImportResult:
-        static_cast<R::ImportResult*>(rep->mutable_value())->mutable_save()->mutate_replayed(true);
+      case R::ReplyPayload::ProjectImportResult:
+        static_cast<R::ProjectImportResult*>(rep->mutable_value())->mutable_save()->mutate_replayed(true);
         break;
       case R::ReplyPayload::RunAccepted:
         static_cast<R::RunAccepted*>(rep->mutable_value())->mutate_replayed(true);
@@ -977,8 +988,8 @@ void Service::import_definitions(RequestIn& req) {
       std::vector<flatbuffers::Offset<R::IdMapping>> maps;
       for (const auto& [from, to] : id_map)
         maps.push_back(R::CreateIdMapping(b, b.CreateString(from), b.CreateString(to)));
-      auto ir = R::CreateImportResult(b, sr, b.CreateVector(maps));
-      receipt = finish_receipt(b, op_id, R::ReceiptValue::ImportResult, ir.Union());
+      auto ir = R::CreateProjectImportResult(b, sr, b.CreateVector(maps));
+      receipt = finish_receipt(b, op_id, R::ReceiptValue::ProjectImportResult, ir.Union());
       return receipt;
     });
     reply(req, receipt_reply(req.request_id, receipt, false));
@@ -1009,8 +1020,8 @@ void Service::cache_clear(RequestIn& req) {
     std::vector<flatbuffers::Offset<flatbuffers::String>> del, ret;
     for (const auto& d : result.deleted) del.push_back(b.CreateString(d));
     for (const auto& d : result.retained) ret.push_back(b.CreateString(d));
-    auto cr = R::CreateCacheClearResult(b, b.CreateVector(del), b.CreateVector(ret), result.freed_bytes);
-    std::string receipt = finish_receipt(b, op_id, R::ReceiptValue::CacheClearResult, cr.Union());
+    auto cr = R::CreateProjectCacheClearResult(b, b.CreateVector(del), b.CreateVector(ret), result.freed_bytes);
+    std::string receipt = finish_receipt(b, op_id, R::ReceiptValue::ProjectCacheClearResult, cr.Union());
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "cache_clear", digest, receipt); });
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
@@ -1056,8 +1067,8 @@ void Service::history_delete(RequestIn& req) {
     }
     uint64_t after = sizes();
     FBB b;
-    auto dr = R::CreateHistoryDeleteResult(b, ids.size(), (before > after ? before - after : 0) + files);
-    std::string receipt = finish_receipt(b, op_id, R::ReceiptValue::HistoryDeleteResult, dr.Union());
+    auto dr = R::CreateRunHistoryDeleteResult(b, ids.size(), (before > after ? before - after : 0) + files);
+    std::string receipt = finish_receipt(b, op_id, R::ReceiptValue::RunHistoryDeleteResult, dr.Union());
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "history_delete", digest, receipt); });
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
@@ -1122,12 +1133,12 @@ void Service::validate(RequestIn& req) {
   bool valid = std::none_of(diags.begin(), diags.end(), [](const Diag& d) { return d.error; });
   FBB b;
   auto dv = wire::diagnostics(b, diags);
-  R::ValidationResultBuilder vb(b);
+  R::ProjectValidateResultBuilder vb(b);
   vb.add_rev(doc->rev);
   vb.add_valid(valid);
   vb.add_diagnostics(dv);
   auto off = vb.Finish();
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ValidationResult, off.Union()));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectValidateResult, off.Union()));
 }
 
 void Service::operation_get(RequestIn& req) {
@@ -1551,8 +1562,8 @@ void Service::file_format(RequestIn& req) {
   }
   auto t = b.CreateString(text);
   auto dv = wire::diagnostics(b, diags);
-  auto off = R::CreateFormatResult(b, t, dv);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::FormatResult, off.Union()));
+  auto off = R::CreateProjectFileFormatResult(b, t, dv);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectFileFormatResult, off.Union()));
 }
 
 void Service::view_save(RequestIn& req) {

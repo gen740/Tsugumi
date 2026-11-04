@@ -179,6 +179,7 @@ class History {
  private:
   void writer_loop();
   void init_schema(sql::Db& db);
+  void migrate();
   sql::Db& reader();
 
   std::filesystem::path path_;

@@ -1,6 +1,7 @@
 #include "history.hh"
 
 #include <cstdio>
+#include <functional>
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -197,25 +198,42 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 )SQL";
 }
 
-// Version of the history's tables. A history of another version is started
-// over (there is no migration of earlier layouts).
+// Version of the history's tables (PRAGMA user_version). An older history
+// is migrated step by step (kMigrations); a newer one is refused and kept.
 constexpr int kHistoryVersion = 2;
+
+bool has_column(sql::Db& db, const char* table, const char* column) {
+  auto st = db.prepare(std::string("SELECT name FROM pragma_table_info('") + table + "')");
+  while (st.step())
+    if (st.text(0) == column) return true;
+  return false;
+}
+
+// kMigrations[v - 1] takes the tables from version v to v + 1.
+const std::vector<std::function<void(sql::Db&)>> kMigrations = {
+    // 1 -> 2: a value's hash stored beside it (ranged reads); the build cache
+    // flag and detail of an invocation.
+    [](sql::Db& db) {
+      if (!has_column(db, "ivalues", "hash")) {
+        db.exec("ALTER TABLE ivalues ADD COLUMN hash TEXT NOT NULL DEFAULT ''");
+        std::vector<std::pair<int64_t, std::string>> rows;
+        {
+          auto st = db.prepare("SELECT rowid, bytes FROM ivalues");
+          while (st.step()) rows.emplace_back(st.i64(0), crypto::sha256_hex(st.blob(1)));
+        }
+        for (const auto& [id, h] : rows) db.prepare("UPDATE ivalues SET hash=? WHERE rowid=?").bind(1, h).bind(2, id).run();
+      }
+      if (!has_column(db, "invocations", "build_cached")) db.exec("ALTER TABLE invocations ADD COLUMN build_cached INTEGER");
+      if (!has_column(db, "invocations", "detail")) db.exec("ALTER TABLE invocations ADD COLUMN detail TEXT");
+    },
+};
+static_assert(kHistoryVersion >= 1);
 
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
     : path_(db_path), secret_(std::move(cursor_secret)), fault_(std::move(fault)) {
-  bool other = false;
-  if (std::filesystem::exists(path_)) {
-    sql::Db probe(path_.string());
-    auto v = probe.prepare("PRAGMA user_version");
-    auto t = probe.prepare("SELECT count(*) FROM sqlite_master");
-    other = v.step() && v.i64(0) != kHistoryVersion && t.step() && t.i64(0) > 0;
-  }
-  if (other) {
-    log::warn("history " + path_.string() + " has another layout; starting a new one");
-    for (const char* suffix : {"", "-wal", "-shm", "-journal"}) std::filesystem::remove(path_.string() + suffix);
-  }
+  if (std::filesystem::exists(path_)) migrate();
   writer_db_ = std::make_unique<sql::Db>(path_.string());
   // Single process owns the database (guarded by the project lock).
   writer_db_->exec("PRAGMA journal_mode=WAL");
@@ -223,6 +241,40 @@ History::History(const std::filesystem::path& db_path, std::string cursor_secret
   writer_db_->exec("PRAGMA foreign_keys=ON");
   init_schema(*writer_db_);
   writer_ = std::thread([this] { writer_loop(); });
+}
+
+// Brings an existing history to kHistoryVersion: refused when it is newer
+// (a later Tsugumi wrote it; it is kept as it is), migrated in one
+// transaction when older, after a copy of it (history.sqlite.v<N>).
+void History::migrate() {
+  sql::Db db(path_.string());
+  int64_t version = 0, tables = 0;
+  {
+    auto v = db.prepare("PRAGMA user_version");
+    if (v.step()) version = v.i64(0);
+    auto t = db.prepare("SELECT count(*) FROM sqlite_master WHERE type='table'");
+    if (t.step()) tables = t.i64(0);
+  }
+  if (tables == 0 || version == kHistoryVersion) return;
+  if (version > kHistoryVersion)
+    throw std::runtime_error("the run history " + path_.string() + " is version " + std::to_string(version) +
+                             ", newer than this Tsugumi (" + std::to_string(kHistoryVersion) +
+                             "); it is kept as it is: use a newer Tsugumi");
+  if (version < 1) throw std::runtime_error("the run history " + path_.string() + " has no version: it is kept as it is");
+  auto backup = path_.string() + ".v" + std::to_string(version);
+  std::filesystem::remove(backup);
+  db.prepare("VACUUM INTO ?").bind(1, backup).run();
+  log::info("history: migrating " + path_.string() + " from version " + std::to_string(version) + " to " +
+            std::to_string(kHistoryVersion) + " (the previous one is kept as " + backup + ")");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (int64_t v = version; v < kHistoryVersion; ++v) kMigrations.at(static_cast<size_t>(v - 1))(db);
+    db.exec("PRAGMA user_version=" + std::to_string(kHistoryVersion));
+    db.exec("COMMIT");
+  } catch (...) {
+    db.exec("ROLLBACK");
+    throw;
+  }
 }
 
 History::~History() {

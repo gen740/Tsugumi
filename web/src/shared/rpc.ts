@@ -230,17 +230,17 @@ export class RPCClient {
   /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
    *  for one revision and returns the file list when ready. */
   async generatedContracts(card: string[], atRev: bigint): Promise<R.SDKFileT[]> {
-    let res = await this.call<R.SDKPrepareResultT>(RequestPayload.CardSDKPrepareRequest,
+    let res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKPrepareRequest,
       Object.assign(new R.CardSDKPrepareRequestT(), { card: cardPath(card), atRev, opId: uuid() }))
     for (let i = 0; i < 100 && res.state === D.SDKState.pending; i++) {
       await new Promise((r) => setTimeout(r, 100))
-      res = await this.call<R.SDKPrepareResultT>(RequestPayload.CardSDKStatusRequest, Object.assign(new R.CardSDKStatusRequestT(), { opId: res.opId }))
+      res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKStatusRequest, Object.assign(new R.CardSDKStatusRequestT(), { opId: res.opId }))
     }
     return res.files
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
-    return this.call<R.HistoryDeleteResultT>(RequestPayload.RunHistoryDeleteRequest,
+    return this.call<R.RunHistoryDeleteResultT>(RequestPayload.RunHistoryDeleteRequest,
       Object.assign(new R.RunHistoryDeleteRequestT(), { opId, endedBefore: endedBefore === null ? null : BigInt(endedBefore) }), 300_000)
   }
   /** The types of an _outputs.fbs text as the core compiles them (bfbs); with
@@ -251,7 +251,7 @@ export class RPCClient {
   }
   /** Checks the document as it would be after `changes` (nothing is saved). */
   validate(changes: R.DocumentChangeT[] | null = null) {
-    return this.call<R.ValidationResultT>(RequestPayload.ProjectValidateRequest,
+    return this.call<R.ProjectValidateResultT>(RequestPayload.ProjectValidateRequest,
       Object.assign(new R.ProjectValidateRequestT(), { mode: D.ValidateMode.executable, changes: changes ?? [] }))
   }
   reload(baseRev: bigint, opId: string, origin: string) {
@@ -352,17 +352,17 @@ export class RPCClient {
   }
   /** Copies definitions (and their sources) from a granted project snapshot. */
   importDefinitions(baseRev: bigint, opId: string, origin: string, sourceGrant: string, definitions: string[]) {
-    return this.call<R.ImportResultT>(
+    return this.call<R.ProjectImportResultT>(
       RequestPayload.ProjectImportRequest,
       Object.assign(new R.ProjectImportRequestT(), { baseRev, opId, origin, sourceGrant, definitions }),
     )
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
-    return this.call<R.CacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
+    return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
   }
   format(path: string, text: string) {
-    return this.call<R.FormatResultT>(RequestPayload.ProjectFileFormatRequest, Object.assign(new R.ProjectFileFormatRequestT(), { path, text }))
+    return this.call<R.ProjectFileFormatResultT>(RequestPayload.ProjectFileFormatRequest, Object.assign(new R.ProjectFileFormatRequestT(), { path, text }))
   }
 }
 

@@ -2550,12 +2550,12 @@ auto run(Card::Input& input) -> Card::Output {
     }
   }
 
-  async clearBuildCache(): Promise<R.CacheClearResultT> {
+  async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
     if (!this.client) throw new RPCError('disconnected', '接続していません')
     return this.client.clearCache(uuid())
   }
 
-  async deleteRunHistory(endedBefore: Date | null): Promise<R.HistoryDeleteResultT> {
+  async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {
     if (!this.client) throw new RPCError('disconnected', '接続していません')
     return this.client.deleteHistory(uuid(), endedBefore ? endedBefore.getTime() : null)
   }
