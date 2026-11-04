@@ -14,6 +14,10 @@ export interface ChatItem {
   text: string
   tool?: { name: string; ok?: boolean }
   archived?: boolean
+  /** A helper's row (role "helper", delegate): its name, its current or last
+   *  tool call (text: the arguments) and how its work ended. */
+  helper?: string
+  ended?: string
 }
 
 export interface SessionInfo {
@@ -393,9 +397,13 @@ export class ChatController extends Observable {
       }
       case 'toolStarted':
         this.items = [...this.items, { id: uuid(), role: 'tool', text: e.arguments, tool: { name: e.name } }]
+        if (e.name === 'delegate') this.startHelpers(e.arguments)
+        break
+      case 'helper':
+        this.handleHelper(e.name, e.event)
         break
       case 'toolFinished': {
-        const i = this.items.map((x) => x.tool?.name === e.name && x.tool?.ok === undefined).lastIndexOf(true)
+        const i = this.items.map((x) => x.role === 'tool' && x.tool?.name === e.name && x.tool?.ok === undefined).lastIndexOf(true)
         if (i >= 0) {
           const it = this.items[i]
           this.items = [...this.items.slice(0, i), { ...it, tool: { name: e.name, ok: e.ok }, text: it.text + '\n→ ' + e.summary }, ...this.items.slice(i + 1)]
@@ -431,6 +439,29 @@ export class ChatController extends Observable {
         break
     }
     this.changed()
+  }
+
+  /** A delegate call: a row per helper. */
+  private startHelpers(args: string) {
+    let tasks: { name?: string }[] = []
+    try {
+      tasks = JSON.parse(args)?.tasks ?? []
+    } catch {}
+    this.items = [...this.items, ...tasks.filter((t) => t?.name).map((t) => ({ id: uuid(), role: 'helper', text: '', helper: String(t.name) }))]
+  }
+
+  /** What a helper does, in its row. */
+  private handleHelper(name: string, e: any) {
+    const i = this.items.map((x) => x.role === 'helper' && x.helper === name).lastIndexOf(true)
+    if (i < 0) return
+    const it = this.items[i]
+    let next: ChatItem | undefined
+    if (e.kind === 'toolStarted') next = { ...it, tool: { name: e.name }, text: e.arguments }
+    else if (e.kind === 'toolFinished' && it.tool?.name === e.name) next = { ...it, tool: { name: e.name, ok: e.ok } }
+    else if (e.kind === 'finished') next = { ...it, ended: '終わりました' }
+    else if (e.kind === 'stepLimit') next = { ...it, ended: '手数の上限で止まりました' }
+    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? '止めました' : `エラー: ${e.message}` }
+    if (next) this.items = [...this.items.slice(0, i), next, ...this.items.slice(i + 1)]
   }
 
   private reloadCurrent() {

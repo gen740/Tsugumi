@@ -531,18 +531,83 @@ extension ProjectSession {
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) {
     guard let fromId = path(from.0).last, let toId = path(to.0).last else { return }
+    // One wire per output: a value goes to several Cards through a fork Card.
+    // A second wire from an output inserts one (or, from a fork, adds a branch).
+    let taken = connections(in: scope).filter {
+      $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == from.1
+        && !($0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == to.1)
+    }
     edit { s in
+      var source = (card: fromId, port: from.1)
+      if !taken.isEmpty {
+        let next = taken.count == 1 ? taken[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
+        if s.kind(from.0) == .fork {
+          source = (fromId, s.addForkBranch(from.0, for: toId))
+        } else if let next, s.kind(next) == .fork, let forkId = path(next).last {
+          // The output already feeds a fork: one more branch of it.
+          source = (forkId, s.addForkBranch(next, for: toId))
+        } else {
+          let fork = s.insertFork(after: (fromId, from.1), wires: taken, in: scope)
+          source = (fork, s.addForkBranch(key(scope + [fork]), for: toId))
+        }
+      }
       s.updateGraph(scope) { g in
         var conns = g["connections"]?.array ?? []
         // One connection per input port: a new wire replaces the old one.
         conns.removeAll { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == to.1 }
         conns.append(.object([
-          ("from", .object([("card", .string(fromId)), ("port", .string(from.1))])),
+          ("from", .object([("card", .string(source.card)), ("port", .string(source.port))])),
           ("to", .object([("card", .string(toId)), ("port", .string(to.1))])),
         ]))
         g["connections"] = .array(conns)
       }
     }
+  }
+
+  /// A fork Card after an output: the output's wires (`wires`) now leave the
+  /// fork, a branch each, and the output feeds the fork. Its id.
+  func insertFork(after from: (card: String, port: String), wires: [JSONValue], in scope: [String]) -> String {
+    let id = uniqueId("fork", in: scope)
+    let k = key(scope + [id])
+    appendCard(id, in: scope)
+    writeTemplate(.fork, card: k)
+    updateCard(k) { c in c["params"] = .array([.object([("name", .string("branches")), ("type", .string("string[]")), ("data", .array([]))])]) }
+    // Between the output's Card and the first Card it fed.
+    let a = position(key(scope + [from.card]))
+    let b = wires.first?["to"]?["card"]?.string.map { position(key(scope + [$0])) } ?? CGPoint(x: a.x + 300, y: a.y)
+    setPosition(k, CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2))
+    var branches: [String] = []
+    for w in wires { branches.append(addForkBranch(k, for: w["to"]?["card"]?.string ?? "out")) }
+    updateGraph(scope) { g in
+      var conns = (g["connections"]?.array ?? []).filter { !wires.contains($0) }
+      for (w, branch) in zip(wires, branches) {
+        conns.append(.object([("from", .object([("card", .string(id)), ("port", .string(branch))])), ("to", w["to"] ?? .null)]))
+      }
+      conns.append(.object([
+        ("from", .object([("card", .string(from.card)), ("port", .string(from.port))])),
+        ("to", .object([("card", .string(id)), ("port", .string("in"))])),
+      ]))
+      g["connections"] = .array(conns)
+    }
+    return id
+  }
+
+  /// A new output of a fork Card, named after the Card it will feed. Its name.
+  @discardableResult
+  func addForkBranch(_ k: CardKey, for target: String) -> String {
+    var branches = cardDefinition(k)?["params"]?.array?.first { $0["name"]?.string == "branches" }?["data"]?.array?.compactMap(\.string)
+      ?? ["out1", "out2"]
+    let base = target.isEmpty ? "out" : target
+    var name = base
+    var n = 2
+    while branches.contains(name) { name = "\(base)_\(n)"; n += 1 }
+    branches.append(name)
+    updateCard(k) { c in
+      var params = (c["params"]?.array ?? []).filter { $0["name"]?.string != "branches" }
+      params.append(.object([("name", .string("branches")), ("type", .string("string[]")), ("data", .array(branches.map { .string($0) }))]))
+      c["params"] = .array(params)
+    }
+    return name
   }
 
   func removeConnection(at index: Int, in scope: [String]) {

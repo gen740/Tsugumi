@@ -1,0 +1,11 @@
+{
+  "description": "反応拡散（Gray–Scott）の模様を育てる",
+  "content": "settings の size と seed を受け取る。一辺 size/2 の周期境界の格子で u=1, v=0 から始め、中央の 20×20 を u=0.5, v=0.25 にして seed の乱数で ±1% の揺らぎを足す。Gray–Scott モデル（Du=0.16, Dv=0.08, F=0.035, k=0.065, dt=1、ラプラシアンは 5 点差分）を 6000 ステップ進め、v の分布を 2 倍に拡大して PNG にして表示する。F・k・ステップ数はパラメータにする。u と v がずっと 0〜1 に収まることを assert で確かめ、最後の v の平均と最大をログに出す。numpy と pillow を使い、ループは配列演算で書く。",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size と seed"
+    }
+  ],
+  "outputs": []
+}

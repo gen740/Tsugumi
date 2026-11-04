@@ -195,6 +195,10 @@ final class ProjectSession {
   private(set) var confirmedLinks: [String: JSONValue] = [:]
   /// The Agent on the canvas: what it reads, writes and threads.
   let presence = AgentPresence()
+  /// The helpers' birds while the Agent has work delegated (one per helper),
+  /// and which helper owns which root-level Card.
+  var helperPresences: [AgentPresence] = []
+  var cardHelper: [String: String] = [:]
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
   @ObservationIgnored private var externalsKey = ""

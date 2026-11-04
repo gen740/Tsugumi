@@ -51,13 +51,12 @@ final class ThoughtSummarizer {
     task = Task { [weak self] in
       try? await Task.sleep(for: .seconds(wait))
       guard let self else { return }
-      let input = self.notes.joined(separator: "\n")
+      let input = String(self.notes.joined(separator: "\n").suffix(2400))
       self.notes.removeAll()
       self.lastCall = Date()
       do {
-        if let line = try await Self.summarize(String(input.suffix(2400)), config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens }) {
-          self.presence.think(line)
-        }
+        let reply = try await Self.summarize(input, config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens })
+        if let line = Self.clean(reply) { self.presence.think(line) }
         self.lastError = nil
       } catch {
         // The bubble keeps its plain lines; the reason is kept for checks.
@@ -93,15 +92,16 @@ final class ThoughtSummarizer {
       : "one line of Japanese, at most 40 characters, in the polite form ending in 「〜しています」 like the app's " +
         "other lines (「load を読んでいます」「start から実行しています」), for example 「帯域の境界を広げて、緑を見やすくしています」"
     return """
-    You watch an AI agent build a data-processing workflow of Cards in an app and say what it is doing right \
-    now, for a small speech bubble beside it on the canvas. Reply with \(voice). Say what it does and why when \
+    You watch an AI agent (and the helpers it may have started) build a data-processing workflow of Cards in \
+    an app and say what it is doing right now, for a small speech bubble beside it on the canvas. Reply with \
+    \(voice). Say what it does and why when \
     that is clear, naming Cards as the notes do but never the tools (say "waiting for the run to end", not \
     run_status); no first person, no greetings, no quotes, no Markdown, never invent facts that are not in \
     the notes.
     """
   }
 
-  static func summarize(_ notes: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String? {
+  static func summarize(_ notes: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
     let provider = MessagesProvider(config: config)
     var text = ""
     for try await e in try provider.stream(system: system, messages: [ChatMessage(role: "user", content: [.text(notes)])], tools: []) {
@@ -111,7 +111,7 @@ final class ThoughtSummarizer {
       default: break
       }
     }
-    return clean(text)
+    return text
   }
 
   /// One line, at most 60 characters, without quotes or Markdown.

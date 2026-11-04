@@ -15,6 +15,12 @@ A permission task ("give <card> network access"): project_inspect ->
 project_save turning the Card's network on -> a final line saying whether it
 was saved or declined (the client asks the user for the approval).
 
+A team task ("delegate the drafts a b c"): delegate with one helper per
+Draft -> a final line quoting the helpers' reports. Each helper (its system
+prompt names it) does project_inspect -> project_save of its own Draft only
+(from the revision it inspected: the others save meanwhile) -> run from the
+trigger (others run too) -> run_status -> run_record of its Card -> report.
+
 A second scripted task implements Drafts ("Implement these Draft Cards ...
 - <path> (definition <id>)"): project_inspect -> one project_save with
 PutDefinition/PutSource per Draft -> project_validate -> run -> report.
@@ -115,6 +121,63 @@ def trigger_of(inspect_value):
     return "start"
 
 
+DELEGATE = re.compile(r"delegate the drafts ((?:[\w-]+ ?)+)", re.I)
+HELPER = re.compile(r'You are the helper "([\w-]+)".*?The Cards you own: ([\w, -]+)\.', re.S)
+
+
+def last_delegate_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            for b in blocks(messages[i]):
+                if b.get("type") == "text" and (t := DELEGATE.search(b["text"])):
+                    return t.group(1).split(), i
+    return None, -1
+
+
+def decide_delegate(messages, cards, start):
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "delegate", {"tasks": [
+            {"name": c, "cards": [c], "instruction": f"Implement the Draft {c} and run it."} for c in cards]})
+    name, res, is_error = results[-1]
+    text = res.get("error", json.dumps(res)) if isinstance(res, dict) else str(res)
+    return ("text", ("Delegation failed: " if is_error else "The helpers reported. ") + text)
+
+
+def decide_helper(messages, helper, cards):
+    """A helper implements its own Draft, runs from the trigger and reports."""
+    results = tool_results(messages)
+    if not results:
+        return ("tool", "project_inspect", {})
+    name, res, is_error = results[-1]
+    value = res.get("value", {}) if isinstance(res, dict) else {}
+    own = cards[0]
+    if name == "project_inspect":
+        d = next(x for x in value["definitions"] if x["id"] == own)
+        meta = json.loads(d["meta_json"]) if d.get("meta_json") else {}
+        card, fbs, nix = implement(json.loads(d["card_json"]), meta)
+        return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
+            {"value_type": "PutDefinition", "value": {"id": own, "card_json": json.dumps(card), "keep_meta": True}},
+            {"value_type": "PutSource", "value": {"path": f"definitions/{own}/_outputs.fbs", "bytes": fbs}},
+            {"value_type": "PutSource", "value": {"path": f"definitions/{own}/default.nix", "bytes": nix}}]})
+    if name == "project_save":
+        if is_error:
+            return ("text", f"{helper}: saving failed: {value.get('kind')} {value.get('diagnostic')}")
+        inspect = next(r for n, r, _ in tool_results(messages) if n == "project_inspect")
+        return ("tool", "run", {"base_rev": str(value["rev"]), "card": {"segments": [trigger_of(inspect["value"])]}})
+    if name in ("run", "run_status"):
+        if is_error:
+            return ("text", f"{helper}: the run could not start: {value.get('kind')} {value.get('diagnostic')}")
+        status = value.get("run", value)
+        if status.get("state") not in TERMINAL:
+            return ("tool", "run_status", {"run_id": status.get("run_id")})
+        return ("tool", "run_record", {"run_id": status.get("run_id"), "card": {"segments": [own]}})
+    if name == "run_record":
+        ok = (value.get("aggregate") or {}).get("succeeded", 0) > 0
+        return ("text", f"{helper}: {own} implemented, its run {'succeeded' if ok else 'did not succeed'}.")
+    return ("text", f"{helper}: done.")
+
+
 DRAFTS = re.compile(r"Implement these Draft Cards", re.I)
 DRAFT_LINE = re.compile(r"^- (\S+) \(definition (\S+)\)", re.M)
 
@@ -209,8 +272,13 @@ def decide_permission(messages, card, start):
     return ("text", "Done.")
 
 
-def decide(messages):
+def decide(messages, system=""):
     """Returns ("tool", name, input) or ("text", message)."""
+    if h := HELPER.search(system):
+        return decide_helper(messages, h.group(1), [c.strip() for c in h.group(2).split(",")])
+    team, team_start = last_delegate_task(messages)
+    if team is not None:
+        return decide_delegate(messages, team, team_start)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
     perm, perm_start = last_permission_task(messages)
@@ -306,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
         if system_text(body).startswith("You summarize"):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
         else:
-            decision = decide(body["messages"])
+            decision = decide(body["messages"], system_text(body))
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()

@@ -64,9 +64,12 @@ extension Shared {
   struct Data {
     struct Tool { let name: String, description: String, inputSchema: [String: Any] }
     struct Draft { let root: String, child: String, card: String, text: String }
+    struct Helper { let prompt: String, outside: String, invalid: String }
     let requests: [String]
     let agentFields: Set<String>
     let referenceTool: Tool
+    let delegateTool: Tool
+    let helper: Helper
     let draft: Draft
     let permissionDeclined: String
   }
@@ -74,9 +77,13 @@ extension Shared {
   static let data: Data = {
     let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
     let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
+    let dt = o["delegateTool"] as! [String: Any], h = o["helper"] as! [String: String]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
+                delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
+                                    inputSchema: dt["inputSchema"] as! [String: Any]),
+                helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
                 permissionDeclined: o["permissionDeclined"] as! String)
   }()

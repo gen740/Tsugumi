@@ -150,6 +150,72 @@ import Testing
     #expect(Set(s.connections(in: []).compactMap { $0["to"]?["card"]?.string }) == ["a", "b", "c"])
   }
 
+  /// delegate: each helper's bird writes the Cards it owns; a Card no helper
+  /// owns is the main Agent's.
+  @Test func helpersSavesAreDrawnByTheirOwnBirds() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
+    #expect(s.presences.count == 3 && s.helperPresences.map(\.label) == ["first", "second"])
+    #expect(s.helperPresences.map(\.tint) == [1, 2])
+    // Each comes to its Card first.
+    #expect(s.helperPresences[0].beats.map(\.beat) == [.visit("a")])
+    let agent = RPCClient(endpoint: d.endpoint.url)
+    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    for id in ["b", "c"] {
+      let snap = try await agent.inspect()
+      _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
+                               changes: [Change.putDefinition(id: id, cardJSON: #"{"template": "logger", "maxRuns": 3}"#, metaJSON: nil)])
+    }
+    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .write("c", reveal: false) }) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(s.helperPresences[1].beats.contains { $0.beat == .write("b", reveal: false) })
+    #expect(!s.presence.beats.contains { $0.beat == .write("b", reveal: false) })
+    #expect(s.presence.beats.contains { $0.beat == .write("c", reveal: false) })
+    #expect(s.presence(forCard: "a") === s.helperPresences[0] && s.presence(forCard: "c") === s.presence)
+    await s.close()
+  }
+
+  /// One wire per output: a second wire from an output goes through a fork
+  /// Card inserted for it; more wires become more branches of that fork.
+  @Test func aSecondWireFromAnOutputGoesThroughAFork() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func wires() -> Set<String> {
+      Set(s.connections(in: []).compactMap { c in
+        guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string, let t = c["to"]?["card"]?.string else { return nil }
+        return "\(f).\(fp)>\(t)"
+      })
+    }
+    s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
+    #expect(wires() == ["start.out>a"])
+    s.connect(from: ("start", "out"), to: ("b", "in"), in: [])
+    #expect(wires() == ["start.out>fork", "fork.a>a", "fork.b>b"])
+    #expect(s.kind("fork") == .fork)
+    // From the trigger again, or from the fork: one more branch, no second fork.
+    s.connect(from: ("start", "out"), to: ("c", "in"), in: [])
+    #expect(wires() == ["start.out>fork", "fork.a>a", "fork.b>b", "fork.c>c"])
+    #expect(s.cards(in: []).count == 5)
+    await s.save()
+    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
+    // The core agrees: no output has two wires.
+    let snap = try await s.rpc!.inspect()
+    let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
+    #expect(!codes.contains("fan_out"), "\(codes)")
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

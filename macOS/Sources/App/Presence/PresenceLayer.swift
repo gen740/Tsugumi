@@ -9,6 +9,19 @@ enum PresenceColor {
   static let ink = dynamic(dark: NSColor(red: 0.30, green: 0.55, blue: 0.50, alpha: 1),
                            light: NSColor(red: 0.50, green: 0.71, blue: 0.66, alpha: 1))
 
+  /// The main Agent's bird while it has helpers out: gold, to tell it apart.
+  static let lead = dynamic(dark: NSColor(red: 0.98, green: 0.80, blue: 0.35, alpha: 1),
+                            light: NSColor(red: 0.72, green: 0.52, blue: 0.05, alpha: 1))
+
+  /// The thread of a bird: the main Agent's (0), then one hue per helper.
+  static func of(_ tint: Int) -> Color {
+    guard tint > 0 else { return thread }
+    let hues: [Double] = [0.08, 0.58, 0.83, 0.13, 0.95, 0.45, 0.70, 0.30]
+    let h = hues[(tint - 1) % hues.count]
+    return dynamic(dark: NSColor(hue: h, saturation: 0.45, brightness: 0.95, alpha: 1),
+                   light: NSColor(hue: h, saturation: 0.75, brightness: 0.62, alpha: 1))
+  }
+
   static func dynamic(dark: NSColor, light: NSColor) -> Color {
     Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
   }
@@ -153,6 +166,8 @@ struct PresenceLayer: View {
   let presence: AgentPresence
   let geometry: PresenceGeometry
   let avatar: AgentAvatar
+  /// The main Agent while helpers work: larger, gold, named "Agent".
+  var lead = false
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
   /// Still: the app's "Tsugumi のアニメーション" (or the system's reduce motion).
   private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
@@ -172,7 +187,12 @@ struct PresenceLayer: View {
   @ViewBuilder
   private func scene(at t: Date, size: CGSize) -> some View {
     let ch = Choreography(presence: presence, g: geometry)
-    let z = CGFloat(geometry.zoom)
+    // The main Agent stands out among its helpers: larger and gold; the
+    // helpers are a little smaller, each in its colour.
+    let scale = lead ? 1.4 : presence.label != nil ? 0.8 : 1.0
+    let z = CGFloat(geometry.zoom * scale)
+    let color = lead ? PresenceColor.lead : PresenceColor.of(presence.tint)
+    let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
       if avatar != .none, presence.visible(at: t), let pose = reduceMotion ? ch.still(at: t) : ch.posed(at: t) {
@@ -182,31 +202,48 @@ struct PresenceLayer: View {
         let inside = CGRect(origin: .zero, size: size).insetBy(dx: 8, dy: 8).contains(p)
         if !reduceMotion {
           Trail(points: (0...18).compactMap { k in ch.pose(at: t.addingTimeInterval(-0.045 * Double(k))).map { geometry.screen($0.center) } },
-                strong: avatar == .dot, zoom: z)
+                strong: avatar == .dot, zoom: z, color: color)
             .opacity(fade.opacity)
         }
-        figure(pose, at: t, zoom: z).position(p).opacity(fade.opacity)
+        // Where the birds stand when there are several: a halo in its colour.
+        if label != nil, avatar == .bird {
+          Ellipse().fill(color.opacity(lead ? 0.45 : 0.32))
+            .frame(width: 46 * z, height: 12 * z)
+            .position(x: p.x, y: p.y + 24 * z)
+            .opacity(fade.opacity)
+        }
+        figure(pose, at: t, zoom: z, color: color).position(p).opacity(fade.opacity)
+        // Its name beside the bird (clear of the Card's title), in its colour.
+        if let label {
+          let w = label.reduce(CGFloat(12)) { $0 + ($1.isASCII ? 6.2 : 10.5) }
+          Text(label).font(.system(size: lead ? 11 : 10, weight: lead ? .bold : .semibold)).foregroundStyle(color)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Capsule().fill(.regularMaterial))
+            .fixedSize()
+            .position(x: p.x + (avatar == .bird ? 30 * min(1.3, max(0.8, z)) : 10) + w / 2, y: p.y - (avatar == .bird ? 14 : 0))
+            .opacity(fade.opacity)
+        }
         if let line = presence.line(at: t) {
           let since = t.timeIntervalSince(line.since)
           let width = line.text.reduce(CGFloat(22)) { $0 + ($1.isASCII ? 6.9 : 11.8) }
           // A done line goes quietly before the bird does.
           let leaving = presence.working ? 1 : AgentPresence.rise((AgentPresence.Timing.doneLine - since) / 0.8)
-          PresenceBubble(text: line.text)
+          PresenceBubble(text: line.text, color: color)
             .opacity(min(1, since / 0.45) * leaving * fade.opacity)
             .offset(x: min(size.width - 12 - width, max(12, p.x - 36)),
                     y: p.y - (avatar == .bird ? 54 * min(1.3, max(0.8, z)) : 34) + CGFloat(5 * (1 - AgentPresence.rise(since / 0.45))))
         }
-        if !inside { EdgeMark(at: p, in: size) }
+        if !inside { EdgeMark(at: p, in: size, color: color) }
       }
     }
     .frame(width: size.width, height: size.height, alignment: .topLeading)
   }
 
   @ViewBuilder
-  private func figure(_ pose: AvatarPose, at t: Date, zoom: CGFloat) -> some View {
+  private func figure(_ pose: AvatarPose, at t: Date, zoom: CGFloat, color: Color) -> some View {
     switch avatar {
     case .bird: BirdFigure(mood: pose.mood, t: t.timeIntervalSinceReferenceDate, facing: pose.facing, still: reduceMotion, zoom: zoom)
-    case .dot: Circle().fill(PresenceColor.thread).frame(width: 8, height: 8).shadow(color: PresenceColor.thread.opacity(0.6), radius: 3)
+    case .dot: Circle().fill(color).frame(width: 8, height: 8).shadow(color: color.opacity(0.6), radius: 3)
     case .none: EmptyView()
     }
   }
@@ -222,7 +259,7 @@ struct PresenceLayer: View {
           a: CGFloat(geometry.zoom), b: 0, c: 0, d: CGFloat(geometry.zoom),
           tx: geometry.screen(.zero).x, ty: geometry.screen(.zero).y))
         // The thread's colour while it is drawn, the wire's once it is taut.
-        let color = p < 1 ? PresenceColor.thread : Color.secondary.opacity(0.75)
+        let color = p < 1 ? PresenceColor.of(presence.tint) : Color.secondary.opacity(0.75)
         ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
       }
     }
@@ -234,6 +271,7 @@ struct Trail: View {
   let points: [CGPoint]
   let strong: Bool
   let zoom: CGFloat
+  var color = PresenceColor.thread
   var body: some View {
     Canvas { ctx, _ in
       let n = points.count
@@ -245,7 +283,7 @@ struct Trail: View {
         var seg = Path()
         seg.move(to: a)
         seg.addLine(to: b)
-        ctx.stroke(seg, with: .color(PresenceColor.thread.opacity((strong ? 0.85 : 0.4) * f)),
+        ctx.stroke(seg, with: .color(color.opacity((strong ? 0.85 : 0.4) * f)),
                    style: StrokeStyle(lineWidth: ((strong ? 3 : 2) * f + 0.4) * min(1.3, max(0.7, zoom)), lineCap: .round))
       }
     }
@@ -254,11 +292,12 @@ struct Trail: View {
 
 struct PresenceBubble: View {
   let text: String
+  var color = PresenceColor.thread
   var body: some View {
     Text(text).font(.system(size: 11.5)).lineLimit(1)
       .padding(.horizontal, 10).padding(.vertical, 6)
       .background(RoundedRectangle(cornerRadius: 9).fill(.regularMaterial))
-      .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(PresenceColor.thread.opacity(0.45), lineWidth: 1))
+      .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(color.opacity(0.45), lineWidth: 1))
       .fixedSize()
   }
 }
@@ -267,13 +306,14 @@ struct PresenceBubble: View {
 struct EdgeMark: View {
   let at: CGPoint
   let size: CGSize
-  init(at: CGPoint, in size: CGSize) { self.at = at; self.size = size }
+  let color: Color
+  init(at: CGPoint, in size: CGSize, color: Color = PresenceColor.thread) { self.at = at; self.size = size; self.color = color }
   var body: some View {
     let x = min(size.width - 22, max(22, at.x)), y = min(size.height - 16, max(16, at.y))
     let symbol = at.x > size.width ? "chevron.right" : at.x < 0 ? "chevron.left" : at.y < 0 ? "chevron.up" : "chevron.down"
     HStack(spacing: 2) {
-      Circle().fill(PresenceColor.thread).frame(width: 6, height: 6)
-      Image(systemName: symbol).font(.system(size: 9, weight: .bold)).foregroundStyle(PresenceColor.thread)
+      Circle().fill(color).frame(width: 6, height: 6)
+      Image(systemName: symbol).font(.system(size: 9, weight: .bold)).foregroundStyle(color)
     }
     .padding(.horizontal, 6).padding(.vertical, 4)
     .background(Capsule().fill(.regularMaterial))

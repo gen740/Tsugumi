@@ -1,0 +1,118 @@
+{
+  "name": "力学系ギャラリー",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "lorenz"
+      },
+      {
+        "id": "mandelbrot"
+      },
+      {
+        "id": "logistic"
+      },
+      {
+        "id": "life"
+      },
+      {
+        "id": "grayscott"
+      },
+      {
+        "id": "pendulum"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "config"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "lorenz"
+        },
+        "to": {
+          "card": "lorenz",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "mandelbrot"
+        },
+        "to": {
+          "card": "mandelbrot",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "logistic"
+        },
+        "to": {
+          "card": "logistic",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "life"
+        },
+        "to": {
+          "card": "life",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "grayscott"
+        },
+        "to": {
+          "card": "grayscott",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "pendulum"
+        },
+        "to": {
+          "card": "pendulum",
+          "port": "settings"
+        }
+      }
+    ]
+  }
+}

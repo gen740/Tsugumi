@@ -50,7 +50,7 @@ struct GraphCanvas: View {
           groupFrame(id)
         }
         WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, thread: $0.thread) },
-                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presence: session.presence)
+                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
         if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
         ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
@@ -66,7 +66,11 @@ struct GraphCanvas: View {
         }
         ForEach(noteIds, id: \.self) { id in noteView(id) }
         // The Agent at work: threads being drawn and the tsugumi.
-        PresenceLayer(presence: session.presence, geometry: presenceGeometry(routed), avatar: prefs.agentAvatar)
+        // (one bird per helper while the Agent has work delegated)
+        ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
+          PresenceLayer(presence: p, geometry: presenceGeometry(routed), avatar: prefs.agentAvatar,
+                        lead: p === session.presence && !session.helperPresences.isEmpty)
+        }
         if let p = pending {
           Path { path in
             path.move(to: screen(portWorld(p.from.0, p.from.1, output: p.fromOutput)))
@@ -238,15 +242,7 @@ struct GraphCanvas: View {
   }
 
   /// Output frame of a Card (world units): saved place, or beside the Card.
-  private func frameRect(_ k: CardKey) -> CGRect {
-    let o = origin(k)
-    let f = session.displayFrame(k)
-    let sz = CGSize(width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
-    let at = session.flow == .topToBottom
-      ? CGPoint(x: f?["x"]?.double ?? (o.x + session.geometry(k).size.width + 40), y: f?["y"]?.double ?? o.y)
-      : CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + session.geometry(k).height + 30))
-    return CGRect(origin: at, size: sz)
-  }
+  private func frameRect(_ k: CardKey) -> CGRect { session.displayRect(k, origin: origin(k)) }
 
   private func noteRect(_ n: JSONValue) -> CGRect {
     CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
@@ -462,7 +458,7 @@ struct GraphCanvas: View {
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil)
-      .modifier(CardWriting(presence: session.presence, card: k, title: data.title, zoom: camera.zoom))
+      .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }

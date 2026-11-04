@@ -1,0 +1,9 @@
+{
+  "description": "画像の大きさと乱数の種",
+  "outputs": [
+    {
+      "name": "config",
+      "description": "size（画像の一辺のピクセル数）と seed（乱数の種）"
+    }
+  ]
+}

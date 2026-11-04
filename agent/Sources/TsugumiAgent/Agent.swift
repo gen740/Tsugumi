@@ -94,6 +94,8 @@ public enum AgentEvent: Sendable {
   /// The turn used its steps (model replies with tool calls) without
   /// finishing; `unconfirmedRun` is a run it started and never saw end.
   case stepLimit(steps: Int, unconfirmedRun: String?)
+  /// What a helper started by `delegate` does (its own events).
+  indirect case helper(name: String, event: AgentEvent)
 }
 
 /// The Agent loop: streaming model turns, tool argument validation, real RPC
@@ -103,7 +105,7 @@ public actor Agent {
   let codec: FlatJSON
   let transport: ToolTransport
   let storage: URL
-  public private(set) var conversation: Conversation
+  public internal(set) var conversation: Conversation
   private var provider: MessagesProvider
   private var turn: Task<Void, Never>?
   /// Model replies with tool calls in one turn before it stops and asks to
@@ -111,7 +113,15 @@ public actor Agent {
   public var maxSteps = 60
   /// Bundled references for reference_read: a top-level name ("demos",
   /// "sdk/python/tsugumi/__init__.py", "card-guide.md") -> where it is.
-  private let references: [String: URL]
+  let references: [String: URL]
+  /// A helper started by `delegate` (nil: the main Agent).
+  public nonisolated let helper: Helper?
+  /// The provider's settings, for the helpers.
+  var providerConfig: ProviderConfig
+  /// Each definition's _card.json as this Agent last saw it (inspect, its
+  /// own saves): a save that meets only others' layout changes is sent again.
+  var seenDefinitions: [String: String] = [:]
+  var approverForHelpers: Approver? { approver }
   /// A run started by a tool call whose end was not seen yet.
   private var unconfirmedRun: String?
   /// Replies cut at the output limit in this turn.
@@ -125,8 +135,10 @@ public actor Agent {
   public static let systemPrompt = Shared.systemPrompt
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
-              references: [String: URL] = [:]) {
+              references: [String: URL] = [:], helper: Helper? = nil) {
     self.references = references
+    self.helper = helper
+    self.providerConfig = provider
     self.catalog = catalog
     self.codec = FlatJSON(schema: catalog.schema)
     self.transport = transport
@@ -135,7 +147,10 @@ public actor Agent {
     self.conversation = Conversation.load(storage)
   }
 
-  public func setProvider(_ config: ProviderConfig) { provider = MessagesProvider(config: config) }
+  public func setProvider(_ config: ProviderConfig) {
+    providerConfig = config
+    provider = MessagesProvider(config: config)
+  }
   public func setMaxSteps(_ n: Int) { maxSteps = max(1, n) }
   public func models() async throws -> [String] { try await provider.models() }
 
@@ -237,7 +252,7 @@ public actor Agent {
     startTurn { await self.loop(events) }
   }
 
-  private func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
+  func loop(_ events: @escaping @Sendable (AgentEvent) -> Void) async {
     do {
       try await reconcilePending(events)
       closeDanglingToolUses()
@@ -308,7 +323,7 @@ public actor Agent {
       var order: [Int] = []
       var stopReason = "end_turn"
       do {
-        for try await e in try provider.stream(system: Self.systemPrompt, messages: wireMessages(), tools: self.tools) {
+        for try await e in try provider.stream(system: system, messages: wireMessages(), tools: self.tools) {
           switch e {
           case .text(let t):
             text += t
@@ -359,8 +374,11 @@ public actor Agent {
     return [ChatMessage(role: "user", content: [.text("Summary of the earlier conversation:\n\(s)")])] + conversation.messages
   }
 
-  /// The RPC tools and the Agent's own (reference_read, when references exist).
-  public var tools: [ToolSpec] { references.isEmpty ? catalog.tools : catalog.tools + [Self.referenceTool] }
+  /// The RPC tools and the Agent's own (reference_read, when references
+  /// exist; delegate, for the main Agent).
+  public var tools: [ToolSpec] {
+    catalog.tools + (references.isEmpty ? [] : [Self.referenceTool]) + (helper == nil ? [Self.delegateTool] : [])
+  }
 
   static let referenceTool = ToolSpec(
     name: Shared.data.referenceTool.name, requestName: "", payloadType: 0, object: -1,
@@ -438,6 +456,10 @@ public actor Agent {
       let (text, isError) = readReference(path)
       return finish(&record, text, isError: isError, events)
     }
+    if name == Self.delegateTool.name, helper == nil {
+      let (text, isError) = await delegate(input, events)
+      return finish(&record, text, isError: isError, events)
+    }
     guard let spec = catalog.tool(named: name) else {
       return finish(&record, "unknown tool \(name)", isError: true, events)
     }
@@ -448,6 +470,12 @@ public actor Agent {
     var full = args
     // Fields the Agent fills itself: never the model's.
     for f in ToolCatalog.agentFields { full.removeValue(forKey: f) }
+    // A helper saves only its own Cards.
+    if let helper, name == "project_save", let outside = helper.outside(full["changes"]) {
+      return finish(&record, Shared.fill(Shared.data.helper.outside,
+                                         ["name": helper.name, "cards": helper.cards.joined(separator: ", "), "what": outside]),
+                    isError: true, events)
+    }
     if spec.mutating {
       record.opId = record.opId ?? UUID().uuidString.lowercased()
       full["op_id"] = record.opId
@@ -486,6 +514,40 @@ public actor Agent {
         }
         json = renderReply(replyType, table)
       }
+      // A save or run that met only changes it does not touch (the canvas
+      // tidied, a Card dragged) goes on from the current revision.
+      if helper == nil, replyType == "Failure", Self.failureKind(json) == "revision_conflict",
+         let rev = await rebased(tool: name, args: full) {
+        full["base_rev"] = String(rev)
+        record.opId = UUID().uuidString.lowercased()
+        full["op_id"] = record.opId
+        (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+          try codec.build(spec.object, full, into: &b)
+        }
+        json = renderReply(replyType, table)
+      }
+      // Helpers save and run at the same time: one meeting another's run
+      // (busy) waits for it to end, one meeting another's save
+      // (revision_conflict) goes on from the current revision. A helper's
+      // saves only touch its own Cards, so nothing of another is lost.
+      if helper != nil, spec.mutating {
+        let deadline = Date().addingTimeInterval(Self.helperWait)
+        while replyType == "Failure", let kind = Self.failureKind(json), kind == "busy" || kind == "revision_conflict",
+              Date() < deadline {
+          if kind == "revision_conflict" {
+            guard let rev = Self.currentRev(json) else { break }
+            full["base_rev"] = String(rev)
+          } else {
+            try await Task.sleep(for: .seconds(1))
+          }
+          record.opId = UUID().uuidString.lowercased()
+          full["op_id"] = record.opId
+          (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+            try codec.build(spec.object, full, into: &b)
+          }
+          json = renderReply(replyType, table)
+        }
+      }
       // A run still building or running: wait here (up to statusWait) instead
       // of the model spending a reply on each look.
       if name == "run_status" {
@@ -500,6 +562,7 @@ public actor Agent {
         }
       }
       noteRun(tool: name, reply: replyType, json: json)
+      noteDefinitions(reply: replyType, json: json)
       return finish(&record, json, isError: replyType == "Failure", events)
     } catch {
       // Unknown outcome: keep the record as sent so a resume asks OperationGet.
@@ -618,7 +681,7 @@ public actor Agent {
     return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
   }
 
-  private func renderReply(_ type: String, _ table: Table) -> String {
+  func renderReply(_ type: String, _ table: Table) -> String {
     let objName = type == "Failure" ? "Tsugumi.Data.Failure" : "Tsugumi.RPC.\(type)"
     guard let (i, _) = catalog.schema.object(named: objName) else { return "{\"reply\":\"\(type)\"}" }
     let obj: [String: Any] = ["reply": type, "value": codec.json(i, table)]

@@ -1,0 +1,11 @@
+{
+  "description": "マンデルブロ集合を描く",
+  "content": "settings の size を受け取る。複素平面の実部 −2.2〜0.8、虚部 −1.5〜1.5 を size×size に分け、最大 200 回の反復で発散までの回数を数え、滑らかな色付け（発散した点は反復回数に log log |z| の補正を入れる）で PNG にして表示する。範囲と最大反復回数はパラメータにする。c=0 が集合に属し c=1+1i が属さないことを assert で確かめ、集合に属した点の割合をログに出す。numpy と pillow を使い、ループは numpy の配列演算で書く。",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size と seed"
+    }
+  ],
+  "outputs": []
+}

@@ -2095,14 +2095,69 @@ export class ProjectSession extends Observable {
   connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop()
     if (!fromId || !toId) return
+    // One wire per output: a value goes to several Cards through a fork Card.
+    // A second wire from an output inserts one (or, from a fork, adds a branch).
+    const taken = this.connections(scope).filter((c) =>
+      str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === from[1]
+      && !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === to[1]))
     this.edit((x) => {
+      let source: [string, string] = [fromId, from[1]]
+      if (taken.length) {
+        const nextId = taken.length === 1 ? str(get(taken[0], 'to', 'card')) : undefined
+        const next = nextId ? key([...scope, nextId]) : undefined
+        if (x.kind(from[0]) === 'fork') source = [fromId, x.addForkBranch(from[0], toId)]
+        else if (next && nextId && x.kind(next) === 'fork') source = [nextId, x.addForkBranch(next, toId)]  // one more branch of it
+        else {
+          const fork = x.insertFork([fromId, from[1]], taken, scope)
+          source = [fork, x.addForkBranch(key([...scope, fork]), toId)]
+        }
+      }
       x.updateGraph(scope, (g) => {
         // One connection per input port: a new wire replaces the old one.
         const conns = (arr(g.get('connections')) ?? []).filter((c) => !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === to[1]))
-        conns.push(obj([['from', obj([['card', fromId], ['port', from[1]]])], ['to', obj([['card', toId], ['port', to[1]]])]]))
+        conns.push(obj([['from', obj([['card', source[0]], ['port', source[1]]])], ['to', obj([['card', toId], ['port', to[1]]])]]))
         g.set('connections', conns)
       })
     })
+  }
+
+  /** A fork Card after an output: the output's wires (`wires`) now leave the
+   *  fork, a branch each, and the output feeds the fork. Its id. */
+  insertFork(from: [string, string], wires: J[], scope: string[]): string {
+    const id = this.uniqueId('fork', scope)
+    const k = key([...scope, id])
+    this.appendCard(id, scope)
+    this.writeTemplate('fork', k)
+    this.updateCard(k, (c) => c.set('params', [obj([['name', 'branches'], ['type', 'string[]'], ['data', []]])]))
+    // Between the output's Card and the first Card it fed.
+    const a = this.position(key([...scope, from[0]]))
+    const firstId = wires.length ? str(get(wires[0], 'to', 'card')) : undefined
+    const b = firstId ? this.position(key([...scope, firstId])) : { x: a.x + 300, y: a.y }
+    this.setPosition(k, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+    const branches = wires.map((w) => this.addForkBranch(k, str(get(w, 'to', 'card')) ?? 'out'))
+    this.updateGraph(scope, (g) => {
+      const conns = (arr(g.get('connections')) ?? []).filter((c) => !wires.includes(c))
+      wires.forEach((w, i) => conns.push(obj([['from', obj([['card', id], ['port', branches[i]]])], ['to', get(w, 'to') ?? null]])))
+      conns.push(obj([['from', obj([['card', from[0]], ['port', from[1]]])], ['to', obj([['card', id], ['port', 'in']])]]))
+      g.set('connections', conns)
+    })
+    return id
+  }
+
+  /** A new output of a fork Card, named after the Card it will feed. Its name. */
+  addForkBranch(k: CardKey, target: string): string {
+    const params = arr(get(this.cardDefinition(k), 'params')) ?? []
+    const data = arr(get(params.find((p) => str(get(p, 'name')) === 'branches'), 'data'))
+    const branches = data ? data.map((x) => str(x) ?? '') : ['out1', 'out2']
+    const base = target || 'out'
+    let name = base
+    for (let n = 2; branches.includes(name); n++) name = `${base}_${n}`
+    branches.push(name)
+    this.updateCard(k, (c) => {
+      const rest = (arr(c.get('params')) ?? []).filter((p) => str(get(p, 'name')) !== 'branches')
+      c.set('params', [...rest, obj([['name', 'branches'], ['type', 'string[]'], ['data', branches]])])
+    })
+    return name
   }
 
   removeConnection(index: number, scope: string[]) {

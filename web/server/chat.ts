@@ -371,6 +371,8 @@ class ChatHost {
     this.agents.get(id)?.cancel()
     this.agents.delete(id)
     fs.rmSync(this.file(id), { force: true })
+    // (and its helpers' conversations, from delegate)
+    fs.rmSync(this.file(id).replace(/\.json$/, '') + '.helpers', { recursive: true, force: true })
   }
 
   /** Full-text search over every session, compacted parts included. */

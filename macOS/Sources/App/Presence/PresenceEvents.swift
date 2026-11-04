@@ -40,6 +40,7 @@ enum PresenceEvents {
     case "project_file_list", "project_file_read": String(localized: "ファイルを読んでいます")
     case "attached_folder_read": String(localized: "添えられたフォルダを読んでいます")
     case "run_cancel": String(localized: "実行を止めています")
+    case "delegate": String(localized: "手分けして進めています")
     default: nil
     }
   }

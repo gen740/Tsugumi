@@ -175,6 +175,8 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
       return <div className="chat-user-row" style={{ opacity: op }}><div className="chat-user selectable">{item.text}</div></div>
     case 'tool':
       return <div style={{ opacity: op }}><ToolRow item={item} session={session} tab={tab} /></div>
+    case 'helper':
+      return <HelperRow item={item} />
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
@@ -382,7 +384,8 @@ export function toolStep(name: string, args: string) {
   const target: string | undefined = card ?? (typeof v?.path === 'string' ? v.path : typeof v?.definition === 'string' ? v.definition : undefined)
   const n = name.toLowerCase()
   const [running, done] =
-    n.includes('save') || n.includes('put') || n.includes('write') ? ['変更を保存しています', '変更を保存']
+    n === 'delegate' ? ['手分けして進めています', '手分けして進めました']
+    : n.includes('save') || n.includes('put') || n.includes('write') ? ['変更を保存しています', '変更を保存']
     : n.includes('run') && !n.includes('status') ? ['実行しています', '実行']
     : n.includes('read') || n.includes('inspect') || n.includes('get') ? ['確認しています', '確認']
     : n.includes('log') ? ['ログを読んでいます', 'ログを確認']
@@ -392,6 +395,22 @@ export function toolStep(name: string, args: string) {
     : [`${name} を実行しています`, name]
   const t = target ? `（${target}）` : ''
   return { card, running: running + t + '…', done: done + t }
+}
+
+/** A helper at work (delegate): its name and what it does now, or how its
+ *  work ended. */
+function HelperRow({ item }: { item: ChatItem }) {
+  const step = item.tool ? toolStep(item.tool.name, item.text) : undefined
+  const ok = item.tool?.ok
+  const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : '：失敗')) : '考えています…')
+  return (
+    <div className="chat-tool row gap6 center" style={{ paddingLeft: 10 }}>
+      <span className="caption" style={{ fontWeight: 600 }}>{item.helper}</span>
+      <span className="caption ellipsis" style={{ color: ok === false && !item.ended ? 'var(--red)' : 'var(--secondary)' }}>{text}</span>
+      <span className="spacer" />
+      {!item.ended && <Spinner small />}
+    </div>
+  )
 }
 
 /** A folded tool step: one line saying what was done; details on demand. */

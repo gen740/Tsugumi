@@ -162,6 +162,19 @@
         "地球科学",
         "画像"
       ]
+    },
+    {
+      "id": "dynamics-draft",
+      "title": "力学系ギャラリー（Draft）",
+      "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",
+      "path": "dynamics-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "手分け",
+        "Python",
+        "画像"
+      ]
     }
   ]
 }

@@ -66,7 +66,7 @@ public struct ChatMessage: Codable, Equatable {
   }
 }
 
-public struct Usage: Codable, Equatable {
+public struct Usage: Codable, Equatable, Sendable {
   /// Context of the last request (uncached, cache read and cache written).
   public var inputTokens = 0
   public var outputTokens = 0

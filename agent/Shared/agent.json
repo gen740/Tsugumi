@@ -20,7 +20,32 @@
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n{list}"
+  },
+  "delegateTool": {
+    "name": "delegate",
+    "description": "Hands independent parts of the work to helper Agents that work at the same time in this project, one per task, with the same tools; returns each helper's report once all have finished. Each task owns the root-level Cards it lists: its helper changes only their definitions (never tsugumi.json, the layout or another Card), and a Card belongs to one task only.",
+    "inputSchema": {
+      "type": "object", "additionalProperties": false, "required": ["tasks"],
+      "properties": {
+        "tasks": {
+          "type": "array", "minItems": 2, "maxItems": 8,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["name", "cards", "instruction"],
+            "properties": {
+              "name": { "type": "string", "description": "a short name for the helper, e.g. its Card's id" },
+              "cards": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "ids of the root-level Cards this helper owns" },
+              "instruction": { "type": "string", "description": "what to do, how to check it and what to report" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "helper": {
+    "prompt": "You are the helper \"{name}\", one of several Agents the main Agent started to work on this project at the same time. Your task:\n{instruction}\nThe Cards you own: {cards}. Change only their definitions (PutDefinition, and PutSource under definitions/<id>/); never SetProject, SetLayout, RemoveDefinition or RenameDefinition, and never another Card. The other helpers save and run at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save or run meets their work (busy, revision_conflict) the app waits and sends it again for you. The first time, run the workflow from its trigger Card (the other helpers' Cards may run too; look only at yours with run_record); once your Card has run, you may run it alone: run {\"base_rev\": ..., \"card\": {\"segments\": [\"<your Card>\"]}, \"propagate\": false}. You cannot delegate. End with a short report for the main Agent, in the language of your Cards' descriptions: what each of your Cards does, what its run produced, and anything left undone.",
+    "outside": "The helper {name} may change only its own Cards ({cards}); this save also changes {what}. Nothing was saved: change only your Cards.",
+    "invalid": "delegate needs 2 to 8 tasks, each with a name, an instruction and root-level Cards of this project that no other task lists: {why}"
   },
   "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
 }

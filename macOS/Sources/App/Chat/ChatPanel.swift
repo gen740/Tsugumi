@@ -383,6 +383,8 @@ struct ChatPanel: View {
       .opacity(item.archived ? 0.6 : 1)
     case "tool":
       ToolRow(item: item, tab: tab, session: session).opacity(item.archived ? 0.6 : 1)
+    case "helper":
+      HelperRow(item: item, tint: session.helperPresences.first { $0.label == item.helper }?.tint ?? 1)
     case "note":
       Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
@@ -463,6 +465,7 @@ struct ToolStep {
   private var target: String? {
     guard let v = try? JSONValue.parse(args.components(separatedBy: "\n→ ").first ?? args) else { return nil }
     if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
+    if let c = v["card"]?["segments"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?.string { return c }
     return v["path"]?.string ?? v["definition"]?.string
   }
@@ -470,11 +473,14 @@ struct ToolStep {
   var card: CardKey? {
     guard let v = try? JSONValue.parse(args.components(separatedBy: "\n→ ").first ?? args) else { return nil }
     if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return key(c) }
+    // (a CardPath as the model writes it)
+    if let c = v["card"]?["segments"]?.array?.compactMap(\.string), !c.isEmpty { return key(c) }
     return v["card"]?.string
   }
 
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
+    if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
     if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
     if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
     if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }
@@ -487,6 +493,34 @@ struct ToolStep {
 
   var running: String { verb.running + (target.map { "（\($0)）" } ?? "") + "…" }
   var done: String { verb.done + (target.map { "（\($0)）" } ?? "") }
+}
+
+/// A helper at work (delegate): its name in its bird's colour and what it
+/// does now, or how its work ended.
+private struct HelperRow: View {
+  let item: ChatController.Item
+  let tint: Int
+
+  var body: some View {
+    let step = item.tool.map { ToolStep(name: $0.name, args: item.text) }
+    HStack(spacing: 6) {
+      Circle().fill(PresenceColor.of(tint)).frame(width: 7, height: 7)
+      Text(item.helper ?? "").font(.caption.weight(.semibold)).foregroundStyle(PresenceColor.of(tint))
+      Group {
+        if let ended = item.ended {
+          Text(ended)
+        } else if let step, let t = item.tool {
+          Text(t.ok == nil ? step.running : step.done + (t.ok! ? "" : String(localized: "：失敗")))
+        } else {
+          Text("考えています…")
+        }
+      }
+      .font(.caption).foregroundStyle(item.tool?.ok == false && item.ended == nil ? .red : .secondary).lineLimit(1)
+      Spacer()
+      if item.ended == nil { ProgressView().controlSize(.mini) }
+    }
+    .padding(.leading, 10)
+  }
 }
 
 /// A folded tool step: one line saying what was done; details on demand.

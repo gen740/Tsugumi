@@ -11,6 +11,9 @@
         "id": "settings"
       },
       {
+        "id": "share"
+      },
+      {
         "id": "generate"
       },
       {
@@ -36,16 +39,6 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
-        },
-        "to": {
-          "card": "generate",
-          "port": "config"
-        }
-      },
-      {
-        "from": {
           "card": "generate",
           "port": "csv"
         },
@@ -62,16 +55,6 @@
         "to": {
           "card": "render",
           "port": "summary"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "config"
-        },
-        "to": {
-          "card": "render",
-          "port": "config"
         }
       },
       {
@@ -82,6 +65,36 @@
         "to": {
           "card": "archive",
           "port": "report"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "config"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "generate"
+        },
+        "to": {
+          "card": "generate",
+          "port": "config"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "render"
+        },
+        "to": {
+          "card": "render",
+          "port": "config"
         }
       }
     ]

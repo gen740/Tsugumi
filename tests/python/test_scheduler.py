@@ -129,8 +129,8 @@ def subgraph(id_, inner_text_id="inner"):
 
 
 def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):
-    c = env([card("src", "msg"), subgraph("s1"), subgraph("s2"), card("o1", "log"), card("o2", "log")],
-            [conn("src", "msg", "s1", "in"), conn("src", "msg", "s2", "in"),
+    c = env([card("src", "msg"), card("f", "fork"), subgraph("s1"), subgraph("s2"), card("o1", "log"), card("o2", "log")],
+            [conn("src", "msg", "f", "in"), conn("f", "out1", "s1", "in"), conn("f", "out2", "s2", "in"),
              conn("s1", "out", "o1", "in"), conn("s2", "out", "o2", "in")])
     run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
@@ -161,8 +161,10 @@ def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
 def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     defs = dict(BASE_DEFS)
     defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
-    c = env([card("start", "trigger"), card("src", "msg"), card("out", "log"), card("plan", "plan"), card("after", "log")],
-            [conn("start", "out", "src", "start"), conn("src", "msg", "out", "in"), conn("src", "msg", "plan", "data"),
+    c = env([card("start", "trigger"), card("src", "msg"), card("f", "fork"), card("out", "log"), card("plan", "plan"),
+             card("after", "log")],
+            [conn("start", "out", "src", "start"), conn("src", "msg", "f", "in"), conn("f", "out1", "out", "in"),
+             conn("f", "out2", "plan", "data"),
              conn("plan", "summary", "after", "in")], defs)
     # The Draft's ports come from _meta.json (names and purposes only).
     import json as _json

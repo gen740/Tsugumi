@@ -1071,7 +1071,9 @@ struct WireLayer: View {
   let wires: [WireDraw]
   var animate = false
   var zoom: Double = 1
-  var presence: AgentPresence?
+  /// The birds (the Agent's and its helpers'): a wire one of them threads is
+  /// drawn by its presence layer meanwhile.
+  var presences: [AgentPresence] = []
 
   /// The active wires' dashes, and how fast they flow (points per second).
   static let dash: [CGFloat] = [8, 6]
@@ -1079,8 +1081,8 @@ struct WireLayer: View {
 
   var body: some View {
     let anyActive = animate && wires.contains { $0.style == .active }
-    let _ = presence?.revision
-    let threading = presence?.animating(at: Date()) ?? false
+    let _ = presences.map(\.revision)
+    let threading = presences.contains { $0.animating(at: Date()) }
     // At the display's frame rate, the phase wrapping at exactly one dash
     // period, so the dashes flow without a jump.
     SwiftUI.TimelineView(.animation(paused: !anyActive && !threading)) { t in
@@ -1091,7 +1093,7 @@ struct WireLayer: View {
         let w = max(1, 1.6 * min(1.4, zoom))
         for wire in wires {
           // A wire the Agent is threading is drawn by the presence layer.
-          if let th = wire.thread, let presence, presence.thread(th, at: t.date) != .plain { continue }
+          if let th = wire.thread, presences.contains(where: { $0.thread(th, at: t.date) != .plain }) { continue }
           let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
           switch wire.style {
           case .normal:
