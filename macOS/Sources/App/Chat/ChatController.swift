@@ -201,7 +201,10 @@ final class ChatController {
   func refreshSessions() {
     let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     sessions = files.filter { $0.pathExtension == "json" }.map { f in
-      let c = Conversation.load(f)
+      guard let c = try? Conversation.read(f) else {
+        return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: f.lastPathComponent,
+                           updatedAt: .distantPast, messages: 0)
+      }
       return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: c.title ?? firstText(c) ?? String(localized: "新しい会話"),
                          updatedAt: c.updatedAt, messages: c.fullHistory.count)
     }
@@ -227,8 +230,17 @@ final class ChatController {
     usageLimited = false
     status = nil
     currentId = id
-    let agent = Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
+    let agent: Agent
+    do {
+      agent = try Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
                       provider: provider, storage: url(id), references: Self.references)
+    } catch {
+      self.agent = nil
+      items = []
+      failed = true
+      status = String(describing: error)
+      return
+    }
     self.agent = agent
     items = []
     Task {
@@ -281,7 +293,7 @@ final class ChatController {
     guard !text.isEmpty else { return [] }
     var hits: [SearchHit] = []
     for s in sessions {
-      let c = Conversation.load(url(s.id))
+      guard let c = try? Conversation.read(url(s.id)) else { continue }
       for m in c.fullHistory {
         for b in m.content {
           guard case .text(let t) = b, let r = t.range(of: text, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }

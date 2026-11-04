@@ -36,6 +36,17 @@ export function approvalRequired(json: string): string[] | undefined {
   return asked.length ? asked : undefined
 }
 
+/** Undefined means the original operation has no terminal receipt yet. */
+export function recoveredOperationError(json: string): boolean | undefined {
+  try {
+    const o = JSON.parse(json), v = o.value, r = v?.receipt
+    if (o.reply !== 'OperationResult' || v?.state !== 'completed' ||
+        typeof r?.result_type !== 'string' || !r.result_type || r.result_type === 'NONE' ||
+        !r.result || typeof r.result !== 'object' || Array.isArray(r.result)) return undefined
+    return r.result_type === 'Failure'
+  } catch { return undefined }
+}
+
 export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
 
 export class ToolCatalog {
@@ -162,11 +173,25 @@ export const newConversation = (id: string): Conversation => ({
 })
 
 export function loadConversation(file: string, id: string): Conversation {
-  try {
-    return { ...newConversation(id), ...JSON.parse(fs.readFileSync(file, 'utf8')) }
-  } catch {
-    return newConversation(id)
+  let text: string
+  try { text = fs.readFileSync(file, 'utf8') }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return newConversation(id)
+    throw error
   }
+  const c = JSON.parse(text)
+  const messages = (ms: any) => Array.isArray(ms) && ms.every((m) =>
+    m && ['user', 'assistant'].includes(m.role) && Array.isArray(m.content) && m.content.every((b: any) =>
+      b && (b.type === 'text' ? typeof b.text === 'string'
+        : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
+        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
+  if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
+      !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
+        ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
+      !c.usage || !Number.isFinite(c.usage.inputTokens) || !Number.isFinite(c.usage.outputTokens)) {
+    throw new Error(`Invalid conversation file: ${file}`)
+  }
+  return c
 }
 
 const isDir = (p: string) => {
@@ -517,6 +542,14 @@ export function clip(s: string): string {
     + 'read the rest with a narrower request (an offset, a range or one file)]'
 }
 
+/** Keep recent tool calls together with their results; the summary supplies
+ *  the leading user message if the retained tail starts with an assistant. */
+export function compactionBoundary(messages: ChatMessage[], keep = 4): number {
+  let cut = Math.max(0, messages.length - keep)
+  while (cut > 0 && messages[cut].content.some((b) => b.type === 'tool_result')) cut--
+  return cut
+}
+
 export class Agent {
   conversation: Conversation
   /** Model replies with tool calls in one turn before it stops and asks to
@@ -691,7 +724,8 @@ export class Agent {
       if (signal.aborted || e instanceof Cancelled) {
         // Tools that were not sent are recorded as skipped; nothing is re-sent later.
         for (const t of this.conversation.tools) if (t.state === 'pending') t.state = 'skipped'
-        this.save()
+        try { this.save() }
+        catch (error) { events({ kind: 'error', message: String(error) }); return }
         events({ kind: 'error', message: 'cancelled' })
       } else {
         events({ kind: 'error', message: String((e as Error).message ?? e) })
@@ -902,6 +936,9 @@ export class Agent {
         record.opId = randomUUID()
         full.op_id = record.opId
         full.approved_permissions = asked
+        // The persisted record must name the operation we are about to send.
+        this.save()
+        if (signal?.aborted) throw new Cancelled()
         ;({ type: replyType, json } = await call())
       }
       // A run still building or running: wait here (up to statusWait) instead
@@ -950,9 +987,16 @@ export class Agent {
       try {
         const rpc = await this.rpc()
         const r = await rpc.callRaw(op.payloadType, (b) => this.codec.build(op.object, { op_id: t.opId }, b))
-        t.state = 'completed'
         t.result = this.renderReply(this.catalog.replyNames.get(r.type) ?? 'Unknown', r.bb, r.table)
-        events({ kind: 'toolFinished', id: t.id, name: t.name, ok: true, summary: 'reconciled with operation_get' })
+        const error = recoveredOperationError(t.result)
+        if (error !== undefined) {
+          t.state = 'completed'
+          t.isError = error
+          events({ kind: 'toolFinished', id: t.id, name: t.name, ok: !error, summary: 'reconciled with operation_get' })
+        }
+        for (const m of this.conversation.messages) m.content = m.content.map((b) =>
+          b.type === 'tool_result' && b.tool_use_id === t.id
+            ? { ...b, content: clip(t.result!), is_error: error ?? true } : b)
       } catch {}
     }
     this.save()
@@ -963,9 +1007,10 @@ export class Agent {
   private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false) {
     const c = this.conversation
     if (!(force || c.usage.inputTokens > (this.provider.contextLimit * 3) / 4) || c.messages.length <= (force ? 4 : 6)) return
-    const keep = 4
-    let transcript = ''
-    for (const m of c.messages.slice(0, -keep)) {
+    const messages = c.messages.slice(), cut = compactionBoundary(messages)
+    if (!cut) return
+    let transcript = c.summary ? `Earlier summary: ${c.summary}\n` : ''
+    for (const m of messages.slice(0, cut)) {
       for (const b of m.content) {
         if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
         else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
@@ -975,12 +1020,12 @@ export class Agent {
     const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
     let summary = ''
     for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
-    // The kept tail must start with a user message that is not a tool result.
-    let tail = c.messages.slice(-keep)
-    while (tail.length && (tail[0].role !== 'user' || tail[0].content.some((b) => b.type === 'tool_result'))) tail = tail.slice(1)
-    c.summary = [c.summary, summary].filter(Boolean).join('\n')
-    c.archive = [...c.archive, ...c.messages.slice(0, c.messages.length - tail.length)]
-    c.messages = tail
+    if (signal.aborted) throw new Cancelled()
+    if (!summary.trim()) throw new Error('the context summary was empty; the conversation was kept')
+    if (c.messages.length !== messages.length) return
+    c.summary = summary
+    c.archive = [...c.archive, ...messages.slice(0, cut)]
+    c.messages = messages.slice(cut)
     c.usage.inputTokens = 0
     this.save()
     events({ kind: 'compacted' })

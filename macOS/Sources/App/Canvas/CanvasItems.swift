@@ -260,7 +260,7 @@ struct DisplayContent: View {
         Text("画像を表示できません").font(.system(size: size(10, 12))).foregroundStyle(.secondary)
       }
     case .points(let x, let y, let z, let colors)?:
-      PointCloudView(x: x, y: y, z: z, colors: colors)
+      PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
     case .module(let name, let json)?:
       ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
     case nil where large:
@@ -279,6 +279,7 @@ struct DisplayContent: View {
 /// 5 ms for 100 000 points); drawing every point as a SwiftUI path took
 /// about 120 ms a frame, which made dragging crawl.
 struct PointCloudView: View {
+  let identity: DisplaySnapshot.Identity?
   let x: [Float], y: [Float], z: [Float], colors: [UInt32]
   @State private var yaw = 0.6
   @State private var pitch = 0.4
@@ -286,11 +287,6 @@ struct PointCloudView: View {
   @State private var dragStart: (Double, Double)?
   @State private var cloud: PreparedCloud?
   @Environment(\.displayScale) private var displayScale
-
-  /// Cheap identity of the data: the cloud is prepared again only when it changes.
-  private var dataKey: [Float] {
-    [Float(x.count), x.first ?? 0, x.last ?? 0, y.last ?? 0, z.last ?? 0, Float(colors.count)]
-  }
 
   var body: some View {
     Canvas { ctx, size in
@@ -310,7 +306,7 @@ struct PointCloudView: View {
     }
     .accessibilityLabel(String(localized: "点群 \(x.count) 点"))
     .onAppear { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
-    .onChange(of: dataKey) { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
+    .onChange(of: identity) { cloud = PreparedCloud(x: x, y: y, z: z, colors: colors) }
   }
 }
 
