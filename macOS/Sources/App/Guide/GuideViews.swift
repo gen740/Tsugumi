@@ -187,7 +187,7 @@ struct GuideBubbleView: View {
       }
     }
     .padding(10)
-    .frame(width: 270, alignment: .leading)
+    .frame(width: 300, alignment: .leading)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(TsugumiPalette.rufous.opacity(0.45)))
     .shadow(color: .black.opacity(0.18), radius: 8, y: 3)

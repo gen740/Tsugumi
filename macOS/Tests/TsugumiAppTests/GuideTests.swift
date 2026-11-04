@@ -18,12 +18,16 @@ import Testing
   #expect(spoken.say == "CSV を作ります。" && spoken.choices == ["次へ", "もっと詳しく", "a", "b"])
 }
 
-/// The bubble says the first sentence of an answer that gave it no line.
-@Test func theBubbleSaysTheFirstSentence() {
-  #expect(GuideController.firstSentence("**実行は成功**しました。全 Card が動きました。") == "実行は成功しました。")
+/// The bubble says the opening of an answer that gave it no line: whole
+/// sentences up to about 120 characters.
+@Test func theBubbleSaysTheOpening() {
+  #expect(GuideController.firstSentence("**実行は成功**しました。全 Card が動きました。") == "実行は成功しました。全 Card が動きました。")
+  let long = "これは最初の文です。" + String(repeating: "い", count: 115) + "。"
+  #expect(GuideController.firstSentence(long) == "これは最初の文です。")
   #expect(GuideController.firstSentence("\n## 見方\n- `heading` が見出しです") == "見方")
   #expect(GuideController.firstSentence("   ") == nil)
-  #expect((GuideController.firstSentence(String(repeating: "あ", count: 200)) ?? "").count == 79)
+  #expect((GuideController.firstSentence(String(repeating: "あ", count: 200)) ?? "").count == 139)
+  #expect(GuideAction.parse(#"{"endTour": true}"#).endTour && !GuideAction.parse("{}").endTour)
 }
 
 /// The tour's copy is recognised whichever spelling of its folder a window has.

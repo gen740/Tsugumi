@@ -59,8 +59,9 @@
         "type": "object", "additionalProperties": false,
         "properties": {
           "highlight": { "type": "string", "description": "where the bird flies and what it points at: run (the run / stop button), chat (the Agent chat button), logs (the log button), demos (Home's demo list button), new_project (Home's new project button), settings, card:<Card id> (a Card of the workflow on the screen) or demo:<demo id> (its card in Home's demo list, which opens)" },
-          "say": { "type": "string", "description": "one short sentence the bird says in its speech bubble (your reply text is the full answer)" },
+          "say": { "type": "string", "description": "what the bird says in its speech bubble: one to three short sentences, the point of this step (your reply text is the full explanation)" },
           "choices": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "short replies the user can tap in the bubble (e.g. 次へ, もっと詳しく); the one tapped comes back to you as the user's message" },
+          "endTour": { "type": "boolean", "description": "true at the last step of a demo tour (the next steps offered): the tour is over and the app stops telling you about runs" },
           "actions": {
             "type": "array", "maxItems": 3,
             "items": {
@@ -82,7 +83,6 @@
     "tourStart": "[Tour] The user chose to see the demo \"{demo}\" ({title}). An editable copy is open (the bundled original is untouched). Begin the tour at step 1.",
     "tourResume": "[Tour] The user is back in the demo \"{demo}\". Continue the tour from where it was (look at the last run first).",
     "event": "[Event] {event}",
-    "runStarted": "A run started ({run}).",
     "runEnded": "The run {run} ended: {state}.",
     "disconnected": "The connection to the project's environment was lost; the run's outcome is unknown until it comes back.",
     "reconnected": "The connection to the project's environment is back; the run's state is {state}."

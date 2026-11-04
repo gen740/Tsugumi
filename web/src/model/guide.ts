@@ -37,19 +37,24 @@ export type GuideScreen = 'home' | 'demos' | 'project'
 
 /** A guide_show call: where the bird flies, what it says there, the replies
  *  it offers to tap and the buttons that act. */
-export interface GuideShow { highlight?: string; say?: string; choices: string[]; actions: GuideAction[] }
+export interface GuideShow { highlight?: string; say?: string; choices: string[]; actions: GuideAction[]; endTour?: boolean }
 
 /** What the bird says in its bubble, where it is (target; undefined: at
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
 export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean }
 
-/** The first sentence of a reply, short enough for the bubble. */
+/** The opening of a reply for the bubble: its first sentences, up to about 120 characters. */
 export function firstSentence(text: string): string | undefined {
   const line = text.replace(/\*\*|`/g, '').split('\n').map((l) => l.replace(/^[\s#>*•-]+/, '').trim()).find((l) => l) ?? ''
   if (!line) return undefined
-  const m = line.match(/^.*?[。！？!?]/)
-  const s = m ? m[0] : line
-  return s.length > 80 ? s.slice(0, 78) + '…' : s
+  // Whole sentences while they fit, at least the first.
+  const sentences = line.match(/[^。！？!?]*[。！？!?]|[^。！？!?]+$/g) ?? [line]
+  let s = ''
+  for (const x of sentences) {
+    if (s && s.length + x.length > 120) break
+    s += x.trimStart()
+  }
+  return s.length > 140 ? s.slice(0, 138) + '…' : s
 }
 
 /** What a guide_show call points at, says and offers. */
@@ -69,7 +74,7 @@ export function parseShow(args: string): GuideShow {
   const say = typeof v?.say === 'string' ? v.say.trim() : ''
   const choices = (Array.isArray(v?.choices) ? v.choices : []).filter((c: unknown): c is string => typeof c === 'string' && !!c.trim())
     .map((c: string) => c.trim()).slice(0, 4)
-  return { highlight: h || undefined, say: say || undefined, choices, actions }
+  return { highlight: h || undefined, say: say || undefined, choices, actions, endTour: v?.endTour === true }
 }
 
 const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
@@ -292,6 +297,7 @@ export class GuideController extends Observable {
       case 'toolStarted':
         if (e.name === 'guide_show') {
           const shown = parseShow(e.arguments)
+          if (shown.endTour) this.endTour()
           this.point(shown.highlight)
           this.pending.push(...shown.actions)
           this.pendingChoices.push(...shown.choices)
@@ -375,6 +381,7 @@ export class GuideController extends Observable {
   chatShow(chat: ChatController, args: string) {
     if (!this.available) return
     const shown = parseShow(args)
+    if (shown.endTour) this.endTour()
     this.speakingChat = chat
     this.highlight = shown.highlight
     this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight }
@@ -572,7 +579,7 @@ export class GuideController extends Observable {
       return
     }
     if (s.runActive) {
-      if (!before.startsWith(run + ':') || !wasActive) this.tell(text('event', { event: text('runStarted', { run }) }), '実行が始まりました', s)
+      // The bird watches the run; Tsugumi is told only how it ended.
     } else if (s.runStatus && (wasActive || !before.startsWith(run + ':'))) {
       this.tell(text('event', { event: text('runEnded', { run, state }) }), `実行が終わりました（${runState(s.runStatus.state).label}）`, s)
     }

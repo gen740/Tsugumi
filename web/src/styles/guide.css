@@ -51,7 +51,7 @@ span[data-guide] { display: inline-flex; }
 .guide-nest-button { padding: 2px 4px; }
 
 /* The bubble: what the bird says, choices to tap, buttons that act. */
-.guide-speech { width: 270px; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+.guide-speech { width: 300px; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;
   border: 1px solid color-mix(in srgb, var(--tsugumi-rufous) 45%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); }
 .guide-choice { border: 1px solid color-mix(in srgb, var(--tsugumi-rufous) 55%, transparent); background: color-mix(in srgb, var(--tsugumi-rufous) 14%, transparent);
   color: inherit; border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }

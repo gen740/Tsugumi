@@ -32,7 +32,7 @@ struct GuideAction: Identifiable, Hashable {
     let choices = (v["choices"]?.array ?? []).compactMap { $0.string?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     // Unknown kinds are dropped first; at most three buttons and four choices.
     return GuideShow(highlight: highlight?.isEmpty == false ? highlight : nil, say: say?.isEmpty == false ? say : nil,
-                     choices: Array(choices.prefix(4)), actions: Array(actions.prefix(3)))
+                     choices: Array(choices.prefix(4)), actions: Array(actions.prefix(3)), endTour: v["endTour"]?.bool == true)
   }
 }
 
@@ -43,6 +43,8 @@ struct GuideShow: Equatable {
   var say: String?
   var choices: [String] = []
   var actions: [GuideAction] = []
+  /// The last step of a demo tour: no more notes about runs.
+  var endTour = false
 }
 
 /// What the bird says in its speech bubble, where it is (target: what it
@@ -249,6 +251,7 @@ final class GuideController {
     guard available else { return }
     speakingChat = chat
     let shown = GuideAction.parse(arguments)
+    if shown.endTour { endTour() }
     point(at: shown.highlight)
     bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight)
   }
@@ -407,6 +410,7 @@ final class GuideController {
       if name == "guide_show" {
         speakingChat = nil
         let shown = GuideAction.parse(args)
+        if shown.endTour { endTour() }
         point(at: shown.highlight)
         pending += shown.actions
         pendingChoices += shown.choices
@@ -463,14 +467,22 @@ final class GuideController {
     pendingChoices = []
   }
 
-  /// The first sentence of a reply, short enough for the bubble.
+  /// The opening of a reply for the bubble: its first sentences, up to about 120 characters.
   nonisolated static func firstSentence(_ text: String) -> String? {
     let plain = text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
       .split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " #-•*>")) }.first { !$0.isEmpty } ?? ""
     guard !plain.isEmpty else { return nil }
-    let end = plain.firstIndex { "。！？!?".contains($0) }.map { plain.index(after: $0) } ?? plain.endIndex
-    let s = String(plain[..<end])
-    return s.count > 80 ? String(s.prefix(78)) + "…" : s
+    // Whole sentences while they fit, at least the first.
+    var s = ""
+    var rest = Substring(plain)
+    while !rest.isEmpty {
+      let end = rest.firstIndex { "。！？!?".contains($0) }.map { rest.index(after: $0) } ?? rest.endIndex
+      let sentence = String(rest[..<end])
+      if !s.isEmpty && s.count + sentence.count > 120 { break }
+      s += sentence
+      rest = rest[end...].drop { $0 == " " }
+    }
+    return s.count > 140 ? String(s.prefix(138)) + "…" : s
   }
 
   private func flush() {
@@ -664,11 +676,7 @@ final class GuideController {
       return
     }
     if s.runActive {
-      // A new run (not each step of one).
-      if !before.hasPrefix(run + ":") || !seenActive {
-        tell(Agent.guideText("event", ["event": Agent.guideText("runStarted", ["run": run])]),
-             display: String(localized: "実行が始まりました"), session: s)
-      }
+      // The bird watches the run; Tsugumi is told only how it ended.
     } else if seenActive || !before.hasPrefix(run + ":"), s.runStatus != nil {
       tell(Agent.guideText("event", ["event": Agent.guideText("runEnded", ["run": run, "state": state])]),
            display: String(localized: "実行が終わりました（\(s.runStatus?.state.label ?? state)）"), session: s)
