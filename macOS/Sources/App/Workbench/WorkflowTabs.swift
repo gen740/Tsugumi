@@ -11,6 +11,10 @@ struct WorkflowTabs: View {
   @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
+  @Environment(\.guideWindow) private var guideWindow
+
+  /// The guide's panel is open in this main window (docked in the inspector).
+  private var guideDocked: Bool { guideWindow != nil && GuideController.shared.available && GuideController.shared.open }
 
   var body: some View {
     // Sidebar, title and toolbar come from the split view so they never overlap,
@@ -36,16 +40,27 @@ struct WorkflowTabs: View {
         }
       }
       .overlay(alignment: .bottomTrailing) {
-        GuideCorner(screen: .project, session: session, tab: workspace.active)
+        GuideCorner(screen: .project, session: session, tab: workspace.active, docked: true)
           .padding(.trailing, 14).padding(.bottom, 58)
       }
-      .inspector(isPresented: $workspace.showChat) {
-        // Wider by default; the width the user gives it is kept (per Mac).
-        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
-          .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
-            if w >= 320 { chatWidth = Double(w.rounded()) }
+      // The chat, and the guide's panel docked above it: never over the canvas.
+      .inspector(isPresented: Binding(get: { workspace.showChat || guideDocked },
+                                      set: { if !$0 { workspace.showChat = false; GuideController.shared.open = false } })) {
+        VStack(spacing: 0) {
+          if guideDocked {
+            GuideDock(session: session, tab: workspace.active)
+              .frame(maxHeight: workspace.showChat ? 420 : .infinity)
+            if workspace.showChat { Divider() }
           }
-          .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
+          if workspace.showChat {
+            // Wider by default; the width the user gives it is kept (per Mac).
+            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
+          }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+          if w >= 320 { chatWidth = Double(w.rounded()) }
+        }
+        .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
       }
       }
     }

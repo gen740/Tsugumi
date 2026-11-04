@@ -36,8 +36,10 @@ function GuideRings() {
   return <style>{`${sel} { outline: 2.5px solid ${PALETTE.rufous}; outline-offset: 4px; border-radius: 8px; animation: guide-ring 1.6s ease-in-out infinite; }`}</style>
 }
 
-/** The bird in the corner and its panel. Shown only with a model connection. */
-export function GuideCorner({ screen, session, tab }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab }) {
+/** The bird in the corner and its panel. Shown only with a model connection.
+ *  In a project the panel is `docked` in the right column (GuideDock), so it
+ *  never covers the canvas; on Home it floats above the bird. */
+export function GuideCorner({ screen, session, tab, docked }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; docked?: boolean }) {
   useObserve(guide, session, prefs)
   const runKey = session ? guide.runKey(session) : ''
   useEffect(() => {
@@ -50,7 +52,30 @@ export function GuideCorner({ screen, session, tab }: { screen: GuideScreen; ses
   const tourHere = !!(session && guide.tour && guide.same(guide.tour.path, session))
   const mood = guide.busy ? 'thinking' : guide.failed ? 'worried' : session?.runActive && tourHere ? 'watching' : 'idle'
 
-  const perform = (a: GuideAction) => {
+  const perform = makePerform(session, tab)
+
+  return (
+    <div className={`guide-corner${screen === 'project' ? ' in-project' : ''}`}>
+      <GuideRings />
+      {guide.open && !docked && <GuidePanel screen={screen} session={session} tab={tab} perform={perform} />}
+      <div className="guide-corner-row">
+        {!guide.open && (guide.activity || guide.failed) && (
+          <span className="guide-bubble material" aria-hidden>{guide.activity ? guide.activity + '…' : 'うまく答えられませんでした'}</span>
+        )}
+        <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}`}
+          title={`ガイドのツグミに聞く（${prefs.label('toggleGuide')}）`}
+          aria-label="ガイドのツグミ" aria-expanded={guide.open}
+          onClick={() => guide.set('open', !guide.open)}>
+          <GuideBird />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** What a button of the guide does, with the app's own controls. */
+function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
+  return (a: GuideAction) => {
     switch (a.kind) {
       case 'open_demo':
         void openDemo(a.demo ?? 'report', session)
@@ -82,24 +107,6 @@ export function GuideCorner({ screen, session, tab }: { screen: GuideScreen; ses
         windowActions?.home()
     }
   }
-
-  return (
-    <div className={`guide-corner${screen === 'project' ? ' in-project' : ''}`}>
-      <GuideRings />
-      {guide.open && <GuidePanel screen={screen} session={session} tab={tab} perform={perform} />}
-      <div className="guide-corner-row">
-        {!guide.open && (guide.activity || guide.failed) && (
-          <span className="guide-bubble material" aria-hidden>{guide.activity ? guide.activity + '…' : 'うまく答えられませんでした'}</span>
-        )}
-        <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}`}
-          title={`ガイドのツグミに聞く（${prefs.label('toggleGuide')}）`}
-          aria-label="ガイドのツグミ" aria-expanded={guide.open}
-          onClick={() => guide.set('open', !guide.open)}>
-          <GuideBird />
-        </button>
-      </div>
-    </div>
-  )
 }
 
 async function openDemo(id: string, session?: ProjectSession) {
@@ -133,7 +140,14 @@ const HINTS: Record<'project' | 'home', string[]> = {
   home: ['Tsugumi で何ができる？', 'デモを見せて', '新しいプロジェクトの作り方は？'],
 }
 
-function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void }) {
+/** The guide's panel in a project's right column: above the Agent chat
+ *  when it is open (`split`), the whole column otherwise. */
+export function GuideDock({ session, tab, split }: { session: ProjectSession; tab?: WorkflowTab; split: boolean }) {
+  useObserve(guide, session)
+  return <GuidePanel screen="project" session={session} tab={tab} perform={makePerform(session, tab)} docked split={split} />
+}
+
+function GuidePanel({ screen, session, tab, perform, docked, split }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void; docked?: boolean; split?: boolean }) {
   const [text, setText] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -160,7 +174,7 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
     }
   }
   return (
-    <div className="guide-panel material" role="dialog" aria-label="ガイドのツグミとの会話"
+    <div className={`guide-panel ${docked ? `docked${split ? ' split' : ''}` : 'material'}`} role="dialog" aria-label="ガイドのツグミとの会話"
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()

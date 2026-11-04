@@ -13,7 +13,8 @@ import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, Wor
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel } from './chat'
-import { GuideCorner } from './guide'
+import { guide } from '../model/guide'
+import { GuideCorner, GuideDock } from './guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
@@ -68,6 +69,8 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
     document.title = session.scopeName([])
   })
   const problem = hasProblem(session)
+  useObserve(guide)
+  const guideDocked = !!onSwitchProject && guide.available && guide.open
   return (
     <div className="window workflow-window">
       {workspace.showSidebar && tab && (
@@ -96,10 +99,12 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
           </>
         )}
       </div>
-      {!problem && workspace.showChat && (
+      {!problem && (workspace.showChat || guideDocked) && (
         // Wider by default; the width the user gives it is kept (per browser).
+        // The guide's panel docks here, above the chat, never over the canvas.
         <SidePane side="right" storageKey="chat.width" initial={480} min={320} max={900} className="chat-pane">
-          <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />
+          {guideDocked && <GuideDock session={session} tab={tab} split={workspace.showChat} />}
+          {workspace.showChat && <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />}
         </SidePane>
       )}
       <LoadingOverlay content={loadingContent(session)} />
@@ -130,7 +135,7 @@ export function Workbench({ workspace, session, tab }: { workspace: Workspace; s
       <div className="workbench-canvas">
         <CanvasWorkspace workspace={workspace} session={session} tab={tab} onSwitchProject={workspace.switchProject}
           bottomTrailing={<StatusBar workspace={workspace} session={session} tab={tab} />} />
-        {workspace.switchProject && <GuideCorner screen="project" session={session} tab={tab} />}
+        {workspace.switchProject && <GuideCorner screen="project" session={session} tab={tab} docked />}
       </div>
       {workspace.showBottom && <LogTimelinePanel workspace={workspace} session={session} tab={tab} />}
     </div>

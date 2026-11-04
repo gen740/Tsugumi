@@ -22,6 +22,8 @@
 span[data-guide] { display: inline-flex; }
 
 .guide-panel { width: 340px; height: 440px; max-height: calc(100vh - 120px); border-radius: 14px; box-shadow: var(--shadow-strong); display: flex; flex-direction: column; overflow: hidden; }
+.guide-panel.docked { width: auto; height: auto; max-height: none; border-radius: 0; box-shadow: none; background: var(--window-bg); }
+.chat-pane > .guide-panel.docked.split { flex: 0 0 52%; border-bottom: 0.5px solid var(--separator-strong); }
 .guide-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 0.5px solid var(--separator); }
 .guide-tour { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: color-mix(in srgb, var(--tsugumi-rufous) 12%, transparent); color: var(--tsugumi-rufous); }
 .guide-tour .caption { color: var(--label); }

@@ -68,6 +68,9 @@ struct GuideCorner: View {
   let screen: GuideController.Screen
   var session: ProjectSession? = nil
   var tab: WorkflowTab? = nil
+  /// In a project the panel is docked in the inspector column (GuideDock),
+  /// so it never covers the canvas; on Home it floats above the bird.
+  var docked = false
   @Environment(AppModel.self) private var model
   @Environment(\.guideWindow) private var window
   @Environment(\.openWindow) private var openWindow
@@ -79,7 +82,7 @@ struct GuideCorner: View {
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
       if guide.available, window != nil {
-        if guide.open {
+        if guide.open && !docked {
           GuidePanel(screen: screen, session: session, tab: tab, perform: perform)
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
         }
@@ -108,6 +111,10 @@ struct GuideCorner: View {
     .onChange(of: guide.offersDemo, initial: true) { _, offers in if offers, window != nil { guide.open = true } }
   }
 
+  private var perform: GuidePerformer {
+    GuidePerformer(model: model, window: window, session: session, tab: tab, openWindow: openWindow, openSettings: openSettings)
+  }
+
   /// What changes in the project that the guide follows during a tour.
   private var runKey: String {
     guard let s = session else { return "" }
@@ -127,10 +134,20 @@ struct GuideCorner: View {
     if guide.failed { return String(localized: "うまく答えられませんでした") }
     return nil
   }
+}
 
-  // MARK: Actions
+/// What a button of the guide does, with the app's own controls in this window.
+@MainActor
+struct GuidePerformer {
+  let model: AppModel
+  let window: GuideWindowActions?
+  let session: ProjectSession?
+  let tab: WorkflowTab?
+  let openWindow: OpenWindowAction
+  let openSettings: OpenSettingsAction
+  private var guide: GuideController { .shared }
 
-  private func perform(_ a: GuideAction) {
+  func callAsFunction(_ a: GuideAction) {
     switch a.kind {
     case .openDemo:
       openDemo(a.demo ?? "report")
@@ -222,13 +239,32 @@ struct GuideAvatar: View {
 
 // MARK: - The panel
 
+/// The guide's panel in a project's inspector column: above the Agent chat
+/// when it is open (`split`), the whole column otherwise.
+struct GuideDock: View {
+  let session: ProjectSession
+  let tab: WorkflowTab?
+  @Environment(AppModel.self) private var model
+  @Environment(\.guideWindow) private var window
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+
+  var body: some View {
+    GuidePanel(screen: .project, session: session, tab: tab,
+               perform: GuidePerformer(model: model, window: window, session: session, tab: tab,
+                                       openWindow: openWindow, openSettings: openSettings),
+               docked: true)
+  }
+}
+
 /// The conversation with the guide: its greeting and demo offer, the tour
 /// being shown, the replies with their buttons, and a field to ask in.
 private struct GuidePanel: View {
   let screen: GuideController.Screen
   let session: ProjectSession?
   let tab: WorkflowTab?
-  let perform: (GuideAction) -> Void
+  let perform: GuidePerformer
+  var docked = false
   @Environment(\.guideWindow) private var window
   @Environment(\.openSettings) private var openSettings
   @State private var text = ""
@@ -258,10 +294,7 @@ private struct GuidePanel: View {
       Divider()
       input
     }
-    .frame(width: 340, height: 440)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.secondary.opacity(0.25)))
-    .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+    .modifier(GuidePanelFrame(docked: docked))
     .onExitCommand { guide.open = false }
     .onAppear { focused = !guide.offersDemo }
     .accessibilityElement(children: .contain)
@@ -522,6 +555,23 @@ struct GuideSetupView: View {
         working = false
         message = String(localized: "接続を確かめられませんでした（\(String(describing: error))）。キーを入れ直すか、ネットワークを確かめて再試行してください。")
       }
+    }
+  }
+}
+
+/// A floating panel above the bird, or a docked one filling its place in a column.
+private struct GuidePanelFrame: ViewModifier {
+  let docked: Bool
+
+  func body(content: Content) -> some View {
+    if docked {
+      content.frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else {
+      content
+        .frame(width: 340, height: 440)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.secondary.opacity(0.25)))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
     }
   }
 }
