@@ -134,12 +134,23 @@ function copyDemo(id: string): string {
 
 const FLOWS = ['topToBottom', 'leftToRight']
 
+/** The nixpkgs this Tsugumi builds with (its flake.lock): new projects are
+ *  pinned to it, so a later Tsugumi with another nixpkgs leaves them as they are. */
+const nixpkgsPin: string | null = (() => {
+  try {
+    const locked = JSON.parse(fs.readFileSync(path.join(repo, 'flake.lock'), 'utf8')).nodes.nixpkgs.locked
+    return `https://github.com/NixOS/nixpkgs/archive/${locked.rev}.tar.gz#${locked.narHash}`
+  } catch {
+    return null
+  }
+})()
+
 /** Creates an empty project; the initial documents are placed before the environment starts. */
 function createProject(parent: string, name: string, flow: unknown): string {
   const dir = path.join(parent, name.replace(/[/\\]/g, '-'))
   if (fs.existsSync(dir)) throw new HttpError(409, `${dir} は既に存在します`)
   fs.mkdirSync(dir, { recursive: true })
-  const project = { name, pkgsPath: 'tsugumi:default', databaseConnections: [], canvas: { cards: [], connections: [] } }
+  const project = { name, pkgsPath: nixpkgsPin ?? 'tsugumi:default', databaseConnections: [], canvas: { cards: [], connections: [] } }
   fs.writeFileSync(path.join(dir, 'tsugumi.json'), JSON.stringify(project, null, 2) + '\n')
   // The direction the new project's Cards are laid out in (the app's default).
   const f = typeof flow === 'string' && FLOWS.includes(flow) ? flow : 'topToBottom'
@@ -351,7 +362,7 @@ function projectDir(p: unknown): string {
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/status': () => ({
-    setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null,
+    setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
     ...chatStatus(), documents: projectsDir,
   }),
   'POST /api/setup/build': () => {

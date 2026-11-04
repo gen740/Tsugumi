@@ -401,6 +401,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const [message, setMessage] = useState<string>()
+  const pin = app.status?.nixpkgsPin ?? undefined
   const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '')
   const save = async () => {
     session.edit((x) => {
@@ -417,9 +418,15 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     }}>
       <div className="scroll flex1">
         <Form>
-          <Section footer="「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。">
+          <Section footer="このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。">
             <Row label="プロジェクト名"><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
-            <Row label="実行環境（Nixpkgs）"><TextField value={pkgs} onChange={setPkgs} placeholder="tsugumi:default" style={{ width: 260 }} /></Row>
+            <Row label="実行環境（Nixpkgs）"><TextField value={pkgs} onChange={setPkgs} placeholder={pin ?? 'tsugumi:default'} style={{ width: 260 }} /></Row>
+            {(!pkgs || pkgs === 'tsugumi:default') && (
+              <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}><Icon name="exclamationmark.triangle" />Nixpkgs が固定されていません。Tsugumi を更新すると、このプロジェクトの Card のパッケージも変わります。</span></Row>
+            )}
+            {pin && pkgs !== pin && (
+              <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? 'この Tsugumi の Nixpkgs に固定' : 'この Tsugumi の Nixpkgs に更新'}</Button></Row>
+            )}
           </Section>
           <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。</span>}>
             <Row label="流れの向き" help="このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。">

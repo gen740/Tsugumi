@@ -88,6 +88,8 @@ export interface Status {
   /** Where demo copies go (~/Documents/Tsugumi or TSUGUMI_PROJECTS_DIR). */
   documents: string
   launchProject: string | null
+  /** The nixpkgs this Tsugumi builds with (new projects are pinned to it). */
+  nixpkgsPin: string | null
   chatAvailable: boolean
   chatError: string | null
 }

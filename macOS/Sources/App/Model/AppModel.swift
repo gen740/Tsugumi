@@ -195,7 +195,7 @@ final class AppModel {
     let project: JSONValueLiteral = """
     {
       "name": \(JSONValueLiteral.quote(name)),
-      "pkgsPath": "tsugumi:default",
+      "pkgsPath": \(JSONValueLiteral.quote(NixpkgsPin.current ?? "tsugumi:default")),
       "databaseConnections": [],
       "canvas": { "cards": [], "connections": [] }
     }

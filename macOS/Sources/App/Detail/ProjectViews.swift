@@ -391,8 +391,15 @@ private struct GeneralProjectSettings: View {
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
-        TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text("tsugumi:default"))
-        Text("「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。")
+        TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(NixpkgsPin.current ?? "tsugumi:default"))
+        if pkgs.isEmpty || pkgs == "tsugumi:default" {
+          Label("Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。", systemImage: "exclamationmark.triangle")
+            .font(.caption).foregroundStyle(.orange)
+        }
+        if let pin = NixpkgsPin.current, pkgs != pin {
+          Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? "このアプリの Nixpkgs に固定" : "このアプリの Nixpkgs に更新") { pkgs = pin }
+        }
+        Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)
         Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
           ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
