@@ -10,6 +10,8 @@ import TsugumiAgent
 final class ThoughtSummarizer {
   let presence: AgentPresence
   private(set) var usage = Usage()
+  /// Why the last summary could not be written (nil when it was).
+  private(set) var lastError: String?
   private var notes: [String] = []
   private var lastCall = Date.distantPast
   private var task: Task<Void, Never>?
@@ -52,8 +54,14 @@ final class ThoughtSummarizer {
       let input = self.notes.joined(separator: "\n")
       self.notes.removeAll()
       self.lastCall = Date()
-      if let line = try? await Self.summarize(String(input.suffix(2400)), config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens }) {
-        self.presence.think(line)
+      do {
+        if let line = try await Self.summarize(String(input.suffix(2400)), config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens }) {
+          self.presence.think(line)
+        }
+        self.lastError = nil
+      } catch {
+        // The bubble keeps its plain lines; the reason is kept for checks.
+        self.lastError = "\(error)"
       }
       self.task = nil
       if !self.notes.isEmpty { self.schedule() }
@@ -74,13 +82,24 @@ final class ThoughtSummarizer {
     return c
   }
 
-  static let system = """
-  You watch an AI agent build a data-processing workflow of Cards in an app and describe what it is \
-  doing right now, for a small speech bubble beside it on the canvas. Reply with one line of Japanese, \
-  at most 40 characters, in plain present tense as the agent's own thought (for example \
-  「帯域の境界を広げて、緑を見やすくする」). Say what it does and why when that is clear; no greetings, \
-  no quotes, no Markdown, never invent facts that are not in the notes.
-  """
+  /// The bubble speaks in the app's language and in the voice of its plain
+  /// lines (「load を読んでいます」), so a summary does not change the tone.
+  static var system: String { system(english: Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true) }
+
+  nonisolated static func system(english: Bool) -> String {
+    let voice = english
+      ? "one line of English, at most 60 characters, in the present progressive like the app's other lines " +
+        "(\"Reading load\", \"Running from start\"), for example \"Widening the band edges so green stands out\""
+      : "one line of Japanese, at most 40 characters, in the polite form ending in 「〜しています」 like the app's " +
+        "other lines (「load を読んでいます」「start から実行しています」), for example 「帯域の境界を広げて、緑を見やすくしています」"
+    return """
+    You watch an AI agent build a data-processing workflow of Cards in an app and say what it is doing right \
+    now, for a small speech bubble beside it on the canvas. Reply with \(voice). Say what it does and why when \
+    that is clear, naming Cards as the notes do but never the tools (say "waiting for the run to end", not \
+    run_status); no first person, no greetings, no quotes, no Markdown, never invent facts that are not in \
+    the notes.
+    """
+  }
 
   static func summarize(_ notes: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String? {
     let provider = MessagesProvider(config: config)

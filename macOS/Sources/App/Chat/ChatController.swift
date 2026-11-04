@@ -150,22 +150,23 @@ final class ChatController {
 
   var provider: ProviderConfig { AgentSettings.current() }
 
-  /// The references the Agent may read (reference_read): the bundled demos,
-  /// the Python SDK and the Card guide; next to the repository in a
+  /// The references the Agent may read (reference_read): the bundled demos
+  /// that are not Draft tasks or their answers (Agent.referenceDemos), the
+  /// Python SDK and the Card guide; next to the repository in a
   /// development build.
   static let references: [String: URL] = {
     let fm = FileManager.default
     if let res = Bundle.main.resourceURL, fm.fileExists(atPath: res.appendingPathComponent("reference/card-guide.md").path) {
-      return ["demos": res.appendingPathComponent("demos", isDirectory: true),
-              "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
-              "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]
+      return Agent.referenceDemos(in: res.appendingPathComponent("demos", isDirectory: true)).merging([
+        "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
+        "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]) { a, _ in a }
     }
     #if DEBUG
     // A development build run from the source tree reads the repository.
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
-    return ["demos": repo.appendingPathComponent("demos", isDirectory: true),
-            "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
-            "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]
+    return Agent.referenceDemos(in: repo.appendingPathComponent("demos", isDirectory: true)).merging([
+      "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
+      "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     #else
     return [:]
     #endif
@@ -426,7 +427,7 @@ final class ChatController {
     }
     Task { await agent?.cancel() }
     busy = false
-    session.presence.turnEnded()
+    session.presence.turnEnded(.stopped)
     status = String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。")
   }
 
@@ -483,6 +484,7 @@ final class ChatController {
     switch e {
     case .text(let t):
       thoughts.note(text: t)
+      session.presence.doing(String(localized: "考えています"))
       if let last = items.last, last.role == "assistant", last.tool == nil {
         items[items.count - 1].text += t
       } else {
@@ -490,6 +492,7 @@ final class ChatController {
       }
     case .toolStarted(_, let name, let args):
       items.append(Item(role: "tool", text: args, tool: (name, nil)))
+      session.presence.doing(PresenceEvents.activity(tool: name))
       showOnCanvas(tool: name, arguments: args)
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
@@ -508,7 +511,7 @@ final class ChatController {
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       busy = false
-      session.presence.turnEnded()
+      session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
       status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。") : String(localized: "エラー: \(s)")
       refreshAfterTurn()
@@ -518,7 +521,7 @@ final class ChatController {
       refreshAfterTurn()
     case .stepLimit(let steps, let run):
       busy = false
-      session.presence.turnEnded()
+      session.presence.turnEnded(.limit)
       stoppedAtLimit = true
       status = String(localized: "\(steps) 手の上限で中断しました。「続ける」で続きから再開できます。")
         + (run.map { String(localized: " 実行 \(String($0.prefix(8))) の結果はまだ確かめていません。") } ?? "")

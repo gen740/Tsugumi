@@ -175,6 +175,7 @@
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
 "ありません" = "None";
 "ありません。" = "None.";
+"うまくいきませんでした" = "That did not work";
 "くわえている手毬の糸は「紡ぐ」から。この糸が Card をつなぐ配線になるよ" = "The thread from my temari is that spun thread. It becomes the wires between Cards.";
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
@@ -350,6 +351,7 @@
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
 "ファイルを読み込めませんでした" = "Could not read the file";
+"ファイルを読んでいます" = "Reading files";
 "ファイルを選んでください" = "Choose a file";
 "ファイルアクセスを制限" = "Restrict file access";
 "フィールドを読めません: %@" = "Cannot read a field: %@";
@@ -375,6 +377,7 @@
 "プロジェクトを取り込む" = "Import Project";
 "プロジェクトを複製" = "Duplicate Project";
 "プロジェクトを複製…" = "Duplicate Project…";
+"プロジェクトを見ています" = "Looking at the project";
 "プロジェクトを読み込めませんでした" = "Could not load the project";
 "プロジェクトを読み込んでいます…" = "Loading the project…";
 "プロジェクトを開く" = "Open Project";
@@ -449,6 +452,7 @@
 "例: 集計する数値の列" = "e.g. the numbers to sum up";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
+"保存しています" = "Saving";
 "保存して終了" = "Save and Quit";
 "保存しました。" = "Saved.";
 "保存せずに終了" = "Quit Without Saving";
@@ -518,6 +522,7 @@
 "出力はありません" = "No outputs";
 "出力を切断" = "Disconnect Outputs";
 "出力を検証中" = "Validating outputs";
+"出力を見ています" = "Looking at the outputs";
 "出力ポート" = "Output ports";
 "出力ポートと型の正本は _outputs.fbs です（型はここで選べます。型そのものはソースで定義します）。" = "_outputs.fbs is the source of output ports and their types (a type can be chosen here; types themselves are defined in the source).";
 "出力検証" = "Output validation";
@@ -594,6 +599,7 @@
 "変更を保存できませんでした。" = "Could not save the changes.";
 "変更を破棄" = "Discard Changes";
 "変更を破棄…" = "Discard Changes…";
+"変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
 "外部の変更を再読込" = "Reload External Changes";
 "外部接続" = "External Connections";
@@ -620,9 +626,12 @@
 "実行するとここにログが表示されます。" = "Logs appear here after a run.";
 "実行すると表示されます。" = "Appears after a run.";
 "実行の期限（秒）" = "Run timeout (s)";
+"実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
+"実行の記録を見ています" = "Reading the run's record";
 "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on.";
 "実行を停止" = "Stop Run";
+"実行を止めています" = "Stopping the run";
 "実行を選ぶか、実行してください。" = "Choose a run, or run the workflow.";
 "実行を選んでください" = "Choose a run";
 "実行ログを開く" = "Open Run Log";
@@ -742,6 +751,7 @@
 "日時" = "Date";
 "日本語" = "日本語";
 "書き出す…" = "Export…";
+"書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";
 "最大実行回数" = "Max runs";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
@@ -782,10 +792,12 @@
 "概要" = "Description";
 "構文エラーがあります（テキストは変更していません）" = "Syntax errors (the text was not changed)";
 "標準" = "Standard";
+"止めました" = "Stopped";
 "残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";
 "段階" = "Phase";
 "流れの向き" = "Flow direction";
+"添えられたフォルダを読んでいます" = "Reading the attached folder";
 "添付を外す" = "Remove the attachment";
 "添付（環境を再起動）" = "Attach (restarts the environment)";
 "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）" = "No preparation, evaluation or build output (empty when cached or reused)";
@@ -891,6 +903,7 @@
 "送信" = "Send";
 "送信（Return）" = "Send (Return)";
 "送信（⌘Return）" = "Send (⌘Return)";
+"途中で止まっています" = "Stopped partway";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
 "適用" = "Apply";

@@ -9,7 +9,8 @@ import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { draftRequest } from '../src/shared/agentShared'
-import { approvalRequired, ToolCatalog } from './agent'
+import os from 'node:os'
+import { Agent, approvalRequired, referenceDemos, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -50,4 +51,19 @@ for (const c of fixture.flatjson) {
 }
 for (const c of fixture.draftRequest) assert.equal(draftRequest(c.scope, c.cards), c.expect)
 for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.json) ?? null, c.expect, c.json)
+// The Draft demos are tasks and the finished demo of each is its answer:
+// reference_read neither lists nor reads them (as the Swift Agent).
+{
+  const refs = referenceDemos(path.join(root, 'demos'))
+  assert.deepEqual(Object.keys(refs).sort(), ['demos/collatz', 'demos/live-stream', 'demos/report'])
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-ref-'))
+  const agent = new Agent(new ToolCatalog(schema), async () => { throw new Error('no rpc') },
+    { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never, path.join(tmp, 'c.json'), 'c', refs)
+  assert.deepEqual(agent.readReference('demos'), ['collatz/\nlive-stream/\nreport/', false])
+  assert.equal(agent.readReference('demos/report/tsugumi.json')[1], false)
+  for (const hidden of ['demos/casa', 'demos/casa/definitions/bands/src/main.py', 'demos/casa-draft', 'demos/../core']) {
+    assert.equal(agent.readReference(hidden)[1], true, `${hidden} is readable`)
+  }
+  fs.rmSync(tmp, { recursive: true, force: true })
+}
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

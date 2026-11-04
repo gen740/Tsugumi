@@ -67,6 +67,24 @@ final class AgentPresence {
   private(set) var endedAt: Date?
   /// The latest thought summary (from a small model), with its time.
   private(set) var thought: (text: String, at: Date)?
+  /// What the Agent does between scenes (looking things up, checking,
+  /// waiting for a run), with its time.
+  private(set) var activity: (text: String, at: Date)?
+  /// How the last turn ended (the bubble's last words).
+  private(set) var outcome: Outcome = .done
+
+  enum Outcome: Equatable {
+    case done, failed, stopped, limit
+
+    var line: String {
+      switch self {
+      case .done: String(localized: "できました")
+      case .failed: String(localized: "うまくいきませんでした")
+      case .stopped: String(localized: "止めました")
+      case .limit: String(localized: "途中で止まっています")
+      }
+    }
+  }
   /// Bumped when an effect ends, so views that animate it can stop.
   private(set) var revision = 0
   private var sweeper: Task<Void, Never>?
@@ -79,17 +97,30 @@ final class AgentPresence {
     working = true
     endedAt = nil
     thought = nil
+    activity = nil
+    outcome = .done
     beats.removeAll { $0.end < now }
   }
 
-  func turnEnded(now: Date = Date()) {
+  func turnEnded(_ outcome: Outcome = .done, now: Date = Date()) {
+    self.outcome = outcome
     working = false
     endedAt = max(now, beats.last?.end ?? now)
     sweep()
   }
 
+  /// A thought summary; one that comes after the turn ended is dropped.
   func think(_ text: String, now: Date = Date()) {
+    guard working else { return }
     thought = (text, now)
+  }
+
+  /// What the Agent started doing (nil: nothing to say beyond the scenes).
+  func doing(_ text: String?, now: Date = Date()) {
+    guard working, let text else { return }
+    // The same thing still going on (text streams in many pieces) keeps its time.
+    if let a = activity, a.text == text, a.at >= (current(at: now)?.beat.start ?? .distantPast) { return }
+    activity = (text, now)
   }
 
   func enqueue(_ beat: Beat, now: Date = Date()) {
@@ -141,19 +172,26 @@ final class AgentPresence {
   }
 
   /// What the bubble says at `now`: a fresh thought summary if there is one,
-  /// otherwise the plain line of the scene.
+  /// otherwise the line of the scene playing, otherwise what the Agent does
+  /// now (a scene that has ended is not said on: the bird would be reading
+  /// a Card while the Agent looks something else up).
   func line(at now: Date) -> (text: String, since: Date)? {
     let scene = current(at: now)
-    if let t = thought, now.timeIntervalSince(t.at) < 8, t.at >= (scene?.beat.start ?? .distantPast).addingTimeInterval(-8) {
+    // A scene that started after the thought is newer than it (the bird
+    // writes rgb while the thought still says it checks bands).
+    if working, let t = thought, now.timeIntervalSince(t.at) < 8, t.at >= (scene?.beat.start ?? .distantPast) {
       return (t.text, t.at)
     }
-    if let s = scene {
-      if working || s.beat.end > now { return (s.beat.line, s.beat.start) }
-      // Done: said for a moment, then the bubble goes before the bird.
-      let doneAt = max(s.beat.end, endedAt ?? s.beat.end)
-      return now.timeIntervalSince(doneAt) < Timing.doneLine ? (String(localized: "できました"), doneAt) : nil
+    if let s = scene, s.beat.end > now { return (s.beat.line, s.beat.start) }
+    if working {
+      if let a = activity, a.at >= (scene?.beat.start ?? .distantPast) { return (a.text, a.at) }
+      if let s = scene { return (s.beat.line, s.beat.start) }
+      return (String(localized: "考えています"), appearedAt ?? now)
     }
-    return working ? (String(localized: "考えています"), endedAt ?? now) : nil
+    // Ended: said for a moment, then the bubble goes before the bird.
+    guard let e = endedAt else { return nil }
+    let doneAt = max(scene?.beat.end ?? e, e)
+    return now.timeIntervalSince(doneAt) < Timing.doneLine ? (outcome.line, doneAt) : nil
   }
 
   /// How far a written Card is (reveal 0…1 while it is written out; nil when

@@ -9,10 +9,12 @@ enum PresenceEvents {
   }
 
   /// The Card a tool call looks at: a file under `definitions/<id>/` or a
-  /// `card` argument (root-level Cards; Cards in Card are left out).
+  /// `card` argument, a CardPath as the model writes it
+  /// (`{"segments": ["bands"]}`, or a bare list).
   static func look(tool: String, arguments: String) -> Look? {
     guard let obj = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any] else { return nil }
-    let card = (obj["card"] as? [String]).flatMap { $0.isEmpty ? nil : $0 }
+    let segments = (obj["card"] as? [String]) ?? ((obj["card"] as? [String: Any])?["segments"] as? [String])
+    let card = segments.flatMap { $0.isEmpty ? nil : $0 }
     switch tool {
     case "run": return card.map(Look.run)
     case "run_record", "log_range", "run_plan": return card.map(Look.visit)
@@ -20,6 +22,25 @@ enum PresenceEvents {
       guard let p = obj["path"] as? String else { return nil }
       return cardOfFile(p).map { .visit([$0]) }
     default: return nil
+    }
+  }
+
+  /// What the bubble says while the Agent does something that is not a
+  /// scene of a Card (looking things up, checking, waiting); nil for the
+  /// calls the scenes show.
+  static func activity(tool: String) -> String? {
+    switch tool {
+    case "project_inspect": String(localized: "プロジェクトを見ています")
+    case "reference_read": String(localized: "書き方を調べています")
+    case "project_validate": String(localized: "変更を確かめています")
+    case "project_save": String(localized: "保存しています")
+    case "run_status": String(localized: "実行の終わりを待っています")
+    case "run_record", "log_range", "run_invocations", "run_history", "run_plan": String(localized: "実行の記録を見ています")
+    case "artifact_list", "artifact_read": String(localized: "出力を見ています")
+    case "project_file_list", "project_file_read": String(localized: "ファイルを読んでいます")
+    case "attached_folder_read": String(localized: "添えられたフォルダを読んでいます")
+    case "run_cancel": String(localized: "実行を止めています")
+    default: nil
     }
   }
 

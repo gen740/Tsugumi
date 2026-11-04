@@ -167,6 +167,31 @@ final class UIScript {
           }
           say("presence \(p.beats.count) scenes, \(String(format: "%.1f", end.timeIntervalSinceNow)) s")
         }
+      case "presencelog":
+        // Writes `bubble <seconds> <scene> | <line>` whenever the tsugumi's
+        // bubble changes, for the rest of the script.
+        if let s = session {
+          let p = s.presence, t0 = Date()
+          Task { @MainActor [weak self] in
+            var last = "", lastError = ""
+            while self?.log != nil {
+              let now = Date()
+              let scene = p.current(at: now).map { "\($0.beat.beat)" } ?? "-"
+              let text = (p.visible(at: now) ? p.line(at: now)?.text : nil) ?? "(none)"
+              let entry = scene.prefix(60) + " | " + text
+              if entry != last {
+                self?.say(String(format: "bubble %.1f ", now.timeIntervalSince(t0)) + entry)
+                last = entry
+              }
+              let err = AppModel.shared.chat(for: s).thoughts.lastError ?? ""
+              if err != lastError {
+                self?.say("thought-error " + err.prefix(300))
+                lastError = err
+              }
+              try? await Task.sleep(for: .milliseconds(250))
+            }
+          }
+        }
       case "waitchat":
         // waitchat <minutes>: until the Agent's turn ends
         if let s = session {
