@@ -155,6 +155,12 @@ enum DisplayValue {
 }
 
 struct DisplaySnapshot {
+  struct Identity: Equatable {
+    let runId: String
+    let invocation: UInt64
+    let revision: UInt64
+  }
+  var identity: Identity { Identity(runId: runId, invocation: invocation, revision: revision) }
   let runId: String
   let invocation: UInt64
   let revision: UInt64
