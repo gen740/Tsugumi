@@ -9,6 +9,7 @@
 | --- | --- |
 | [INSTALL.md](../INSTALL.md) | GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順 |
 | [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
+| [Demos.md](Demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
 
 ## 考え方を知る
