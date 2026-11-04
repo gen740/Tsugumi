@@ -68,7 +68,7 @@ export function GuideCorner({ screen }: { screen: GuideScreen }) {
  *  chat button while the chat is closed). It flies out from here and back. */
 export function GuideNest({ busy, small }: { busy: boolean; small?: boolean }) {
   useObserve(guide, prefs)
-  if (!guide.available) return null
+  if (!guide.present) return null
   return (
     <span className={`guide-nest${small ? ' small' : ''}${busy ? ' thinking' : ''}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
       data-guide-home="" title="ツグミ" aria-label={busy ? 'ツグミ（考えています）' : 'ツグミ'} role="img">
@@ -204,7 +204,7 @@ export function GuideFlyer() {
   const bubbleRef = useRef<HTMLDivElement>(null)
   // Where the bird goes: what Tsugumi points at, or (the chat's Agent at work) the Card it works on.
   const working = !guide.bubble && guide.work?.card ? guide.work : undefined
-  const target = guide.available ? guide.bubble?.target ?? (working?.card ? `card:${working.card}` : undefined) : undefined
+  const target = guide.present ? guide.bubble?.target ?? (working?.card ? `card:${working.card}` : undefined) : undefined
   const still = prefs.tsugumiStill
   // Where the target and home are now (Cards move with the canvas, loading comes and goes).
   const [tick, setTick] = useState(0)
@@ -335,7 +335,7 @@ export function GuideFlyer() {
       )}
       {arrived && goal === 'perch' && !guide.bubble && working?.line && (
         // The Agent at work: what it does, in a line beside the bird (nothing to press).
-        <div className="guide-work-line material" style={{ left: feetX + (box.flip ? -10 : -170), top: feetY + 6 }} aria-live="polite">{working.line}</div>
+        <div className="guide-work-line material" style={{ left: feetX + (box.flip ? -10 : -170), top: feetY + 6 }} aria-live="polite">{working.from ? `${working.from}: ${working.line}` : working.line}</div>
       )}
     </div>
   )

@@ -153,14 +153,23 @@ export class GuideController extends Observable {
   /** The bird has left home (its home shows no bird meanwhile). */
   away = false
   /** The chat's Agent at work (outside demo mode): the Card the bird flies to and what it says there. */
-  work?: { card?: string; line?: string }
+  work?: { card?: string; line?: string; from?: string }
+  /** An agent outside the page (Claude Code through the plugin) worked on the
+   *  open project: the bird is there for it even without a model key here. */
+  external = false
+  private externalIdle?: ReturnType<typeof setTimeout>
 
-  /** The chat's Agent called a tool: the bird goes to the Card it looks at. */
-  chatWork(tool: string, args: string) {
-    if (!this.available) return
+  /** The bird is in the window: Tsugumi can speak (a usable connection), or Claude Code works here. */
+  get present() {
+    return this.available || this.external
+  }
+
+  /** The chat's Agent (or Claude Code) called a tool: the bird goes to the Card it looks at. */
+  chatWork(tool: string, args: string, from?: string) {
+    if (!this.present) return
     const scene = workScene(tool, args)
     // Without a Card of its own the bird stays by the last one, saying what it does now.
-    this.work = { card: scene.card ?? this.work?.card, line: scene.line ?? this.work?.line }
+    this.work = { card: scene.card ?? this.work?.card, line: scene.line ?? this.work?.line, from }
     this.changed()
   }
 
@@ -169,6 +178,18 @@ export class GuideController extends Observable {
     if (!this.work) return
     this.work = undefined
     this.changed()
+  }
+
+  /** Claude Code's tool calls on the open project. It has no turns the page
+   *  sees: the bird goes home when no call follows for a few seconds. */
+  private externalWork(from: string, e: { kind: string; name?: string; arguments?: string }) {
+    clearTimeout(this.externalIdle)
+    if (!this.external) {
+      this.external = true
+      this.changed()
+    }
+    if (e.kind === 'toolStarted' && e.name) this.chatWork(e.name, e.arguments ?? '{}', from)
+    if (e.kind === 'toolFinished') this.externalIdle = setTimeout(() => { if (this.work?.from === from) this.chatWorkEnded() }, 10_000)
   }
   /** The chat's answer the bubble points to was asked for: the chat shows it marked. */
   chatFlash = 0
@@ -200,6 +221,7 @@ export class GuideController extends Observable {
     super()
     onServerEvent((e) => {
       if (e.type === 'guide') this.handle(e.event)
+      if (e.type === 'agentWork' && e.project === this.contextSession?.dir) this.externalWork(String(e.from ?? 'Claude Code'), e.event)
       if (e.type === 'reconnected') void this.refresh()
     })
   }

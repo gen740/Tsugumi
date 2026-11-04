@@ -128,6 +128,7 @@ Developer ID による署名・公証はしていない（ad-hoc 署名）ため
 起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。
 
 Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
+Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](docs/claude-code.md)）。
 なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)を参照してください。
 
 | デモ | 試せること |
@@ -170,6 +171,7 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 - [設計の独自性](docs/novelty.md)：同じ Workflow で設計・実装・検証をつなぐ理由と、なぜ今この設計なのか
 - [開発資料](docs/Development.md)：実行基盤、設計上の決定、テスト、計測、実装状況
 - [Web UI](docs/WebUI.md)：ブラウザから使うクライアントと、tsugumid をホストで直接動かす構成
+- [Claude Code から使う](docs/claude-code.md)：Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう
 - [版の管理](docs/Versions.md)：プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」
 - [固定しているバージョン](docs/Lock.md)：実行環境と依存ライブラリの固定値
 
