@@ -34,7 +34,7 @@ cd web && npm install && nix develop --command npm run gen && npm run build
 node web/dist/server.js --open
 ```
 
-`http://127.0.0.1:8780/` を開きます。`--port` でポートを、引数のプロジェクトフォルダでそのまま開くプロジェクトを指定できます。core のバイナリがない場合は、初期設定画面からビルドすることもできます。
+起動時に表示される `http://127.0.0.1:8780/?key=…` を開きます（`--open` なら自動で開きます）。`key` は起動のたびに作る鍵で、このページだけが送る cookie（HttpOnly・SameSite=Strict）に置き換わってアドレスバーから消えます。`/api/` はすべて（GET とイベントの購読も）この cookie を求めるので、同じマシンの他のユーザーや他のサイトのページからは使えません。変更を伴う呼び出しはさらに専用のヘッダーを求めます。応答には CSP（`frame-ancestors 'none'`）と `nosniff` を付けます。`--port` でポートを、引数のプロジェクトフォルダでそのまま開くプロジェクトを指定できます。core のバイナリがない場合は、初期設定画面からビルドすることもできます。
 
 | 環境変数 | 内容 |
 | --- | --- |
@@ -53,6 +53,8 @@ TypeScript の binding と `tsugumi.bfbs` は `npm run gen`（`flatc` 25.12.19�
 - 書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（`runs/<run>/work/…/out`）だけです。Linux では出力フォルダを `/proc/self/fd` 経由で渡しますが、macOS にはないためパスで渡します。
 - bubblewrap と違い、ファイルの存在確認（`stat`）は全体で許可しています（中身は読めません）。また、uid の分離はしません。
 - Mac のフォルダを Card に共有する機能（`/host/<name>`）は共通 VM が必要なため、Web UI では使えません。
+- ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。
+- チャットに添付したフォルダは、サーバーが control フォルダの `attached.json` に書いたものだけを tsugumid が読みます（RPC からは変えられません）。
 - `sandbox: false` の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（`tsugumid` 自身は判断しません）。Linux で他人の Card を動かすときは、`tsugumid` を隔離されたコンテナの中で動かしてください。
 
 ## ショートカット

@@ -3,7 +3,7 @@
 // over its WebSocket RPC; this server only does what a page cannot (files,
 // processes, the model API key).
 import { ChildProcess, spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -407,12 +407,45 @@ const routes: Record<string, Handler> = {
   ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here }),
 }
 
+// The page is opened through the URL printed at start, which carries this
+// run's key: the server answers it with a cookie only the page's own origin
+// sends (HttpOnly, SameSite=Strict) and every /api/ request must carry it.
+// Other users of this host and other sites' pages get nothing.
+const key = randomBytes(32).toString('hex')
+const cookieName = () => `tsugumi_${(server.address() as net.AddressInfo).port}`
+
+function authorized(req: http.IncomingMessage): boolean {
+  const want = `${cookieName()}=${key}`
+  const got = (req.headers.cookie ?? '').split(';').map((c) => c.trim()).find((c) => c.startsWith(cookieName() + '='))
+  return !!got && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
+}
+
+// Every response: no framing, no type sniffing, only this origin's code.
+const SECURITY_HEADERS = {
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+    "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+}
+
 function send(res: http.ServerResponse, status: number, v: unknown) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
   res.end(JSON.stringify(v))
 }
 
 const server = http.createServer(async (req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v)
+  try {
+    await handle(req, res)
+  } catch (e) {
+    // A malformed request (an undecodable path, a broken body) fails alone.
+    if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, { error: (e as Error).message ?? String(e) })
+    else res.end()
+  }
+})
+
+async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
   // Loopback names only (no DNS rebinding), and API calls carry a header a
   // cross-origin page cannot send without a CORS preflight we never allow.
@@ -420,6 +453,18 @@ const server = http.createServer(async (req, res) => {
   if (![`127.0.0.1:${actualPort}`, `localhost:${actualPort}`].includes(req.headers.host ?? '')) {
     res.writeHead(403).end('forbidden host')
     return
+  }
+  // The URL printed at start: its key becomes the cookie, and leaves the address bar.
+  if (url.searchParams.get('key') === key) {
+    url.searchParams.delete('key')
+    res.writeHead(302, {
+      'set-cookie': `${cookieName()}=${key}; HttpOnly; SameSite=Strict; Path=/`,
+      location: url.pathname + url.search,
+    })
+    return void res.end()
+  }
+  if (url.pathname.startsWith('/api/') && !authorized(req)) {
+    return send(res, 401, { error: 'このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。' })
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -444,16 +489,16 @@ const server = http.createServer(async (req, res) => {
     return
   }
   let file = path.normalize(path.join(publicDir, decodeURIComponent(url.pathname)))
-  if (!file.startsWith(publicDir)) return void res.writeHead(403).end()
+  if (file !== publicDir && !file.startsWith(publicDir + path.sep)) return void res.writeHead(403).end()
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(publicDir, 'index.html')
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' })
   fs.createReadStream(file).pipe(res)
-})
+}
 
 server.listen(port, '127.0.0.1', () => {
   const p = (server.address() as net.AddressInfo).port
   origins = [`http://127.0.0.1:${p}`, `http://localhost:${p}`]
-  const url = `http://127.0.0.1:${p}/` + (launchProject ? `?project=${encodeURIComponent(launchProject)}` : '')
+  const url = `http://127.0.0.1:${p}/?key=${key}` + (launchProject ? `&project=${encodeURIComponent(launchProject)}` : '')
   console.log(`Tsugumi web UI: ${url}`)
   console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
   console.log(`  data:     ${support}`)
