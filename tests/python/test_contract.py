@@ -754,3 +754,27 @@ def test_the_journal_is_compacted_and_keeps_answers(project):
         assert again.replayed is True and again.rev == last_rev
     finally:
         d.cleanup()
+
+
+def test_large_saves_compact_the_journal_now_and_then(project):
+    """Saves whose receipts are large (a 200 KB document each) do not make
+    every later save compact the journal again: the kept receipts are bounded
+    in bytes too, so compactions stay few and the last save is still
+    answered from its receipt."""
+    d = Daemon(project).start()
+    try:
+        c = d.client()
+        c.hello()
+        snap = c.call("ProjectInspectRequest")
+        rev, doc = snap.rev, json.loads(text(snap.projectJson))
+        for i in range(80):
+            doc["name"] = "x" * 200000 + str(i)
+            last = {"baseRev": rev, "opId": new_id(), "origin": "t", "changes": [change("SetProject", json=json.dumps(doc))]}
+            rev = c.call("ProjectSaveRequest", **last).rev
+        compactions = d.log.read_text().count("journal: compacted")
+        assert 1 <= compactions <= 12, compactions
+        assert (project / ".tsugumi" / "document.journal").stat().st_size < 8 << 20
+        again = c.call("ProjectSaveRequest", **last)
+        assert again.replayed is True and again.rev == rev
+    finally:
+        d.cleanup()

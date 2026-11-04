@@ -20,10 +20,14 @@ namespace stdfs = std::filesystem;
 namespace {
 
 constexpr char kMagic[4] = {'T', 'S', 'J', '1'};
-// The journal is compacted past this size, keeping this many receipts (a
-// client retrying an operation within them gets its answer again).
+// The journal is compacted past this size, keeping the latest receipts (a
+// client retrying an operation within them gets its answer again): at most
+// this many, and at most this many bytes of them, the newest always, so a
+// compacted journal is well under the size and the next compaction waits
+// for megabytes of new records (receipts of large saves are large).
 constexpr uintmax_t kCompactBytes = 8u << 20;
 constexpr size_t kKeepReceipts = 2000;
+constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
 bool utf8_boundary(const std::string& s, uint64_t off) {
   if (off == 0 || off == s.size()) return true;
@@ -261,7 +265,14 @@ void Store::compact_journal() {
   uint64_t rev = 0, exec_rev = 0;
   {
     std::lock_guard<std::mutex> l(mu_);
-    while (receipt_order_.size() > kKeepReceipts) {
+    size_t kept = 0, bytes = 0;
+    for (auto it = receipt_order_.rbegin(); it != receipt_order_.rend(); ++it, ++kept) {
+      const auto& r = receipts_.at(*it);
+      size_t size = r.op_id.size() + r.kind.size() + r.digest.size() + r.bytes.size();
+      if (kept > 0 && (kept == kKeepReceipts || bytes + size > kKeepReceiptBytes)) break;
+      bytes += size;
+    }
+    while (receipt_order_.size() > kept) {
       receipts_.erase(receipt_order_.front());
       receipt_order_.pop_front();
     }
