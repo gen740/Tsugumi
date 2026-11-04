@@ -97,35 +97,49 @@ public enum StreamEvent {
 public struct ProviderConfig: Codable, Equatable, Sendable {
   /// Wire protocol of the endpoint.
   public enum API: String, Codable, Sendable { case anthropicMessages, openAIResponses }
+  /// How requests are authorized: none (the local fixture), an API key in
+  /// the Keychain, or the user's ChatGPT plan (Sign in with ChatGPT).
+  public enum Auth: String, Codable, Sendable { case none, apiKey, chatGPT }
 
   public var name: String
   public var baseURL: URL
   public var model: String
-  public var usesKeychain: Bool  // false for the local fixture
+  public var auth: Auth
   public var api: API = .anthropicMessages
-  /// Output limit of one model reply: a Card's sources fit in one save.
+  /// Output limit of one model reply: a Card's sources fit in one save
+  /// (not sent with the ChatGPT plan, which does not accept it).
   public var maxTokens = 32768
   public var contextLimit = 180_000
+  /// ChatGPT sign-in: where it signs in and the keychain item of its accounts.
+  public var chatGPTEndpoints = ChatGPTEndpoints.openAI
+  public var chatGPTStore = "ChatGPT"
 
-  public init(name: String, baseURL: URL, model: String, usesKeychain: Bool, api: API = .anthropicMessages) {
+  public init(name: String, baseURL: URL, model: String, auth: Auth, api: API = .anthropicMessages) {
     self.name = name
     self.baseURL = baseURL
     self.model = model
-    self.usesKeychain = usesKeychain
+    self.auth = auth
     self.api = api
   }
 
+  /// A real provider (not the local fixture).
+  public var isRemote: Bool { auth != .none }
+
   public static let anthropic = ProviderConfig(name: "Anthropic", baseURL: URL(string: "https://api.anthropic.com")!,
-                                               model: "claude-sonnet-5-5", usesKeychain: true)
-  /// OpenAI with an API key (Responses API). Not a ChatGPT account sign-in.
+                                               model: "claude-sonnet-5-5", auth: .apiKey)
+  /// OpenAI with an API key (Responses API).
   public static let openAI = ProviderConfig(name: "OpenAI", baseURL: URL(string: "https://api.openai.com")!,
-                                            model: "gpt-6.1-sol", usesKeychain: true, api: .openAIResponses)
+                                            model: "gpt-6.1-sol", auth: .apiKey, api: .openAIResponses)
+  /// OpenAI with the user's ChatGPT plan (Sign in with ChatGPT, open-source flow).
+  public static let chatGPT = ProviderConfig(name: "ChatGPT", baseURL: URL(string: "https://api.openai.com")!,
+                                             model: "gpt-6.1-sol", auth: .chatGPT, api: .openAIResponses)
   public static func localFixture(port: Int) -> ProviderConfig {
-    var c = ProviderConfig(name: "Local fixture", baseURL: URL(string: "http://127.0.0.1:\(port)")!, model: "fixture",
-                           usesKeychain: false)
+    var c = ProviderConfig(name: "Local fixture", baseURL: URL(string: "http://127.0.0.1:\(port)")!, model: "fixture", auth: .none)
     c.contextLimit = 6000
     return c
   }
+
+  var chatGPTAuth: ChatGPTAuth { ChatGPTAuth.shared(endpoints: chatGPTEndpoints, store: chatGPTStore) }
 }
 
 /// Model credentials stay in the user's login keychain on the host (one item
@@ -149,10 +163,13 @@ public enum Keychain {
     SecItemDelete(q as CFDictionary)
   }
 
+  /// Saves in place when the item exists (a reader never sees it missing).
   public static func save(_ secret: String, account: String) throws {
     let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                kSecAttrAccount as String: account]
-    SecItemDelete(base as CFDictionary)
+    let u = SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary)
+    if u == errSecSuccess { return }
+    guard u == errSecItemNotFound else { throw AgentError.provider("Keychain error \(u)") }
     var add = base
     add[kSecValueData as String] = Data(secret.utf8)
     add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
@@ -182,11 +199,15 @@ public struct MessagesProvider: Sendable {
     session = URLSession(configuration: c)
   }
 
-  private func request(path: String) throws -> URLRequest {
+  /// A request with its credentials: the API key, or the ChatGPT access
+  /// token (`stale`: one the API refused, to be refreshed).
+  private func request(path: String, stale: String? = nil) async throws -> URLRequest {
     var r = URLRequest(url: config.baseURL.appendingPathComponent(path))
     r.setValue("application/json", forHTTPHeaderField: "content-type")
     if config.api == .anthropicMessages { r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
-    if config.usesKeychain {
+    switch config.auth {
+    case .none: break
+    case .apiKey:
       guard let key = Keychain.load(account: config.name) else {
         throw AgentError.provider("no API key for \(config.name); add it in Settings")
       }
@@ -194,19 +215,30 @@ public struct MessagesProvider: Sendable {
       case .anthropicMessages: r.setValue(key, forHTTPHeaderField: "x-api-key")
       case .openAIResponses: r.setValue("Bearer " + key, forHTTPHeaderField: "authorization")
       }
+    case .chatGPT:
+      r.setValue("Bearer " + (try await config.chatGPTAuth.accessToken(replacing: stale)), forHTTPHeaderField: "authorization")
     }
     return r
   }
 
   /// Model capability discovery (available models).
-  public func models() async throws -> [String] {
-    let (data, resp) = try await session.data(for: try request(path: "v1/models"))
+  public func models() async throws -> [String] { try await modelChoices().map(\.id) }
+
+  /// Models with the names to show (the ChatGPT account's catalog lists
+  /// display names, in the server's order).
+  public func modelChoices() async throws -> [(id: String, label: String)] {
+    let (data, resp) = try await session.data(for: try await request(path: "v1/models"))
     guard (resp as? HTTPURLResponse)?.statusCode == 200,
-          let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let list = obj["data"] as? [[String: Any]] else {
+          let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw AgentError.provider("cannot list models")
     }
-    return list.compactMap { $0["id"] as? String }
+    if config.auth == .chatGPT, let list = obj["models"] as? [[String: Any]] {
+      return list.filter { $0["visibility"] as? String == "list" }.compactMap { m in
+        (m["slug"] as? String).map { ($0, m["display_name"] as? String ?? $0) }
+      }
+    }
+    guard let list = obj["data"] as? [[String: Any]] else { throw AgentError.provider("cannot list models") }
+    return list.compactMap { ($0["id"] as? String).map { ($0, $0) } }
   }
 
   public struct HTTPStatusError: Error {
@@ -241,8 +273,6 @@ public struct MessagesProvider: Sendable {
 
   public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
     if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
-    var r = try request(path: "v1/messages")
-    r.httpMethod = "POST"
     let cached = Self.cachedBody(system: system, messages: messages, tools: tools)
     let body: [String: Any] = [
       "model": config.model,
@@ -252,11 +282,14 @@ public struct MessagesProvider: Sendable {
       "messages": cached.messages,
       "tools": cached.tools,
     ]
-    r.httpBody = try JSONSerialization.data(withJSONObject: body)
+    let payload = try JSONSerialization.data(withJSONObject: body)
     let session = self.session
     return AsyncThrowingStream { cont in
       let task = Task {
         do {
+          var r = try await request(path: "v1/messages")
+          r.httpMethod = "POST"
+          r.httpBody = payload
           let (bytes, resp) = try await session.bytes(for: r)
           let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
           if status != 200 {
@@ -322,9 +355,13 @@ public struct MessagesProvider: Sendable {
 // MARK: - OpenAI Responses API
 
 extension MessagesProvider {
+  /// The ChatGPT plan takes function tools only grouped in a namespace; the
+  /// model's calls then name it, and the history repeats it.
+  static let toolNamespace = "tsugumi"
+
   /// The conversation as Responses API input items: messages, function calls
   /// (the model's tool uses) and their outputs.
-  static func responsesInput(_ messages: [ChatMessage]) -> [[String: Any]] {
+  static func responsesInput(_ messages: [ChatMessage], namespace: String? = nil) -> [[String: Any]] {
     var out: [[String: Any]] = []
     for m in messages {
       var texts: [[String: Any]] = []
@@ -336,7 +373,9 @@ extension MessagesProvider {
         case .text(let t): texts.append(["type": m.role == "assistant" ? "output_text" : "input_text", "text": t])
         case .toolUse(let id, let name, let input):
           flush()
-          out.append(["type": "function_call", "call_id": id, "name": name, "arguments": input])
+          var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": input]
+          if let namespace { call["namespace"] = namespace }
+          out.append(call)
         case .toolResult(let id, let content, _):
           flush()
           out.append(["type": "function_call_output", "call_id": id, "output": content])
@@ -347,32 +386,81 @@ extension MessagesProvider {
     return out
   }
 
-  func responsesStream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
-    var r = try request(path: "v1/responses")
-    r.httpMethod = "POST"
+  /// The request body. With the ChatGPT plan: no max_output_tokens (not
+  /// accepted) and the tools in a namespace; store false and stream true always.
+  func responsesBody(system: String, messages: [ChatMessage], tools: [ToolSpec]) -> [String: Any] {
+    let plan = config.auth == .chatGPT
     var body: [String: Any] = [
       "model": config.model,
       "instructions": system,
-      "input": Self.responsesInput(messages),
-      "max_output_tokens": config.maxTokens,
+      "input": Self.responsesInput(messages, namespace: plan ? Self.toolNamespace : nil),
       "stream": true,
       "store": false,
     ]
+    if !plan { body["max_output_tokens"] = config.maxTokens }
     if !tools.isEmpty {
-      body["tools"] = tools.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }
+      let functions: [[String: Any]] = tools.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }
+      body["tools"] = plan
+        ? [["type": "namespace", "name": Self.toolNamespace, "description": "Tools of the open Tsugumi project.", "tools": functions]]
+        : functions
     }
-    r.httpBody = try JSONSerialization.data(withJSONObject: body)
+    return body
+  }
+
+  /// A failure of a ChatGPT plan request, by its documented error code
+  /// (siwc errors and recovery): the usage limit stops the turn; an
+  /// unavailable usage check or user is retried like a 503.
+  static func planError(status: Int, error: [String: Any]?, detail: String, requestId: String?) -> Error {
+    let code = error?["code"] as? String
+    let message = error?["message"] as? String ?? detail
+    let rid = requestId.map { " (request \($0))" } ?? ""
+    switch code {
+    case "subscription_sharing_usage_limit_exceeded": return ChatGPTError.usageLimit
+    case "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable":
+      return HTTPStatusError(status: 503, body: "\(code!): \(message)\(rid)")
+    case "subscription_sharing_user_not_eligible": return ChatGPTError.notEligible(message)
+    case "subscription_sharing_unsupported_capability":
+      return ChatGPTError.unsupported((error?["param"] as? String).map { "\($0): \(message)" } ?? message)
+    case let c?: return ChatGPTError.failed("\(c): \(message)\(rid)")
+    case nil:
+      switch status {
+      case 401: return ChatGPTError.failed("the account or its permission was not accepted (401): \(message)\(rid)")
+      case 403: return ChatGPTError.failed("blocked by a policy or permission check (403): \(message)\(rid)")
+      default: return HTTPStatusError(status: status, body: message + rid)
+      }
+    }
+  }
+
+  func responsesStream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
+    let payload = try JSONSerialization.data(withJSONObject: responsesBody(system: system, messages: messages, tools: tools))
+    let plan = config.auth == .chatGPT
     let session = self.session
     return AsyncThrowingStream { cont in
       let task = Task {
         do {
-          let (bytes, resp) = try await session.bytes(for: r)
-          let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-          if status != 200 {
+          var stale: String?
+          var opened: (URLSession.AsyncBytes, URLResponse)?
+          while opened == nil {
+            var r = try await request(path: "v1/responses", stale: stale)
+            r.httpMethod = "POST"
+            r.httpBody = payload
+            let (bytes, resp) = try await session.bytes(for: r)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 { opened = (bytes, resp); break }
             var text = ""
             for try await line in bytes.lines { text += line }
-            throw HTTPStatusError(status: status, body: text, retryAfter: Self.retryAfter(resp))
+            // A refused access token is refreshed once (unless refreshed meanwhile).
+            if plan && status == 401 && stale == nil {
+              stale = r.value(forHTTPHeaderField: "authorization")?.replacingOccurrences(of: "Bearer ", with: "")
+              continue
+            }
+            guard plan else { throw HTTPStatusError(status: status, body: text, retryAfter: Self.retryAfter(resp)) }
+            let obj = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+            throw Self.planError(status: status, error: obj?["error"] as? [String: Any],
+                                 detail: obj?["detail"] as? String ?? text,
+                                 requestId: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id"))
           }
+          let (bytes, resp) = opened!
           var usedTools = false
           var finished = false
           for try await line in bytes.lines {
@@ -386,7 +474,9 @@ extension MessagesProvider {
             case "response.output_item.added":
               if let item = obj["item"] as? [String: Any], item["type"] as? String == "function_call" {
                 usedTools = true
-                cont.yield(.toolStart(index: index, id: item["call_id"] as? String ?? UUID().uuidString, name: item["name"] as? String ?? ""))
+                var name = item["name"] as? String ?? ""
+                if name.hasPrefix(Self.toolNamespace + ".") { name.removeFirst(Self.toolNamespace.count + 1) }
+                cont.yield(.toolStart(index: index, id: item["call_id"] as? String ?? UUID().uuidString, name: name))
               }
             case "response.function_call_arguments.delta":
               if let d = obj["delta"] as? String { cont.yield(.toolInput(index: index, partialJSON: d)) }
@@ -404,6 +494,10 @@ extension MessagesProvider {
               finished = true
             case "response.failed", "error":
               let e = ((obj["response"] as? [String: Any])?["error"] ?? obj["error"]) as? [String: Any]
+              if plan {
+                throw Self.planError(status: 0, error: e, detail: "stream error",
+                                     requestId: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id"))
+              }
               throw AgentError.provider(e?["message"] as? String ?? e?["code"] as? String ?? "stream error")
             default:
               break

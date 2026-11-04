@@ -11,6 +11,7 @@ import { FlatJSON } from '../src/shared/flatjson'
 import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
+import { planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -229,11 +230,14 @@ export interface ProviderConfig {
   model: string
   /** Wire protocol of the endpoint. */
   api: 'anthropicMessages' | 'openAIResponses'
+  /** How requests are authorized: none (the local fixture), an API key, or
+   *  the user's ChatGPT plan (Sign in with ChatGPT). */
+  auth: 'none' | 'apiKey' | 'chatgpt'
   /** Read on this host only (Keychain, 0600 file or environment); never sent
    *  to the page, tsugumid or Card workers. */
   apiKey?: string
-  /** A real provider needs a key; the local fixture does not. */
-  needsKey: boolean
+  /** The ChatGPT access token (refreshed near its expiry; `stale` is one the API refused). */
+  token?: (stale?: string) => Promise<string>
   /** Output limit of one model reply: a Card's sources fit in one save. */
   maxTokens: number
   contextLimit: number
@@ -272,24 +276,31 @@ type StreamEvent =
   | { t: 'toolInput'; index: number; json: string }
   | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
-function headers(c: ProviderConfig): Record<string, string> {
+async function headers(c: ProviderConfig, stale?: string): Promise<Record<string, string>> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
   if (c.api === 'anthropicMessages') h['anthropic-version'] = '2023-06-01'
-  if (c.needsKey) {
+  if (c.auth === 'apiKey') {
     if (!c.apiKey) throw new Error(`no API key for ${c.name}; add it in Settings > API`)
     if (c.api === 'anthropicMessages') h['x-api-key'] = c.apiKey
     else h.authorization = 'Bearer ' + c.apiKey
+  } else if (c.auth === 'chatgpt') {
+    h.authorization = 'Bearer ' + (await c.token!(stale))
   }
   return h
 }
 
 const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith('/') ? c.baseURL : c.baseURL + '/')
 
-export async function listModels(c: ProviderConfig): Promise<string[]> {
-  const r = await fetch(endpoint(c, 'v1/models'), { headers: headers(c) })
+/** Available models, with the names to show (the ChatGPT account's catalog
+ *  lists display names, in the server's order). */
+export async function listModels(c: ProviderConfig): Promise<{ id: string; label: string }[]> {
+  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c) })
   if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
-  const obj = (await r.json()) as { data?: { id: string }[] }
-  return (obj.data ?? []).map((m) => m.id)
+  const obj = (await r.json()) as { data?: { id: string }[]; models?: { slug: string; display_name?: string; visibility?: string }[] }
+  if (c.auth === 'chatgpt' && obj.models) {
+    return obj.models.filter((m) => m.visibility === 'list').map((m) => ({ id: m.slug, label: m.display_name ?? m.slug }))
+  }
+  return (obj.data ?? []).map((m) => ({ id: m.id, label: m.id }))
 }
 
 /** Lines of a server-sent event stream. */
@@ -333,7 +344,7 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
-  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
+  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(body), signal })
   if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
@@ -370,9 +381,13 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
   if (!stopped) throw new ConnectionLost()
 }
 
+/** The ChatGPT plan takes function tools only grouped in a namespace; the
+ *  model's calls then name it, and the history repeats it. */
+const TOOL_NAMESPACE = 'tsugumi'
+
 /** The conversation as Responses API input items: messages, function calls
  *  (the model's tool uses) and their outputs. */
-function responsesInput(messages: ChatMessage[]): unknown[] {
+function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
   const out: unknown[] = []
   for (const m of messages) {
     let texts: unknown[] = []
@@ -384,7 +399,7 @@ function responsesInput(messages: ChatMessage[]): unknown[] {
       if (b.type === 'text') texts.push({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: b.text })
       else if (b.type === 'tool_use') {
         flush()
-        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input })
+        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
       } else {
         flush()
         out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
@@ -395,14 +410,37 @@ function responsesInput(messages: ChatMessage[]): unknown[] {
   return out
 }
 
-/** OpenAI Responses API with an API key (not a ChatGPT account sign-in). */
+/** OpenAI Responses API, with an API key or the ChatGPT plan. The plan takes
+ *  no max_output_tokens and the tools in a namespace; store false and stream
+ *  true always. */
 async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const plan = c.auth === 'chatgpt'
   const body: Record<string, unknown> = {
-    model: c.model, instructions: system, input: responsesInput(messages), max_output_tokens: c.maxTokens, stream: true, store: false,
+    model: c.model, instructions: system, input: responsesInput(messages, plan ? TOOL_NAMESPACE : undefined), stream: true, store: false,
   }
-  if (tools.length) body.tools = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
-  const r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
-  if (r.status !== 200) throw await HTTPStatusError.from(r)
+  if (!plan) body.max_output_tokens = c.maxTokens
+  if (tools.length) {
+    const functions = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+    body.tools = plan ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : functions
+  }
+  let stale: string | undefined
+  let r: Response
+  for (;;) {
+    const h = await headers(c, stale)
+    r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: h, body: JSON.stringify(body), signal })
+    if (r.status === 200) break
+    // A refused access token is refreshed once (unless refreshed meanwhile).
+    if (plan && r.status === 401 && stale === undefined) {
+      stale = h.authorization.replace(/^Bearer /, '')
+      await r.body?.cancel()
+      continue
+    }
+    if (!plan) throw await HTTPStatusError.from(r)
+    const text = await r.text()
+    let obj: any
+    try { obj = JSON.parse(text) } catch {}
+    throw planError(r.status, obj?.error, typeof obj?.detail === 'string' ? obj.detail : text, r.headers.get('x-request-id'))
+  }
   let usedTools = false
   let finished = false
   for await (const line of sseLines(r)) {
@@ -417,7 +455,9 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       case 'response.output_item.added':
         if (obj.item?.type === 'function_call') {
           usedTools = true
-          yield { t: 'toolStart', index, id: obj.item.call_id ?? randomUUID(), name: obj.item.name ?? '' }
+          let name: string = obj.item.name ?? ''
+          if (name.startsWith(TOOL_NAMESPACE + '.')) name = name.slice(TOOL_NAMESPACE.length + 1)
+          yield { t: 'toolStart', index, id: obj.item.call_id ?? randomUUID(), name }
         }
         break
       case 'response.function_call_arguments.delta':
@@ -434,6 +474,7 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       }
       case 'response.failed': case 'error': {
         const e = obj.response?.error ?? obj.error
+        if (plan) throw planError(0, e, 'stream error', r.headers.get('x-request-id'))
         throw new Error(e?.message ?? e?.code ?? 'stream error')
       }
     }
@@ -730,13 +771,13 @@ export class Agent {
         return { blocks, stop }
       } catch (e) {
         if (signal.aborted) throw new Cancelled()
-        const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost
+        const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost || e instanceof TransientError
         if (!retryable || attempt >= 3) throw e
         // The reply is asked again: what it had streamed goes.
         if (text) events({ kind: 'discardText' })
         // The provider's retry-after when it gave one (rate limits), else backoff.
         const wait = Math.min(120, Math.max(e instanceof HTTPStatusError ? e.retryAfter ?? 0 : 0, 0.5 * (1 << (attempt + 1))))
-        events({ kind: 'retrying', message: e instanceof HTTPStatusError
+        events({ kind: 'retrying', message: e instanceof HTTPStatusError || e instanceof TransientError
           ? `provider returned ${e.status}; retry ${attempt + 1} in ${Math.ceil(wait)} s` : `connection to the model failed; retry ${attempt + 1}` })
         await new Promise((r) => setTimeout(r, wait * 1000))
         continue

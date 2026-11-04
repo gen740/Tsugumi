@@ -14,6 +14,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p .",
     "contract": "node scripts/contract.mjs",
+    "check:chatgpt": "node scripts/contract.mjs chatgpt",
     "test": "node scripts/test.mjs"
   },
   "dependencies": {

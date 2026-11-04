@@ -67,7 +67,23 @@ struct AgentHarness {
     f.standardOutput = FileHandle.nullDevice
     try f.run()
     fixture = f
-    usleep(500_000)
+    // Python starts slowly on a CI runner: wait until the fixture accepts
+    // connections (a fixed pause let the first requests fail there).
+    let deadline = Date().addingTimeInterval(30)
+    while !Self.accepts(port: fixturePort) && Date() < deadline && f.isRunning { usleep(50_000) }
+  }
+
+  /// Something listens on 127.0.0.1:port.
+  static func accepts(port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in()
+    a.sin_family = sa_family_t(AF_INET)
+    a.sin_addr.s_addr = inet_addr("127.0.0.1")
+    a.sin_port = UInt16(port).bigEndian
+    return withUnsafePointer(to: &a) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+    } == 0
   }
 
   /// Ends the daemon and the fixture, polled with a deadline (waitUntilExit
@@ -201,7 +217,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let client = RPCClient(endpoint: h.endpoint!)
     _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
     let config = ProviderConfig(name: account, baseURL: URL(string: "http://127.0.0.1:\(h.fixturePort)")!, model: "fixture",
-                                usesKeychain: true, api: .openAIResponses)
+                                auth: .apiKey, api: .openAIResponses)
     let agent = try makeAgent(h, client, provider: config)
     let log = EventLog()
     await agent.send("set src.text to \"Hello over Responses\" and run, then report out", context: []) { log.add($0) }
@@ -211,6 +227,69 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
     #expect(Keychain.load(account: account) == nil)
+    await client.close()
+  }
+
+  /// Sign in with ChatGPT against the fixture's issuer, then the same
+  /// conversation on the ChatGPT plan: the browser is played by following the
+  /// authorize redirect to the loopback callback; the ID token is verified
+  /// with the issuer's JWKS; every request follows the plan's rules (the
+  /// fixture refuses others); access tokens that live one second are
+  /// refreshed (rotating the refresh token) before each request; the usage
+  /// limit stops the turn without retries; signing out revokes the session.
+  @Test func chatGPTPlanSignInRunRefreshLimitSignOut() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--chatgpt-expires", "1"])
+    defer { h.stop() }
+    let issuer = "http://127.0.0.1:\(h.fixturePort)"
+    let store = "Tsugumi test ChatGPT \(UUID().uuidString)"
+    defer { Keychain.delete(account: store) }
+    let auth = ChatGPTAuth.shared(endpoints: ChatGPTEndpoints(issuer: issuer, resource: "https://api.openai.com/v1"), store: store)
+    let browser = URLSession(configuration: .ephemeral)
+    let signedIn = try await auth.signIn { url in _ = try await browser.data(from: url) }
+    #expect(signedIn.welcome && signedIn.account.planEnabled && signedIn.account.email == "fixture@example.com")
+    #expect(signedIn.account.clientId == "oaiapp_fixture_1")
+    try await auth.markWelcomed(clientId: signedIn.account.clientId)
+
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    var config = ProviderConfig(name: "ChatGPT", baseURL: URL(string: issuer)!, model: "fixture", auth: .chatGPT, api: .openAIResponses)
+    config.chatGPTEndpoints = ChatGPTEndpoints(issuer: issuer, resource: "https://api.openai.com/v1")
+    config.chatGPTStore = store
+    let models = try await MessagesProvider(config: config).modelChoices()
+    #expect(models.map(\.id) == ["fixture"] && models.first?.label == "Fixture model")
+    let agent = try makeAgent(h, client, provider: config)
+    let log = EventLog()
+    await agent.send("set src.text to \"Hello on the plan\" and run, then report out", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello on the plan") == true)
+    let stats = try JSONSerialization.jsonObject(with: try await browser.data(from: URL(string: "\(issuer)/fixture/chatgpt")!).0) as! [String: Any]
+    #expect((stats["violations"] as? [String])?.isEmpty == true, "\(stats)")
+    #expect((stats["refreshes"] as? Int ?? 0) >= 3, "\(stats)")
+    let authorize = (stats["authorize"] as? [[String: Any]])?.first
+    #expect(authorize?["client_id"] as? String == "dynamic_agent_client" && authorize?["agent_name_hint"] as? String == "Tsugumi")
+    #expect((authorize?["ext_agent_host_id"] as? String)?.hasPrefix("urn:uuid:") == true)
+
+    let limited = EventLog()
+    await agent.send("now exceed the usage limit", context: []) { limited.add($0) }
+    await waitFinished(limited)
+    #expect(limited.all.contains { if case .error(let s) = $0 { return s == ChatGPTError.usageLimitText }; return false }, "\(limited.all)")
+    #expect(!limited.all.contains { if case .retrying = $0 { return true }; return false })
+
+    // Signing in again to the saved registration keeps its client and host.
+    _ = try await auth.signIn(clientId: signedIn.account.clientId) { url in _ = try await browser.data(from: url) }
+    let again = (try JSONSerialization.jsonObject(with: try await browser.data(from: URL(string: "\(issuer)/fixture/chatgpt")!).0) as! [String: Any])["authorize"] as! [[String: Any]]
+    #expect(again.last?["client_id"] as? String == "oaiapp_fixture_1" && again.last?["agent_name_hint"] == nil)
+    #expect(again.last?["ext_agent_host_id"] as? String == authorize?["ext_agent_host_id"] as? String)
+    #expect(again.last?["id_token_hint"] as? Bool == true)
+
+    #expect(try await auth.signOut(clientId: signedIn.account.clientId))
+    #expect(await auth.accounts().map(\.signedIn) == [false])
+    await #expect(throws: ChatGPTError.self) { _ = try await auth.accessToken() }
+    // Nothing of the tokens is left after signing out.
+    let record = try #require(Keychain.load(account: store))
+    #expect(!record.contains("chatgpt-access-") && !record.contains("chatgpt-refresh-"))
     await client.close()
   }
 

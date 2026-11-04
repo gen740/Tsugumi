@@ -117,6 +117,8 @@ final class ChatController {
   private(set) var busy = false
   private(set) var status: String?
   private(set) var failed = false
+  /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
+  private(set) var usageLimited = false
   private(set) var sessions: [SessionInfo] = []
   private(set) var currentId: String = ""
   private(set) var usage = Usage()
@@ -225,6 +227,7 @@ final class ChatController {
     previous.map { a in Task { await a.cancel() } }
     busy = false
     failed = false
+    usageLimited = false
     status = nil
     currentId = id
     let agent: Agent
@@ -476,6 +479,7 @@ final class ChatController {
   private func begin() {
     busy = true
     failed = false
+    usageLimited = false
     stoppedAtLimit = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
@@ -525,7 +529,10 @@ final class ChatController {
       busy = false
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
-      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。") : String(localized: "エラー: \(s)")
+      usageLimited = s == ChatGPTError.usageLimitText
+      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
+        : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+        : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       busy = false
@@ -560,6 +567,11 @@ enum AgentSettings {
     let d = UserDefaults.standard
     if d.string(forKey: "agent.provider") == "fixture" {
       return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
+    }
+    if d.string(forKey: "agent.provider") == "chatgpt" {
+      var c = ProviderConfig.chatGPT
+      if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
+      return c
     }
     if d.string(forKey: "agent.provider") == "openai" {
       var c = ProviderConfig.openAI

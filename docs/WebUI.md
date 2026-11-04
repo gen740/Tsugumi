@@ -14,7 +14,7 @@ macOS アプリが共通 Linux VM の中で `tsugumid` を動かすのに対し�
 ```
 
 - `tsugumid` は UI のオリジン（`http://127.0.0.1:<port>` と `http://localhost:<port>`）だけを `--allow-origin` で許可し、token は SessionHello でだけ送ります（URL・ログには出しません）。
-- Node サーバー（`web/server/`）は、ブラウザにできないことだけを受け持ちます: プロジェクトフォルダの操作（新規作成・デモのコピー・フォルダ選択・Card in Card として取り込むプロジェクトの読み取り）、`tsugumid` の起動・停止、import grant、Skill の読み込み、Agent とモデルの API キー。`127.0.0.1` にだけ公開し、`Host` ヘッダーを検査し、変更を伴う API には同一オリジンのページしか送れないヘッダーを要求します。
+- Node サーバー（`web/server/`）は、ブラウザにできないことだけを受け持ちます: プロジェクトフォルダの操作（新規作成・デモのコピー・フォルダ選択・Card in Card として取り込むプロジェクトの読み取り）、`tsugumid` の起動・停止、import grant、Skill の読み込み、Agent とモデルの API キー、ChatGPT のサインイン（データフォルダの `chatgpt.json`、0600）。`127.0.0.1` にだけ公開し、`Host` ヘッダーを検査し、変更を伴う API には同一オリジンのページしか送れないヘッダーを要求します。
 - Agent はサーバー側で動き、tool 定義と JSON⇄FlatBuffers の変換は macOS 版と同じく `tsugumi.bfbs` から作ります。`tsugumid` へは Unix socket で接続します。
 - 折れ線グラフは、macOS 版の Dawn 描画層（`ui/renderer`）と同じ WGSL・頂点生成を WebGPU に移植しています（Chromium の WebGPU 実装は Dawn）。WebGPU が使えないブラウザでは理由を表示します。
 
@@ -41,6 +41,7 @@ node web/dist/server.js --open
 | `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | バイナリと SDK の場所（既定は `build/` と `sdk/`） |
 | `TSUGUMI_WEB_DATA` | 設定・最近のプロジェクト・会話・control フォルダの保存先（macOS の既定 `~/Library/Application Support/Tsugumi/web`） |
 | `ANTHROPIC_API_KEY` | あればそれを API キーとして使う（なければ macOS では Keychain のアプリと同じ項目、それ以外ではデータフォルダの 0600 ファイル） |
+| `TSUGUMI_CHATGPT_ISSUER` / `TSUGUMI_CHATGPT_API` | ChatGPT のサインインとプランへのリクエストの送り先（テスト用。既定は `https://auth.openai.com` と `https://api.openai.com`） |
 
 TypeScript の binding と `tsugumi.bfbs` は `npm run gen`（`flatc` 25.12.19）で `web/src/gen` に生成し、Git には入れていません。
 

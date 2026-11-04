@@ -20,7 +20,7 @@ try {
   }
   const a = Object.create(Agent.prototype) as any
   a.storage = path.join(dir, 'chat.json')
-  a.provider = { api: 'anthropicMessages', baseURL: 'http://fixture.invalid', needsKey: false, contextLimit: 10 }
+  a.provider = { api: 'anthropicMessages', baseURL: 'http://fixture.invalid', auth: 'none', contextLimit: 10 }
   a.conversation = { messages: structuredClone(cases.find((c: any) => c.name === 'complete_pairs').messages),
     archive: [], summary: 'EARLIER', usage: { inputTokens: 100 } }
   const original = structuredClone(a.conversation.messages)
