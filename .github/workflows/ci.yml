@@ -40,8 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
-      - name: Build the host tsugumid (the Swift tests talk to it)
-        run: nix develop -c bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid'
+      # The worker runs the Cards an Agent test builds (TeamTests runs bash Cards).
+      - name: Build the host tsugumid and its worker (the Swift tests talk to them)
+        run: nix develop -c bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid tsugumi-worker'
       # Swift and its SDK are Xcode's; only flatc comes from the flake.
       - name: Model, RPC, Agent and launcher (macOS/CoreTests)
         run: |

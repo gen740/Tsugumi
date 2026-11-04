@@ -56,7 +56,9 @@ extension Agent {
 
   /// The rules, and for a helper its task.
   var system: String {
-    guard let helper else { return Self.systemPrompt }
+    if role == .guide { return Self.guidePrompt }
+    // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
+    guard let helper else { return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") }
     return Self.systemPrompt + "\n\n" + Shared.fill(Shared.data.helper.prompt, [
       "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction])
   }

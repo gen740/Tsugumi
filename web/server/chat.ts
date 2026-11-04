@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, AgentEvent, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { Agent, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { EnvironmentManager, projectKey } from './env'
 
@@ -44,19 +44,28 @@ interface Settings {
   chatGPTModel: string
   fixturePort: number
   /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
-  models: string[]
+  /** Models listed with "モデル一覧を取得", per connection (no request from the chat). */
+  models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   /** Their display names (the ChatGPT account's catalog has them). */
   modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
+  /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
+  guide: GuideState
 }
+
+/** The demo the guide shows: its id and title, the copy's folder, and
+ *  whether the guide began it. */
+interface GuideTour { demo: string; title: string; path: string; started: boolean }
+interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null }
 
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
-  models: [], modelNames: {}, allowedPermissions: [],
+  models: {}, modelNames: {}, allowedPermissions: [],
+  guide: { setupDone: false, demoAnswered: false, tour: null },
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
 
@@ -71,7 +80,11 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
-  if (Array.isArray(b.models)) out.models = b.models.filter((m): m is string => typeof m === 'string')
+  if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
+    const m = b.models as Record<string, unknown>
+    out.models = Object.fromEntries((['anthropic', 'openai', 'chatgpt'] as const).filter((k) => Array.isArray(m[k]))
+      .map((k) => [k, (m[k] as unknown[]).filter((x): x is string => typeof x === 'string')]))
+  }
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
   return out
@@ -155,7 +168,12 @@ const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(path.join(ctx.support, 'c
 let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
 
 async function provider(): Promise<ProviderConfig> {
-  const s = settings()
+  return providerFor(settings().provider)
+}
+
+/** A connection with its chosen model (each keeps its own); its key or token when it has one. */
+async function providerFor(id: ProviderId): Promise<ProviderConfig> {
+  const s = { ...settings(), provider: id }
   if (s.provider === 'fixture') {
     return { name: 'Local fixture', baseURL: `http://127.0.0.1:${s.fixturePort}`, model: 'fixture', api: 'anthropicMessages', auth: 'none', maxTokens: 32768, contextLimit: 6000 }
   }
@@ -208,6 +226,77 @@ function cleanFolders(v: unknown): string[] {
   })
 }
 
+// ---- The guide -----------------------------------------------------------------
+
+// The guide bird in the bottom-right corner: one conversation for the whole
+// app with the same model connection as the Agent (no key, no guide). It
+// reads the project on the page's screen and explains; what it offers to do
+// (guide_show) the user does with a button of the page.
+let guideAgent: Agent | undefined
+/** The project the page asked about (its reads go there), if one is open. */
+let guideProject: string | undefined
+const guideFile = () => path.join(ctx.support, 'agent', 'guide', 'conversation.json')
+const guideEvents = (e: AgentEvent) => ctx.broadcast({ type: 'guide', event: e })
+
+async function guide(): Promise<Agent> {
+  if (!catalog) throw ctx.httpError(503, catalogError!)
+  if (!guideAgent) {
+    const rpc = () => {
+      if (!guideProject) throw new Error(guideText('noProject'))
+      return chatFor(guideProject).rpc()
+    }
+    guideAgent = new Agent(catalog, rpc, await guideProvider(), guideFile(), 'guide', references(), undefined, 'guide')
+    // A guide answers in a few steps and never waits on a run.
+    guideAgent.maxSteps = 12
+    guideAgent.statusWait = 0
+  }
+  guideAgent.setProvider(await guideProvider())
+  return guideAgent
+}
+
+/** The guide's connection: the Agent's, with the small model Tsugumi speaks
+ *  with on the ChatGPT plan: gpt-6.1-luna when the account offers it, else
+ *  its newest luna (the plan refuses models it does not offer). */
+async function guideProvider(): Promise<ProviderConfig> {
+  const p = await provider()
+  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) } : p
+}
+
+export function speechModel(offered: string[], fallback: string): string {
+  const preferred = 'gpt-6.1-luna'
+  if (offered.includes(preferred)) return preferred
+  const version = (m: string) => (m.match(/\d+/g) ?? []).map(Number)
+  const newer = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) > (b[i] ?? -1); return false }
+  return offered.filter((m) => m.includes('luna')).reduce<string | undefined>((best, m) => (!best || newer(version(m), version(best)) ? m : best), undefined) ?? fallback
+}
+
+/** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
+ *  signed-in ChatGPT plan, or the local fixture. */
+async function guideAvailable(): Promise<boolean> {
+  if (!catalog) return false
+  const s = settings()
+  if (s.provider === 'fixture') return true
+  if (s.provider === 'chatgpt') return chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled)
+  return !!(await keySource(s.provider))
+}
+
+/** The guide's state for the page; a key already there answers the first start. */
+async function guideState() {
+  const available = await guideAvailable()
+  let g = settings().guide
+  if (available && !g.setupDone) {
+    g = { ...g, setupDone: true }
+    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+  }
+  return { available, ...g }
+}
+
+function cleanTour(v: unknown): GuideTour | null {
+  const t = v as Partial<GuideTour> | null
+  if (!t || typeof t.demo !== 'string' || typeof t.title !== 'string' || typeof t.path !== 'string') return null
+  return { demo: t.demo, title: t.title, path: t.path, started: t.started === true }
+}
+
 // ---- Skills ----------------------------------------------------------------------
 
 interface Skill { name: string; description: string; path: string; content: string; source: string }
@@ -253,8 +342,11 @@ function loadSkills(folder: string, source: string): Skill[] {
   return out
 }
 
+/** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
+const DEMO: Skill = { name: 'demo', description: 'ツグミが画面を飛び回って、デモや画面の使い方を案内します', path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' }
+
 function skillsFor(project: string | undefined): Skill[] {
-  const out = project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : []
+  const out = [DEMO, ...(project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : [])]
   for (const f of settings().skillFolders) if (f.enabled) out.push(...loadSkills(f.path, path.basename(f.path)))
   return out
 }
@@ -468,13 +560,23 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
-  'POST /api/settings/models': async () => {
-    const list = await listModels(await provider())
+  /** Lists a connection's models (the one in use unless `provider` names another). */
+  'POST /api/settings/models': async (b) => {
+    const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
+    if (id === 'fixture') throw ctx.httpError(400, 'fixture にはモデル一覧がありません。')
+    const list = await listModels(await providerFor(id))
     const models = list.map((m) => m.id)
-    const modelNames = Object.fromEntries(list.map((m) => [m.id, m.label]))
-    ctx.writeJSON(settingsFile(), { ...settings(), models, modelNames })
+    const s = settings()
+    const modelNames = id === 'chatgpt' ? Object.fromEntries(list.map((m) => [m.id, m.label])) : s.modelNames
+    ctx.writeJSON(settingsFile(), { ...s, models: { ...s.models, [id]: models }, modelNames })
     return { models, modelNames }
   },
+  /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
+  'GET /api/settings/connections': async () => ({
+    anthropic: !!(await keySource('anthropic')),
+    openai: !!(await keySource('openai')),
+    chatgpt: chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled),
+  }),
   'GET /api/chatgpt': () => chatGPTState(),
   // Starts a sign-in: the page opens the URL in a tab; the outcome is read back with GET /api/chatgpt.
   'POST /api/chatgpt/signin': async (b) => {
@@ -570,5 +672,51 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { folder: f, name: path.basename(f) }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
+  'POST /api/guide': async () => {
+    const state = await guideState()
+    const a = state.available ? await guide() : undefined
+    return { ...state, conversation: a?.conversation ?? null, busy: a?.busy ?? false }
+  },
+  'POST /api/guide/state': async (b) => {
+    const g = { ...settings().guide }
+    if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
+    if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
+    if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
+    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    return guideState()
+  },
+  /** A connection check for the first start: the provider lists its models with the key. */
+  'POST /api/guide/check': async () => {
+    try {
+      await listModels(await provider())
+    } catch (e) {
+      throw ctx.httpError(502, String((e as Error).message ?? e))
+    }
+    return guideState()
+  },
+  'POST /api/guide/send': async (b) => {
+    if (!(await guideAvailable())) throw ctx.httpError(409, 'ガイドに使える API キーがありません。')
+    const a = await guide()
+    if (a.busy) throw ctx.httpError(409, 'ツグミはまだ答えています。')
+    guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
+    a.send(String(b.prompt), String(b.display), guideEvents, String(b.display))
+    return { ok: true }
+  },
+  'POST /api/guide/retry': async () => {
+    const a = await guide()
+    if (!a.busy) a.retry(guideEvents)
+    return { ok: true }
+  },
+  'POST /api/guide/cancel': async () => {
+    guideAgent?.cancel()
+    return { ok: true }
+  },
+  /** A new conversation (the old one is gone; the tour stays). */
+  'POST /api/guide/reset': async () => {
+    guideAgent?.cancel()
+    guideAgent = undefined
+    fs.rmSync(guideFile(), { force: true })
+    return { ok: true }
+  },
   }
 }

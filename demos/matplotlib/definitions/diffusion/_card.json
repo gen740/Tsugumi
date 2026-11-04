@@ -1,0 +1,15 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "walks"
+    }
+  ],
+  "params": [
+    {
+      "name": "frames",
+      "type": "uint64",
+      "data": 60
+    }
+  ]
+}

@@ -68,7 +68,9 @@ struct GraphCanvas: View {
         // The Agent at work: threads being drawn and the tsugumi.
         // (one bird per helper while the Agent has work delegated)
         ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
-          PresenceLayer(presence: p, geometry: presenceGeometry(routed), avatar: prefs.agentAvatar,
+          // One Tsugumi: while the guide's bird is out (demo mode), the Agent's bird is not drawn too.
+          PresenceLayer(presence: p, geometry: presenceGeometry(routed),
+                        avatar: GuideController.shared.awayWindows > 0 ? .none : prefs.agentAvatar,
                         lead: p === session.presence && !session.helperPresences.isEmpty)
         }
         if let p = pending {
@@ -459,6 +461,7 @@ struct GraphCanvas: View {
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil)
       .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
+      .guideTarget("card:\(k)", radius: 12)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }

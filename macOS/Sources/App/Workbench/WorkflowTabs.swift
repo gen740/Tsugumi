@@ -11,6 +11,12 @@ struct WorkflowTabs: View {
   @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
+  @Environment(\.guideWindow) private var guideWindow
+
+  /// What changes in the project that a demo tour follows.
+  private var runKey: String {
+    "\(session.connected)|\(session.currentRunId ?? "")|\(session.runStatus.map { String(describing: $0.state) } ?? "")"
+  }
 
   var body: some View {
     // Sidebar, title and toolbar come from the split view so they never overlap,
@@ -37,6 +43,7 @@ struct WorkflowTabs: View {
       }
       .inspector(isPresented: $workspace.showChat) {
         // Wider by default; the width the user gives it is kept (per Mac).
+        // The chat is Tsugumi: the bird waits at its top left (GuideNest).
         ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
           .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
             if w >= 320 { chatWidth = Double(w.rounded()) }
@@ -46,6 +53,24 @@ struct WorkflowTabs: View {
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
+    // A demo tour: Tsugumi of this chat leads it, following the real runs.
+    .onChange(of: runKey, initial: true) { if guideWindow != nil { GuideController.shared.observe(session, tab: workspace.active) } }
+    .onChange(of: workspace.active?.id, initial: true) {
+      if guideWindow != nil { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
+    }
+    .onAppear { if guideWindow != nil, GuideController.shared.touring(session) { workspace.showChat = true } }
+    // Tsugumi points into a Card in Card (or back at a root Card): the canvas shows that workflow.
+    .onChange(of: GuideController.shared.scopeRequest) { _, s in
+      guard guideWindow != nil, let s, let tab = workspace.active else { return }
+      GuideController.shared.scopeRequest = nil
+      if session.kind(key(s)) == .subgraph || s.isEmpty { tab.enter(s) }
+    }
+    .onChange(of: GuideController.shared.highlight) { _, h in
+      guard guideWindow != nil, let h, h.hasPrefix("card:"), !h.dropFirst(5).contains("/"), let tab = workspace.active,
+            !tab.scope.isEmpty else { return }
+      let id = String(h.dropFirst(5))
+      if session.instance(key(tab.scope + [id])) == nil, session.instance(key([id])) != nil { tab.enter([]) }
+    }
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
     // The title bar stays quiet: the project's name and where the canvas is

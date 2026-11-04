@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
+import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
 import { PERMISSIONS } from '../model/permissions'
 import { useObserve } from '../model/observable'
@@ -450,7 +451,7 @@ interface APIState {
   openAIModel: string
   chatGPTModel: string
   fixturePort: number
-  models: string[]
+  models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   keys: { Anthropic: KeySource; OpenAI: KeySource }
   keyEnv: { Anthropic: string; OpenAI: string }
   allowedPermissions: string[]
@@ -459,6 +460,8 @@ interface APIState {
 /** Re-reads the connection of every open chat (after it changed here). */
 function refreshChats() {
   for (const s of app.sessions.values()) void app.chat(s).refreshProvider()
+  // The guide is there exactly while the chosen provider has a key.
+  void guide.refresh()
 }
 
 /** Model connections. API keys stay on this host (the macOS Keychain); they are
@@ -466,40 +469,24 @@ function refreshChats() {
  *  settings or logs. */
 function APISettings() {
   const [s, setS] = useState<APIState>()
-  const [key, setKey] = useState('')
-  const [models, setModels] = useState<string[]>([])
-  const [message, setMessage] = useState<string>()
   const reload = () => api<APIState>('/api/settings').then((v) => {
     setS(v)
     return v
   })
   useEffect(() => {
-    void reload().then((v) => setModels(v.models))
+    void reload()
   }, [])
   const update = (v: Partial<APIState>) => {
     setS((x) => (x ? { ...x, ...v } : x))
     void api('/api/settings', v).then(refreshChats)
   }
   if (!s) return null
-  const keyed = s.provider === 'anthropic' || s.provider === 'openai'
-  const plan = s.provider === 'chatgpt'
-  const name = s.provider === 'openai' ? 'OpenAI' : 'Anthropic'
-  const source = keyed ? s.keys[name] : null
-  const model = s.provider === 'openai' ? s.openAIModel : s.model
-  const setModel = (m: string) => update(s.provider === 'openai' ? { openAIModel: m } : { model: m })
-  const sourceLabel = source === 'keychain' ? 'macOS Keychain（このホストのみ）' : source === 'env' ? `環境変数 ${s.keyEnv[name]}` : source === 'file' ? 'このホストのファイル（0600）' : '未設定'
-  const run = async (f: () => Promise<string>) => {
-    try {
-      setMessage(await f())
-    } catch (e) {
-      setMessage(errorText(e))
-    }
-  }
   return (
     <Form>
+      {/* Every connection can be set up; this picks the one the chat and Tsugumi use (the chat's model menu switches it too). */}
       <Section>
-        <Row label="接続先">
-          <Select<ProviderId> value={s.provider} onChange={(v) => { update({ provider: v }); setModels([]); setMessage(undefined); setKey('') }} options={[
+        <Row label="使う接続先">
+          <Select<ProviderId> value={s.provider} onChange={(v) => update({ provider: v })} options={[
             { value: 'anthropic', label: 'Anthropic API（API キー）' }, { value: 'openai', label: 'OpenAI API（API キー）' },
             { value: 'chatgpt', label: 'ChatGPT プラン（Sign in with ChatGPT）' },
             { value: 'fixture', label: 'ローカル fixture（テスト用・通信なし）' },
@@ -513,41 +500,11 @@ function APISettings() {
             <Row><span className="caption mono selectable">起動: python3 tests/fixtures/model_fixture.py --port {s.fixturePort}</span></Row>
           </>
         )}
+        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。</span></Row>
       </Section>
-      {keyed && (
-        <Section title="API キー">
-          <Row label="モデル"><TextField value={model} onChange={setModel} /></Row>
-          <Row label="保存先"><span className="secondary">{sourceLabel}</span></Row>
-          <Row label="新しい API キー">
-            <input type="password" className="field" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" spellCheck={false} aria-label="新しい API キー" />
-          </Row>
-          <Row>
-            <div className="row gap8 wrap">
-              <Button disabled={!key} onClick={() => void run(async () => {
-                const r = await api<{ message: string }>('/api/settings/key', { provider: s.provider, key })
-                setKey('')
-                await reload()
-                refreshChats()
-                return r.message
-              })}>キーを保存</Button>
-              <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {
-                const r = await api<{ message: string }>('/api/settings/key/delete', { provider: s.provider })
-                await reload()
-                return r.message
-              })}>キーを削除</Button>
-              <Button disabled={!source} onClick={() => void run(async () => {
-                const r = await api<{ models: string[] }>('/api/settings/models', {})
-                setModels(r.models)
-                return `${r.models.length} 件のモデルを取得しました。`
-              })}>モデル一覧を取得</Button>
-            </div>
-          </Row>
-          {models.length > 0 && (
-            <Row label="一覧から選択"><Select value={model} onChange={setModel} options={[...new Set([model, ...models])].map((m) => ({ value: m, label: m }))} /></Row>
-          )}
-        </Section>
-      )}
-      {plan && <ChatGPTSettings model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} />}
+      <KeySection id="anthropic" s={s} reload={reload} update={update} />
+      <KeySection id="openai" s={s} reload={reload} update={update} />
+      <ChatGPTSettings model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
       <Section title="Agent が確認なしに Card に与えてよい権限">
         {PERMISSIONS.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
@@ -557,9 +514,23 @@ function APISettings() {
         ))}
         <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。</span></Row>
       </Section>
-      {message && <div className="caption selectable">{message}</div>}
+      <GuideSettings />
       <div className="caption secondary">チャットは任意機能です。通常の操作はすべて UI から行えます。</div>
     </Form>
+  )
+}
+
+/** The guide bird: whether it is shown, and the first start's offer again. */
+function GuideSettings() {
+  useObserve(guide)
+  return (
+    <Section title="ガイドのツグミ">
+      <Row label="状態"><span className="secondary">{guide.available ? '右下に表示中' : 'API キーが未設定のため表示していません'}</span></Row>
+      {/* Pressed, it says what happens next and waits until it has happened. */}
+      <Row><Button disabled={guide.offersDemo} onClick={() => void guide.resetIntroduction()}>初回の案内（デモの勧誘）をもう一度表示</Button></Row>
+      {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。</span></Row>}
+      <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。</span></Row>
+    </Section>
   )
 }
 
@@ -574,7 +545,7 @@ interface ChatGPTState {
 /** Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. This server
  *  keeps the registrations and tokens in a 0600 file of its data folder; the
  *  page never sees a token. */
-function ChatGPTSettings({ model, setModel }: { model: string; setModel: (m: string) => void }) {
+function ChatGPTSettings({ model, setModel, inUse }: { model: string; setModel: (m: string) => void; inUse?: boolean }) {
   const [st, setSt] = useState<ChatGPTState>()
   const [message, setMessage] = useState<string>()
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
@@ -633,7 +604,7 @@ function ChatGPTSettings({ model, setModel }: { model: string; setModel: (m: str
   }
   return (
     <>
-      <Section title="ChatGPT プラン（Sign in with ChatGPT）">
+      <Section title={`ChatGPT プラン（Sign in with ChatGPT）${inUse ? '（使用中）' : ''}`}>
         <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。</span></Row>
         {active && <Row label="使用中のアカウント"><span className="selectable">{active.email ?? active.clientId}</span></Row>}
         {active?.signedIn && !active.planEnabled && (
@@ -673,7 +644,7 @@ function ChatGPTSettings({ model, setModel }: { model: string; setModel: (m: str
         <Row label="モデル"><TextField value={model} onChange={setModel} /></Row>
         <Row>
           <Button disabled={!active?.signedIn} onClick={() => void run(async () => {
-            const r = await api<{ models: string[]; modelNames: Record<string, string> }>('/api/settings/models', {})
+            const r = await api<{ models: string[]; modelNames: Record<string, string> }>('/api/settings/models', { provider: 'chatgpt' })
             setModels(r.models.map((id) => ({ id, label: r.modelNames[id] ?? id })))
             return `${r.models.length} 件のモデルを取得しました。`
           })}>モデル一覧を取得</Button>
@@ -694,6 +665,60 @@ function ChatGPTSettings({ model, setModel }: { model: string; setModel: (m: str
         </Sheet>
       )}
     </>
+  )
+}
+
+/** One API key connection: its key (on this host only), its model and the models it offers. */
+function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: APIState; reload: () => Promise<APIState>; update: (v: Partial<APIState>) => void }) {
+  const [key, setKey] = useState('')
+  const [models, setModels] = useState<string[]>(s.models[id] ?? [])
+  const [message, setMessage] = useState<string>()
+  const name = id === 'openai' ? 'OpenAI' : 'Anthropic'
+  const source = s.keys[name]
+  const model = id === 'openai' ? s.openAIModel : s.model
+  const setModel = (m: string) => update(id === 'openai' ? { openAIModel: m } : { model: m })
+  const sourceLabel = source === 'keychain' ? 'macOS Keychain（このホストのみ）' : source === 'env' ? `環境変数 ${s.keyEnv[name]}` : source === 'file' ? 'このホストのファイル（0600）' : '未設定'
+  const run = async (f: () => Promise<string>) => {
+    try {
+      setMessage(await f())
+    } catch (e) {
+      setMessage(errorText(e))
+    }
+  }
+  return (
+    <Section title={`${name} API キー${s.provider === id ? '（使用中）' : ''}`}>
+      <Row label="保存先"><span className="secondary">{sourceLabel}</span></Row>
+      <Row label="新しい API キー">
+        <input type="password" className="field" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" spellCheck={false} aria-label={`新しい ${name} API キー`} />
+      </Row>
+      <Row>
+        <div className="row gap8 wrap">
+          <Button disabled={!key} onClick={() => void run(async () => {
+            const r = await api<{ message: string }>('/api/settings/key', { provider: id, key })
+            setKey('')
+            await reload()
+            refreshChats()
+            return r.message
+          })}>キーを保存</Button>
+          <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {
+            const r = await api<{ message: string }>('/api/settings/key/delete', { provider: id })
+            await reload()
+            refreshChats()
+            return r.message
+          })}>キーを削除</Button>
+          <Button disabled={!source} onClick={() => void run(async () => {
+            const r = await api<{ models: string[] }>('/api/settings/models', { provider: id })
+            setModels(r.models)
+            return `${r.models.length} 件のモデルを取得しました。`
+          })}>モデル一覧を取得</Button>
+        </div>
+      </Row>
+      <Row label="モデル"><TextField value={model} onChange={setModel} /></Row>
+      {models.length > 0 && (
+        <Row label="一覧から選択"><Select value={model} onChange={setModel} options={[...new Set([model, ...models])].map((m) => ({ value: m, label: m }))} /></Row>
+      )}
+      {message && <Row><span className="caption selectable">{message}</span></Row>}
+    </Section>
   )
 }
 

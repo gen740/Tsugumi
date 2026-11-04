@@ -358,7 +358,7 @@ struct CardDatabaseView: View {
       message = session.saveError.map { String(localized: "保存できませんでした: \($0)") } ?? String(localized: "適用しました（revision \(session.rev)）。")
       load()
     } catch {
-      parseError = String(localized: "JSON として読めません: \(error)")
+      parseError = String(localized: "JSON として読めません: \(String(describing: error))")
     }
   }
 }
@@ -571,7 +571,7 @@ private struct RunHistorySettings: View {
         message = String(localized: "\(r.deletedRuns ?? 0) 件の実行を削除し、\(freed) を解放しました。")
       } catch {
         failed = true
-        message = String(localized: "削除できませんでした: \(error)")
+        message = String(localized: "削除できませんでした: \(String(describing: error))")
       }
       working = false
     }
@@ -620,7 +620,7 @@ private struct CacheSettings: View {
     working = true
     message = nil
     Task {
-      do { result = try await session.clearBuildCache() } catch { message = String(localized: "削除できませんでした: \(error)") }
+      do { result = try await session.clearBuildCache() } catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
       working = false
     }
   }

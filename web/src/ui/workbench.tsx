@@ -13,6 +13,7 @@ import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, Wor
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel } from './chat'
+import { guide } from '../model/guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
@@ -67,6 +68,40 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
     document.title = session.scopeName([])
   })
   const problem = hasProblem(session)
+  // A demo tour: Tsugumi of this chat leads it, following the real runs.
+  const runKey = guide.runKey(session)
+  useEffect(() => {
+    if (onSwitchProject) guide.observe(session, tab)
+  }, [runKey, session, tab])
+  useEffect(() => {
+    if (onSwitchProject) guide.setContext('project', session, tab)
+  }, [session, tab])
+  useEffect(() => {
+    if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)
+  }, [session])
+  // Tsugumi opens a Card's settings to show it, and points into a Card in Card
+  // (or back at a root Card): the canvas shows that workflow.
+  useObserve(guide)
+  useEffect(() => {
+    const r = guide.openRequest
+    if (!onSwitchProject || !r) return
+    guide.openRequest = undefined
+    const p = r.slice(5)
+    const k = session.instance(p) ? p : key([...(tab?.scope ?? []), ...p.split('/')])
+    if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
+  }, [guide.openRequest])
+  useEffect(() => {
+    const s = guide.scopeRequest
+    if (!onSwitchProject || !s || !tab) return
+    guide.scopeRequest = undefined
+    if (session.kind(key(s)) === 'subgraph') tab.enter(s)
+  }, [guide.scopeRequest])
+  useEffect(() => {
+    const h = guide.highlight
+    if (!onSwitchProject || !h?.startsWith('card:') || h.slice(5).includes('/') || !tab?.scope.length) return
+    const id = h.slice(5)
+    if (!session.instance(key([...tab.scope, id])) && session.instance(key([id]))) tab.enter([])
+  }, [guide.highlight])
   return (
     <div className="window workflow-window">
       {workspace.showSidebar && tab && (
@@ -97,6 +132,7 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
       </div>
       {!problem && workspace.showChat && (
         // Wider by default; the width the user gives it is kept (per browser).
+        // The chat is Tsugumi: the bird waits at its top left (GuideNest).
         <SidePane side="right" storageKey="chat.width" initial={480} min={320} max={900} className="chat-pane">
           <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />
         </SidePane>
@@ -396,9 +432,9 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           {BOTTOM_PANELS.map((p) => {
             const open = workspace.showBottom && workspace.bottomPanel === p
             return (
-              <StatusButton key={p} selected={open} label={BOTTOM_TITLES[p]} help={`${BOTTOM_TITLES[p]}（${prefs.label(PANEL_SHORTCUT[p])}）`} onClick={() => workspace.togglePanel(p)}>
+              <span key={p} data-guide={p === 'log' ? 'logs' : p}><StatusButton selected={open} label={BOTTOM_TITLES[p]} help={`${BOTTOM_TITLES[p]}（${prefs.label(PANEL_SHORTCUT[p])}）`} onClick={() => workspace.togglePanel(p)}>
                 <Icon name={BOTTOM_ICONS[p]} />
-              </StatusButton>
+              </StatusButton></span>
             )
           })}
         </span>

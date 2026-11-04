@@ -1,0 +1,5 @@
+namespace walk;
+// Positions of every walker after every step, walker-major (walkers × (steps + 1)).
+table Walks { walkers:ulong; steps:ulong; positions:[double]; }
+table Outputs { walks:Walks (required); }
+root_type Outputs;

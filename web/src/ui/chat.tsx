@@ -13,6 +13,8 @@ import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { ChatChoices, GuideNest } from './guide'
+import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
 
 export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSession; chat: ChatController; detached: boolean; tab?: WorkflowTab }) {
@@ -22,6 +24,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
   return (
     <div className="chat-panel">
       <div className="chat-header">
+        {!detached && <GuideNest busy={chat.busy} />}
         <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? '会話に戻る' : '会話の一覧と検索'} onClick={() => setShowList(!showList)} />
         <b className="ellipsis flex1">{showList ? '会話' : chat.sessions.find((x) => x.id === chat.currentId)?.title ?? '新しい会話'}</b>
         <Button kind="borderless" iconOnly icon="square.and.pencil" help="新しい会話" onClick={() => { chat.newSession(); setShowList(false) }} />
@@ -118,8 +121,19 @@ function SessionList({ chat, onPick }: { chat: ChatController; onPick: () => voi
 // ---- Conversation ------------------------------------------------------------------
 
 function Conversation({ session, chat, tab }: { session: ProjectSession; chat: ChatController; tab?: WorkflowTab }) {
+  useObserve(guide)
   const scroll = useRef<HTMLDivElement>(null)
   const last = chat.items[chat.items.length - 1]
+  // Tsugumi's bubble sent the user here: its answer is scrolled to and marked for a moment.
+  const answer = [...chat.items].reverse().find((x) => x.role === 'assistant')
+  const [flash, setFlash] = useState<string>()
+  useEffect(() => {
+    if (!guide.chatFlash || !answer) return
+    setFlash(answer.id)
+    document.getElementById(`chat-item-${answer.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    const t = setTimeout(() => setFlash(undefined), 2200)
+    return () => clearTimeout(t)
+  }, [guide.chatFlash])
   // Follows the end while the conversation grows.
   useLayoutEffect(() => {
     const el = scroll.current
@@ -132,12 +146,14 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
         <div className="chat-column">
           {chat.items.length === 0 && (
             <div className="chat-intro">
-              <div className="callout">Workflow の相談・生成・編集を依頼できます。</div>
+              <div className="callout">{guide.available ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
               <div className="caption secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</div>
             </div>
           )}
           {chat.items.map((it) => (
-            <Row key={it.id} item={it} streaming={chat.busy && it === last} session={session} tab={tab} />
+            <div key={it.id} id={`chat-item-${it.id}`} className={flash === it.id ? 'guide-flash' : undefined}>
+              <Row item={it} streaming={chat.busy && it === last} session={session} tab={tab} />
+            </div>
           ))}
           {chat.busy && (
             <div className="chat-activity">
@@ -157,6 +173,7 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
           {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>続ける</Button>}
         </div>
       )}
+      <ChatChoices chat={chat} session={session} tab={tab} />
       <Composer session={session} chat={chat} tab={tab} />
     </>
   )
@@ -194,17 +211,28 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
   /** The highlighted Skill candidate (↑ / ↓, Return or Tab takes it). */
   const [skillIndex, setSkillIndex] = useState(0)
-  const [models, setModels] = useState<string[]>([])
+  /** The connections set up, each with its chosen model and the models listed in Settings > API. */
+  const [connections, setConnections] = useState<{ id: string; name: string; models: string[] }[]>([])
   const [picking, setPicking] = useState(false)
   const [toAttach, setToAttach] = useState<string>()
   const [attaching, setAttaching] = useState(false)
   const [attachError, setAttachError] = useState<string>()
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Models listed earlier in Settings > API (no request to the provider from here).
+  // Models listed earlier in Settings > API (no request to the provider from here), per connection set up.
   useEffect(() => {
-    void api<{ models: string[] }>('/api/settings').then((s) => setModels(s.models ?? [])).catch(() => {})
-  }, [chat.provider.name])
+    void Promise.all([
+      api<{ provider: string; model: string; openAIModel: string; chatGPTModel: string; models: Record<string, string[] | undefined> }>('/api/settings'),
+      api<{ anthropic: boolean; openai: boolean; chatgpt: boolean }>('/api/settings/connections'),
+    ]).then(([s, on]) => {
+      const list = (id: string, name: string, chosen: string) => ({ id, name, models: [...new Set([...(s.models?.[id] ?? []), chosen])].sort() })
+      setConnections([
+        ...(on.anthropic ? [list('anthropic', 'Anthropic API', s.model)] : []),
+        ...(on.openai ? [list('openai', 'OpenAI API', s.openAIModel)] : []),
+        ...(on.chatgpt ? [list('chatgpt', 'ChatGPT プラン', s.chatGPTModel)] : []),
+      ])
+    }).catch(() => {})
+  }, [chat.provider.name, chat.provider.model])
 
   // Starts one line high and grows with the text (up to a limit).
   useLayoutEffect(() => {
@@ -245,8 +273,10 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
     inputRef.current?.focus()
   }
 
-  const setModel = (m: string) => {
-    void api('/api/settings', chat.provider.plan ? { chatGPTModel: m } : chat.provider.api === 'openAIResponses' ? { openAIModel: m } : { model: m }).then(() => chat.refreshProvider())
+  /** A model of a connection chosen in the menu: that connection is used from now on. */
+  const choose = (provider: string, m: string) => {
+    const key = provider === 'chatgpt' ? 'chatGPTModel' : provider === 'openai' ? 'openAIModel' : 'model'
+    void api('/api/settings', { provider, [key]: m }).then(() => { void chat.refreshProvider(); void guide.refresh() })
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -329,13 +359,17 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           <button type="button" className="model-menu" disabled={!chat.provider.remote} title={`モデル（接続先: ${chat.provider.name}）`}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
-              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [...new Set([...models, model])].sort().map((m) => ({ label: modelName(m), checked: m === model, action: () => setModel(m) })))
+              // Every connection set up, with its models: choosing one switches to it.
+              const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
+              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, connections.flatMap((c, i) => [
+                i > 0 ? 'divider' as const : null,
+                { label: c.name, disabled: true },
+                ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === model, action: () => choose(c.id, m) })),
+              ]))
             }}>
             <span className="ellipsis">{modelName(model)}</span>
             <Icon name="chevron.down" size={8} />
           </button>
-          {/* Requests use the ChatGPT plan: said beside the model, with its usage page. */}
-          {chat.provider.plan && <a className="caption2 secondary" href={USAGE_URL} target="_blank" rel="noopener noreferrer" title="Manage usage（chatgpt.com/settings/usage）">Using ChatGPT plan</a>}
           <span className="spacer" />
           <span className="caption2 tertiary" title={`直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 ${chat.usage.cacheReadTokens ?? 0}、キャッシュに書いた量 ${chat.usage.cacheWriteTokens ?? 0}`}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy

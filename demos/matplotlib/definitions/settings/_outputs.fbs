@@ -1,0 +1,4 @@
+namespace walk;
+table Settings { seed:ulong; walkers:ulong; steps:ulong; }
+table Outputs { walk:Settings (required); }
+root_type Outputs;

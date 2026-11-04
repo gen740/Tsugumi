@@ -177,6 +177,14 @@ public enum Keychain {
     guard s == errSecSuccess else { throw AgentError.provider("Keychain error \(s)") }
   }
 
+  /// Whether a provider's secret is stored, without reading it (no access prompt).
+  public static func exists(account: String) -> Bool {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                            kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
+    var out: CFTypeRef?
+    return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess
+  }
+
   public static func load(account: String) -> String? {
     let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                             kSecAttrAccount as String: account, kSecReturnData as String: true]

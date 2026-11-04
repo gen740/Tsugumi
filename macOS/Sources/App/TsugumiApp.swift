@@ -34,7 +34,8 @@ struct TsugumiApp: App {
     WindowGroup("Card 設定", id: "card", for: CardRef.self) { $ref in
       // One editor per Card: a window shown for another Card never keeps the
       // previous Card's working copy.
-      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref).id(ref.card) } }
+      // Tsugumi can fly into it to point at a setting.
+      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref).id(ref.card) }.modifier(GuideWindowLayer()) }
     }
     .defaultSize(width: 860, height: 620)
     .windowToolbarStyle(.unifiedCompact(showsTitle: true))
@@ -325,6 +326,10 @@ struct WorkbenchCommands: Commands {
         .shortcut(.addNote)
       Button("チャットの表示切替") { workspace?.showChat.toggle() }
         .shortcut(.toggleChat)
+      // In a project Tsugumi is the chat; on Home, its panel in the corner.
+      Button("ガイドのツグミに聞く") { if let w = workspace { w.showChat.toggle() } else { GuideController.shared.toggleFromMenu() } }
+        .shortcut(.toggleGuide)
+        .disabled(!GuideController.shared.available)
       Button("ログの表示切替") { workspace?.togglePanel(.log) }
         .shortcut(.toggleLog)
       Button("タイムラインの表示切替") { workspace?.togglePanel(.timeline) }

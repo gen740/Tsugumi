@@ -39,6 +39,9 @@ import TsugumiRPC
 
   @Test func helpersImplementDraftsAtTheSameTime() async throws {
     var h = AgentHarness()
+    // The helpers' Cards run, so the worker must be built (not only tsugumid).
+    try #require(FileManager.default.fileExists(atPath: h.root.appendingPathComponent("build/sdk/tsugumi-worker").path),
+                 "build/sdk/tsugumi-worker is missing: ninja -C build tsugumi-worker")
     try h.start()
     defer { h.stop() }
     let client = RPCClient(endpoint: h.endpoint!)
@@ -108,7 +111,8 @@ import TsugumiRPC
       log.add(e)
       // Right after the Agent inspected: the other client saves.
       if case .toolFinished(_, "project_inspect", true, _) = e, once.first() {
-        Task {
+        // (the test's expectations show whether this save went in)
+        _ = Task {
           let snap = try await other.inspect()
           let change = definition
             ? Change.putDefinition(id: "src", cardJSON: #"{"template":"input","params":[{"name":"text","type":"string","data":"theirs"}]}"#, metaJSON: nil)

@@ -189,7 +189,7 @@ struct CardExecutionView: View {
       runs = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
       if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
       error = nil
-    } catch { self.error = String(localized: "履歴を読み込めません: \(error)") }
+    } catch { self.error = String(localized: "履歴を読み込めません: \(String(describing: error))") }
     loaded = true
   }
 

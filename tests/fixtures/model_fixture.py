@@ -25,6 +25,12 @@ A second scripted task implements Drafts ("Implement these Draft Cards ...
 - <path> (definition <id>)"): project_inspect -> one project_save with
 PutDefinition/PutSource per Draft -> project_validate -> run -> report.
 
+The guide (its system prompt begins "You are Tsugumi, the guide bird"): a
+question gets project_inspect -> an attempt at project_save (the guide only
+reads: it is refused) -> guide_show pointing at the run button with a run
+button -> a line saying how many Cards it read, whether the save was refused
+and which tools it was offered. An [Event] note gets the run state it names.
+
 Sign in with ChatGPT (the ChatGPT plan): the fixture is also the OAuth
 issuer (http://127.0.0.1:<port>): /api/accounts/authorize redirects at once
 to the loopback callback (registering oaiapp_fixture_<n> for
@@ -288,8 +294,32 @@ def decide_permission(messages, card, start):
     return ("text", "Done.")
 
 
-def decide(messages, system=""):
+GUIDE = "You are Tsugumi, the guide bird"
+EVENT = re.compile(r"\[Event\] The run (\S+) ended: (\w+)")
+
+
+def decide_guide(messages, tools):
+    start = max(i for i, m in enumerate(messages) if m["role"] == "user" and any(b.get("type") == "text" for b in blocks(m)))
+    text = "".join(b.get("text", "") for b in blocks(messages[start]) if b.get("type") == "text")
+    if e := EVENT.search(text):
+        return ("text", f"The run {e.group(1)} ended: {e.group(2)}.")
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "project_inspect", {})
+    if len(results) == 1:
+        return ("tool", "project_save", {"base_rev": "0", "changes": []})
+    if len(results) == 2:
+        return ("tool", "guide_show", {"highlight": "run", "actions": [{"kind": "run", "label": "Run it"}]})
+    cards = len(results[0][1].get("value", {}).get("definitions", []))
+    refused = results[1][2]
+    return ("text", f"I read {cards} Cards; the save was {'refused' if refused else 'accepted'}; "
+                    f"tools: {' '.join(sorted(tools))}. Press Run to see it.")
+
+
+def decide(messages, system="", tools=()):
     """Returns ("tool", name, input) or ("text", message)."""
+    if system.startswith(GUIDE):
+        return decide_guide(messages, tools)
     if h := HELPER.search(system):
         return decide_helper(messages, h.group(1), [c.strip() for c in h.group(2).split(",")])
     team, team_start = last_delegate_task(messages)
@@ -601,7 +631,7 @@ class Handler(BaseHTTPRequestHandler):
         if system_text(body).startswith("You summarize"):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
         else:
-            decision = decide(body["messages"], system_text(body))
+            decision = decide(body["messages"], system_text(body), [t["name"] for t in body.get("tools", [])])
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()

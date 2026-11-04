@@ -1,0 +1,83 @@
+/* The guide bird in the bottom-right corner, its panel and the rings it draws. */
+.guide-corner { position: absolute; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+.guide-corner > * { pointer-events: auto; }
+/* In a project: left of the chat, above the canvas's bottom row. */
+.guide-corner.in-project { right: 14px; bottom: 58px; }
+.guide-corner-row { display: flex; align-items: flex-end; gap: 6px; }
+.guide-bubble { font-size: 12px; padding: 4px 9px; border-radius: 999px; max-width: 220px; }
+.guide-avatar { width: 52px; height: 52px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--tsugumi-rufous) 70%, transparent);
+  background: var(--tsugumi-cream); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22); padding: 6px 5px 4px; cursor: pointer; display: inline-flex; flex: none; }
+.guide-avatar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.guide-avatar.worried { border-color: var(--orange); }
+.guide-bird { width: 100%; height: 100%; overflow: visible; }
+.guide-avatar:not(.still) .guide-bird { animation: guide-breathe 3.2s ease-in-out infinite; transform-origin: 50% 90%; }
+.guide-avatar.thinking:not(.still) .guide-bird { animation: guide-tilt 0.9s ease-in-out infinite; }
+.guide-avatar.watching:not(.still) .guide-bird { animation: guide-hop 0.6s ease-in-out infinite; }
+.guide-avatar.worried .guide-bird { transform: rotate(6deg) scaleY(0.95); animation: none; }
+@keyframes guide-breathe { 50% { transform: scaleY(0.97); } }
+@keyframes guide-tilt { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+@keyframes guide-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes guide-ring { 50% { outline-color: color-mix(in srgb, var(--tsugumi-rufous) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .guide-bird, [data-guide] { animation: none !important; } }
+span[data-guide] { display: inline-flex; }
+
+.guide-panel { width: 340px; height: 440px; max-height: calc(100vh - 120px); border-radius: 14px; box-shadow: var(--shadow-strong); display: flex; flex-direction: column; overflow: hidden; }
+.guide-panel.docked { width: auto; height: auto; max-height: none; border-radius: 0; box-shadow: none; background: var(--window-bg); }
+.chat-pane > .guide-panel.docked.split { flex: 0 0 52%; border-bottom: 0.5px solid var(--separator-strong); }
+.guide-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 0.5px solid var(--separator); }
+.guide-tour { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: color-mix(in srgb, var(--tsugumi-rufous) 12%, transparent); color: var(--tsugumi-rufous); }
+.guide-tour .caption { color: var(--label); }
+.guide-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.guide-offer { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px; background: color-mix(in srgb, var(--tsugumi-cream) 40%, transparent); }
+.guide-user { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 15%, transparent); white-space: pre-wrap; }
+.guide-note { align-self: center; text-align: center; }
+.guide-reply { display: flex; flex-direction: column; gap: 8px; }
+.guide-error { color: var(--orange); }
+.guide-input { display: flex; align-items: flex-end; gap: 6px; padding: 8px 10px; border-top: 0.5px solid var(--separator); }
+.guide-input textarea { flex: 1; resize: none; border: 0; background: transparent; font: inherit; font-size: 13px; max-height: 80px; outline: none; color: inherit; }
+.guide-setup { display: flex; flex-direction: column; gap: 12px; }
+.guide-setup .guide-avatar { cursor: default; }
+.link-button { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-align: left; font: inherit; font-size: 13px; }
+.link-button:hover { text-decoration: underline; }
+.home-window { position: relative; }
+
+/* Tsugumi's home in a project: the top left of the chat, or the chat button. */
+.guide-nest { display: inline-flex; width: 32px; height: 24px; flex: none; transition: opacity 0.15s; }
+.guide-nest.small { width: 22px; height: 16px; }
+.guide-nest .guide-bird { animation: guide-breathe 3.2s ease-in-out infinite; transform-origin: 50% 90%; }
+.guide-nest.thinking .guide-bird { animation: guide-tilt 0.9s ease-in-out infinite; }
+.guide-nest.still .guide-bird { animation: none; }
+.guide-nest.away, .guide-avatar.away { opacity: 0; }
+.guide-nest-button { padding: 2px 4px; }
+
+/* The bubble: what the bird says, choices to tap, buttons that act. */
+.guide-speech { width: 300px; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--tsugumi-rufous) 45%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); }
+.guide-choice { border: 1px solid color-mix(in srgb, var(--tsugumi-rufous) 55%, transparent); background: color-mix(in srgb, var(--tsugumi-rufous) 14%, transparent);
+  color: inherit; border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.guide-choice:hover:not(:disabled) { background: color-mix(in srgb, var(--tsugumi-rufous) 26%, transparent); }
+.guide-choice:disabled { opacity: 0.5; cursor: default; }
+.guide-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-choices { padding: 6px 12px; border-top: 0.5px solid var(--separator); }
+
+/* The flight over the whole page. */
+.guide-flyer { position: fixed; inset: 0; pointer-events: none; z-index: 1500; }
+.guide-flying-bird { position: fixed; width: 90px; height: 64px; transition: left 0.9s ease-in-out, top 0.9s ease-in-out, width 0.9s ease-in-out, height 0.9s ease-in-out; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)); }
+.guide-flying-bird.left .guide-bird { transform: scaleX(-1); }
+.guide-flying-bird.moving:not(.still) { animation: guide-flap 0.18s linear infinite; }
+.guide-flying-bird:not(.moving):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
+@keyframes guide-flap { 50% { transform: translateY(-3px) scaleY(0.9); } }
+.guide-flyer-bubble { position: fixed; pointer-events: auto; animation: guide-pop 0.2s ease-out; }
+@keyframes guide-pop { from { opacity: 0; transform: scale(0.92); } }
+@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble { transition: none !important; animation: none !important; } }
+.guide-reply-field { display: flex; align-items: center; gap: 4px; }
+.guide-reply-field .field { flex: 1; min-width: 0; font-size: 12.5px; padding: 3px 7px; }
+
+/* The guide's bird is flying into the loading card: the card's bird waits for it. */
+body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }
+.guide-more { border: 0; background: none; padding: 0; text-align: left; color: var(--tsugumi-rufous); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.guide-more:hover { text-decoration: underline; }
+.guide-flying-bird.draggable { pointer-events: auto; cursor: grab; }
+.guide-flying-bird.draggable:active { cursor: grabbing; }
+.guide-flash { border-radius: 6px; box-shadow: inset 3px 0 0 var(--tsugumi-rufous); background: color-mix(in srgb, var(--tsugumi-rufous) 12%, transparent); transition: background 0.6s; }
+.guide-work-line { position: fixed; max-width: 220px; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }

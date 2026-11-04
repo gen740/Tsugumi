@@ -20,6 +20,8 @@ export function Button(props: {
   iconOnly?: boolean
   pressed?: boolean
   type?: 'button' | 'submit'
+  /** What the guide may point at (guide_show "highlight"). */
+  guide?: string
 }) {
   const k = props.kind ?? 'bordered'
   return (
@@ -30,6 +32,7 @@ export function Button(props: {
       title={props.help}
       aria-label={props.iconOnly ? props.help : undefined}
       aria-pressed={props.pressed}
+      data-guide={props.guide}
       onClick={(e) => {
         e.stopPropagation()
         props.onClick?.(e)

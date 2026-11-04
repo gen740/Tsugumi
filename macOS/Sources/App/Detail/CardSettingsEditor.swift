@@ -388,6 +388,7 @@ struct CardSettingsEditor: View {
       Button("適用") { Task { _ = await m.apply() } }
         .disabled(!m.unapplied || m.applying || !session.isEditable)
         .keyboardShortcut("s", modifiers: .command)
+        .guideTarget("apply")
       Button("閉じる") {
         Task {
           if m.unapplied {
@@ -678,6 +679,7 @@ private struct ParamRow: View {
         TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
       }
       Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
+        .guideTarget("param:\(name)")
     }
   }
 

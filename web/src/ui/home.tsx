@@ -9,6 +9,8 @@ import { prefs } from '../model/prefs'
 import { errorText } from '../model/session'
 import { Button, Empty, showMenu, Sheet, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
+import { guide } from '../model/guide'
+import { GuideCorner } from './guide'
 import { FolderPicker } from './sidebar'
 
 // ---- Art ---------------------------------------------------------------------------
@@ -91,7 +93,7 @@ function loadBird() {
   return birdArt
 }
 
-function useBird() {
+export function useBird() {
   const [art, setArt] = useState<{ bird: string; perch: string }>()
   useEffect(() => {
     let alive = true
@@ -167,7 +169,7 @@ export function TsugumiLoadingCard({ content, onCancel }: { content: LoadingCont
         <div className="loading-picture">
           <LowPolyBackground />
           <div className="loading-shade" />
-          <TsugumiIdleScene birdScale={0.22} />
+          <div className="fill-abs" data-guide-loading=""><TsugumiIdleScene birdScale={0.22} /></div>
           {f !== undefined && <div className="loading-progress" style={{ width: `${f * 100}%` }} />}
         </div>
         <div className="loading-text">
@@ -260,6 +262,13 @@ export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
   useEffect(() => {
     document.title = 'Tsugumi'
   }, [])
+  useObserve(guide)
+  useEffect(() => {
+    if (guide.demosRequested) {
+      setShowDemos(true)
+      guide.set('demosRequested', false)
+    }
+  }, [guide.demosRequested])
   useEffect(() => {
     if (app.requestNewProject) {
       setShowNew(true)
@@ -279,6 +288,7 @@ export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
           </div>
         )}
       </div>
+      <GuideCorner screen={showDemos ? 'demos' : 'home'} />
       {showNew && <NewProjectSheet onClose={() => setShowNew(false)} onCreated={onOpen} />}
       {picking && <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); onOpen(p) }} />}
     </div>
@@ -295,14 +305,14 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
         <div className="home-scene"><TsugumiIdleScene birdScale={0.19} /></div>
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
-          <Button kind="prominent" large icon="plus.square" onClick={onNew}>新規プロジェクト…</Button>
+          <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>
           <Button large icon="folder" onClick={onOpen}>既存のプロジェクトを開く…</Button>
-          <button type="button" className="home-link" onClick={onToggleDemos}>
+          <button type="button" className="home-link" data-guide="demos" onClick={onToggleDemos}>
             <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? '最近のプロジェクト' : 'デモを見る'}
           </button>
         </div>
         <span className="spacer" />
-        <Button kind="borderless" small icon="gearshape" className="home-settings" help="アプリ設定（⌘,）" onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>設定</Button>
+        <Button kind="borderless" small icon="gearshape" className="home-settings" guide="settings" help="アプリ設定（⌘,）" onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>設定</Button>
       </div>
     </div>
   )
@@ -373,9 +383,15 @@ function Recents({ onOpen }: { onOpen: (path: string) => void }) {
 }
 
 function Demos({ onOpen }: { onOpen: (path: string) => void }) {
-  useObserve(app)
+  useObserve(app, guide)
   const [tag, setTag] = useState<string>()
   const [search, setSearch] = useState('')
+  // Tsugumi points at a demo: it is shown, whatever the filter.
+  useEffect(() => {
+    if (!guide.highlight?.startsWith('demo:')) return
+    setTag(undefined)
+    setSearch('')
+  }, [guide.highlight])
   const demos = app.status?.demos ?? []
   const q = search.toLowerCase()
   const shown = demos.filter((d) => (tag === undefined || d.tags.includes(tag)) &&
@@ -419,7 +435,7 @@ function TagChip({ label, selected, onClick }: { label: string; selected: boolea
 /** A demo with a thumbnail drawn from its own Workflow (Cards and wires). */
 function DemoCard({ demo, onOpen }: { demo: Demo; onOpen: () => void }) {
   return (
-    <div className="demo-card">
+    <div className="demo-card" data-guide={`demo:${demo.id}`}>
       <DemoThumbnailView mini={demo.thumbnail} />
       <div className="headline">{demo.title}</div>
       <div className="callout secondary clamp3">{demo.description}</div>

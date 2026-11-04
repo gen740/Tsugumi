@@ -124,7 +124,8 @@ final class EventLog: @unchecked Sendable {
   var text: String { all.compactMap { if case .text(let t) = $0 { return t }; return nil }.joined() }
 }
 
-func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil, references: [String: URL] = [:]) throws -> Agent {
+func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil, references: [String: URL] = [:],
+               role: Agent.Role = .worker) throws -> Agent {
   let bfbs = try #require(RPCSchema.bfbs())
   let schema = try BFBS(data: bfbs)
   let catalog = try ToolCatalog(schema: schema)
@@ -132,7 +133,7 @@ func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig?
   for v in schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" })!.values { names[UInt8(v.value)] = v.name }
   return try Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
                provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"),
-               references: references)
+               references: references, role: role)
 }
 
 final class Asked: @unchecked Sendable {
@@ -634,7 +635,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     // The Draft demos are tasks and the finished demo of each is its answer:
     // neither is listed nor read (implementing casa-draft must not copy casa).
     let (demos, e5) = await agent.readReference("demos")
-    #expect(!e5 && demos.split(separator: "\n") == ["collatz/", "live-stream/", "report/"])
+    #expect(!e5 && demos.split(separator: "\n") == ["collatz/", "live-stream/", "matplotlib/", "report/"])
     for hidden in ["demos/casa", "demos/casa/definitions/bands/src/main.py", "demos/casa-draft", "demos/gw150914/tsugumi.json"] {
       let (_, e) = await agent.readReference(hidden)
       #expect(e, "\(hidden) is readable")

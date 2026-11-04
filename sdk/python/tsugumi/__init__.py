@@ -14,11 +14,15 @@ A Python Card provides ``main(ctx)`` in ``src/main.py``::
 Input and output classes are generated from the Card's ``_inputs.fbs`` and
 ``_outputs.fbs`` (namespaces ``inputs.<port>`` and ``outputs.<port>``); the
 parameters are ``params.Params``.
+
+matplotlib draws into the Card's display (``tsugumi.mpl``): ``plt.show()``,
+``plt.pause()`` and animations work as they would in a window.
 """
 
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from typing import Any, Iterable, Optional
 
@@ -26,6 +30,20 @@ import _tsugumi_host as _host
 import flatbuffers
 
 __all__ = ["Context", "Failure"]
+
+# matplotlib's figures go to the Card's display unless the Card picks a backend.
+os.environ.setdefault("MPLBACKEND", "module://tsugumi.mpl")
+
+_in_call = False
+"""Inside an invocation or a run-start hook (the host's functions can be called)."""
+
+_card_displayed = False
+"""The Card sent a display itself (ctx.display_*) during this call."""
+
+
+def _shown_by_card() -> None:
+    global _card_displayed
+    _card_displayed = True
 
 
 class Failure(Exception):
@@ -101,30 +119,45 @@ class Context:
 
     # -- display --
     def display_text(self, text: str) -> None:
+        _shown_by_card()
         _host.display_text(text)
 
     def display_markdown(self, text: str) -> None:
         """Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted."""
+        _shown_by_card()
         _host.display_markdown(text)
 
     def display_scalar(self, value: float, label: str) -> None:
+        _shown_by_card()
         _host.display_scalar(float(value), label)
 
     def display_line_chart(self, series: Iterable[dict]) -> None:
+        _shown_by_card()
         _host.display_line_chart([(s["id"], s.get("label", s["id"]), list(map(float, s["x"])),
                                    list(map(float, s["y"]))) for s in series])
 
     def display_table(self, columns: list, rows: Iterable[Iterable]) -> None:
+        _shown_by_card()
         _host.display_table([str(c) for c in columns], [[str(c) for c in r] for r in rows])
 
     def display_image(self, data: bytes, media_type: str = "image/png", alt: str = "") -> None:
+        _shown_by_card()
         _host.display_image(media_type, bytes(data), alt)
 
     def display_points(self, x, y, z, colors=None) -> None:
+        _shown_by_card()
         _host.display_points(list(map(float, x)), list(map(float, y)), list(map(float, z)),
                              None if colors is None else [int(c) for c in colors])
 
+    def display_figure(self, *figures) -> None:
+        """matplotlib figures as the Card's image (several are stacked), whatever the backend."""
+        from tsugumi import mpl
+
+        _shown_by_card()
+        mpl.display(list(figures))
+
     def display_module(self, name: str, data) -> None:
+        _shown_by_card()
         import json
         _host.display_module(name, data if isinstance(data, str) else json.dumps(data))
 
@@ -143,8 +176,14 @@ _card_module = None
 
 
 def _guard(body, report: bool = True) -> bool:
+    global _in_call, _card_displayed
+    _in_call = report  # report is False only while loading, outside any call
+    _card_displayed = False
+    done = False
     try:
         body()
+        _finish_figures(show=True)
+        done = True
         sys.stdout.flush()
         sys.stderr.flush()
         return True
@@ -162,6 +201,24 @@ def _guard(body, report: bool = True) -> bool:
         if report:  # while loading there is no invocation to fail
             _host.fail("worker_failed", f"{type(e).__name__}: {e}")
         return False
+    finally:
+        if not done:
+            _finish_figures(show=False)
+        _in_call = False
+
+
+def _finish_figures(show: bool) -> None:
+    """With the Tsugumi backend, the figures a call left open are closed (and
+    first shown, after a call that succeeded unless the Card sent a display of
+    its own: a figure it forgot to close does not replace that)."""
+    mod = sys.modules.get("tsugumi.mpl")
+    plt = sys.modules.get("matplotlib.pyplot")
+    if mod is None or plt is None or not _in_call or "tsugumi.mpl" not in str(plt.get_backend()):
+        return
+    if show and not _card_displayed:
+        mod._finish_invocation()
+    else:
+        mod._close_all()
 
 
 def _load() -> bool:

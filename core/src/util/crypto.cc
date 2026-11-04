@@ -21,9 +21,6 @@ namespace tsugumi::crypto {
 
 namespace {
 
-
-inline uint32_t rotl(uint32_t x, int n) { return (x << n) | (x >> (32 - n)); }
-
 void random_bytes(void* out, size_t n) {
 #if defined(__APPLE__)
   arc4random_buf(out, n);

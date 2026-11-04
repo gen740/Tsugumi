@@ -6,6 +6,10 @@ public typealias RequestPayload = Tsugumi_RPC_RequestPayload
 public typealias ReplyPayload = Tsugumi_RPC_ReplyPayload
 public typealias FailureKind = Tsugumi_Data_FailureKind
 
+/// The generated failure kinds are plain values (the generated file cannot
+/// declare it, so it is asserted here).
+extension Tsugumi_Data_FailureKind: @unchecked Sendable {}
+
 /// A structured failure returned by tsugumid (never matched by its text).
 public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public let kind: FailureKind
@@ -137,7 +141,7 @@ public actor RPCClient {
       }
       Task {
         try? await Task.sleep(for: timeout)
-        await self.resolve(id, .failure(RPCError.timeout))
+        self.resolve(id, .failure(RPCError.timeout))
       }
     }
     if reply.value?.type == .failure, let f = reply.value?.value as? Tsugumi_Data_FailureT {
@@ -169,7 +173,7 @@ public actor RPCClient {
       }
       Task {
         try? await Task.sleep(for: timeout)
-        await self.resolveRaw(id, .failure(RPCError.timeout))
+        self.resolveRaw(id, .failure(RPCError.timeout))
       }
     }
     var bb = ByteBuffer(data: raw)

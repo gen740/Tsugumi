@@ -16,7 +16,15 @@ struct ChatPanel: View {
   @State private var query = ""
   @State private var input = ""
   @State private var model = AgentSettings.current().model
-  @State private var models: [String] = []
+  /// The connection chosen in Settings > API: the model menu follows it when it changes.
+  @AppStorage("agent.provider") private var providerSetting = "anthropic"
+  /// The connections set up (keys stored, ChatGPT signed in) with their models.
+  @State private var connections: [Connection] = []
+  struct Connection: Identifiable {
+    let id: String
+    let name: String
+    let models: [String]
+  }
   /// Display names of the ChatGPT account's models (Settings > API).
   @State private var modelNames: [String: String] = [:]
   /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
@@ -30,6 +38,7 @@ struct ChatPanel: View {
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
   @FocusState private var inputFocused: Bool
+  @State private var flashing = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -47,6 +56,7 @@ struct ChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 8) {
+      if !detached && GuideController.shared.available { GuideNest(busy: chat.busy) }
       Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "list.bullet") }
         .buttonStyle(.borderless)
         .help(showList ? "会話に戻る" : "会話の一覧と検索")
@@ -123,12 +133,23 @@ struct ChatPanel: View {
           LazyVStack(alignment: .leading, spacing: 12) {
             if chat.items.isEmpty {
               VStack(alignment: .leading, spacing: 6) {
-                Text("Workflow の相談・生成・編集を依頼できます。").font(.callout)
+                Text(GuideController.shared.available ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
+                                                       : String(localized: "Workflow の相談・生成・編集を依頼できます。")).font(.callout)
                 Text("Card を右クリックして参照に追加、$ で Skill を選べます。").font(.caption).foregroundStyle(.secondary)
               }
               .padding(.top, 16)
             }
-            ForEach(chat.items) { item in row(item).id(item.id) }
+            ForEach(chat.items) { item in
+              row(item).id(item.id)
+                .background(alignment: .leading) {
+                  // Tsugumi's bubble sent the user here: its answer is marked for a moment.
+                  if flashing, item.id == chat.items.last(where: { $0.role == "assistant" })?.id {
+                    RoundedRectangle(cornerRadius: 6).fill(TsugumiPalette.rufous.opacity(0.12)).padding(-6)
+                      .overlay(alignment: .leading) { Rectangle().fill(TsugumiPalette.rufous).frame(width: 3).padding(.leading, -6) }
+                      .transition(.opacity)
+                  }
+                }
+            }
             if chat.busy { activity.id("activity") }
           }
           .padding(.horizontal, 14).padding(.vertical, 12)
@@ -137,6 +158,15 @@ struct ChatPanel: View {
         .scrollIndicators(overflows ? .automatic : .never)
         .onScrollGeometryChange(for: Bool.self) { g in g.contentSize.height > g.containerSize.height + 1 } action: { _, v in overflows = v }
         .onChange(of: chat.items.count) { scrollToEnd(proxy) }
+        .onChange(of: GuideController.shared.chatFlash) { _, d in
+          guard d != nil, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
+          withAnimation { proxy.scrollTo(last.id, anchor: .top) }
+          withAnimation(.easeOut(duration: 0.2)) { flashing = true }
+          Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.easeOut(duration: 0.6)) { flashing = false }
+          }
+        }
         .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
       if let s = chat.status {
@@ -152,6 +182,7 @@ struct ChatPanel: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
       }
+      if !detached { ChatChoices(chat: chat, tab: tab) }
       composer
     }
   }
@@ -300,9 +331,14 @@ struct ChatPanel: View {
             .help("参照・フォルダを添付")
           // The model, as quiet text under the input (a menu, not a pop-up box).
           Menu {
-            ForEach(Array(Set(models + [model])).sorted(), id: \.self) { m in
-              Button { model = m } label: {
-                if m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
+            // Every connection set up, with its models: choosing one switches to it.
+            ForEach(connections) { c in
+              Section(c.name) {
+                ForEach(c.models, id: \.self) { m in
+                  Button { choose(c.id, m) } label: {
+                    if c.id == providerSetting && m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
+                  }
+                }
               }
             }
           } label: {
@@ -316,20 +352,9 @@ struct ChatPanel: View {
           .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
           .tint(.secondary)
           .foregroundStyle(.secondary)
-          .onChange(of: model) {
-            let key = chat.provider.auth == .chatGPT ? "agent.model.chatgpt" : chat.provider.api == .openAIResponses ? "agent.model.openai" : "agent.model"
-            UserDefaults.standard.set(model, forKey: key)
-          }
           .disabled(!chat.provider.isRemote)
           .help("モデル（接続先: \(chat.provider.name)）")
           thoughtsToggle
-          if chat.provider.auth == .chatGPT {
-            // Requests use the ChatGPT plan: said beside the model, with its usage page.
-            Link(destination: ChatGPTAuth.usageURL) {
-              Text("Using ChatGPT plan").font(.caption2).foregroundStyle(.secondary)
-            }
-            .help("Manage usage（chatgpt.com/settings/usage）")
-          }
           Spacer()
           Text("\(chat.usage.inputTokens / 1000)k").font(.caption2).foregroundStyle(.tertiary)
             .help(String(localized: "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 \(chat.usage.cacheReadTokens)、キャッシュに書いた量 \(chat.usage.cacheWriteTokens)"))
@@ -353,6 +378,8 @@ struct ChatPanel: View {
     }
     .padding(10)
     .task { await loadModels() }
+    // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
+    .onChange(of: providerSetting) { Task { await loadModels() } }
     .confirmationDialog("思考の過程を描きますか？", isPresented: $askThoughts) {
       Button("描く") { drawThoughtsAsked = true; drawThoughts = true }
       Button("キャンセル", role: .cancel) {}
@@ -447,9 +474,29 @@ struct ChatPanel: View {
 
   /// Models listed earlier in Settings > API (no network request from here).
   private func loadModels() async {
+    let d = UserDefaults.standard
     model = AgentSettings.current().model
-    models = UserDefaults.standard.stringArray(forKey: "agent.models") ?? []
-    modelNames = chat.provider.auth == .chatGPT ? UserDefaults.standard.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:] : [:]
+    modelNames = d.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:]
+    // The connections set up (checked without reading any secret), each with its models.
+    var out: [Connection] = []
+    func add(_ id: String, _ name: String) {
+      let chosen = AgentSettings.config(for: id).model
+      let listed = d.stringArray(forKey: AgentSettings.modelsKey(id)) ?? []
+      out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen])).sorted()))
+    }
+    if Keychain.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
+    if Keychain.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
+    if await ChatGPTAuth.shared().accounts().contains(where: { $0.active && $0.signedIn && $0.planEnabled }) { add("chatgpt", "ChatGPT プラン") }
+    if providerSetting == "fixture" { add("fixture", "Local fixture") }
+    connections = out
+  }
+
+  /// A model of a connection chosen in the menu: that connection is used from now on.
+  private func choose(_ provider: String, _ m: String) {
+    UserDefaults.standard.set(m, forKey: AgentSettings.modelKey(provider))
+    providerSetting = provider
+    model = m
+    GuideController.shared.refreshAvailability()
   }
 
   private func modelName(_ m: String) -> String { modelNames[m] ?? m }

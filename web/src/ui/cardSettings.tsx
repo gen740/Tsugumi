@@ -445,7 +445,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
           <span className="spacer" />
           {model.applying && <Spinner small />}
           <Button onClick={() => (model.unapplied ? setConfirmReload(true) : model.reload())}>再読込</Button>
-          <Button kind="prominent" disabled={!model.unapplied || model.applying || !session.isEditable} help="⌘S" onClick={() => void model.apply()}>適用</Button>
+          <Button kind="prominent" guide="apply" disabled={!model.unapplied || model.applying || !session.isEditable} help="⌘S" onClick={() => void model.apply()}>適用</Button>
           <Button help="未適用の変更は適用してから閉じます" onClick={() => void close()}>閉じる</Button>
         </div>
       </div>
@@ -729,7 +729,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   }
   return (
     <Row label={name}>
-      <div className="row gap6 center">
+      <div className="row gap6 center" data-guide={`param:${name}`}>
         {type === 'bool'
           ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
           : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}

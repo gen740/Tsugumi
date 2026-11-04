@@ -47,5 +47,47 @@
     "outside": "The helper {name} may change only its own Cards ({cards}); this save also changes {what}. Nothing was saved: change only your Cards.",
     "invalid": "delegate needs 2 to 8 tasks, each with a name, an instruction and root-level Cards of this project that no other task lists: {why}"
   },
+  "guide": {
+    "tools": [
+      "project_inspect", "project_file_list", "project_file_read", "run_status", "run_history", "run_record",
+      "log_range", "artifact_list", "artifact_read"
+    ],
+    "showTool": {
+      "name": "guide_show",
+      "description": "The bird flies to a part of the screen and speaks there: it points at it (highlight), says one line beside it (say), and offers choices the user can tap as their reply and buttons that act. Nothing happens until the user presses a button; the app then does it with its own controls.",
+      "inputSchema": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "highlight": { "type": "string", "description": "where the bird flies and what it points at: run (the run / stop button), chat (the Agent chat button), logs (the log button), demos (Home's demo list button), new_project (Home's new project button), settings, card:<Card id> (a Card of the workflow; card:<outer id>/<inner id> is a Card inside a Card in Card, which the app opens), param:<name> (a setting in the open Card settings window), apply (that window's 適用 button, which saves it) or demo:<demo id> (its card in Home's demo list, which opens)" },
+          "open": { "type": "string", "description": "a window the app opens for the user to look at (opening changes nothing): card:<Card id or outer/inner> opens that Card's settings window, where the bird flies to point at param:<name>" },
+          "say": { "type": "string", "description": "what the bird says in its speech bubble: one to three short sentences, the point of this step (your reply text is the full explanation)" },
+          "choices": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "short replies the user can tap in the bubble (e.g. 次へ, もっと詳しく); the one tapped comes back to you as the user's message" },
+          "endTour": { "type": "boolean", "description": "true at the last step of a demo tour, with a farewell such as 「いつでも呼んでくださいね。わからない機能があれば説明します」: the bird says it, then flies home, and the app stops telling you about runs" },
+          "actions": {
+            "type": "array", "maxItems": 3,
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["kind", "label"],
+              "properties": {
+                "kind": { "type": "string", "enum": ["open_demo", "show_demos", "run", "stop", "open_card", "open_settings", "new_project", "home"] },
+                "label": { "type": "string", "description": "the button's text: a few words in the user's language" },
+                "demo": { "type": "string", "description": "open_demo: the demo's id (from [Screen] demos)" },
+                "card": { "type": "string", "description": "open_card: the Card's id (its settings window opens)" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "shown": "Shown. Nothing has happened yet: the user decides whether to press a button.",
+    "chatNote": "You are Tsugumi, the bird of this chat. guide_show moves the bird about the screen: use it only while the demo skill ([Skill demo]) is active in this conversation (until its farewell); otherwise answer in the chat as usual.",
+    "readOnly": "{tool} is not one of the guide's tools: the guide only reads. Offer the user a button with guide_show or tell them how to do it.",
+    "noProject": "No project is open on the user's screen, so there is no project to read.",
+    "tourStart": "[Tour] The user chose to see the demo \"{demo}\" ({title}). An editable copy is open (the bundled original is untouched). Begin the tour at step 1.",
+    "tourResume": "[Tour] The user is back in the demo \"{demo}\". Continue the tour from where it was (look at the last run first).",
+    "event": "[Event] {event}",
+    "runEnded": "The run {run} ended: {state}.",
+    "disconnected": "The connection to the project's environment was lost; the run's outcome is unknown until it comes back.",
+    "reconnected": "The connection to the project's environment is back; the run's state is {state}."
+  },
   "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
 }
