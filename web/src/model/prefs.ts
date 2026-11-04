@@ -13,7 +13,7 @@ export const SHORTCUT_ACTIONS = [
   'openSettings', 'openArtifacts', 'openLog', 'toggleCollapse', 'duplicate', 'fitAll', 'actualSize', 'zoomIn', 'zoomOut', 'arrange', 'group',
   'addDraft', 'generateDrafts',
   // Panels and the rest
-  'toggleChat', 'toggleLog', 'toggleTimeline', 'toggleTerminal', 'showDetails', 'addNote', 'formatSource',
+  'toggleChat', 'toggleLog', 'toggleTimeline', 'toggleTerminal', 'showDetails', 'addNote', 'formatSource', 'toggleGuide',
 ] as const
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number]
 
@@ -23,7 +23,7 @@ export const SHORTCUT_TITLES: Record<ShortcutAction, string> = {
   openLog: '実行ログを開く', toggleCollapse: '折りたたみを切り替える', duplicate: 'Card を複製', fitAll: '全体表示', actualSize: '100% で表示',
   zoomIn: '拡大', zoomOut: '縮小', arrange: '整列', group: 'グループ操作', addDraft: 'Draft Card を追加', generateDrafts: 'Draft から Card を生成',
   toggleChat: 'チャットの表示切替', toggleLog: 'ログの表示切替', toggleTimeline: 'タイムラインの表示切替', toggleTerminal: 'ターミナルの表示切替',
-  showDetails: '選択した Card の詳細', addNote: '付箋を追加', formatSource: 'ソースコードを整形',
+  showDetails: '選択した Card の詳細', addNote: '付箋を追加', formatSource: 'ソースコードを整形', toggleGuide: 'ガイドのツグミに聞く',
 }
 
 /** Works only while the canvas has the focus (a key without ⌘ would
@@ -69,6 +69,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, KeyBinding> = {
   showDetails: { key: 'i', command: true, option: true },
   addNote: { key: 'n', command: true, option: true },
   formatSource: { key: 'f', option: true, shift: true },
+  toggleGuide: { key: 'g', command: true, option: true },
 }
 
 export const sameBinding = (a: KeyBinding, b: KeyBinding) =>

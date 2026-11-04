@@ -11,7 +11,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
   case openSettings, openArtifacts, openLog, toggleCollapse, duplicate, fitAll, actualSize, zoomIn, zoomOut, arrange, group
   case addDraft, generateDrafts
   // Panels and the rest
-  case toggleChat, toggleLog, toggleTimeline, toggleTerminal, showDetails, addNote, formatSource
+  case toggleChat, toggleLog, toggleTimeline, toggleTerminal, showDetails, addNote, formatSource, toggleGuide
   var id: String { rawValue }
 
   var title: String {
@@ -43,6 +43,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .showDetails: return String(localized: "選択した Card の詳細")
     case .addNote: return String(localized: "付箋を追加")
     case .formatSource: return String(localized: "ソースコードを整形")
+    case .toggleGuide: return String(localized: "ガイドのツグミに聞く")
     }
   }
 
@@ -85,6 +86,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case .showDetails: return KeyBinding(key: "i", command: true, option: true)
     case .addNote: return KeyBinding(key: "n", command: true, option: true)
     case .formatSource: return KeyBinding(key: "f", option: true, shift: true)
+    case .toggleGuide: return KeyBinding(key: "g", command: true, option: true)
     }
   }
 }

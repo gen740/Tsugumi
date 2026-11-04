@@ -65,11 +65,19 @@ extension Shared {
     struct Tool { let name: String, description: String, inputSchema: [String: Any] }
     struct Draft { let root: String, child: String, card: String, text: String }
     struct Helper { let prompt: String, outside: String, invalid: String }
+    /// The guide (Agent.Role.guide): the tools it reads with, its own tool and the app's notes to it.
+    struct Guide {
+      let tools: [String]
+      let showTool: Tool
+      let texts: [String: String]
+      func text(_ k: String) -> String { texts[k]! }
+    }
     let requests: [String]
     let agentFields: Set<String>
     let referenceTool: Tool
     let delegateTool: Tool
     let helper: Helper
+    let guide: Guide
     let draft: Draft
     let permissionDeclined: String
   }
@@ -78,12 +86,17 @@ extension Shared {
     let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
     let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
     let dt = o["delegateTool"] as! [String: Any], h = o["helper"] as! [String: String]
+    let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
                 delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
                                     inputSchema: dt["inputSchema"] as! [String: Any]),
                 helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!),
+                guide: .init(tools: g["tools"] as! [String],
+                             showTool: .init(name: gt["name"] as! String, description: gt["description"] as! String,
+                                             inputSchema: gt["inputSchema"] as! [String: Any]),
+                             texts: g.compactMapValues { $0 as? String }),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
                 permissionDeclined: o["permissionDeclined"] as! String)
   }()

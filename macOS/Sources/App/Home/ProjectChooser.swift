@@ -66,6 +66,9 @@ struct ProjectChooser: View {
         }
       }
     }
+    .overlay(alignment: .bottomTrailing) {
+      if arrived { GuideCorner(screen: showDemos ? .demos : .home).padding(16) }
+    }
     .coordinateSpace(.named("home"))
     .onAppear {
       guard WelcomeIntro.take(reduceMotion: reduceMotion) else { return }
@@ -88,6 +91,17 @@ struct ProjectChooser: View {
     }
     .tint(TsugumiPalette.rufous)
     .onReceive(NotificationCenter.default.publisher(for: .appShowDemos)) { _ in showDemos = true }
+    .onChange(of: GuideController.shared.demosRequested, initial: true) { _, asked in
+      if asked {
+        showDemos = true
+        GuideController.shared.demosRequested = false
+      }
+    }
+    // The first start asks for a model key (or a skip) once the welcome is over.
+    .sheet(isPresented: Binding(get: { arrived && GuideController.shared.needsSetup && !model.smokeMode },
+                                set: { if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() } })) {
+      GuideSetupView {}
+    }
     // The home window shows no title: the key visual and the name are in it.
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -204,15 +218,28 @@ struct ProjectChooser: View {
           }
         }
       }
+      ScrollViewReader { proxy in
       ScrollView {
         if shownDemos.isEmpty {
           ContentUnavailableView(model.demos.isEmpty ? "デモが見つかりません" : "条件に合うデモはありません", systemImage: "questionmark.folder")
             .padding(.top, 40)
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
-          ForEach(shownDemos) { demo in DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } } }
+          ForEach(shownDemos) { demo in
+            DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } }
+              .guideTarget("demo:\(demo.id)", radius: 12)
+              .id(demo.id)
+          }
         }
         .padding(.bottom, 20)
+      }
+      // Tsugumi points at a demo: it is shown (whatever the filter) and scrolled to.
+      .onChange(of: GuideController.shared.highlight) { _, h in
+        guard let h, h.hasPrefix("demo:") else { return }
+        tag = nil
+        search = ""
+        withAnimation { proxy.scrollTo(String(h.dropFirst(5)), anchor: .center) }
+      }
       }
     }
     .padding(.horizontal, 24)
@@ -314,12 +341,14 @@ private struct HomeSidebar: View {
       VStack(alignment: .leading, spacing: 8) {
         Button(action: onNew) { Label("新規プロジェクト…", systemImage: "plus.square").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large).buttonStyle(.borderedProminent)
+          .guideTarget("new_project")
         Button(action: onOpen) { Label("既存のプロジェクトを開く…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large)
         Button { showDemos.toggle() } label: {
           Label(showDemos ? "最近のプロジェクト" : "デモを見る", systemImage: showDemos ? "clock" : "sparkles")
         }
         .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream).padding(.top, 4)
+        .guideTarget("demos")
       }
       .padding(.horizontal, 18)
       .opacity(reveal).offset(y: 10 * (1 - reveal))

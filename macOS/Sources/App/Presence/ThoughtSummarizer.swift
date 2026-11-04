@@ -68,12 +68,17 @@ final class ThoughtSummarizer {
   }
 
   /// The model for the summaries: a small one of the Agent's provider (the
-  /// local fixture has none, and the user's ChatGPT plan is not spent on
-  /// them: plain lines only).
+  /// local fixture has none: plain lines only; on the ChatGPT plan, the
+  /// small speech model).
   static func config() -> ProviderConfig? {
     var c = AgentSettings.current()
-    guard c.auth == .apiKey else { return nil }
+    guard c.auth != .none else { return nil }
     let d = UserDefaults.standard
+    if c.auth == .chatGPT {
+      c.model = AgentSettings.chatGPTSpeechModel
+      c.maxTokens = 120
+      return c
+    }
     switch c.api {
     case .anthropicMessages: c.model = d.string(forKey: "agent.thoughtModel").flatMap { $0.isEmpty ? nil : $0 } ?? "claude-haiku-5-5"
     case .openAIResponses: c.model = d.string(forKey: "agent.thoughtModel.openai").flatMap { $0.isEmpty ? nil : $0 } ?? c.model

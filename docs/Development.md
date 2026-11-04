@@ -220,7 +220,7 @@ docs/assets/       アイコンとキービジュアルの SVG
 | SwiftUI アプリ（[ui-view.md](ui-view.md) の構成、split view の sidebar とチャット inspector、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。UI スクリプトで実ウインドウを撮影して確認（上の表）。マウスのクリック・ドラッグは未確認 |
 | Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。Live Stream の折れ線の目視確認は未実施 |
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮、プロンプトキャッシュ） | 実装済み。テスト用モデル（`tests/fixtures/model_fixture.py`）で読取→変更→実行→説明、Draft の実装、取消、取消後の再試行（未回答の tool_use を閉じる）、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録を自動テスト。実際の API（claude-sonnet-5-5）での Draft から実行までの記録は [AgentRun.md](AgentRun.md) |
-| ChatGPT プラン（Sign in with ChatGPT: ループバックでのサインイン、ID トークンの検査、Keychain / 0600 の記録、トークンの更新と取り消し、プランの規則、利用上限、「Using ChatGPT plan」「Manage usage」） | 実装済み（アプリと Web UI）。テスト用モデルを OAuth の発行者とした自動テスト（`macOS/CoreTests`、`npm run check:chatgpt`）。実際の ChatGPT アカウントでの確認はまだ |
+| ChatGPT プラン（Sign in with ChatGPT: ループバックでのサインイン、ID トークンの検査、Keychain / 0600 の記録、トークンの更新と取り消し、プランの規則、利用上限、「Manage usage」） | 実装済み（アプリと Web UI）。テスト用モデルを OAuth の発行者とした自動テスト（`macOS/CoreTests`、`npm run check:chatgpt`）。実際の ChatGPT アカウントでの確認はまだ |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
 | Web UI（同じ画面・操作・ショートカットをブラウザで。Mac 上の tsugumid、Seatbelt による Card の隔離） | 実装済み（[WebUI.md](WebUI.md)、型検査とビルドで確認） |
 | N-Queens・200 Card の大規模デモ、WASM 表示 | 未実装（仕様上の次段階） |

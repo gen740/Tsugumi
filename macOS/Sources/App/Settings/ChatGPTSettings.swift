@@ -8,6 +8,7 @@ import TsugumiAgent
 /// files, settings or logs.
 struct ChatGPTSettings: View {
   @AppStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
+  @AppStorage("agent.provider") private var provider = "anthropic"
   @State private var accounts: [ChatGPTAccountInfo] = []
   @State private var signingIn: Task<Void, Never>?
   @State private var message: String?
@@ -44,7 +45,10 @@ struct ChatGPTSettings: View {
         Link("Manage usage", destination: ChatGPTAuth.usageURL)
       }
     } header: {
-      Text("ChatGPT プラン（Sign in with ChatGPT）")
+      HStack {
+        Text("ChatGPT プラン（Sign in with ChatGPT）")
+        if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
+      }
     } footer: {
       Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。トークンは macOS Keychain（このデバイスのみ）に置かれ、core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
         .font(.caption).foregroundStyle(.secondary)
@@ -69,8 +73,8 @@ struct ChatGPTSettings: View {
         Button("モデル一覧を取得") {
           Task {
             do {
-              models = try await MessagesProvider(config: AgentSettings.current()).modelChoices()
-              UserDefaults.standard.set(models.map(\.id), forKey: "agent.models")
+              models = try await MessagesProvider(config: AgentSettings.config(for: "chatgpt")).modelChoices()
+              UserDefaults.standard.set(models.map(\.id), forKey: AgentSettings.modelsKey("chatgpt"))
               UserDefaults.standard.set(Dictionary(models.map { ($0.id, $0.label) }, uniquingKeysWith: { a, _ in a }),
                                         forKey: "agent.modelNames")
               message = String(localized: "\(models.count) 件のモデルを取得しました。")
@@ -142,5 +146,9 @@ struct ChatGPTSettings: View {
     }
   }
 
-  private func refresh() async { accounts = await auth.accounts() }
+  private func refresh() async {
+    accounts = await auth.accounts()
+    // The guide is there while the active account may use the plan.
+    GuideController.shared.refreshAvailability()
+  }
 }

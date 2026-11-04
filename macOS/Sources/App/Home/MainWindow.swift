@@ -47,6 +47,17 @@ struct MainWindow: View {
     .onReceive(NotificationCenter.default.publisher(for: .appOpenProject)) { _ in openFromPanel() }
     .onReceive(NotificationCenter.default.publisher(for: .appDuplicateProject)) { _ in duplicateProject() }
     .tsugumiLoading(model.preparing)
+    // Tsugumi flies over the whole window (from its corner or the chat).
+    .modifier(GuideWindowLayer())
+    // The guide's buttons act in this window.
+    .environment(\.guideWindow, GuideWindowActions(
+      openProject: { url in workspace.session == nil ? open(url) : openFromCopy(url) },
+      home: leaveProject,
+      newProject: {
+        if workspace.session != nil { leaveProject() }
+        model.requestNewProject = true
+      },
+      showChat: { workspace.showChat = true }))
     // A window closed with a project: saved, then given back like leaving it.
     .onDisappear {
       guard let s = workspace.session else { return }

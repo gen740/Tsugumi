@@ -4,6 +4,7 @@ import './styles/canvas.css'
 import './styles/detail.css'
 import './styles/shell.css'
 import './styles/chat.css'
+import './styles/guide.css'
 import { App } from './ui/App'
 
 createRoot(document.getElementById('root')!).render(<App />)

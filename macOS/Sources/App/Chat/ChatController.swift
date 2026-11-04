@@ -234,6 +234,7 @@ final class ChatController {
     failed = false
     usageLimited = false
     status = nil
+    demoMode = false
     currentId = id
     let agent: Agent
     do {
@@ -317,8 +318,13 @@ final class ChatController {
 
   // MARK: - Skills and references
 
+  /// The built-in $demo: Tsugumi of this chat shows the screen around (it flies only then).
+  static let demoSkill = Skill(name: "demo", description: String(localized: "ツグミが画面を飛び回って、デモや画面の使い方を案内します"),
+                               path: "builtin:demo", content: Agent.demoSkill, source: "Tsugumi")
+
   func reloadSkills() {
-    var out = loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
+    var out = [Self.demoSkill]
+    out += loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
     for f in AppPreferences.shared.skillFolders where f.enabled {
       out += loadSkills(in: URL(fileURLWithPath: f.path), source: URL(fileURLWithPath: f.path).lastPathComponent)
     }
@@ -372,20 +378,58 @@ final class ChatController {
     guard let agent, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     var prompt = text
     let used = skills(in: text)
+    if used.contains(where: { $0.name == "demo" }) { demoMode = true }
     for s in used { prompt += "\n\n[Skill \(s.name)]\n\(s.content)" }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
     if !refs.isEmpty { prompt += "\n\n[References]\n" + refs.map(describe).joined(separator: "\n") }
     if !folders.isEmpty {
       prompt += "\n\n[Attached folders]\n" + folders.map { "\($0) (read with attached_folder_read, folder: \"\($0)\")" }.joined(separator: "\n")
     }
-    items.append(Item(role: "user", text: text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))))
+    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
+    items.append(Item(role: "user", text: shown))
     references = []
     begin()
     Task {
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: text) { e in Task { @MainActor in self.handle(e) } }
+      // The chat shows what was typed, not the skills and references attached to it.
+      await agent.send(prompt: prompt, title: text, display: shown) { e in Task { @MainActor in self.handle(e) } }
     }
   }
+
+  /// Demo mode ($demo, or a demo tour): the bird flies about the screen for this
+  /// chat; it ends with the tour's farewell. Otherwise the chat is a chat.
+  private(set) var demoMode = false
+
+  /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
+  private(set) var choices: [String] = []
+  private(set) var offered: [GuideAction] = []
+  /// Notes of the app (a demo tour's runs) that came while it answered.
+  @ObservationIgnored private var notes: [(prompt: String, display: String)] = []
+
+  /// Something the app tells Tsugumi (a tour step, a run that ended); one that
+  /// comes while it answers waits for the answer to end.
+  func tell(prompt: String, display: String) {
+    // A tour is demo mode: the skill comes with its first note.
+    var prompt = prompt
+    if !demoMode {
+      prompt += "\n\n[Skill demo]\n" + Agent.demoSkill
+      demoMode = true
+    }
+    if busy {
+      notes.append((prompt, display))
+      return
+    }
+    sendRequest(display: display, prompt: prompt)
+  }
+
+  private func flushNotes() {
+    guard !notes.isEmpty else { return }
+    let n = notes
+    notes = []
+    sendRequest(display: n.last!.display, prompt: n.map(\.prompt).joined(separator: "\n"))
+  }
+
+  private var lastReply: String { items.last { $0.role == "assistant" }?.text ?? "" }
 
   /// Sends a request the app wrote for the model; the chat shows `display`.
   private func sendRequest(display: String, prompt: String) {
@@ -486,6 +530,9 @@ final class ChatController {
   }
 
   private func begin() {
+    choices = []
+    offered = []
+    GuideController.shared.chatTurnBegan(self)
     busy = true
     failed = false
     usageLimited = false
@@ -577,6 +624,16 @@ final class ChatController {
       }
     case .helper(let name, let event):
       handleHelper(name, event)
+    case .toolStarted(_, "guide_show", let args):
+      // The bird flies and speaks; the chat keeps the choices under the answer.
+      let shown = GuideAction.parse(args)
+      choices = shown.choices
+      offered = shown.actions
+      // The bird moves only in demo mode; after the farewell the chat is a chat again.
+      if demoMode { GuideController.shared.chatShow(self, arguments: args) }
+      if shown.endTour { demoMode = false }
+    case .toolFinished(_, "guide_show", _, _):
+      break
     case .toolStarted(_, let name, let args):
       items.append(Item(role: "tool", text: args, tool: (name, nil)))
       if name == "delegate" { startHelpers(args) }
@@ -599,6 +656,8 @@ final class ChatController {
       // The reply is asked again: what it had streamed goes.
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
+      if s == "cancelled" { notes = [] }
       busy = false
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
@@ -608,11 +667,14 @@ final class ChatController {
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
       session.presence.turnEnded()
       refreshAfterTurn()
       tidySoon()
+      flushNotes()
     case .stepLimit(let steps, let run):
+      GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
       session.presence.turnEnded(.limit)
       stoppedAtLimit = true
@@ -637,23 +699,62 @@ final class ChatController {
 }
 
 enum AgentSettings {
-  static func current() -> ProviderConfig {
+  /// The small model Tsugumi speaks with on the ChatGPT plan (the Home guide,
+  /// the canvas bird's thoughts): gpt-6.1-luna when the account offers it,
+  /// else its newest luna ("agent.speechModel.chatgpt" overrides it).
+  static var chatGPTSpeechModel: String {
     let d = UserDefaults.standard
-    if d.string(forKey: "agent.provider") == "fixture" {
+    if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
+    return speechModel(offered: d.stringArray(forKey: modelsKey("chatgpt")) ?? [], fallback: config(for: "chatgpt").model)
+  }
+
+  /// gpt-6.1-luna if offered, else the newest luna offered, else `fallback`
+  /// (the chat's model, which the plan takes, when nothing is listed yet).
+  nonisolated static func speechModel(offered: [String], fallback: String) -> String {
+    let preferred = "gpt-6.1-luna"
+    if offered.contains(preferred) { return preferred }
+    let version = { (m: String) -> [Int] in m.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) } }
+    return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
+  }
+
+  /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.
+  static func guide() -> ProviderConfig {
+    var c = current()
+    if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
+    return c
+  }
+
+  /// The connection chosen in Settings > API ("anthropic", "openai", "chatgpt" or "fixture").
+  static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
+
+  static func current() -> ProviderConfig { config(for: provider) }
+
+  /// A connection with its chosen model (each keeps its own).
+  static func config(for provider: String) -> ProviderConfig {
+    let d = UserDefaults.standard
+    switch provider {
+    case "fixture":
       return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
-    }
-    if d.string(forKey: "agent.provider") == "chatgpt" {
+    case "chatgpt":
       var c = ProviderConfig.chatGPT
       if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
       return c
-    }
-    if d.string(forKey: "agent.provider") == "openai" {
+    case "openai":
       var c = ProviderConfig.openAI
       if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
       return c
+    default:
+      var c = ProviderConfig.anthropic
+      if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
+      return c
     }
-    var c = ProviderConfig.anthropic
-    if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
-    return c
   }
+
+  /// Where a connection keeps its chosen model.
+  static func modelKey(_ provider: String) -> String {
+    provider == "chatgpt" ? "agent.model.chatgpt" : provider == "openai" ? "agent.model.openai" : "agent.model"
+  }
+
+  /// Where a connection keeps the models listed in Settings > API.
+  static func modelsKey(_ provider: String) -> String { "agent.models.\(provider)" }
 }
