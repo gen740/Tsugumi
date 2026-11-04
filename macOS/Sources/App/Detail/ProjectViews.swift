@@ -345,7 +345,7 @@ struct CardDatabaseView: View {
 
   private func place(_ id: String) {
     let k = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
-    message = "\(k) を Workflow に配置しました（未保存）。"
+    message = String(localized: "\(k) を Workflow に配置しました（未保存）。")
   }
 
   private func apply(_ id: String) async {
@@ -355,10 +355,10 @@ struct CardDatabaseView: View {
       parseError = nil
       session.edit { $0.setDefinition(id, card: card, meta: meta) }
       await session.save()
-      message = session.saveError.map { "保存できませんでした: \($0)" } ?? "適用しました（revision \(session.rev)）。"
+      message = session.saveError.map { String(localized: "保存できませんでした: \($0)") } ?? String(localized: "適用しました（revision \(session.rev)）。")
       load()
     } catch {
-      parseError = "JSON として読めません: \(error)"
+      parseError = String(localized: "JSON として読めません: \(error)")
     }
   }
 }
@@ -413,7 +413,7 @@ private struct GeneralProjectSettings: View {
           }
           Task {
             await session.save()
-            message = session.saveError ?? "保存しました。"
+            message = session.saveError ?? String(localized: "保存しました。")
           }
         }
         .disabled(!changed || !session.isEditable)
@@ -477,7 +477,7 @@ private struct DatabaseSettings: View {
     session.edit { $0.project["databaseConnections"] = .array(list) }
     Task {
       await session.save()
-      message = session.saveError ?? "保存しました。"
+      message = session.saveError ?? String(localized: "保存しました。")
       if session.saveError == nil { load() }
     }
   }
@@ -501,7 +501,7 @@ private struct RunHistorySettings: View {
         Task {
           await session.save()
           failed = session.saveError != nil
-          message = session.saveError.map { "保存できませんでした: \($0)" }
+          message = session.saveError.map { String(localized: "保存できませんでした: \($0)") }
         }
       })
   }
@@ -551,7 +551,7 @@ private struct RunHistorySettings: View {
         message = String(localized: "\(r.deletedRuns ?? 0) 件の実行を削除し、\(freed) を解放しました。")
       } catch {
         failed = true
-        message = "削除できませんでした: \(error)"
+        message = String(localized: "削除できませんでした: \(error)")
       }
       working = false
     }
@@ -600,7 +600,7 @@ private struct CacheSettings: View {
     working = true
     message = nil
     Task {
-      do { result = try await session.clearBuildCache() } catch { message = "削除できませんでした: \(error)" }
+      do { result = try await session.clearBuildCache() } catch { message = String(localized: "削除できませんでした: \(error)") }
       working = false
     }
   }

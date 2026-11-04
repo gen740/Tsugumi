@@ -1,22 +1,30 @@
 # インストールと開発用ビルド
 
-## 配布用アプリを使う
+## 入手のしかた
 
-対応環境は **Apple silicon Mac / macOS 26 以降**です。
-配布用の `Tsugumi.app` には計算の実行環境とデモが同梱されており、Nix・コンパイラ・コンテナ環境などを個別にセットアップする必要はありません。
+Tsugumi はソースからビルドして使います。Apple の Developer ID による署名と公証はしていないため、ビルド済みのアプリは配布していません。下の手順で作った `dist/Tsugumi.app` は、そのマシンでだけ使える ad-hoc 署名（VM を動かすための virtualization entitlement つき）で、ほかの Mac へコピーすると Gatekeeper に止められます。
 
-1. 入手した `Tsugumi.app` を「アプリケーション」フォルダに置いて開きます。
-2. ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選びます。
-3. 初回の実行環境の準備が完了したら、画面上部の「実行」を押します。
+対応環境は **Apple silicon Mac / macOS 26 以降**です。初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。
 
-初回の環境準備はアプリが自動で行い、画面に進行状況を表示します。Card の依存パッケージを初回取得する際にはインターネット接続が必要です。
-Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定します。
+最小の手順（詳細は次の節）:
 
-基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
+```bash
+ui/renderer/build.sh
+```
 
-## ソースからビルドする（開発者向け）
+```bash
+macOS/build-app.sh
+```
 
-以下は、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
+```bash
+open dist/Tsugumi.app
+```
+
+ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定します。基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
+
+## ソースからビルドする
+
+以下はアプリを作る手順と、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
 依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
 
 前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM の起動ディスクをビルドするとき（公開版がないとき）のみ Apple container 0.6.0（`container system start` 済み）を使用します。
@@ -43,7 +51,7 @@ Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得
 ui/renderer/build.sh
 ```
 
-アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、ローカル実行用の ad-hoc 署名を付与）：
+アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、このマシン用の ad-hoc 署名を付与。起動ディスクがなければ `build-image.sh --vm` を先に実行します）：
 
 ```bash
 macOS/build-app.sh

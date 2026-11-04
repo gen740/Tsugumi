@@ -9,6 +9,9 @@
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$repo/dist"
+# The version (VERSION, see docs/Development.md) and a build number that only grows.
+version="$(cat "$repo/VERSION")"
+build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
 renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 
@@ -58,8 +61,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Tsugumi</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$build</string>
   <key>CFBundleDevelopmentRegion</key><string>ja</string>
   <key>CFBundleLocalizations</key><array><string>ja</string><string>en</string></array>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
@@ -69,8 +72,15 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 # Local use only: ad-hoc signature (no notarization), with the
-# virtualization entitlement the shared VM needs.
-codesign --force --deep --sign - --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
+# virtualization entitlement the shared VM needs. Nested code first, each by
+# itself (not --deep, which signs whatever it finds the same way).
+# Rpaths of the machine it was built on (where the renderer was built) are not
+# the app's: it finds its libraries in its own Frameworks.
+otool -l "$app/Contents/MacOS/Tsugumi" | awk '/LC_RPATH/ {getline; getline; print $2}' | grep '^/' | while read -r p; do
+  install_name_tool -delete_rpath "$p" "$app/Contents/MacOS/Tsugumi"
+done
+for lib in "$app/Contents/Frameworks/"*.dylib; do codesign --force --sign - "$lib" >/dev/null; done
+codesign --force --sign - --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
 touch "$app"

@@ -161,9 +161,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.setActivationPolicy(.regular)
     // The Dock icon also when the executable is started directly (scripts,
     // `swift run` next to the repository's icon).
-    let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
-      ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/AppIcon.icns")
-    if let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
+    var icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+    #if DEBUG
+    if icon == nil { icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/AppIcon.icns") }
+    #endif
+    if let icon, let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
     NSApp.activate(ignoringOtherApps: true)
     Task { @MainActor in
       AppPreferences.shared.applyTheme()

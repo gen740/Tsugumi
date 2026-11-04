@@ -122,13 +122,13 @@ struct MainWindow: View {
   private func leaveProject() {
     guard let s = workspace.session else { return }
     if s.runActive {
-      switchError = "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。"
+      switchError = String(localized: "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。")
       return
     }
     Task {
       if s.dirty { await s.save() }
       if s.dirty {
-        switchError = "変更を保存できませんでした: \(s.saveError ?? "")。変更は保持しています。"
+        switchError = String(localized: "変更を保存できませんでした: \(s.saveError ?? "")。変更は保持しています。")
         return
       }
       workspace.close()
@@ -179,11 +179,11 @@ struct EnvironmentSetupView: View {
         .foregroundStyle(.secondary)
       GroupBox {
         VStack(alignment: .leading, spacing: 12) {
-          step("この Mac で仮想マシンを使える", ok: s.virtualizationSupported,
-               detail: "Apple silicon の Mac と macOS 26 以降が必要です。") { EmptyView() }
-          step("実行環境の VM イメージがある", ok: s.imageAvailable,
-               detail: s.imageAvailable ? "VM イメージ \(s.imageVersion ?? "")"
-                                        : "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。") {
+          step(String(localized: "この Mac で仮想マシンを使える"), ok: s.virtualizationSupported,
+               detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
+          step(String(localized: "実行環境の VM イメージがある"), ok: s.imageAvailable,
+               detail: s.imageAvailable ? String(localized: "VM イメージ \(s.imageVersion ?? "")")
+                                        : String(localized: "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。")) {
             EmptyView()
           }
         }

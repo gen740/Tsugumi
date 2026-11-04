@@ -719,7 +719,7 @@ private struct PortsCategory: View {
               TextField("用途", text: note("inputs", name), prompt: Text("用途（何を受け取るか）"))
                 .textFieldStyle(.roundedBorder).labelsHidden()
                 .help("このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。")
-              Text(r?.inputs.first { $0.name == name }?.rootType ?? "未解決").font(.caption).foregroundStyle(.secondary)
+              Text(r?.inputs.first { $0.name == name }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
           }
@@ -1094,7 +1094,7 @@ private struct SourceCategory: View {
       if !generatedFile {
         Button("整形") { format(path) }.disabled(formatting || model.loadedText(path) == nil).controlSize(.small)
           .shortcut(.formatSource)
-          .help(tip("ソースコードを整形", .formatSource))
+          .help(tip(String(localized: "ソースコードを整形"), .formatSource))
       }
     }
     .padding(.horizontal, 10).padding(.vertical, 6)

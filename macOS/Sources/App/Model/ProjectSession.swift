@@ -1077,7 +1077,7 @@ final class ProjectSession {
       case .busy:
         savingAfterRun = true
       case .externalChange:
-        saveError = "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。"
+        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
       default:
         saveError = f.description
       }

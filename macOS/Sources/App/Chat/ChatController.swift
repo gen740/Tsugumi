@@ -89,7 +89,7 @@ final class ChatController {
     var label: String {
       switch self {
       case .card(let k): return "Card \(k)"
-      case .display(let k): return "可視化 \(k)"
+      case .display(let k): return String(localized: "可視化 \(k)")
       }
     }
   }
@@ -160,10 +160,15 @@ final class ChatController {
               "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
               "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]
     }
+    #if DEBUG
+    // A development build run from the source tree reads the repository.
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
     return ["demos": repo.appendingPathComponent("demos", isDirectory: true),
             "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
             "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]
+    #else
+    return [:]
+    #endif
   }()
 
   init(session: ProjectSession) {
@@ -172,7 +177,7 @@ final class ChatController {
     dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Tsugumi/agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
-      status = "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。"
+      status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
       available = false
       return
     }
@@ -194,7 +199,7 @@ final class ChatController {
     let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     sessions = files.filter { $0.pathExtension == "json" }.map { f in
       let c = Conversation.load(f)
-      return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: c.title ?? firstText(c) ?? "新しい会話",
+      return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: c.title ?? firstText(c) ?? String(localized: "新しい会話"),
                          updatedAt: c.updatedAt, messages: c.fullHistory.count)
     }
     .sorted { $0.updatedAt > $1.updatedAt }
@@ -288,7 +293,7 @@ final class ChatController {
   // MARK: - Skills and references
 
   func reloadSkills() {
-    var out = loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: "プロジェクト")
+    var out = loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
     for f in AppPreferences.shared.skillFolders where f.enabled {
       out += loadSkills(in: URL(fileURLWithPath: f.path), source: URL(fileURLWithPath: f.path).lastPathComponent)
     }
@@ -422,7 +427,7 @@ final class ChatController {
     Task { await agent?.cancel() }
     busy = false
     session.presence.turnEnded()
-    status = "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。"
+    status = String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。")
   }
 
   /// Goes on after the step limit stopped the Agent.
@@ -448,7 +453,7 @@ final class ChatController {
   func compact() {
     guard let agent else { return }
     begin()
-    status = "会話を圧縮しています…"
+    status = String(localized: "会話を圧縮しています…")
     Task {
       await agent.setProvider(provider)
       await agent.compact { e in Task { @MainActor in self.handle(e) } }
@@ -497,7 +502,7 @@ final class ChatController {
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
       reloadCurrent()
-    case .retrying(let s): status = "再試行中: \(s)"
+    case .retrying(let s): status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
@@ -505,7 +510,7 @@ final class ChatController {
       busy = false
       session.presence.turnEnded()
       failed = s != "cancelled"
-      status = s == "cancelled" ? "回答を停止しました（Workflow の実行は止めていません）。" : "エラー: \(s)"
+      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。") : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       busy = false

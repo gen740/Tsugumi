@@ -106,7 +106,7 @@ struct RunLogView: View {
           Text("journal").tag(Tsugumi_Data_LogStream.journal)
         }
         .pickerStyle(.segmented).frame(width: 240).labelsHidden()
-        Text(card.map { "Card \($0.joined(separator: "/"))" + (invocation.map { " #\($0)" } ?? "") } ?? "実行全体")
+        Text(card.map { "Card \($0.joined(separator: "/"))" + (invocation.map { " #\($0)" } ?? "") } ?? String(localized: "実行全体"))
           .font(.caption).foregroundStyle(.secondary)
         Spacer()
         Toggle("末尾を追う", isOn: $follow).toggleStyle(.checkbox).font(.caption)
@@ -345,7 +345,7 @@ struct RunTimelineView: View {
   }
 
   private func description(_ e: TimelineEntry) -> String {
-    var lines = ["\(session.displayName(e.card)) · 実行 #\(e.invocation) · \(e.state.label)"]
+    var lines = [String(localized: "\(session.displayName(e.card)) · 実行 #\(e.invocation) · \(e.state.label)")]
     if let s = e.startedAt, let f = e.endedAt { lines.append(String(localized: "全体 ") + formatDuration(Double(f - s) / 1000)) }
     for st in e.stages {
       if let a = st.start, let b = st.end { lines.append("\(st.stage.label): " + formatDuration(Double(b - a) / 1000)) }

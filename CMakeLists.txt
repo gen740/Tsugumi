@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.28)
 if(APPLE)
-  # Apple container and the app require macOS 26 or later.
+  # The app (Virtualization.framework, SwiftUI) requires macOS 26 or later.
   set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "")
 endif()
-project(Tsugumi VERSION 1.0.0 LANGUAGES C CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TSUGUMI_VERSION LIMIT_COUNT 1)
+project(Tsugumi VERSION ${TSUGUMI_VERSION} LANGUAGES C CXX)
 if(TSUGUMI_BUILD_RENDERER)
   enable_language(OBJCXX)
 endif()

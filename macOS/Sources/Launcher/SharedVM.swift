@@ -32,10 +32,15 @@ public struct VMImage: Sendable, Equatable {
     if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil),
        let source = bundle.url(forResource: "tsugumi-source", withExtension: nil),
        let image = VMImage(directory: dir, source: source) { return image }
+    #if DEBUG
+    // A development build (tsugumi-vmctl, tests) uses the repository.
     var repo = URL(fileURLWithPath: #filePath)
     for _ in 0..<4 { repo.deleteLastPathComponent() }
     return VMImage(directory: repo.appendingPathComponent("dist/tsugumi-vm"), source: repo,
                    sourceEntries: sourceList(repo.appendingPathComponent("macOS/Container/vm-source.txt")))
+    #else
+    return nil
+    #endif
   }
 
   /// macOS/Container/vm-source.txt: one path per line, `#` comments.

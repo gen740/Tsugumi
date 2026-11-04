@@ -118,12 +118,12 @@ struct CanvasWorkspace: View {
   private var viewControls: some View {
     let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
     return HStack(spacing: 2) {
-      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help(tip("縮小", .zoomOut))
+      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help(tip(String(localized: "縮小"), .zoomOut))
       Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42) }.help(tip("100% に戻す", .actualSize))
-      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help(tip("拡大", .zoomIn))
+      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help(tip(String(localized: "拡大"), .zoomIn))
       Divider().frame(height: 16)
       Button { NotificationCenter.default.post(name: .canvasFitAll, object: tab.id) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-        .help(tip("全体表示", .fitAll))
+        .help(tip(String(localized: "全体表示"), .fitAll))
       // Notes, groups and folding are in the canvas's context menu and the
       // menu bar, where they are named; small icons for them read as nothing.
       Button { session.arrange(tab.scope) } label: { Image(systemName: "rectangle.grid.2x2") }
@@ -177,8 +177,8 @@ struct CanvasRunControl: View {
       .buttonStyle(.borderedProminent)
       .tint(shownActive ? .red : .accentColor)
       .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
-      .help(shownActive ? tip("Workflow の実行を停止（チャットの回答停止とは別の操作です）", .stop)
-                        : tip("文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）", .run))
+      .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
+                        : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
       // State and time on one line in a fixed width (what runs now is in the
       // tooltip); the clock ticks in hundredths while the run is active.
       HStack(spacing: 4) {

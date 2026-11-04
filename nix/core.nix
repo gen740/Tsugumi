@@ -9,10 +9,10 @@ in
 # GCC 16 did not finish compiling one of the core's files.
 clangStdenv.mkDerivation {
   pname = "tsugumid";
-  version = "1.0.0";
+  version = lib.fileContents ../VERSION;
   src = lib.fileset.toSource {
     root = ../.;
-    fileset = lib.fileset.unions [ ../CMakeLists.txt ../cmake ../core ../sdk ../protocol ../tests/cpp ];
+    fileset = lib.fileset.unions [ ../VERSION ../CMakeLists.txt ../cmake ../core ../sdk ../protocol ../tests/cpp ];
   };
   nativeBuildInputs = [ cmake ninja pkg-config flatbuffers ];
   # The embedded Nix evaluator: the same Nix as the environment's daemon.

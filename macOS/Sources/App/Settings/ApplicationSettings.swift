@@ -129,7 +129,7 @@ private struct StorageNote: View {
   let text: String
 
   var body: some View {
-    Label("保存先: " + text, systemImage: "externaldrive")
+    Label(String(localized: "保存先: ") + text, systemImage: "externaldrive")
       .font(.caption).foregroundStyle(.secondary)
       .padding(.horizontal, 20).padding(.top, 10)
   }
@@ -339,7 +339,7 @@ private struct ShortcutSettings: View {
         TableColumn("操作") { a in Text(a.title) }
         TableColumn("キー") { a in
           HStack {
-            Text(recording == a ? "キーを押してください…" : prefs.shortcut(a).label).monospaced()
+            Text(recording == a ? String(localized: "キーを押してください…") : prefs.shortcut(a).label).monospaced()
               .foregroundStyle(recording == a ? Color.accentColor : .primary)
             if let c = prefs.conflict(prefs.shortcut(a), except: a) {
               Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).help("「\(c.title)」と重複しています")
@@ -521,14 +521,14 @@ private struct APISettings: View {
                 try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
                 key = ""
                 refresh()
-                message = "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。"
+                message = String(localized: "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
               } catch { message = "\(error)" }
             }
             .disabled(key.isEmpty)
             Button("キーを削除", role: .destructive) {
               Keychain.delete(account: config.name)
               refresh()
-              message = "\(config.name) のキーを Keychain から削除しました。"
+              message = String(localized: "\(config.name) のキーを Keychain から削除しました。")
             }
             .disabled(!stored.contains(config.name))
             Button("モデル一覧を取得") {
@@ -536,7 +536,7 @@ private struct APISettings: View {
                 do {
                   models = try await MessagesProvider(config: AgentSettings.current()).models()
                   UserDefaults.standard.set(models, forKey: "agent.models")
-                  message = "\(models.count) 件のモデルを取得しました。"
+                  message = String(localized: "\(models.count) 件のモデルを取得しました。")
                 } catch { message = "\(error)" }
               }
             }
@@ -596,7 +596,7 @@ private struct ConnectionSettings: View {
           HStack {
             Image(systemName: s.connected ? "circle.fill" : "circle").foregroundStyle(s.connected ? .green : .secondary).font(.caption)
             Text(s.scopeName([])).bold()
-            Text(s.connected ? "接続中" : s.environment.label).foregroundStyle(.secondary)
+            Text(s.connected ? String(localized: "接続中") : s.environment.label).foregroundStyle(.secondary)
           }
           if case .ready(let ep) = s.environment {
             HStack {

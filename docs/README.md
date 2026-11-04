@@ -2,7 +2,7 @@
 
 | 文書 | 内容 |
 | --- | --- |
-| [INSTALL.md](../INSTALL.md) | 配布用アプリの導入手順と、開発者向けのソースからのビルド方法 |
+| [INSTALL.md](../INSTALL.md) | ソースからのビルドと起動の手順（ビルド済みのアプリは配布していません） |
 | [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
 | [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |

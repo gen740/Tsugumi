@@ -141,13 +141,13 @@ final class AppPreferences {
   enum Language: String, CaseIterable, Identifiable {
     case system, ja, en
     var id: String { rawValue }
-    var label: String { self == .system ? "システムに従う" : (self == .ja ? "日本語" : "English") }
+    var label: String { self == .system ? String(localized: "システムに従う") : (self == .ja ? String(localized: "日本語") : "English") }
   }
 
   enum Theme: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
-    var label: String { self == .system ? "システムに従う" : (self == .light ? "ライト" : "ダーク") }
+    var label: String { self == .system ? String(localized: "システムに従う") : (self == .light ? String(localized: "ライト") : String(localized: "ダーク")) }
   }
 
   /// Whether the Tsugumi bird (Home, loading) moves.
@@ -166,7 +166,7 @@ final class AppPreferences {
   enum SendKey: String, CaseIterable, Identifiable {
     case returnKey, commandReturn
     var id: String { rawValue }
-    var label: String { self == .returnKey ? "Return で送信（⇧Return で改行）" : "⌘Return で送信（Return で改行）" }
+    var label: String { self == .returnKey ? String(localized: "Return で送信（⇧Return で改行）") : String(localized: "⌘Return で送信（Return で改行）") }
   }
 
   var language: Language { didSet { d.set(language.rawValue, forKey: "app.language"); applyLanguage() } }

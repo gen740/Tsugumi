@@ -92,10 +92,14 @@ final class AppModel {
 
   /// When run from the source tree (swift run), demos come from the repository.
   private static func sourceTreeDemos() -> URL? {
+    #if DEBUG
     var dir = URL(fileURLWithPath: #filePath)
     for _ in 0..<4 { dir.deleteLastPathComponent() }
     let candidate = dir.appendingPathComponent("demos")
     return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("index.json").path) ? candidate : nil
+    #else
+    return nil  // a release build has its demos in the bundle only
+    #endif
   }
 
   private func loadDemos() {

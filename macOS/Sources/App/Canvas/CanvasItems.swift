@@ -90,7 +90,7 @@ struct GroupFrameView: View {
       RoundedRectangle(cornerRadius: 12 * z).strokeBorder(color.opacity(0.5), style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
       HStack(spacing: 6 * z) {
         Image(systemName: "rectangle.3.group").font(.system(size: 10 * z))
-        Text(group["name"]?.string ?? "グループ").font(.system(size: 12 * z, weight: .semibold))
+        Text(group["name"]?.string ?? String(localized: "グループ")).font(.system(size: 12 * z, weight: .semibold))
         Spacer()
       }
       .foregroundStyle(color)

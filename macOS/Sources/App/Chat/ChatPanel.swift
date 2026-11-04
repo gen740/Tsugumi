@@ -48,7 +48,7 @@ struct ChatPanel: View {
       Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "list.bullet") }
         .buttonStyle(.borderless)
         .help(showList ? "会話に戻る" : "会話の一覧と検索")
-      Text(showList ? "会話" : (chat.sessions.first { $0.id == chat.currentId }?.title ?? "新しい会話"))
+      Text(showList ? String(localized: "会話") : (chat.sessions.first { $0.id == chat.currentId }?.title ?? String(localized: "新しい会話")))
         .font(.headline).lineLimit(1)
       Spacer()
       Button { chat.newSession(); showList = false } label: { Image(systemName: "square.and.pencil") }
@@ -475,14 +475,14 @@ struct ToolStep {
 
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
-    if n.contains("save") || n.contains("put") || n.contains("write") { return ("変更を保存しています", "変更を保存") }
-    if n.contains("run") && !n.contains("status") { return ("実行しています", "実行") }
-    if n.contains("read") || n.contains("inspect") || n.contains("get") { return ("確認しています", "確認") }
-    if n.contains("log") { return ("ログを読んでいます", "ログを確認") }
-    if n.contains("validate") || n.contains("check") { return ("検証しています", "検証") }
-    if n.contains("format") { return ("整形しています", "整形") }
-    if n.contains("status") || n.contains("record") || n.contains("history") { return ("結果を確認しています", "結果を確認") }
-    return ("\(name) を実行しています", name)
+    if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
+    if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
+    if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }
+    if n.contains("log") { return (String(localized: "ログを読んでいます"), String(localized: "ログを確認")) }
+    if n.contains("validate") || n.contains("check") { return (String(localized: "検証しています"), String(localized: "検証")) }
+    if n.contains("format") { return (String(localized: "整形しています"), String(localized: "整形")) }
+    if n.contains("status") || n.contains("record") || n.contains("history") { return (String(localized: "結果を確認しています"), String(localized: "結果を確認")) }
+    return (String(localized: "\(name) を実行しています"), name)
   }
 
   var running: String { verb.running + (target.map { "（\($0)）" } ?? "") + "…" }

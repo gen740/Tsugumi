@@ -729,7 +729,7 @@ extension ProjectSession {
       s.updateLayout(of: scope) { l in
         var notes = l["notes"]?.array ?? []
         notes.append(.object([
-          ("id", .string(id)), ("scope", .string("")), ("text", .string("メモ")), ("color", .string("yellow")),
+          ("id", .string(id)), ("scope", .string("")), ("text", .string(String(localized: "メモ"))), ("color", .string("yellow")),
           ("x", .real(p.x)), ("y", .real(p.y)), ("width", .real(240)), ("height", .real(120)),
         ]))
         l["notes"] = .array(notes)
@@ -784,7 +784,7 @@ extension ProjectSession {
     }
   }
 
-  func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = "グループ") -> String {
+  func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "グループ")) -> String {
     let id = "group-" + UUID().uuidString.prefix(8).lowercased()
     edit { s in
       s.updateGroups(in: scope) { g in

@@ -20,13 +20,13 @@ struct CardExecutionView: View {
   enum Filter: String, CaseIterable, Identifiable {
     case all, succeeded, failed
     var id: String { rawValue }
-    var title: String { self == .all ? "すべて" : (self == .succeeded ? "成功" : "失敗") }
+    var title: String { self == .all ? String(localized: "すべて") : (self == .succeeded ? String(localized: "成功") : String(localized: "失敗")) }
   }
 
   enum Detail: String, CaseIterable, Identifiable {
     case io, log, info
     var id: String { rawValue }
-    var title: String { self == .io ? "入出力" : (self == .log ? "ログ" : "情報") }
+    var title: String { self == .io ? String(localized: "入出力") : (self == .log ? String(localized: "ログ") : String(localized: "情報")) }
   }
 
   /// Loading, failed and empty are said plainly, never as an empty split view.
@@ -189,7 +189,7 @@ struct CardExecutionView: View {
       runs = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
       if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
       error = nil
-    } catch { self.error = "履歴を読み込めません: \(error)" }
+    } catch { self.error = String(localized: "履歴を読み込めません: \(error)") }
     loaded = true
   }
 
@@ -344,7 +344,7 @@ struct CardArtifactsView: View {
       if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
         preview = .image(img)
       } else if let s = String(data: data.prefix(256 * 1024), encoding: .utf8) {
-        preview = .text(s + (data.count > 256 * 1024 ? "\n…（先頭 256 KiB を表示）" : ""))
+        preview = .text(s + (data.count > 256 * 1024 ? String(localized: "\n…（先頭 256 KiB を表示）") : ""))
       } else {
         preview = .binary(data.count)
       }

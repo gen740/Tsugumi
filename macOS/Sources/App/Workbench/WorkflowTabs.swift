@@ -322,7 +322,7 @@ enum RunActions {
       c["id"]?.string.map { s.kind(key([$0])) } == .trigger
     }
     guard let id = trigger?["id"]?.string else {
-      s.notice = "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。"
+      s.notice = String(localized: "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。")
       return
     }
     Task {

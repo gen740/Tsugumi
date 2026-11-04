@@ -2,6 +2,7 @@
 # copied into the app (build-app.sh) and shared with the VM read-only.
 flake.nix
 flake.lock
+VERSION
 CMakeLists.txt
 cmake
 core

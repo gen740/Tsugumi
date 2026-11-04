@@ -40,7 +40,7 @@ struct StageLogView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
-        Text("\(session.displayName(key(card))) · 実行 #\(shownInvocation ?? invocation ?? 0)" + (state.map { " · " + $0.label } ?? ""))
+        Text(String(localized: "\(session.displayName(key(card))) · 実行 #\(shownInvocation ?? invocation ?? 0)") + (state.map { " · " + $0.label } ?? ""))
           .font(.callout.weight(.medium))
         Spacer()
         Button("すべて開く") { open = Set(groups.map(\.id) + ["raw"]) }.controlSize(.small)

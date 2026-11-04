@@ -886,7 +886,7 @@ struct GraphCanvas: View {
 
   private func deleteSelection() {
     guard session.isEditable else {
-      session.notice = "実行中は Card を削除できません。"
+      session.notice = String(localized: "実行中は Card を削除できません。")
       return
     }
     if let i = tab.selectedConnection {

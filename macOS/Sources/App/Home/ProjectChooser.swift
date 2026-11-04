@@ -228,14 +228,14 @@ struct ProjectChooser: View {
     let p = NSOpenPanel()
     p.canChooseDirectories = true
     p.canChooseFiles = false
-    p.message = "tsugumi.json を含むフォルダを選んでください"
+    p.message = String(localized: "tsugumi.json を含むフォルダを選んでください")
     if p.runModal() == .OK, let url = p.url { onOpen(url) }
   }
 
   private func createProject() {
     let p = NSSavePanel()
     p.nameFieldStringValue = newName
-    p.message = "プロジェクトのフォルダを作成する場所を選んでください"
+    p.message = String(localized: "プロジェクトのフォルダを作成する場所を選んでください")
     guard p.runModal() == .OK, let url = p.url else { return }
     do {
       try model.createProject(at: url, name: newName)
