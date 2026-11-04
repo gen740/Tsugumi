@@ -2,11 +2,39 @@
 
 ## 入手のしかた
 
-Tsugumi はソースからビルドして使います。Apple の Developer ID による署名と公証はしていないため、ビルド済みのアプリは配布していません。下の手順で作った `dist/Tsugumi.app` は、そのマシンでだけ使える ad-hoc 署名（VM を動かすための virtualization entitlement つき）で、ほかの Mac へコピーすると Gatekeeper に止められます。
-
 対応環境は **Apple silicon Mac / macOS 26 以降**です。初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。
 
-最小の手順（詳細は次の節）:
+### リリース版を入れる
+
+[GitHub Releases](https://github.com/gen740/Tsugumi/releases) の最新版を `/Applications` に入れます。
+
+```bash
+curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
+```
+
+リリース版は Apple の Developer ID による署名と公証をしていない ad-hoc 署名（VM を動かすための virtualization entitlement つき）です。ブラウザでダウンロードした zip から取り出したアプリは Gatekeeper に止められるので、上のように `curl` で取得するか、取り出したあとに隔離属性を外してください。
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Tsugumi.app
+```
+
+ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定します。基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
+
+### 自動更新
+
+リリース版は起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、チェックサム・署名・bundle id・版番号を確かめてから、**次に終了したとき**に入れ替えます（終了時には VM が止まっているので、実行中の計算が更新で中断されることはありません）。すぐに更新したいときは、ホーム画面の「再起動して更新」か、アプリケーションメニューの「再起動して … に更新」を選びます。設定の「一般」→「アップデート」で、今の版の確認、手動での確認、自動確認のオン・オフができます。
+
+- アプリを置いたフォルダ（通常は `/Applications`）に書き込めることが必要です。隔離属性がついたまま開いたアプリ（App Translocation で別の場所から動いている）は更新できないので、`/Applications` に移して隔離属性を外してください。
+- ad-hoc 署名は版ごとに変わるため、更新後に初めて API キーを使うとき、macOS がキーチェーンへのアクセスを一度確認します（「常に許可」を選べば、その版では以後確認されません）。
+- v1.0.0 になるまでは、版の間でプロジェクトの文書や設定の互換性を保ちません（[AGENTS.md](AGENTS.md)）。
+
+## ソースからビルドする
+
+以下はアプリを作る手順と、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
+
+ソースからビルドしたアプリは**開発版（Tsugumi Dev）**です。リリース版とは別のアプリとして扱われ（bundle id `app.tsugumi.Tsugumi.dev`）、VM・Nix store・control フォルダ・会話履歴を `~/Library/Application Support/Tsugumi-dev/` に置きます（リリース版は `Tsugumi/`）。そのため、開発版や開発版で回すテストがリリース版の VM を止めたり初期化したりすることはなく、両方を同時に起動できます。開発版は自動更新しません。
+
+最小の手順:
 
 ```bash
 ui/renderer/build.sh
@@ -19,12 +47,6 @@ macOS/build-app.sh
 ```bash
 open dist/Tsugumi.app
 ```
-
-ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定します。基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
-
-## ソースからビルドする
-
-以下はアプリを作る手順と、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
 依存ライブラリの固定バージョンは [docs/Lock.md](docs/Lock.md) にまとめています。
 
 前提環境：Nix（flakes 有効）、Xcode または Command Line Tools。VM の起動ディスクをビルドするとき（公開版がないとき）のみ Apple container 0.6.0（`container system start` 済み）を使用します。
@@ -51,7 +73,7 @@ Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得
 ui/renderer/build.sh
 ```
 
-アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、このマシン用の ad-hoc 署名を付与。起動ディスクがなければ `build-image.sh --vm` を先に実行します）：
+アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。`--release` をつけるとリリース版として作ります（リリースの workflow が使う。[開発資料](docs/Development.md#リリース)）。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、このマシン用の ad-hoc 署名を付与。起動ディスクがなければ `build-image.sh --vm` を先に実行します）：
 
 ```bash
 macOS/build-app.sh

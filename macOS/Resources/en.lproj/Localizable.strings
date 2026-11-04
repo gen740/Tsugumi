@@ -14,11 +14,14 @@
 "%@ から %@ へつないでいます" = "Connecting %@ to %@";
 "%@ から実行しています" = "Running from %@";
 "%@ が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。" = "%@ was changed outside Tsugumi. Reload to take it in (the changes are kept).";
+"%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
 "%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
+"%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
 "%@ は空ではありません。空のフォルダか新しい名前を選んでください。" = "%@ is not empty. Choose an empty folder or a new name.";
 "%@ を Workflow に配置しました（未保存）。" = "Placed %@ in the Workflow (not saved).";
+"%@ をダウンロードしています" = "Downloading %@";
 "%@ を削除できませんでした: %@" = "Could not delete %@: %@";
 "%@ を実行しています" = "Running %@";
 "%@ を書いています" = "Writing %@";
@@ -89,6 +92,7 @@
 "File / Directory の出力がないため、保持できる出力はありません" = "No File / Directory output, so no output can be kept";
 "File / Directory は、型に文字列の value（パス）がある場合に選べます" = "File / Directory can be chosen when the type has a string value (a path)";
 "Finder で表示" = "Show in Finder";
+"GitHub から HTTP %lld が返りました" = "GitHub answered HTTP %lld";
 "Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。" = "Whether the Tsugumi on Home and while loading moves. By default it follows macOS “Reduce motion”.";
 "Home へ戻る" = "Back to Home";
 "JSON として読めません: %@" = "Not readable as JSON: %@";
@@ -122,11 +126,14 @@
 "Skill はまだありません" = "No Skills yet";
 "Skill を再読込" = "Reload Skills";
 "Skill を検索" = "Search Skills";
+"Tsugumi %@ の準備ができました" = "Tsugumi %@ is ready";
+"Tsugumi %@ の準備ができました。次に終了したときに更新します。" = "Tsugumi %@ is ready. It is installed the next time you quit.";
 "Tsugumi のアニメーション" = "Tsugumi animation";
 "Tsugumi のプロジェクトではありません: %@" = "Not a Tsugumi project: %@";
 "Tsugumi の外で編集されたファイルを取り込みます" = "Takes in files edited outside Tsugumi";
 "Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
+"Tsugumi は最新です" = "Tsugumi is up to date";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
 "VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）" = "Building Tsugumi inside the VM (first start and after an update only; a minute or two)";
 "VM を起動しています" = "Booting the VM";
@@ -149,6 +156,7 @@
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
+"macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
@@ -173,6 +181,7 @@
 "「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
 "「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
+"あとで" = "Later";
 "ありません" = "None";
 "ありません。" = "None.";
 "うまくいきませんでした" = "That did not work";
@@ -193,6 +202,7 @@
 "この stream への出力はありません" = "Nothing on this stream";
 "このアプリの Nixpkgs に固定" = "Pin to This App's Nixpkgs";
 "このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
+"このアプリは自動更新できません" = "This app cannot update itself";
 "このアプリ（この Mac のユーザー設定）" = "This app (this Mac's user settings)";
 "このアプリ（この Mac。API キーは macOS のキーチェーン）" = "This app (this Mac; API keys in the macOS Keychain)";
 "このタブで開く" = "Open in This Tab";
@@ -242,12 +252,17 @@
 "まだ実行していません" = "Not run yet";
 "まだ結果がありません" = "No result yet";
 "まだ結果がありません（実行すると表示されます）" = "No result yet (run to see one)";
+"まもなく確認します" = "Checking shortly";
 "もう一度保存" = "Save Again";
 "もう一方の処理が終わるのを待ってから、再試行してください。" = "Wait for the other operation to finish, then retry.";
 "やり直す" = "Redo";
 "アイコン" = "Icon";
 "アイコンを選ぶ" = "Choose an Icon";
 "アイコンを選ぶ…" = "Choose an Icon…";
+"アップデート" = "Updates";
+"アップデートを確認…" = "Check for Updates…";
+"アップデートを確認できませんでした" = "Could not check for updates";
+"アップデートを自動的に確認する" = "Check for updates automatically";
 "アプリ" = "App";
 "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。" = "The app has no VM image. During development, make one with macOS/Container/build-image.sh --vm.";
 "インデントガイドを表示" = "Show indent guides";
@@ -296,6 +311,7 @@
 "ショートカット" = "Shortcuts";
 "スキップ" = "Skipped";
 "ソース" = "Source";
+"ソースからビルドした開発版（Tsugumi Dev）は自動更新しません。" = "Builds from source (Tsugumi Dev) do not update themselves.";
 "ソースを開く…" = "Open Sources…";
 "ソースコードを整形" = "Format source code";
 "タイムライン" = "Timeline";
@@ -307,6 +323,8 @@
 "ターミナルは終了しました" = "The terminal ended";
 "ターミナルを開き直します（実行中のコマンドは終了します）" = "Opens the terminal again (a running command ends)";
 "ターミナルを開けませんでした" = "Could not open the terminal";
+"ダウンロードしたアプリが正しくありません（%@）" = "The downloaded app is not valid (%@)";
+"ダウンロードしたファイルのチェックサムが一致しません" = "The checksum of the downloaded file does not match";
 "ダブルクリックで編集" = "Double-click to edit";
 "ダブルクリックまたは Canvas へドラッグして配置" = "Double-click or drag onto the canvas to place";
 "ダーク" = "Dark";
@@ -396,6 +414,7 @@
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
+"リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
 "ログの表示切替" = "Toggle Log";
@@ -421,6 +440,7 @@
 "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
 "不明" = "Unknown";
 "並列実行数: %lld" = "Parallel runs: %lld";
+"今すぐ確認" = "Check Now";
 "今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
 "今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
 "今後は確認しない（設定の「API」でいつでも変えられます）" = "Don't ask again (can be changed any time in Settings > API)";
@@ -512,6 +532,9 @@
 "再試行" = "Retry";
 "再試行中: %@" = "Retrying: %@";
 "再読込" = "Reload";
+"再起動して %@ に更新" = "Restart to Update to %@";
+"再起動して更新" = "Restart to Update";
+"再起動すると新しい版になります。あとにした場合は、次に終了したときに更新します。" = "Restart to use the new version. Otherwise it is installed the next time you quit.";
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
 "処理" = "Step";
 "処理 Card の実行環境は default.nix で定義します。" = "A step Card's environment is defined in default.nix.";
@@ -755,6 +778,7 @@
 "書き込み" = "Write";
 "最大実行回数" = "Max runs";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
+"最新の版です（%@ に確認）" = "Up to date (checked at %@)";
 "最新を読み込む" = "Load Latest";
 "最近のプロジェクト" = "Recent Projects";
 "最近開いたプロジェクトはありません" = "No recent projects";
@@ -771,6 +795,7 @@
 "未実装（実行されません）" = "Not implemented (never runs)";
 "未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。" = "Not supported. OpenAI offers “Sign in with ChatGPT” only to selected commercial partners in a limited trial or through a procedure for public open source tools. This project meets neither condition now; it will be added, apart from API key connections, once it does.";
 "未接続" = "Offline";
+"未確認" = "Not checked yet";
 "未解決" = "Unresolved";
 "未設定" = "Not set";
 "未適用" = "Not applied";
@@ -807,6 +832,7 @@
 "点（控えめ）" = "Dots (subtle)";
 "無期限" = "No Limit";
 "版" = "Version";
+"版 %@ が最新の版です。" = "Version %@ is the latest version.";
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
 "版の履歴" = "Version History";
@@ -898,6 +924,7 @@
 "起動: python3 tests/fixtures/model_fixture.py --port %lld" = "Start: python3 tests/fixtures/model_fixture.py --port %lld";
 "起動しています" = "Starting";
 "起動中: %@" = "Starting: %@";
+"起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";

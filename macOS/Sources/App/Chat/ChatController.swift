@@ -2,6 +2,7 @@ import FlatBuffers
 import Foundation
 import Observation
 import TsugumiAgent
+import TsugumiLauncher
 import TsugumiRPC
 
 /// Bridges the Agent's tool calls to this project's authenticated RPC client.
@@ -175,8 +176,7 @@ final class ChatController {
   init(session: ProjectSession) {
     self.session = session
     thoughts = ThoughtSummarizer(presence: session.presence)
-    dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("Tsugumi/agent/\(session.identity.id)", isDirectory: true)
+    dir = AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
       status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
       available = false

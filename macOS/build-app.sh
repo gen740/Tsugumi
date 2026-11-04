@@ -5,9 +5,30 @@
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
-#   macOS/build-app.sh            # release build
+#   macOS/build-app.sh            # dev build (optimized; "Tsugumi Dev")
+#   macOS/build-app.sh --release  # the build the release workflow publishes
+#
+# The two are different apps to macOS (AppChannel.swift): the dev build has
+# the bundle id app.tsugumi.Tsugumi.dev, keeps its VM and store in
+# ~/Library/Application Support/Tsugumi-dev and never updates itself; the
+# release (app.tsugumi.Tsugumi, Application Support/Tsugumi) updates itself
+# from the GitHub releases (Updater.swift). Checks with a dev build never
+# touch the VM of the release in use.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+channel=dev
+case "${1:-}" in
+  --release) channel=release ;;
+  "") ;;
+  *) sed -n '8,9s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac
+if [ "$channel" = release ]; then
+  bundle_id=app.tsugumi.Tsugumi
+  name=Tsugumi
+else
+  bundle_id=app.tsugumi.Tsugumi.dev
+  name="Tsugumi Dev"
+fi
 dist="$repo/dist"
 # The version (VERSION, see docs/Development.md) and a build number that only grows.
 version="$(cat "$repo/VERSION")"
@@ -55,9 +76,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Tsugumi</string>
-  <key>CFBundleDisplayName</key><string>Tsugumi</string>
-  <key>CFBundleIdentifier</key><string>app.tsugumi.Tsugumi</string>
+  <key>CFBundleName</key><string>$name</string>
+  <key>CFBundleDisplayName</key><string>$name</string>
+  <key>CFBundleIdentifier</key><string>$bundle_id</string>
+  <key>TsugumiChannel</key><string>$channel</string>
   <key>CFBundleExecutable</key><string>Tsugumi</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -71,7 +93,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Local use only: ad-hoc signature (no notarization), with the
+# Ad-hoc signature (no Developer ID, no notarization), with the
 # virtualization entitlement the shared VM needs. Nested code first, each by
 # itself (not --deep, which signs whatever it finds the same way).
 # Rpaths of the machine it was built on (where the renderer was built) are not

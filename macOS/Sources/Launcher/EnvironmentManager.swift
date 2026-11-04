@@ -33,7 +33,8 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
 /// Starts, finds and stops project environments in the app's one shared VM.
 ///
 /// All projects run in one Linux VM (SharedVM) with one Nix store, kept as a
-/// sparse disk image in `~/Library/Application Support/Tsugumi/vm/`. Each
+/// sparse disk image in `~/Library/Application Support/Tsugumi/vm/`
+/// (`Tsugumi-dev/vm/` for builds from source, AppChannel). Each
 /// open project has its own tsugumid there (its own uid, mount and PID
 /// namespaces and cgroup; tsugumi-vmd), sees only its own folder and control
 /// folder, and stopping it never stops another project. Project documents,
@@ -50,8 +51,7 @@ public actor EnvironmentManager {
   private var starting: [String: Task<Endpoint, Error>] = [:]
 
   public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
-    self.support = support ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("Tsugumi", isDirectory: true)
+    self.support = support ?? AppChannel.current.supportDirectory
     self.image = image
     self.resources = resources
     vm = SharedVM(directory: self.support.appendingPathComponent("vm", isDirectory: true))

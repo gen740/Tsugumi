@@ -1,0 +1,89 @@
+# Builds the app for a version and publishes it as a GitHub release:
+# Tsugumi.zip (the app, ad-hoc signed, `build-app.sh --release`) and
+# Tsugumi.zip.sha256. Installed release builds read the latest release and
+# update themselves to it (macOS/Sources/App/Model/Updater.swift).
+#
+# Started by a tag v<major.minor.patch> that matches VERSION
+# (macOS/tools/release.sh makes and pushes one), or by hand with a version:
+# then VERSION is set to it on main, committed and tagged here.
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (major.minor.patch); VERSION on main is set to it
+        required: true
+permissions:
+  contents: write
+concurrency: release
+jobs:
+  app:
+    name: Build and publish the app (macOS)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the build number is the number of commits
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+      - name: Tag the version (run by hand)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          v="$VERSION_INPUT"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a version: $v" >&2; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$(cat VERSION)" != "$v" ]; then
+            echo "$v" > VERSION
+            git commit -qm "Release $v" VERSION
+          fi
+          git tag -a "v$v" -m "Tsugumi $v"
+          git push origin HEAD:refs/heads/main "refs/tags/v$v"
+          echo "TAG=v$v" >> "$GITHUB_ENV"
+      - name: The tag is the version in VERSION
+        run: |
+          tag="${TAG:-$GITHUB_REF_NAME}"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          test "v$(cat VERSION)" = "$tag"
+      - uses: cachix/install-nix-action@v31
+      - name: Cache the Dawn renderer
+        uses: actions/cache@v4
+        with:
+          path: build-renderer
+          key: renderer-${{ runner.os }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt') }}
+      - name: Build the Dawn renderer
+        run: '[ -f build-renderer/ui/renderer/libtsugumi_renderer.dylib ] || ui/renderer/build.sh'
+      # The VM's boot disk is downloaded from gen740/tsugumi-vm
+      # (macOS/tools/publish-vm.sh publishes it after vm-boot.nix changes).
+      - name: Build the app
+        run: macOS/build-app.sh --release
+      - name: Check and package the app
+        run: |
+          set -euo pipefail
+          app=dist/Tsugumi.app
+          codesign --verify --deep --strict "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :TsugumiChannel' "$app/Contents/Info.plist")" = release
+          test "v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$TAG"
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent Tsugumi.app Tsugumi.zip && shasum -a 256 Tsugumi.zip > Tsugumi.zip.sha256)
+          ls -l dist/Tsugumi.zip
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Apple silicon Mac / macOS 26 以降。インストール済みの Tsugumi は自動でこの版に更新されます（次に終了したとき）。
+
+          新しく入れる場合（ad-hoc 署名のため、ブラウザでダウンロードすると Gatekeeper に止められます。curl で取得してください）:
+
+          ```bash
+          curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
+          ```
+          NOTES
+          gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 \
+            --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes
