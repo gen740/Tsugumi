@@ -11,3 +11,5 @@ for (const c of JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/merge
 console.log('merge behavior: passed')
 
 await import("./recovery")
+
+await import("./approval")

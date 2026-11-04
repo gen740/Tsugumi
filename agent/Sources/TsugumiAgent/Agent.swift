@@ -406,7 +406,7 @@ public actor Agent {
   }
 
   /// Validates arguments, executes the RPC and records the result.
-  private func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async -> ContentBlock {
+  func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async -> ContentBlock {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
@@ -458,6 +458,12 @@ public actor Agent {
         record.opId = UUID().uuidString.lowercased()
         full["op_id"] = record.opId
         full["approved_permissions"] = asked
+        // Recovery must look up the approved operation, even if the process
+        // exits between sending it and receiving its reply.
+        conversation.tools.removeAll { $0.id == record.id }
+        conversation.tools.append(record)
+        try conversation.save(storage)
+        try Task.checkCancellation()
         (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
           try codec.build(spec.object, full, into: &b)
         }
