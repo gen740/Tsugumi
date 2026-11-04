@@ -1,0 +1,11 @@
+{
+  "description": "ロジスティック写像の分岐図を描く",
+  "content": "settings の size を受け取る。x_{n+1} = r x_n (1 − x_n) について、r を 2.5〜4.0 で size 本に分け、各 r で x_0=0.5 から 1000 回を捨てて続く 300 回の x を、横軸 r・縦軸 x の size×size の画像に点で打って PNG にして表示する。r の範囲と回数はパラメータにする。r=3.2 では捨てた後の x が 2 つの値（周期 2）に収まることを assert で確かめ、その 2 値をログに出す。numpy と pillow を使う。",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size と seed"
+    }
+  ],
+  "outputs": []
+}

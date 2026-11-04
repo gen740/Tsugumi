@@ -171,17 +171,26 @@ final class UIScript {
         // Writes `bubble <seconds> <scene> | <line>` whenever the tsugumi's
         // bubble changes, for the rest of the script.
         if let s = session {
-          let p = s.presence, t0 = Date()
+          let t0 = Date()
           Task { @MainActor [weak self] in
-            var last = "", lastError = ""
+            var last: [String: String] = [:], lastError = "", lastTidy = ""
             while self?.log != nil {
               let now = Date()
-              let scene = p.current(at: now).map { "\($0.beat.beat)" } ?? "-"
-              let text = (p.visible(at: now) ? p.line(at: now)?.text : nil) ?? "(none)"
-              let entry = scene.prefix(60) + " | " + text
-              if entry != last {
-                self?.say(String(format: "bubble %.1f ", now.timeIntervalSince(t0)) + entry)
-                last = entry
+              // The main bird and each helper's (named).
+              for p in s.presences {
+                let scene = p.current(at: now).map { "\($0.beat.beat)" } ?? "-"
+                let text = (p.visible(at: now) ? p.line(at: now)?.text : nil) ?? "(none)"
+                let who = p.label ?? "main"
+                let entry = scene.prefix(60) + " | " + text
+                if entry != last[who] {
+                  self?.say(String(format: "bubble %.1f ", now.timeIntervalSince(t0)) + "[\(who)] " + entry)
+                  last[who] = entry
+                }
+              }
+              let t = AppModel.shared.chat(for: s).tidied
+              if "\(t)" != lastTidy {
+                self?.say(String(format: "tidy %.1f ", now.timeIntervalSince(t0)) + "moved \(t)")
+                lastTidy = "\(t)"
               }
               let err = AppModel.shared.chat(for: s).thoughts.lastError ?? ""
               if err != lastError {

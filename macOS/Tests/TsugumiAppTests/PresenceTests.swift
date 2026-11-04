@@ -184,3 +184,39 @@ import Testing
   #expect(mid.opacity > 0.2 && mid.opacity < 0.8 && mid.lift > 0.2)
   #expect(p.fade(at: end.addingTimeInterval(T.linger)).opacity == 0)
 }
+
+/// A Card and the frame below it are one block; blocks that overlap are
+/// pushed apart along the flow's cross axis, in their order, by just enough.
+@Test func tidyingMakesRoomForWhatCardsShow() {
+  typealias B = LayoutTidy.Box
+  // Two rows of Cards; the first row's blocks (Card and frame) reach into the second row.
+  let boxes = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 320, height: 280)),
+               B(id: "card:b", rect: CGRect(x: 400, y: 0, width: 320, height: 280)),
+               B(id: "card:c", rect: CGRect(x: 0, y: 200, width: 200, height: 80)),
+               B(id: "card:d", rect: CGRect(x: 400, y: 200, width: 320, height: 280)),
+               B(id: "note:n", rect: CGRect(x: 900, y: 0, width: 240, height: 120))]
+  #expect(Set(LayoutTidy.overlaps(boxes).map { $0.0 + " " + $0.1 }) == ["card:a card:c", "card:b card:d"])
+  let moves = LayoutTidy.makeRoom(boxes, across: true)
+  // Only the second row moves, straight down, just past the first row.
+  #expect(moves == [LayoutTidy.Move(id: "card:c", by: CGVector(dx: 0, dy: 280 + LayoutTidy.gap - 200)),
+                    LayoutTidy.Move(id: "card:d", by: CGVector(dx: 0, dy: 280 + LayoutTidy.gap - 200))])
+  #expect(LayoutTidy.overlaps(LayoutTidy.applying(moves, to: boxes)).isEmpty)
+  // Nothing moves when nothing overlaps.
+  #expect(LayoutTidy.makeRoom(LayoutTidy.applying(moves, to: boxes), across: true).isEmpty)
+  // A chain: pushing one block down makes room below it too.
+  let chain = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 200, height: 300)),
+               B(id: "card:b", rect: CGRect(x: 0, y: 250, width: 200, height: 100)),
+               B(id: "card:c", rect: CGRect(x: 0, y: 380, width: 200, height: 100))]
+  let after = LayoutTidy.applying(LayoutTidy.makeRoom(chain, across: true), to: chain)
+  #expect(LayoutTidy.overlaps(after).isEmpty)
+  #expect(after.map(\.rect.minY) == [0, 324, 448])
+  // Top to bottom: the push goes right instead.
+  let side = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 300, height: 100)),
+              B(id: "card:b", rect: CGRect(x: 200, y: 0, width: 100, height: 100))]
+  #expect(LayoutTidy.makeRoom(side, across: false) == [LayoutTidy.Move(id: "card:b", by: CGVector(dx: 124, dy: 0))])
+  // Side by side, however close, is not the same column: nothing moves.
+  let columns = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 320, height: 300)),
+                 B(id: "card:b", rect: CGRect(x: 330, y: 0, width: 320, height: 300)),
+                 B(id: "card:c", rect: CGRect(x: 0, y: 250, width: 200, height: 80))]
+  #expect(LayoutTidy.makeRoom(columns, across: true).map(\.id) == ["card:c"])
+}

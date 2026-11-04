@@ -150,6 +150,38 @@ import Testing
     #expect(Set(s.connections(in: []).compactMap { $0["to"]?["card"]?.string }) == ["a", "b", "c"])
   }
 
+  /// delegate: each helper's bird writes the Cards it owns; a Card no helper
+  /// owns is the main Agent's.
+  @Test func helpersSavesAreDrawnByTheirOwnBirds() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
+    #expect(s.presences.count == 3 && s.helperPresences.map(\.label) == ["first", "second"])
+    #expect(s.helperPresences.map(\.tint) == [1, 2])
+    // Each comes to its Card first.
+    #expect(s.helperPresences[0].beats.map(\.beat) == [.visit("a")])
+    let agent = RPCClient(endpoint: d.endpoint.url)
+    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    for id in ["b", "c"] {
+      let snap = try await agent.inspect()
+      _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
+                               changes: [Change.putDefinition(id: id, cardJSON: #"{"template": "logger", "maxRuns": 3}"#, metaJSON: nil)])
+    }
+    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .write("c", reveal: false) }) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(s.helperPresences[1].beats.contains { $0.beat == .write("b", reveal: false) })
+    #expect(!s.presence.beats.contains { $0.beat == .write("b", reveal: false) })
+    #expect(s.presence.beats.contains { $0.beat == .write("c", reveal: false) })
+    #expect(s.presence(forCard: "a") === s.helperPresences[0] && s.presence(forCard: "c") === s.presence)
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

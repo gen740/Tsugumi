@@ -706,6 +706,9 @@
 "戻る" = "Back";
 "所属する Card" = "Member Cards";
 "所要時間" = "Duration";
+"手分けして進めています" = "Splitting the work among helpers";
+"手分けして進めました" = "Split the work among helpers";
+"手数の上限で止まりました" = "Stopped at the step limit";
 "折りたたみを切り替える" = "Toggle Collapse";
 "折りたたむ" = "Collapse";
 "折りたたむ（実行には影響しません）" = "Collapse (does not affect runs)";
@@ -838,6 +841,7 @@
 "確認しています" = "Checking";
 "種類" = "Kind";
 "稼働中" = "Running";
+"終わりました" = "Finished";
 "終了" = "Ended";
 "終了しました" = "Ended";
 "組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）" = "Add a built-in Card (input, Draft, start, fork, branch, merge, logger, code)";

@@ -1,6 +1,7 @@
 import FlatBuffers
 import Foundation
 import Observation
+import SwiftUI
 import TsugumiAgent
 import TsugumiRPC
 
@@ -73,6 +74,10 @@ final class ChatController {
     var text: String
     var tool: (name: String, ok: Bool?)?
     var archived = false
+    /// A helper's row (role "helper"): its name, its current or last tool
+    /// call (text: the arguments) and how its work ended (nil: working).
+    var helper: String?
+    var ended: String?
   }
 
   struct SessionInfo: Identifiable, Hashable {
@@ -269,6 +274,8 @@ final class ChatController {
 
   func delete(_ id: String) {
     try? FileManager.default.removeItem(at: url(id))
+    // (and its helpers' conversations, from delegate)
+    try? FileManager.default.removeItem(at: url(id).deletingPathExtension().appendingPathExtension("helpers"))
     refreshSessions()
     if id == currentId { select(sessions.first?.id ?? UUID().uuidString.lowercased()) }
   }
@@ -472,11 +479,71 @@ final class ChatController {
   }
 
   /// The tsugumi on the canvas follows what the Agent looks at and runs.
-  private func showOnCanvas(tool: String, arguments: String) {
+  private func showOnCanvas(tool: String, arguments: String, bird: AgentPresence? = nil) {
+    let bird = bird ?? session.presence
     switch PresenceEvents.look(tool: tool, arguments: arguments) {
-    case .visit(let p)?: if session.instance(key(p)) != nil { session.presence.enqueue(.visit(key(p))) }
-    case .run(let p)?: if session.instance(key(p)) != nil { session.presence.enqueue(.run(key(p))) }
+    case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
+    case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }
     case nil: break
+    }
+  }
+
+  /// Blocks moved by tidying in this session (for checks).
+  private(set) var tidied = 0
+  private var tidyTask: Task<Void, Never>?
+
+  /// While the Agent works, what its Cards show must not cover other Cards:
+  /// a moment after each step (when new output frames have come), room is
+  /// made where blocks overlap (LayoutTidy).
+  private func tidySoon() {
+    guard session.isEditable else { return }
+    tidyTask?.cancel()
+    tidyTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .milliseconds(900))
+      guard let self, !Task.isCancelled else { return }
+      withAnimation(.easeInOut(duration: 0.6)) { self.tidied += self.session.tidy() }
+    }
+  }
+
+  /// A delegate call: its helpers' birds come out, each with a row here.
+  private func startHelpers(_ arguments: String) {
+    guard let v = try? JSONValue.parse(arguments), let tasks = v["tasks"]?.array else { return }
+    let list = tasks.compactMap { t -> (name: String, cards: [String])? in
+      guard let n = t["name"]?.string else { return nil }
+      return (n, t["cards"]?.array?.compactMap(\.string) ?? [])
+    }
+    session.startHelpers(list)
+    for t in list { items.append(Item(role: "helper", text: "", helper: t.name)) }
+  }
+
+  /// What a helper does: its bird and its row.
+  private func handleHelper(_ name: String, _ e: AgentEvent) {
+    let bird = session.helperPresence(name)
+    let row = items.lastIndex { $0.role == "helper" && $0.helper == name }
+    switch e {
+    case .text:
+      bird.doing(String(localized: "考えています"))
+    case .toolStarted(_, let tool, let args):
+      // The thought line follows the helpers too (and tidies as they work).
+      thoughts.note(tool: "\(name)/\(tool)", arguments: args)
+      bird.doing(PresenceEvents.activity(tool: tool))
+      showOnCanvas(tool: tool, arguments: args, bird: bird)
+      if let row { items[row].tool = (tool, nil); items[row].text = args }
+    case .toolFinished(_, let tool, let ok, let summary):
+      thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
+      tidySoon()
+      if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
+    case .finished:
+      bird.turnEnded(.done)
+      if let row { items[row].ended = String(localized: "終わりました") }
+    case .stepLimit:
+      bird.turnEnded(.limit)
+      if let row { items[row].ended = String(localized: "手数の上限で止まりました") }
+    case .error(let s):
+      bird.turnEnded(s == "cancelled" ? .stopped : .failed)
+      if let row { items[row].ended = s == "cancelled" ? String(localized: "止めました") : String(localized: "エラー: \(s)") }
+    default:
+      break
     }
   }
 
@@ -490,14 +557,18 @@ final class ChatController {
       } else {
         items.append(Item(role: "assistant", text: t))
       }
+    case .helper(let name, let event):
+      handleHelper(name, event)
     case .toolStarted(_, let name, let args):
       items.append(Item(role: "tool", text: args, tool: (name, nil)))
+      if name == "delegate" { startHelpers(args) }
       session.presence.doing(PresenceEvents.activity(tool: name))
       showOnCanvas(tool: name, arguments: args)
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       thoughts.note(tool: name, ok: ok, summary: summary)
-      if let i = items.lastIndex(where: { $0.tool?.name == name && $0.tool?.ok == nil }) {
+      tidySoon()
+      if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
       }
@@ -519,6 +590,7 @@ final class ChatController {
       busy = false
       session.presence.turnEnded()
       refreshAfterTurn()
+      tidySoon()
     case .stepLimit(let steps, let run):
       busy = false
       session.presence.turnEnded(.limit)

@@ -88,6 +88,10 @@ final class AgentPresence {
   /// Bumped when an effect ends, so views that animate it can stop.
   private(set) var revision = 0
   private var sweeper: Task<Void, Never>?
+  /// A helper's name (shown under its bird; nil: the main Agent) and its
+  /// colour (0: the main Agent's, then one per helper).
+  var label: String?
+  var tint = 0
   /// Display name of a Card (for the plain lines).
   var name: (CardKey) -> String = { path($0).last ?? $0 }
 

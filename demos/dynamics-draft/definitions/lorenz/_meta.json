@@ -1,0 +1,11 @@
+{
+  "description": "ローレンツ・アトラクタを描く",
+  "content": "settings の size と seed を受け取る。ローレンツ方程式（σ=10, ρ=28, β=8/3）を初期値 (1, 1, 1) から RK4 で dt=0.005、40000 ステップ解き、最初の 1000 ステップを捨てる。軌道を x–z 平面に投影し、size×size の格子で通過回数を数えて、対数の濃淡で PNG にして表示する。σ・ρ・β・ステップ数はパラメータにする。軌道が |x|<30 かつ 0<z<60 に収まることを assert で確かめ、x と z の範囲をログに出す。numpy と pillow を使う。",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size と seed"
+    }
+  ],
+  "outputs": []
+}

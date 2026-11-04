@@ -195,6 +195,8 @@ export type AgentEvent =
   /** The turn used its steps (model replies with tool calls) without
    *  finishing; `unconfirmedRun` is a run it started and never saw end. */
   | { kind: 'stepLimit'; steps: number; unconfirmedRun?: string }
+  /** What a helper started by `delegate` does (its own events). */
+  | { kind: 'helper'; name: string; event: AgentEvent }
 
 // ---- Provider ------------------------------------------------------------------
 
@@ -450,6 +452,74 @@ export function referenceDemos(demos: string): Record<string, string> {
   return out
 }
 
+/** A helper started by `delegate`: its name, the root-level Cards it owns
+ *  and its task. Its saves may change only those Cards' definitions. */
+export interface Helper { name: string; cards: string[]; instruction: string }
+
+const DELEGATE_TOOL: ToolSpec = { ...AGENT.delegateTool, payloadType: -1, object: -1, mutating: false }
+/** How long a helper's save or run waits for the others' (busy), ms. */
+const HELPER_WAIT = 900_000
+const HELPER_STEPS = 40
+
+/** The tasks of a delegate call, or why they cannot be done. */
+export function delegateTasks(input: string): Helper[] | string {
+  let raw: unknown
+  try {
+    raw = JSON.parse(input)?.tasks
+  } catch {}
+  if (!Array.isArray(raw)) return 'tasks is not a list of tasks'
+  if (raw.length < 2 || raw.length > 8) return `${raw.length} tasks`
+  const helpers: Helper[] = []
+  const owner = new Map<string, string>()
+  for (const t of raw as Record<string, unknown>[]) {
+    const name = String(t?.name ?? '').trim()
+    const cards = Array.isArray(t?.cards) ? (t.cards as unknown[]).map((c) => String(c).trim()) : []
+    const instruction = String(t?.instruction ?? '')
+    if (!name || name.length > 40 || !/^[\p{L}\p{N}_-]+$/u.test(name)) return `the name "${name}" (letters, digits, - and _)`
+    if (helpers.some((h) => h.name === name)) return `two tasks named ${name}`
+    if (!cards.length || !instruction) return `${name} has no Cards or no instruction`
+    for (const c of cards) {
+      if (!c || c.includes('/')) return `${c} is not a root-level Card id`
+      if (owner.has(c)) return `${c} is in both ${owner.get(c)} and ${name}`
+      owner.set(c, name)
+    }
+    helpers.push({ name, cards, instruction })
+  }
+  return helpers
+}
+
+/** What a save's changes touch beyond a helper's Cards (undefined: nothing). */
+export function helperOutside(h: Helper, changes: unknown): string | undefined {
+  if (!Array.isArray(changes)) return undefined
+  const out: string[] = []
+  for (const c of changes as { value_type?: string; value?: Record<string, unknown> }[]) {
+    const kind = c?.value_type ?? '?'
+    const v = c?.value ?? {}
+    if (kind === 'PutDefinition') {
+      const id = String(v.id ?? '')
+      if (!h.cards.includes(id)) out.push(`the definition ${id}`)
+    } else if (kind === 'PutSource' || kind === 'RemoveSource') {
+      const p = String(v.path ?? '')
+      const parts = p.split('/')
+      if (!(parts.length >= 3 && parts[0] === 'definitions' && h.cards.includes(parts[1]) && !parts.includes('..'))) out.push(p || kind)
+    } else {
+      out.push(kind)
+    }
+  }
+  return out.length ? out.join(', ') : undefined
+}
+
+function failureOf(json: string): { kind?: string; currentRev?: string } {
+  try {
+    const o = JSON.parse(json)
+    if (o?.reply !== 'Failure') return {}
+    const r = o.value?.current_rev
+    return { kind: o.value?.kind, currentRev: r === undefined ? undefined : String(r) }
+  } catch {
+    return {}
+  }
+}
+
 /** reference_read: Tsugumi's bundled references, read only. */
 const REFERENCE_TOOL: ToolSpec = { ...AGENT.referenceTool, payloadType: -1, object: -1, mutating: false }
 
@@ -494,6 +564,9 @@ export class Agent {
   private turn?: Promise<void>
   /** A run started by a tool call whose end was not seen yet. */
   private unconfirmedRun?: string
+  /** Each definition's _card.json as this Agent last saw it (inspect, its
+   *  own saves): a save that meets only others' layout changes is sent again. */
+  private seenDefinitions = new Map<string, string>()
 
   constructor(
     readonly catalog: ToolCatalog,
@@ -504,14 +577,84 @@ export class Agent {
     /** Bundled references for reference_read: a top-level name ("demos",
      *  "sdk/python/tsugumi/__init__.py", "card-guide.md") -> where it is. */
     private readonly references: Record<string, string> = {},
+    /** A helper started by `delegate` (undefined: the main Agent). */
+    readonly helper?: Helper,
   ) {
     this.codec = new FlatJSON(catalog.schema)
     this.conversation = loadConversation(storage, id)
   }
 
-  /** The RPC tools and the Agent's own (reference_read, when references exist). */
+  /** The RPC tools and the Agent's own (reference_read, when references
+   *  exist; delegate, for the main Agent). */
   get tools(): ToolSpec[] {
-    return Object.keys(this.references).length ? [...this.catalog.tools, REFERENCE_TOOL] : this.catalog.tools
+    return [...this.catalog.tools, ...(Object.keys(this.references).length ? [REFERENCE_TOOL] : []), ...(this.helper ? [] : [DELEGATE_TOOL])]
+  }
+
+  /** The rules, and for a helper its task. */
+  get system(): string {
+    if (!this.helper) return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
+      name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
+  }
+
+  /** Runs the helpers of a delegate call at the same time and returns their
+   *  reports (an error only when the call itself is wrong or none finished). */
+  private async delegate(input: string, events: (e: AgentEvent) => void, signal?: AbortSignal): Promise<[string, boolean]> {
+    const tasks = delegateTasks(input)
+    if (typeof tasks === 'string') return [fill(AGENT.helper.invalid, { why: tasks }), true]
+    // Each helper keeps its conversation next to this one's; a new call starts them afresh.
+    const dir = this.storage.replace(/\.json$/, '') + '.helpers'
+    fs.mkdirSync(dir, { recursive: true })
+    // The user answers one approval at a time, whichever helper asks.
+    let line: Promise<unknown> = Promise.resolve()
+    const approver = this.approver
+    const ask = approver ? (asked: string[]) => {
+      const next = line.then(() => approver(asked))
+      line = next.catch(() => {})
+      return next
+    } : undefined
+    const reports = await Promise.all(tasks.map(async (h) => {
+      const file = path.join(dir, h.name + '.json')
+      fs.rmSync(file, { force: true })
+      const a = new Agent(this.catalog, this.rpc, this.provider, file, `${this.id}.${h.name}`, this.references, h)
+      a.maxSteps = HELPER_STEPS
+      a.statusWait = this.statusWait
+      a.approver = ask
+      return a.work((e) => events({ kind: 'helper', name: h.name, event: e }), signal)
+    }))
+    const u = this.conversation.usage
+    for (const r of reports) {
+      u.outputTokens += r.usage.outputTokens
+      u.cacheReadTokens = (u.cacheReadTokens ?? 0) + (r.usage.cacheReadTokens ?? 0)
+      u.cacheWriteTokens = (u.cacheWriteTokens ?? 0) + (r.usage.cacheWriteTokens ?? 0)
+    }
+    this.save()
+    const text = tasks.map((h, i) => `## ${h.name} (${h.cards.join(', ')}): ${reports[i].outcome}\n${reports[i].report || '(no report)'}`).join('\n\n')
+    return ['Reports of the helpers. Check each Card with run_record before reporting to the user.\n\n' + text,
+      !reports.some((r) => r.outcome === 'finished')]
+  }
+
+  /** A helper's whole task in one turn: its last words are its report. */
+  async work(events: (e: AgentEvent) => void, outer?: AbortSignal) {
+    this.conversation = newConversation(this.id)
+    this.conversation.title = this.helper?.name
+    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: 'Do your task (in the rules above) and end with your report.' }] })
+    this.save()
+    const ac = new AbortController()
+    this.abort = ac
+    const stop = () => ac.abort()
+    outer?.addEventListener('abort', stop)
+    let outcome = 'stopped'
+    await this.loop((e) => {
+      if (e.kind === 'finished') outcome = 'finished'
+      else if (e.kind === 'stepLimit') outcome = `stopped after ${e.steps} steps`
+      else if (e.kind === 'error') outcome = e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`
+      events(e)
+    }, ac.signal)
+    outer?.removeEventListener('abort', stop)
+    const last = [...this.conversation.messages].reverse().find((m) => m.role === 'assistant')
+    const report = (last?.content ?? []).filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text').map((b) => b.text).join('\n')
+    return { outcome, report, usage: this.conversation.usage }
   }
 
   get busy() {
@@ -667,7 +810,7 @@ export class Agent {
       const order: number[] = []
       let stop = 'end_turn'
       try {
-        for await (const e of stream(this.provider, SYSTEM_PROMPT, this.wireMessages(), this.tools, signal)) {
+        for await (const e of stream(this.provider, this.system, this.wireMessages(), this.tools, signal)) {
           if (e.t === 'text') {
             text += e.text
             events({ kind: 'text', text: e.text })
@@ -807,6 +950,10 @@ export class Agent {
       const [text, isError] = this.readReference(p)
       return this.finish(record, text, isError, events)
     }
+    if (name === DELEGATE_TOOL.name && !this.helper) {
+      const [text, isError] = await this.delegate(input, events, signal)
+      return this.finish(record, text, isError, events)
+    }
     const spec = this.catalog.tool(name)
     if (!spec) return this.finish(record, `unknown tool ${name}`, true, events)
     // Incomplete or invalid arguments are never executed.
@@ -828,6 +975,11 @@ export class Agent {
     const full = { ...args }
     // Fields the Agent fills itself: never the model's.
     for (const f of AGENT_FIELDS) delete full[f]
+    // A helper saves only its own Cards.
+    const outside = this.helper && name === 'project_save' ? helperOutside(this.helper, full.changes) : undefined
+    if (this.helper && outside) {
+      return this.finish(record, fill(AGENT.helper.outside, { name: this.helper.name, cards: this.helper.cards.join(', '), what: outside }), true, events)
+    }
     if (spec.mutating) {
       record.opId = record.opId ?? randomUUID()
       full.op_id = record.opId
@@ -863,6 +1015,36 @@ export class Agent {
         full.approved_permissions = asked
         ;({ type: replyType, json } = await call())
       }
+      // A save or run that met only changes it does not touch (the canvas
+      // tidied, a Card dragged) goes on from the current revision.
+      if (!this.helper && failureOf(json).kind === 'revision_conflict') {
+        const rev = await this.rebased(name, full, rpc)
+        if (rev !== undefined) {
+          full.base_rev = rev
+          record.opId = randomUUID()
+          full.op_id = record.opId
+          ;({ type: replyType, json } = await call())
+        }
+      }
+      // Helpers save and run at the same time: one meeting another's run
+      // (busy) waits for it to end, one meeting another's save
+      // (revision_conflict) goes on from the current revision. A helper's
+      // saves only touch its own Cards, so nothing of another is lost.
+      if (this.helper && spec.mutating) {
+        const deadline = Date.now() + HELPER_WAIT
+        for (let f = failureOf(json); (f.kind === 'busy' || f.kind === 'revision_conflict') && Date.now() < deadline; f = failureOf(json)) {
+          if (signal?.aborted) break
+          if (f.kind === 'revision_conflict') {
+            if (f.currentRev === undefined) break
+            full.base_rev = f.currentRev
+          } else {
+            await new Promise((r) => setTimeout(r, 1000))
+          }
+          record.opId = randomUUID()
+          full.op_id = record.opId
+          ;({ type: replyType, json } = await call())
+        }
+      }
       // A run still building or running: wait here (up to statusWait) instead
       // of the model spending a reply on each look.
       if (name === 'run_status') {
@@ -874,6 +1056,7 @@ export class Agent {
         }
       }
       this.noteRun(name, replyType, json)
+      this.noteDefinitions(replyType, json)
       return this.finish(record, json, replyType === 'Failure', events)
     } catch (e) {
       // Unknown outcome: keep the record as sent so a resume asks OperationGet.
@@ -881,6 +1064,55 @@ export class Agent {
         return this.finish(record, `the connection failed after sending; outcome unknown (op_id ${record.opId}). Use operation_get.`, true, events, true)
       }
       return this.finish(record, String((e as Error).message ?? e), true, events)
+    }
+  }
+
+  /** Remembers the definitions a reply shows (an inspect's, a save's). */
+  private noteDefinitions(reply: string, json: string) {
+    if (reply !== 'ProjectSnapshot' && reply !== 'SaveResult') return
+    let v: any
+    try {
+      v = JSON.parse(json).value
+    } catch {
+      return
+    }
+    if (reply === 'ProjectSnapshot') {
+      this.seenDefinitions = new Map()
+      for (const d of v?.definitions ?? []) if (typeof d?.id === 'string') this.seenDefinitions.set(d.id, d.card_json ?? '')
+    } else {
+      for (const d of v?.delta?.definitions_upsert ?? []) if (typeof d?.id === 'string') this.seenDefinitions.set(d.id, d.card_json ?? '')
+      for (const id of v?.delta?.definitions_removed ?? []) this.seenDefinitions.delete(id)
+    }
+  }
+
+  /** The current revision, when sending again changes nothing of what others
+   *  did: a save that rewrites only definitions (and files, which the core
+   *  checks by their base_hash) still as this Agent saw them; a run when no
+   *  definition it saw has changed. undefined: the model sees the conflict. */
+  private async rebased(tool: string, args: Record<string, unknown>, rpc: RPCClient): Promise<string | undefined> {
+    const inspect = this.catalog.tool('project_inspect')
+    if ((tool !== 'project_save' && tool !== 'run') || !this.seenDefinitions.size || !inspect) return undefined
+    let ids: string[] = []
+    if (tool === 'project_save') {
+      if (!Array.isArray(args.changes)) return undefined
+      for (const c of args.changes as { value_type?: string; value?: Record<string, unknown> }[]) {
+        if (c?.value_type === 'PutDefinition') ids.push(String(c.value?.id ?? ''))
+        else if (c?.value_type !== 'PutSource') return undefined  // the document, the layout, removals, renames: the model decides
+      }
+    } else {
+      ids = [...this.seenDefinitions.keys()]
+    }
+    try {
+      const r = await rpc.callRaw(inspect.payloadType, (b) => this.codec.build(inspect.object, {}, b))
+      const type = this.catalog.replyNames.get(r.type) ?? 'Unknown'
+      if (type !== 'ProjectSnapshot') return undefined
+      const v = JSON.parse(this.renderReply(type, r.bb, r.table)).value
+      const now = new Map<string, string>()
+      for (const d of v?.definitions ?? []) if (typeof d?.id === 'string') now.set(d.id, d.card_json ?? '')
+      for (const id of ids) if (now.get(id) !== this.seenDefinitions.get(id)) return undefined
+      return v?.rev === undefined ? undefined : String(v.rev)
+    } catch {
+      return undefined
     }
   }
 

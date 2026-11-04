@@ -10,7 +10,7 @@ import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
-import { Agent, approvalRequired, referenceDemos, ToolCatalog } from './agent'
+import { Agent, approvalRequired, delegateTasks, helperOutside, referenceDemos, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -65,5 +65,23 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
     assert.equal(agent.readReference(hidden)[1], true, `${hidden} is readable`)
   }
   fs.rmSync(tmp, { recursive: true, force: true })
+}
+// delegate: the tasks are checked before any helper starts, and a helper
+// saves only its own Cards (as the Swift Agent).
+{
+  const ok = delegateTasks('{"tasks":[{"name":"a","cards":["a"],"instruction":"x"},{"name":"b","cards":["b","c"],"instruction":"y"}]}')
+  assert.ok(Array.isArray(ok) && ok.length === 2)
+  for (const bad of ['{"tasks":[{"name":"a","cards":["a"],"instruction":"x"}]}',
+    '{"tasks":[{"name":"a","cards":["a"],"instruction":"x"},{"name":"b","cards":["a"],"instruction":"y"}]}',
+    '{"tasks":[{"name":"a/..","cards":["a"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]}',
+    '{"tasks":[{"name":"a","cards":["x/y"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]}']) {
+    assert.equal(typeof delegateTasks(bad), 'string', bad)
+  }
+  const h = { name: 'lorenz', cards: ['lorenz'], instruction: '' }
+  assert.equal(helperOutside(h, [{ value_type: 'PutDefinition', value: { id: 'lorenz' } },
+    { value_type: 'PutSource', value: { path: 'definitions/lorenz/src/main.py' } }]), undefined)
+  assert.equal(helperOutside(h, [{ value_type: 'PutDefinition', value: { id: 'life' } }]), 'the definition life')
+  assert.equal(helperOutside(h, [{ value_type: 'SetProject', value: { json: '{}' } }]), 'SetProject')
+  assert.ok(helperOutside(h, [{ value_type: 'PutSource', value: { path: 'definitions/lorenz/../life/x' } }]))
 }
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)
