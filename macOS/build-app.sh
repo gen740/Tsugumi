@@ -43,12 +43,22 @@ vm="$dist/tsugumi-vm"
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
 swiftenv=(env -i HOME="$HOME" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
-(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --product Tsugumi)
-bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build -c release --show-bin-path)"
+# Swift Build, also where it is not the default yet (Xcode 26.6 of the release
+# runner): its Bundle.module finds the packages' resource bundles in
+# Contents/Resources. The native build system's looks only next to the app
+# and in the build folder, so its app crashes on any other Mac.
+build_opts=(-c release --build-system swiftbuild)
+(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product Tsugumi)
+bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
+# Nothing may look for files where this machine built them (that only works here).
+if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$' | head -3 | grep .; then
+  echo "the app refers to paths of this build (above)" >&2
+  exit 1
+fi
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
