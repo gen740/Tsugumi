@@ -139,7 +139,9 @@ struct GuideCorner: View {
           } else if let b = guide.bubble, guide.speakingChat == nil {
             GuideBubbleView(bubble: b, perform: perform)
           } else if guide.failed, !guide.open {
-            Text("うまく答えられませんでした").font(.caption)
+            // What went wrong, briefly (the panel has it in full, with 再試行).
+            Text(guide.status ?? String(localized: "うまく答えられませんでした")).font(.caption).lineLimit(3)
+              .frame(maxWidth: 280, alignment: .trailing)
               .padding(.horizontal, 9).padding(.vertical, 5)
               .background(.regularMaterial, in: Capsule())
           }
@@ -779,7 +781,8 @@ private struct GuidePanel: View {
       if let t = guide.tour { tourBar(t) }
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 10) {
+          // Not lazy: the end it scrolls to (the newest reply, the status) is always laid out.
+          VStack(alignment: .leading, spacing: 10) {
             if guide.offersDemo { offer }
             if guide.items.isEmpty && !guide.offersDemo { hints }
             ForEach(guide.items) { item in row(item).id(item.id) }

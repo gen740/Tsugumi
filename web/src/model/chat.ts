@@ -308,10 +308,12 @@ export class ChatController extends Observable {
     if (this.folders.length) {
       prompt += '\n\n[Attached folders]\n' + this.folders.map((f) => `${f} (read with attached_folder_read, folder: "${f}")`).join('\n')
     }
-    this.items = [...this.items, { id: uuid(), role: 'user', text: text + (refs.length ? '\n📎 ' + refs.map(refLabel).join(', ') : '') }]
+    const shown = text + (refs.length ? '\n📎 ' + refs.map(refLabel).join(', ') : '')
+    this.items = [...this.items, { id: uuid(), role: 'user', text: shown }]
     this.references = []
     this.begin()
-    void api('/api/chat/send', { ...this.base, prompt, title: text, folders: this.folders }).catch((e) => this.fail(e))
+    // The chat shows what was typed, not the skills and references attached to it.
+    void api('/api/chat/send', { ...this.base, prompt, title: text, display: shown, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */

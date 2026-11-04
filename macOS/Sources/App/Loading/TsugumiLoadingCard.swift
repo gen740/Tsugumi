@@ -49,6 +49,8 @@ struct TsugumiLoadingCard: View {
   @Environment(GuideStage.self) private var stage: GuideStage?
   /// Loading is over and the card fades out: the guide's bird leaves it now, not after the fade.
   @Environment(\.loadingShown) private var loadingShown
+  /// Where the picture is (window coordinates): the bird's place follows it and the progress.
+  @State private var pictureFrame: CGRect = .zero
 
   var body: some View {
     let f = content.fraction.map { min(1, max(0, $0)) }
@@ -74,6 +76,7 @@ struct TsugumiLoadingCard: View {
         }
         .frame(height: 150)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
+          pictureFrame = r
           if loadingShown { stage?.loadingBird = Self.birdFeet(in: r, fraction: f) }
         }
         .onChange(of: loadingShown) { _, shown in if !shown { stage?.loadingBird = nil } }
@@ -126,7 +129,8 @@ struct TsugumiLoadingCard: View {
     }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(content.title)
-    .onChange(of: f) { stage?.loadingBird = nil }
+    // The progress moves the bird (or the card turns from progress to waiting): the guide's bird follows.
+    .onChange(of: f) { if loadingShown, pictureFrame != .zero { stage?.loadingBird = Self.birdFeet(in: pictureFrame, fraction: f) } }
     .accessibilityValue(f.map { "\(Int($0 * 100))%" } ?? content.message)
   }
 

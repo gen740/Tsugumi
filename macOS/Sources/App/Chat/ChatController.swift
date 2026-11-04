@@ -383,12 +383,14 @@ final class ChatController {
     if !folders.isEmpty {
       prompt += "\n\n[Attached folders]\n" + folders.map { "\($0) (read with attached_folder_read, folder: \"\($0)\")" }.joined(separator: "\n")
     }
-    items.append(Item(role: "user", text: text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))))
+    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
+    items.append(Item(role: "user", text: shown))
     references = []
     begin()
     Task {
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: text) { e in Task { @MainActor in self.handle(e) } }
+      // The chat shows what was typed, not the skills and references attached to it.
+      await agent.send(prompt: prompt, title: text, display: shown) { e in Task { @MainActor in self.handle(e) } }
     }
   }
 
