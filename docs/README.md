@@ -7,7 +7,7 @@
 | [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
 | [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
-| [Vision.md](Vision.md) | 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と構想 |
+| [Vision.md](Vision.md) | 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想 |
 | [Philosophy.md](Philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
 | [Name.md](Name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
 | [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
