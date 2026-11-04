@@ -490,6 +490,10 @@ export class ProjectSession extends Observable {
         this.changed()
         this.reconnect()
       }
+      if (this.makeRepositoryOnConnect) {
+        this.makeRepositoryOnConnect = false
+        await c.versionInit(uuid(), 'ui').catch(() => {})
+      }
       if (this.dirty) this.scheduleSave()
       this.changed()
       await this.refreshVisibleDisplays()
@@ -2553,6 +2557,46 @@ auto run(Card::Input& input) -> Card::Output {
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
     if (!this.client) throw new RPCError('disconnected', '接続していません')
     return this.client.clearCache(uuid())
+  }
+
+  // ---- Versions (git) ----------------------------------------------------------
+
+  /** The project's versions as last read (core/src/versions.cc). */
+  versionGraph?: R.VersionGraphT
+  /** Made or copied by this page: it becomes a repository when it connects. */
+  makeRepositoryOnConnect = false
+
+  async refreshVersions() {
+    if (!this.client) return
+    try {
+      this.versionGraph = await this.client.versionGraph()
+    } catch {}
+    this.changed()
+  }
+
+  async makeRepository() {
+    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    await this.client.versionInit(uuid(), 'ui')
+    await this.refreshVersions()
+  }
+
+  /** Names what is saved now as a version (a commit and an annotated tag). */
+  async markVersion(name: string, message: string) {
+    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (this.dirty) await this.save()
+    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    await this.client.versionMark(uuid(), 'ui', name, message)
+    await this.refreshVersions()
+  }
+
+  /** Starts from `commit`: the documents become that version's; a change and
+   *  run from there opens a branch, and nothing later is lost. */
+  async startFrom(commit: string) {
+    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (this.runActive) throw new Error('実行中は別の版に移れません。')
+    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
+    await this.refreshVersions()
   }
 
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {

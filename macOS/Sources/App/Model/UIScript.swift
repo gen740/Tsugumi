@@ -22,6 +22,7 @@ import TsugumiRPC
 ///   drag <x1> <y1> <x2> <y2> [window title]
 ///   save                            key delete|forwarddelete|escape
 ///   winsize <w> <h> <window title>  home | demos (Home's demo list)
+///   open versions                   makerepo (the project becomes a repository)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
 ///   (points from the window's top-left; sent to the window like a real
@@ -32,7 +33,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), draft(CardRef), definitions(ProjectRef), workflowSettings(ProjectRef), settings
+    case card(CardRef), draft(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings
   }
 
   var request: Request?
@@ -99,6 +100,7 @@ final class UIScript {
           win.setFrame(f, display: true, animate: false)
         }
       case "select": workspace?.active?.selection = [w[1]]
+      case "makerepo": if let s = session { try? await s.makeRepository() }
       case "arrange": if let s = session, let t = workspace?.active { s.arrange(t.scope) }
       case "open":
         guard let ref else { break }
@@ -108,6 +110,7 @@ final class UIScript {
           request = .card(CardRef(path: ref.path, card: w[2], category: cat))
         case "draft": request = .draft(CardRef(path: ref.path, card: w[2]))
         case "definitions": request = .definitions(ref)
+        case "versions": request = .versions(ref)
         case "workflow-settings": request = .workflowSettings(ref)
         default: break
         }

@@ -192,3 +192,13 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .workflow-detail.sidebar-hidden .cv-top { left: var(--canvas-leading); }
 .workflow-detail.sidebar-hidden > .tabbar { padding-left: 50px; }
 .workflow-detail.sidebar-hidden:has(> .tabbar) > .sidebar-show { top: 3px; height: 26px; }
+
+/* The version tree (versions.tsx). */
+.versions-header { padding: 8px 12px; border-bottom: 1px solid var(--separator); align-items: center; }
+.version-row { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 8px; cursor: default; }
+.version-row.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.version-tag, .version-branch { font-size: 10.5px; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+.version-tag { background: color-mix(in srgb, #a855f7 16%, transparent); display: inline-flex; gap: 3px; align-items: center; }
+.version-branch { background: color-mix(in srgb, var(--secondary) 18%, transparent); font-family: var(--mono, ui-monospace, monospace); }
+.version-branch.current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.versions-detail { width: 320px; flex: none; padding: 14px; border-left: 1px solid var(--separator); }

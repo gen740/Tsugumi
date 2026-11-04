@@ -29,6 +29,7 @@ struct MainWindow: View {
       case .card(let ref): openWindow(id: "card", value: ref)
       case .draft(let ref): openWindow(id: "draft", value: ref)
       case .definitions(let ref): openWindow(id: "definitions", value: ref)
+      case .versions(let ref): openWindow(id: "versions", value: ref)
       case .workflowSettings(let ref):
         if let s = AppModel.shared.sessions.values.first(where: { $0.identity.url.path == ref.path }) {
           ProjectSettingsPane.open(s, with: openSettings)

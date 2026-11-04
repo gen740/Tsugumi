@@ -8,6 +8,7 @@ import { CardArtifactsView, CardExecutionView, VisualizationWindow } from './his
 import { Icon } from './icons'
 import { CardDatabaseView, DraftEditor, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
+import { VersionTreeView } from './versions'
 
 function title(w: DetailWindow): string {
   const s = w.session
@@ -16,6 +17,7 @@ function title(w: DetailWindow): string {
     case 'card': return `Card 設定 · ${name(w.what.card)}`
     case 'draft': return `Draft · ${name(w.what.card)}`
     case 'definitions': return 'Card 定義'
+    case 'versions': return '版の履歴'
     case 'executions': return `実行履歴 · ${name(w.what.card)}`
     case 'artifacts': return `成果物 · ${name(w.what.card)}`
     case 'workflowSettings': return `Workflow 設定 · ${s?.scopeName([]) ?? ''}`
@@ -35,6 +37,7 @@ function Content({ w }: { w: DetailWindow }) {
     case 'card': return <CardSettingsEditor session={s} card={what.card} initial={what.category} onClose={close} />
     case 'draft': return <DraftEditor session={s} cardKey={what.card} onClose={close} />
     case 'definitions': return <CardDatabaseView session={s} definition={what.definition} />
+    case 'versions': return <VersionTreeView session={s} />
     case 'executions': return <CardExecutionView session={s} cardKey={what.card} />
     case 'artifacts': return <CardArtifactsView session={s} cardKey={what.card} />
     case 'workflowSettings': return <WorkflowSettingsView session={s} />

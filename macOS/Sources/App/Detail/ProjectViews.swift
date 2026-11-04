@@ -397,7 +397,8 @@ private struct GeneralProjectSettings: View {
             .font(.caption).foregroundStyle(.orange)
         }
         if let pin = NixpkgsPin.current, pkgs != pin {
-          Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? "このアプリの Nixpkgs に固定" : "このアプリの Nixpkgs に更新") { pkgs = pin }
+          Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? String(localized: "このアプリの Nixpkgs に固定")
+                                                           : String(localized: "このアプリの Nixpkgs に更新")) { pkgs = pin }
         }
         Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)

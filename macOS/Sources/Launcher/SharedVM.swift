@@ -409,6 +409,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     c.storageDevices = [root, store, history].map { VZVirtioBlockDeviceConfiguration(attachment: $0) }
     let net = VZVirtioNetworkDeviceConfiguration()
     net.attachment = VZNATNetworkDeviceAttachment()
+    net.macAddress = macAddress()
     c.networkDevices = [net]
     lock.withLock { slots.removeAll() }
     let source = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-source")
@@ -433,6 +434,18 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   private var _bootCount = 0
   private var bootCount: Int { lock.withLock { _bootCount } }
+
+  /// One MAC address per support folder, kept across boots: the Mac's DHCP
+  /// gives the VM the same lease again instead of a new one at every start
+  /// (a new random address each time used up the pool).
+  private func macAddress() -> VZMACAddress {
+    let file = directory.appendingPathComponent("mac-address")
+    if let text = try? String(contentsOf: file, encoding: .utf8),
+       let mac = VZMACAddress(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) { return mac }
+    let mac = VZMACAddress.randomLocallyAdministered()
+    try? mac.string.write(to: file, atomically: true, encoding: .utf8)
+    return mac
+  }
 
   /// The VM's clock follows the Mac's (it drifts, e.g. across sleep), so
   /// times recorded by tsugumid agree with the app's clock.

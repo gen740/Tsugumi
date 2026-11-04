@@ -6,10 +6,11 @@ opens a branch, and a demo's history file becomes its versions."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 
-from conftest import Daemon
+from conftest import ROOT, Daemon
 from projects import builtin_project, run_and_wait
 from tsugumi_client import _request_class, change, new_id, text
 from Tsugumi.Data.RunState import RunState
@@ -129,5 +130,34 @@ def test_a_demo_history_becomes_its_versions(tmp_path):
         assert [text(r.state) for r in by["別の文を試す"].runs] == ["failed"]
         assert src_text(c) == "final"
         assert git(root, "show", "HEAD~1:definitions/src/_card.json").count("tried") == 1
+    finally:
+        d.cleanup()
+
+
+def test_the_casa_demo_carries_its_trials(tmp_path):
+    """The Cas A demo's copy becomes a repository with how it came to be:
+    branches tried, a failed run, the adopted version tagged."""
+    root = tmp_path / "casa"
+    shutil.copytree(ROOT / "demos" / "casa", root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        c.call("VersionInitRequest", opId=new_id(), origin="test")
+        g = graph(c)
+        assert not g.dirty and text(g.branch) == "main"
+        assert {text(b) for x in g.commits for b in (x.branches or [])} == {"main", "try-hard-blue", "try-soft-green"}
+        states = [text(r.state) for x in g.commits for r in (x.runs or [])]
+        assert "failed" in states and states.count("succeeded") >= 5
+        head = next(x for x in g.commits if text(x.id) == text(g.head))
+        assert [text(t) for t in head.tags] == ["rgb-v1"]
+        assert "failed" not in git(root, "log", "--notes=tsugumi", "--format=%N", "main", "-1")
+        assert git(root, "log", "--notes=tsugumi", "--grep=failed", "--all", "--format=%s").startswith("青の帯域")
+        # Going back to the plan gives the Drafts.
+        plan = next(x for x in g.commits if not (x.parents or []))
+        rev = c.call("ProjectInspectRequest").rev
+        c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=text(plan.id))
+        snap = c.call("ProjectInspectRequest")
+        assert all(json.loads(text(d.cardJson)).get("template") in ("draft", "trigger") for d in snap.definitions)
     finally:
         d.cleanup()

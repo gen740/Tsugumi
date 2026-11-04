@@ -49,6 +49,11 @@ struct TsugumiApp: App {
     }
     .defaultSize(width: 900, height: 600)
 
+    WindowGroup("版の履歴", id: "versions", for: ProjectRef.self) { $ref in
+      if let ref { DetailHost(path: ref.path) { VersionTreeView(session: $0) } }
+    }
+    .defaultSize(width: 980, height: 620)
+
     WindowGroup("実行履歴", id: "executions", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardExecutionView(session: $0, cardKey: ref.card) } }
     }
@@ -249,6 +254,9 @@ struct WorkbenchCommands: Commands {
       Button("実行を停止") { if let s = session { Task { await s.cancelRun() } } }
         .shortcut(.stop)
         .disabled(!(session?.runActive ?? false))
+      Button("版の履歴…") { if let s = session { openWindow(id: "versions", value: ProjectRef(path: s.identity.url.path)) } }
+        .keyboardShortcut("y", modifiers: [.command, .option])
+        .disabled(session == nil)
       Divider()
       Section("Canvas（フォーカスがあるとき）") {
         Button("Card 設定を開く") {

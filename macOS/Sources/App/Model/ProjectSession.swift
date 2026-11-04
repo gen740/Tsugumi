@@ -335,6 +335,11 @@ final class ProjectSession {
   @ObservationIgnored private var viewRev: UInt64 = 0
   @ObservationIgnored private var viewSaveTask: Task<Void, Never>?
 
+  // Versions (git): the graph as last read, and whether this project is new
+  // (made or copied by the app), so it becomes a repository when it connects.
+  var versionGraph: Tsugumi_RPC_VersionGraphT?
+  @ObservationIgnored var makeRepositoryOnConnect = false
+
   // Runs
   private(set) var runStatus: Tsugumi_RPC_RunStatusT?
   private(set) var cardStates: [CardKey: CardRunState] = [:]
@@ -426,6 +431,10 @@ final class ProjectSession {
       lastSeq = opened.seq ?? 1
       connected = true
       listen(c)
+      if makeRepositoryOnConnect {
+        makeRepositoryOnConnect = false
+        _ = try? await c.versionInit(opId: UUID(), origin: "ui")
+      }
       if dirty { scheduleSave() }
       await refreshVisibleDisplays()
     } catch {

@@ -47,6 +47,8 @@ export function WorkbenchSidebar({ workspace, session, tab }: { workspace: Works
         </div>
       </div>
       <div className="sidebar-footer">
+        <Button kind="borderless" iconOnly icon="point.3.connected.trianglepath.dotted" help="版の履歴（git）"
+          onClick={() => app.openWindow(session, { kind: 'versions' })} />
         <Button kind="borderless" iconOnly icon="gearshape" help="このプロジェクトの設定（設定ウインドウの「このプロジェクト」）"
           onClick={() => app.openWindow(session, { kind: 'workflowSettings' })} />
       </div>

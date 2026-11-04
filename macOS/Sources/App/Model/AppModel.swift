@@ -158,12 +158,17 @@ final class AppModel {
     let identity = try ProjectIdentity(url: url)
     if let s = sessions[identity.id] { return s }
     let s = ProjectSession(identity: identity, environments: environments)
+    s.makeRepositoryOnConnect = fresh.remove(identity.url.resolvingSymlinksInPath().path) != nil
     sessions[identity.id] = s
     let name = (try? JSONSerialization.jsonObject(with: Data(contentsOf: identity.url.appendingPathComponent("tsugumi.json"))) as? [String: Any])?["name"] as? String
     remember(identity.url, name: name ?? identity.url.lastPathComponent)
     s.start()
     return s
   }
+
+  /// Projects made or copied here: they become git repositories when they
+  /// first connect (a demo's history file becomes its versions).
+  private var fresh: Set<String> = []
 
   /// Copies a bundled demo into a new, editable project (the original stays untouched).
   func copyDemo(_ demo: DemoEntry) throws -> URL {
@@ -178,12 +183,14 @@ final class AppModel {
       n += 1
     }
     try FileManager.default.copyItem(at: demo.url, to: dest)
+    fresh.insert(dest.resolvingSymlinksInPath().path)
     return dest
   }
 
   /// Creates an empty project; the initial documents are placed before the environment starts.
   func createProject(at url: URL, name: String) throws {
     try Self.writeNewProject(at: url, name: name, flow: AppPreferences.shared.flowDirection.rawValue)
+    fresh.insert(url.resolvingSymlinksInPath().path)
   }
 
   /// A new project's documents in `url`: never over an existing project or

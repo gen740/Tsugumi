@@ -361,6 +361,20 @@ export class RPCClient {
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
   }
+  // ---- Versions (git): core/src/versions.cc
+  versionGraph(limit = 500) {
+    return this.call<R.VersionGraphT>(RequestPayload.VersionGraphRequest, Object.assign(new R.VersionGraphRequestT(), { limit }))
+  }
+  versionInit(opId: string, origin: string) {
+    return this.call<R.VersionResultT>(RequestPayload.VersionInitRequest, Object.assign(new R.VersionInitRequestT(), { opId, origin }))
+  }
+  versionMark(opId: string, origin: string, name: string, message: string) {
+    return this.call<R.VersionResultT>(RequestPayload.VersionMarkRequest, Object.assign(new R.VersionMarkRequestT(), { opId, origin, name, message }))
+  }
+  versionCheckout(baseRev: bigint, opId: string, origin: string, commit: string) {
+    return this.call<R.SaveResultT>(RequestPayload.VersionCheckoutRequest,
+      Object.assign(new R.VersionCheckoutRequestT(), { baseRev, opId, origin, commit }))
+  }
   format(path: string, text: string) {
     return this.call<R.ProjectFileFormatResultT>(RequestPayload.ProjectFileFormatRequest, Object.assign(new R.ProjectFileFormatRequestT(), { path, text }))
   }

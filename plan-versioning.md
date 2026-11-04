@@ -1,4 +1,6 @@
-# 版管理とプロジェクトの nixpkgs（review-from-claude.md の後に着手）
+# 版管理とプロジェクトの nixpkgs
+
+実装済み（2026-11-04、使い方は [docs/Versions.md](docs/Versions.md)）。ただし、版を選んだときにその版の Canvas を戻さずに見る機能は未実装で、今は「この版から始める」で戻って見る。
 
 2026-11-04 に決めたこと。プロジェクトのフォルダを最初から git リポジトリにし、版は内容の hash（commit）で表す。実行は開始時の版（commit）を記録する。commit と実行は 1 : N。
 

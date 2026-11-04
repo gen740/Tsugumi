@@ -2,6 +2,7 @@
 "\n…（先頭 256 KiB を表示）" = "\n… (the first 256 KiB shown)";
 " · 成果物 " = " · artifact ";
 " · 未配置" = " · not placed";
+" ほか %lld" = " and %lld more";
 " 実行 %@ の結果はまだ確かめていません。" = " The result of run %@ has not been checked yet.";
 "## 受け取るもの（入力）\n- 例: 数値の列（仮の入力 numbers）\n\n## 出すもの（出力）\n- 例: 平均と最大値（仮の出力 summary）\n\n## 処理の内容\n- 例: 空の列ならエラーにする\n- 例: 平均は小数第 2 位まで\n\n## できたと言える条件\n- 例: [1, 2, 3] から 平均 2、最大 3 が出る" = "## What it takes (inputs)\n- e.g. a list of numbers (provisional input numbers)\n\n## What it gives (outputs)\n- e.g. the mean and maximum (provisional output summary)\n\n## What it does\n- e.g. an empty list is an error\n- e.g. the mean to 2 decimal places\n\n## When it is done\n- e.g. [1, 2, 3] gives mean 2 and maximum 3";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
@@ -103,6 +104,7 @@
 "Nix 定義" = "Nix Definition";
 "Nix 評価" = "Nix evaluation";
 "Nix 評価中" = "Evaluating Nix";
+"Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。" = "Nixpkgs is not pinned: updating the app also changes the packages of this project's Cards.";
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "Python の処理" = "Python step";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
@@ -147,6 +149,7 @@
 "default.nix を作成" = "Create default.nix";
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
+"git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
 "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
@@ -188,10 +191,13 @@
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
+"このアプリの Nixpkgs に固定" = "Pin to This App's Nixpkgs";
+"このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
 "このアプリ（この Mac のユーザー設定）" = "This app (this Mac's user settings)";
 "このアプリ（この Mac。API キーは macOS のキーチェーン）" = "This app (this Mac; API keys in the macOS Keychain)";
 "このタブで開く" = "Open in This Tab";
 "このプロジェクト" = "This project";
+"このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。" = "Deletes the registrations of this project's Card builds (Nix GC roots) and the build work files. What is in the shared Nix store stays and is deleted, as unregistered, by “Clean shared store” in the app settings. Documents, the run history and kept artifacts are not deleted. The next run evaluates again and uses what is still in the store without building.";
 "このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。" = "The direction this project's Cards are laid out in (saved in layout.json, applied at once). Lines and “Arrange” follow it.";
 "このプロジェクトの tsugumid が起動中に終了しました" = "tsugumid exited during startup";
@@ -201,6 +207,7 @@
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";
 "このプロジェクトの実行環境（書き出しは %@/.tsugumi/runs.sqlite）" = "This project's environment (exported to %@/.tsugumi/runs.sqlite)";
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
+"このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
@@ -210,6 +217,10 @@
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
+"この版から始めますか？" = "Start from this version?";
+"この版から始める" = "Start from This Version";
+"この版から始める…" = "Start from This Version…";
+"この版での実行はありません。" = "No runs of this version.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "すべて" = "All";
@@ -407,6 +418,8 @@
 "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
 "不明" = "Unknown";
 "並列実行数: %lld" = "Parallel runs: %lld";
+"今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
+"今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
 "今後は確認しない（設定の「API」でいつでも変えられます）" = "Don't ask again (can be changed any time in Settings > API)";
 "他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）" = "Import another project (copied into externals and placed as a Card in Card)";
 "他の変更と重なり保存できませんでした。変更は保持しています。" = "Could not save: it overlaps other changes. The changes are kept.";
@@ -551,6 +564,7 @@
 "名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ" = "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.";
 "名前を変更" = "Rename";
 "名前を変更…" = "Rename…";
+"名前（例: thin-bands）" = "Name (e.g. thin-bands)";
 "呼び出し" = "Invocation";
 "呼び出し #%llu" = "Invocation #%llu";
 "呼び出しなし" = "No invocations";
@@ -569,6 +583,7 @@
 "場所" = "Location";
 "変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。" = "Changing it may leave Cards and lines out of line (“Arrange” lays them out again).";
 "変更" = "Change";
+"変更: %@" = "Changed: %@";
 "変更できませんでした" = "Could not change";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
@@ -594,6 +609,7 @@
 "定義を選んでください" = "Choose a definition";
 "実行" = "Run";
 "実行 #%llu" = "Invocation #%llu";
+"実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@" = "%lld runs (%lld succeeded, %lld failed) · last: %@";
 "実行 revision" = "Execution revision";
 "実行: %@" = "Run: %@";
 "実行が終わったら保存します" = "Saved when the run ends";
@@ -603,6 +619,7 @@
 "実行するとここにログが表示されます。" = "Logs appear here after a run.";
 "実行すると表示されます。" = "Appears after a run.";
 "実行の期限（秒）" = "Run timeout (s)";
+"実行の結果" = "Run Results";
 "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on.";
 "実行を停止" = "Stop Run";
 "実行を選ぶか、実行してください。" = "Choose a run, or run the workflow.";
@@ -615,6 +632,7 @@
 "実行中は Card を変更できません。実行が終わってから適用してください。" = "Cards cannot change while running. Apply after the run ends.";
 "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。" = "Projects cannot be switched while running. Stop the run or wait for it to end.";
 "実行中は切り替えられません" = "Cannot switch while running";
+"実行中は別の版に移れません。" = "You cannot move to another version while a run is in progress.";
 "実行中は変更できません" = "Cannot change while running";
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
 "実行中・SDK 準備中は削除できません。" = "Cannot delete while a run or SDK preparation is active.";
@@ -725,11 +743,13 @@
 "書き出す…" = "Export…";
 "書き込み" = "Write";
 "最大実行回数" = "Max runs";
+"最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新を読み込む" = "Load Latest";
 "最近のプロジェクト" = "Recent Projects";
 "最近開いたプロジェクトはありません" = "No recent projects";
 "未保存" = "Unsaved";
 "未保存の変更" = "Unsaved changes";
+"未保存の変更があります。保存してから選んでください。" = "There are unsaved changes. Save them first.";
 "未保存の変更があります（保持しています）" = "There are unsaved changes (kept)";
 "未保存の変更は保持しています。" = "Unsaved changes are kept.";
 "未完了" = "Not done";
@@ -751,6 +771,8 @@
 "末尾を追う" = "Follow";
 "条件に合うデモはありません" = "No demo matches";
 "条件に合う実行はありません" = "No matching runs";
+"枝: %@" = "Branch: %@";
+"枝の外（次の変更で新しい枝）" = "Not on a branch (the next change starts one)";
 "枠を削除（Card は残ります）" = "Remove Frame (the Card stays)";
 "桃" = "Pink";
 "検索" = "Search";
@@ -759,6 +781,7 @@
 "概要" = "Description";
 "構文エラーがあります（テキストは変更していません）" = "Syntax errors (the text was not changed)";
 "標準" = "Standard";
+"残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";
 "段階" = "Phase";
 "流れの向き" = "Flow direction";
@@ -770,6 +793,15 @@
 "点群 %lld 点" = "Point cloud, %lld points";
 "点（控えめ）" = "Dots (subtle)";
 "無期限" = "No Limit";
+"版" = "Version";
+"版として残す" = "Keep as Version";
+"版として残す…" = "Keep as Version…";
+"版の履歴" = "Version History";
+"版の履歴…" = "Version History…";
+"版を操作できませんでした" = "The version could not be changed";
+"版を選ぶと、その実行の結果と変わった Card を表示します。" = "Select a version to see its runs and the Cards it changed.";
+"版管理されていません" = "Not versioned";
+"版管理を始める" = "Start Versioning";
 "状態" = "State";
 "環境を停止" = "Stop Environment";
 "生成" = "Generated";
@@ -842,6 +874,7 @@
 "詳細を閉じる" = "Close details";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
+"読み直す" = "Reload";
 "読み込み中…" = "Loading…";
 "読み込めないため名前を変更しませんでした: " = "Not renamed: it could not be read: ";
 "読み込んでいます…" = "Reading…";

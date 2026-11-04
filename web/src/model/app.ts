@@ -12,6 +12,7 @@ export type WindowKind =
   | { kind: 'card'; card: CardKey; category?: CardEditorCategory }
   | { kind: 'draft'; card: CardKey }
   | { kind: 'definitions'; definition?: string }
+  | { kind: 'versions' }
   | { kind: 'executions'; card: CardKey }
   | { kind: 'artifacts'; card: CardKey }
   | { kind: 'workflowSettings' }
@@ -31,7 +32,7 @@ export interface DetailWindow {
 }
 
 const SIZES: Record<WindowKind['kind'], [number, number]> = {
-  card: [860, 620], draft: [640, 560], definitions: [900, 600], executions: [900, 560], artifacts: [900, 560],
+  card: [860, 620], draft: [640, 560], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
   workflowSettings: [680, 480], visual: [900, 600], chat: [460, 720], appSettings: [760, 520],
 }
 
@@ -79,6 +80,7 @@ export class AppModel extends Observable {
     let s = this.sessions.get(info.key)
     if (!s) {
       s = new ProjectSession(info.path, info.key, info.path.split('/').pop() ?? info.name)
+      s.makeRepositoryOnConnect = this.fresh.delete(info.path) || this.fresh.delete(dir)
       this.sessions.set(info.key, s)
       s.start()
     }
@@ -96,14 +98,22 @@ export class AppModel extends Observable {
     await this.refresh()
   }
 
+  /** Projects made or copied here: they become git repositories when they
+   *  first connect (a demo's history file becomes its versions). */
+  private fresh = new Set<string>()
+
   /** Copies a bundled demo into a new, editable project (the original stays untouched). */
   async copyDemo(id: string): Promise<string> {
-    return (await api<{ path: string }>('/api/demo/copy', { id })).path
+    const p = (await api<{ path: string }>('/api/demo/copy', { id })).path
+    this.fresh.add(p)
+    return p
   }
 
   /** Creates an empty project laid out in the given direction. */
   async createProject(parent: string, name: string, flow: string): Promise<string> {
-    return (await api<{ path: string }>('/api/project/create', { parent, name, flow })).path
+    const p = (await api<{ path: string }>('/api/project/create', { parent, name, flow })).path
+    this.fresh.add(p)
+    return p
   }
 
   /** A copy of a project's saved documents and sources in a new folder. */

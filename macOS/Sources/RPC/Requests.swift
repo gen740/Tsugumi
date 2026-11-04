@@ -248,6 +248,43 @@ public extension RPCClient {
     return try await call(.runhistorydeleterequest, r, timeout: .seconds(300))
   }
 
+  // MARK: Versions (git)
+
+  /// The project's versions, newest first, with branches, tags, runs and changed Cards.
+  func versionGraph(limit: UInt32 = 500) async throws -> Tsugumi_RPC_VersionGraphT {
+    let r = Tsugumi_RPC_VersionGraphRequestT()
+    r.limit = limit
+    return try await call(.versiongraphrequest, r)
+  }
+
+  /// Makes the project a git repository (a demo's history becomes its versions).
+  func versionInit(opId: UUID, origin: String) async throws -> Tsugumi_RPC_VersionResultT {
+    let r = Tsugumi_RPC_VersionInitRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    return try await call(.versioninitrequest, r)
+  }
+
+  /// Names the current version (a commit of what is saved and an annotated tag).
+  func versionMark(opId: UUID, origin: String, name: String, message: String) async throws -> Tsugumi_RPC_VersionResultT {
+    let r = Tsugumi_RPC_VersionMarkRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    r.name = name
+    r.message = message
+    return try await call(.versionmarkrequest, r)
+  }
+
+  /// Starts from a version: the project's files become those of `commit`.
+  func versionCheckout(baseRev: UInt64, opId: UUID, origin: String, commit: String) async throws -> Tsugumi_RPC_SaveResultT {
+    let r = Tsugumi_RPC_VersionCheckoutRequestT()
+    r.baseRev = baseRev
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    r.commit = commit
+    return try await call(.versioncheckoutrequest, r)
+  }
+
   /// The types of an _outputs.fbs text as the core compiles them (bfbs); with
   /// a port and a type, also the text with that port changed. Saves nothing.
   func outputTypes(text: String, port: String? = nil, typeName: String? = nil,

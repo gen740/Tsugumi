@@ -128,7 +128,8 @@ function copyDemo(id: string): string {
   fs.mkdirSync(projectsDir, { recursive: true })
   let dest = path.join(projectsDir, id)
   for (let n = 2; fs.existsSync(dest); n++) dest = path.join(projectsDir, `${id}-${n}`)
-  fs.cpSync(demo.path, dest, { recursive: true, filter: (src) => !src.includes(`${path.sep}.tsugumi`) })
+  // Not a demo's own state folder (.tsugumi/); its history file comes along.
+  fs.cpSync(demo.path, dest, { recursive: true, filter: (src) => !/[\\/]\.tsugumi([\\/]|$)/.test(src) })
   return dest
 }
 
@@ -434,7 +435,7 @@ function authorized(req: http.IncomingMessage): boolean {
 // Every response: no framing, no type sniffing, only this origin's code.
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
-    "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
   'referrer-policy': 'no-referrer',

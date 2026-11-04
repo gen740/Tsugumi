@@ -79,4 +79,6 @@ def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(
     r, _ = request(port, "GET", "/")
     assert r.status == 200
     assert "frame-ancestors 'none'" in r.getheader("content-security-policy")
+    # The page reaches its project's tsugumid over a loopback WebSocket.
+    assert "ws://127.0.0.1:*" in r.getheader("content-security-policy")
     assert r.getheader("x-content-type-options") == "nosniff"
