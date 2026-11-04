@@ -11,6 +11,7 @@
 | [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
 | [Demos.md](Demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
+| [claude-code.md](claude-code.md) | Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう |
 
 ## 考え方を知る
 
@@ -38,3 +39,5 @@
 | [AgentRun.md](AgentRun.md) | 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録 |
 | [Development.md](Development.md) | 実行基盤の設計決定、テストと確認範囲、構成ごとの計測、現在の実装状況と解決済みの記録 |
 | [Lock.md](Lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
+| [Provenance.md](Provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
+| [LicenseAudit.md](LicenseAudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |

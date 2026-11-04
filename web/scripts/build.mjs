@@ -1,4 +1,4 @@
-// Bundles the host server and the browser UI into dist/ with esbuild.
+// Bundles the host server, the plugin's MCP server and the browser UI into dist/ with esbuild.
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,8 +21,9 @@ const copy = () => {
 copy()
 
 const server = {
-  entryPoints: [path.join(root, 'server', 'main.ts')],
-  outfile: path.join(out, 'server.js'),
+  // The host server, and the Claude Code plugin's MCP server (plugins/tsugumi).
+  entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts') },
+  outdir: out,
   bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
   logLevel: 'info',
 }

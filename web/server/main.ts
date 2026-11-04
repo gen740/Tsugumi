@@ -10,6 +10,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ServerInfo, webDataDir } from './paths'
 import { chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './env'
 
@@ -34,10 +35,7 @@ const bins = {
   worker: process.env.TSUGUMI_WORKER ?? path.join(build, 'sdk', 'tsugumi-worker'),
   sdkDir: process.env.TSUGUMI_SDK_DIR ?? path.join(repo, 'sdk'),
 }
-const support = process.env.TSUGUMI_WEB_DATA ??
-  (process.platform === 'darwin'
-    ? path.join(os.homedir(), 'Library', 'Application Support', 'Tsugumi', 'web')
-    : path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), '.local', 'share'), 'tsugumi-web'))
+const support = webDataDir()
 fs.mkdirSync(support, { recursive: true })
 const demosRoot = path.join(repo, 'demos')
 // TSUGUMI_PROJECTS_DIR: where demo copies go instead of ~/Documents/Tsugumi (checks).
@@ -416,7 +414,7 @@ const routes: Record<string, Handler> = {
     stopTerminal(terminal(b.id))
     return { ok: true }
   },
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size }),
 }
 
 // The page is opened through the URL printed at start, which carries this
@@ -424,6 +422,7 @@ const routes: Record<string, Handler> = {
 // sends (HttpOnly, SameSite=Strict) and every /api/ request must carry it.
 // Other users of this host and other sites' pages get nothing.
 const key = randomBytes(32).toString('hex')
+const serverFile = path.join(support, 'server.json')
 const cookieName = () => `tsugumi_${(server.address() as net.AddressInfo).port}`
 
 function authorized(req: http.IncomingMessage): boolean {
@@ -514,6 +513,10 @@ server.listen(port, '127.0.0.1', () => {
   console.log(`Tsugumi web UI: ${url}`)
   console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
   console.log(`  data:     ${support}`)
+  // For local clients of this user (the Claude Code plugin's MCP server): how
+  // to reach this server. Readable by this user alone, like the key in the URL.
+  fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, key, pid: process.pid, cookie: cookieName() } satisfies ServerInfo), { mode: 0o600 })
+  fs.renameSync(serverFile + '.tmp', serverFile)
   if (openBrowser) spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).unref()
 })
 
@@ -521,6 +524,9 @@ let stopping = false
 async function shutdown() {
   if (stopping) return
   stopping = true
+  try {
+    if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
+  } catch {}
   for (const s of streams) s.end()
   for (const t of terminals.values()) stopTerminal(t, 'SIGKILL')
   server.close()

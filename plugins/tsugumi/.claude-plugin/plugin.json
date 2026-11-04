@@ -1,0 +1,28 @@
+{
+  "name": "tsugumi",
+  "version": "0.2.0",
+  "description": "Work on Tsugumi projects from Claude Code: open them in the Tsugumi web UI and edit, run and read them with the core's tools while the user watches.",
+  "author": {
+    "name": "gen740"
+  },
+  "homepage": "https://github.com/gen740/Tsugumi",
+  "license": "MIT",
+  "userConfig": {
+    "tsugumi_repo": {
+      "type": "directory",
+      "title": "Tsugumi checkout",
+      "description": "A built checkout of the Tsugumi repository (the core in build/, the web UI in web/dist). Leave it empty when the plugin is loaded from such a checkout. See docs/claude-code.md.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "mcpServers": {
+    "tsugumi": {
+      "command": "sh",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/tsugumi-mcp",
+        "${user_config.tsugumi_repo}"
+      ]
+    }
+  }
+}

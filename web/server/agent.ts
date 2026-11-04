@@ -594,6 +594,14 @@ function failureOf(json: string): { kind?: string; currentRev?: string } {
 
 /** reference_read: Tsugumi's bundled references, read only. */
 const REFERENCE_TOOL: ToolSpec = { ...AGENT.referenceTool, payloadType: -1, object: -1, mutating: false }
+
+/** What an agent outside the web UI (Claude Code through the plugin) may call:
+ *  the core's tools and reference_read. Not attached_folder_read (folders are
+ *  attached to a chat), delegate or guide_show (those belong to the chat). */
+export function externalTools(catalog: ToolCatalog): ToolSpec[] {
+  return [...catalog.tools.filter((t) => t.name !== 'attached_folder_read'), REFERENCE_TOOL]
+}
+const EXTERNAL_TOOL_NAMES = (catalog: ToolCatalog) => new Set(externalTools(catalog).map((t) => t.name))
 const GUIDE_SHOW_TOOL: ToolSpec = { ...AGENT.guide.showTool, payloadType: -1, object: -1, mutating: false }
 const GUIDE_TOOLS = new Set<string>(AGENT.guide.tools)
 type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>
@@ -691,6 +699,14 @@ export class Agent {
     if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote
     return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
+  }
+
+  /** One tool call from an agent outside the web UI (Claude Code through the
+   *  plugin): the same checks, approvals and RPC as a model's call here. */
+  async call(name: string, input: string, events: (e: AgentEvent) => void): Promise<{ text: string; isError: boolean }> {
+    if (!EXTERNAL_TOOL_NAMES(this.catalog).has(name)) return { text: `unknown tool ${name}`, isError: true }
+    const r = await this.runTool(randomUUID(), name, input, events)
+    return r.type === 'tool_result' ? { text: r.content, isError: r.is_error } : { text: '', isError: true }
   }
 
   /** Runs the helpers of a delegate call at the same time and returns their

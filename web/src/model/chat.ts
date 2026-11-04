@@ -89,7 +89,9 @@ export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
   /** A save of the Agent waiting for the user: what it would give Cards. */
-  permission?: { id: string; asked: string[] }
+  /** A save waiting for the user's approval: of this chat's Agent, or of
+   *  Claude Code (from) working on the project through the plugin. */
+  permission?: { id: string; asked: string[]; from?: string }
   status?: string
   failed = false
   /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
@@ -113,6 +115,8 @@ export class ChatController extends Observable {
     if (!this.available) this.status = app.status?.chatError ?? 'RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。'
     onServerEvent((e) => {
       if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
+      // Claude Code's saves (the plugin) are approved here, whichever conversation is open.
+      else if (e.type === 'chat' && e.project === session.dir && e.session === 'external' && (e.event.kind === 'permission' || e.event.kind === 'permissionAnswered')) this.handle(e.event)
       // Progress sent while the stream was down: the conversation is read again.
       if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
     })
@@ -437,7 +441,7 @@ export class ChatController extends Observable {
         break
       }
       case 'permission':
-        this.permission = { id: e.id, asked: e.asked }
+        this.permission = { id: e.id, asked: e.asked, from: e.from }
         break
       case 'permissionAnswered':
         if (this.permission?.id === e.id) this.permission = undefined

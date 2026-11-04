@@ -147,7 +147,8 @@ through the SDK's backend (`sdk/python/tsugumi/mpl.py`), so code written for a w
 `plt.show()` shows the open figures (several are stacked) and closes them; figures left open when
 `main` returns are shown too; `plt.pause()` loops and `FuncAnimation` + `plt.show()` update the
 display live while the Card runs (an endless animation ends when the run is stopped).
-`ctx.display_figure(fig)` shows a figure with any backend. Do not call `matplotlib.use("Agg")` and
+`ctx.display_figure(fig)` shows a figure with any backend. Japanese labels draw as they are (a
+Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Do not call `matplotlib.use("Agg")` and
 `savefig` just to display. Example: `demos/matplotlib` (a static figure and a live animation).
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.

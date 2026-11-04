@@ -27,6 +27,6 @@ def main(ctx):
     right.plot(x, np.exp(-x**2 / (2 * n)) / np.sqrt(2 * np.pi * n), "k--", label=r"$\mathcal{N}(0, t)$")
     right.set(xlabel=f"position after {n} steps", title="where they end up")
     right.legend()
-    fig.suptitle("Random walks spread as √t")
+    fig.suptitle("Random walks spread as √t（拡散は √t で広がる）")
     fig.tight_layout()
     plt.show()

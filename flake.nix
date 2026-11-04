@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # Typed-schema JSON decoding/encoding for the C++ core (header only).
   inputs.hosq = {
-    url = "github:CLI20-dev/hosq/38c3c8e21f570a9698006c361fc58bf0365896e0";
+    url = "github:CLI20-dev/hosq/1eb894224b0feffbb5b81d075d3e2c76160f99a1";
     flake = false;
   };
 

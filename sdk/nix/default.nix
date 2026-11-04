@@ -127,12 +127,23 @@ rec {
 
   # A Python Card: `src/main.py` defines `main(ctx)`. The package contains the
   # interpreter, the requested packages and a main.so that embeds Python.
+  # `fonts`: font packages matplotlib falls back to for glyphs its own fonts
+  # lack (by default a Japanese font when matplotlib is among the packages).
   pythonCard =
-    { src, sdk, name ? "tsugumi-python-card", python ? pkgs.python3, packages ? (ps: [ ]) }:
+    {
+      src,
+      sdk,
+      name ? "tsugumi-python-card",
+      python ? pkgs.python3,
+      packages ? (ps: [ ]),
+      fonts ? null,
+    }:
     assert lib.assertMsg (sdk.python != null) "pythonCard: the SDK was made without \"python\" in languages";
     let
       env = python.withPackages (ps: [ ps.flatbuffers ] ++ packages ps);
       bindings = sdk.python;
+      usesMatplotlib = lib.any (p: (p.pname or "") == "matplotlib") (packages python.pkgs);
+      fallbackFonts = if fonts != null then fonts else lib.optional usesMatplotlib pkgs.ipaexfont;
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
@@ -154,6 +165,10 @@ rec {
         touch $out/lib/python/card/__init__.py
         cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
         cp -r --no-preserve=mode ${sdkRoot}/python/tsugumi $out/lib/python/
+        # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
+        for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
+          find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
+        done > $out/lib/python/tsugumi/_fonts.txt
         cp $NIX_BUILD_TOP/main.so $out/lib/main.so
       '';
     };
