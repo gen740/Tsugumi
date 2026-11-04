@@ -1,6 +1,6 @@
 // Behaviour tests of the core without RPC: port types, graph resolution and
-// the Nix upstream analysis, run plans, history state selection and the
-// notification send queue.
+// the Nix upstream analysis, run plans, history state selection, the
+// notification send queue and the typed JSON schemas.
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <set>
 #include <string>
 #include <thread>
@@ -19,6 +20,7 @@
 #include "history.hh"
 #include "nix_refs.hh"
 #include "scheduler.hh"
+#include "schema.hh"
 #include "server.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "types.hh"
@@ -617,6 +619,102 @@ TEST(send_queue_keeps_order_and_drops_only_slow_peers) {
   ::close(slow);
   server.stop();
   stdfs::remove_all(dir);
+}
+
+// ---- typed JSON schemas (hosq) ---------------------------------------------------
+
+namespace {
+template <class S>
+bool decodes(std::string_view text) {
+  S s;
+  return !schema::decode(text, s);
+}
+}  // namespace
+
+TEST(schema_keys_that_share_a_prefix_select_their_own_member) {
+  // "boundary" is a prefix of "boundaries", in either order.
+  for (const char* text : {R"({"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"boundary":{"outputs":{"x":3,"y":4}}})",
+                           R"({"boundary":{"outputs":{"x":3,"y":4}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}}})"}) {
+    schema::Layout l;
+    CHECK(!schema::decode(text, l));
+    const auto* bs = schema::get(l.boundaries);
+    const auto* b = schema::get(l.boundary);
+    CHECK(bs && bs->entries().size() == 1 && bs->entries()[0].first == "a");
+    CHECK(b && !schema::get(b->inputs) && schema::get(b->outputs));
+  }
+  // "tag" is a prefix of "tagMessage"; "time" shares "t".
+  schema::HistoryCommit c;
+  CHECK(!schema::decode(R"({"tagMessage":"m","time":7,"tag":"v1"})", c));
+  CHECK(schema::get(c.tag) && *schema::get(c.tag) == "v1");
+  CHECK(schema::get(c.tag_message) && *schema::get(c.tag_message) == "m");
+  CHECK(schema::get(c.time) && *schema::get(c.time) == 7);
+  // "rev", "receipt" and "execution_rev" in a schema whose members are all required.
+  schema::JournalRecord r;
+  CHECK(!schema::decode(
+      R"({"t":"txn","rev":1,"execution_rev":2,"op":"o","kind":"k","digest":"d","receipt":"r","files":[]})", r));
+  CHECK(*r.rev == 1 && *r.execution_rev == 2 && *r.receipt_b64 == "r");
+}
+
+TEST(schema_rejects_keys_near_a_member_name) {
+  // Each value fits the member the key resembles, so only the key can fail.
+  using schema::Layout;
+  auto member = [](const std::string& key, const char* value) { return "{\"" + key + "\":" + value + "}"; };
+  CHECK(decodes<Layout>(member("boundary", "{}")) && decodes<Layout>(member("boundaries", "{}")));
+  CHECK(decodes<Layout>(member("flow", "\"leftToRight\"")));
+  for (const char* key : {"boundar", "boundaryX", "boundariesX", "Boundary", "boundarie", "boundary\\u0000", ""})
+    CHECK(!decodes<Layout>(member(key, "{}")));
+  for (const char* key : {"flo", "flows", "Flow", " flow", "flow ", "fl\u00f6w", "\u30d5\u30ed\u30fc", "fl\\u006fw"})
+    CHECK(!decodes<Layout>(member(key, "\"leftToRight\"")));  // an escaped spelling is not the member either
+  // A required-member schema rejects an extra key that extends a member name.
+  CHECK(!decodes<schema::JournalRecord>(
+      R"({"t":"txn","rev":1,"revs":1,"execution_rev":2,"op":"o","kind":"k","digest":"d","receipt":"r","files":[]})"));
+  // ... and a key that extends the name of a missing required member.
+  CHECK(!decodes<schema::BuildCache>(R"({"outs":"x"})"));
+}
+
+TEST(schema_validation_rules) {
+  using schema::CardDefinition;
+  CHECK(!decodes<CardDefinition>(R"({"sandbox":true,"sandbox":false})"));                // duplicate key
+  CHECK(!decodes<CardDefinition>(R"({"params":[{"name":"a","data":{"k":1,"k":2}}]})"));  // nested duplicate
+  CHECK(!decodes<CardDefinition>("{\"description\":\"\xff\"}"));                          // invalid UTF-8
+  CHECK(!decodes<CardDefinition>("{\"description\":\"\xc3\"}"));                          // truncated sequence
+  CHECK(decodes<CardDefinition>("{\"description\":\"\xc3\xa9\"}"));
+  CHECK(!decodes<CardDefinition>(R"({"timeoutSeconds":NaN})"));      // not JSON
+  CHECK(!decodes<CardDefinition>(R"({"timeoutSeconds":Infinity})"));
+  CHECK(!decodes<schema::Position>(R"({"x":1e999,"y":0})"));          // not finite as a number
+  CHECK(!decodes<CardDefinition>(R"({"sandbox":"true"})"));        // type
+  CHECK(!decodes<CardDefinition>(R"({"maxRuns":-1})"));
+  CHECK(!decodes<CardDefinition>(R"({"maxRuns":1.5})"));
+  CHECK(!decodes<CardDefinition>(R"({"maxRuns":18446744073709551616})"));
+  CHECK(!decodes<CardDefinition>(R"({"sandbox":true} )" "x"));     // trailing text
+  // An optional member set to null is not "absent": its type still applies.
+  CHECK(!decodes<CardDefinition>(R"({"sandbox":null})"));
+  // A captured value may be null; the core reads it as unset.
+  CardDefinition d;
+  CHECK(!schema::decode(R"({"timeoutSeconds":null})", d));
+  CHECK(schema::get(d.timeout_seconds) && schema::is_null(*schema::get(d.timeout_seconds)));
+}
+
+TEST(schema_keeps_64_bit_integers_and_spellings) {
+  schema::CardDefinition d;
+  CHECK(!schema::decode(R"({"maxRuns":18446744073709551615,"params":[{"name":"p","data":1.50e+2}]})", d));
+  CHECK(schema::get(d.max_runs) && *schema::get(d.max_runs) == std::numeric_limits<uint64_t>::max());
+  const auto& param = (*schema::get(d.params))[0];
+  CHECK_EQ(schema::text(*schema::get(param.data)), std::string("1.50e+2"));  // original spelling
+  auto big = schema::capture("-9223372036854775808");
+  CHECK_EQ(schema::text(big), std::string("-9223372036854775808"));
+  // Encode and decode again: every value comes back unchanged.
+  schema::JournalRecord r;
+  CHECK(!schema::decode(R"({"t":"commit","rev":18446744073709551615,"execution_rev":0,"op":"é\n\"",)"
+                        R"("kind":"k","digest":"","receipt":"","files":[{"p":"a/b","delete":false,"c":""}]})",
+                        r));
+  schema::JournalRecord again;
+  CHECK(!schema::decode(schema::encode(r), again));
+  CHECK(*again.rev == std::numeric_limits<uint64_t>::max());
+  CHECK(*again.execution_rev == 0);
+  CHECK_EQ(*again.op, std::string("\xc3\xa9\n\""));
+  CHECK(again.files->size() == 1 && *(*again.files)[0].path == "a/b");
+  CHECK_EQ(schema::encode(again), schema::encode(r));
 }
 
 int main() {
