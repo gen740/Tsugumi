@@ -51,6 +51,8 @@ def test_only_the_page_with_the_key_reaches_the_api(web):
     assert r.status == 401
     r, _ = request(port, "GET", "/api/events")
     assert r.status == 401
+    r, _ = request(port, "GET", "/api/settings")
+    assert r.status == 401
     r, _ = request(port, "GET", "/api/env/list", {"Cookie": f"tsugumi_{port}=wrong"})
     assert r.status == 401
     r, _ = request(port, "GET", f"/?key={key}&project=x")

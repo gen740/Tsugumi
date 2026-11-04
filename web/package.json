@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "description": "Tsugumi web UI: a browser client of tsugumid and a small host launcher",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "gen": "sh scripts/gen.sh",
     "build": "node scripts/build.mjs",

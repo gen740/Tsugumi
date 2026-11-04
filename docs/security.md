@@ -166,9 +166,12 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 
 ## 8. モデルの API キー（Agent）
 
-- LLM プロバイダの API キーは **macOS Keychain** に保存します（`agent/Sources/TsugumiAgent/Provider.swift`）。
-  - サービス名は `app.tsugumi.agent`、アカウント名はプロバイダ名（`Anthropic` / `OpenAI`）です。
-  - 属性には `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` を指定しており、この Mac のロック解除中のみ読み取り可能で、iCloud キーチェーンやバックアップを通じて他の端末へ同期されることはありません。
+- LLM プロバイダの API キーは利用者の **ログインキーチェーン**（macOS Keychain）に保存します（`agent/Sources/TsugumiAgent/Provider.swift`）。
+  - サービス名は `app.tsugumi.agent`、アカウント名はプロバイダ名（`Anthropic` / `OpenAI`）です。アプリと Web UI のサーバーは同じ項目を使うので、どちらで登録したキーも両方で使えます。
+  - ログインキーチェーンの項目は iCloud キーチェーンに同期されません。読めるのはログインキーチェーンのロックが解除されている間（通常はログイン中）です。
+  - 項目のアクセスリストは、保存したプログラムだけを信頼します。アプリで保存したキーをほかのプログラム（`security` コマンドを含む）が読もうとすると、macOS が利用者に確認します。ソースからビルドしたアプリは ad-hoc 署名のため、ビルドし直すと最初の読み出しで一度確認が出ます。
+  - Web UI のサーバーは `/usr/bin/security` を通して読み書きします。Web UI で保存したキーは `security` を信頼するため、この利用者として動くプログラムなら確認なしに `security find-generic-password` で読めます。両方を使う場合は、アプリの設定からキーを登録することを勧めます。macOS 以外（または Keychain に保存できなかったとき）は、Web UI のデータフォルダのファイル（0600）に保存します。
+  - データ保護キーチェーン（`kSecUseDataProtectionKeychain`）は使いません。これには provisioning profile でしか与えられない entitlement が必要で、ad-hoc 署名のビルドでは使えないためです（`errSecMissingEntitlement`）。
 - API キーは **モデルへのリクエスト送信時にその都度 Keychain から読み出し、HTTPS のリクエストヘッダー（`x-api-key` / `Authorization: Bearer`）にのみ載せます**。
 - API キーを `tsugumid`・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも一切記録しません。
 - HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
@@ -215,4 +218,4 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - `network: true` と `hostFolders`（特に `write: true`）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の `_card.json` に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。
 - `sandbox: false` の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと `.tsugumi` は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。
 - 開発・テスト用に Mac ホスト上で直接 `tsugumid` を動かすモード（`bubblewrap` なし）ではサンドボックス隔離が行われません（通常のアプリ実行経路では使用されません）。
-- 配布用アプリはローカル実行向けの ad-hoc 署名であり、Apple による公証（Notarization）は行っていません。
+- ビルドしたアプリはそのマシンで使うための ad-hoc 署名であり、Developer ID による署名と Apple による公証（Notarization）はしていません。ビルド済みのアプリは配布していません。

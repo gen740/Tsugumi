@@ -128,10 +128,17 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
   }
 }
 
-/// Model credentials stay in the macOS Keychain on the host (one item per
-/// provider, readable only while the Mac is unlocked, not synced). They are
-/// never written to project files, settings or logs, and never sent to
-/// tsugumid or to Card workers.
+/// Model credentials stay in the user's login keychain on the host (one item
+/// per provider, service app.tsugumi.agent and the provider's name as the
+/// account, the same item the web UI's server reads with `security`). The
+/// item's access list trusts the program that saved it; others are asked
+/// about first. They are never written to project files, settings or logs,
+/// and never sent to tsugumid or to Card workers.
+///
+/// Not the data protection keychain (kSecUseDataProtectionKeychain): it needs
+/// a keychain-access-groups entitlement, which only a provisioning profile
+/// grants, and an ad-hoc signed build from source has none (errSecMissingEntitlement).
+/// Login keychain items are never synced to iCloud Keychain.
 public enum Keychain {
   static let service = "app.tsugumi.agent"
 

@@ -31,3 +31,14 @@ def test_paths_of_the_build_machine_stay_in_debug_builds():
             elif "#filePath" in line and not any(stack) and not s.startswith("//"):
                 outside.append(f"{path.relative_to(ROOT)}:{n}")
     assert not outside
+
+
+def test_the_app_and_the_web_ui_keep_api_keys_in_the_same_keychain_item():
+    swift = (ROOT / "agent/Sources/TsugumiAgent/Provider.swift").read_text(encoding="utf-8")
+    web = (ROOT / "web/server/chat.ts").read_text(encoding="utf-8")
+    service = re.search(r'static let service = "([^"]+)"', swift).group(1)
+    assert f"const KEYCHAIN_SERVICE = '{service}'" in web
+    # the data protection keychain needs an entitlement ad-hoc builds lack
+    assert "kSecUseDataProtectionKeychain as String" not in swift
+    for name in ("Anthropic", "OpenAI"):
+        assert f"name: '{name}'" in web and f'name: "{name}"' in swift

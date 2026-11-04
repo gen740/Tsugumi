@@ -3,7 +3,7 @@
 Tsugumi's own code is under the MIT License (`LICENSE`). The components
 below are not ours and keep their own licenses. Versions are the ones
 pinned in this repository (`macOS/Package.resolved`, `flake.lock`,
-`ui/renderer/CMakeLists.txt`, `macOS/Container/`).
+`ui/renderer/CMakeLists.txt`, `macOS/Container/`, `web/package-lock.json`).
 
 ## Copied into this repository
 
@@ -25,6 +25,18 @@ CLI from our own `grammar.js` and is covered by `LICENSE`.
 | tree-sitter-swift (bundled with SwiftTreeSitter) | MIT |
 | SwiftTerm 1.11.2 (Miguel de Icaza; includes code derived from xterm.js) | MIT |
 | Dawn (Google WebGPU), `libtsugumi_renderer.dylib` | BSD-3-Clause; Dawn's own third-party code (Abseil, SPIRV-Tools, Tint, etc.) under Apache-2.0 / BSD / MIT as listed in Dawn's `third_party/` |
+
+## Bundled into the web UI (`web/dist/`)
+
+`npm run build` bundles these into the page and the host server; each
+license's text is in its package under `web/node_modules/`.
+
+| Component | License |
+|---|---|
+| React 18.3.1, React DOM 18.3.1, scheduler 0.23.2 (Meta Platforms) | MIT |
+| marked 18.1.1 (Christopher Jeffrey and the marked contributors) | MIT |
+| KaTeX 0.19.0 (Khan Academy and contributors; MathML output, no fonts) | MIT |
+| FlatBuffers 25.9.23 (Google; the newest on npm, read by code that flatc 25.12.19 generates) | Apache-2.0 |
 
 ## Linked into tsugumid (core daemon, runs in the VM)
 
