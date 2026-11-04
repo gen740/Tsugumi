@@ -655,14 +655,26 @@ public actor Agent {
     return kind == "Failure"
   }
 
+  /// Keep recent tool calls together with their results. The summary is the
+  /// leading user message, so the tail may safely start with an assistant.
+  static func compactionBoundary(_ messages: [ChatMessage], keep: Int = 4) -> Int {
+    var cut = max(0, messages.count - keep)
+    while cut > 0 && messages[cut].content.contains(where: { if case .toolResult = $0 { return true }; return false }) {
+      cut -= 1
+    }
+    return cut
+  }
+
   /// Context compaction: older turns are replaced by a model-written summary
   /// when the last request approached the provider's context limit.
   private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false) async throws {
     let limit = provider.config.contextLimit
     guard force || conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > (force ? 4 : 6) else { return }
-    let keep = 4
-    let old = Array(conversation.messages.dropLast(keep))
-    var transcript = ""
+    let messages = conversation.messages
+    let cut = Self.compactionBoundary(messages)
+    guard cut > 0 else { return }
+    let old = Array(messages.prefix(cut))
+    var transcript = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
     for m in old {
       for b in m.content {
         switch b {
@@ -677,14 +689,14 @@ public actor Agent {
     for try await e in try provider.stream(system: "You summarize conversations.", messages: ask, tools: []) {
       if case .text(let t) = e { summary += t }
     }
-    // The kept tail must start with a user message that is not a tool result.
-    var tail = Array(conversation.messages.suffix(keep))
-    while let first = tail.first, first.role != "user" || first.content.contains(where: { if case .toolResult = $0 { return true }; return false }) {
-      tail.removeFirst()
+    try Task.checkCancellation()
+    guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw AgentError.provider("the context summary was empty; the conversation was kept")
     }
-    conversation.summary = [conversation.summary, summary].compactMap { $0 }.joined(separator: "\n")
-    conversation.archive += conversation.messages.dropLast(tail.count)
-    conversation.messages = tail
+    guard conversation.messages == messages else { return }
+    conversation.summary = summary
+    conversation.archive += old
+    conversation.messages = Array(messages.dropFirst(cut))
     conversation.usage.inputTokens = 0
     try? conversation.save(storage)
     events(.compacted)

@@ -13,3 +13,5 @@ console.log('merge behavior: passed')
 await import("./recovery")
 
 await import("./approval")
+
+await import("./compaction")

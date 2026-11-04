@@ -469,6 +469,14 @@ export function clip(s: string): string {
     + 'read the rest with a narrower request (an offset, a range or one file)]'
 }
 
+/** Keep recent tool calls together with their results; the summary supplies
+ *  the leading user message if the retained tail starts with an assistant. */
+export function compactionBoundary(messages: ChatMessage[], keep = 4): number {
+  let cut = Math.max(0, messages.length - keep)
+  while (cut > 0 && messages[cut].content.some((b) => b.type === 'tool_result')) cut--
+  return cut
+}
+
 export class Agent {
   conversation: Conversation
   /** Model replies with tool calls in one turn before it stops and asks to
@@ -917,9 +925,10 @@ export class Agent {
   private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false) {
     const c = this.conversation
     if (!(force || c.usage.inputTokens > (this.provider.contextLimit * 3) / 4) || c.messages.length <= (force ? 4 : 6)) return
-    const keep = 4
-    let transcript = ''
-    for (const m of c.messages.slice(0, -keep)) {
+    const messages = c.messages.slice(), cut = compactionBoundary(messages)
+    if (!cut) return
+    let transcript = c.summary ? `Earlier summary: ${c.summary}\n` : ''
+    for (const m of messages.slice(0, cut)) {
       for (const b of m.content) {
         if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
         else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
@@ -929,12 +938,12 @@ export class Agent {
     const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
     let summary = ''
     for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
-    // The kept tail must start with a user message that is not a tool result.
-    let tail = c.messages.slice(-keep)
-    while (tail.length && (tail[0].role !== 'user' || tail[0].content.some((b) => b.type === 'tool_result'))) tail = tail.slice(1)
-    c.summary = [c.summary, summary].filter(Boolean).join('\n')
-    c.archive = [...c.archive, ...c.messages.slice(0, c.messages.length - tail.length)]
-    c.messages = tail
+    if (signal.aborted) throw new Cancelled()
+    if (!summary.trim()) throw new Error('the context summary was empty; the conversation was kept')
+    if (c.messages.length !== messages.length) return
+    c.summary = summary
+    c.archive = [...c.archive, ...messages.slice(0, cut)]
+    c.messages = messages.slice(cut)
     c.usage.inputTokens = 0
     this.save()
     events({ kind: 'compacted' })
