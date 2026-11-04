@@ -359,7 +359,9 @@ class ChatHost {
     } catch {}
     return files.map((f) => {
       const id = f.slice(0, -5)
-      const c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id)
+      let c
+      try { c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id) }
+      catch { return { id, title: `読み込めない会話 (${id})`, updatedAt: 0, messages: 0 } }
       const m = [...c.archive, ...c.messages].find((m) => m.role === 'user')
       const first = m?.display ?? m?.content.flatMap((b) => (b.type === 'text' ? [b.text] : []))[0]
       return { id, title: c.title ?? (first ? first.slice(0, 60) : '新しい会話'), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
@@ -377,7 +379,8 @@ class ChatHost {
     const q = text.toLowerCase()
     const hits: { session: string; title: string; snippet: string }[] = []
     for (const s of this.sessions()) {
-      const c = loadConversation(this.file(s.id), s.id)
+      let c
+      try { c = loadConversation(this.file(s.id), s.id) } catch { continue }
       for (const m of [...c.archive, ...c.messages]) {
         for (const b of m.content) {
           if (b.type !== 'text') continue

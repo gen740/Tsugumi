@@ -172,11 +172,25 @@ export const newConversation = (id: string): Conversation => ({
 })
 
 export function loadConversation(file: string, id: string): Conversation {
-  try {
-    return { ...newConversation(id), ...JSON.parse(fs.readFileSync(file, 'utf8')) }
-  } catch {
-    return newConversation(id)
+  let text: string
+  try { text = fs.readFileSync(file, 'utf8') }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return newConversation(id)
+    throw error
   }
+  const c = JSON.parse(text)
+  const messages = (ms: any) => Array.isArray(ms) && ms.every((m) =>
+    m && ['user', 'assistant'].includes(m.role) && Array.isArray(m.content) && m.content.every((b: any) =>
+      b && (b.type === 'text' ? typeof b.text === 'string'
+        : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
+        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
+  if (!c || typeof c.id !== 'string' || !messages(c.messages) || !messages(c.archive ?? []) ||
+      !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
+        ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
+      !c.usage || !Number.isFinite(c.usage.inputTokens) || !Number.isFinite(c.usage.outputTokens)) {
+    throw new Error(`Invalid conversation file: ${file}`)
+  }
+  return { ...newConversation(id), ...c }
 }
 
 const isDir = (p: string) => {
@@ -651,7 +665,8 @@ export class Agent {
       if (signal.aborted || e instanceof Cancelled) {
         // Tools that were not sent are recorded as skipped; nothing is re-sent later.
         for (const t of this.conversation.tools) if (t.state === 'pending') t.state = 'skipped'
-        this.save()
+        try { this.save() }
+        catch (error) { events({ kind: 'error', message: String(error) }); return }
         events({ kind: 'error', message: 'cancelled' })
       } else {
         events({ kind: 'error', message: String((e as Error).message ?? e) })

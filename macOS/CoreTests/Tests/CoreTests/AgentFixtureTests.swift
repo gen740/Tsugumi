@@ -114,7 +114,7 @@ func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig?
   let catalog = try ToolCatalog(schema: schema)
   var names: [UInt8: String] = [:]
   for v in schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" })!.values { names[UInt8(v.value)] = v.name }
-  return Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
+  return try Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
                provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"),
                references: references)
 }
@@ -541,7 +541,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
                 "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
                 "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]
     let bfbs = try #require(RPCSchema.bfbs())
-    let agent = Agent(catalog: try ToolCatalog(schema: try BFBS(data: bfbs)), transport: NoTransport(), provider: .localFixture(port: 1),
+    let agent = try Agent(catalog: try ToolCatalog(schema: try BFBS(data: bfbs)), transport: NoTransport(), provider: .localFixture(port: 1),
                       storage: FileManager.default.temporaryDirectory.appendingPathComponent("ref-\(UUID()).json"), references: refs)
     #expect(await agent.tools.contains { $0.name == "reference_read" })
     let (top, e1) = await agent.readReference("")
