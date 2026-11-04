@@ -628,7 +628,7 @@ public actor Agent {
 
   /// Tool calls left "sent" (disconnect or restart) are checked with
   /// OperationGet; nothing non-idempotent is re-sent blindly.
-  private func reconcilePending(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws {
+  func reconcilePending(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws {
     guard let opSpec = catalog.tool(named: "operation_get") else { return }
     for i in conversation.tools.indices where conversation.tools[i].state == .sent {
       guard let op = conversation.tools[i].opId else { continue }
@@ -636,13 +636,40 @@ public actor Agent {
       if let (type, table) = try? await transport.call(payloadType: opSpec.payloadType, build: { b in
         try codec.build(opSpec.object, ["op_id": op], into: &b)
       }) {
-        conversation.tools[i].state = .completed
-        conversation.tools[i].result = renderReply(type, table)
-        events(.toolFinished(id: conversation.tools[i].id, name: conversation.tools[i].name, ok: true,
-                             summary: "reconciled with operation_get"))
+        let json = renderReply(type, table)
+        conversation.tools[i].result = json
+        let error = Self.recoveredOperationError(json)
+        if let error {
+          conversation.tools[i].state = .completed
+          conversation.tools[i].isError = error
+          events(.toolFinished(id: conversation.tools[i].id, name: conversation.tools[i].name, ok: !error,
+                               summary: "reconciled with operation_get"))
+        }
+        let id = conversation.tools[i].id
+        // A previous turn may already contain an "outcome unknown" result.
+        // Replace that result too, so the next model request sees the receipt.
+        for m in conversation.messages.indices {
+          conversation.messages[m].content = conversation.messages[m].content.map { block in
+            if case .toolResult(let toolId, _, _) = block, toolId == id {
+              return .toolResult(toolUseId: id, content: Self.clip(json), isError: error ?? true)
+            }
+            return block
+          }
+        }
       }
     }
     try? conversation.save(storage)
+  }
+
+  /// nil means the original operation has no terminal receipt yet.
+  static func recoveredOperationError(_ json: String) -> Bool? {
+    guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+          obj["reply"] as? String == "OperationResult",
+          let value = obj["value"] as? [String: Any], value["state"] as? String == "completed",
+          let receipt = value["receipt"] as? [String: Any],
+          let kind = receipt["result_type"] as? String, kind != "NONE", !kind.isEmpty,
+          receipt["result"] is [String: Any] else { return nil }
+    return kind == "Failure"
   }
 
   /// Context compaction: older turns are replaced by a model-written summary

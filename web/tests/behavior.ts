@@ -9,3 +9,5 @@ for (const c of JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/merge
   assert.deepEqual(JSON.parse(serialize(result!)), c.expect, c.name)
 }
 console.log('merge behavior: passed')
+
+await import("./recovery")
