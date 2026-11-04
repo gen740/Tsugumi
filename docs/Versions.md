@@ -47,3 +47,7 @@ Mac アプリは Workflow メニューの「版の履歴…」（⌥⌘Y）、We
 ## 実装
 
 `core/src/versions.cc`（libgit2）。RPC は `VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`。git の操作が失敗しても実行は止めません（その実行は版を記録しません）。
+
+## まだできないこと
+
+- 版を選んだときに、戻らずにその版の Canvas と結果を見ること。今は「この版から始める」で戻って見ます。
