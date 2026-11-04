@@ -68,10 +68,11 @@ final class ThoughtSummarizer {
   }
 
   /// The model for the summaries: a small one of the Agent's provider (the
-  /// local fixture has none: plain lines only).
+  /// local fixture has none, and the user's ChatGPT plan is not spent on
+  /// them: plain lines only).
   static func config() -> ProviderConfig? {
     var c = AgentSettings.current()
-    guard c.usesKeychain else { return nil }
+    guard c.auth == .apiKey else { return nil }
     let d = UserDefaults.standard
     switch c.api {
     case .anthropicMessages: c.model = d.string(forKey: "agent.thoughtModel").flatMap { $0.isEmpty ? nil : $0 } ?? "claude-haiku-5-5"

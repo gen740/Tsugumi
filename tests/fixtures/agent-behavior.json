@@ -1,0 +1,348 @@
+{
+  "recovery": [
+    {
+      "name": "pending",
+      "reply": "OperationResult",
+      "value": {
+        "state": "pending"
+      },
+      "error": null
+    },
+    {
+      "name": "unknown",
+      "reply": "OperationResult",
+      "value": {
+        "state": "unknown"
+      },
+      "error": null
+    },
+    {
+      "name": "success",
+      "reply": "OperationResult",
+      "value": {
+        "state": "completed",
+        "receipt": {
+          "op_id": "op",
+          "result_type": "SaveResult",
+          "result": {}
+        }
+      },
+      "error": false
+    },
+    {
+      "name": "failure",
+      "reply": "OperationResult",
+      "value": {
+        "state": "completed",
+        "receipt": {
+          "op_id": "op",
+          "result_type": "Failure",
+          "result": {
+            "kind": "validation_failed",
+            "args": []
+          }
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "missing_receipt",
+      "reply": "OperationResult",
+      "value": {
+        "state": "completed"
+      },
+      "error": null
+    },
+    {
+      "name": "empty_receipt",
+      "reply": "OperationResult",
+      "value": {
+        "state": "completed",
+        "receipt": {
+          "op_id": "op"
+        }
+      },
+      "error": null
+    },
+    {
+      "name": "lookup_failure",
+      "reply": "Failure",
+      "value": {
+        "kind": "internal_error",
+        "args": []
+      },
+      "error": null
+    }
+  ],
+  "compaction": [
+    {
+      "name": "empty",
+      "messages": [],
+      "cut": 0
+    },
+    {
+      "name": "short",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task"
+            }
+          ]
+        }
+      ],
+      "cut": 0
+    },
+    {
+      "name": "complete_pairs",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t1",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t1",
+              "content": "RESULT_1",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t2",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t2",
+              "content": "RESULT_2",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t3",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t3",
+              "content": "RESULT_3",
+              "is_error": false
+            }
+          ]
+        }
+      ],
+      "cut": 3
+    },
+    {
+      "name": "trailing_assistant",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t1",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t1",
+              "content": "RESULT_1",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t2",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t2",
+              "content": "RESULT_2",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t3",
+              "name": "run",
+              "input": "{}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t3",
+              "content": "RESULT_3",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done"
+            }
+          ]
+        }
+      ],
+      "cut": 3
+    },
+    {
+      "name": "plain_text",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "0"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "1"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "2"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "3"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "4"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "5"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "6"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "7"
+            }
+          ]
+        }
+      ],
+      "cut": 4
+    }
+  ]
+}

@@ -41,7 +41,7 @@
 | デバイス | 内容 | 書込 |
 | --- | --- | --- |
 | rootfs | アプリ同梱の erofs イメージ（Linux カーネル 6.12.115 と Nix、`macOS/Container/vm-boot.nix`）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（`macOS/Container/vm-system.nix`、依存は署名を検証して cache.nixos.org から取得） | 読み取り専用（ソースの共有も読み取り専用） |
-| store ディスク | `~/Library/Application Support/Tsugumi/vm/store.img`（全プロジェクト共通の Nix store） | 可 |
+| store ディスク | `~/Library/Application Support/Tsugumi/vm/store.img`（全プロジェクト共通の Nix store。ソースからビルドした開発版は `Tsugumi-dev/` の下。以下同じ） | 可 |
 | 実行履歴ディスク | `~/Library/Application Support/Tsugumi/vm/history.img`（全プロジェクトの実行履歴、プロジェクトごとにディレクトリ分離） | 可 |
 | virtiofs（スロットごと） | 開いているプロジェクトのフォルダ（`project`）と、その control フォルダ（`control`） | 可 |
 | virtiofs（同じスロット、指定時のみ） | Card 設定で指定した Mac のフォルダ（`host-<tag>`）、チャットに添付した Mac のフォルダ（`chat-<tag>`） | `host-` は `write: true` のもののみ可、`chat-` は読み取り専用 |
@@ -177,9 +177,24 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 - HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
 - 設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。
 
+### ChatGPT プラン（Sign in with ChatGPT）
+
+API キーの代わりに、利用者の ChatGPT（Plus・Pro）プランで Agent を使えます。OpenAI が[オープンソースのツール向けに公開している手順](https://developers.openai.com/siwc/token-sharing-open-source)（ChatGPT plan usage）に従っています（`agent/Sources/TsugumiAgent/ChatGPT.swift`、Web UI は `web/server/chatgpt.ts`）。
+
+- サインインは既定のブラウザで行います。Tsugumi は `127.0.0.1` の空いたポートで `/auth/callback` を待ち、結果を受け取るとすぐに閉じます。毎回新しい `state`・`nonce`・PKCE（S256）を使い、`state` が合わない応答は捨てます。client secret や開発者の API キーは使いません（初回は `dynamic_agent_client` で Tsugumi を登録し、発行された `client_id` を以後のサインインに使います）。
+- ID トークンは OpenAI の JWKS（`https://auth.openai.com/.well-known/jwks.json`）で RS256 の署名を確かめ、発行者・audience（発行された `client_id`）・期限・`nonce` を検査します。以前のアカウントに入り直すときは、同じアカウント（`sub`）であることも確かめます。プランを使う許可（`chatgpt.tokens.use.direct`）が付与されなかったときは、Agent はプランを使わず、許可し直すか API キーを使うよう案内します。
+- ホスト ID（`ext_agent_host_id`）は最初のサインインの前に作る `urn:uuid:`（UUIDv4）で、利用者を識別する情報を含みません。
+- アプリでは、ホスト ID・登録（アカウント）ごとの `client_id`・メールアドレス・ID / アクセス / リフレッシュトークンを、API キーと同じサービスの **ログインキーチェーン** の 1 項目（アカウント名 `ChatGPT`）に置きます。開発版とリリース版は同じ項目を使い、トークンの更新（リフレッシュトークンは更新のたびに替わります）は `~/Library/Caches/app.tsugumi.agent/ChatGPT.lock` で 1 つずつ行い、更新の前に項目を読み直します。
+- Web UI のサーバーは別の agent host です。`security -i` では長い記録を書けないため、ホスト ID と登録・トークンをデータフォルダの `chatgpt.json`（0600、書き換えは一時ファイルから rename）に置きます。アプリでサインインしていても、Web UI では別にサインインします。サインインはサーバーと同じマシンのブラウザで行ってください（`127.0.0.1` の受け口に届く必要があります）。
+- アクセストークン（1 時間）は期限の 5 分前から更新し、API に拒まれた（401）ときは 1 度だけ更新して送り直します。更新が `invalid_grant` などで終わったセッションのトークンは消し、同じ登録でのサインインを求めます。通信やサーバーの一時的な失敗ではトークンを消しません。
+- サインアウトは OpenAI の取り消し口（revocation endpoint）でリフレッシュトークンを取り消してから、手元のトークンを消します（登録とホスト ID は残ります）。取り消しを確かめられなかったときは、ChatGPT の設定から Tsugumi の接続を解除できることを伝えます。
+- トークンは API キーと同じく、`tsugumid`・Linux VM・Card worker・ページへ渡さず、プロジェクトファイル・設定・ログ・会話履歴にも記録しません。リクエストのヘッダー（`Authorization: Bearer`）にだけ載せ、送り先は `https://api.openai.com/v1/responses` と `/v1/models` だけです。
+- プランでのリクエストは `store: false`・`stream: true` で送り（会話は OpenAI 側に保存されません）、`max_output_tokens` を付けず、tool は名前空間 `tsugumi` にまとめます。利用上限（`subscription_sharing_usage_limit_exceeded`）では再試行せずに止め、チャットに「Manage usage」（`https://chatgpt.com/settings/usage`）を出します。別の課金方法へ黙って切り替えることはありません。Plus の 5 時間ごとの上限は、ほかのアプリと共有です。
+- 吹き出しの「思考の過程」の要約は、プランの利用枠を使わないよう、ChatGPT プランでは作りません（決まった文だけを出します）。
+
 ### モデルに送られるもの
 
-Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI）には以下の情報が送信されます。
+Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI。ChatGPT プランも OpenAI）には以下の情報が送信されます。
 - チャットの会話本文
 - チャットに参照として追加した Card や可視化の情報
 - Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから `AttachedFolderRead` で読み取ったファイル内容など）
@@ -218,4 +233,4 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - `network: true` と `hostFolders`（特に `write: true`）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の `_card.json` に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。
 - `sandbox: false` の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと `.tsugumi` は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。
 - 開発・テスト用に Mac ホスト上で直接 `tsugumid` を動かすモード（`bubblewrap` なし）ではサンドボックス隔離が行われません（通常のアプリ実行経路では使用されません）。
-- ビルドしたアプリはそのマシンで使うための ad-hoc 署名であり、Developer ID による署名と Apple による公証（Notarization）はしていません。ビルド済みのアプリは配布していません。
+- リリース版もソースからビルドしたアプリも ad-hoc 署名であり、Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（`.github/workflows/release.yml`）、自動更新は GitHub の最新リリースの `Tsugumi.zip` を、同じリリースの `Tsugumi.zip.sha256`・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。

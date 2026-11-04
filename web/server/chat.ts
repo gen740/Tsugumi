@@ -8,6 +8,7 @@ import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
 import { Agent, AgentEvent, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { EnvironmentManager, projectKey } from './env'
 
 export interface ChatContext {
@@ -32,17 +33,20 @@ export function chatStatus() {
   return { chatAvailable: !catalogError, chatError: catalogError ?? null }
 }
 
-type ProviderId = 'anthropic' | 'openai' | 'fixture'
+type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
 
 interface Settings {
   skillFolders: { path: string; enabled: boolean }[]
   provider: ProviderId
-  /** The Anthropic model, and the OpenAI one (each provider keeps its own). */
+  /** The Anthropic model, the OpenAI one and the ChatGPT plan's (each provider keeps its own). */
   model: string
   openAIModel: string
+  chatGPTModel: string
   fixturePort: number
   /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
   models: string[]
+  /** Their display names (the ChatGPT account's catalog has them). */
+  modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
@@ -51,7 +55,8 @@ interface Settings {
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
-  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', fixturePort: 8765, models: [], allowedPermissions: [],
+  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
+  models: [], modelNames: {}, allowedPermissions: [],
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
 
@@ -61,9 +66,10 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (Array.isArray(b.skillFolders)) {
     out.skillFolders = b.skillFolders.filter((f) => f && typeof f.path === 'string').map((f) => ({ path: String(f.path), enabled: f.enabled !== false }))
   }
-  if (b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'fixture') out.provider = b.provider
+  if (b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' || b.provider === 'fixture') out.provider = b.provider
   if (typeof b.model === 'string') out.model = b.model.trim()
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
+  if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
   if (Array.isArray(b.models)) out.models = b.models.filter((m): m is string => typeof m === 'string')
   const allowed = b.allowedPermissions
@@ -139,21 +145,40 @@ async function deleteKey(p: KeyedProvider) {
   return `${PROVIDERS[p].name} のキーを削除しました。` + (process.env[PROVIDERS[p].env] ? `（環境変数 ${PROVIDERS[p].env} は残っています）` : '')
 }
 
+// Sign in with ChatGPT: this server's registrations and tokens, in a 0600
+// file of its data folder. TSUGUMI_CHATGPT_ISSUER and TSUGUMI_CHATGPT_API
+// point the sign-in and the requests at the local fixture (tests only).
+let chatGPTAuth: ChatGPTAuth | undefined
+const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(path.join(ctx.support, 'chatgpt.json'),
+  process.env.TSUGUMI_CHATGPT_ISSUER ? endpointsFor(process.env.TSUGUMI_CHATGPT_ISSUER, OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS))
+/** The last sign-in started from the page: its outcome, once it came. */
+let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
+
 async function provider(): Promise<ProviderConfig> {
   const s = settings()
   if (s.provider === 'fixture') {
-    return { name: 'Local fixture', baseURL: `http://127.0.0.1:${s.fixturePort}`, model: 'fixture', api: 'anthropicMessages', needsKey: false, maxTokens: 32768, contextLimit: 6000 }
+    return { name: 'Local fixture', baseURL: `http://127.0.0.1:${s.fixturePort}`, model: 'fixture', api: 'anthropicMessages', auth: 'none', maxTokens: 32768, contextLimit: 6000 }
+  }
+  if (s.provider === 'chatgpt') {
+    return { name: 'ChatGPT', baseURL: process.env.TSUGUMI_CHATGPT_API ?? 'https://api.openai.com', model: s.chatGPTModel || defaultSettings.chatGPTModel,
+             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000 }
   }
   if (s.provider === 'openai') {
-    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', needsKey: true, apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000 }
+    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000 }
   }
-  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', needsKey: true, apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000 }
+  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000 }
 }
 
-/** What the page may know of the connection (no key). */
+/** What the page may know of the connection (no key, no token). */
 async function providerInfo() {
   const p = await provider()
-  return { name: p.name, model: p.model, api: p.api, usesKey: p.needsKey }
+  return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt',
+           modelNames: p.auth === 'chatgpt' ? settings().modelNames : {} }
+}
+
+/** The ChatGPT accounts and the sign-in for the settings page (never a token). */
+function chatGPTState() {
+  return { accounts: chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
 }
 
 /** The references the Agent may read (reference_read): the repository's
@@ -360,7 +385,9 @@ class ChatHost {
     } catch {}
     return files.map((f) => {
       const id = f.slice(0, -5)
-      const c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id)
+      let c
+      try { c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id) }
+      catch { return { id, title: `読み込めない会話 (${id})`, updatedAt: 0, messages: 0 } }
       const m = [...c.archive, ...c.messages].find((m) => m.role === 'user')
       const first = m?.display ?? m?.content.flatMap((b) => (b.type === 'text' ? [b.text] : []))[0]
       return { id, title: c.title ?? (first ? first.slice(0, 60) : '新しい会話'), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
@@ -380,7 +407,8 @@ class ChatHost {
     const q = text.toLowerCase()
     const hits: { session: string; title: string; snippet: string }[] = []
     for (const s of this.sessions()) {
-      const c = loadConversation(this.file(s.id), s.id)
+      let c
+      try { c = loadConversation(this.file(s.id), s.id) } catch { continue }
       for (const m of [...c.archive, ...c.messages]) {
         for (const b of m.content) {
           if (b.type !== 'text') continue
@@ -441,9 +469,45 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
   'POST /api/settings/models': async () => {
-    const models = await listModels(await provider())
-    ctx.writeJSON(settingsFile(), { ...settings(), models })
-    return { models }
+    const list = await listModels(await provider())
+    const models = list.map((m) => m.id)
+    const modelNames = Object.fromEntries(list.map((m) => [m.id, m.label]))
+    ctx.writeJSON(settingsFile(), { ...settings(), models, modelNames })
+    return { models, modelNames }
+  },
+  'GET /api/chatgpt': () => chatGPTState(),
+  // Starts a sign-in: the page opens the URL in a tab; the outcome is read back with GET /api/chatgpt.
+  'POST /api/chatgpt/signin': async (b) => {
+    const { url, done } = await chatgpt().begin(typeof b.clientId === 'string' ? b.clientId : undefined, b.consent === true)
+    signInOutcome = null
+    done.then((r) => {
+      signInOutcome = { ok: true, welcome: r.welcome ? r.account.clientId : undefined, message: r.account.planEnabled
+        ? `${r.account.email ?? r.account.clientId} でサインインしました。`
+        : 'サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。' }
+    }, (e: Error) => {
+      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? 'サインインを中止しました。' : e.message }
+    })
+    return { url }
+  },
+  'POST /api/chatgpt/cancel': () => {
+    chatgpt().cancel()
+    return chatGPTState()
+  },
+  'POST /api/chatgpt/select': async (b) => {
+    await chatgpt().select(String(b.clientId))
+    return chatGPTState()
+  },
+  'POST /api/chatgpt/welcomed': async (b) => {
+    await chatgpt().markWelcomed(String(b.clientId))
+    signInOutcome = signInOutcome && { ...signInOutcome, welcome: undefined }
+    return chatGPTState()
+  },
+  'POST /api/chatgpt/signout': async (b) => {
+    const id = String(b.clientId)
+    const email = chatgpt().accounts().find((a) => a.clientId === id)?.email ?? id
+    const revoked = await chatgpt().signOut(id)
+    return { ...chatGPTState(), message: revoked ? `${email} からサインアウトしました。`
+      : 'このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。' }
   },
   'POST /api/settings/skillCount': (b) => ({ count: loadSkills(String(b.path), '').length }),
   'POST /api/settings/skillFolderStatus': (b) => {

@@ -11,6 +11,7 @@ import { FlatJSON } from '../src/shared/flatjson'
 import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
+import { planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -33,6 +34,17 @@ export function approvalRequired(json: string): string[] | undefined {
   if (value?.kind !== 'approval_required') return undefined
   const asked = (value.args ?? []).filter((a) => a.key === 'permission').map((a) => String(a.value))
   return asked.length ? asked : undefined
+}
+
+/** Undefined means the original operation has no terminal receipt yet. */
+export function recoveredOperationError(json: string): boolean | undefined {
+  try {
+    const o = JSON.parse(json), v = o.value, r = v?.receipt
+    if (o.reply !== 'OperationResult' || v?.state !== 'completed' ||
+        typeof r?.result_type !== 'string' || !r.result_type || r.result_type === 'NONE' ||
+        !r.result || typeof r.result !== 'object' || Array.isArray(r.result)) return undefined
+    return r.result_type === 'Failure'
+  } catch { return undefined }
 }
 
 export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
@@ -161,11 +173,25 @@ export const newConversation = (id: string): Conversation => ({
 })
 
 export function loadConversation(file: string, id: string): Conversation {
-  try {
-    return { ...newConversation(id), ...JSON.parse(fs.readFileSync(file, 'utf8')) }
-  } catch {
-    return newConversation(id)
+  let text: string
+  try { text = fs.readFileSync(file, 'utf8') }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return newConversation(id)
+    throw error
   }
+  const c = JSON.parse(text)
+  const messages = (ms: any) => Array.isArray(ms) && ms.every((m) =>
+    m && ['user', 'assistant'].includes(m.role) && Array.isArray(m.content) && m.content.every((b: any) =>
+      b && (b.type === 'text' ? typeof b.text === 'string'
+        : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
+        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
+  if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
+      !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
+        ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
+      !c.usage || !Number.isFinite(c.usage.inputTokens) || !Number.isFinite(c.usage.outputTokens)) {
+    throw new Error(`Invalid conversation file: ${file}`)
+  }
+  return c
 }
 
 const isDir = (p: string) => {
@@ -206,11 +232,14 @@ export interface ProviderConfig {
   model: string
   /** Wire protocol of the endpoint. */
   api: 'anthropicMessages' | 'openAIResponses'
+  /** How requests are authorized: none (the local fixture), an API key, or
+   *  the user's ChatGPT plan (Sign in with ChatGPT). */
+  auth: 'none' | 'apiKey' | 'chatgpt'
   /** Read on this host only (Keychain, 0600 file or environment); never sent
    *  to the page, tsugumid or Card workers. */
   apiKey?: string
-  /** A real provider needs a key; the local fixture does not. */
-  needsKey: boolean
+  /** The ChatGPT access token (refreshed near its expiry; `stale` is one the API refused). */
+  token?: (stale?: string) => Promise<string>
   /** Output limit of one model reply: a Card's sources fit in one save. */
   maxTokens: number
   contextLimit: number
@@ -249,24 +278,31 @@ type StreamEvent =
   | { t: 'toolInput'; index: number; json: string }
   | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
-function headers(c: ProviderConfig): Record<string, string> {
+async function headers(c: ProviderConfig, stale?: string): Promise<Record<string, string>> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
   if (c.api === 'anthropicMessages') h['anthropic-version'] = '2023-06-01'
-  if (c.needsKey) {
+  if (c.auth === 'apiKey') {
     if (!c.apiKey) throw new Error(`no API key for ${c.name}; add it in Settings > API`)
     if (c.api === 'anthropicMessages') h['x-api-key'] = c.apiKey
     else h.authorization = 'Bearer ' + c.apiKey
+  } else if (c.auth === 'chatgpt') {
+    h.authorization = 'Bearer ' + (await c.token!(stale))
   }
   return h
 }
 
 const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith('/') ? c.baseURL : c.baseURL + '/')
 
-export async function listModels(c: ProviderConfig): Promise<string[]> {
-  const r = await fetch(endpoint(c, 'v1/models'), { headers: headers(c) })
+/** Available models, with the names to show (the ChatGPT account's catalog
+ *  lists display names, in the server's order). */
+export async function listModels(c: ProviderConfig): Promise<{ id: string; label: string }[]> {
+  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c) })
   if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
-  const obj = (await r.json()) as { data?: { id: string }[] }
-  return (obj.data ?? []).map((m) => m.id)
+  const obj = (await r.json()) as { data?: { id: string }[]; models?: { slug: string; display_name?: string; visibility?: string }[] }
+  if (c.auth === 'chatgpt' && obj.models) {
+    return obj.models.filter((m) => m.visibility === 'list').map((m) => ({ id: m.slug, label: m.display_name ?? m.slug }))
+  }
+  return (obj.data ?? []).map((m) => ({ id: m.id, label: m.id }))
 }
 
 /** Lines of a server-sent event stream. */
@@ -310,7 +346,7 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
-  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
+  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(body), signal })
   if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
@@ -347,9 +383,13 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
   if (!stopped) throw new ConnectionLost()
 }
 
+/** The ChatGPT plan takes function tools only grouped in a namespace; the
+ *  model's calls then name it, and the history repeats it. */
+const TOOL_NAMESPACE = 'tsugumi'
+
 /** The conversation as Responses API input items: messages, function calls
  *  (the model's tool uses) and their outputs. */
-function responsesInput(messages: ChatMessage[]): unknown[] {
+function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
   const out: unknown[] = []
   for (const m of messages) {
     let texts: unknown[] = []
@@ -361,7 +401,7 @@ function responsesInput(messages: ChatMessage[]): unknown[] {
       if (b.type === 'text') texts.push({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: b.text })
       else if (b.type === 'tool_use') {
         flush()
-        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input })
+        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
       } else {
         flush()
         out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
@@ -372,14 +412,37 @@ function responsesInput(messages: ChatMessage[]): unknown[] {
   return out
 }
 
-/** OpenAI Responses API with an API key (not a ChatGPT account sign-in). */
+/** OpenAI Responses API, with an API key or the ChatGPT plan. The plan takes
+ *  no max_output_tokens and the tools in a namespace; store false and stream
+ *  true always. */
 async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const plan = c.auth === 'chatgpt'
   const body: Record<string, unknown> = {
-    model: c.model, instructions: system, input: responsesInput(messages), max_output_tokens: c.maxTokens, stream: true, store: false,
+    model: c.model, instructions: system, input: responsesInput(messages, plan ? TOOL_NAMESPACE : undefined), stream: true, store: false,
   }
-  if (tools.length) body.tools = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
-  const r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: headers(c), body: JSON.stringify(body), signal })
-  if (r.status !== 200) throw await HTTPStatusError.from(r)
+  if (!plan) body.max_output_tokens = c.maxTokens
+  if (tools.length) {
+    const functions = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+    body.tools = plan ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : functions
+  }
+  let stale: string | undefined
+  let r: Response
+  for (;;) {
+    const h = await headers(c, stale)
+    r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: h, body: JSON.stringify(body), signal })
+    if (r.status === 200) break
+    // A refused access token is refreshed once (unless refreshed meanwhile).
+    if (plan && r.status === 401 && stale === undefined) {
+      stale = h.authorization.replace(/^Bearer /, '')
+      await r.body?.cancel()
+      continue
+    }
+    if (!plan) throw await HTTPStatusError.from(r)
+    const text = await r.text()
+    let obj: any
+    try { obj = JSON.parse(text) } catch {}
+    throw planError(r.status, obj?.error, typeof obj?.detail === 'string' ? obj.detail : text, r.headers.get('x-request-id'))
+  }
   let usedTools = false
   let finished = false
   for await (const line of sseLines(r)) {
@@ -394,7 +457,9 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       case 'response.output_item.added':
         if (obj.item?.type === 'function_call') {
           usedTools = true
-          yield { t: 'toolStart', index, id: obj.item.call_id ?? randomUUID(), name: obj.item.name ?? '' }
+          let name: string = obj.item.name ?? ''
+          if (name.startsWith(TOOL_NAMESPACE + '.')) name = name.slice(TOOL_NAMESPACE.length + 1)
+          yield { t: 'toolStart', index, id: obj.item.call_id ?? randomUUID(), name }
         }
         break
       case 'response.function_call_arguments.delta':
@@ -411,6 +476,7 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       }
       case 'response.failed': case 'error': {
         const e = obj.response?.error ?? obj.error
+        if (plan) throw planError(0, e, 'stream error', r.headers.get('x-request-id'))
         throw new Error(e?.message ?? e?.code ?? 'stream error')
       }
     }
@@ -546,6 +612,14 @@ export function clip(s: string): string {
     + 'read the rest with a narrower request (an offset, a range or one file)]'
 }
 
+/** Keep recent tool calls together with their results; the summary supplies
+ *  the leading user message if the retained tail starts with an assistant. */
+export function compactionBoundary(messages: ChatMessage[], keep = 4): number {
+  let cut = Math.max(0, messages.length - keep)
+  while (cut > 0 && messages[cut].content.some((b) => b.type === 'tool_result')) cut--
+  return cut
+}
+
 export class Agent {
   conversation: Conversation
   /** Model replies with tool calls in one turn before it stops and asks to
@@ -639,7 +713,13 @@ export class Agent {
     this.conversation = newConversation(this.id)
     this.conversation.title = this.helper?.name
     this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: 'Do your task (in the rules above) and end with your report.' }] })
-    this.save()
+    try {
+      this.save()
+    } catch (e) {
+      // Its conversation cannot be kept: this helper does not start.
+      events({ kind: 'error', message: String((e as Error).message ?? e) })
+      return { outcome: `failed: ${String((e as Error).message ?? e)}`, report: '', usage: this.conversation.usage }
+    }
     const ac = new AbortController()
     this.abort = ac
     const stop = () => ac.abort()
@@ -793,7 +873,8 @@ export class Agent {
       if (signal.aborted || e instanceof Cancelled) {
         // Tools that were not sent are recorded as skipped; nothing is re-sent later.
         for (const t of this.conversation.tools) if (t.state === 'pending') t.state = 'skipped'
-        this.save()
+        try { this.save() }
+        catch (error) { events({ kind: 'error', message: String(error) }); return }
         events({ kind: 'error', message: 'cancelled' })
       } else {
         events({ kind: 'error', message: String((e as Error).message ?? e) })
@@ -839,13 +920,13 @@ export class Agent {
         return { blocks, stop }
       } catch (e) {
         if (signal.aborted) throw new Cancelled()
-        const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost
+        const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost || e instanceof TransientError
         if (!retryable || attempt >= 3) throw e
         // The reply is asked again: what it had streamed goes.
         if (text) events({ kind: 'discardText' })
         // The provider's retry-after when it gave one (rate limits), else backoff.
         const wait = Math.min(120, Math.max(e instanceof HTTPStatusError ? e.retryAfter ?? 0 : 0, 0.5 * (1 << (attempt + 1))))
-        events({ kind: 'retrying', message: e instanceof HTTPStatusError
+        events({ kind: 'retrying', message: e instanceof HTTPStatusError || e instanceof TransientError
           ? `provider returned ${e.status}; retry ${attempt + 1} in ${Math.ceil(wait)} s` : `connection to the model failed; retry ${attempt + 1}` })
         await new Promise((r) => setTimeout(r, wait * 1000))
         continue
@@ -1013,6 +1094,9 @@ export class Agent {
         record.opId = randomUUID()
         full.op_id = record.opId
         full.approved_permissions = asked
+        // The persisted record must name the operation we are about to send.
+        this.save()
+        if (signal?.aborted) throw new Cancelled()
         ;({ type: replyType, json } = await call())
       }
       // A save or run that met only changes it does not touch (the canvas
@@ -1141,9 +1225,16 @@ export class Agent {
       try {
         const rpc = await this.rpc()
         const r = await rpc.callRaw(op.payloadType, (b) => this.codec.build(op.object, { op_id: t.opId }, b))
-        t.state = 'completed'
         t.result = this.renderReply(this.catalog.replyNames.get(r.type) ?? 'Unknown', r.bb, r.table)
-        events({ kind: 'toolFinished', id: t.id, name: t.name, ok: true, summary: 'reconciled with operation_get' })
+        const error = recoveredOperationError(t.result)
+        if (error !== undefined) {
+          t.state = 'completed'
+          t.isError = error
+          events({ kind: 'toolFinished', id: t.id, name: t.name, ok: !error, summary: 'reconciled with operation_get' })
+        }
+        for (const m of this.conversation.messages) m.content = m.content.map((b) =>
+          b.type === 'tool_result' && b.tool_use_id === t.id
+            ? { ...b, content: clip(t.result!), is_error: error ?? true } : b)
       } catch {}
     }
     this.save()
@@ -1154,9 +1245,10 @@ export class Agent {
   private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false) {
     const c = this.conversation
     if (!(force || c.usage.inputTokens > (this.provider.contextLimit * 3) / 4) || c.messages.length <= (force ? 4 : 6)) return
-    const keep = 4
-    let transcript = ''
-    for (const m of c.messages.slice(0, -keep)) {
+    const messages = c.messages.slice(), cut = compactionBoundary(messages)
+    if (!cut) return
+    let transcript = c.summary ? `Earlier summary: ${c.summary}\n` : ''
+    for (const m of messages.slice(0, cut)) {
       for (const b of m.content) {
         if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
         else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
@@ -1166,12 +1258,12 @@ export class Agent {
     const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
     let summary = ''
     for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
-    // The kept tail must start with a user message that is not a tool result.
-    let tail = c.messages.slice(-keep)
-    while (tail.length && (tail[0].role !== 'user' || tail[0].content.some((b) => b.type === 'tool_result'))) tail = tail.slice(1)
-    c.summary = [c.summary, summary].filter(Boolean).join('\n')
-    c.archive = [...c.archive, ...c.messages.slice(0, c.messages.length - tail.length)]
-    c.messages = tail
+    if (signal.aborted) throw new Cancelled()
+    if (!summary.trim()) throw new Error('the context summary was empty; the conversation was kept')
+    if (c.messages.length !== messages.length) return
+    c.summary = summary
+    c.archive = [...c.archive, ...messages.slice(0, cut)]
+    c.messages = messages.slice(cut)
     c.usage.inputTokens = 0
     this.save()
     events({ kind: 'compacted' })

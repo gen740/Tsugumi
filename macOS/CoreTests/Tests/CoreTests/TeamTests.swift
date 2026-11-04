@@ -118,13 +118,15 @@ import TsugumiRPC
       }
     }
     await waitFinished(log, seconds: 60)
-    #expect(log.text.contains("succeeded"), "\(log.all)")
     let tools = await agent.conversation.tools
     let saves = tools.filter { $0.name == "project_save" }
     if definition {
-      // Theirs was not overwritten blindly: the model saw the conflict and inspected again.
-      #expect(saves.first?.isError == true && tools.filter { $0.name == "project_inspect" }.count == 2, "\(tools.map(\.name))")
+      // Theirs was not overwritten: the model is told of the conflict.
+      #expect(saves.first?.isError == true && saves.first?.result?.contains("revision_conflict") == true, "\(tools.map(\.name))")
+      let snap = try await client.inspect()
+      #expect(snap.definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("theirs") == true)
     } else {
+      #expect(log.text.contains("succeeded"), "\(log.all)")
       #expect(saves.count == 1 && saves[0].isError == false, "\(saves.map(\.result))")
       #expect(tools.filter { $0.name == "project_inspect" }.count == 1)
       let snap = try await client.inspect()

@@ -11,7 +11,7 @@ import {
   SEND_KEY_LABELS, SendKey, SHORTCUT_ACTIONS, SHORTCUT_TITLES, ShortcutAction, Theme, THEME_LABELS,
 } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
-import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Stepper, TextField, Toggle } from './controls'
+import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Sheet, Stepper, TextField, Toggle } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import * as projectViews from './projectViews'
@@ -442,12 +442,13 @@ function SkillSettings() {
   )
 }
 
-type ProviderId = 'anthropic' | 'openai' | 'fixture'
+type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
 type KeySource = 'env' | 'keychain' | 'file' | null
 interface APIState {
   provider: ProviderId
   model: string
   openAIModel: string
+  chatGPTModel: string
   fixturePort: number
   models: string[]
   keys: { Anthropic: KeySource; OpenAI: KeySource }
@@ -481,6 +482,7 @@ function APISettings() {
   }
   if (!s) return null
   const keyed = s.provider === 'anthropic' || s.provider === 'openai'
+  const plan = s.provider === 'chatgpt'
   const name = s.provider === 'openai' ? 'OpenAI' : 'Anthropic'
   const source = keyed ? s.keys[name] : null
   const model = s.provider === 'openai' ? s.openAIModel : s.model
@@ -499,10 +501,11 @@ function APISettings() {
         <Row label="接続先">
           <Select<ProviderId> value={s.provider} onChange={(v) => { update({ provider: v }); setModels([]); setMessage(undefined); setKey('') }} options={[
             { value: 'anthropic', label: 'Anthropic API（API キー）' }, { value: 'openai', label: 'OpenAI API（API キー）' },
+            { value: 'chatgpt', label: 'ChatGPT プラン（Sign in with ChatGPT）' },
             { value: 'fixture', label: 'ローカル fixture（テスト用・通信なし）' },
           ]} />
         </Row>
-        {!keyed && (
+        {s.provider === 'fixture' && (
           <>
             <Row label="fixture のポート">
               <input type="number" className="field" value={s.fixturePort} min={1} max={65535} onChange={(e) => update({ fixturePort: Number(e.target.value) })} style={{ width: 100 }} />
@@ -544,6 +547,7 @@ function APISettings() {
           )}
         </Section>
       )}
+      {plan && <ChatGPTSettings model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} />}
       <Section title="Agent が確認なしに Card に与えてよい権限">
         {PERMISSIONS.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
@@ -553,12 +557,143 @@ function APISettings() {
         ))}
         <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。</span></Row>
       </Section>
-      <Section title="ChatGPT アカウントでの接続">
-        <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。</span></Row>
-      </Section>
       {message && <div className="caption selectable">{message}</div>}
       <div className="caption secondary">チャットは任意機能です。通常の操作はすべて UI から行えます。</div>
     </Form>
+  )
+}
+
+interface ChatGPTAccountInfo { clientId: string; email: string | null; signedIn: boolean; planEnabled: boolean; active: boolean }
+interface ChatGPTState {
+  accounts: ChatGPTAccountInfo[]
+  signingIn: boolean
+  outcome: { ok: boolean; message: string; welcome?: string } | null
+  usageURL: string
+}
+
+/** Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. This server
+ *  keeps the registrations and tokens in a 0600 file of its data folder; the
+ *  page never sees a token. */
+function ChatGPTSettings({ model, setModel }: { model: string; setModel: (m: string) => void }) {
+  const [st, setSt] = useState<ChatGPTState>()
+  const [message, setMessage] = useState<string>()
+  const [models, setModels] = useState<{ id: string; label: string }[]>([])
+  const [url, setUrl] = useState<string>()
+  const reload = () => api<ChatGPTState>('/api/chatgpt').then((v) => {
+    setSt(v)
+    return v
+  })
+  useEffect(() => {
+    void reload()
+  }, [])
+  // While a sign-in runs in the browser tab, its outcome is read back.
+  useEffect(() => {
+    if (!st?.signingIn) return
+    const t = setInterval(() => void reload().then((v) => {
+      if (v.signingIn) return
+      setUrl(undefined)
+      if (v.outcome) setMessage(v.outcome.message)
+      refreshChats()
+    }), 1000)
+    return () => clearInterval(t)
+  }, [st?.signingIn])
+  if (!st) return null
+  const active = st.accounts.find((a) => a.active)
+  const run = async (f: () => Promise<string | undefined>) => {
+    try {
+      setMessage(await f())
+    } catch (e) {
+      setMessage(errorText(e))
+    }
+  }
+  const signIn = (clientId?: string, consent = false) => {
+    // The tab opens within the click (a pop-up blocker allows it), then goes to the sign-in.
+    const tab = window.open('about:blank', '_blank')
+    void run(async () => {
+      let r: { url: string }
+      try {
+        r = await api<{ url: string }>('/api/chatgpt/signin', { clientId, consent })
+      } catch (e) {
+        tab?.close()
+        throw e
+      }
+      setUrl(r.url)
+      if (tab) {
+        tab.opener = null
+        tab.location.href = r.url
+      }
+      await reload()
+      return undefined
+    })
+  }
+  const welcome = st.outcome?.welcome
+  const welcomed = (go: boolean) => {
+    if (go) window.open(st.usageURL, '_blank', 'noopener,noreferrer')
+    void api<ChatGPTState>('/api/chatgpt/welcomed', { clientId: welcome }).then(setSt)
+  }
+  return (
+    <>
+      <Section title="ChatGPT プラン（Sign in with ChatGPT）">
+        <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。</span></Row>
+        {active && <Row label="使用中のアカウント"><span className="selectable">{active.email ?? active.clientId}</span></Row>}
+        {active?.signedIn && !active.planEnabled && (
+          <Row><span className="caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。</span></Row>
+        )}
+        {st.accounts.map((a) => (
+          <Row key={a.clientId} label={<span><Icon name={a.active ? 'checkmark.circle.fill' : 'circle'} /> {a.email ?? a.clientId}</span>}>
+            <div className="row gap8 wrap center">
+              <span className="caption secondary">{!a.signedIn ? 'サインアウト済み' : a.planEnabled ? 'サインイン中' : 'サインイン中（プランの利用は未許可）'}</span>
+              {a.signedIn && !a.active && <Button small onClick={() => void run(async () => { setSt(await api<ChatGPTState>('/api/chatgpt/select', { clientId: a.clientId })); refreshChats(); return undefined })}>このアカウントを使う</Button>}
+              {!a.signedIn && <Button small disabled={st.signingIn} onClick={() => signIn(a.clientId)}>Continue with ChatGPT</Button>}
+              {a.signedIn && !a.planEnabled && <Button small disabled={st.signingIn} onClick={() => signIn(a.clientId, true)}>プランの利用を許可</Button>}
+              {a.signedIn && <Button small kind="destructive" onClick={() => void run(async () => {
+                const r = await api<ChatGPTState & { message: string }>('/api/chatgpt/signout', { clientId: a.clientId })
+                setSt(r)
+                refreshChats()
+                return r.message
+              })}>サインアウト</Button>}
+            </div>
+          </Row>
+        ))}
+        <Row>
+          <div className="row gap8 wrap center">
+            {st.signingIn
+              ? <>
+                  <span className="caption secondary">ブラウザでサインインを続けてください…</span>
+                  {url && <a className="caption" href={url} target="_blank" rel="noopener noreferrer">サインインのページを開く</a>}
+                  <Button small onClick={() => void api<ChatGPTState>('/api/chatgpt/cancel', {}).then(setSt)}>中止</Button>
+                </>
+              : <Button kind="prominent" onClick={() => signIn()}>{st.accounts.length ? 'Continue with ChatGPT（別のアカウント）' : 'Continue with ChatGPT'}</Button>}
+            <a href={st.usageURL} target="_blank" rel="noopener noreferrer">Manage usage</a>
+          </div>
+        </Row>
+        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。</span></Row>
+      </Section>
+      <Section title="モデル">
+        <Row label="モデル"><TextField value={model} onChange={setModel} /></Row>
+        <Row>
+          <Button disabled={!active?.signedIn} onClick={() => void run(async () => {
+            const r = await api<{ models: string[]; modelNames: Record<string, string> }>('/api/settings/models', {})
+            setModels(r.models.map((id) => ({ id, label: r.modelNames[id] ?? id })))
+            return `${r.models.length} 件のモデルを取得しました。`
+          })}>モデル一覧を取得</Button>
+        </Row>
+        {models.length > 0 && <Row label="一覧から選択"><Select value={model} onChange={setModel} options={models.map((m) => ({ value: m.id, label: m.label }))} /></Row>}
+      </Section>
+      {message && <div className="caption selectable">{message}</div>}
+      {welcome && (
+        <Sheet width={420} onClose={() => welcomed(false)}>
+          <div className="sheet-body">
+            <b>ChatGPT プランを使っています</b>
+            <span className="callout secondary" style={{ whiteSpace: 'normal' }}>Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。</span>
+            <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
+              <Button onClick={() => welcomed(true)}>Manage usage</Button>
+              <Button kind="prominent" onClick={() => welcomed(false)}>Got it</Button>
+            </div>
+          </div>
+        </Sheet>
+      )}
+    </>
   )
 }
 

@@ -98,11 +98,17 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ## 使ってみる
 
-Apple silicon Mac / macOS 26 以降に対応しています。Tsugumi はソースからビルドして使います（Developer ID による署名・公証をしていないため、ビルド済みのアプリは配布していません）。ビルドしたアプリには計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。手順は [INSTALL.md](INSTALL.md) を参照してください。
+Apple silicon Mac / macOS 26 以降に対応しています。[GitHub Releases](https://github.com/gen740/Tsugumi/releases) のアプリを入れると、以後は新しいリリースに自動で更新されます。アプリには計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
+
+```bash
+curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
+```
+
+Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](INSTALL.md) を参照してください。
 
 起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。
 
-Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録します。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
+Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
 なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)を参照してください。
 
 | デモ | 試せること |

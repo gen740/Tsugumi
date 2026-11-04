@@ -94,7 +94,8 @@ extension Agent {
 
   /// Runs the helpers of a delegate call at the same time and returns their
   /// reports (an error only when the call itself is wrong or none finished).
-  func delegate(_ input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async -> (String, Bool) {
+  /// A conversation that cannot be saved stops the work (as for one Agent).
+  func delegate(_ input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> (String, Bool) {
     let helpers: [Helper]
     switch Self.tasks(input) {
     case .success(let h): helpers = h
@@ -110,8 +111,11 @@ extension Agent {
       for (i, h) in helpers.enumerated() {
         let file = dir.appendingPathComponent(h.name + ".json")
         try? FileManager.default.removeItem(at: file)
-        let agent = Agent(catalog: catalog, transport: transport, provider: config, storage: file,
-                          references: references, helper: h)
+        guard let agent = try? Agent(catalog: catalog, transport: transport, provider: config, storage: file,
+                                     references: references, helper: h) else {
+          group.addTask { (i, HelperReport(outcome: "failed: its conversation cannot be read at \(file.path)", report: "", usage: Usage())) }
+          continue
+        }
         group.addTask {
           await agent.setMaxSteps(Self.helperSteps)
           await agent.setApprover { asked in await line.ask(asked) }
@@ -127,7 +131,7 @@ extension Agent {
       conversation.usage.cacheReadTokens += r.usage.cacheReadTokens
       conversation.usage.cacheWriteTokens += r.usage.cacheWriteTokens
     }
-    try? conversation.save(storage)
+    try conversation.save(storage)
     let text = zip(helpers, reports).map { h, r in
       "## \(h.name) (\(h.cards.joined(separator: ", "))): \(r.outcome)\n\(r.report.isEmpty ? "(no report)" : r.report)"
     }.joined(separator: "\n\n")
@@ -146,7 +150,10 @@ extension Agent {
     conversation = Conversation()
     conversation.title = helper?.name
     conversation.messages.append(ChatMessage(role: "user", content: [.text("Do your task (in the rules above) and end with your report.")]))
-    try? conversation.save(storage)
+    do { try conversation.save(storage) } catch {
+      events(.error("\(error)"))
+      return HelperReport(outcome: "failed: \(error)", report: "", usage: conversation.usage)
+    }
     let outcome = Outcome()
     await loop { e in
       switch e {

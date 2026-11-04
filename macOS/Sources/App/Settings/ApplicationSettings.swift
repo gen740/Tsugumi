@@ -199,8 +199,53 @@ private struct GeneralSettings: View {
         ForEach(AppPreferences.Motion.allCases) { Text($0.label).tag($0) }
       }
       .help("Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。")
+      UpdateSettings()
     }
     .formStyle(.grouped)
+  }
+}
+
+/// The version, and updates from the GitHub releases (Updater).
+private struct UpdateSettings: View {
+  @Bindable private var updater = Updater.shared
+
+  var body: some View {
+    Section("アップデート") {
+      LabeledContent("版", value: updater.build.isEmpty ? updater.currentVersion : "\(updater.currentVersion) (\(updater.build))")
+      if let why = updater.unavailable {
+        Text(why).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      } else {
+        Toggle("アップデートを自動的に確認する", isOn: $updater.automatic)
+          .help("起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。")
+        HStack {
+          status
+          Spacer()
+          if case .ready = updater.state {
+            Button("再起動して更新") { updater.installAndRelaunch() }
+          } else {
+            Button("今すぐ確認") { Task { await updater.check() } }.disabled(updater.busy)
+          }
+        }
+      }
+      Link("リリースの一覧（GitHub）", destination: Updater.releasesPage).font(.callout)
+    }
+  }
+
+  @ViewBuilder private var status: some View {
+    switch updater.state {
+    case .idle:
+      if updater.automatic { Text("まもなく確認します").foregroundStyle(.secondary) } else { Text("未確認").foregroundStyle(.secondary) }
+    case .checking:
+      HStack(spacing: 6) { ProgressView().controlSize(.small); Text("確認しています") }
+    case .upToDate:
+      Text("最新の版です（\(updater.lastCheck.map { $0.formatted(date: .omitted, time: .shortened) } ?? "") に確認）").foregroundStyle(.secondary)
+    case .downloading(let v):
+      HStack(spacing: 6) { ProgressView().controlSize(.small); Text("\(v) をダウンロードしています") }
+    case .ready(let v):
+      Text("\(v) の準備ができました。次に終了したときに更新します。")
+    case .failed(let m):
+      Text(m).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(3)
+    }
   }
 }
 
@@ -509,15 +554,19 @@ private struct APISettings: View {
   @State private var message: String?
 
   private var config: ProviderConfig { provider == "openai" ? .openAI : .anthropic }
+  private var keyed: Bool { provider == "anthropic" || provider == "openai" }
 
   var body: some View {
     Form {
       Picker("接続先", selection: $provider) {
         Text("Anthropic API（API キー）").tag("anthropic")
         Text("OpenAI API（API キー）").tag("openai")
+        Text("ChatGPT プラン（Sign in with ChatGPT）").tag("chatgpt")
         Text("ローカル fixture（テスト用・通信なし）").tag("fixture")
       }
-      if provider == "anthropic" || provider == "openai" {
+      if provider == "chatgpt" {
+        ChatGPTSettings()
+      } else if keyed {
         Section("API キー") {
           TextField("モデル", text: provider == "openai" ? $openAIModel : $anthropicModel)
           LabeledContent("保存先", value: stored.contains(config.name) ? "macOS Keychain（このデバイスのみ・ロック解除中に使用）" : "未設定")
@@ -572,11 +621,7 @@ private struct APISettings: View {
         Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
           .font(.caption).foregroundStyle(.secondary)
       }
-      Section("ChatGPT アカウントでの接続") {
-        Text("未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      }
-      if let message { Text(message).font(.caption) }
+      if keyed, let message { Text(message).font(.caption) }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
     }
     .formStyle(.grouped)
