@@ -28,8 +28,8 @@ jobs:
               -DTSUGUMI_BASH="$(command -v bash)" -DTSUGUMI_CARD_PATH="$PATH"
             ninja -C build
             ctest --test-dir build --output-on-failure'
-      - name: Web UI typecheck, bindings and build (the Python tests run its Agent contract and server)
-        run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm run build'
+      - name: Web UI typecheck, behavior contracts and build (Python tests cover RPC and server)
+        run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm test && npm run build'
       - name: Python tests
         run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 
