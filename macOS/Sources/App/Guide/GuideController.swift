@@ -62,6 +62,8 @@ struct GuideBubble: Equatable {
   var thinking = false
   /// The tour's last words: the bird says them, then flies home by itself.
   var farewell = false
+  /// The answer says more than the bubble: it points the user to the chat (or the panel).
+  var more = false
 }
 
 /// The guide reads the project on the user's screen; on Home there is none.
@@ -132,6 +134,18 @@ final class GuideController {
   var scopeRequest: [String]?
   /// Windows where the bird is out (its homes show no bird meanwhile: one Tsugumi).
   var awayWindows = 0
+  /// The chat's answer the bubble points to was asked for: the chat shows it marked.
+  private(set) var chatFlash: Date?
+
+  /// The bubble's "詳しくはチャットに": the chat (or on Home the panel) shows the whole answer.
+  func showDetails() {
+    if speakingChat != nil { chatFlash = Date() } else { open = true }
+  }
+
+  /// Whether an answer says more than its bubble.
+  nonisolated static func saysMore(_ reply: String, than say: String?) -> Bool {
+    reply.trimmingCharacters(in: .whitespacesAndNewlines).count > (say?.count ?? 0) + 120
+  }
   private(set) var tour: Tour?
   /// Home's demo list asked for by the guide (show_demos).
   var demosRequested = false
@@ -294,6 +308,7 @@ final class GuideController {
     guard speakingChat === chat, var b = bubble else { return }
     if b.thinking { b = GuideBubble(target: b.target) }
     if b.say == nil { b.say = Self.firstSentence(reply) }
+    b.more = Self.saysMore(reply, than: b.say)
     bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty ? nil : b
     leaveAfterFarewell()
   }
@@ -478,6 +493,7 @@ final class GuideController {
     if var b = bubble {
       if b.thinking { b = GuideBubble(target: b.target) }
       if b.say == nil { b.say = Self.firstSentence(reply) }
+      b.more = Self.saysMore(reply, than: b.say)
       bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty && b.target == nil ? nil : b
       leaveAfterFarewell()
     }

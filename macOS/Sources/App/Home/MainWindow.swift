@@ -56,7 +56,8 @@ struct MainWindow: View {
       newProject: {
         if workspace.session != nil { leaveProject() }
         model.requestNewProject = true
-      }))
+      },
+      showChat: { workspace.showChat = true }))
     // A window closed with a project: saved, then given back like leaving it.
     .onDisappear {
       guard let s = workspace.session else { return }

@@ -41,7 +41,10 @@ export interface GuideShow { highlight?: string; say?: string; choices: string[]
 
 /** What the bird says in its bubble, where it is (target; undefined: at
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
-export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean }
+export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean; more?: boolean }
+
+/** Whether an answer says more than its bubble (the bubble then points to the chat). */
+export const saysMore = (reply: string, say?: string) => reply.trim().length > (say?.length ?? 0) + 120
 
 /** The opening of a reply for the bubble: its first sentences, up to about 120 characters. */
 export function firstSentence(text: string): string | undefined {
@@ -112,6 +115,15 @@ export class GuideController extends Observable {
   contextTab?: WorkflowTab
   /** The bird has left home (its home shows no bird meanwhile). */
   away = false
+  /** The chat's answer the bubble points to was asked for: the chat shows it marked. */
+  chatFlash = 0
+
+  /** The bubble's "詳しくはチャットに": the chat (or on Home the panel) shows the whole answer. */
+  showDetails() {
+    if (this.speakingChat) this.chatFlash = Date.now()
+    else this.open = true
+    this.changed()
+  }
   /** A Card settings window to open ("card:<path>"), and a workflow scope to
    *  show (pointing into a Card in Card): taken by the project's workbench. */
   openRequest?: string
@@ -347,6 +359,7 @@ export class GuideController extends Observable {
       let b = this.bubble
       if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
       if (!b.say) b = { ...b, say: firstSentence(reply) }
+      b = { ...b, more: saysMore(reply, b.say) }
       this.bubble = !b.say && !b.choices.length && !b.actions.length && !b.target ? undefined : b
       this.leaveAfterFarewell()
     }
@@ -417,6 +430,7 @@ export class GuideController extends Observable {
     let b = this.bubble
     if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
     if (!b.say) b = { ...b, say: firstSentence(reply) }
+    b = { ...b, more: saysMore(reply, b.say) }
     this.bubble = !b.say && !b.choices.length && !b.actions.length ? undefined : b
     this.leaveAfterFarewell()
     this.changed()

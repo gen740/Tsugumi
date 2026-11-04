@@ -420,6 +420,7 @@
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
 "ドラッグして入力ポートへ接続" = "Drag to an input port to connect";
+"ドラッグで動かせます" = "Drag to move";
 "ドラッグで移動できます" = "Drag to move";
 "ドラッグで範囲を拡大・横スクロールで移動" = "Drag to zoom into a range; scroll sideways to move";
 "ネットワークへのアクセス" = "Network access";
@@ -684,6 +685,7 @@
 "問題 %lld 件（一覧から対象の Card やログへ移動できます）" = "%lld problems (go to their Card or log from the list)";
 "問題はありません" = "No issues";
 "問題一覧" = "Issues";
+"回答の全文を表示します" = "Shows the whole answer";
 "回答を停止" = "Stop answering";
 "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。" = "Stopped answering. Runs already accepted keep going (stop runs with “Stop” on the canvas).";
 "回答を停止しました（Workflow の実行は止めていません）。" = "Stopped answering (the Workflow's run was not stopped).";
@@ -974,6 +976,7 @@
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";
 "結果を確認しています" = "Checking the result";
+"続きは会話に書きました" = "More in the conversation";
 "続きを表示" = "Show more";
 "続ける" = "Continue";
 "緑" = "Green";
@@ -1017,6 +1020,7 @@
 "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" = "Allowing saves this change. Otherwise nothing is saved and the Agent is told to explain why it needs it.";
 "診断" = "Diagnostics";
 "詳しいログ" = "Detailed log";
+"詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";

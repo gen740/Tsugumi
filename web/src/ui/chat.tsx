@@ -121,8 +121,19 @@ function SessionList({ chat, onPick }: { chat: ChatController; onPick: () => voi
 // ---- Conversation ------------------------------------------------------------------
 
 function Conversation({ session, chat, tab }: { session: ProjectSession; chat: ChatController; tab?: WorkflowTab }) {
+  useObserve(guide)
   const scroll = useRef<HTMLDivElement>(null)
   const last = chat.items[chat.items.length - 1]
+  // Tsugumi's bubble sent the user here: its answer is scrolled to and marked for a moment.
+  const answer = [...chat.items].reverse().find((x) => x.role === 'assistant')
+  const [flash, setFlash] = useState<string>()
+  useEffect(() => {
+    if (!guide.chatFlash || !answer) return
+    setFlash(answer.id)
+    document.getElementById(`chat-item-${answer.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    const t = setTimeout(() => setFlash(undefined), 2200)
+    return () => clearTimeout(t)
+  }, [guide.chatFlash])
   // Follows the end while the conversation grows.
   useLayoutEffect(() => {
     const el = scroll.current
@@ -140,7 +151,9 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
             </div>
           )}
           {chat.items.map((it) => (
-            <Row key={it.id} item={it} streaming={chat.busy && it === last} session={session} tab={tab} />
+            <div key={it.id} id={`chat-item-${it.id}`} className={flash === it.id ? 'guide-flash' : undefined}>
+              <Row item={it} streaming={chat.busy && it === last} session={session} tab={tab} />
+            </div>
           ))}
           {chat.busy && (
             <div className="chat-activity">

@@ -30,6 +30,7 @@ struct ChatPanel: View {
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
   @FocusState private var inputFocused: Bool
+  @State private var flashing = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -130,7 +131,17 @@ struct ChatPanel: View {
               }
               .padding(.top, 16)
             }
-            ForEach(chat.items) { item in row(item).id(item.id) }
+            ForEach(chat.items) { item in
+              row(item).id(item.id)
+                .background(alignment: .leading) {
+                  // Tsugumi's bubble sent the user here: its answer is marked for a moment.
+                  if flashing, item.id == chat.items.last(where: { $0.role == "assistant" })?.id {
+                    RoundedRectangle(cornerRadius: 6).fill(TsugumiPalette.rufous.opacity(0.12)).padding(-6)
+                      .overlay(alignment: .leading) { Rectangle().fill(TsugumiPalette.rufous).frame(width: 3).padding(.leading, -6) }
+                      .transition(.opacity)
+                  }
+                }
+            }
             if chat.busy { activity.id("activity") }
           }
           .padding(.horizontal, 14).padding(.vertical, 12)
@@ -139,6 +150,15 @@ struct ChatPanel: View {
         .scrollIndicators(overflows ? .automatic : .never)
         .onScrollGeometryChange(for: Bool.self) { g in g.contentSize.height > g.containerSize.height + 1 } action: { _, v in overflows = v }
         .onChange(of: chat.items.count) { scrollToEnd(proxy) }
+        .onChange(of: GuideController.shared.chatFlash) { _, d in
+          guard d != nil, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
+          withAnimation { proxy.scrollTo(last.id, anchor: .top) }
+          withAnimation(.easeOut(duration: 0.2)) { flashing = true }
+          Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.easeOut(duration: 0.6)) { flashing = false }
+          }
+        }
         .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
       if let s = chat.status {

@@ -1124,6 +1124,10 @@ EN = {
 "定番のデモを見る": "See the Standard Demo",
 "興味のあること（例: 画像処理）": "What interests you (e.g. image processing)",
 "ツグミが画面を飛び回って、デモや画面の使い方を案内します": "Tsugumi flies about the screen and shows you demos and how things work",
+"詳しくはチャットに書きました": "More in the chat",
+"続きは会話に書きました": "More in the conversation",
+"回答の全文を表示します": "Shows the whole answer",
+"ドラッグで動かせます": "Drag to move",
 }
 
 

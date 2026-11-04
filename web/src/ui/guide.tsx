@@ -22,6 +22,8 @@ export interface GuideWindowActions {
   openProject: (path: string) => void
   home: () => void
   newProject: () => void
+  /** Opens the project's chat column. */
+  showChat?: () => void
 }
 let windowActions: GuideWindowActions | undefined
 export function setGuideWindow(a: GuideWindowActions) {
@@ -84,6 +86,12 @@ function BubbleView({ bubble, perform, style }: { bubble: GuideBubble; perform: 
           : <span className="flex1">{bubble.say ?? 'ここです'}</span>}
         <Button kind="borderless" small iconOnly icon="xmark" help="閉じる（ツグミは元の場所に戻ります）" onClick={() => guide.dismissBubble()} />
       </div>
+      {!bubble.thinking && bubble.more && (
+        // The whole answer is in the chat: the eyes go there.
+        <button type="button" className="guide-more" onClick={() => { if (guide.speakingChat) windowActions?.showChat?.(); guide.showDetails() }}>
+          {guide.speakingChat ? '詳しくはチャットに書きました →' : '続きは会話に書きました ↘'}
+        </button>
+      )}
       {!bubble.thinking && <Choices choices={bubble.choices} actions={bubble.actions} perform={perform} onChoice={(c) => guide.choose(c)} />}
       {!bubble.thinking && <ReplyField onSend={(t) => guide.choose(t)} />}
     </div>
@@ -232,8 +240,14 @@ export function GuideFlyer() {
     const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
     return { left: x - BIRD.w / 2, top: y - BIRD.h, width: BIRD.w, height: BIRD.h, flip: right }
   }
+  // Where the user dragged the perched bird out of the way, for the target it stands by.
+  const [nudge, setNudge] = useState<{ target: string; dx: number; dy: number }>()
+  const [drag, setDrag] = useState<{ x0: number; y0: number; dx: number; dy: number }>()
   const loading = guide.available ? loadingBox() : undefined
-  const perch = loading ? undefined : perchBox()
+  let perch = loading ? undefined : perchBox()
+  if (perch && nudge && nudge.target === target) perch = { ...perch, left: perch.left + nudge.dx, top: perch.top + nudge.dy }
+  // The whole answer is in the chat (to the right): the bird turns to look at it.
+  if (perch && guide.bubble?.more && guide.speakingChat) perch = { ...perch, flip: false }
   const home = !loading && !perch ? homeBox() : undefined
   const goal = loading ? 'loading' : perch ? 'perch' : 'home'
   const at = loading ?? perch ?? home
@@ -284,7 +298,8 @@ export function GuideFlyer() {
   }, [key])
   if (!guide.away || !box || inCard) return <GuideRings />
   const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
-  const feetX = box.left + box.width / 2, feetY = box.top + box.height
+  const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0
+  const feetX = box.left + box.width / 2 + dx, feetY = box.top + box.height + dy
   let bx = box.flip ? feetX - 30 : feetX - bw + 30
   let by = feetY + 12
   if (by + bh > window.innerHeight - 8) by = feetY - 70 - bh
@@ -293,8 +308,22 @@ export function GuideFlyer() {
   return (
     <div className="guide-flyer" aria-live="polite">
       <GuideRings />
-      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}`}
-        style={{ left: box.left, top: box.top, width: box.width, height: box.height, transition: still ? 'none' : undefined }} aria-hidden>
+      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}${arrived ? ' draggable' : ''}`}
+        style={{ left: box.left + dx, top: box.top + dy, width: box.width, height: box.height, transition: still || drag ? 'none' : undefined }}
+        aria-hidden title={arrived ? 'ドラッグで動かせます' : undefined}
+        onPointerDown={(e) => {
+          if (!arrived) return
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setDrag({ x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 })
+        }}
+        onPointerMove={(e) => { if (drag) setDrag({ ...drag, dx: e.clientX - drag.x0, dy: e.clientY - drag.y0 }) }}
+        onPointerUp={() => {
+          if (!drag || !target) { setDrag(undefined); return }
+          const before = nudge?.target === target ? nudge : { dx: 0, dy: 0 }
+          setNudge({ target, dx: before.dx + drag.dx, dy: before.dy + drag.dy })
+          setBox({ ...box, left: box.left + drag.dx, top: box.top + drag.dy })
+          setDrag(undefined)
+        }}>
         <GuideBird />
       </div>
       {arrived && goal === 'perch' && guide.bubble && (

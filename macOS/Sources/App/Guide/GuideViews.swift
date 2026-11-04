@@ -9,6 +9,8 @@ struct GuideWindowActions {
   var home: () -> Void
   /// The new project sheet on Home.
   var newProject: () -> Void
+  /// Opens the project's chat column.
+  var showChat: () -> Void = {}
 }
 
 private struct GuideWindowKey: EnvironmentKey { static let defaultValue: GuideWindowActions? = nil }
@@ -208,6 +210,18 @@ struct GuideBubbleView: View {
           .buttonStyle(.plain).help("閉じる（ツグミは元の場所に戻ります）").accessibilityLabel("閉じる")
       }
       .font(.callout)
+      if !bubble.thinking && bubble.more {
+        // The whole answer is in the chat: the eyes go there.
+        Button { perform.showDetails() } label: {
+          HStack(spacing: 4) {
+            Text(guide.speakingChat != nil ? String(localized: "詳しくはチャットに書きました") : String(localized: "続きは会話に書きました"))
+            Image(systemName: guide.speakingChat != nil ? "arrow.right" : "arrow.down.right")
+          }
+          .font(.caption.weight(.semibold)).foregroundStyle(TsugumiPalette.rufous)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("回答の全文を表示します")
+      }
       if !bubble.thinking && (!bubble.choices.isEmpty || !bubble.actions.isEmpty) {
         GuideChoices(choices: bubble.choices, actions: bubble.actions, perform: perform)
       }
@@ -437,6 +451,10 @@ struct GuideFlyer: View {
   @State private var inCard = false
   /// Facing left (mirrored); in the loading card it faces as the card's bird does.
   @State private var facingLeft = true
+  /// Where the user dragged the perched bird (and its bubble) out of the way,
+  /// for the target it stands by; a new target starts without it.
+  @State private var nudge: (target: String, by: CGSize)?
+  @GestureState private var drag: CGSize = .zero
   @State private var bubbleSize = CGSize(width: 300, height: 90)
 
   private var guide: GuideController { .shared }
@@ -456,7 +474,11 @@ struct GuideFlyer: View {
 
   private func goal(_ o: CGPoint, _ size: CGSize) -> Goal {
     if guide.available, window != nil, let l = stage.loadingBird { return .loading(l.feet, l.scale) }
-    if let r = perch { return .perch(feetPoint(r, origin: o, size: size), left: r.midX > o.x + size.width / 2) }
+    if let r = perch {
+      var p = feetPoint(r, origin: o, size: size)
+      if let n = nudge, n.target == guide.bubble?.target { p.x += n.by.width; p.y += n.by.height }
+      return .perch(p, left: r.midX > o.x + size.width / 2)
+    }
     return .home(stage.corner == .zero ? nil : CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 4))
   }
 
@@ -480,20 +502,35 @@ struct GuideFlyer: View {
           }
           .frame(width: 900 * scale, height: 640 * scale)
           .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
-          .position(x: f.x - o.x, y: f.y - o.y - 320 * scale + 8)
-          .allowsHitTesting(false)
+          .contentShape(Rectangle())
+          // Perched, it can be dragged out of the way (its bubble comes along).
+          .gesture(DragGesture(minimumDistance: 3)
+            .updating($drag) { v, s, _ in s = v.translation }
+            .onEnded { v in
+              guard let t = guide.bubble?.target else { return }
+              let before = nudge?.target == t ? nudge!.by : .zero
+              nudge = (t, CGSize(width: before.width + v.translation.width, height: before.height + v.translation.height))
+              if let f = feet { feet = CGPoint(x: f.x + v.translation.width, y: f.y + v.translation.height) }
+            })
+          .position(x: f.x - o.x + drag.width, y: f.y - o.y - 320 * scale + 8 + drag.height)
+          .allowsHitTesting(arrived)
+          .help(arrived ? String(localized: "ドラッグで動かせます") : "")
           .accessibilityHidden(true)
           if arrived, perch != nil, let b = guide.bubble {
             GuideBubbleView(bubble: b, perform: GuidePerformer(model: model, window: window, session: guide.flyerSession,
                                                                tab: guide.flyerTab, openWindow: openWindow, openSettings: openSettings))
               .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-              .position(bubbleCenter(feet: CGPoint(x: f.x - o.x, y: f.y - o.y), left: left, in: size))
+              .position(bubbleCenter(feet: CGPoint(x: f.x - o.x + drag.width, y: f.y - o.y + drag.height), left: left, in: size))
               .transition(.opacity.combined(with: .scale(scale: 0.9)))
           }
         }
       }
       .frame(width: size.width, height: size.height, alignment: .topLeading)
       .onChange(of: goal(o, size), initial: true) { _, g in fly(to: g) }
+      // The whole answer is in the chat (to the right): the bird turns to look at it.
+      .onChange(of: guide.bubble?.more) { _, more in
+        if more == true, guide.speakingChat != nil, arrived { withAnimation(.easeInOut(duration: 0.25)) { facingLeft = false } }
+      }
     }
     // Tsugumi opens a Card's settings to show it (in the window of that project).
     .onChange(of: guide.openRequest, initial: true) { _, r in
@@ -622,6 +659,12 @@ struct GuidePerformer {
     case .home:
       window?.home()
     }
+  }
+
+  /// The whole answer: the chat opens at it, marked (on Home, the panel).
+  func showDetails() {
+    if guide.speakingChat != nil { window?.showChat() }
+    guide.showDetails()
   }
 
   /// A button that cannot do anything now is shown but disabled (a run while one runs, ...).

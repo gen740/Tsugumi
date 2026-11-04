@@ -31,6 +31,12 @@ import Testing
   #expect(GuideAction.parse(#"{"open": " card:archive/copy ", "highlight": "param:rows"}"#).open == "card:archive/copy")
 }
 
+/// A long answer sends the user to the chat; one the bubble holds does not.
+@Test func aLongAnswerPointsToTheChat() {
+  #expect(GuideController.saysMore(String(repeating: "あ", count: 300), than: "要点です。"))
+  #expect(!GuideController.saysMore("要点です。少しだけ補足。", than: "要点です。"))
+}
+
 /// "card:<id>" also points at that Card inside the Card in Card on the screen.
 @MainActor @Test func aCardIsFoundInsideACardInCard() {
   let g = GuideController.shared

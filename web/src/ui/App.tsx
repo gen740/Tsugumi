@@ -86,6 +86,7 @@ export function App() {
       if (workspace.session && !(await leaveProject())) return
       app.request('requestNewProject', true)
     })(),
+    showChat: () => workspace.set('showChat', true),
   })
 
   /** Opens another project, once the current one has been left (saved first when needed). */
