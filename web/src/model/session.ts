@@ -188,8 +188,19 @@ export function displaySummary(d: DisplaySnapshot): string {
     case 'table': return `表 ${v.columns.length} 列 × ${v.rows.length} 行`
     case 'image': return v.alt || '画像'
     case 'points': return `点群 ${v.x.length} 点`
-    case 'module': return `モジュール ${v.name}`
+    case 'module': return plotTitle(v.name, v.json) ?? `モジュール ${v.name}`
   }
+}
+
+/** A Plotly figure's or Vega-Lite chart's title (as an image shows its alt
+ *  text), or what it is when it has none. */
+function plotTitle(name: string, json: string): string | undefined {
+  if (name !== 'plotly' && name !== 'vega-lite') return undefined
+  let v: any
+  try { v = JSON.parse(json) } catch { v = undefined }
+  const t = name === 'plotly' ? v?.layout?.title : v?.title
+  const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
+  return text || (name === 'plotly' ? 'Plotly のグラフ' : 'Vega-Lite のグラフ')
 }
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
