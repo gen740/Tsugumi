@@ -334,7 +334,8 @@ def mpl_demo(tmp_path):
 def test_matplotlib_draws_into_the_displays(mpl_demo):
     """Plain matplotlib (plt.show(), a FuncAnimation) reaches the Cards'
     displays through the SDK's backend: the animation live, frame by frame,
-    and each Card's last image sharp (2x) and named after its title."""
+    and each Card's last image sharp (2x) and named after its title; the
+    Japanese in a title draws with the Card's fallback font."""
     c = connect(mpl_demo)
     edit_card(mpl_demo, c, "settings", lambda b: (set_param(b, "walkers", 200), set_param(b, "steps", 80)))
     edit_card(mpl_demo, c, "diffusion", lambda b: set_param(b, "frames", 12))
@@ -354,7 +355,8 @@ def test_matplotlib_draws_into_the_displays(mpl_demo):
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, (stderr(c, rid, "summary"), stderr(c, rid, "diffusion"))
     assert frames.count("diffusion") >= 3, frames  # the animation was seen while it played
-    for card, alt in (("summary", "Random walks spread as √t"), ("diffusion", "step 80 of 80")):
+    assert "missing from font" not in stderr(c, rid, "summary")
+    for card, alt in (("summary", "Random walks spread as √t（拡散は √t で広がる）"), ("diffusion", "step 80 of 80")):
         d = c.call("RunRecordRequest", runId=rid, card=path(card)).record.display
         assert d.valueType == 5, card  # DisplayImage
         img = d.value

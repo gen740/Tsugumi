@@ -43,6 +43,31 @@ LIVE_SCALE = 1
 """The same for the frames of a live figure (each frame costs less to draw); its
 last frame is sent at SCALE when the call ends."""
 
+def _add_fonts() -> None:
+    """The Card's fallback fonts (``_fonts.txt``, written by pythonCard: a Japanese
+    font when the Card uses matplotlib) go after the font families, so Japanese
+    labels draw (matplotlib takes a glyph its first font lacks from the next
+    family) while Latin text keeps matplotlib's own look."""
+    from pathlib import Path
+
+    from matplotlib import font_manager, rcParams
+
+    listing = Path(__file__).with_name("_fonts.txt")
+    if not listing.is_file():
+        return
+    names = []
+    for line in listing.read_text().splitlines():
+        if line.strip():
+            font_manager.fontManager.addfont(line.strip())
+            names.append(font_manager.FontProperties(fname=line.strip()).get_name())
+    # Gothic (sans-serif) faces before Mincho (serif) ones, matching matplotlib's sans-serif look.
+    names = sorted(dict.fromkeys(names), key=lambda n: any(w in n for w in ("Mincho", "Serif")))
+    family = list(rcParams["font.family"])
+    rcParams["font.family"] = family + [n for n in names if n not in family]
+
+
+_add_fonts()
+
 _timers: set["TimerTsugumi"] = set()
 _last_sent = 0.0
 _pending = False  # a frame is waiting for the next FPS slot
