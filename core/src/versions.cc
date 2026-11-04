@@ -368,7 +368,8 @@ void Versions::checkout(const std::string& commit) {
   Object target;
   if (git_object_lookup(target.out(), r.get(), &oid, GIT_OBJECT_COMMIT) != 0)
     throw Failed(FailureKind::not_found, "no version " + commit);
-  git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
+  git_checkout_options opts;
+  git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION);
   opts.checkout_strategy = GIT_CHECKOUT_FORCE;
   check(git_checkout_tree(r.get(), target.get(), &opts), "checkout");
   // On a branch's tip, continue that branch.
@@ -398,7 +399,8 @@ VersionGraphData Versions::graph(size_t limit) {
     if (git_repository_head(h.out(), r.get()) == 0) g.branch = git_reference_shorthand(h.get());
   }
   {
-    git_status_options so = GIT_STATUS_OPTIONS_INIT;
+    git_status_options so;
+    git_status_options_init(&so, GIT_STATUS_OPTIONS_VERSION);
     so.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
     Status st;
     if (git_status_list_new(st.out(), r.get(), &so) == 0) g.dirty = git_status_list_entrycount(st.get()) > 0;

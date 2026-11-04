@@ -108,7 +108,8 @@ import TsugumiRPC
       log.add(e)
       // Right after the Agent inspected: the other client saves.
       if case .toolFinished(_, "project_inspect", true, _) = e, once.first() {
-        Task {
+        // (the test's expectations show whether this save went in)
+        _ = Task {
           let snap = try await other.inspect()
           let change = definition
             ? Change.putDefinition(id: "src", cardJSON: #"{"template":"input","params":[{"name":"text","type":"string","data":"theirs"}]}"#, metaJSON: nil)

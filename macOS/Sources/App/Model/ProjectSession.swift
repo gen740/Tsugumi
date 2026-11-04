@@ -1106,7 +1106,7 @@ final class ProjectSession {
         saveError = nil
         forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
       } else {
-        saveError = String(localized: "保存できませんでした: \(error)。変更は保持しています。")
+        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
       }
     }
   }
@@ -1510,15 +1510,14 @@ final class NotificationInbox: @unchecked Sendable {
   /// Everything queued so far (waits until there is something or the stream ended).
   func take() async -> ([NotificationEvent], Bool) {
     while true {
-      lock.lock()
-      if !items.isEmpty || done {
+      // (scoped: an async function never holds the lock across a suspension)
+      let ready: ([NotificationEvent], Bool)? = lock.withLock {
+        guard !items.isEmpty || done else { return nil }
         let batch = items
         items.removeAll(keepingCapacity: true)
-        let d = done
-        lock.unlock()
-        return (batch, d)
+        return (batch, done)
       }
-      lock.unlock()
+      if let ready { return ready }
       await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
         lock.lock()
         if !items.isEmpty || done {

@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
-import Virtualization
+// (its configuration types are not Sendable; they are handed to the VM queue only)
+@preconcurrency import Virtualization
 
 /// The shared VM's boot disk (macOS/Container/vm-boot.nix: kernel and a
 /// small root file system with Nix) and Tsugumi's source, from which the VM
@@ -501,9 +502,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   }
 
   private func boot(_ config: VZVirtualMachineConfiguration) async throws {
+    let handed = OnVMQueue(config)
     try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
       queue.async {
-        let vm = VZVirtualMachine(configuration: config, queue: self.queue)
+        let vm = VZVirtualMachine(configuration: handed.value, queue: self.queue)
         vm.delegate = self
         self.vm = vm
         self.lock.withLock { self.current = ObjectIdentifier(vm) }
@@ -560,8 +562,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       return true
     }
     guard isCurrent else { return }
+    let handed = OnVMQueue(which)
     queue.async {
-      if self.vm === which {
+      if self.vm === handed.value {
         self.vm = nil
         self.fileSystems = []
         self.socket = nil
@@ -609,9 +612,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   }
 
   private func setShare(_ slot: Int, _ dirs: [String: VZSharedDirectory]) async {
+    let handed = OnVMQueue(dirs)
     await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
       queue.async {
-        if slot < self.fileSystems.count { self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: dirs) }
+        if slot < self.fileSystems.count { self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: handed.value) }
         c.resume()
       }
     }
@@ -790,4 +794,11 @@ public final class LoopbackBridge: @unchecked Sendable {
 public func noSigPipe(_ fd: Int32) {
   var one: Int32 = 1
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+}
+
+/// Virtualization's objects are not Sendable: one is handed to the VM's queue
+/// and used only there (the queue Virtualization requires for them).
+private struct OnVMQueue<T>: @unchecked Sendable {
+  let value: T
+  init(_ value: T) { self.value = value }
 }

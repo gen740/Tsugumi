@@ -63,6 +63,7 @@ std::string trim(std::string s) {
 
 struct Server::Command {
   enum class Kind { Reply, Subscribe, Unsubscribe, SetVisible, Broadcast, Close };
+  explicit Command(Kind k) : kind(k) {}
   Kind kind;
   ConnId conn = 0;
   std::string bytes;

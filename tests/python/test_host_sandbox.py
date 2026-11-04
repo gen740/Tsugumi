@@ -29,7 +29,14 @@ def test_a_card_with_network_reaches_nothing_on_this_host(tmp_path):
     listener.listen(1)
     port = listener.getsockname()[1]
     accepted = []
-    threading.Thread(target=lambda: accepted.append(listener.accept()), daemon=True).start()
+
+    def accept():
+        try:
+            accepted.append(listener.accept())
+        except OSError:
+            pass  # the listener closed at the end of the test: nothing came
+
+    threading.Thread(target=accept, daemon=True).start()
     probe = bash(
         f'if (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; then r=connected; else r=refused; fi\n'
         'echo "loopback: $r"\n'
