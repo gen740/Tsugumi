@@ -234,8 +234,10 @@ export function GuideFlyer() {
   }
   const loading = guide.available ? loadingBox() : undefined
   const perch = loading ? undefined : perchBox()
+  const home = !loading && !perch ? homeBox() : undefined
   const goal = loading ? 'loading' : perch ? 'perch' : 'home'
-  const key = goal + (loading ? `${Math.round(loading.left)},${Math.round(loading.top)}` : perch ? `${Math.round(perch.left)},${Math.round(perch.top)}` : '')
+  const at = loading ?? perch ?? home
+  const key = goal + (at ? `${Math.round(at.left)},${Math.round(at.top)}` : '')
   void tick
   useEffect(() => {
     const ms = still ? 0 : 900
@@ -256,6 +258,7 @@ export function GuideFlyer() {
       }
       setInCard(false)
       setArrived(false)
+      if (guide.bubble?.target?.startsWith('demo:')) guide.dismissBubble()
       document.body.classList.add('guide-handoff')
       return flyTo(loading, () => { setInCard(true); document.body.classList.remove('guide-handoff') })
     }
@@ -272,8 +275,9 @@ export function GuideFlyer() {
     if (guide.away) {
       setArrived(false)
       setInCard(false)
+      // No home shown yet (Home has gone, the chat not there yet): it waits where it is.
       const h = homeBox()
-      if (!h) { setAway(false); return }
+      if (!h) return
       return flyTo(h, () => setAway(false))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -347,8 +351,7 @@ async function openDemo(id: string, session?: ProjectSession) {
   }
   try {
     const p = await app.copyDemo(demo.id)
-    // The bird leaves the demo's card: it flies into the loading card.
-    guide.dismissBubble()
+    // The bird stays by the demo's card until the loading card comes, then flies into it.
     guide.startTour(demo, p)
     windowActions?.openProject(p)
   } catch (e) {

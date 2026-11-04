@@ -19,6 +19,7 @@ struct LoadingPresentation<Item: Equatable, Overlay: View>: ViewModifier {
       .overlay {
         if let shown {
           overlay(shown)
+            .environment(\.loadingShown, item != nil)
             .transition(.opacity)
             // let clicks through as soon as loading is over, even while fading
             .allowsHitTesting(item != nil)
@@ -54,6 +55,16 @@ struct LoadingPresentation<Item: Equatable, Overlay: View>: ViewModifier {
       withAnimation(.easeOut(duration: fadeOut)) { shown = nil }
       hiding = nil
     }
+  }
+}
+
+private struct LoadingShownKey: EnvironmentKey { static let defaultValue = true }
+
+extension EnvironmentValues {
+  /// False once loading is over and the overlay is fading out.
+  var loadingShown: Bool {
+    get { self[LoadingShownKey.self] }
+    set { self[LoadingShownKey.self] = newValue }
   }
 }
 

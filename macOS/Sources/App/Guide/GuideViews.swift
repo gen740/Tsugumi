@@ -29,7 +29,12 @@ extension EnvironmentValues {
 final class GuideStage {
   /// The pointed-at view and its frame, while it is on the screen.
   var perch: (id: String, frame: CGRect)?
-  var corner: CGRect = .zero
+  /// The bird's home in this window now (zero: none shown, e.g. between Home and a project).
+  var corner: CGRect = .zero {
+    didSet { if corner != .zero { lastCorner = corner } }
+  }
+  /// Where its home last was: a flight starts there when no home is shown.
+  private(set) var lastCorner: CGRect = .zero
   /// The bird has left its home (no home shows a bird meanwhile, in any window).
   var away = false {
     didSet { if away != oldValue { GuideController.shared.awayWindows += away ? 1 : -1 } }
@@ -138,6 +143,7 @@ struct GuideCorner: View {
         .buttonStyle(.plain)
         .opacity(guide.awayWindows > 0 ? 0 : 1)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
+        .onDisappear { stage?.corner = .zero }
         .help(String(localized: "ガイドのツグミに聞く（\(AppPreferences.shared.shortcut(.toggleGuide).label)）"))
         .accessibilityLabel(String(localized: "ガイドのツグミ"))
         .accessibilityValue(guide.activity ?? (guide.open ? String(localized: "会話を表示中") : ""))
@@ -373,6 +379,7 @@ struct GuideNest: View {
     .frame(width: size * 1.05, height: size * 0.75)
     .opacity(GuideController.shared.awayWindows > 0 ? 0 : 1)
     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
+    .onDisappear { stage?.corner = .zero }
     .help("ツグミ")
     .accessibilityLabel("ツグミ")
     .accessibilityValue(busy ? String(localized: "考えています") : "")
@@ -421,6 +428,8 @@ struct GuideFlyer: View {
   @State private var arrived = false
   /// Landed in the loading card: the card's own bird is shown instead.
   @State private var inCard = false
+  /// Facing left (mirrored); in the loading card it faces as the card's bird does.
+  @State private var facingLeft = true
   @State private var bubbleSize = CGSize(width: 300, height: 90)
 
   private var guide: GuideController { .shared }
@@ -435,12 +444,13 @@ struct GuideFlyer: View {
   }
 
   /// Where the bird goes: into the loading card, beside its target, or home.
-  private enum Goal: Equatable { case loading(CGPoint, CGFloat), perch(CGPoint), home }
+  /// Home is where its home is shown now (nil: none yet; the bird waits where it is).
+  private enum Goal: Equatable { case loading(CGPoint, CGFloat), perch(CGPoint, left: Bool), home(CGPoint?) }
 
   private func goal(_ o: CGPoint, _ size: CGSize) -> Goal {
     if guide.available, window != nil, let l = stage.loadingBird { return .loading(l.feet, l.scale) }
-    if let r = perch { return .perch(feetPoint(r, origin: o, size: size)) }
-    return .home
+    if let r = perch { return .perch(feetPoint(r, origin: o, size: size), left: r.midX > o.x + size.width / 2) }
+    return .home(stage.corner == .zero ? nil : CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 4))
   }
 
   var body: some View {
@@ -449,7 +459,7 @@ struct GuideFlyer: View {
       let size = geo.size
       ZStack(alignment: .topLeading) {
         if stage.away, let f = feet, !inCard {
-          let left = perch.map { $0.midX > o.x + size.width / 2 } ?? true
+          let left = facingLeft
           TimelineView(.animation(minimumInterval: 1 / 30, paused: still)) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
             let flying = ctx.date < flyingUntil
@@ -490,7 +500,7 @@ struct GuideFlyer: View {
   }
 
   private func fly(to goal: Goal) {
-    let home = stage.corner == .zero ? nil : CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 4)
+    let last = stage.lastCorner == .zero ? nil : CGPoint(x: stage.lastCorner.midX, y: stage.lastCorner.maxY - 4)
     let duration = still ? 0 : 0.9
     func go(_ p: CGPoint, scale s: CGFloat, then: @escaping @MainActor () -> Void) {
       flyingUntil = Date().addingTimeInterval(duration)
@@ -504,32 +514,46 @@ struct GuideFlyer: View {
     case .loading(let p, let s):
       // From wherever it is (its home, a demo's card) into the loading card's bird.
       if !stage.away {
-        guard let home else { return }
-        feet = home
+        guard let start = last else {
+          // Nowhere to come from: it is the card's bird at once.
+          stage.away = true
+          inCard = true
+          return
+        }
+        feet = start
         scale = Self.birdScale
         stage.away = true
       }
       inCard = false
       arrived = false
+      facingLeft = false
       stage.handoff = true
+      // What it said by the demo's card is done.
+      if guide.bubble?.target?.hasPrefix("demo:") == true { guide.dismissBubble() }
       go(p, scale: s) { inCard = true; stage.handoff = false }
-    case .perch(let p):
+    case .perch(let p, let left):
       if !stage.away || inCard {
         // Out of the loading card where it was, from home, or (no home) right there.
-        feet = inCard ? feet : (home ?? p)
-        if !inCard { scale = Self.birdScale }
+        if !inCard { feet = last ?? p; scale = Self.birdScale }
         inCard = false
         stage.away = true
       }
       arrived = false
+      facingLeft = left
       go(p, scale: Self.birdScale) { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
-    case .home:
+    case .home(let home):
       guard stage.away else { return }
       arrived = false
-      inCard = false
       stage.handoff = false
-      guard let home else { stage.away = false; return }
-      go(home, scale: Self.birdScale) { stage.away = false }
+      if inCard {
+        // Out of the loading card: from the card's bird, as it is.
+        inCard = false
+        facingLeft = false
+      }
+      // No home shown yet (Home has gone, the chat not there yet): it waits where it is.
+      guard let home else { return }
+      facingLeft = home.x < (feet?.x ?? home.x)
+      go(home, scale: Self.birdScale) { stage.away = false; facingLeft = true }
     }
   }
 
@@ -612,8 +636,7 @@ struct GuidePerformer {
     }
     do {
       let url = try model.copyDemo(demo)
-      // The bird leaves the demo's card: it flies into the loading card.
-      guide.dismissBubble()
+      // The bird stays by the demo's card until the loading card comes, then flies into it.
       guide.startTour(demo, copy: url)
       window?.openProject(url)
     } catch {

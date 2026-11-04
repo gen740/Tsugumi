@@ -47,6 +47,8 @@ struct TsugumiLoadingCard: View {
   @Environment(\.openWindow) private var openWindow
   /// Tsugumi's flights in this window: the guide's bird lands on this card's bird.
   @Environment(GuideStage.self) private var stage: GuideStage?
+  /// Loading is over and the card fades out: the guide's bird leaves it now, not after the fade.
+  @Environment(\.loadingShown) private var loadingShown
 
   var body: some View {
     let f = content.fraction.map { min(1, max(0, $0)) }
@@ -64,12 +66,17 @@ struct TsugumiLoadingCard: View {
           LinearGradient(colors: [.black.opacity(0), .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
             .frame(height: 14).frame(maxHeight: .infinity, alignment: .bottom)
           Group {
-            if let f { TsugumiProgressScene(fraction: f, catchX: Self.catchX, hidesBird: stage?.handoff ?? false) }
-            else { TsugumiIdleScene(catchX: Self.catchX, hidesBird: stage?.handoff ?? false) }
+            // While the guide's bird flies in, and once it has flown out as the card fades, the card has no bird of its own.
+            let hides = (stage?.handoff ?? false) || (!loadingShown && (stage?.away ?? false))
+            if let f { TsugumiProgressScene(fraction: f, catchX: Self.catchX, hidesBird: hides) }
+            else { TsugumiIdleScene(catchX: Self.catchX, hidesBird: hides) }
           }
         }
         .frame(height: 150)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in stage?.loadingBird = Self.birdFeet(in: r, fraction: f) }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
+          if loadingShown { stage?.loadingBird = Self.birdFeet(in: r, fraction: f) }
+        }
+        .onChange(of: loadingShown) { _, shown in if !shown { stage?.loadingBird = nil } }
         .onDisappear { stage?.loadingBird = nil }
         .environment(\.colorScheme, .dark)
         .clipped()
