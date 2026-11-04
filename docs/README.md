@@ -10,6 +10,8 @@
 | [Vision.md](Vision.md) | 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想 |
 | [Philosophy.md](Philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
 | [Name.md](Name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
+| [Provenance.md](Provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
+| [LicenseAudit.md](LicenseAudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |
 | [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
 | [Versions.md](Versions.md) | 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」 |
 | [security.md](security.md) | 4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
