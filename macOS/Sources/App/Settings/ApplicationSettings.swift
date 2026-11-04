@@ -58,13 +58,21 @@ struct ApplicationSettings: View {
     // A plain list + content (no split view): switching categories, going back
     // and reopening the window always work, whatever a category is doing.
     HStack(spacing: 0) {
-      List(selection: Binding<String?>(get: { projectPane.map { "project." + $0.rawValue } ?? category.rawValue },
+      List(selection: Binding<String?>(get: { projectPane?.selection ?? category.rawValue },
                                        set: { if let v = $0 { stored = v } })) {
-        // The project's settings, while a project is open.
+        Section("アプリ") {
+          ForEach(Category.allCases) { c in
+            Label(c.title, systemImage: c.symbol).tag(Optional(c.rawValue))
+              .accessibilityIdentifier("settings.category.\(c.title)")
+          }
+        }
+        // The open project's settings, under the app's.
         if let project {
           Section {
-            ForEach(ProjectSettingsPane.allCases) { p in
-              Label(p.title, systemImage: p.symbol).tag(Optional("project." + p.rawValue))
+            // Row ids are the selection's values: the List selects by them, so a
+            // pane named like an app category ("general") never selects that category.
+            ForEach(ProjectSettingsPane.allCases, id: \.selection) { p in
+              Label(p.title, systemImage: p.symbol).tag(Optional(p.selection))
             }
           } header: {
             if projects.count > 1 {
@@ -79,12 +87,6 @@ struct ApplicationSettings: View {
                 Text(project.scopeName([])).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
               }
             }
-          }
-        }
-        Section("アプリ") {
-          ForEach(Category.allCases) { c in
-            Label(c.title, systemImage: c.symbol).tag(Optional(c.rawValue))
-              .accessibilityIdentifier("settings.category.\(c.title)")
           }
         }
       }
@@ -137,11 +139,14 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, databases, history, cache
+  case general, canvas, databases, history, cache
   var id: String { rawValue }
+  /// The settings window's selection for this pane.
+  var selection: String { "project." + rawValue }
   var title: String {
     switch self {
-    case .general: return String(localized: "一般")
+    case .general: return String(localized: "名前と実行環境")
+    case .canvas: return "Canvas"
     case .databases: return String(localized: "データベース接続先")
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
@@ -150,6 +155,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .general: return "folder.badge.gearshape"
+    case .canvas: return "rectangle.3.group"
     case .databases: return "cylinder.split.1x2"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
@@ -159,6 +165,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     let name = s.identity.url.lastPathComponent
     switch self {
     case .general, .databases: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
+    case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
     case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
     }
@@ -166,7 +173,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
 
   /// Opens the settings window at a project's pane.
   @MainActor static func open(_ s: ProjectSession, _ pane: ProjectSettingsPane = .general, with openSettings: OpenSettingsAction) {
-    UserDefaults.standard.set("project." + pane.rawValue, forKey: "settings.category")
+    UserDefaults.standard.set(pane.selection, forKey: "settings.category")
     UserDefaults.standard.set(s.identity.url.path, forKey: "settings.project")
     openSettings()
   }
@@ -211,7 +218,7 @@ private struct AppearanceSettings: View {
         Picker("新しいプロジェクトの流れの向き", selection: $prefs.flowDirection) {
           ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
         }
-        .help("新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「一般」で変えます。")
+        .help("新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。")
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)

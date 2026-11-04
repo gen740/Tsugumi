@@ -1,5 +1,5 @@
 // App-wide settings; the category on the left switches the content. While a
-// project is open its own settings come first (kept in the project).
+// project is open its own settings follow the app's (kept in the project).
 import { ReactNode, useEffect, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
@@ -29,15 +29,17 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
-export type ProjectSettingsPane = 'general' | 'databases' | 'history' | 'cache'
+export type ProjectSettingsPane = 'general' | 'canvas' | 'databases' | 'history' | 'cache'
 const PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
-  { id: 'general', title: '一般', icon: 'folder.badge.gearshape' }, { id: 'databases', title: 'データベース接続先', icon: 'cylinder.split.1x2' },
+  { id: 'general', title: '名前と実行環境', icon: 'folder.badge.gearshape' }, { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
+  { id: 'databases', title: 'データベース接続先', icon: 'cylinder.split.1x2' },
   { id: 'history', title: '実行履歴', icon: 'clock.arrow.circlepath' }, { id: 'cache', title: 'ビルドキャッシュ', icon: 'shippingbox' },
 ]
 function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
     case 'general': case 'databases': return `このプロジェクト（${name}/tsugumi.json）`
+    case 'canvas': return `このプロジェクト（${name}/layout.json）`
     case 'history': return `このプロジェクトの実行環境（書き出しは ${name}/.tsugumi/runs.sqlite）`
     case 'cache': return 'このプロジェクトの実行環境（このホスト）'
   }
@@ -99,6 +101,12 @@ export function ApplicationSettings() {
   return (
     <div className="settings-window">
       <div className="settings-nav">
+        <div className="settings-nav-header">アプリ</div>
+        {CATS.map((c) => (
+          <button key={c.id} type="button" className={`nav-row${current === c.id ? ' selected' : ''}`} onClick={() => select(c.id)}>
+            <Icon name={c.icon} />{c.title}
+          </button>
+        ))}
         {project && (
           <>
             <div className="settings-nav-header">
@@ -119,12 +127,6 @@ export function ApplicationSettings() {
             ))}
           </>
         )}
-        <div className="settings-nav-header">アプリ</div>
-        {CATS.map((c) => (
-          <button key={c.id} type="button" className={`nav-row${current === c.id ? ' selected' : ''}`} onClick={() => select(c.id)}>
-            <Icon name={c.icon} />{c.title}
-          </button>
-        ))}
       </div>
       <div className="settings-content">
         <div className="settings-title">{pane && project ? `${pane.title} — ${project.scopeName([])}` : category.title}</div>
@@ -182,7 +184,7 @@ function AppearanceSettings() {
       <Form style={{ width: 340, flex: 'none' }}>
         <Section>
           <Row label="テーマ"><Select<Theme> value={prefs.theme} onChange={(v) => prefs.set('theme', v)} options={options(THEME_LABELS)} /></Row>
-          <Row label="新しいプロジェクトの流れの向き" help="新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「一般」で変えます。">
+          <Row label="新しいプロジェクトの流れの向き" help="新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。">
             <Select<FlowDirection> value={prefs.flowDirection} onChange={(v) => prefs.set('flowDirection', v)} options={options(FLOW_LABELS)} />
           </Row>
           <Row label="グリッドを表示（移動時に吸着）"><Toggle checked={prefs.showGrid} onChange={(v) => prefs.set('showGrid', v)} /></Row>

@@ -41,8 +41,14 @@ struct WorkbenchSidebar: View {
       }
       .listStyle(.sidebar)
       .safeAreaInset(edge: .bottom, spacing: 0) {
-        // The settings window (⌘,) at this project's settings.
+        // The project's versions, and the settings window (⌘,) at its settings.
         HStack {
+          Button {
+            openWindow(id: "versions", value: ProjectRef(path: session.identity.url.path))
+          } label: { Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 13)).frame(width: 26, height: 22) }
+            .buttonStyle(.borderless)
+            .help("版の履歴（git、⌥⌘Y）")
+            .accessibilityLabel("版の履歴")
           Button {
             ProjectSettingsPane.open(session, with: openSettings)
           } label: { Image(systemName: "gearshape").font(.system(size: 13)).frame(width: 26, height: 22) }

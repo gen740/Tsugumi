@@ -262,19 +262,16 @@ struct CanvasDraftControls: View {
     let drafts = session.cards(in: tab.scope).compactMap { $0["id"]?.string }.map { key(tab.scope + [$0]) }
       .filter { session.kind($0) == .draft }
     if !drafts.isEmpty {
-      HStack(spacing: 8) {
-        Label("Draft \(drafts.count) 件", systemImage: "pencil.and.outline")
-        Button {
-          workspace.showChat = true
-          model.chat(for: session).generateDrafts(scope: tab.scope, cards: drafts)
-        } label: { Label("Card を生成", systemImage: "wand.and.stars") }
-          .disabled(session.dirty || !session.connected || session.runActive || model.chat(for: session).busy)
-          .help(session.dirty ? "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" :
-                  "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。")
-      }
-      .font(.callout)
-      .padding(.horizontal, 10).padding(.vertical, 6)
-      .background(.regularMaterial, in: Capsule())
+      Button {
+        workspace.showChat = true
+        model.chat(for: session).generateDrafts(scope: tab.scope, cards: drafts)
+      } label: { Label("Card を生成", systemImage: "wand.and.stars") }
+        .disabled(session.dirty || !session.connected || session.runActive || model.chat(for: session).busy)
+        .help(session.dirty ? "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" :
+                "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。")
+        .font(.callout)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
     }
   }
 }

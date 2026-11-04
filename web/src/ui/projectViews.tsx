@@ -356,9 +356,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
 // ---- Project settings --------------------------------------------------------------
 
-export type ProjectSettingsPane = 'general' | 'databases' | 'history' | 'cache'
+export type ProjectSettingsPane = 'general' | 'canvas' | 'databases' | 'history' | 'cache'
 export const PROJECT_SETTINGS_PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
-  { id: 'general', title: '一般', icon: 'folder.badge.gearshape' },
+  { id: 'general', title: '名前と実行環境', icon: 'folder.badge.gearshape' },
+  { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
   { id: 'databases', title: 'データベース接続先', icon: 'cylinder.split.1x2' },
   { id: 'history', title: '実行履歴', icon: 'clock.arrow.circlepath' },
   { id: 'cache', title: 'ビルドキャッシュ', icon: 'shippingbox' },
@@ -369,6 +370,7 @@ export function ProjectSettingsContent({ pane, session }: { pane: ProjectSetting
   useObserve(session)
   switch (pane) {
     case 'general': return <GeneralProjectSettings key={session.key} session={session} />
+    case 'canvas': return <CanvasProjectSettings session={session} />
     case 'databases': return <DatabaseSettings key={session.key} session={session} />
     case 'history': return <RunHistorySettings key={session.key} session={session} />
     case 'cache': return <CacheSettings key={session.key} session={session} />
@@ -428,12 +430,6 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
               <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? 'この Tsugumi の Nixpkgs に固定' : 'この Tsugumi の Nixpkgs に更新'}</Button></Row>
             )}
           </Section>
-          <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。</span>}>
-            <Row label="流れの向き" help="このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。">
-              <Select<FlowDirection> value={session.flow} onChange={(f) => session.setFlow(f)}
-                options={(Object.keys(FLOW_LABELS) as FlowDirection[]).map((f) => ({ value: f, label: FLOW_LABELS[f] }))} />
-            </Row>
-          </Section>
           <Section>
             <Value label="場所" value={session.dir} />
           </Section>
@@ -444,6 +440,22 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
         <span className="spacer" />
         <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>保存</Button>
       </div>
+    </div>
+  )
+}
+
+/** How the project's Cards are laid out (layout.json, applied at once). */
+function CanvasProjectSettings({ session }: { session: ProjectSession }) {
+  return (
+    <div className="scroll fill">
+      <Form>
+        <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。</span>}>
+          <Row label="流れの向き" help="このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。">
+            <Select<FlowDirection> value={session.flow} onChange={(f) => session.setFlow(f)}
+              options={(Object.keys(FLOW_LABELS) as FlowDirection[]).map((f) => ({ value: f, label: FLOW_LABELS[f] }))} />
+          </Row>
+        </Section>
+      </Form>
     </div>
   )
 }

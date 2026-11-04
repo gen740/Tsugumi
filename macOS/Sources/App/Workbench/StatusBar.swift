@@ -11,6 +11,7 @@ struct StatusBar: View {
   @State private var showSync = false
   @State private var showIssues = false
   @State private var confirmDiscard = false
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     // Full, compact and minimal layouts: the bar never overlaps itself, and
@@ -41,6 +42,7 @@ struct StatusBar: View {
       Divider().frame(height: 14)
       syncState(short: compact).fixedSize()
       if !compact {
+        revision.fixedSize()
         Divider().frame(height: 14)
         counts.fixedSize()
       }
@@ -97,7 +99,7 @@ struct StatusBar: View {
         switch session.syncState {
         case .saved:
           Image(systemName: "checkmark.icloud").foregroundStyle(.green)
-          Text(short ? String(localized: "保存済み") : String(localized: "保存済み · rev \(session.rev)"))
+          Text("保存済み")
         case .waitingForRun:
           Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
           Text(short ? String(localized: "実行後に保存") : String(localized: "実行が終わったら保存します"))
@@ -118,6 +120,23 @@ struct StatusBar: View {
     .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
   }
 
+  /// The saved revision; the project's versions (git) open from it.
+  private var revision: some View {
+    Button(action: openVersions) {
+      HStack(spacing: 4) {
+        Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.secondary)
+        Text(verbatim: "rev \(session.rev)").monospacedDigit()
+      }
+    }
+    .buttonStyle(StatusButtonStyle())
+    .help(String(localized: "版の履歴を開く（確定 revision \(session.rev)、⌥⌘Y）"))
+    .accessibilityLabel(String(localized: "版の履歴"))
+  }
+
+  private func openVersions() {
+    openWindow(id: "versions", value: ProjectRef(path: session.identity.url.path))
+  }
+
   private var syncDetail: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("保存・同期").font(.headline)
@@ -136,6 +155,11 @@ struct StatusBar: View {
         Button("外部の変更を再読込") { Task { await session.reloadExternal() } }
           .disabled(!session.connected)
           .help("Tsugumi の外で編集されたファイルを取り込みます")
+        Button("版の履歴…") {
+          showSync = false
+          openVersions()
+        }
+        .help("実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます")
       }
     }
     .padding(14)

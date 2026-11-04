@@ -343,12 +343,18 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         </span>
         <span className="vdivider sb-not-min" />
         <StatusButton buttonRef={syncRef} help="保存・同期の詳細" onClick={() => setShowSync(!showSync)}>
-          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span className="sb-long">保存済み · rev {String(session.rev)}</span><span className="sb-short">保存済み</span></>}
+          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>保存済み</span></>}
           {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">実行が終わったら保存します</span><span className="sb-short">実行後に保存</span></>}
           {sync.kind === 'saving' && <><Spinner small /><span>保存中…</span></>}
           {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>同期できません</span></>}
           {sync.kind === 'offline' && <><Icon name="icloud.slash" className="secondary" /><span>未接続</span></>}
         </StatusButton>
+        {/* The saved revision; the project's versions (git) open from it. */}
+        <span className="sb-full">
+          <StatusButton label="版の履歴" help={`版の履歴を開く（確定 revision ${String(session.rev)}）`} onClick={() => app.openWindow(session, { kind: 'versions' })}>
+            <Icon name="point.3.connected.trianglepath.dotted" /><span className="mono-digits">rev {String(session.rev)}</span>
+          </StatusButton>
+        </span>
         <Popover open={showSync} onClose={() => setShowSync(false)} anchor={syncRef} width={440}>
           <div className="popover-body">
             <div className="headline">保存・同期</div>
@@ -364,6 +370,8 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
                 </>
               )}
               <Button disabled={!session.connected} help="Tsugumi の外で編集されたファイルを取り込みます" onClick={() => void session.reloadExternal()}>外部の変更を再読込</Button>
+              <Button icon="point.3.connected.trianglepath.dotted" help="実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます"
+                onClick={() => { setShowSync(false); app.openWindow(session, { kind: 'versions' }) }}>版の履歴…</Button>
             </div>
           </div>
         </Popover>

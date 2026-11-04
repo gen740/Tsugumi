@@ -183,7 +183,6 @@ export function CanvasDraftControls({ workspace, session, tab }: { workspace: Wo
   if (!drafts.length) return null
   return (
     <div className="capsule material cv-drafts">
-      <span className="label"><Icon name="pencil.and.outline" /><span>Draft {drafts.length} 件</span></span>
       <Button icon="wand.and.stars" small disabled={session.dirty || !session.connected || session.runActive || chat.busy}
         help={session.dirty ? '先に変更を保存してください（配線と Draft の内容を確定してから生成します）'
           : 'この階層の Draft をチャットで実装します。進捗はチャットに表示されます。'}

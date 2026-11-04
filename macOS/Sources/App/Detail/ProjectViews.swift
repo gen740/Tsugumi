@@ -373,6 +373,7 @@ struct ProjectSettingsContent: View {
   var body: some View {
     switch pane {
     case .general: GeneralProjectSettings(session: session)
+    case .canvas: CanvasProjectSettings(session: session)
     case .databases: DatabaseSettings(session: session)
     case .history: RunHistorySettings(session: session)
     case .cache: CacheSettings(session: session)
@@ -402,12 +403,6 @@ private struct GeneralProjectSettings: View {
         }
         Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)
-        Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
-          ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
-        }
-        .help("このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
-        Label("変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
-          .font(.caption).foregroundStyle(.orange)
         LabeledContent("場所", value: session.identity.url.path)
       }
       .formStyle(.grouped)
@@ -433,6 +428,23 @@ private struct GeneralProjectSettings: View {
       name = session.project["name"]?.string ?? ""
       pkgs = session.project["pkgsPath"]?.string ?? ""
     }
+  }
+}
+
+/// How the project's Cards are laid out (layout.json, applied at once).
+private struct CanvasProjectSettings: View {
+  let session: ProjectSession
+
+  var body: some View {
+    Form {
+      Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
+        ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
+      }
+      .help("このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
+      Label("変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
+        .font(.caption).foregroundStyle(.orange)
+    }
+    .formStyle(.grouped)
   }
 }
 

@@ -75,7 +75,6 @@
 "Card 設定を開く" = "Open Card Settings";
 "Card「%@」の定義（definitions/%@/）です。" = "The definition of Card “%@” (definitions/%@/).";
 "ChatGPT アカウントでの接続" = "Connecting with a ChatGPT account";
-"Draft %lld 件" = "%lld Drafts";
 "Draft %lld 枚（%@）から Card を生成します" = "Generating Cards from %lld Drafts (%@)";
 "Draft Card を追加" = "Add Draft Card";
 "Draft · %@" = "Draft · %@";
@@ -209,6 +208,7 @@
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
+"このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "この仮の入出力を削除" = "Delete this provisional input or output";
@@ -465,7 +465,6 @@
 "保存先" = "Saved in";
 "保存先: " = "Saved in: ";
 "保存済み" = "Saved";
-"保存済み · rev %llu" = "Saved · rev %llu";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
 "保持する出力" = "Output to retain";
@@ -559,6 +558,7 @@
 "合流" = "Merge";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
+"名前と実行環境" = "Name and Environment";
 "名前に使えるのは英数字と - _ . だけです（128 文字まで）。" = "A name may contain only letters, digits and - _ . (up to 128 characters).";
 "名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。" = "The name is the Card's ID and its definition folder name (definitions/<name>/). Changing it carries over connections, layout and run history (saved at once).";
 "名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ" = "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.";
@@ -613,6 +613,7 @@
 "実行 revision" = "Execution revision";
 "実行: %@" = "Run: %@";
 "実行が終わったら保存します" = "Saved when the run ends";
+"実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます" = "Shows the versions kept at each run (git) with their branches, tags and run results";
 "実行されていません" = "Not run";
 "実行されませんでした" = "Did not run";
 "実行しています" = "Running";
@@ -732,7 +733,7 @@
 "新しいプロジェクト…" = "New Project…";
 "新しいプロジェクトの流れの向き" = "Flow direction of new projects";
 "新しい会話" = "New Conversation";
-"新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「一般」で変えます。" = "The direction new projects lay out their Cards in. For an open project, change it in Settings → This project → General.";
+"新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。" = "The direction new projects lay out their Cards in. For an open project, change it in Settings → This project → Canvas.";
 "新規" = "New";
 "新規プロジェクト" = "New Project";
 "新規プロジェクト…" = "New Project…";
@@ -798,6 +799,8 @@
 "版として残す…" = "Keep as Version…";
 "版の履歴" = "Version History";
 "版の履歴…" = "Version History…";
+"版の履歴を開く（確定 revision %llu、⌥⌘Y）" = "Open the version history (saved revision %llu, ⌥⌘Y)";
+"版の履歴（git、⌥⌘Y）" = "Version history (git, ⌥⌘Y)";
 "版を操作できませんでした" = "The version could not be changed";
 "版を選ぶと、その実行の結果と変わった Card を表示します。" = "Select a version to see its runs and the Cards it changed.";
 "版管理されていません" = "Not versioned";
