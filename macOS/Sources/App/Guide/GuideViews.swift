@@ -504,15 +504,26 @@ struct GuideFlyer: View {
           .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
           .contentShape(Rectangle())
           // Perched, it can be dragged out of the way (its bubble comes along).
-          .gesture(DragGesture(minimumDistance: 3)
-            .updating($drag) { v, s, _ in s = v.translation }
+          .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .updating($drag) { v, s, t in
+              // Under the cursor exactly: no easing of the flights.
+              t.animation = nil
+              s = v.translation
+            }
             .onEnded { v in
               guard let t = guide.bubble?.target else { return }
               let before = nudge?.target == t ? nudge!.by : .zero
               nudge = (t, CGSize(width: before.width + v.translation.width, height: before.height + v.translation.height))
-              if let f = feet { feet = CGPoint(x: f.x + v.translation.width, y: f.y + v.translation.height) }
+              // Where it was let go, at once (not flown there).
+              if let f = feet {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) { feet = CGPoint(x: f.x + v.translation.width, y: f.y + v.translation.height) }
+              }
             })
-          .position(x: f.x - o.x + drag.width, y: f.y - o.y - 320 * scale + 8 + drag.height)
+          .position(x: f.x - o.x, y: f.y - o.y - 320 * scale + 8)
+          .offset(drag)
+          .transaction { if drag != .zero { $0.animation = nil } }
           .allowsHitTesting(arrived)
           .help(arrived ? String(localized: "ドラッグで動かせます") : "")
           .accessibilityHidden(true)
@@ -520,7 +531,9 @@ struct GuideFlyer: View {
             GuideBubbleView(bubble: b, perform: GuidePerformer(model: model, window: window, session: guide.flyerSession,
                                                                tab: guide.flyerTab, openWindow: openWindow, openSettings: openSettings))
               .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-              .position(bubbleCenter(feet: CGPoint(x: f.x - o.x + drag.width, y: f.y - o.y + drag.height), left: left, in: size))
+              .position(bubbleCenter(feet: CGPoint(x: f.x - o.x, y: f.y - o.y), left: left, in: size))
+              .offset(drag)
+              .transaction { if drag != .zero { $0.animation = nil } }
               .transition(.opacity.combined(with: .scale(scale: 0.9)))
           }
         }
@@ -576,6 +589,8 @@ struct GuideFlyer: View {
       if guide.bubble?.target?.hasPrefix("demo:") == true { guide.dismissBubble() }
       go(p, scale: s) { inCard = true; stage.handoff = false }
     case .perch(let p, let left):
+      // Already there (let go after a drag): it stays, no flight.
+      if stage.away, !inCard, feet == p { return }
       if !stage.away || inCard {
         // Out of the loading card where it was, from home, or (no home) right there.
         if !inCard { feet = last ?? p; scale = Self.birdScale }
