@@ -532,7 +532,7 @@ struct GuideSetupView: View {
     do {
       try Keychain.save(k, account: config.name)
     } catch {
-      message = String(localized: "キーを保存できませんでした: \(error)")
+      message = String(localized: "キーを保存できませんでした: \(String(describing: error))")
       return
     }
     key = ""
