@@ -12,7 +12,7 @@ import time
 import pytest
 
 from conftest import ROOT, demo_environment
-from projects import start_run, wait_run
+from projects import ENDED, start_run, wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
@@ -242,12 +242,25 @@ def test_live_stream_keeps_its_pace(live):
     assert st.endedAt - st.startedAt >= 400, st.endedAt - st.startedAt
 
 
+def first_display(c, rid: str, timeout: float = 1800):
+    """The run's first Display; a run that ends without one fails the test
+    at once (a build that could not download, say), never after the timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            return c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=5)
+        except TimeoutError:
+            st = c.call("RunStatusRequest", runId=rid)
+            assert st.state not in ENDED, f"the run ended ({st.state}) before showing anything: {st.failure}"
+    raise TimeoutError("no Display")
+
+
 def test_live_stream_cancel_and_rerun(live):
     c = connect(live)
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
     rid = start_run(c, ["start"])
-    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
+    first_display(c, rid)
     time.sleep(1.0)
     t0 = time.time()
     st = c.call("RunCancelRequest", runId=rid)
@@ -273,7 +286,7 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
     rid = start_run(c, ["start"])
-    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1800)
+    first_display(c, rid)
     c.close()
     live.crash()
     live.start()

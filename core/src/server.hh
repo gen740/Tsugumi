@@ -72,6 +72,9 @@ class RequestSink {
 
 struct ServerOptions {
   std::string unix_path;           // empty: no Unix socket
+  // WebSocket on a Unix socket (0600): the shared VM's projects, reached by
+  // vmd only, so that nothing listens on the VM's loopback.
+  std::string ws_unix_path;
   std::string tcp_host = "0.0.0.0";
   int tcp_port = -1;               // <0: no WebSocket listener
   std::vector<std::string> allowed_origins;
@@ -119,7 +122,7 @@ class Server {
 
   ServerOptions opts_;
   RequestSink* sink_;
-  int unix_fd_ = -1, tcp_fd_ = -1, wake_r_ = -1, wake_w_ = -1;
+  int unix_fd_ = -1, ws_unix_fd_ = -1, tcp_fd_ = -1, wake_r_ = -1, wake_w_ = -1;
   int bound_port_ = -1;
   std::thread thread_;
   std::atomic<bool> stopping_{false};

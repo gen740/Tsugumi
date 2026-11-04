@@ -28,6 +28,7 @@ namespace {
 struct Options {
   stdfs::path project;
   std::string unix_socket;
+  std::string ws_unix_socket;
   std::string listen_host = "127.0.0.1";
   int listen_port = -1;
   stdfs::path control_dir;
@@ -61,6 +62,7 @@ std::optional<Options> parse(int argc, char** argv) {
     };
     if (a == "--project") o.project = next();
     else if (a == "--unix") o.unix_socket = next();
+    else if (a == "--listen-unix-ws") o.ws_unix_socket = next();
     else if (a == "--listen") {
       std::string v = next();
       auto colon = v.rfind(':');
@@ -180,6 +182,7 @@ int run_daemon(int argc, char** argv) {
   }
   ServerOptions sv;
   sv.unix_path = opt.unix_socket;
+  sv.ws_unix_path = opt.ws_unix_socket;
   sv.tcp_host = opt.listen_host;
   sv.tcp_port = opt.listen_port;
   sv.allowed_origins = opt.origins;

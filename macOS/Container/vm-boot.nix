@@ -105,6 +105,15 @@ let
     mount -t tmpfs -o mode=1777 tmpfs /tmp
     mount -t tmpfs -o mode=700 tmpfs /root
     mkdir -p /run/tsugumi
+    # Hardening for code of many projects in one kernel (kernel.nix has the
+    # rest, and no BPF JIT or userfaultfd at all): no kernel addresses or log
+    # for users, ptrace only of descendants, no links or files planted in
+    # shared sticky folders, BPF for root only.
+    for kv in kernel.kptr_restrict=2 kernel.dmesg_restrict=1 kernel.perf_event_paranoid=3 \
+      kernel.yama.ptrace_scope=1 kernel.unprivileged_bpf_disabled=1 fs.protected_symlinks=1 \
+      fs.protected_hardlinks=1 fs.protected_fifos=2 fs.protected_regular=2 fs.suid_dumpable=0; do
+      echo "''${kv#*=}" > "/proc/sys/$(echo "''${kv%%=*}" | tr . /)" 2>/dev/null || echo "sysctl $kv: not set"
+    done
     # A writable /etc: tsugumi-vmd adds one user per project.
     cp -a /etc /run/etc && mount --bind /run/etc /etc
     echo "kernel $(uname -r), $(nproc) CPUs, $(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) MiB"

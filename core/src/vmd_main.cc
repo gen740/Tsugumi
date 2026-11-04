@@ -59,6 +59,7 @@
 #include <sys/prctl.h>
 #include <sys/reboot.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -152,7 +153,6 @@ struct Project {
   std::string id;
   int slot = -1;
   uid_t uid = 0;
-  int port = 0;
   pid_t pid = 0;  // tini, PID 1 of the project's PID namespace
   bool running = false;
 };
@@ -200,16 +200,26 @@ void ensure_user(const std::string& id, uid_t uid) {
   if (!has("/etc/group")) std::ofstream("/etc/group", std::ios::app) << name << ":x:" << uid << ":\n";
 }
 
-struct ChildArgs {
-  std::string id, name;
-  uid_t uid;
-  int slot, port, cpus;
-  int sync_fd;  // read end: the parent has put the child into its cgroup
-  int log_fd;
+// What a project's first process does, prepared by the parent: the child of
+// this multithreaded process only makes system calls (no allocation).
+struct ProjectView {
+  std::string project, control, history, rpc, slots;
+  std::vector<std::pair<std::string, std::string>> extra;  // folders of the Mac / of chats: source, target
 };
 
+struct ChildArgs {
+  std::string name;
+  uid_t uid;
+  int sync_fd;  // read end: the parent has put the child into its cgroup
+  int log_fd;
+  ProjectView view;
+  std::vector<std::string> argv, env;
+  std::vector<char*> av, ev;
+};
+
+// In a child of this multithreaded process: no stdio locks, no allocation.
 void die(const char* what) {
-  std::fprintf(stderr, "vmd child: %s: %s\n", what, std::strerror(errno));
+  ::dprintf(2, "vmd child: %s: %s\n", what, std::strerror(errno));
   _exit(127);
 }
 
@@ -248,38 +258,54 @@ std::vector<std::string> project_env(const std::string& id) {
 
 const std::string kHistory = "/history-disk";
 std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
+// Per project: the folder of its tsugumid's socket (0700, the project's user).
+const std::string kRpc = "/run/tsugumi-rpc";
+std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, its run history at /history, the folders of the Mac it was
 // given (share entries host-<tag>) at /run/tsugumi/host/<tag> and those
 // attached to its chats (chat-<tag>) at /run/tsugumi/chat/<tag>, nothing of the
 // share, the store disk or other projects.
-void enter_project_view(int slot, const std::string& id) {
-  if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) die("make / private");
+ProjectView project_view(int slot, const std::string& id) {
+  ProjectView v;
   std::string dir = opt.host + "/" + std::to_string(slot);
-  std::string p = dir + "/project", c = dir + "/control", h = history_dir(id);
-  if (::mount(p.c_str(), "/project", nullptr, MS_BIND, nullptr) != 0) die("bind /project");
-  if (::mount(c.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0) die("bind /control");
-  if (::mount(h.c_str(), "/history", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /history");
-  if (::mount("tmpfs", "/run/tsugumi", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755") != 0) die("private /run/tsugumi");
-  ::mkdir("/run/tsugumi/host", 0755);
-  ::mkdir("/run/tsugumi/chat", 0755);
+  v.project = dir + "/project";
+  v.control = dir + "/control";
+  v.history = history_dir(id);
+  v.rpc = rpc_dir(id);
+  v.slots = fs::path(opt.host).parent_path().string();
   std::error_code ec;
   for (const auto& e : fs::directory_iterator(dir, ec)) {
     std::string name = e.path().filename().string();
     bool host = name.starts_with("host-"), chat = name.starts_with("chat-");
     // host-<tag> / chat-<tag>: the tag is 16 hex digits, like a project id.
     if (!(host || chat) || !valid_id(name.substr(5))) continue;
-    std::string target = std::string(host ? "/run/tsugumi/host/" : "/run/tsugumi/chat/") + name.substr(5);
-    ::mkdir(target.c_str(), 0755);
-    if (::mount(e.path().c_str(), target.c_str(), nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0)
-      std::fprintf(stderr, "vmd child: bind %s: %s\n", name.c_str(), std::strerror(errno));
-    else
-      std::fprintf(stderr, "vmd child: folder of the Mac %s at %s\n", name.c_str(), target.c_str());
+    v.extra.emplace_back(e.path().string(), std::string(host ? "/run/tsugumi/host/" : "/run/tsugumi/chat/") + name.substr(5));
+    logf("%s: folder %s at %s", id.c_str(), name.c_str(), v.extra.back().second.c_str());
   }
-  if (ec) std::fprintf(stderr, "vmd child: cannot list %s: %s\n", dir.c_str(), ec.message().c_str());
+  if (ec) logf("%s: cannot list %s: %s", id.c_str(), dir.c_str(), ec.message().c_str());
+  return v;
+}
+
+void enter_project_view(const ProjectView& v) {
+  if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) die("make / private");
+  if (::mount(v.project.c_str(), "/project", nullptr, MS_BIND, nullptr) != 0) die("bind /project");
+  if (::mount(v.control.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0) die("bind /control");
+  if (::mount(v.history.c_str(), "/history", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /history");
+  if (::mount("tmpfs", "/run/tsugumi", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755") != 0) die("private /run/tsugumi");
+  // tsugumid's socket: in a folder only this project's user (and vmd) enters.
+  ::mkdir("/run/tsugumi/rpc", 0700);
+  if (::mount(v.rpc.c_str(), "/run/tsugumi/rpc", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind the rpc folder");
+  ::mkdir("/run/tsugumi/host", 0755);
+  ::mkdir("/run/tsugumi/chat", 0755);
+  for (const auto& [source, target] : v.extra) {
+    ::mkdir(target.c_str(), 0755);
+    if (::mount(source.c_str(), target.c_str(), nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0)
+      ::dprintf(2, "vmd child: bind %s: %s\n", source.c_str(), std::strerror(errno));
+  }
   // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
-  if (::umount2(fs::path(opt.host).parent_path().c_str(), MNT_DETACH) != 0) die("hide the slots");
+  if (::umount2(v.slots.c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
   ::umount2(kHistory.c_str(), MNT_DETACH);  // every project's history but this one
   if (::mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777") != 0) die("private /tmp");
@@ -353,22 +379,14 @@ int project_main(void* arg) {
   ::close(a->sync_fd);
   ::dup2(a->log_fd, 1);
   ::dup2(a->log_fd, 2);
-  enter_project_view(a->slot, a->id);
+  enter_project_view(a->view);
   // A fresh /proc for this PID namespace.
   if (::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr) != 0) die("mount /proc");
   ::sethostname(a->name.c_str(), a->name.size());
-  std::string roots = kRoots + "/" + a->id;
   ::chown("/tmp/home", a->uid, a->uid);
   drop_to(a->uid);
-  std::vector<std::string> argv = {opt.tini, "-g", "--", opt.tsugumid, "--project", "/project",
-                                   "--listen", "127.0.0.1:" + std::to_string(a->port), "--control-dir", "/control",
-                                   "--cpus", std::to_string(a->cpus), "--allow-missing-origin",
-                                   "--gcroots-dir", roots, "--history-dir", "/history",
-                                   "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat"};
-  std::vector<std::string> env = project_env(a->id);
-  auto av = cstrings(argv), ev = cstrings(env);
   ::chdir("/project");
-  ::execve(av[0], av.data(), ev.data());
+  ::execve(a->av[0], a->av.data(), a->ev.data());
   die("exec tsugumid");
   return 127;
 }
@@ -397,7 +415,7 @@ std::string mount_slot(int slot) {
 std::string start_project(const std::string& id, int cpus, const std::string& name, int slot) {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
-    return "ok " + std::to_string(it->second.port);
+    return "ok " + id;
   if (slot < 0 || slot > 63) return "error invalid slot";
   for (const auto& [other, op] : projects)
     if (op.running && op.slot == slot) return "error slot " + std::to_string(slot) + " is in use";
@@ -409,7 +427,6 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   pr.id = id;
   pr.slot = slot;
   pr.uid = uid_for(id);
-  pr.port = 7700 + static_cast<int>(pr.uid - 20000);
   ensure_user(id, pr.uid);
   // Build roots of this project, kept while the project exists. Only vmd
   // creates the folder; anything else in its place is replaced, never followed.
@@ -437,17 +454,40 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   if (::lstat(hist.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the run history folder";
   ::lchown(hist.c_str(), pr.uid, pr.uid);
   ::chmod(hist.c_str(), 0700);
+  // The folder of tsugumid's socket: nothing of the project listens on the
+  // VM's loopback (Cards allowed the network share it), and other projects'
+  // users cannot enter this folder.
+  std::string rpc = rpc_dir(id);
+  fs::create_directories(kRpc);
+  ::chmod(kRpc.c_str(), 0711);
+  if (::lstat(rpc.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
+    std::error_code ec;
+    fs::remove(rpc, ec);
+  }
+  ::mkdir(rpc.c_str(), 0700);
+  if (::lstat(rpc.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the rpc folder";
+  ::lchown(rpc.c_str(), pr.uid, pr.uid);
+  ::chmod(rpc.c_str(), 0700);
   std::string cg = cgroup_dir(id);
   fs::create_directories(cg);
+  // The control folder is the project's: a link there is never followed by root.
   std::string log_path = c + "/tsugumid.log";
-  int log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  int log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
   if (log_fd < 0) return std::string("error cannot open tsugumid.log: ") + std::strerror(errno);
   int sync[2];
   if (::pipe2(sync, O_CLOEXEC) != 0) {
     ::close(log_fd);
     return "error pipe";
   }
-  ChildArgs args{id, sanitize_name(name), pr.uid, slot, pr.port, cpus, sync[0], log_fd};
+  ChildArgs args{sanitize_name(name), pr.uid, sync[0], log_fd, project_view(slot, id), {}, {}, {}, {}};
+  args.argv = {opt.tini, "-g", "--", opt.tsugumid, "--project", "/project",
+               "--listen-unix-ws", "/run/tsugumi/rpc/s", "--control-dir", "/control",
+               "--cpus", std::to_string(cpus), "--allow-missing-origin",
+               "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
+               "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat"};
+  args.env = project_env(id);
+  args.av = cstrings(args.argv);
+  args.ev = cstrings(args.env);
   // The child's fds must survive exec only where dup2'ed, so CLOEXEC is fine.
   static thread_local std::vector<char> stack(1 << 20);
   pid_t pid = ::clone(project_main, stack.data() + stack.size(),
@@ -464,8 +504,8 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   pr.pid = pid;
   pr.running = true;
   projects[id] = pr;
-  logf("started %s (uid %u, pid %d, port %d)", id.c_str(), pr.uid, pid, pr.port);
-  return "ok " + std::to_string(pr.port);
+  logf("started %s (uid %u, pid %d)", id.c_str(), pr.uid, pid);
+  return "ok " + id;
 }
 
 bool cgroup_empty(const std::string& id) {
@@ -515,7 +555,7 @@ std::string status() {
   std::lock_guard<std::mutex> l(mu);
   std::string out = "ok";
   for (const auto& [id, p] : projects)
-    if (p.running) out += " " + id + ":" + std::to_string(p.pid) + ":" + std::to_string(p.port);
+    if (p.running) out += " " + id + ":" + std::to_string(p.pid);
   return out;
 }
 
@@ -596,22 +636,32 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     reply(conn, "error openpty");
     return;
   }
+  // Neither end leaks into processes other threads start meanwhile.
   ::fcntl(master, F_SETFD, FD_CLOEXEC);
+  ::fcntl(slave, F_SETFD, FD_CLOEXEC);
+  // The child of this multithreaded process allocates nothing: prepared here.
+  std::vector<std::string> ns_paths;
+  for (const char* ns : {"ipc", "uts", "pid", "mnt"}) ns_paths.push_back("/proc/" + std::to_string(target) + "/ns/" + ns);
+  std::string procs = cgroup_dir(id) + "/cgroup.procs";
+  std::vector<std::string> env = project_env(id);
+  env.push_back("TERM=xterm-256color");
+  env.push_back("PS1=\\[\\e[1;32m\\]\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ ");
+  std::vector<std::string> argv = {opt.bash, "--noprofile", "--norc", "-i"};
+  auto av = cstrings(argv), ev = cstrings(env);
   pid_t pid = ::fork();
   if (pid == 0) {
     // Join the project's namespaces (the PID namespace applies to the next
     // child). All are opened first: /proc changes with the mount namespace.
-    std::vector<int> nsfd;
-    for (const char* ns : {"ipc", "uts", "pid", "mnt"}) {
-      std::string path = "/proc/" + std::to_string(target) + "/ns/" + ns;
-      int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-      if (fd < 0) die(ns);
-      nsfd.push_back(fd);
-    }
+    int nsfd[4];
+    for (int i = 0; i < 4; ++i)
+      if ((nsfd[i] = ::open(ns_paths[i].c_str(), O_RDONLY | O_CLOEXEC)) < 0) die("open a namespace");
     for (int fd : nsfd)
       if (::setns(fd, 0) != 0) die("setns");
     // Into the project's cgroup, so stopping the project ends its terminals too.
-    write_file(cgroup_dir(id) + "/cgroup.procs", std::to_string(::getpid()));
+    if (int fd = ::open(procs.c_str(), O_WRONLY | O_CLOEXEC); fd >= 0) {
+      (void)!::write(fd, "0", 1);
+      ::close(fd);
+    }
     pid_t inner = ::fork();
     if (inner != 0) {
       int st = 0;
@@ -626,11 +676,6 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     if (slave > 2) ::close(slave);
     drop_to(uid);
     ::chdir("/project");
-    std::vector<std::string> env = project_env(id);
-    env.push_back("TERM=xterm-256color");
-    env.push_back("PS1=\\[\\e[1;32m\\]\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ ");
-    std::vector<std::string> argv = {opt.bash, "--noprofile", "--norc", "-i"};
-    auto av = cstrings(argv), ev = cstrings(env);
     ::execve(av[0], av.data(), ev.data());
     die("exec bash");
   }
@@ -741,20 +786,20 @@ void control(int conn) {
 
 void rpc(int conn) {
   std::string id = read_line(conn);
-  int port = 0;
+  bool running = false;
   {
     std::lock_guard<std::mutex> l(mu);
-    if (auto it = projects.find(id); it != projects.end() && it->second.running) port = it->second.port;
+    if (auto it = projects.find(id); it != projects.end() && it->second.running) running = true;
   }
-  if (!port) {
+  if (!running) {
     ::close(conn);
     return;
   }
-  int up = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  sockaddr_in a{};
-  a.sin_family = AF_INET;
-  a.sin_port = htons(static_cast<uint16_t>(port));
-  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  int up = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  sockaddr_un a{};
+  a.sun_family = AF_UNIX;
+  std::string sock = rpc_dir(id) + "/s";
+  std::strncpy(a.sun_path, sock.c_str(), sizeof a.sun_path - 1);
   if (up < 0 || ::connect(up, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
     if (up >= 0) ::close(up);
     ::close(conn);

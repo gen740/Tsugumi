@@ -40,7 +40,7 @@
 
 | デバイス | 内容 | 書込 |
 | --- | --- | --- |
-| rootfs | アプリ同梱の erofs イメージ（Linux カーネル 6.12.28 と Nix、`macOS/Container/vm-boot.nix`）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（`macOS/Container/vm-system.nix`、依存は署名を検証して cache.nixos.org から取得） | 読み取り専用（ソースの共有も読み取り専用） |
+| rootfs | アプリ同梱の erofs イメージ（Linux カーネル 6.12.115 と Nix、`macOS/Container/vm-boot.nix`）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（`macOS/Container/vm-system.nix`、依存は署名を検証して cache.nixos.org から取得） | 読み取り専用（ソースの共有も読み取り専用） |
 | store ディスク | `~/Library/Application Support/Tsugumi/vm/store.img`（全プロジェクト共通の Nix store） | 可 |
 | 実行履歴ディスク | `~/Library/Application Support/Tsugumi/vm/history.img`（全プロジェクトの実行履歴、プロジェクトごとにディレクトリ分離） | 可 |
 | virtiofs（スロットごと） | 開いているプロジェクトのフォルダ（`project`）と、その control フォルダ（`control`） | 可 |
@@ -72,10 +72,12 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
   - `/control` … 自身の control フォルダ
   - `/history` … 自身の実行履歴フォルダ（実行履歴ディスク上、`nosuid,nodev`）
   - 専用の `/tmp` と `/run/tsugumi`（`tmpfs`）
+  - `/run/tsugumi/rpc` … `tsugumid` の待ち受けソケット（WebSocket、Unix ソケット）。実体は `/run/tsugumi-rpc/<id>`（そのプロジェクトの uid だけが入れる 0700 のフォルダ）で、`tsugumi-vmd` がここへ中継します。VM の loopback にはどのプロジェクトのポートもありません（ネットワークを許可した Card は VM のネットワークを共有するため、ポートがあれば他のプロジェクトの `tsugumid` に届いてしまいます）。
   - `/run/tsugumi/host/<tag>`・`/run/tsugumi/chat/<tag>` … そのプロジェクトに共有された Mac のフォルダ（§2、指定時のみ）
   - `/nix` … オーバーレイマウント（共通 store は全プロジェクトから読み取り可能、書き込みは `nix-daemon` 経由のみ）
 - **cgroup**：`/sys/fs/cgroup/tsugumi/<id>` に配置します。プロジェクトを停止する際は `cgroup.kill` によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには一切影響を与えません。
 - **GC root**：`/nix/var/nix/gcroots/tsugumi/projects/<id>/` は `tsugumi-vmd` が root 権限で作成し、親ディレクトリにはプロジェクト側からの書き込み権限を与えません。そのため、他のプロジェクトが先にディレクトリを作って横取りすることはできません（`test_shared_vm.py` で検証済み）。
+- **カーネル**：Linux 6.12 LTS（`macOS/Container/kernel.nix`）から io_uring を外し、非特権 BPF を既定で無効にしています。`/init` が sysctl でカーネルアドレスとログの読み取り、ptrace（子孫のみ）、共有の sticky フォルダでのリンク・ファイルの差し込みを制限します（Yama を有効にしています。BPF JIT と userfaultfd は組み込んでいません）。
 - **ターミナル**：VM 内ターミナルを開く際は、対象プロジェクトの名前空間に `setns` で入り、同じ cgroup に所属させ、プロジェクトの uid に権限を落としてから `bash` を起動します。プロジェクトを閉じればターミナルも終了します。
 
 ### プロジェクト間で共有しているもの
@@ -127,6 +129,7 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 - `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`：ネットワーク経由で取得できる URL を公式 nixpkgs のアーカイブのみに限定しています（`NIX_PATH` も空です）。
 - ビルドは `nix-daemon` のサンドボックス（`sandbox = true`、`build-users-group = nixbld`）内で行われ、`trusted-users = root` のみとしているため、プロジェクト側の uid から substituter や Nix 設定を書き換えることはできません。
 - バイナリキャッシュの取得先は `https://cache.nixos.org` のみとし、署名検証鍵を固定しています。
+- **固定出力 derivation（`fetchurl` など、内容を hash で固定したもの）は、ビルドのときに外部と通信できます**。これは Nix の仕様で、Card の `network` 設定とは別です（`network: false` の Card の `default.nix` でもデータを取得できます）。取得したものは hash と一致しなければ捨てられますが、取得先への通信そのもの（URL に含めた値など）は外へ出ます。
 
 ## 6. RPC の認証
 

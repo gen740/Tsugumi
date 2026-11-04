@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,6 +20,13 @@ pid_t spawn(const Spec& spec) {
   argv.push_back(nullptr);
   for (const auto& e : spec.env) envp.push_back(const_cast<char*>(e.c_str()));
   envp.push_back(nullptr);
+  // The child of a multithreaded process allocates nothing: what it needs is
+  // made here.
+  constexpr size_t kMaxFds = 16;
+  if (spec.fds.size() > kMaxFds) throw std::invalid_argument("too many fds for a child");
+  std::pair<int, int> mapped[kMaxFds];
+  size_t nmapped = 0;
+  for (auto [child, parent] : spec.fds) mapped[nmapped++] = {child, parent};
   int err_pipe[2];
   if (::pipe(err_pipe) != 0) throw std::runtime_error("pipe failed");
   ::fcntl(err_pipe[1], F_SETFD, FD_CLOEXEC);
@@ -42,21 +50,31 @@ pid_t spawn(const Spec& spec) {
     ::dup2(spec.stdout_fd >= 0 ? spec.stdout_fd : devnull, 1);
     ::dup2(spec.stderr_fd >= 0 ? spec.stderr_fd : devnull, 2);
     // Move mapped fds to high numbers first to avoid clobbering.
-    std::vector<std::pair<int, int>> moved;
-    for (auto [child, parent] : spec.fds) {
-      int tmp = ::fcntl(parent, F_DUPFD, 64);
-      moved.emplace_back(child, tmp);
+    for (size_t i = 0; i < nmapped; ++i) mapped[i].second = ::fcntl(mapped[i].second, F_DUPFD, 64);
+    for (size_t i = 0; i < nmapped; ++i) {
+      ::dup2(mapped[i].second, mapped[i].first);
+      ::close(mapped[i].second);
     }
-    for (auto [child, tmp] : moved) {
-      ::dup2(tmp, child);
-      ::close(tmp);
-    }
-    // Close everything else.
-    for (int fd = 3; fd < 1024; ++fd) {
-      bool keep = fd == err_pipe[1];
-      for (auto [child, _] : spec.fds) keep |= fd == child;
-      if (!keep) ::close(fd);
-    }
+    // Close everything else, however high (the daemon may hold thousands).
+    auto keep = [&](int fd) {
+      if (fd == err_pipe[1]) return true;
+      for (size_t i = 0; i < nmapped; ++i)
+        if (fd == mapped[i].first) return true;
+      return false;
+    };
+#ifdef SYS_close_range
+    int from = 3;
+    for (int fd = 3; fd <= 1024 + 64; ++fd)
+      if (keep(fd)) {
+        if (fd > from) ::syscall(SYS_close_range, from, fd - 1, 0);
+        from = fd + 1;
+      }
+    ::syscall(SYS_close_range, from, ~0u, 0);
+#else
+    long max = ::sysconf(_SC_OPEN_MAX);
+    for (int fd = 3; fd < (max > 0 ? max : 65536); ++fd)
+      if (!keep(fd)) ::close(fd);
+#endif
     if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) {
       int e = errno;
       (void)::write(err_pipe[1], &e, sizeof e);

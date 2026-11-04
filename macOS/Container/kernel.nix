@@ -1,23 +1,23 @@
-# Guest kernel for Tsugumi environments (Apple container VMs).
+# Guest kernel of the shared Tsugumi VM (Virtualization.framework), 6.12 LTS.
 #
-# The recommended kernel of Apple container 0.6.0 (6.12.28, kata based) has
-# SELinux built in and as the default LSM. Its inode release hook
-# (selinux_inode_free_security) dereferences NULL when a mount namespace is
-# torn down while its superblock's inodes are evicted -- which happens all the
-# time here (Nix build sandboxes, bubblewrap, container shutdown). The oops
-# leaves the exiting process stuck, the VM never shuts down and `container
-# stop` / `rm` hang. Tsugumi does not use SELinux (Cards are isolated with
-# namespaces by bubblewrap), so this kernel is the same configuration
-# (base-6.12.28.config, read from /proc/config.gz of the recommended kernel)
-# without SELinux. It is passed with `--kernel` to Tsugumi's containers only;
-# the system's default kernel is not changed.
+# The configuration (kernel/base-6.12.28.config) is that of a kata based VM
+# kernel, brought to this version with olddefconfig, without:
+#   SELinux    its inode release hook (selinux_inode_free_security) oopsed on
+#              NULL when a mount namespace was torn down while its inodes were
+#              evicted -- all the time here (Nix build sandboxes, bubblewrap),
+#              leaving the exiting process stuck. Cards are isolated with
+#              namespaces (bubblewrap), not SELinux.
+#   io_uring   a large kernel surface no Card or tool here needs.
+# and with unprivileged BPF off by default (BPF_UNPRIV_DEFAULT_OFF) and Yama
+# (ptrace of descendants only). BPF JIT and userfaultfd are not built in. The
+# rest of the hardening is sysctls set by the VM's /init (vm-boot.nix).
 { lib, stdenv, fetchurl, flex, bison, bc, perl, openssl, elfutils, python3 }:
 stdenv.mkDerivation rec {
   pname = "tsugumi-guest-kernel";
-  version = "6.12.28";
+  version = "6.12.115";
   src = fetchurl {
     url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${version}.tar.xz";
-    hash = "sha256-6KCZGCVirs/3gd5yznaUYecG2Xr0LXQN/yDrRQ3Vdx4=";
+    hash = "sha256-DskP5LIEIrG2ZLd+bS3eIrQL1B5+ssrYrIc5pHScsbs=";
   };
   nativeBuildInputs = [ flex bison bc perl openssl elfutils python3 ];
   enableParallelBuilding = true;
@@ -30,10 +30,14 @@ stdenv.mkDerivation rec {
     chmod u+w .config
     scripts/config --disable SECURITY_SELINUX \
       --disable DEFAULT_SECURITY_SELINUX --enable DEFAULT_SECURITY_DAC \
-      --set-str LSM "landlock,lockdown,yama,loadpin,safesetid,smack,tomoyo,apparmor,ipe,bpf"
+      --set-str LSM "landlock,lockdown,yama,loadpin,safesetid,smack,tomoyo,apparmor,ipe,bpf" \
+      --disable IO_URING --enable BPF_UNPRIV_DEFAULT_OFF --enable SECURITY_YAMA
     make $makeFlags olddefconfig
-    # Fail when the result still has SELinux.
+    # Fail when the result still has SELinux or io_uring, or allows unprivileged BPF.
     ! grep -q '^CONFIG_SECURITY_SELINUX=y' .config
+    ! grep -q '^CONFIG_IO_URING=y' .config
+    grep -q '^CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
+    grep -q '^CONFIG_SECURITY_YAMA=y' .config
     runHook postConfigure
   '';
   buildPhase = ''

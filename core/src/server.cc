@@ -115,22 +115,26 @@ void Server::start() {
   wake_w_ = p[1];
   set_nonblock(wake_r_);
   set_nonblock(wake_w_);
-  if (!opts_.unix_path.empty()) {
-    unix_fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  // The caller holds the project lock, so a leftover socket file is ours to replace.
+  auto listen_unix = [](const std::string& path) {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    if (opts_.unix_path.size() >= sizeof addr.sun_path) throw std::runtime_error("unix socket path too long");
-    std::strcpy(addr.sun_path, opts_.unix_path.c_str());
-    // The caller holds the project lock, so a leftover socket file is ours to replace.
-    ::unlink(opts_.unix_path.c_str());
+    if (path.size() >= sizeof addr.sun_path) throw std::runtime_error("unix socket path too long");
+    std::strcpy(addr.sun_path, path.c_str());
+    ::unlink(path.c_str());
     mode_t old = ::umask(0177);
-    int rc = ::bind(unix_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
+    int rc = ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
     ::umask(old);
     if (rc != 0) throw std::runtime_error("bind unix socket: " + std::string(std::strerror(errno)));
-    ::chmod(opts_.unix_path.c_str(), 0600);
-    ::listen(unix_fd_, 64);
-    set_nonblock(unix_fd_);
-  }
+    ::chmod(path.c_str(), 0600);
+    ::listen(fd, 64);
+    set_nonblock(fd);
+    return fd;
+  };
+  if (!opts_.unix_path.empty()) unix_fd_ = listen_unix(opts_.unix_path);
+  if (!opts_.ws_unix_path.empty()) ws_unix_fd_ = listen_unix(opts_.ws_unix_path);
   if (opts_.tcp_port >= 0) {
     tcp_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
@@ -157,9 +161,10 @@ void Server::stop() {
   if (thread_.joinable()) thread_.join();
   for (auto& [_, c] : conns_) ::close(c->fd);
   conns_.clear();
-  for (int fd : {unix_fd_, tcp_fd_, wake_r_, wake_w_})
+  for (int fd : {unix_fd_, ws_unix_fd_, tcp_fd_, wake_r_, wake_w_})
     if (fd >= 0) ::close(fd);
   if (!opts_.unix_path.empty()) ::unlink(opts_.unix_path.c_str());
+  if (!opts_.ws_unix_path.empty()) ::unlink(opts_.ws_unix_path.c_str());
 }
 
 void Server::wake() {
@@ -689,6 +694,7 @@ void Server::loop() {
     fds.push_back({wake_r_, POLLIN, 0});
     ids.push_back(0);
     if (unix_fd_ >= 0) { fds.push_back({unix_fd_, POLLIN, 0}); ids.push_back(0); }
+    if (ws_unix_fd_ >= 0) { fds.push_back({ws_unix_fd_, POLLIN, 0}); ids.push_back(0); }
     if (tcp_fd_ >= 0) { fds.push_back({tcp_fd_, POLLIN, 0}); ids.push_back(0); }
     for (auto it = conns_.begin(); it != conns_.end();) {
       Conn& c = *it->second;
@@ -719,6 +725,10 @@ void Server::loop() {
     ++i;
     if (unix_fd_ >= 0) {
       if (fds[i].revents & POLLIN) accept_on(unix_fd_, false);
+      ++i;
+    }
+    if (ws_unix_fd_ >= 0) {
+      if (fds[i].revents & POLLIN) accept_on(ws_unix_fd_, true);
       ++i;
     }
     if (tcp_fd_ >= 0) {
