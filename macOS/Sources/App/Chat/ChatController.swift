@@ -234,6 +234,7 @@ final class ChatController {
     failed = false
     usageLimited = false
     status = nil
+    demoMode = false
     currentId = id
     let agent: Agent
     do {
@@ -315,8 +316,13 @@ final class ChatController {
 
   // MARK: - Skills and references
 
+  /// The built-in $demo: Tsugumi of this chat shows the screen around (it flies only then).
+  static let demoSkill = Skill(name: "demo", description: String(localized: "ツグミが画面を飛び回って、デモや画面の使い方を案内します"),
+                               path: "builtin:demo", content: Agent.demoSkill, source: "Tsugumi")
+
   func reloadSkills() {
-    var out = loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
+    var out = [Self.demoSkill]
+    out += loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
     for f in AppPreferences.shared.skillFolders where f.enabled {
       out += loadSkills(in: URL(fileURLWithPath: f.path), source: URL(fileURLWithPath: f.path).lastPathComponent)
     }
@@ -370,6 +376,7 @@ final class ChatController {
     guard let agent, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     var prompt = text
     let used = skills(in: text)
+    if used.contains(where: { $0.name == "demo" }) { demoMode = true }
     for s in used { prompt += "\n\n[Skill \(s.name)]\n\(s.content)" }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
     if !refs.isEmpty { prompt += "\n\n[References]\n" + refs.map(describe).joined(separator: "\n") }
@@ -385,6 +392,10 @@ final class ChatController {
     }
   }
 
+  /// Demo mode ($demo, or a demo tour): the bird flies about the screen for this
+  /// chat; it ends with the tour's farewell. Otherwise the chat is a chat.
+  private(set) var demoMode = false
+
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
   private(set) var choices: [String] = []
   private(set) var offered: [GuideAction] = []
@@ -394,6 +405,12 @@ final class ChatController {
   /// Something the app tells Tsugumi (a tour step, a run that ended); one that
   /// comes while it answers waits for the answer to end.
   func tell(prompt: String, display: String) {
+    // A tour is demo mode: the skill comes with its first note.
+    var prompt = prompt
+    if !demoMode {
+      prompt += "\n\n[Skill demo]\n" + Agent.demoSkill
+      demoMode = true
+    }
     if busy {
       notes.append((prompt, display))
       return
@@ -608,7 +625,9 @@ final class ChatController {
       let shown = GuideAction.parse(args)
       choices = shown.choices
       offered = shown.actions
-      GuideController.shared.chatShow(self, arguments: args)
+      // The bird moves only in demo mode; after the farewell the chat is a chat again.
+      if demoMode { GuideController.shared.chatShow(self, arguments: args) }
+      if shown.endTour { demoMode = false }
     case .toolFinished(_, "guide_show", _, _):
       break
     case .toolStarted(_, let name, let args):

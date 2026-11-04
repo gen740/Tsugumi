@@ -8,8 +8,6 @@ struct MainWindow: View {
   @Environment(AppModel.self) private var model
   @State private var workspace = Workspace()
   @State private var switchError: String?
-  /// Where Tsugumi's targets and home are in this window, for its flights.
-  @State private var guideStage = GuideStage()
 
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
@@ -50,8 +48,7 @@ struct MainWindow: View {
     .onReceive(NotificationCenter.default.publisher(for: .appDuplicateProject)) { _ in duplicateProject() }
     .tsugumiLoading(model.preparing)
     // Tsugumi flies over the whole window (from its corner or the chat).
-    .overlay { GuideFlyer() }
-    .environment(guideStage)
+    .modifier(GuideWindowLayer())
     // The guide's buttons act in this window.
     .environment(\.guideWindow, GuideWindowActions(
       openProject: { url in workspace.session == nil ? open(url) : openFromCopy(url) },

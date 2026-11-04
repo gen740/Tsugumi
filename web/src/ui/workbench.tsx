@@ -79,6 +79,29 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   useEffect(() => {
     if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)
   }, [session])
+  // Tsugumi opens a Card's settings to show it, and points into a Card in Card
+  // (or back at a root Card): the canvas shows that workflow.
+  useObserve(guide)
+  useEffect(() => {
+    const r = guide.openRequest
+    if (!onSwitchProject || !r) return
+    guide.openRequest = undefined
+    const p = r.slice(5)
+    const k = session.instance(p) ? p : key([...(tab?.scope ?? []), ...p.split('/')])
+    if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
+  }, [guide.openRequest])
+  useEffect(() => {
+    const s = guide.scopeRequest
+    if (!onSwitchProject || !s || !tab) return
+    guide.scopeRequest = undefined
+    if (session.kind(key(s)) === 'subgraph') tab.enter(s)
+  }, [guide.scopeRequest])
+  useEffect(() => {
+    const h = guide.highlight
+    if (!onSwitchProject || !h?.startsWith('card:') || h.slice(5).includes('/') || !tab?.scope.length) return
+    const id = h.slice(5)
+    if (!session.instance(key([...tab.scope, id])) && session.instance(key([id]))) tab.enter([])
+  }, [guide.highlight])
   return (
     <div className="window workflow-window">
       {workspace.showSidebar && tab && (

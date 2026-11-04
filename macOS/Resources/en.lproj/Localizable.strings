@@ -390,6 +390,7 @@
 "チャットを閉じる（%@）" = "Close the chat (%@)";
 "チャットを開く（%@）" = "Open the chat (%@)";
 "ツグミ" = "Tsugumi";
+"ツグミが画面を飛び回って、デモや画面の使い方を案内します" = "Tsugumi flies about the screen and shows you demos and how things work";
 "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。" = "I'm Tsugumi. Ask me to plan, build or edit a workflow, or how to use the app.";
 "ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and the chat's Agent use an OpenAI or Anthropic model with your API key. A key for either one is enough. It is kept only in this Mac's keychain, never in projects, conversation records or logs.";
 "ツグミに質問" = "Ask Tsugumi";

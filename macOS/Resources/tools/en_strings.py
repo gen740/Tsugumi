@@ -1123,6 +1123,7 @@ EN = {
 "天文・地震・タンパク質のデータ": "Astronomy, seismic and protein data",
 "定番のデモを見る": "See the Standard Demo",
 "興味のあること（例: 画像処理）": "What interests you (e.g. image processing)",
+"ツグミが画面を飛び回って、デモや画面の使い方を案内します": "Tsugumi flies about the screen and shows you demos and how things work",
 }
 
 

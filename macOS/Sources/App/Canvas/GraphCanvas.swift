@@ -459,7 +459,7 @@ struct GraphCanvas: View {
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil)
       .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
-      .guideTarget("card:\(path(k).last ?? k)", radius: 12)
+      .guideTarget("card:\(k)", radius: 12)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }

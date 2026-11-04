@@ -62,7 +62,7 @@ span[data-guide] { display: inline-flex; }
 
 /* The flight over the whole page. */
 .guide-flyer { position: fixed; inset: 0; pointer-events: none; z-index: 1500; }
-.guide-flying-bird { position: fixed; width: 90px; height: 64px; transition: left 0.9s ease-in-out, top 0.9s ease-in-out; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)); }
+.guide-flying-bird { position: fixed; width: 90px; height: 64px; transition: left 0.9s ease-in-out, top 0.9s ease-in-out, width 0.9s ease-in-out, height 0.9s ease-in-out; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)); }
 .guide-flying-bird.left .guide-bird { transform: scaleX(-1); }
 .guide-flying-bird.moving:not(.still) { animation: guide-flap 0.18s linear infinite; }
 .guide-flying-bird:not(.moving):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
@@ -72,3 +72,6 @@ span[data-guide] { display: inline-flex; }
 @media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble { transition: none !important; animation: none !important; } }
 .guide-reply-field { display: flex; align-items: center; gap: 4px; }
 .guide-reply-field .field { flex: 1; min-width: 0; font-size: 12.5px; padding: 3px 7px; }
+
+/* The guide's bird is flying into the loading card: the card's bird waits for it. */
+body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }

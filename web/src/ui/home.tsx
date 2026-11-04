@@ -169,7 +169,7 @@ export function TsugumiLoadingCard({ content, onCancel }: { content: LoadingCont
         <div className="loading-picture">
           <LowPolyBackground />
           <div className="loading-shade" />
-          <TsugumiIdleScene birdScale={0.22} />
+          <div className="fill-abs" data-guide-loading=""><TsugumiIdleScene birdScale={0.22} /></div>
           {f !== undefined && <div className="loading-progress" style={{ width: `${f * 100}%` }} />}
         </div>
         <div className="loading-text">

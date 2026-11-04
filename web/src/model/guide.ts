@@ -37,11 +37,11 @@ export type GuideScreen = 'home' | 'demos' | 'project'
 
 /** A guide_show call: where the bird flies, what it says there, the replies
  *  it offers to tap and the buttons that act. */
-export interface GuideShow { highlight?: string; say?: string; choices: string[]; actions: GuideAction[]; endTour?: boolean }
+export interface GuideShow { highlight?: string; say?: string; choices: string[]; actions: GuideAction[]; endTour?: boolean; open?: string }
 
 /** What the bird says in its bubble, where it is (target; undefined: at
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
-export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean }
+export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean }
 
 /** The opening of a reply for the bubble: its first sentences, up to about 120 characters. */
 export function firstSentence(text: string): string | undefined {
@@ -74,7 +74,8 @@ export function parseShow(args: string): GuideShow {
   const say = typeof v?.say === 'string' ? v.say.trim() : ''
   const choices = (Array.isArray(v?.choices) ? v.choices : []).filter((c: unknown): c is string => typeof c === 'string' && !!c.trim())
     .map((c: string) => c.trim()).slice(0, 4)
-  return { highlight: h || undefined, say: say || undefined, choices, actions, endTour: v?.endTour === true }
+  return { highlight: h || undefined, say: say || undefined, choices, actions, endTour: v?.endTour === true,
+    open: typeof v?.open === 'string' ? v.open.trim() : undefined }
 }
 
 const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
@@ -111,6 +112,10 @@ export class GuideController extends Observable {
   contextTab?: WorkflowTab
   /** The bird has left home (its home shows no bird meanwhile). */
   away = false
+  /** A Card settings window to open ("card:<path>"), and a workflow scope to
+   *  show (pointing into a Card in Card): taken by the project's workbench. */
+  openRequest?: string
+  scopeRequest?: string[]
   /** Home's demo list asked for by the guide (show_demos). */
   demosRequested = false
   private n = 0
@@ -297,12 +302,10 @@ export class GuideController extends Observable {
       case 'toolStarted':
         if (e.name === 'guide_show') {
           const shown = parseShow(e.arguments)
-          if (shown.endTour) this.endTour()
-          this.point(shown.highlight)
+          this.speakingChat = undefined
+          this.show(shown)
           this.pending.push(...shown.actions)
           this.pendingChoices.push(...shown.choices)
-          this.speakingChat = undefined
-          this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight }
         } else {
           this.activity = e.name.startsWith('run') || e.name === 'log_range' ? '実行の様子を見ています' : 'プロジェクトを読んでいます'
         }
@@ -345,6 +348,7 @@ export class GuideController extends Observable {
       if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
       if (!b.say) b = { ...b, say: firstSentence(reply) }
       this.bubble = !b.say && !b.choices.length && !b.actions.length && !b.target ? undefined : b
+      this.leaveAfterFarewell()
     }
     if (!this.pending.length && !this.pendingChoices.length) return
     // Only the newest buttons and choices are offered.
@@ -380,12 +384,24 @@ export class GuideController extends Observable {
   /** The chat's Tsugumi called guide_show: the bird flies and speaks for it. */
   chatShow(chat: ChatController, args: string) {
     if (!this.available) return
-    const shown = parseShow(args)
-    if (shown.endTour) this.endTour()
     this.speakingChat = chat
-    this.highlight = shown.highlight
-    this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight }
+    this.show(parseShow(args))
     this.changed()
+  }
+
+  /** A guide_show of either Tsugumi: where the bird goes, what opens, what it says. */
+  private show(shown: GuideShow) {
+    if (shown.endTour) this.endTour()
+    if (shown.open?.startsWith('card:')) this.openRequest = shown.open
+    this.point(shown.highlight)
+    this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight, farewell: shown.endTour }
+  }
+
+  /** After its last words the bird flies home by itself. */
+  private leaveAfterFarewell() {
+    const b = this.bubble
+    if (!b?.farewell || b.thinking) return
+    setTimeout(() => { if (this.bubble?.id === b.id) this.dismissBubble() }, 7000)
   }
 
   /** The chat answers: a bubble that is out shows that it thinks. */
@@ -402,6 +418,7 @@ export class GuideController extends Observable {
     if (b.thinking) b = { id: ++this.n, choices: [], actions: [], target: b.target }
     if (!b.say) b = { ...b, say: firstSentence(reply) }
     this.bubble = !b.say && !b.choices.length && !b.actions.length ? undefined : b
+    this.leaveAfterFarewell()
     this.changed()
   }
 
@@ -463,6 +480,11 @@ export class GuideController extends Observable {
     this.highlight = target
     // A demo's card is in Home's demo list: it opens to show it.
     if (target?.startsWith('demo:')) this.demosRequested = true
+    // A Card inside a Card in Card: its workflow opens on the canvas.
+    if (target?.startsWith('card:')) {
+      const parts = target.slice(5).split('/')
+      if (parts.length > 1) this.scopeRequest = parts.slice(0, -1)
+    }
   }
 
   clearHighlight() {

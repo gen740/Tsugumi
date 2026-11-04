@@ -28,6 +28,13 @@ import Testing
   #expect(GuideController.firstSentence("   ") == nil)
   #expect((GuideController.firstSentence(String(repeating: "あ", count: 200)) ?? "").count == 139)
   #expect(GuideAction.parse(#"{"endTour": true}"#).endTour && !GuideAction.parse("{}").endTour)
+  #expect(GuideAction.parse(#"{"open": " card:archive/copy ", "highlight": "param:rows"}"#).open == "card:archive/copy")
+}
+
+/// "card:<id>" also points at that Card inside the Card in Card on the screen.
+@MainActor @Test func aCardIsFoundInsideACardInCard() {
+  let g = GuideController.shared
+  #expect(!g.points(at: "card:archive/copy"))
 }
 
 /// The tour's copy is recognised whichever spelling of its folder a window has.

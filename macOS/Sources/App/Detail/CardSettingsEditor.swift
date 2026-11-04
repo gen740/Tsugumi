@@ -678,6 +678,7 @@ private struct ParamRow: View {
         TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
       }
       Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
+        .guideTarget("param:\(name)")
     }
   }
 

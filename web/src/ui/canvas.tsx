@@ -516,7 +516,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const data = scene.data(k)
         const g = scene.geometry(k)
         return (
-          <CardNodeView key={k} data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + (k.split('/').pop() ?? k)}
+          <CardNodeView key={k} data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(screen(scene.origin(k)), g.size.width * z, g.size.height * z)}
             onParamCommit={data.kind === 'input' ? (name, text) => commitParam(k, name, text) : undefined}
             paramsEditable={session.isEditable}

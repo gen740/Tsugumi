@@ -32,7 +32,8 @@ struct GuideAction: Identifiable, Hashable {
     let choices = (v["choices"]?.array ?? []).compactMap { $0.string?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     // Unknown kinds are dropped first; at most three buttons and four choices.
     return GuideShow(highlight: highlight?.isEmpty == false ? highlight : nil, say: say?.isEmpty == false ? say : nil,
-                     choices: Array(choices.prefix(4)), actions: Array(actions.prefix(3)), endTour: v["endTour"]?.bool == true)
+                     choices: Array(choices.prefix(4)), actions: Array(actions.prefix(3)), endTour: v["endTour"]?.bool == true,
+                     open: v["open"]?.string?.trimmingCharacters(in: .whitespaces))
   }
 }
 
@@ -45,6 +46,8 @@ struct GuideShow: Equatable {
   var actions: [GuideAction] = []
   /// The last step of a demo tour: no more notes about runs.
   var endTour = false
+  /// A window to open for the user to look at ("card:<path>": that Card's settings).
+  var open: String?
 }
 
 /// What the bird says in its speech bubble, where it is (target: what it
@@ -57,6 +60,8 @@ struct GuideBubble: Equatable {
   var target: String?
   /// The guide is answering (the bubble shows that it thinks).
   var thinking = false
+  /// The tour's last words: the bird says them, then flies home by itself.
+  var farewell = false
 }
 
 /// The guide reads the project on the user's screen; on Home there is none.
@@ -121,6 +126,12 @@ final class GuideController {
   private(set) var highlight: String?
   /// The bird's speech bubble (nil: it sits quietly in its corner).
   private(set) var bubble: GuideBubble?
+  /// A Card settings window to open ("card:<path>"), taken by the main window that shows the project.
+  var openRequest: String?
+  /// A workflow scope to show (pointing into a Card in Card), taken by the project's window.
+  var scopeRequest: [String]?
+  /// Windows where the bird is out (its homes show no bird meanwhile: one Tsugumi).
+  var awayWindows = 0
   private(set) var tour: Tour?
   /// Home's demo list asked for by the guide (show_demos).
   var demosRequested = false
@@ -250,10 +261,26 @@ final class GuideController {
   func chatShow(_ chat: ChatController, arguments: String) {
     guard available else { return }
     speakingChat = chat
-    let shown = GuideAction.parse(arguments)
+    show(GuideAction.parse(arguments))
+  }
+
+  /// A guide_show of either Tsugumi: where the bird goes, what opens, what it says.
+  private func show(_ shown: GuideShow) {
     if shown.endTour { endTour() }
+    if let o = shown.open, o.hasPrefix("card:") { openRequest = o }
     point(at: shown.highlight)
-    bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight)
+    bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight,
+                         farewell: shown.endTour)
+  }
+
+  /// After its last words the bird flies home by itself.
+  private func leaveAfterFarewell() {
+    guard let b = bubble, b.farewell, !b.thinking else { return }
+    let id = b.id
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(7))
+      if self?.bubble?.id == id { self?.dismissBubble() }
+    }
   }
 
   /// The chat answers: a bubble that is out shows that it thinks.
@@ -268,6 +295,7 @@ final class GuideController {
     if b.thinking { b = GuideBubble(target: b.target) }
     if b.say == nil { b.say = Self.firstSentence(reply) }
     bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty ? nil : b
+    leaveAfterFarewell()
   }
 
   /// The bubble is closed: the bird flies back to its corner.
@@ -410,11 +438,9 @@ final class GuideController {
       if name == "guide_show" {
         speakingChat = nil
         let shown = GuideAction.parse(args)
-        if shown.endTour { endTour() }
-        point(at: shown.highlight)
+        show(shown)
         pending += shown.actions
         pendingChoices += shown.choices
-        bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight)
       } else {
         activity = name.hasPrefix("run") || name == "log_range" ? String(localized: "実行の様子を見ています")
           : String(localized: "プロジェクトを読んでいます")
@@ -453,6 +479,7 @@ final class GuideController {
       if b.thinking { b = GuideBubble(target: b.target) }
       if b.say == nil { b.say = Self.firstSentence(reply) }
       bubble = b.say == nil && b.choices.isEmpty && b.actions.isEmpty && b.target == nil ? nil : b
+      leaveAfterFarewell()
     }
     guard !pending.isEmpty || !pendingChoices.isEmpty else { return }
     // Only the newest buttons and choices are offered.
@@ -537,6 +564,11 @@ final class GuideController {
     highlight = target
     // A demo's card is in Home's demo list: it opens to show it.
     if target?.hasPrefix("demo:") == true { demosRequested = true }
+    // A Card inside a Card in Card: its workflow opens on the canvas.
+    if let t = target, t.hasPrefix("card:") {
+      let parts = t.dropFirst(5).split(separator: "/").map(String.init)
+      if parts.count > 1 { scopeRequest = Array(parts.dropLast()) }
+    }
   }
 
   func clearHighlight() {
@@ -547,10 +579,12 @@ final class GuideController {
   /// Whether a project is the copy of the demo being shown.
   func touring(_ s: ProjectSession) -> Bool { tour.map { Self.same($0.path, s.identity.url) } ?? false }
 
-  /// Whether the guide points at `target` (the run button is also "stop").
+  /// Whether the guide points at `target` (the run button is also "stop";
+  /// "card:<id>" is also that Card inside the Card in Card on the screen).
   func points(at target: String) -> Bool {
     guard let h = highlight else { return false }
-    return h == target || (target == "run" && h == "stop")
+    if h == target || (target == "run" && h == "stop") { return true }
+    return h.hasPrefix("card:") && !h.dropFirst(5).contains("/") && target.hasPrefix("card:") && target.hasSuffix("/" + h.dropFirst(5))
   }
 
   // MARK: - What the guide sees

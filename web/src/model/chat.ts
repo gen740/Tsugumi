@@ -302,6 +302,7 @@ export class ChatController extends Observable {
     if (!text.trim() || !this.available) return
     let prompt = text
     for (const sk of this.skillsIn(text)) prompt += `\n\n[Skill ${sk.name}]\n${sk.content}`
+    if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
     const refs = [...this.references, ...selection.filter((k) => !this.references.some((r) => r.kind === 'card' && r.card === k)).map((card) => ({ kind: 'card' as const, card }))]
     if (refs.length) prompt += '\n\n[References]\n' + refs.map((r) => this.describe(r)).join('\n')
     if (this.folders.length) {
@@ -360,6 +361,10 @@ export class ChatController extends Observable {
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
+  /** Demo mode ($demo, or a demo tour): the bird flies about the screen for
+   *  this chat; it ends with the tour's farewell. Otherwise the chat is a chat. */
+  demoMode = false
+
   /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
   choices: string[] = []
   offered: GuideAction[] = []
@@ -369,6 +374,12 @@ export class ChatController extends Observable {
   /** Something the app tells Tsugumi (a tour step, a run that ended); one that
    *  comes while it answers waits for the answer to end. */
   tell(prompt: string, display: string) {
+    // A tour is demo mode: the skill comes with its first note.
+    if (!this.demoMode) {
+      const demo = this.skills.find((s) => s.name === 'demo')
+      if (demo) prompt += `\n\n[Skill demo]\n${demo.content}`
+      this.demoMode = true
+    }
     if (this.busy) {
       this.notes.push({ prompt, display })
       return
@@ -444,7 +455,9 @@ export class ChatController extends Observable {
           const shown = parseShow(e.arguments)
           this.choices = shown.choices
           this.offered = shown.actions
-          guide.chatShow(this, e.arguments)
+          // The bird moves only in demo mode; after the farewell the chat is a chat again.
+          if (this.demoMode) guide.chatShow(this, e.arguments)
+          if (shown.endTour) this.demoMode = false
           break
         }
         this.items = [...this.items, { id: uuid(), role: 'tool', text: e.arguments, tool: { name: e.name } }]

@@ -729,7 +729,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   }
   return (
     <Row label={name}>
-      <div className="row gap6 center">
+      <div className="row gap6 center" data-guide={`param:${name}`}>
         {type === 'bool'
           ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
           : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}

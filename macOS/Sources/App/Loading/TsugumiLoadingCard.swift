@@ -27,8 +27,26 @@ struct TsugumiLoadingCard: View {
   static let spoolWidth: CGFloat = 56
   static let spoolX: CGFloat = 22 + spoolWidth / 2
   static let catchX: CGFloat = spoolX
+
+  /// Where the scene's bird stands (window coordinates) and its size, for the
+  /// guide's bird to land on: the idle bird over its perch, or the progress
+  /// bird at its step along the branch.
+  static func birdFeet(in r: CGRect, fraction: Double?) -> (feet: CGPoint, scale: CGFloat) {
+    let y = r.maxY - 25
+    guard let fraction else {
+      let s: CGFloat = 0.22
+      return (CGPoint(x: r.midX + (TsugumiBird.feet.x - (TsugumiBird.tailTip + TsugumiBird.beakTip) / 2) * s, y: y), s)
+    }
+    let s: CGFloat = 0.2, x0 = r.minX + 24, x1 = r.maxX - 24
+    let tip = x0 + (x1 - x0) * fraction
+    let lo = x0 + (TsugumiBird.feet.x - TsugumiBird.tailTip) * s - 8
+    let want = max(lo, tip - (TsugumiBird.beakTip - TsugumiBird.feet.x) * s + 6)
+    return (CGPoint(x: lo + ((want - lo) / 18).rounded(.down) * 18, y: y), s)
+  }
   @Environment(\.colorScheme) private var scheme
   @Environment(\.openWindow) private var openWindow
+  /// Tsugumi's flights in this window: the guide's bird lands on this card's bird.
+  @Environment(GuideStage.self) private var stage: GuideStage?
 
   var body: some View {
     let f = content.fraction.map { min(1, max(0, $0)) }
@@ -46,10 +64,13 @@ struct TsugumiLoadingCard: View {
           LinearGradient(colors: [.black.opacity(0), .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
             .frame(height: 14).frame(maxHeight: .infinity, alignment: .bottom)
           Group {
-            if let f { TsugumiProgressScene(fraction: f, catchX: Self.catchX) } else { TsugumiIdleScene(catchX: Self.catchX) }
+            if let f { TsugumiProgressScene(fraction: f, catchX: Self.catchX, hidesBird: stage?.handoff ?? false) }
+            else { TsugumiIdleScene(catchX: Self.catchX, hidesBird: stage?.handoff ?? false) }
           }
         }
         .frame(height: 150)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in stage?.loadingBird = Self.birdFeet(in: r, fraction: f) }
+        .onDisappear { stage?.loadingBird = nil }
         .environment(\.colorScheme, .dark)
         .clipped()
         VStack(spacing: 8) {
@@ -98,6 +119,7 @@ struct TsugumiLoadingCard: View {
     }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(content.title)
+    .onChange(of: f) { stage?.loadingBird = nil }
     .accessibilityValue(f.map { "\(Int($0 * 100))%" } ?? content.message)
   }
 
@@ -128,6 +150,8 @@ struct TsugumiLoadingCard: View {
 struct TsugumiIdleScene: View {
   var catchX: CGFloat? = nil
   var birdScale: CGFloat = 0.22
+  /// The guide's bird is flying in to be this one: none drawn until it lands.
+  var hidesBird = false
   @Environment(\.tsugumiClock) private var clock
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
   private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
@@ -143,6 +167,7 @@ struct TsugumiIdleScene: View {
         let fx = mid + (TsugumiBird.feet.x - (TsugumiBird.tailTip + TsugumiBird.beakTip) / 2) * birdScale
         let s = 1 - pose.hop / 40
         g.fill(Path(ellipseIn: CGRect(x: fx - 30 * s, y: y - 6, width: 60 * s, height: 6)), with: .color(.black.opacity(0.2)))
+        if hidesBird { return }
         let feet = CGPoint(x: fx, y: y - 3)
         let bill = TsugumiBird.point(TsugumiBird.gape, at: feet, scale: birdScale, pose: pose)
         // over the lower edge and away into the picture, in front of the bird
@@ -163,6 +188,7 @@ struct TsugumiProgressScene: View {
   let fraction: Double
   var catchX: CGFloat
   var birdScale: CGFloat = 0.2
+  var hidesBird = false
   /// How far one hop goes along the branch.
   var stride: CGFloat = 18
   @State private var walker = HopWalker()
@@ -190,6 +216,7 @@ struct TsugumiProgressScene: View {
           fx = step
         }
         pose.blink = max(pose.blink, BirdMotion.blink(t, every: 2.7))
+        if hidesBird { return }
         let feet = CGPoint(x: fx, y: y - 3)
         let bill = TsugumiBird.point(TsugumiBird.gape, at: feet, scale: birdScale, pose: pose)
         // over the lower edge and away into the picture, in front of the bird

@@ -24,6 +24,8 @@ import TsugumiRPC
                          storage: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID()).json"))
     let chatTools = Set(await chat.tools.map(\.name))
     #expect(chatTools.contains("guide_show") && chatTools.contains("project_save"))
+    // Its guiding is the built-in skill $demo (a tour or the user starts it), ending with a farewell.
+    #expect(Agent.demoSkill.hasPrefix("---\nname: demo\n") && Agent.demoSkill.contains("\"endTour\": true"))
     let helper = try Agent(catalog: catalog, transport: NoTransport(), provider: .localFixture(port: 1),
                            storage: FileManager.default.temporaryDirectory.appendingPathComponent("helper-\(UUID()).json"),
                            helper: .init(name: "a", cards: ["a"], instruction: "x"))

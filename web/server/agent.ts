@@ -12,7 +12,7 @@ import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
-import chatPrompt from '../../agent/Shared/chat-prompt.md'
+import demoSkill from '../../agent/Shared/demo-skill.md'
 import { planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
@@ -503,6 +503,8 @@ function wire(b: ContentBlock): unknown {
 export const SYSTEM_PROMPT = systemPrompt
 /** The guide's rules (agent/Shared/guide-prompt.md). */
 export const GUIDE_PROMPT = guidePrompt
+/** The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around. */
+export const DEMO_SKILL = demoSkill
 
 /** The bundled demos the Agent may read, as references ("demos/<path>"):
  *  not the Draft demos (tasks to implement) nor the finished demo of each,
@@ -686,7 +688,7 @@ export class Agent {
   get system(): string {
     if (this.role === 'guide') return GUIDE_PROMPT
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
-    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + chatPrompt
+    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote
     return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
   }

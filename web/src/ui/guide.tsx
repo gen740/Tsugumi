@@ -32,8 +32,7 @@ export function setGuideWindow(a: GuideWindowActions) {
 function GuideRings() {
   const h = guide.highlight
   if (!h) return null
-  const targets = h === 'stop' ? ['run'] : [h]
-  const sel = targets.map((t) => `[data-guide="${CSS.escape(t)}"]`).join(', ')
+  const sel = targetSelector(h)
   return <style>{`${sel} { outline: 2.5px solid ${PALETTE.rufous}; outline-offset: 4px; border-radius: 8px; animation: guide-ring 1.6s ease-in-out infinite; }`}</style>
 }
 
@@ -170,33 +169,56 @@ function actionEnabled(a: GuideAction): boolean {
   }
 }
 
+/** The elements the guide points at with `h`: the run button is also
+ *  "stop"; "card:<id>" is also that Card inside a Card in Card on the screen. */
+export function targetSelector(h: string): string {
+  const t = h === 'stop' ? 'run' : h
+  const sel = [`[data-guide="${CSS.escape(t)}"]`]
+  if (t.startsWith('card:') && !t.slice(5).includes('/')) sel.push(`[data-guide^="card:"][data-guide$="/${CSS.escape(t.slice(5))}"]`)
+  return sel.join(', ')
+}
+
+type Box = { left: number; top: number; width: number; height: number; flip: boolean }
+const BIRD = { w: 90, h: 64 }
+const visible = (el: Element | null | undefined) => !!el && (el as HTMLElement).getClientRects().length > 0
+
 /** The bird away from home, over the whole page: it flies to what Tsugumi
  *  points at, perches beside it with its bubble, and flies home when the
- *  bubble is closed. Without motion it appears there instead of flying. */
+ *  bubble is closed. When a project loads it flies into the loading card's
+ *  bird and grows to its size (the card's bird is it), and comes out of it
+ *  again when loading ends. Without motion it appears there instead of flying. */
 export function GuideFlyer() {
   useObserve(guide, prefs)
-  const [feet, setFeet] = useState<{ x: number; y: number; left: boolean }>()
+  const [box, setBox] = useState<Box>()
   const [arrived, setArrived] = useState(false)
   const [moving, setMoving] = useState(false)
+  const [inCard, setInCard] = useState(false)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const target = guide.available && guide.bubble?.target ? guide.bubble.target : undefined
   const still = prefs.tsugumiStill
-  // Where the target and home are now (Cards move with the canvas).
+  // Where the target and home are now (Cards move with the canvas, loading comes and goes).
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (!target && !guide.away) return
     const t = setInterval(() => setTick((n) => n + 1), 250)
     return () => clearInterval(t)
-  }, [target, guide.away])
-  const home = () => {
-    const el = [...document.querySelectorAll('[data-guide-home]')].find((e) => (e as HTMLElement).offsetParent !== null)
+  }, [])
+  const homeBox = (): Box | undefined => {
+    const el = [...document.querySelectorAll('[data-guide-home]')].find(visible)
     const r = el?.getBoundingClientRect()
-    return r ? { x: r.left + r.width / 2, y: r.bottom - 6, left: true } : undefined
+    return r ? { left: r.left + r.width / 2 - BIRD.w / 2, top: r.bottom - 4 - BIRD.h, width: BIRD.w, height: BIRD.h, flip: true } : undefined
+  }
+  const loadingBox = (): Box | undefined => {
+    const el = [...document.querySelectorAll('[data-guide-loading] .tsugumi-bird')].find(visible)
+    const r = el?.getBoundingClientRect()
+    if (!r || !r.width) return undefined
+    // The flying bird's picture (viewBox 130 270 680 470) laid over the card's bird.
+    const width = r.width / (616 / 680), height = r.height / (410 / 470)
+    return { left: r.left - (30 / 680) * width, top: r.top - (28 / 470) * height, width, height, flip: false }
   }
   const scrolled = useRef<string>()
-  const perch = () => {
+  const perchBox = (): Box | undefined => {
     if (!target) return undefined
-    const el = document.querySelector(`[data-guide="${CSS.escape(target === 'stop' ? 'run' : target)}"]`)
+    const el = [...document.querySelectorAll(targetSelector(target))].find(visible)
     // A demo card or a control out of view is brought into view once.
     if (el && scrolled.current !== target) {
       scrolled.current = target
@@ -205,53 +227,73 @@ export function GuideFlyer() {
     }
     const r = el?.getBoundingClientRect()
     if (!r || r.width === 0) return undefined
-    const right = r.right + 300 < window.innerWidth
+    const right = r.right + 320 < window.innerWidth
     const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
     const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
-    return { x, y, left: right }
+    return { left: x - BIRD.w / 2, top: y - BIRD.h, width: BIRD.w, height: BIRD.h, flip: right }
   }
-  const goal = perch()
-  const goalKey = goal ? `${Math.round(goal.x)},${Math.round(goal.y)}` : ''
+  const loading = guide.available ? loadingBox() : undefined
+  const perch = loading ? undefined : perchBox()
+  const goal = loading ? 'loading' : perch ? 'perch' : 'home'
+  const key = goal + (loading ? `${Math.round(loading.left)},${Math.round(loading.top)}` : perch ? `${Math.round(perch.left)},${Math.round(perch.top)}` : '')
+  void tick
   useEffect(() => {
     const ms = still ? 0 : 900
-    if (goal) {
+    const setAway = (v: boolean) => { if (guide.away !== v) { guide.away = v; guide.changed() } }
+    const flyTo = (to: Box, then: () => void) => {
+      setMoving(true)
+      // The next frame starts the flight from where the bird is.
+      requestAnimationFrame(() => setBox(to))
+      const t = setTimeout(() => { setMoving(false); then() }, ms)
+      return () => clearTimeout(t)
+    }
+    if (goal === 'loading' && loading) {
       if (!guide.away) {
-        setFeet(home())
-        guide.away = true
-        guide.changed()
+        const h = homeBox()
+        if (!h) return
+        setBox(h)
+        setAway(true)
+      }
+      setInCard(false)
+      setArrived(false)
+      document.body.classList.add('guide-handoff')
+      return flyTo(loading, () => { setInCard(true); document.body.classList.remove('guide-handoff') })
+    }
+    document.body.classList.remove('guide-handoff')
+    if (goal === 'perch' && perch) {
+      if (!guide.away || inCard) {
+        if (!inCard) setBox(homeBox() ?? perch)
+        setInCard(false)
+        setAway(true)
       }
       setArrived(false)
-      setMoving(true)
-      // The next frame starts the flight from home.
-      requestAnimationFrame(() => setFeet(goal))
-      const t = setTimeout(() => { setMoving(false); setArrived(true) }, ms)
-      return () => clearTimeout(t)
+      return flyTo(perch, () => setArrived(true))
     }
     if (guide.away) {
       setArrived(false)
-      setMoving(true)
-      setFeet(home())
-      const t = setTimeout(() => { setMoving(false); guide.away = false; guide.changed() }, ms)
-      return () => clearTimeout(t)
+      setInCard(false)
+      const h = homeBox()
+      if (!h) { setAway(false); return }
+      return flyTo(h, () => setAway(false))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [goalKey, target])
-  void tick
-  if (!guide.away || !feet) return <GuideRings />
-  const bw = bubbleRef.current?.offsetWidth ?? 270, bh = bubbleRef.current?.offsetHeight ?? 100
-  let bx = feet.left ? feet.x - 30 : feet.x - bw + 30
-  let by = feet.y + 12
-  if (by + bh > window.innerHeight - 8) by = feet.y - 70 - bh
+  }, [key])
+  if (!guide.away || !box || inCard) return <GuideRings />
+  const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
+  const feetX = box.left + box.width / 2, feetY = box.top + box.height
+  let bx = box.flip ? feetX - 30 : feetX - bw + 30
+  let by = feetY + 12
+  if (by + bh > window.innerHeight - 8) by = feetY - 70 - bh
   bx = Math.min(Math.max(bx, 8), window.innerWidth - bw - 8)
   by = Math.min(Math.max(by, 8), window.innerHeight - bh - 8)
   return (
     <div className="guide-flyer" aria-live="polite">
       <GuideRings />
-      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${feet.left ? ' left' : ''}`}
-        style={{ left: feet.x - 45, top: feet.y - 64, transition: still ? 'none' : undefined }} aria-hidden>
+      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}`}
+        style={{ left: box.left, top: box.top, width: box.width, height: box.height, transition: still ? 'none' : undefined }} aria-hidden>
         <GuideBird />
       </div>
-      {arrived && guide.bubble && (
+      {arrived && goal === 'perch' && guide.bubble && (
         <div ref={bubbleRef} className="guide-flyer-bubble" style={{ left: bx, top: by }}>
           <BubbleView bubble={guide.bubble} perform={makePerform(guide.speakingChat?.session ?? guide.contextSession, guide.contextTab)} />
         </div>
@@ -305,6 +347,8 @@ async function openDemo(id: string, session?: ProjectSession) {
   }
   try {
     const p = await app.copyDemo(demo.id)
+    // The bird leaves the demo's card: it flies into the loading card.
+    guide.dismissBubble()
     guide.startTour(demo, p)
     windowActions?.openProject(p)
   } catch (e) {

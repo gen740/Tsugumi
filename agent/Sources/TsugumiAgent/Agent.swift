@@ -151,6 +151,8 @@ public actor Agent {
   public static let systemPrompt = Shared.systemPrompt
   /// The guide's rules (agent/Shared/guide-prompt.md).
   public static let guidePrompt = Shared.guidePrompt
+  /// The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around.
+  public static let demoSkill = Shared.demoSkill
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
               references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) throws {

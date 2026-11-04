@@ -30,8 +30,24 @@ final class GuideStage {
   /// The pointed-at view and its frame, while it is on the screen.
   var perch: (id: String, frame: CGRect)?
   var corner: CGRect = .zero
-  /// The bird has left its corner (the corner shows no avatar meanwhile).
-  var away = false
+  /// The bird has left its home (no home shows a bird meanwhile, in any window).
+  var away = false {
+    didSet { if away != oldValue { GuideController.shared.awayWindows += away ? 1 : -1 } }
+  }
+  /// Where the loading card's bird stands while the card is shown (its feet and size).
+  var loadingBird: (feet: CGPoint, scale: CGFloat)?
+  /// The guide's bird is flying into the loading card: the card draws no bird until it lands.
+  var handoff = false
+}
+
+/// Tsugumi's flights in a window: the stage its targets and homes report to,
+/// and the bird that flies over it.
+struct GuideWindowLayer: ViewModifier {
+  @State private var stage = GuideStage()
+
+  func body(content: Content) -> some View {
+    content.overlay { GuideFlyer() }.environment(stage)
+  }
 }
 
 // MARK: - Pointing
@@ -103,7 +119,7 @@ struct GuideCorner: View {
         if guide.open {
           GuidePanel(screen: screen, session: session, tab: tab, perform: perform)
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
-        } else if !(stage?.away ?? false) {
+        } else if guide.awayWindows == 0 {
           if guide.offersDemo {
             GuideOfferBubble(perform: perform)
           } else if let b = guide.bubble, guide.speakingChat == nil {
@@ -120,7 +136,7 @@ struct GuideCorner: View {
           GuideAvatar(mood: mood, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
         }
         .buttonStyle(.plain)
-        .opacity(stage?.away ?? false ? 0 : 1)
+        .opacity(guide.awayWindows > 0 ? 0 : 1)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
         .help(String(localized: "ガイドのツグミに聞く（\(AppPreferences.shared.shortcut(.toggleGuide).label)）"))
         .accessibilityLabel(String(localized: "ガイドのツグミ"))
@@ -355,7 +371,7 @@ struct GuideNest: View {
       }
     }
     .frame(width: size * 1.05, height: size * 0.75)
-    .opacity(stage?.away ?? false ? 0 : 1)
+    .opacity(GuideController.shared.awayWindows > 0 ? 0 : 1)
     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
     .help("ツグミ")
     .accessibilityLabel("ツグミ")
@@ -386,28 +402,45 @@ struct ChatChoices: View {
 
 // MARK: - The flight
 
-/// The bird away from its corner, over the whole window: it flies to what the
+/// The bird away from its home, over the whole window: it flies to what the
 /// guide points at, perches beside it with its bubble, and flies home when
-/// the bubble is closed. Without motion it appears there instead of flying.
+/// the bubble is closed. When a project loads it flies into the loading
+/// card's bird and grows to its size (the card's bird is it), and comes out
+/// of it again when loading ends. In a window without a home (a Card's
+/// settings) it appears beside the target. Without motion it appears there
+/// instead of flying.
 struct GuideFlyer: View {
   @Environment(GuideStage.self) private var stage
-  @Environment(AppModel.self) private var model
   @Environment(\.guideWindow) private var window
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var feet: CGPoint?
+  @State private var scale: CGFloat = 0.1
   @State private var flyingUntil = Date.distantPast
   @State private var arrived = false
-  @State private var bubbleSize = CGSize(width: 260, height: 90)
+  /// Landed in the loading card: the card's own bird is shown instead.
+  @State private var inCard = false
+  @State private var bubbleSize = CGSize(width: 300, height: 90)
 
   private var guide: GuideController { .shared }
+  private var model: AppModel { .shared }
   private var still: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion) }
+  static let birdScale: CGFloat = 0.1
 
   /// The pointed-at frame while the bubble stands there (window coordinates).
   private var perch: CGRect? {
-    guard guide.available, let b = guide.bubble, let t = b.target, let p = stage.perch, p.id == t || (t == "stop" && p.id == "run") else { return nil }
+    guard guide.available, let b = guide.bubble, let t = b.target, let p = stage.perch, guide.points(at: p.id) || p.id == t else { return nil }
     return p.frame
+  }
+
+  /// Where the bird goes: into the loading card, beside its target, or home.
+  private enum Goal: Equatable { case loading(CGPoint, CGFloat), perch(CGPoint), home }
+
+  private func goal(_ o: CGPoint, _ size: CGSize) -> Goal {
+    if guide.available, window != nil, let l = stage.loadingBird { return .loading(l.feet, l.scale) }
+    if let r = perch { return .perch(feetPoint(r, origin: o, size: size)) }
+    return .home
   }
 
   var body: some View {
@@ -415,7 +448,7 @@ struct GuideFlyer: View {
       let o = geo.frame(in: .global).origin
       let size = geo.size
       ZStack(alignment: .topLeading) {
-        if stage.away, let f = feet {
+        if stage.away, let f = feet, !inCard {
           let left = perch.map { $0.midX > o.x + size.width / 2 } ?? true
           TimelineView(.animation(minimumInterval: 1 / 30, paused: still)) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
@@ -424,16 +457,16 @@ struct GuideFlyer: View {
               var pose = BirdPose()
               if flying { pose.flap = (sin(t * 22) + 1) / 2; pose.tilt = -0.1 }
               else if !still { pose.hop = CGFloat(max(0, sin(t * 2.4)) * 2); pose.blink = t.truncatingRemainder(dividingBy: 4.2) < 0.12 ? 1 : 0 }
-              TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 4), scale: 0.1, pose: pose)
+              TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 8), scale: scale, pose: pose)
             }
             .scaleEffect(x: left ? -1 : 1, y: 1)
           }
-          .frame(width: 90, height: 64)
+          .frame(width: 900 * scale, height: 640 * scale)
           .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
-          .position(x: f.x - o.x, y: f.y - o.y - 30)
+          .position(x: f.x - o.x, y: f.y - o.y - 320 * scale + 8)
           .allowsHitTesting(false)
           .accessibilityHidden(true)
-          if arrived, let b = guide.bubble {
+          if arrived, perch != nil, let b = guide.bubble {
             GuideBubbleView(bubble: b, perform: GuidePerformer(model: model, window: window, session: guide.flyerSession,
                                                                tab: guide.flyerTab, openWindow: openWindow, openSettings: openSettings))
               .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
@@ -443,7 +476,60 @@ struct GuideFlyer: View {
         }
       }
       .frame(width: size.width, height: size.height, alignment: .topLeading)
-      .onChange(of: perch.map { feetPoint($0, origin: o, size: size) }, initial: true) { _, p in fly(to: p) }
+      .onChange(of: goal(o, size), initial: true) { _, g in fly(to: g) }
+    }
+    // Tsugumi opens a Card's settings to show it (in the window of that project).
+    .onChange(of: guide.openRequest, initial: true) { _, r in
+      guard let r, window != nil, let s = guide.flyerSession else { return }
+      guide.openRequest = nil
+      let path = String(r.dropFirst(5)).split(separator: "/").map(String.init)
+      let k = s.instance(key(path)) != nil ? key(path) : key((guide.flyerTab?.scope ?? []) + path)
+      guard s.instance(k) != nil else { return }
+      openWindow(id: "card", value: CardRef(path: s.identity.url.path, card: k))
+    }
+  }
+
+  private func fly(to goal: Goal) {
+    let home = stage.corner == .zero ? nil : CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 4)
+    let duration = still ? 0 : 0.9
+    func go(_ p: CGPoint, scale s: CGFloat, then: @escaping @MainActor () -> Void) {
+      flyingUntil = Date().addingTimeInterval(duration)
+      withAnimation(still ? nil : .easeInOut(duration: duration)) { feet = p; scale = s }
+      Task { @MainActor in
+        try? await Task.sleep(for: .seconds(duration))
+        if feet == p { then() }
+      }
+    }
+    switch goal {
+    case .loading(let p, let s):
+      // From wherever it is (its home, a demo's card) into the loading card's bird.
+      if !stage.away {
+        guard let home else { return }
+        feet = home
+        scale = Self.birdScale
+        stage.away = true
+      }
+      inCard = false
+      arrived = false
+      stage.handoff = true
+      go(p, scale: s) { inCard = true; stage.handoff = false }
+    case .perch(let p):
+      if !stage.away || inCard {
+        // Out of the loading card where it was, from home, or (no home) right there.
+        feet = inCard ? feet : (home ?? p)
+        if !inCard { scale = Self.birdScale }
+        inCard = false
+        stage.away = true
+      }
+      arrived = false
+      go(p, scale: Self.birdScale) { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
+    case .home:
+      guard stage.away else { return }
+      arrived = false
+      inCard = false
+      stage.handoff = false
+      guard let home else { stage.away = false; return }
+      go(home, scale: Self.birdScale) { stage.away = false }
     }
   }
 
@@ -465,31 +551,6 @@ struct GuideFlyer: View {
     return CGPoint(x: x, y: y)
   }
 
-  private func fly(to target: CGPoint?) {
-    let home = CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 6)
-    let duration = still ? 0 : 0.9
-    if let target {
-      if !stage.away {
-        feet = home
-        stage.away = true
-      }
-      arrived = false
-      flyingUntil = Date().addingTimeInterval(duration)
-      withAnimation(still ? nil : .easeInOut(duration: duration)) { feet = target }
-      Task { @MainActor in
-        try? await Task.sleep(for: .seconds(duration))
-        if feet == target { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
-      }
-    } else if stage.away {
-      arrived = false
-      flyingUntil = Date().addingTimeInterval(duration)
-      withAnimation(still ? nil : .easeInOut(duration: duration)) { feet = home }
-      Task { @MainActor in
-        try? await Task.sleep(for: .seconds(duration))
-        if feet == home { stage.away = false }
-      }
-    }
-  }
 }
 
 /// What a button of the guide does, with the app's own controls in this window.
@@ -551,6 +612,8 @@ struct GuidePerformer {
     }
     do {
       let url = try model.copyDemo(demo)
+      // The bird leaves the demo's card: it flies into the loading card.
+      guide.dismissBubble()
       guide.startTour(demo, copy: url)
       window?.openProject(url)
     } catch {

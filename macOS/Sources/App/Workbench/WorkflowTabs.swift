@@ -59,6 +59,18 @@ struct WorkflowTabs: View {
       if guideWindow != nil { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
     }
     .onAppear { if guideWindow != nil, GuideController.shared.touring(session) { workspace.showChat = true } }
+    // Tsugumi points into a Card in Card (or back at a root Card): the canvas shows that workflow.
+    .onChange(of: GuideController.shared.scopeRequest) { _, s in
+      guard guideWindow != nil, let s, let tab = workspace.active else { return }
+      GuideController.shared.scopeRequest = nil
+      if session.kind(key(s)) == .subgraph || s.isEmpty { tab.enter(s) }
+    }
+    .onChange(of: GuideController.shared.highlight) { _, h in
+      guard guideWindow != nil, let h, h.hasPrefix("card:"), !h.dropFirst(5).contains("/"), let tab = workspace.active,
+            !tab.scope.isEmpty else { return }
+      let id = String(h.dropFirst(5))
+      if session.instance(key(tab.scope + [id])) == nil, session.instance(key([id])) != nil { tab.enter([]) }
+    }
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
     // The title bar stays quiet: the project's name and where the canvas is

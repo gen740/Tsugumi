@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, AgentEvent, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { Agent, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { EnvironmentManager, projectKey } from './env'
 
@@ -316,8 +316,11 @@ function loadSkills(folder: string, source: string): Skill[] {
   return out
 }
 
+/** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
+const DEMO: Skill = { name: 'demo', description: 'ツグミが画面を飛び回って、デモや画面の使い方を案内します', path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' }
+
 function skillsFor(project: string | undefined): Skill[] {
-  const out = project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : []
+  const out = [DEMO, ...(project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : [])]
   for (const f of settings().skillFolders) if (f.enabled) out.push(...loadSkills(f.path, path.basename(f.path)))
   return out
 }
