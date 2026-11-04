@@ -250,7 +250,6 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const [stages, setStages] = useState<StageRecord[]>([])
   const [state, setState] = useState<D.CardState>()
   const [failure, setFailure] = useState<string>()
-  const [workerReused, setWorkerReused] = useState<boolean>()
   const [shownInvocation, setShownInvocation] = useState<bigint>()
   const [logs, setLogs] = useState<Map<D.LogStream, string>>(new Map())
   const [open, setOpen] = useState<Set<string>>(new Set())
@@ -299,7 +298,6 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
       const rec = await rpc.record(runId, card, inv, inv === null).catch(() => undefined)
       inv = inv ?? rec?.selectedInvocation ?? null
       setShownInvocation(inv ?? undefined)
-      setWorkerReused(rec?.record?.summary?.workerReused ?? undefined)
       let st: StageRecord[] = []
       const live = session.cardStates.get(k)
       if (runId === session.currentRunId && live && live.invocation === inv) {
@@ -378,10 +376,6 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{text || empty}</pre>
   )
 
-  const workerMode = (logs.get(D.LogStream.journal) ?? '').split('\n').flatMap((line) => {
-    try { const v = JSON.parse(line); return v.event === 'worker_mode' && ['resident', 'fresh'].includes(v.message) ? [v.message] : [] }
-    catch { return [] }
-  }).at(-1)
   const shown = shownInvocation ?? invocation ?? 0n
   let body: JSX.Element
   if (!loaded) body = <div className="center-fill"><Spinner /></div>
@@ -428,8 +422,6 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
                   {g.id === 'build' && logText(logs.get(D.LogStream.build) ?? '', '準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')}
                   {g.id === 'execute' && (
                     <>
-                      {workerMode && <div className="caption">実行モード: {workerMode === 'resident' ? '状態を保持（常駐 worker）' : '呼び出しごとに初期化'}</div>}
-                      {workerReused !== undefined && <div className="caption secondary">{workerReused ? 'この呼び出しは常駐 worker を再利用しました' : 'この呼び出しは新しい worker で実行しました'}</div>}
                       <div className="caption headline secondary">stdout</div>
                       {logText(logs.get(D.LogStream.stdout) ?? '', 'stdout への出力はありません')}
                       <div className="caption headline secondary">stderr</div>

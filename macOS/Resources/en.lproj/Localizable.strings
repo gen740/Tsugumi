@@ -213,8 +213,6 @@
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "この仮の入出力を削除" = "Delete this provisional input or output";
-"この呼び出しは常駐 worker を再利用しました" = "This invocation reused a resident worker";
-"この呼び出しは新しい worker で実行しました" = "This invocation used a new worker";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -535,7 +533,6 @@
 "初回の準備をしています" = "Preparing for the first time";
 "初期値" = "Initial value";
 "初期化" = "Reset";
-"初期化はプロセス内の状態が対象です。ファイル・乱数・外部サービスの状態は固定しません。" = "This resets process state. Files, randomness, and external services are not fixed.";
 "初期化を完了できませんでした（残りは保持しています。再試行できます）: " = "Could not finish resetting (the rest is kept; you can retry): ";
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
@@ -574,7 +571,6 @@
 "名前（例: thin-bands）" = "Name (e.g. thin-bands)";
 "呼び出し" = "Invocation";
 "呼び出し #%llu" = "Invocation #%llu";
-"呼び出しごとに初期化" = "Start fresh for each invocation";
 "呼び出しなし" = "No invocations";
 "問題 %lld 件" = "%lld issues";
 "問題 %lld 件（一覧から対象の Card やログへ移動できます）" = "%lld problems (go to their Card or log from the list)";
@@ -633,7 +629,6 @@
 "実行を停止" = "Stop Run";
 "実行を選ぶか、実行してください。" = "Choose a run, or run the workflow.";
 "実行を選んでください" = "Choose a run";
-"実行モード" = "Execution mode";
 "実行ログを開く" = "Open Run Log";
 "実行中" = "Running";
 "実行中の接続線を動かす" = "Animate connections while running";
@@ -816,7 +811,6 @@
 "版管理されていません" = "Not versioned";
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
-"状態を保持（常駐 worker）" = "Keep state (resident worker)";
 "環境を停止" = "Stop Environment";
 "生成" = "Generated";
 "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: " = "Could not generate (unsaved changes or unresolved types prevent it): ";
