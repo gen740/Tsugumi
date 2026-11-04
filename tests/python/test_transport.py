@@ -213,3 +213,35 @@ def test_run_continues_after_its_client_disconnects(tmp_path):
         c2.close()
     finally:
         d.cleanup()
+
+
+def test_a_peer_without_hello_cannot_make_tsugumid_buffer(tmp_path):
+    """Before its Hello a peer may send only a little: one announcing an 8 MiB
+    frame and streaming it is dropped, without tsugumid buffering it all."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = Daemon(root).start()
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(d.unix)
+        s.settimeout(10)
+        dropped = False
+        try:
+            s.sendall(struct.pack("<I", 8 << 20))
+            for _ in range(64):
+                s.sendall(b"\0" * 65536)
+        except (BrokenPipeError, ConnectionResetError):
+            dropped = True
+        if not dropped:
+            try:
+                dropped = s.recv(1) == b""
+            except (ConnectionResetError, socket.timeout):
+                dropped = True
+        s.close()
+        assert dropped
+        # Others are served as before.
+        c = d.client()
+        c.hello()
+        c.call("ProjectInspectRequest")
+    finally:
+        d.cleanup()

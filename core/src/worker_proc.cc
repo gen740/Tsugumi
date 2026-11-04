@@ -113,14 +113,15 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
     }
     return out + "\"";
   };
-  auto regex_quote = [&](const std::string& p) {
+  auto regex_text = [](const std::string& t) {
     std::string out;
-    for (char ch : real(p)) {
+    for (char ch : t) {
       if (std::strchr("\\.^$|?*+()[]{}\"", ch)) out += '\\';
       out += ch;
     }
     return out;
   };
+  auto regex_quote = [&](const std::string& p) { return regex_text(real(p)); };
   std::string read = "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") (subpath \"/usr/share\")"
                      " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") (subpath \"/private/etc\")"
                      " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
@@ -130,7 +131,7 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
     if (std::filesystem::path(p).filename() == "runs")
-      write += " (regex #\"^" + regex_quote(p) + "/[^/]+/work/.+/[0-9]+/out(/|$)\")";
+      write += " (regex #\"^" + regex_quote(p) + "/[^/]+/work/" + regex_text(sp.card) + "/[0-9]+/out(/|$)\")";
   }
   return "(version 1)\n(deny default)\n"
          "(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n"
@@ -138,7 +139,11 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
          "(allow file-read* " + read + ")\n(allow file-write* " + write + ")\n"
          "(deny file-write* (subpath " + quote(scripts) + "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
-         (sp.network ? "(allow network*)\n(allow mach-lookup)\n" : "");
+         // With the network allowed, still nothing on this host: tsugumid's
+         // own ports and sockets, the web server, other local services.
+         (sp.network ? "(allow network*)\n(allow mach-lookup)\n(deny network-outbound (remote ip \"localhost:*\"))\n"
+                       "(deny network-outbound (remote unix-socket))\n"
+                     : "");
 }
 #endif
 

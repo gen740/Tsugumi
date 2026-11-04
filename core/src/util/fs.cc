@@ -1,5 +1,6 @@
 #include "util/fs.hh"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -194,6 +195,88 @@ Listing list_tree(const stdfs::path& root) {
       if (rel.find(".tsugumi-tmp-") == std::string::npos) out.files.push_back(rel);
     }
   }
+  std::sort(out.files.begin(), out.files.end());
+  std::sort(out.links.begin(), out.links.end());
+  return out;
+}
+
+namespace {
+
+// An fd of `rel` below `root`, walking each component with O_NOFOLLOW.
+int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
+  int dir = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (dir < 0) throw Error("open " + root.string() + ": " + std::strerror(errno));
+  std::vector<std::string> parts;
+  for (const auto& c : rel.lexically_normal())
+    if (!c.empty() && c != ".") parts.push_back(c.string());
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (parts[i] == "..") {
+      ::close(dir);
+      throw Error(rel.string() + " leaves " + root.string());
+    }
+    bool last = i + 1 == parts.size();
+    int fd = ::openat(dir, parts[i].c_str(), (last ? flags : (O_RDONLY | O_DIRECTORY)) | O_NOFOLLOW | O_CLOEXEC);
+    int err = errno;
+    ::close(dir);
+    if (fd < 0) throw Error("open " + (root / rel).string() + ": " + std::strerror(err));
+    dir = fd;
+  }
+  return dir;
+}
+
+void list_fd(int dir, const std::string& prefix, Listing& out) {
+  DIR* d = ::fdopendir(dir);
+  if (!d) {
+    ::close(dir);
+    throw Error("list: " + std::string(std::strerror(errno)));
+  }
+  std::vector<std::string> subdirs;
+  while (auto* e = ::readdir(d)) {
+    std::string name = e->d_name;
+    if (name == "." || name == "..") continue;
+    struct stat st{};
+    if (::fstatat(::dirfd(d), name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) continue;
+    if (S_ISLNK(st.st_mode)) out.links.push_back(prefix + name);
+    else if (S_ISDIR(st.st_mode)) subdirs.push_back(name);
+    else if (S_ISREG(st.st_mode)) out.files.push_back(prefix + name);
+  }
+  for (const auto& s : subdirs) {
+    int fd = ::openat(::dirfd(d), s.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) out.links.push_back(prefix + s);  // replaced since it was read
+    else list_fd(fd, prefix + s + "/", out);
+  }
+  ::closedir(d);
+}
+
+}  // namespace
+
+std::string read_beneath(const stdfs::path& root, const stdfs::path& rel) {
+  int fd = open_beneath(root, rel, O_RDONLY);
+  struct stat st{};
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    ::close(fd);
+    throw Error((root / rel).string() + " is not a regular file");
+  }
+  std::string out;
+  char buf[1 << 16];
+  for (;;) {
+    ssize_t n = ::read(fd, buf, sizeof buf);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      int err = errno;
+      ::close(fd);
+      throw Error("read " + (root / rel).string() + ": " + std::strerror(err));
+    }
+    if (n == 0) break;
+    out.append(buf, static_cast<size_t>(n));
+  }
+  ::close(fd);
+  return out;
+}
+
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel) {
+  Listing out;
+  list_fd(open_beneath(root, rel, O_RDONLY | O_DIRECTORY), "", out);
   std::sort(out.files.begin(), out.files.end());
   std::sort(out.links.begin(), out.links.end());
   return out;

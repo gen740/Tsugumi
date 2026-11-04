@@ -45,6 +45,13 @@ struct Listing {
 };
 Listing list_tree(const stdfs::path& root);
 
+// Below a trusted folder `root` (the run folder, tsugumid's state), files a
+// Card wrote: no symlink below `root` is followed, so a Card that swaps a
+// checked file for a link after the check gets an error, never another file.
+// `rel` is relative to root.
+std::string read_beneath(const stdfs::path& root, const stdfs::path& rel);
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel);
+
 // Exclusive non blocking advisory lock held for the lifetime of the object.
 class FileLock {
  public:

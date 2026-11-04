@@ -41,6 +41,9 @@ struct WorkerSpawn {
   // input trees (where every File / Directory input lives), so that a worker
   // serves any input. Output folders arrive as descriptors per call.
   std::vector<std::string> ro_paths;
+  // The Card's key ("a/b"): on a Mac (Seatbelt) only its own invocations'
+  // output folders under the runs tree are writable.
+  std::string card;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.

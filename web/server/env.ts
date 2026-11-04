@@ -98,6 +98,14 @@ export class EnvironmentManager {
     fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
     fs.chmodSync(e.control, 0o700)
     fs.mkdirSync(e.sockDir, { recursive: true, mode: 0o700 })
+    // In the shared temp directory another user could have made it first.
+    const st = fs.lstatSync(e.sockDir)
+    if (!st.isDirectory() || st.uid !== process.getuid!() || (st.mode & 0o077) !== 0) {
+      const s: EnvState = { state: 'failed', message: `ソケットのフォルダ ${e.sockDir} が自分専用ではありません（所有者かアクセス権が違います）`,
+        recovery: 'このフォルダを削除してから、もう一度開いてください。', log: '' }
+      this.set(e, s)
+      return s
+    }
     const grants = path.join(e.control, 'grants.json')
     if (!fs.existsSync(grants)) fs.writeFileSync(grants, '{"grants":{}}')
     const ready = path.join(e.control, 'server.ready')

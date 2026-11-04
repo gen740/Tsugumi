@@ -566,6 +566,7 @@ void Server::parse_ws(Conn& c) {
       }
     } else if (opcode == 0x0) {
       if (!c.ws_fragmenting) return drop(c, "unexpected continuation");
+      if (c.ws_fragments.size() + payload.size() > opts_.limits.max_frame_bytes) return drop(c, "message too large");
       c.ws_fragments += payload;
       if (fin) {
         c.ws_fragmenting = false;
@@ -578,10 +579,17 @@ void Server::parse_ws(Conn& c) {
   }
 }
 
+// What a peer may send before its Hello (the WebSocket handshake included).
+constexpr size_t kPreAuthBytes = 64 * 1024;
+
 void Server::on_readable(Conn& c) {
   char buf[65536];
   bool eof = false;
-  while (!c.closing) {
+  // Before Hello a peer sends a handshake and one small frame: more is
+  // dropped. After it, a frame at a time is buffered (the rest waits in the
+  // socket until these are handled).
+  const size_t limit = c.authenticated ? size_t(opts_.limits.max_frame_bytes) + sizeof buf : kPreAuthBytes;
+  while (!c.closing && c.rbuf.size() < limit) {
     ssize_t r = ::recv(c.fd, buf, sizeof buf, 0);
     if (r == 0) {
       eof = true;
@@ -608,6 +616,7 @@ void Server::on_readable(Conn& c) {
       handle_frame(c, std::move(frame));
     }
   }
+  if (!c.authenticated && !c.closing && c.rbuf.size() >= kPreAuthBytes) return drop(c, "too much data before Hello");
   if (eof) drop(c, "peer closed");
 }
 

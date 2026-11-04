@@ -235,6 +235,14 @@ def test_attached_folder_is_read_only_inside_it(tmp_path):
     try:
         c = d.client()
         c.hello()
+        # Only folders the launcher listed as attached (a tsugumid on the host).
+        with pytest.raises(RpcFailure) as err:
+            c.call("AttachedFolderReadRequest", folder=str(folder), path="")
+        assert err.value.kind == "not_found"
+        (d.control / "attached.json").write_text(json.dumps({"folders": [str(folder)]}))
+        with pytest.raises(RpcFailure) as err:
+            c.call("AttachedFolderReadRequest", folder=str(tmp_path), path="secret.txt")
+        assert err.value.kind == "not_found"
         listing = bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="").bytes).decode()
         assert listing.splitlines() == ["escape", "notes.txt", "sub/"]
         assert bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="notes.txt").bytes).decode() == "日本語のメモ"

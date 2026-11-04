@@ -22,6 +22,7 @@
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "types.hh"
 #include "util/crypto.hh"
+#include "util/fs.hh"
 
 using namespace tsugumi;
 namespace stdfs = std::filesystem;
@@ -183,6 +184,39 @@ TEST(hashes_match_known_vectors) {
   }
   auto s1 = crypto::sha1("abc");
   CHECK(crypto::hex(s1.data(), s1.size()) == "a9993e364706816aba3e25717850c26c9cd0d89d");
+}
+
+// A Card's outputs are read below the run folder without following links:
+// a link anywhere below the root (the file, a folder on the way) fails the
+// read instead of reading what it points to.
+TEST(outputs_are_read_without_following_links) {
+  namespace sfs = std::filesystem;
+  auto root = sfs::temp_directory_path() / ("tsugumi-beneath-" + crypto::uuid4());
+  sfs::create_directories(root / "out" / "dir" / "sub");
+  auto secret = root.parent_path() / ("tsugumi-secret-" + crypto::uuid4());
+  std::ofstream(secret) << "secret";
+  std::ofstream(root / "out" / "dir" / "a.txt") << "a";
+  std::ofstream(root / "out" / "dir" / "sub" / "b.txt") << "b";
+  sfs::create_symlink(secret, root / "out" / "dir" / "link.txt");
+  sfs::create_directory_symlink(secret.parent_path(), root / "out" / "up");
+  CHECK(fs::read_beneath(root, "out/dir/a.txt") == "a");
+  auto refused = [&](const char* rel) {
+    try {
+      fs::read_beneath(root, rel);
+      return false;
+    } catch (const fs::Error&) {
+      return true;
+    }
+  };
+  CHECK(refused("out/dir/link.txt"));
+  CHECK(refused(("out/up/" + secret.filename().string()).c_str()));
+  CHECK(refused("out/../../etc/hosts"));
+  CHECK(refused("out/dir"));
+  auto l = fs::list_beneath(root, "out/dir");
+  CHECK((l.files == std::vector<std::string>{"a.txt", "sub/b.txt"}));
+  CHECK((l.links == std::vector<std::string>{"link.txt"}));
+  sfs::remove_all(root);
+  sfs::remove(secret);
 }
 
 TEST(catalog_ports_and_errors) {

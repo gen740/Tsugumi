@@ -33,6 +33,9 @@ struct ServiceOptions {
   std::string token;                 // required on WebSocket connections
   std::string server_instance_id;
   std::filesystem::path grants_file;  // launcher-managed import grants (JSON)
+  // Launcher-managed list of the folders attached to a chat (JSON), for a
+  // tsugumid on the host (no chat_folders): only these are read.
+  std::filesystem::path attached_file;
   std::filesystem::path sdk_dir;      // installed SDK (share/tsugumi/sdk)
   std::filesystem::path worker_binary;
   std::string fault;                  // test-only fault injection point

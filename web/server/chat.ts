@@ -336,6 +336,18 @@ class ChatHost {
     return a
   }
 
+  /** The folders a chat may read; tsugumid on this host reads only those
+   *  listed in its control folder (attached.json), written here alone. */
+  attach(a: Agent, folders: string[]) {
+    a.folders = folders
+    const all = [...new Set([...this.agents.values()].flatMap((x) => x.folders))].sort()
+    const control = ctx.envs.controlDir(this.key)
+    fs.mkdirSync(control, { recursive: true, mode: 0o700 })
+    const file = path.join(control, 'attached.json')
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ folders: all }), { mode: 0o600 })
+    fs.renameSync(file + '.tmp', file)
+  }
+
   events(id: string) {
     return (e: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event: e })
   }
@@ -399,7 +411,7 @@ async function turnAgent(b: any) {
   const host = chatFor(ctx.projectDir(b.path))
   const a = await host.agent(String(b.session))
   a.setProvider(await provider())
-  if (b.folders) a.folders = cleanFolders(b.folders)
+  if (b.folders) host.attach(a, cleanFolders(b.folders))
   return { host, a }
 }
 
@@ -440,7 +452,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!catalog) throw ctx.httpError(503, catalogError!)
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
-    if (b.folders) a.folders = cleanFolders(b.folders)
+    if (b.folders) host.attach(a, cleanFolders(b.folders))
     // Resume work left unfinished by a disconnect or restart.
     if (b.resume && !a.busy) {
       a.setProvider(await provider())

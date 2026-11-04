@@ -1392,6 +1392,18 @@ void Service::attached_folder_read(RequestIn& req) {
   std::string folder = r->folder()->str(), rel = r->path()->str();
   if (folder.empty() || folder.front() != '/') throw Failed(FailureKind::invalid_path, "folder must be an absolute path");
   if (!rel.empty() && !fs::valid_relative_path(rel)) throw Failed(FailureKind::invalid_path, "invalid path " + rel, {{"path", rel}});
+  // On the host every path is reachable: only the folders the launcher listed
+  // as attached (a file RPC cannot change). In the VM only attached folders
+  // are shared at all.
+  if (opts_.chat_folders.empty()) {
+    bool listed = false;
+    if (auto text = fs::read_file(opts_.attached_file)) {
+      schema::Attached a;
+      if (!schema::decode(*text, a))
+        for (const auto& f : *a.folders) listed |= stdfs::path(f).lexically_normal() == stdfs::path(folder).lexically_normal();
+    }
+    if (!listed) throw Failed(FailureKind::not_found, "the folder " + folder + " is not attached here (attach it in the chat)", {{"path", folder}});
+  }
   stdfs::path root = opts_.chat_folders.empty() ? stdfs::path(folder)
                                                 : opts_.chat_folders / crypto::sha256_hex(folder).substr(0, 16);
   std::error_code ec;

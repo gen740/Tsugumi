@@ -840,13 +840,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::error_code ec;
       stdfs::remove_all(where, ec);
       stdfs::create_directories(where);
+      auto [root, rel] = beneath(*src);
       if (v.kind == PortKind::File) {
-        fs::write_atomic(dest, fs::read_file_or_throw(*src), 0644);
+        fs::write_atomic(dest, fs::read_beneath(root, rel), 0644);
       } else {
-        auto listing = fs::list_tree(*src);
+        auto listing = fs::list_beneath(root, rel);
         stdfs::create_directories(dest);
-        for (const auto& f : listing.files)
-          fs::write_atomic(dest / f, fs::read_file_or_throw(stdfs::path(*src) / f), 0644);
+        for (const auto& f : listing.files) fs::write_atomic(dest / f, fs::read_beneath(root, rel / f), 0644);
       }
       return with_path(v, dest.string());
     };
@@ -929,6 +929,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         throw Failed(FailureKind::output_invalid, "required output " + port.name + " is missing", {{"port", port.name}});
   }
 
+  // A File / Directory value's path below the trees tsugumid keeps them in
+  // (the runs, the saved inputs): read from there without following links,
+  // since the worker that wrote it may still be running.
+  std::pair<stdfs::path, stdfs::path> beneath(const std::string& p) const {
+    auto state = svc_.store().state_dir();
+    for (const auto& root : {state / "runs", state / "inputs"}) {
+      auto rel = stdfs::path(p).lexically_normal().lexically_relative(root);
+      if (!rel.empty() && *rel.begin() != ".." && rel != ".") return {root, rel};
+    }
+    throw Failed(FailureKind::output_invalid, "a file value outside the run's folders: " + p);
+  }
+
   stdfs::path invocation_dir(const Node& node, uint64_t inv) {
     return run_dir_ / "work" / path_key(node.path) / std::to_string(inv);
   }
@@ -945,18 +957,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     a.kind = v.kind;
     a.name = stdfs::path(*src).filename().string();
     auto dest = run_dir_ / "artifacts" / a.artifact_id;
+    auto [root, rel] = beneath(*src);
     if (v.kind == PortKind::File) {
-      auto data = fs::read_file_or_throw(*src);
+      auto data = fs::read_beneath(root, rel);
       fs::write_atomic(dest / a.name, data, 0644);
       a.members.push_back({a.name, data.size(), crypto::sha256_hex(data)});
     } else {
-      auto listing = fs::list_tree(*src);
+      auto listing = fs::list_beneath(root, rel);
       if (!listing.links.empty())
         throw Failed(FailureKind::output_invalid, "artifact directory contains symlink " + listing.links.front());
       if (listing.files.size() > 1000)
         throw Failed(FailureKind::resource_limit, "artifact directory exceeds 1,000 files");
       for (const auto& f : listing.files) {
-        auto data = fs::read_file_or_throw(stdfs::path(*src) / f);
+        auto data = fs::read_beneath(root, rel / f);
         fs::write_atomic(dest / f, data, 0644);
         a.members.push_back({f, data.size(), crypto::sha256_hex(data)});
       }
@@ -1143,6 +1156,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
     sp.hidden_paths.push_back(svc_.store().state_dir().string());
     sp.network = node.settings.network;
+    sp.card = path_key(node.path);
     for (const auto& f : node.settings.host_folders) {
       std::string source = f.path;
       if (const auto& root = svc_.options().host_folders; !root.empty())
