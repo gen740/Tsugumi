@@ -181,6 +181,7 @@ uid_t uid_for(const std::string& id) {
   }
   if (auto it = uids.find(id); it != uids.end()) return it->second;
   std::ofstream(file, std::ios::app) << id << " " << next << "\n";
+  logf("uid %u for %s (%zu known)", next, id.c_str(), uids.size());
   return next;
 }
 

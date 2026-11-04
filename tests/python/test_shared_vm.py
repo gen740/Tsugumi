@@ -198,3 +198,47 @@ def test_closed_projects_give_their_slot_back(tmp_path):
             assert c.call("ProjectInspectRequest").rev >= 0
         finally:
             env.stop()
+
+
+def test_a_crashed_tsugumid_is_started_again_with_its_documents(tmp_path):
+    """The project's tsugumid killed in the VM: the next start (the app's
+    reconnection) starts a new one for the same project, which serves its
+    documents as before."""
+    from projects import builtin_project
+    root = tmp_path / "p"
+    builtin_project(root)
+    env = VMEnv(root, "crash").start()
+    try:
+        rev = env.client().call("ProjectInspectRequest").rev
+        env.crash()
+        env.start()
+        assert env.client().call("ProjectInspectRequest").rev == rev
+    finally:
+        env.stop()
+
+
+def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path):
+    """Requests to vmd with a bad project id (paths, nothing), a wrong number
+    of words, unknown words or a very long line are refused one by one; vmd
+    keeps serving, the running project included, and starts another."""
+    from projects import builtin_project
+    builtin_project(tmp_path / "a")
+    a = VMEnv(tmp_path / "a", "before-bad").start()
+    try:
+        vm = a.vm
+        bad = ["start ../x 1 /tmp 3", "start a/b 1 /tmp 3", "start x", "stop ../../etc", "stop", "forget ..",
+               "shell ../x 10 10", "shell x", "resize", "resize 99999999999 1 1", "clock 0", "clock -5",
+               "frobnicate", "start " + "a" * 5000 + " 1 /tmp 3", "stop " + "\u00e9" * 50]
+        for req in bad:
+            line = vm.command(f"vm {req}")[-1]
+            assert line.startswith("error "), (req, line)
+        assert vm.command("vm ping")[-1].strip() == "ok"
+        assert a.client().call("ProjectInspectRequest").rev >= 0
+        builtin_project(tmp_path / "b")
+        b = VMEnv(tmp_path / "b", "after-bad").start()
+        try:
+            assert b.client().call("ProjectInspectRequest").rev >= 0
+        finally:
+            b.stop()
+    finally:
+        a.stop()
