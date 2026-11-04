@@ -6,11 +6,11 @@ import Security
 // ChatGPT plan for its Responses API requests
 // (developers.openai.com/siwc/token-sharing-open-source).
 //
-// The app and the web UI's server on this Mac are one agent host: they share
-// the host ID and the registrations, kept in one login keychain item
-// (service app.tsugumi.agent, account "ChatGPT"), as they share API keys. A
-// refresh rotates the refresh token, so refreshes are serialized across both
-// processes with a lock folder, and the record is read again under the lock.
+// The app keeps its host ID and registrations in one login keychain item
+// (service app.tsugumi.agent, account "ChatGPT"); the web UI's server is an
+// agent host of its own (web/server/chatgpt.ts). A refresh rotates the
+// refresh token, so refreshes are serialized across the app's processes with
+// a lock folder, and the record is read again under the lock.
 
 /// Where the sign-in happens (OpenAI, or the local fixture in tests).
 public struct ChatGPTEndpoints: Codable, Equatable, Sendable {
@@ -142,7 +142,9 @@ public actor ChatGPTAuth {
     let caches = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/app.tsugumi.agent")
     lock = caches.appendingPathComponent("\(store).lock")
     let c = URLSessionConfiguration.ephemeral
-    c.timeoutIntervalForRequest = 60
+    // Every request ends well before a lock counts as stale (60 s).
+    c.timeoutIntervalForRequest = 15
+    c.timeoutIntervalForResource = 15
     session = URLSession(configuration: c)
   }
 
@@ -261,7 +263,7 @@ public actor ChatGPTAuth {
     }
     if consent { q.append(("prompt", "consent")) }
     // The listener answers before the browser opens (a browser may wait for the callback's page).
-    let waiting = Task { try await listener.callback(timeout: 600) }
+    let waiting = Task { try await listener.callback(state: state, timeout: 600) }
     let cb: [String: String]
     do {
       try await open(Self.url(endpoints.authorize, q))
@@ -328,28 +330,30 @@ public actor ChatGPTAuth {
   /// revocation was not confirmed (the user can disconnect Tsugumi in ChatGPT
   /// settings).
   public func signOut(clientId: String) async throws -> Bool {
-    guard let a = load()?.accounts.first(where: { $0.clientId == clientId }) else { return true }
-    var revoked = a.refreshToken == nil
-    if let t = a.refreshToken {
-      for attempt in 0..<3 where !revoked {
-        if attempt > 0 { try? await Task.sleep(for: .seconds(Double(1 << attempt))) }
-        var r = URLRequest(url: endpoints.revoke)
-        r.httpMethod = "POST"
-        r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
-        r.httpBody = Data(Self.form([("token", t), ("token_type_hint", "refresh_token"), ("client_id", clientId)]).utf8)
-        guard let (_, resp) = try? await session.data(for: r), let status = (resp as? HTTPURLResponse)?.statusCode else { continue }
-        if status == 200 { revoked = true } else if status < 500 { break }
+    // Under the lock, so a refresh cannot rotate the token between its
+    // revocation and the forgetting of the tokens.
+    try await locked {
+      guard var s = load(), let i = s.accounts.firstIndex(where: { $0.clientId == clientId }) else { return true }
+      var revoked = s.accounts[i].refreshToken == nil
+      if let t = s.accounts[i].refreshToken {
+        for attempt in 0..<3 where !revoked {
+          if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt))) }
+          var r = URLRequest(url: endpoints.revoke)
+          r.httpMethod = "POST"
+          r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
+          r.httpBody = Data(Self.form([("token", t), ("token_type_hint", "refresh_token"), ("client_id", clientId)]).utf8)
+          guard let (_, resp) = try? await session.data(for: r), let status = (resp as? HTTPURLResponse)?.statusCode else { continue }
+          if status == 200 { revoked = true } else if status < 500 { break }
+        }
       }
-    }
-    try await update { s in
-      guard let i = s.accounts.firstIndex(where: { $0.clientId == clientId }) else { return }
       s.accounts[i].accessToken = nil
       s.accounts[i].refreshToken = nil
       s.accounts[i].idToken = nil
       s.accounts[i].expiresIn = nil
       s.accounts[i].savedAt = nil
+      try save(s)
+      return revoked
     }
-    return revoked
   }
 
   // MARK: Tokens
@@ -364,7 +368,14 @@ public actor ChatGPTAuth {
     guard a.signedIn, let current = a.accessToken else { throw ChatGPTError.signInRequired("signed out") }
     guard a.planEnabled else { throw ChatGPTError.planNotEnabled }
     if stale == nil && !a.expiresSoon() { return current }
-    return try await locked {
+    // Not cancelled with the turn: once OpenAI rotated the refresh token, the
+    // answer must be saved, or the next refresh reuses the old token and the
+    // account is signed out.
+    return try await Task { try await self.refreshLocked(id: id, stale: stale) }.value
+  }
+
+  private func refreshLocked(id: String, stale: String?) async throws -> String {
+    try await locked {
       // Read again: the other process may have refreshed meanwhile.
       guard let s = load(), let a = s.accounts.first(where: { $0.clientId == id }), let current = a.accessToken,
             let refresh = a.refreshToken else {
@@ -524,7 +535,8 @@ public actor ChatGPTAuth {
 }
 
 /// A one-shot HTTP listener on 127.0.0.1 for the OAuth callback
-/// (/auth/callback); other paths get 404 and it keeps waiting.
+/// (/auth/callback with the sign-in's state); anything else gets 404 and it
+/// keeps waiting.
 final class LoopbackListener: @unchecked Sendable {
   let fd: Int32
   let port: Int
@@ -557,10 +569,11 @@ final class LoopbackListener: @unchecked Sendable {
     return stopped
   }
 
-  /// The callback's query parameters.
-  func callback(timeout: TimeInterval) async throws -> [String: String] {
+  /// The callback's query parameters. A callback with another state (a page
+  /// or process that found the port) gets 404, and the wait goes on.
+  func callback(state: String, timeout: TimeInterval) async throws -> [String: String] {
     try await withTaskCancellationHandler {
-      try await Task.detached { [self] in try wait(until: Date().addingTimeInterval(timeout)) }.value
+      try await Task.detached { [self] in try wait(state: state, until: Date().addingTimeInterval(timeout)) }.value
     } onCancel: {
       stop.lock()
       stopped = true
@@ -568,7 +581,7 @@ final class LoopbackListener: @unchecked Sendable {
     }
   }
 
-  private func wait(until deadline: Date) throws -> [String: String] {
+  private func wait(state: String, until deadline: Date) throws -> [String: String] {
     while true {
       if isStopped { throw CancellationError() }
       guard Date() < deadline else { throw ChatGPTError.failed("the sign-in was not finished in the browser in time") }
@@ -596,6 +609,10 @@ final class LoopbackListener: @unchecked Sendable {
       }
       var q: [String: String] = [:]
       for item in comps.queryItems ?? [] { q[item.name] = item.value ?? "" }
+      guard q["state"] == state else {
+        respond(c, status: "404 Not Found", body: "Not found")
+        continue
+      }
       let ok = q["error"] == nil
       respond(c, status: "200 OK", body: ok
         ? "サインインしました。このタブを閉じて Tsugumi に戻ってください。 / Signed in. Close this tab and return to Tsugumi."

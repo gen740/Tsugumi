@@ -112,8 +112,15 @@ function errorCode(obj: any): string | undefined {
   return typeof obj?.code === 'string' ? obj.code : undefined
 }
 
+/** Every request ends well before a lock counts as stale (60 s), and a hung
+ *  token endpoint never holds up the chats queued behind a refresh. */
+const REQUEST_TIMEOUT = 15_000
+
 async function postForm(url: string, form: Record<string, string>) {
-  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() })
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+  })
   const text = await r.text()
   let obj: any = {}
   try { obj = JSON.parse(text) } catch {}
@@ -246,7 +253,8 @@ export class ChatGPTAuth {
     const answer = new Promise<URLSearchParams>((resolve, reject) => (settle = { resolve, reject }))
     const server = http.createServer((req, res) => {
       const u = new URL(req.url ?? '/', 'http://127.0.0.1')
-      if (req.method !== 'GET' || u.pathname !== '/auth/callback') {
+      // Another state is not this sign-in's answer (a page or process that found the port): keep waiting.
+      if (req.method !== 'GET' || u.pathname !== '/auth/callback' || u.searchParams.get('state') !== state) {
         res.writeHead(404).end('Not found')
         return
       }
@@ -346,23 +354,26 @@ export class ChatGPTAuth {
   /** Signs out: revokes the refresh token, then forgets the tokens (the
    *  registration and the host ID stay). False when the revocation was not
    *  confirmed (the user can disconnect Tsugumi in ChatGPT settings). */
-  async signOut(clientId: string): Promise<boolean> {
-    const a = this.load()?.accounts.find((x) => x.client_id === clientId)
-    if (!a) return true
-    let revoked = !a.refresh_token
-    for (let attempt = 0; attempt < 3 && !revoked && a.refresh_token; attempt++) {
-      if (attempt) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt))
-      try {
-        const r = await postForm(this.endpoints.revoke, { token: a.refresh_token, token_type_hint: 'refresh_token', client_id: clientId })
-        if (r.status === 200) revoked = true
-        else if (r.status < 500) break
-      } catch {}
-    }
-    await this.update((s) => {
-      const x = s.accounts.find((y) => y.client_id === clientId)
-      if (x) delete x.access_token, delete x.refresh_token, delete x.id_token, delete x.expires_in, delete x.saved_at
+  signOut(clientId: string): Promise<boolean> {
+    // Under the lock, so a refresh cannot rotate the token between its
+    // revocation and the forgetting of the tokens.
+    return this.locked(async () => {
+      const s = this.load()
+      const a = s?.accounts.find((x) => x.client_id === clientId)
+      if (!s || !a) return true
+      let revoked = !a.refresh_token
+      for (let attempt = 0; attempt < 3 && !revoked && a.refresh_token; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt))
+        try {
+          const r = await postForm(this.endpoints.revoke, { token: a.refresh_token, token_type_hint: 'refresh_token', client_id: clientId })
+          if (r.status === 200) revoked = true
+          else if (r.status < 500) break
+        } catch {}
+      }
+      delete a.access_token, delete a.refresh_token, delete a.id_token, delete a.expires_in, delete a.saved_at
+      this.save(s)
+      return revoked
     })
-    return revoked
   }
 
   // ---- Tokens --------------------------------------------------------------------
@@ -428,7 +439,7 @@ export class ChatGPTAuth {
       throw new ChatGPTError('failed', 'the ID token is malformed')
     }
     if (parts.length !== 3 || header.alg !== 'RS256') throw new ChatGPTError('failed', 'the ID token is not signed with RS256')
-    const jwks = (await (await fetch(this.endpoints.jwks)).json()) as { keys?: any[] }
+    const jwks = (await (await fetch(this.endpoints.jwks, { signal: AbortSignal.timeout(REQUEST_TIMEOUT) })).json()) as { keys?: any[] }
     const jwk = (jwks.keys ?? []).find((k) => k.kty === 'RSA' && (!header.kid || k.kid === header.kid))
     if (!jwk) throw new ChatGPTError('failed', 'no key of the issuer verifies the ID token')
     const key = crypto.createPublicKey({ key: { kty: 'RSA', n: jwk.n, e: jwk.e }, format: 'jwk' })

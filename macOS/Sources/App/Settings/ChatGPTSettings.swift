@@ -3,9 +3,9 @@ import SwiftUI
 import TsugumiAgent
 
 /// Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. Accounts
-/// (registrations) and their tokens stay in the login keychain, shared with
-/// the web UI's server on this Mac; nothing of them reaches tsugumid, Cards,
-/// project files, settings or logs.
+/// (registrations) and their tokens stay in the login keychain (the web UI's
+/// server keeps its own); nothing of them reaches tsugumid, Cards, project
+/// files, settings or logs.
 struct ChatGPTSettings: View {
   @AppStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
   @State private var accounts: [ChatGPTAccountInfo] = []
