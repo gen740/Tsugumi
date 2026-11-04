@@ -183,3 +183,18 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
         assert copy_runs(root) == [rid]
     finally:
         env.stop()
+
+
+def test_closed_projects_give_their_slot_back(tmp_path):
+    """The VM has a fixed number of folder slots: projects opened one after
+    another, each closed (stopped) before the next, never run out of them."""
+    from projects import builtin_project
+    for i in range(18):  # more than the 16 slots
+        root = tmp_path / f"p{i}"
+        builtin_project(root)
+        env = VMEnv(root, f"slot-{i}").start()
+        try:
+            c = env.client()
+            assert c.call("ProjectInspectRequest").rev >= 0
+        finally:
+            env.stop()

@@ -93,6 +93,23 @@ import Testing
     #expect(s.connected, "\(s.connectionMessage ?? "")")
   }
 
+  /// A project no window shows any more is closed: its connection ends and it
+  /// does not come back on its own (its environment is given back).
+  @Test func aClosedSessionLetsGo() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    await s.close()
+    #expect(!s.connected)
+    guard case .stopped = s.environment else { Issue.record("still \(s.environment)"); return }
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(!s.connected)
+  }
+
   @Test func agentChangesAndUIEditsBothStay() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
