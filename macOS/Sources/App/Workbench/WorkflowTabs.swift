@@ -35,6 +35,10 @@ struct WorkflowTabs: View {
             .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
         }
       }
+      .overlay(alignment: .bottomTrailing) {
+        GuideCorner(screen: .project, session: session, tab: workspace.active)
+          .padding(.trailing, 14).padding(.bottom, 58)
+      }
       .inspector(isPresented: $workspace.showChat) {
         // Wider by default; the width the user gives it is kept (per Mac).
         ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)

@@ -72,6 +72,7 @@ struct CanvasWorkspace: View {
       .help(workspace.showChat ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
                                : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
       .accessibilityLabel("チャット")
+      .guideTarget("chat")
     }
     .buttonStyle(.borderless)
     .font(.callout)
@@ -176,6 +177,7 @@ struct CanvasRunControl: View {
       }
       .buttonStyle(.borderedProminent)
       .tint(shownActive ? .red : .accentColor)
+      .guideTarget("run")
       .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
       .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
                         : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))

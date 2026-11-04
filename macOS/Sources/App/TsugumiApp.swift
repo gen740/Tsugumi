@@ -306,6 +306,9 @@ struct WorkbenchCommands: Commands {
         .shortcut(.addNote)
       Button("チャットの表示切替") { workspace?.showChat.toggle() }
         .shortcut(.toggleChat)
+      Button("ガイドのツグミに聞く") { GuideController.shared.toggleFromMenu() }
+        .shortcut(.toggleGuide)
+        .disabled(!GuideController.shared.available)
       Button("ログの表示切替") { workspace?.togglePanel(.log) }
         .shortcut(.toggleLog)
       Button("タイムラインの表示切替") { workspace?.togglePanel(.timeline) }

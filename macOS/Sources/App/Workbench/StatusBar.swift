@@ -78,6 +78,7 @@ struct StatusBar: View {
     .help("\(p.title)（\(AppPreferences.shared.shortcut(shortcut).label)）")
     .accessibilityLabel(p.title)
     .accessibilityAddTraits(open ? .isSelected : [])
+    .guideTarget(p == .log ? "logs" : p.rawValue)
   }
 
   private func runState(short: Bool) -> some View {

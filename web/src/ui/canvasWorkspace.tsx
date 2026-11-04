@@ -58,7 +58,7 @@ function ProjectActions({ workspace, session, onSwitchProject }: { workspace: Wo
           help={session.runActive ? '実行中は切り替えられません' : '別のプロジェクトを開く（必要な保存の後に切り替えます）'} />
       )}
       <Button kind="borderless" iconOnly icon={workspace.showChat ? 'bubble.left.and.text.bubble.right.fill' : 'bubble.left.and.text.bubble.right'}
-        pressed={workspace.showChat}
+        pressed={workspace.showChat} guide="chat"
         help={workspace.showChat ? tip('チャットを閉じる', 'toggleChat') : tip('チャットを開く', 'toggleChat')}
         onClick={() => workspace.set('showChat', !workspace.showChat)} />
     </div>
@@ -141,7 +141,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
   return (
     <div className="capsule material cv-run">
       {/* One button of a fixed size: its title and color change, nothing moves. */}
-      <Button kind={shownActive ? 'danger' : 'prominent'} icon={shownActive ? 'stop.fill' : 'play.fill'} className="cv-run-button"
+      <Button kind={shownActive ? 'danger' : 'prominent'} icon={shownActive ? 'stop.fill' : 'play.fill'} className="cv-run-button" guide="run"
         disabled={shownActive ? !session.runActive || st === D.RunState.cancelling : !session.connected}
         help={shownActive ? tip('Workflow の実行を停止（チャットの回答停止とは別の操作です）', 'stop') : tip('文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）', 'run')}
         onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>

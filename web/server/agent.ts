@@ -11,6 +11,7 @@ import { FlatJSON } from '../src/shared/flatjson'
 import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
+import guidePrompt from '../../agent/Shared/guide-prompt.md'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -433,6 +434,8 @@ function wire(b: ContentBlock): unknown {
  *  app's Agent; its default.nix and _outputs.fbs examples are the bundled
  *  demos' own files). */
 export const SYSTEM_PROMPT = systemPrompt
+/** The guide's rules (agent/Shared/guide-prompt.md). */
+export const GUIDE_PROMPT = guidePrompt
 
 /** The bundled demos the Agent may read, as references ("demos/<path>"):
  *  not the Draft demos (tasks to implement) nor the finished demo of each,
@@ -522,6 +525,16 @@ function failureOf(json: string): { kind?: string; currentRev?: string } {
 
 /** reference_read: Tsugumi's bundled references, read only. */
 const REFERENCE_TOOL: ToolSpec = { ...AGENT.referenceTool, payloadType: -1, object: -1, mutating: false }
+const GUIDE_SHOW_TOOL: ToolSpec = { ...AGENT.guide.showTool, payloadType: -1, object: -1, mutating: false }
+const GUIDE_TOOLS = new Set<string>(AGENT.guide.tools)
+type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>
+/** A note of the app to the guide (agent/Shared/agent.json "guide"), filled in. */
+export const guideText = (k: GuideText, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
+
+/** What an Agent is for: the project's Agent (it reads, saves and runs) or
+ *  the guide bird of the app (it reads and explains; guide_show offers the
+ *  user buttons, and nothing else of the project changes). */
+export type AgentRole = 'worker' | 'guide'
 
 const RUN_ACTIVE = new Set(['queued', 'preparing', 'running', 'cancelling'])
 const RUN_ENDED = new Set(['succeeded', 'failed', 'cancelled'])
@@ -579,19 +592,24 @@ export class Agent {
     private readonly references: Record<string, string> = {},
     /** A helper started by `delegate` (undefined: the main Agent). */
     readonly helper?: Helper,
+    readonly role: AgentRole = 'worker',
   ) {
     this.codec = new FlatJSON(catalog.schema)
     this.conversation = loadConversation(storage, id)
   }
 
   /** The RPC tools and the Agent's own (reference_read, when references
-   *  exist; delegate, for the main Agent). */
+   *  exist; delegate, for the main Agent). The guide reads only, and offers
+   *  buttons with guide_show. */
   get tools(): ToolSpec[] {
-    return [...this.catalog.tools, ...(Object.keys(this.references).length ? [REFERENCE_TOOL] : []), ...(this.helper ? [] : [DELEGATE_TOOL])]
+    const reference = Object.keys(this.references).length ? [REFERENCE_TOOL] : []
+    if (this.role === 'guide') return [...this.catalog.tools.filter((t) => GUIDE_TOOLS.has(t.name)), ...reference, GUIDE_SHOW_TOOL]
+    return [...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL])]
   }
 
   /** The rules, and for a helper its task. */
   get system(): string {
+    if (this.role === 'guide') return GUIDE_PROMPT
     if (!this.helper) return SYSTEM_PROMPT
     return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
@@ -950,7 +968,11 @@ export class Agent {
       const [text, isError] = this.readReference(p)
       return this.finish(record, text, isError, events)
     }
-    if (name === DELEGATE_TOOL.name && !this.helper) {
+    if (this.role === 'guide') {
+      if (name === GUIDE_SHOW_TOOL.name) return this.finish(record, AGENT.guide.shown, false, events)
+      if (!GUIDE_TOOLS.has(name)) return this.finish(record, guideText('readOnly', { tool: name }), true, events)
+    }
+    if (name === DELEGATE_TOOL.name && !this.helper && this.role === 'worker') {
       const [text, isError] = await this.delegate(input, events, signal)
       return this.finish(record, text, isError, events)
     }

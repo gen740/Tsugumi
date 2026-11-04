@@ -572,6 +572,17 @@ private struct APISettings: View {
         Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
           .font(.caption).foregroundStyle(.secondary)
       }
+      Section {
+        LabeledContent("状態", value: GuideController.shared.available
+                       ? String(localized: "右下に表示中（\(AgentSettings.current().name)）")
+                       : String(localized: "API キーが未設定のため表示していません"))
+        Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
+      } header: {
+        Text("ガイドのツグミ")
+      } footer: {
+        Text("ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
       Section("ChatGPT アカウントでの接続") {
         Text("未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -581,11 +592,13 @@ private struct APISettings: View {
     }
     .formStyle(.grouped)
     .onAppear(perform: refresh)
-    .onChange(of: provider) { models = []; message = nil; key = "" }
+    .onChange(of: provider) { models = []; message = nil; key = ""; GuideController.shared.refreshAvailability() }
   }
 
   private func refresh() {
     stored = Set([ProviderConfig.anthropic.name, ProviderConfig.openAI.name].filter { Keychain.load(account: $0) != nil })
+    // The guide is there exactly while the chosen provider has a key.
+    GuideController.shared.refreshAvailability()
   }
 }
 

@@ -56,6 +56,7 @@ extension Agent {
 
   /// The rules, and for a helper its task.
   var system: String {
+    if role == .guide { return Self.guidePrompt }
     guard let helper else { return Self.systemPrompt }
     return Self.systemPrompt + "\n\n" + Shared.fill(Shared.data.helper.prompt, [
       "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction])

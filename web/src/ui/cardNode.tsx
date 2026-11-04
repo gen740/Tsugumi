@@ -49,6 +49,8 @@ export interface CardNodeProps {
   flow: FlowDirection
   zoom?: number
   selected?: boolean
+  /** What the guide calls this Card when it points at it ("card:<id>"). */
+  guide?: string
   /** Committing an edited param of an input Card (undefined: read-only). */
   onParamCommit?: (name: string, text: string) => void
   paramsEditable?: boolean
@@ -82,7 +84,7 @@ export function CardNodeView(p: CardNodeProps) {
   if (data.errors.length) parts.push(data.errors.join(' '))
 
   return (
-    <div className={`cv-card ${p.className ?? ''}`} style={{ width: w, height: h, ...p.style }} role="group" aria-label={parts.join(', ')}
+    <div className={`cv-card ${p.className ?? ''}`} style={{ width: w, height: h, ...p.style }} data-guide={p.guide} role="group" aria-label={parts.join(', ')}
       onPointerDown={p.onPointerDown} onDoubleClick={p.onDoubleClick} onContextMenu={p.onContextMenu}>
       <svg className="cv-card-fill" width={w} height={h}>
         <path d={outline} fill={fill} style={{ filter: `drop-shadow(0 1px ${selected ? 4 : 1.5}px rgba(0,0,0,${selected ? 0.2 : 0.07}))` }} />

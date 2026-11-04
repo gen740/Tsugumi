@@ -9,6 +9,8 @@ import { prefs } from '../model/prefs'
 import { errorText } from '../model/session'
 import { Button, Empty, showMenu, Sheet, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
+import { guide } from '../model/guide'
+import { GuideCorner } from './guide'
 import { FolderPicker } from './sidebar'
 
 // ---- Art ---------------------------------------------------------------------------
@@ -91,7 +93,7 @@ function loadBird() {
   return birdArt
 }
 
-function useBird() {
+export function useBird() {
   const [art, setArt] = useState<{ bird: string; perch: string }>()
   useEffect(() => {
     let alive = true
@@ -260,6 +262,13 @@ export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
   useEffect(() => {
     document.title = 'Tsugumi'
   }, [])
+  useObserve(guide)
+  useEffect(() => {
+    if (guide.demosRequested) {
+      setShowDemos(true)
+      guide.set('demosRequested', false)
+    }
+  }, [guide.demosRequested])
   useEffect(() => {
     if (app.requestNewProject) {
       setShowNew(true)
@@ -279,6 +288,7 @@ export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
           </div>
         )}
       </div>
+      <GuideCorner screen={showDemos ? 'demos' : 'home'} />
       {showNew && <NewProjectSheet onClose={() => setShowNew(false)} onCreated={onOpen} />}
       {picking && <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); onOpen(p) }} />}
     </div>
@@ -295,14 +305,14 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
         <div className="home-scene"><TsugumiIdleScene birdScale={0.19} /></div>
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
-          <Button kind="prominent" large icon="plus.square" onClick={onNew}>新規プロジェクト…</Button>
+          <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>
           <Button large icon="folder" onClick={onOpen}>既存のプロジェクトを開く…</Button>
-          <button type="button" className="home-link" onClick={onToggleDemos}>
+          <button type="button" className="home-link" data-guide="demos" onClick={onToggleDemos}>
             <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? '最近のプロジェクト' : 'デモを見る'}
           </button>
         </div>
         <span className="spacer" />
-        <Button kind="borderless" small icon="gearshape" className="home-settings" help="アプリ設定（⌘,）" onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>設定</Button>
+        <Button kind="borderless" small icon="gearshape" className="home-settings" guide="settings" help="アプリ設定（⌘,）" onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>設定</Button>
       </div>
     </div>
   )

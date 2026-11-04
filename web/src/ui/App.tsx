@@ -4,6 +4,7 @@
 // the canvas handles its own single-key shortcuts while it has the focus.
 import { useEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
+import { guide } from '../model/guide'
 import { canvasFor } from '../model/canvas'
 import { useObserve } from '../model/observable'
 import { eventBinding, isMac, prefs } from '../model/prefs'
@@ -11,6 +12,7 @@ import { errorText } from '../model/session'
 import { Workspace } from '../model/workspace'
 import { runAll } from './actions'
 import { Button, Empty, MenuHost, Sheet, Spinner, TextField } from './controls'
+import { GuideSetupSheet, setGuideWindow } from './guide'
 import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
@@ -48,6 +50,7 @@ export function App() {
 
   useEffect(() => {
     void app.refresh().then(() => {
+      void guide.refresh()
       // `?project=<folder>` (or the server's launch argument) opens that project.
       const p = params.get('project') ?? app.status?.launchProject
       if (p && !app.setupNeeded) void open(p, detached ? detachedScope!.split('/').filter(Boolean) : undefined)
@@ -75,6 +78,15 @@ export function App() {
     return true
   }
   workspace.switchProject = detached ? undefined : () => void leaveProject()
+  // The guide's buttons act on this page.
+  setGuideWindow({
+    openProject: (p) => void openReplacing(p),
+    home: () => void leaveProject(),
+    newProject: () => void (async () => {
+      if (workspace.session && !(await leaveProject())) return
+      app.request('requestNewProject', true)
+    })(),
+  })
 
   /** Opens another project, once the current one has been left (saved first when needed). */
   const openReplacing = async (dir: string) => {
@@ -142,6 +154,9 @@ export function App() {
         case 'duplicateProject':
           if (s && !detached) setDuplicating(true)
           return
+        case 'toggleGuide':
+          if (!detached && guide.available) guide.set('open', !guide.open)
+          return
       }
       if (!s || !tab) return
       switch (action) {
@@ -185,6 +200,7 @@ export function App() {
       {body}
       <WindowHost />
       <MenuHost />
+      {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
       {app.requestOpenProject && (
         <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject
           onClose={() => app.request('requestOpenProject', false)}

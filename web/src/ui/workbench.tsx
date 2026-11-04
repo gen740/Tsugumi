@@ -13,6 +13,7 @@ import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, Wor
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel } from './chat'
+import { GuideCorner } from './guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
@@ -129,6 +130,7 @@ export function Workbench({ workspace, session, tab }: { workspace: Workspace; s
       <div className="workbench-canvas">
         <CanvasWorkspace workspace={workspace} session={session} tab={tab} onSwitchProject={workspace.switchProject}
           bottomTrailing={<StatusBar workspace={workspace} session={session} tab={tab} />} />
+        {workspace.switchProject && <GuideCorner screen="project" session={session} tab={tab} />}
       </div>
       {workspace.showBottom && <LogTimelinePanel workspace={workspace} session={session} tab={tab} />}
     </div>
@@ -396,9 +398,9 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           {BOTTOM_PANELS.map((p) => {
             const open = workspace.showBottom && workspace.bottomPanel === p
             return (
-              <StatusButton key={p} selected={open} label={BOTTOM_TITLES[p]} help={`${BOTTOM_TITLES[p]}（${prefs.label(PANEL_SHORTCUT[p])}）`} onClick={() => workspace.togglePanel(p)}>
+              <span key={p} data-guide={p === 'log' ? 'logs' : p}><StatusButton selected={open} label={BOTTOM_TITLES[p]} help={`${BOTTOM_TITLES[p]}（${prefs.label(PANEL_SHORTCUT[p])}）`} onClick={() => workspace.togglePanel(p)}>
                 <Icon name={BOTTOM_ICONS[p]} />
-              </StatusButton>
+              </StatusButton></span>
             )
           })}
         </span>

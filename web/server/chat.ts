@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, AgentEvent, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { Agent, AgentEvent, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { EnvironmentManager, projectKey } from './env'
 
 export interface ChatContext {
@@ -46,12 +46,20 @@ interface Settings {
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
+  /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
+  guide: GuideState
 }
+
+/** The demo the guide shows: its id and title, the copy's folder, and
+ *  whether the guide began it. */
+interface GuideTour { demo: string; title: string; path: string; started: boolean }
+interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null }
 
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', fixturePort: 8765, models: [], allowedPermissions: [],
+  guide: { setupDone: false, demoAnswered: false, tour: null },
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
 
@@ -181,6 +189,58 @@ function cleanFolders(v: unknown): string[] {
       return false
     }
   })
+}
+
+// ---- The guide -----------------------------------------------------------------
+
+// The guide bird in the bottom-right corner: one conversation for the whole
+// app with the same model connection as the Agent (no key, no guide). It
+// reads the project on the page's screen and explains; what it offers to do
+// (guide_show) the user does with a button of the page.
+let guideAgent: Agent | undefined
+/** The project the page asked about (its reads go there), if one is open. */
+let guideProject: string | undefined
+const guideFile = () => path.join(ctx.support, 'agent', 'guide', 'conversation.json')
+const guideEvents = (e: AgentEvent) => ctx.broadcast({ type: 'guide', event: e })
+
+async function guide(): Promise<Agent> {
+  if (!catalog) throw ctx.httpError(503, catalogError!)
+  if (!guideAgent) {
+    const rpc = () => {
+      if (!guideProject) throw new Error(guideText('noProject'))
+      return chatFor(guideProject).rpc()
+    }
+    guideAgent = new Agent(catalog, rpc, await provider(), guideFile(), 'guide', references(), undefined, 'guide')
+    // A guide answers in a few steps and never waits on a run.
+    guideAgent.maxSteps = 12
+    guideAgent.statusWait = 0
+  }
+  guideAgent.setProvider(await provider())
+  return guideAgent
+}
+
+/** Whether the chosen provider can be used (a key, or the local fixture). */
+async function guideAvailable(): Promise<boolean> {
+  if (!catalog) return false
+  const s = settings()
+  return s.provider === 'fixture' || !!(await keySource(s.provider))
+}
+
+/** The guide's state for the page; a key already there answers the first start. */
+async function guideState() {
+  const available = await guideAvailable()
+  let g = settings().guide
+  if (available && !g.setupDone) {
+    g = { ...g, setupDone: true }
+    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+  }
+  return { available, ...g }
+}
+
+function cleanTour(v: unknown): GuideTour | null {
+  const t = v as Partial<GuideTour> | null
+  if (!t || typeof t.demo !== 'string' || typeof t.title !== 'string' || typeof t.path !== 'string') return null
+  return { demo: t.demo, title: t.title, path: t.path, started: t.started === true }
 }
 
 // ---- Skills ----------------------------------------------------------------------
@@ -506,5 +566,51 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { folder: f, name: path.basename(f) }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
+  'POST /api/guide': async () => {
+    const state = await guideState()
+    const a = state.available ? await guide() : undefined
+    return { ...state, conversation: a?.conversation ?? null, busy: a?.busy ?? false }
+  },
+  'POST /api/guide/state': async (b) => {
+    const g = { ...settings().guide }
+    if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
+    if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
+    if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
+    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    return guideState()
+  },
+  /** A connection check for the first start: the provider lists its models with the key. */
+  'POST /api/guide/check': async () => {
+    try {
+      await listModels(await provider())
+    } catch (e) {
+      throw ctx.httpError(502, String((e as Error).message ?? e))
+    }
+    return guideState()
+  },
+  'POST /api/guide/send': async (b) => {
+    if (!(await guideAvailable())) throw ctx.httpError(409, 'ガイドに使える API キーがありません。')
+    const a = await guide()
+    if (a.busy) throw ctx.httpError(409, 'ツグミはまだ答えています。')
+    guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
+    a.send(String(b.prompt), String(b.display), guideEvents, String(b.display))
+    return { ok: true }
+  },
+  'POST /api/guide/retry': async () => {
+    const a = await guide()
+    if (!a.busy) a.retry(guideEvents)
+    return { ok: true }
+  },
+  'POST /api/guide/cancel': async () => {
+    guideAgent?.cancel()
+    return { ok: true }
+  },
+  /** A new conversation (the old one is gone; the tour stays). */
+  'POST /api/guide/reset': async () => {
+    guideAgent?.cancel()
+    guideAgent = undefined
+    fs.rmSync(guideFile(), { force: true })
+    return { ok: true }
+  },
   }
 }

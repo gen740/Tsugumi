@@ -57,6 +57,9 @@ struct ProjectChooser: View {
         }
       }
     }
+    .overlay(alignment: .bottomTrailing) {
+      if arrived { GuideCorner(screen: showDemos ? .demos : .home).padding(16) }
+    }
     .coordinateSpace(.named("home"))
     .onAppear {
       guard WelcomeIntro.take(reduceMotion: reduceMotion) else { return }
@@ -79,6 +82,17 @@ struct ProjectChooser: View {
     }
     .tint(TsugumiPalette.rufous)
     .onReceive(NotificationCenter.default.publisher(for: .appShowDemos)) { _ in showDemos = true }
+    .onChange(of: GuideController.shared.demosRequested, initial: true) { _, asked in
+      if asked {
+        showDemos = true
+        GuideController.shared.demosRequested = false
+      }
+    }
+    // The first start asks for a model key (or a skip) once the welcome is over.
+    .sheet(isPresented: Binding(get: { arrived && GuideController.shared.needsSetup && !model.smokeMode },
+                                set: { if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() } })) {
+      GuideSetupView {}
+    }
     // The home window shows no title: the key visual and the name are in it.
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -305,12 +319,14 @@ private struct HomeSidebar: View {
       VStack(alignment: .leading, spacing: 8) {
         Button(action: onNew) { Label("新規プロジェクト…", systemImage: "plus.square").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large).buttonStyle(.borderedProminent)
+          .guideTarget("new_project")
         Button(action: onOpen) { Label("既存のプロジェクトを開く…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large)
         Button { showDemos.toggle() } label: {
           Label(showDemos ? "最近のプロジェクト" : "デモを見る", systemImage: showDemos ? "clock" : "sparkles")
         }
         .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream).padding(.top, 4)
+        .guideTarget("demos")
       }
       .padding(.horizontal, 18)
       .opacity(reveal).offset(y: 10 * (1 - reveal))

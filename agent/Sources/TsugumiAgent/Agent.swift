@@ -116,6 +116,11 @@ public actor Agent {
   let references: [String: URL]
   /// A helper started by `delegate` (nil: the main Agent).
   public nonisolated let helper: Helper?
+  /// What this Agent is for: the project's Agent (it reads, saves and runs)
+  /// or the guide bird of the app (it reads and explains; guide_show offers
+  /// the user buttons, and nothing else of the project changes).
+  public enum Role: Sendable { case worker, guide }
+  public nonisolated let role: Role
   /// The provider's settings, for the helpers.
   var providerConfig: ProviderConfig
   /// Each definition's _card.json as this Agent last saw it (inspect, its
@@ -133,11 +138,14 @@ public actor Agent {
   /// _outputs.fbs examples are the bundled demos' own files (a test keeps
   /// them equal), so they never drift from what works.
   public static let systemPrompt = Shared.systemPrompt
+  /// The guide's rules (agent/Shared/guide-prompt.md).
+  public static let guidePrompt = Shared.guidePrompt
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
-              references: [String: URL] = [:], helper: Helper? = nil) {
+              references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) {
     self.references = references
     self.helper = helper
+    self.role = role
     self.providerConfig = provider
     self.catalog = catalog
     self.codec = FlatJSON(schema: catalog.schema)
@@ -152,6 +160,7 @@ public actor Agent {
     provider = MessagesProvider(config: config)
   }
   public func setMaxSteps(_ n: Int) { maxSteps = max(1, n) }
+  public func setStatusWait(_ seconds: TimeInterval) { statusWait = max(0, seconds) }
   public func models() async throws -> [String] { try await provider.models() }
 
   public func reset() {
@@ -375,9 +384,24 @@ public actor Agent {
   }
 
   /// The RPC tools and the Agent's own (reference_read, when references
-  /// exist; delegate, for the main Agent).
+  /// exist; delegate, for the main Agent). The guide reads only, and offers
+  /// buttons with guide_show.
   public var tools: [ToolSpec] {
-    catalog.tools + (references.isEmpty ? [] : [Self.referenceTool]) + (helper == nil ? [Self.delegateTool] : [])
+    let reference = references.isEmpty ? [] : [Self.referenceTool]
+    if role == .guide {
+      return catalog.tools.filter { Shared.data.guide.tools.contains($0.name) } + reference + [Self.guideShowTool]
+    }
+    return catalog.tools + reference + (helper == nil ? [Self.delegateTool] : [])
+  }
+
+  static let guideShowTool = ToolSpec(
+    name: Shared.data.guide.showTool.name, requestName: "", payloadType: 0, object: -1,
+    description: Shared.data.guide.showTool.description, inputSchema: Shared.data.guide.showTool.inputSchema,
+    mutating: false)
+
+  /// A note of the app to the guide (agent/Shared/agent.json "guide"), filled in.
+  public static func guideText(_ key: String, _ values: [String: String] = [:]) -> String {
+    Shared.fill(Shared.data.guide.text(key), values)
   }
 
   static let referenceTool = ToolSpec(
@@ -456,7 +480,13 @@ public actor Agent {
       let (text, isError) = readReference(path)
       return finish(&record, text, isError: isError, events)
     }
-    if name == Self.delegateTool.name, helper == nil {
+    if role == .guide {
+      if name == Self.guideShowTool.name { return finish(&record, Shared.data.guide.text("shown"), isError: false, events) }
+      guard Shared.data.guide.tools.contains(name) else {
+        return finish(&record, Self.guideText("readOnly", ["tool": name]), isError: true, events)
+      }
+    }
+    if name == Self.delegateTool.name, helper == nil, role == .worker {
       let (text, isError) = await delegate(input, events)
       return finish(&record, text, isError: isError, events)
     }

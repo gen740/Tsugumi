@@ -108,7 +108,8 @@ final class EventLog: @unchecked Sendable {
   var text: String { all.compactMap { if case .text(let t) = $0 { return t }; return nil }.joined() }
 }
 
-func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil, references: [String: URL] = [:]) throws -> Agent {
+func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig? = nil, references: [String: URL] = [:],
+               role: Agent.Role = .worker) throws -> Agent {
   let bfbs = try #require(RPCSchema.bfbs())
   let schema = try BFBS(data: bfbs)
   let catalog = try ToolCatalog(schema: schema)
@@ -116,7 +117,7 @@ func makeAgent(_ h: AgentHarness, _ client: RPCClient, provider: ProviderConfig?
   for v in schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" })!.values { names[UInt8(v.value)] = v.name }
   return Agent(catalog: catalog, transport: DirectTransport(client: client, names: names),
                provider: provider ?? .localFixture(port: h.fixturePort), storage: h.dir.appendingPathComponent("conversation.json"),
-               references: references)
+               references: references, role: role)
 }
 
 final class Asked: @unchecked Sendable {

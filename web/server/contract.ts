@@ -8,7 +8,7 @@ import path from 'node:path'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
-import { draftRequest } from '../src/shared/agentShared'
+import { AGENT, draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
 import { Agent, approvalRequired, delegateTasks, helperOutside, referenceDemos, ToolCatalog } from './agent'
 
@@ -83,5 +83,17 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
   assert.equal(helperOutside(h, [{ value_type: 'PutDefinition', value: { id: 'life' } }]), 'the definition life')
   assert.equal(helperOutside(h, [{ value_type: 'SetProject', value: { json: '{}' } }]), 'SetProject')
   assert.ok(helperOutside(h, [{ value_type: 'PutSource', value: { path: 'definitions/lorenz/../life/x' } }]))
+}
+// The guide only reads and offers buttons (as the Swift Agent's Role.guide).
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-guide-'))
+  const catalog = new ToolCatalog(schema)
+  const g = new Agent(catalog, async () => { throw new Error('no rpc') },
+    { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never, path.join(tmp, 'g.json'), 'g', {}, undefined, 'guide')
+  const offered = g.tools.map((t) => t.name)
+  assert.deepEqual(offered, [...AGENT.guide.tools, 'guide_show'])
+  for (const t of AGENT.guide.tools) assert.equal(catalog.tool(t)?.mutating, false, `${t} changes the project`)
+  assert.ok(g.system.startsWith('You are Tsugumi, the guide bird'))
+  fs.rmSync(tmp, { recursive: true, force: true })
 }
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

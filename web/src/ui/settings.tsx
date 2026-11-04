@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
+import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
 import { PERMISSIONS } from '../model/permissions'
 import { useObserve } from '../model/observable'
@@ -458,6 +459,8 @@ interface APIState {
 /** Re-reads the connection of every open chat (after it changed here). */
 function refreshChats() {
   for (const s of app.sessions.values()) void app.chat(s).refreshProvider()
+  // The guide is there exactly while the chosen provider has a key.
+  void guide.refresh()
 }
 
 /** Model connections. API keys stay on this host (the macOS Keychain); they are
@@ -530,6 +533,7 @@ function APISettings() {
               <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {
                 const r = await api<{ message: string }>('/api/settings/key/delete', { provider: s.provider })
                 await reload()
+                refreshChats()
                 return r.message
               })}>キーを削除</Button>
               <Button disabled={!source} onClick={() => void run(async () => {
@@ -553,12 +557,25 @@ function APISettings() {
         ))}
         <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。</span></Row>
       </Section>
+      <GuideSettings />
       <Section title="ChatGPT アカウントでの接続">
         <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>未対応です。OpenAI の「Sign in with ChatGPT」は、プランの利用を選ばれた商用パートナーの限定試験か、公開のオープンソースツール向けの手順でのみ提供されています。このプロジェクトは現在どちらの条件も満たしていないため、API キー接続とは別の方式として、条件を満たした時点で追加します。</span></Row>
       </Section>
       {message && <div className="caption selectable">{message}</div>}
       <div className="caption secondary">チャットは任意機能です。通常の操作はすべて UI から行えます。</div>
     </Form>
+  )
+}
+
+/** The guide bird: whether it is shown, and the first start's offer again. */
+function GuideSettings() {
+  useObserve(guide)
+  return (
+    <Section title="ガイドのツグミ">
+      <Row label="状態"><span className="secondary">{guide.available ? '右下に表示中' : 'API キーが未設定のため表示していません'}</span></Row>
+      <Row><Button onClick={() => void guide.resetIntroduction()}>初回の案内（デモの勧誘）をもう一度表示</Button></Row>
+      <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。</span></Row>
+    </Section>
   )
 }
 
