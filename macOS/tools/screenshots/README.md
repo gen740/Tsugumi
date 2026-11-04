@@ -11,6 +11,12 @@ cp -R demos/collatz /tmp/shot-collatz && macOS/tools/run-ui.sh dist/Tsugumi.app 
 cp -R demos/live-stream /tmp/shot-live && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live
 ```
 
+README の画像をまとめて（`readme.ui`: workflow・timeline・subworkflow・card-source と、`$demo` のツグミの guide。チャットは設定の接続先のモデルに 1 回依頼します）:
+
+```bash
+cp -R demos/collatz /tmp/shot-readme && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/readme.ui /tmp/shots /tmp/shot-readme
+```
+
 Home のデモ一覧（`demos.ui`、プロジェクトは開きません）:
 
 ```bash

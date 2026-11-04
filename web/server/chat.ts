@@ -245,10 +245,19 @@ async function guide(): Promise<Agent> {
 }
 
 /** The guide's connection: the Agent's, with the small model Tsugumi speaks
- *  with on the ChatGPT plan (gpt-6.1-luna). */
+ *  with on the ChatGPT plan: gpt-6.1-luna when the account offers it, else
+ *  its newest luna (the plan refuses models it does not offer). */
 async function guideProvider(): Promise<ProviderConfig> {
   const p = await provider()
-  return settings().provider === 'chatgpt' ? { ...p, model: 'gpt-6.1-luna' } : p
+  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models, p.model) } : p
+}
+
+export function speechModel(offered: string[], fallback: string): string {
+  const preferred = 'gpt-6.1-luna'
+  if (!offered.length || offered.includes(preferred)) return preferred
+  const version = (m: string) => (m.match(/\d+/g) ?? []).map(Number)
+  const newer = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) > (b[i] ?? -1); return false }
+  return offered.filter((m) => m.includes('luna')).reduce<string | undefined>((best, m) => (!best || newer(version(m), version(best)) ? m : best), undefined) ?? fallback
 }
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a

@@ -1,0 +1,34 @@
+# README の画像（docs/assets/screenshots）を collatz のコピーで撮る:
+# workflow / timeline / subworkflow / card-source と、$demo のツグミ（guide）
+size 1440 900
+chat show
+wait 3
+run
+waitrun
+fit
+select compare
+wait 2
+capture workflow
+panel timeline
+wait 2
+capture timeline
+panel timeline
+enter collatz-cpp
+wait 1
+fit
+wait 2
+capture subworkflow
+enter -
+wait 1
+fit
+open card compare source
+wait 3
+winsize 1200 760 compare
+wait 2
+capture card-source compare
+close compare
+wait 1
+chatsend $demo compare の Card が何をしているか、画面で指しながら教えて
+waitchat 5
+wait 3
+capture guide

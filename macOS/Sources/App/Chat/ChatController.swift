@@ -698,9 +698,20 @@ final class ChatController {
 
 enum AgentSettings {
   /// The small model Tsugumi speaks with on the ChatGPT plan (the Home guide,
-  /// the canvas bird's thoughts); "agent.speechModel.chatgpt" overrides it.
+  /// the canvas bird's thoughts): gpt-6.1-luna when the account offers it,
+  /// else its newest luna ("agent.speechModel.chatgpt" overrides it).
   static var chatGPTSpeechModel: String {
-    UserDefaults.standard.string(forKey: "agent.speechModel.chatgpt").flatMap { $0.isEmpty ? nil : $0 } ?? "gpt-6.1-luna"
+    let d = UserDefaults.standard
+    if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
+    return speechModel(offered: d.stringArray(forKey: "agent.models") ?? [], fallback: current().model)
+  }
+
+  /// gpt-6.1-luna if offered (or nothing is listed yet), else the newest luna offered, else `fallback`.
+  nonisolated static func speechModel(offered: [String], fallback: String) -> String {
+    let preferred = "gpt-6.1-luna"
+    if offered.isEmpty || offered.contains(preferred) { return preferred }
+    let version = { (m: String) -> [Int] in m.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) } }
+    return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
   }
 
   /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.

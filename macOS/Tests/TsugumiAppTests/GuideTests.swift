@@ -37,6 +37,14 @@ import Testing
   #expect(!GuideController.saysMore("要点です。少しだけ補足。", than: "要点です。"))
 }
 
+/// On the ChatGPT plan Tsugumi speaks with gpt-6.1-luna if the account offers it, else its newest luna.
+@Test func theSpeechModelIsOneThePlanOffers() {
+  #expect(AgentSettings.speechModel(offered: [], fallback: "x") == "gpt-6.1-luna")
+  #expect(AgentSettings.speechModel(offered: ["gpt-6.1-sol", "gpt-6.1-luna"], fallback: "x") == "gpt-6.1-luna")
+  #expect(AgentSettings.speechModel(offered: ["gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-luna"], fallback: "x") == "gpt-6-luna")
+  #expect(AgentSettings.speechModel(offered: ["gpt-6.1-sol"], fallback: "gpt-6.1-sol") == "gpt-6.1-sol")
+}
+
 /// "card:<id>" also points at that Card inside the Card in Card on the screen.
 @MainActor @Test func aCardIsFoundInsideACardInCard() {
   let g = GuideController.shared

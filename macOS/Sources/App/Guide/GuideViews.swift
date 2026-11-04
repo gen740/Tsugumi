@@ -793,6 +793,9 @@ private struct GuidePanel: View {
         }
         .onChange(of: guide.items.last?.text) { proxy.scrollTo("end", anchor: .bottom) }
         .onChange(of: guide.items.count) { proxy.scrollTo("end", anchor: .bottom) }
+        // Opened, or a status came (an error with 再試行): the end is shown.
+        .onChange(of: guide.status) { proxy.scrollTo("end", anchor: .bottom) }
+        .onAppear { proxy.scrollTo("end", anchor: .bottom) }
       }
       Divider()
       input
