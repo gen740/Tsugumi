@@ -463,6 +463,8 @@ export class ChatController extends Observable {
           break
         }
         this.items = [...this.items, { id: uuid(), role: 'tool', text: e.arguments, tool: { name: e.name } }]
+        // The bird flies to the Card the Agent works on (in demo mode guide_show moves it instead).
+        if (!this.demoMode) guide.chatWork(e.name, e.arguments)
         if (e.name === 'delegate') this.startHelpers(e.arguments)
         break
       case 'helper':
@@ -486,6 +488,7 @@ export class ChatController extends Observable {
         break
       case 'error':
         guide.chatTurnEnded(this, this.lastReply)
+        guide.chatWorkEnded()
         if (e.message === 'cancelled') this.notes = []
         this.busy = false
         this.failed = e.message !== 'cancelled'
@@ -496,6 +499,7 @@ export class ChatController extends Observable {
         break
       case 'finished':
         guide.chatTurnEnded(this, this.lastReply)
+        guide.chatWorkEnded()
         this.busy = false
         // A note left by a retry (e.g. a reply cut at the output limit) is no longer current.
         if (this.status?.startsWith('再試行中')) this.status = undefined
@@ -504,6 +508,7 @@ export class ChatController extends Observable {
         break
       case 'stepLimit':
         guide.chatTurnEnded(this, this.lastReply)
+        guide.chatWorkEnded()
         this.busy = false
         this.stoppedAtLimit = true
         this.status = `${e.steps} 手の上限で中断しました。「続ける」で続きから再開できます。`

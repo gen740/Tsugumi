@@ -80,3 +80,4 @@ body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }
 .guide-flying-bird.draggable { pointer-events: auto; cursor: grab; }
 .guide-flying-bird.draggable:active { cursor: grabbing; }
 .guide-flash { border-radius: 6px; box-shadow: inset 3px 0 0 var(--tsugumi-rufous); background: color-mix(in srgb, var(--tsugumi-rufous) 12%, transparent); transition: background 0.6s; }
+.guide-work-line { position: fixed; max-width: 220px; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }

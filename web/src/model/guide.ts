@@ -46,6 +46,43 @@ export interface GuideBubble { id: number; say?: string; choices: string[]; acti
 /** Whether an answer says more than its bubble (the bubble then points to the chat). */
 export const saysMore = (reply: string, say?: string) => reply.trim().length > (say?.length ?? 0) + 120
 
+/** What the Agent's tool call looks at, for the bird (as the Mac app's
+ *  PresenceEvents): the Card it reads, runs or writes, and a line about it. */
+export function workScene(tool: string, args: string): { card?: string; line?: string } {
+  let o: any
+  try {
+    o = JSON.parse(args)
+  } catch {
+    o = {}
+  }
+  const segs: string[] | undefined = Array.isArray(o?.card) ? o.card : Array.isArray(o?.card?.segments) ? o.card.segments : undefined
+  const card = segs?.length ? segs.join('/') : undefined
+  const fileCard = (p: unknown) => {
+    const parts = typeof p === 'string' ? p.split('/').filter(Boolean) : []
+    return parts.length >= 2 && parts[0] === 'definitions' ? parts[1] : undefined
+  }
+  switch (tool) {
+    case 'run': return card ? { card, line: `${card} から実行しています` } : { line: '実行しています' }
+    case 'run_record': case 'log_range': case 'run_plan': return card ? { card, line: `${card} の記録を見ています` } : { line: '実行の記録を見ています' }
+    case 'project_file_read': {
+      const c = fileCard(o?.path)
+      return c ? { card: c, line: `${c} を読んでいます` } : { line: 'ファイルを読んでいます' }
+    }
+    case 'project_save': {
+      const changes: any[] = Array.isArray(o?.changes) ? o.changes : []
+      const c = changes.map((x) => x?.value_type === 'PutDefinition' ? x?.value?.id : fileCard(x?.value?.path)).find((x) => typeof x === 'string')
+      return c ? { card: c, line: `${c} を書いています` } : { line: '保存しています' }
+    }
+  }
+  const lines: Record<string, string> = {
+    project_inspect: 'プロジェクトを見ています', reference_read: '書き方を調べています', project_validate: '変更を確かめています',
+    run_status: '実行の終わりを待っています', run_invocations: '実行の記録を見ています', run_history: '実行の記録を見ています',
+    artifact_list: '出力を見ています', artifact_read: '出力を見ています', project_file_list: 'ファイルを読んでいます',
+    attached_folder_read: '添えられたフォルダを読んでいます', run_cancel: '実行を止めています', delegate: '手分けして進めています',
+  }
+  return { line: lines[tool] }
+}
+
 /** The opening of a reply for the bubble: its first sentences, up to about 120 characters. */
 export function firstSentence(text: string): string | undefined {
   const line = text.replace(/\*\*|`/g, '').split('\n').map((l) => l.replace(/^[\s#>*•-]+/, '').trim()).find((l) => l) ?? ''
@@ -115,6 +152,24 @@ export class GuideController extends Observable {
   contextTab?: WorkflowTab
   /** The bird has left home (its home shows no bird meanwhile). */
   away = false
+  /** The chat's Agent at work (outside demo mode): the Card the bird flies to and what it says there. */
+  work?: { card?: string; line?: string }
+
+  /** The chat's Agent called a tool: the bird goes to the Card it looks at. */
+  chatWork(tool: string, args: string) {
+    if (!this.available) return
+    const scene = workScene(tool, args)
+    // Without a Card of its own the bird stays by the last one, saying what it does now.
+    this.work = { card: scene.card ?? this.work?.card, line: scene.line ?? this.work?.line }
+    this.changed()
+  }
+
+  /** The chat's Agent ended its turn: the bird goes home. */
+  chatWorkEnded() {
+    if (!this.work) return
+    this.work = undefined
+    this.changed()
+  }
   /** The chat's answer the bubble points to was asked for: the chat shows it marked. */
   chatFlash = 0
 

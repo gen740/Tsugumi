@@ -202,7 +202,9 @@ export function GuideFlyer() {
   const [moving, setMoving] = useState(false)
   const [inCard, setInCard] = useState(false)
   const bubbleRef = useRef<HTMLDivElement>(null)
-  const target = guide.available && guide.bubble?.target ? guide.bubble.target : undefined
+  // Where the bird goes: what Tsugumi points at, or (the chat's Agent at work) the Card it works on.
+  const working = !guide.bubble && guide.work?.card ? guide.work : undefined
+  const target = guide.available ? guide.bubble?.target ?? (working?.card ? `card:${working.card}` : undefined) : undefined
   const still = prefs.tsugumiStill
   // Where the target and home are now (Cards move with the canvas, loading comes and goes).
   const [tick, setTick] = useState(0)
@@ -330,6 +332,10 @@ export function GuideFlyer() {
         <div ref={bubbleRef} className="guide-flyer-bubble" style={{ left: bx, top: by }}>
           <BubbleView bubble={guide.bubble} perform={makePerform(guide.speakingChat?.session ?? guide.contextSession, guide.contextTab)} />
         </div>
+      )}
+      {arrived && goal === 'perch' && !guide.bubble && working?.line && (
+        // The Agent at work: what it does, in a line beside the bird (nothing to press).
+        <div className="guide-work-line material" style={{ left: feetX + (box.flip ? -10 : -170), top: feetY + 6 }} aria-live="polite">{working.line}</div>
       )}
     </div>
   )
