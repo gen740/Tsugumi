@@ -695,6 +695,19 @@ final class ChatController {
 }
 
 enum AgentSettings {
+  /// The small model Tsugumi speaks with on the ChatGPT plan (the Home guide,
+  /// the canvas bird's thoughts); "agent.speechModel.chatgpt" overrides it.
+  static var chatGPTSpeechModel: String {
+    UserDefaults.standard.string(forKey: "agent.speechModel.chatgpt").flatMap { $0.isEmpty ? nil : $0 } ?? "gpt-6.1-luna"
+  }
+
+  /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.
+  static func guide() -> ProviderConfig {
+    var c = current()
+    if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
+    return c
+  }
+
   static func current() -> ProviderConfig {
     let d = UserDefaults.standard
     if d.string(forKey: "agent.provider") == "fixture" {

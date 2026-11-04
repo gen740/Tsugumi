@@ -337,7 +337,7 @@ final class GuideController {
     guard let catalog else { return nil }
     let a: Agent
     do {
-      a = try Agent(catalog: catalog, transport: GuideTransport(replyNames: replyNames), provider: AgentSettings.current(),
+      a = try Agent(catalog: catalog, transport: GuideTransport(replyNames: replyNames), provider: AgentSettings.guide(),
                     storage: storage, references: ChatController.references, role: .guide)
     } catch {
       failed = true
@@ -372,7 +372,7 @@ final class GuideController {
     let prompt = (note.map { $0 + "\n" } ?? "") + text + "\n\n" + screenNote(screen, session: session, tab: tab)
     begin()
     Task {
-      await agent.setProvider(AgentSettings.current())
+      await agent.setProvider(AgentSettings.guide())
       await agent.send(prompt: prompt, title: text, display: text) { e in Task { @MainActor in self.handle(e) } }
     }
   }
@@ -395,7 +395,7 @@ final class GuideController {
     let full = prompt + "\n\n" + screenNote(.project, session: readSession, tab: tourTab)
     begin()
     Task {
-      await agent.setProvider(AgentSettings.current())
+      await agent.setProvider(AgentSettings.guide())
       await agent.send(prompt: full, title: display, display: display) { e in Task { @MainActor in self.handle(e) } }
     }
   }
@@ -412,7 +412,7 @@ final class GuideController {
     guard available, !busy, let agent = makeAgent() else { return }
     begin()
     Task {
-      await agent.setProvider(AgentSettings.current())
+      await agent.setProvider(AgentSettings.guide())
       await agent.retry { e in Task { @MainActor in self.handle(e) } }
     }
   }

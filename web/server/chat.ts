@@ -235,13 +235,20 @@ async function guide(): Promise<Agent> {
       if (!guideProject) throw new Error(guideText('noProject'))
       return chatFor(guideProject).rpc()
     }
-    guideAgent = new Agent(catalog, rpc, await provider(), guideFile(), 'guide', references(), undefined, 'guide')
+    guideAgent = new Agent(catalog, rpc, await guideProvider(), guideFile(), 'guide', references(), undefined, 'guide')
     // A guide answers in a few steps and never waits on a run.
     guideAgent.maxSteps = 12
     guideAgent.statusWait = 0
   }
-  guideAgent.setProvider(await provider())
+  guideAgent.setProvider(await guideProvider())
   return guideAgent
+}
+
+/** The guide's connection: the Agent's, with the small model Tsugumi speaks
+ *  with on the ChatGPT plan (gpt-6.1-luna). */
+async function guideProvider(): Promise<ProviderConfig> {
+  const p = await provider()
+  return settings().provider === 'chatgpt' ? { ...p, model: 'gpt-6.1-luna' } : p
 }
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a

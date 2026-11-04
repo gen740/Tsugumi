@@ -16,6 +16,8 @@ struct ChatPanel: View {
   @State private var query = ""
   @State private var input = ""
   @State private var model = AgentSettings.current().model
+  /// The connection chosen in Settings > API: the model menu follows it when it changes.
+  @AppStorage("agent.provider") private var providerSetting = "anthropic"
   @State private var models: [String] = []
   /// Display names of the ChatGPT account's models (Settings > API).
   @State private var modelNames: [String: String] = [:]
@@ -349,7 +351,8 @@ struct ChatPanel: View {
           if chat.provider.auth == .chatGPT {
             // Requests use the ChatGPT plan: said beside the model, with its usage page.
             Link(destination: ChatGPTAuth.usageURL) {
-              Text("Using ChatGPT plan").font(.caption2).foregroundStyle(.secondary)
+              // One line however narrow the chat is (it never squeezes the model menu).
+              Text("Using ChatGPT plan").font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             }
             .help("Manage usage（chatgpt.com/settings/usage）")
           }
@@ -376,6 +379,8 @@ struct ChatPanel: View {
     }
     .padding(10)
     .task { await loadModels() }
+    // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
+    .onChange(of: providerSetting) { Task { await loadModels() } }
     .confirmationDialog("思考の過程を描きますか？", isPresented: $askThoughts) {
       Button("描く") { drawThoughtsAsked = true; drawThoughts = true }
       Button("キャンセル", role: .cancel) {}
