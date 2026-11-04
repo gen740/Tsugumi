@@ -1,0 +1,11 @@
+# README の子 Workflow の画像を collatz のコピーで撮る
+size 1440 900
+chat show
+wait 3
+run
+waitrun
+enter collatz-cpp
+wait 1
+fit
+wait 2
+capture subworkflow

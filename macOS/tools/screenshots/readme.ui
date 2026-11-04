@@ -1,34 +1,27 @@
-# README の画像（docs/assets/screenshots）を collatz のコピーで撮る:
-# workflow / timeline / subworkflow / card-source と、$demo のツグミ（guide）
+# README の画像（docs/assets/screenshots）を casa のコピーで撮る:
+# workflow / timeline / card-source と、$demo のツグミ（guide）。
+# サイドバーを隠し、Canvas を広く取って文字が読める倍率で撮る。
 size 1440 900
+sidebar hide
 chat show
 wait 3
 run
 waitrun
 fit
-select compare
 wait 2
 capture workflow
 panel timeline
 wait 2
 capture timeline
 panel timeline
-enter collatz-cpp
-wait 1
-fit
-wait 2
-capture subworkflow
-enter -
-wait 1
-fit
-open card compare source
+open card spectrum source
 wait 3
-winsize 1200 760 compare
+winsize 1200 760 spectrum
 wait 2
-capture card-source compare
-close compare
+capture card-source spectrum
+close spectrum
 wait 1
-chatsend $demo compare の Card が何をしているか、画面で指しながら教えて
+chatsend $demo spectrum の Card が何を示しているか、画面で指しながら教えて
 waitchat 5
 wait 3
 capture guide

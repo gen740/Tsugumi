@@ -10,11 +10,21 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
-名前は **Tsugumi**。鳥のツグミに由来します（[名前の由来](docs/Name.md)）。
+![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
 
-![C++ と Python の処理を並べ、実行結果を比較する Canvas](docs/assets/screenshots/workflow.png)
+<p align="center">
+  <a href="#使ってみる"><b>使ってみる</b></a> ·
+  <a href="#画面でたどる実験と検証">画面でたどる</a> ·
+  <a href="#ドキュメント">ドキュメント</a> ·
+  <a href="docs/Philosophy.md">なぜ作ったか</a> ·
+  <a href="docs/Name.md">名前の由来</a>
+</p>
 
-[使ってみる](#使ってみる) · [画面でたどる](#画面でたどる実験と検証) · [ドキュメント](#ドキュメント) · [なぜ作ったか](docs/Philosophy.md)
+- **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
+- **気になった Card だけを、すぐ試す。** 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。
+- **環境ごと固定して、確かめ直せる。** Card ごとの依存関係を Nix で固定し、実行は git の版と結びつけて記録します。
+- **計算は Mac の中の隔離された VM で。** Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](docs/security.md#モデルに送られるもの)しています。
+- **完成した Workflow に LLM は要らない。** 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。
 
 ## AI を研究に積極的に活用できていますか？
 
@@ -87,41 +97,46 @@ Tsugumi は、この負担を Agent と実行基盤で引き受けます。
 
 ## 画面でたどる、実験と検証
 
-同梱の「Collatz (C++ / Python)」デモでは、一つの入力を C++ と Python の二つの実装に渡し、双方の結果が一致するかを確かめます。
+同梱の「Cas A · Chandra RGB」デモでは、超新星残骸カシオペヤ座 A の X 線観測（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
+同じ光子のエネルギースペクトルも matplotlib で描き、どの元素の輝線がどの色になったのかを確かめます。
+このページの画像は、観測を深い ObsID 114（50 ks。3 帯域で約 1,500 万個の光子）に変えて実行したものです。
 
 ### 全体の流れを見渡す
 
-ページ冒頭の画面では、中央の Canvas に入力から結果の比較までの流れが並んでいます。
-左側のサイドバーで処理の階層を選び、右側のチャットから Agent に実装や変更を依頼できます。
-実行すると各 Card に進行状況が表示され、出力結果もそのまま Canvas 上で見比べられます。
-
-### 気になる処理の中へ入る
-
-「Collatz in C++」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
-普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。
-
-![子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面](docs/assets/screenshots/subworkflow.png)
+ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に `load` → `bands` → `rgb` / `spectrum` の流れが並んでいます。
+実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。
+スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。
+右側のチャットからは、Agent に実装や変更を依頼できます。
 
 ### コードを読み、条件を変えて試す
 
-Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義を確認できます。
-コードやパラメータを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。
+Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義（`default.nix`）を確認できます。
+`spectrum` は、ウィンドウ向けに書くのと同じ matplotlib のコードです。`plt.show()` で描いた図が、そのまま Card の表示に出ます。
+帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。
 
-![Card の設定でソースコードと入出力ポートを確認する画面](docs/assets/screenshots/card-source.png)
+![spectrum の Card 設定で、matplotlib のソースコードを確認する画面](docs/assets/screenshots/card-source.png)
 
 ### 実際に何が動いたかを振り返る
 
 画面下部のタイムラインでは、どの Card がいつ、どれだけの時間をかけて動いたかを時間軸で追えます。
+520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります。
 さらに各 Card の実行履歴やログ、成果物を開き、結論に至るまでの過程を隅々まで確かめられます。
 
 ![各 Card の実行を時間軸で確認するタイムライン](docs/assets/screenshots/timeline.png)
+
+### 気になる処理の中へ入る
+
+大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
+普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。
+
+![子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面](docs/assets/screenshots/subworkflow.png)
 
 ### ツグミに案内してもらう
 
 はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選んで案内します。
 プロジェクトではチャットがツグミです。`$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。
 
-![ツグミが compare の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
+![ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
 
 ## 使ってみる
 
@@ -139,14 +154,18 @@ Agent を使う場合は、設定の「API」で Anthropic または OpenAI の 
 Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](docs/claude-code.md)）。
 なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)を参照してください。
 
+各デモの Card のつながりと動きは[同梱デモのしくみ](docs/Demos.md)にまとめています。
+
 | デモ | 試せること |
 | --- | --- |
 | データからレポートへ | データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する |
 | Collatz (C++ / Python) | 二つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する |
 | Live Stream | 時系列の出力をリアルタイムにグラフで描画し、停止・再実行する |
-| Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分け、RGB 画像にする。帯域や伸長を変えてその Card だけ再実行する |
+| Plots | ウィンドウ向けに書いた matplotlib のコード（`plt.show()`・`FuncAnimation`）が、そのまま Card の表示に描かれる。Plotly の `fig.show()` と Altair の `chart.show()` は対話できるグラフになる |
+| Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する |
 | GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面 | 公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する |
 | 各科学デモの Draft 版 | 計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる |
+| 力学系ギャラリー（Draft） | 互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する |
 
 ## 処理の流れそのものを、人と AI の共通言語にする
 
@@ -173,18 +192,14 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 
 ## ドキュメント
 
-- [Q&A](docs/QA.md)：課題意識、Draft、再現性、記録と再実行についての設計意図
-- [操作ガイド](docs/Usage.md)：画面ごとの操作とデモの試し方
-- [主要機能](docs/features.md)：Card、実行環境、記録、Agent の仕組み
-- [セキュリティと隔離](docs/security.md)：隔離の境界、データの置き場所、外部モデルに送られる内容
-- [設計の独自性](docs/novelty.md)：同じ Workflow で設計・実装・検証をつなぐ理由と、なぜ今この設計なのか
-- [開発資料](docs/Development.md)：実行基盤、設計上の決定、テスト、計測、実装状況
-- [Web UI](docs/WebUI.md)：ブラウザから使うクライアントと、tsugumid をホストで直接動かす構成
-- [Claude Code から使う](docs/claude-code.md)：Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう
-- [版の管理](docs/Versions.md)：プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」
-- [固定しているバージョン](docs/Lock.md)：実行環境と依存ライブラリの固定値
-- [制作範囲と事前準備](docs/Provenance.md)：ハッカソン前の準備、アプリ固有の実装、OSS・生成物の境界
-- [ライセンス調査](docs/LicenseAudit.md)：Tree-sitter・フォント・VM などの確認結果と、配布に向けて残っている対応
+| 目的 | 文書 |
+| --- | --- |
+| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
+| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) |
+| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) |
+| **記録と開発** | [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](docs/LicenseAudit.md) |
+
+すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
 
 ## ライセンス
 

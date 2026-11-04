@@ -175,9 +175,10 @@ in
 | `report`（データからレポートへ） | `seed` による再現性、意図的な失敗と下流の `blocked`、保存済み入力による単体再実行、入れ子の Workflow、ディレクトリ成果物 |
 | `collatz`（C++ / Python） | 2 言語の独立実装による結果の一致検証、フィードバックループと `maxRuns`、条件分岐による `skipped`、整数オーバーフローの検出 |
 | `live-stream` | 100 ms 間隔のランダムウォークを Dawn（WebGPU / Metal）の折れ線で逐次描画、即時のキャンセル応答 |
-| `casa` | Nix で固定した Chandra の観測（取得は最初の 1 回だけ）、エネルギー帯の分割と RGB 画像、Card 単位の再実行 |
+| `plots` | ウィンドウ向けの matplotlib のコード（`plt.show()`・`FuncAnimation`）がそのまま Card の表示に描かれる。静止図とライブのアニメーション、Plotly と Altair の対話できるグラフ |
+| `casa` | Nix で固定した Chandra の観測（取得は最初の 1 回だけ）、エネルギー帯の分割と RGB 画像、matplotlib のエネルギースペクトル（帯域と輝線）、Card 単位の再実行 |
 | `gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench` | 公開データの取得（出典・大きさ・SHA-256 の表示）と解析・図示 |
 | `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
 | `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
 
-デモはホームの「デモを見る」から「コピーを開く」を選ぶことで、`~/Documents/Tsugumi/<demo>` に編集可能なコピーを作ってすぐ試せます。
+各デモの Card の構成と動きは[同梱デモのしくみ](Demos.md)を参照してください。デモはホームの「デモを見る」から「コピーを開く」を選ぶことで、`~/Documents/Tsugumi/<demo>` に編集可能なコピーを作ってすぐ試せます。
