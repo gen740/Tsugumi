@@ -277,7 +277,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   RunStatusData request_cancel(bool interrupted) {
     std::lock_guard<std::mutex> l(mu_);
-    if (!summary_.status.terminal() && !cancel_) {
+    // Once finalize() has taken the final status it is on its way to the history:
+    // a "cancelling" written now would land after it and stay as the run's state.
+    if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
       summary_.status.state = RunState::cancelling;
@@ -1340,6 +1342,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     RunSummaryData sum;
     {
       std::lock_guard<std::mutex> l(mu_);
+      finishing_ = true;
       sum = summary_;
     }
     auto& st = sum.status;
@@ -1411,6 +1414,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
   std::atomic<bool> cancel_{false};
+  bool finishing_ = false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;
   std::optional<FailureData> first_failure_;
   std::optional<FailureData> start_failure_;
