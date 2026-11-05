@@ -201,6 +201,7 @@ rec {
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT)
   #   preRun   bash before the body, every invocation (also with a resident
   #            worker); no Card inputs; its environment and `cd` carry over
+  #            to the call, not to the loading of a package, which comes first
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)

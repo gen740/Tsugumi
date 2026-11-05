@@ -267,6 +267,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   if (sp.network)
     for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
       if (const char* x = std::getenv(v)) spec.env.push_back(std::string(v) + "=" + x);
+  // Not where tsugumid runs, which the sandbox does not let it read (getcwd
+  // fails): libraries ask for the current directory while they are imported.
+  spec.cwd = work_dir();
   spec.fds = {{3, data[1]}, {4, control[1]}};
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];
