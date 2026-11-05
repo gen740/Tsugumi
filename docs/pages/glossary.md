@@ -8,7 +8,7 @@ Tsugumi の文書と画面で使う言葉です。詳しくは各行のリンク
 | --- | --- |
 | **Workflow** | Card を線でつないだグラフ。人間が描き、Agent が編集し、そのまま実行される同じもの（[設計の独自性](novelty.md)） |
 | **Card** | 処理の単位。入出力のポートと設定を持つ（[Card と Workflow](features.md#2-card-と-workflow)） |
-| **コード Card** | `default.nix` で環境を、`src/` で処理を定義する Card（C++ / Python / bash、[はじめての Card](cardguide.md)） |
+| **コード Card** | `default.nix` で環境を、`src/` で処理を定義する Card（C++ / Python / bash / R / Julia、[はじめての Card](cardguide.md)） |
 | **組み込み Card** | コードのない Card。開始（trigger）・入力値（input）・分配（fork）・分岐（branch）・合流（merge）・記録（logger） |
 | **Draft** | 名前と内容だけを持つ未実装の Card。線でつないで計画を描き（ポートは線に合わせて作られる）、Agent に実装させる |
 | **Card in Card（子 Workflow）** | 中に Workflow を持つ Card。外からは 1 つの Card に見え、開くと中へ降りられる |

@@ -228,6 +228,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
                  "--ro-bind", "/nix/store", "/nix/store", "--proc", "/proc", "--dev", "/dev",
                  "--tmpfs", "/tmp"};
+    // popen and system(3) run /bin/sh by that name (R needs it to start).
+    if (!sp.bash.empty()) spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
     if (sp.network) spec.argv.push_back("--share-net");
     if (sp.uid) {
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});

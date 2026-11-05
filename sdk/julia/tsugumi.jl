@@ -1,0 +1,209 @@
+# Tsugumi Julia Card SDK. A Card provides `main(ctx)` in src/main.jl:
+#
+#   function main(ctx)
+#       n = input(ctx, "number")["value"]
+#       output(ctx, "result", Dict("value" => n * ctx.params["factor"]))
+#       display_markdown(ctx, "**$n**")
+#   end
+#
+# Port messages and params are Dicts, read from and written as JSON (the worker
+# converts them to and from FlatBuffers by the port's type). A Card has one
+# display: the last display_* of the invocation. Julia's standard library has
+# no plotting: `display_vegalite` draws an interactive chart from a Vega-Lite
+# spec written as a Dict.
+module Tsugumi
+
+export input, path, output, display_text, display_markdown, display_table, display_image, display_module, display_vegalite
+
+# ---- JSON (the standard library has none) ------------------------------------
+
+function parse_json(s::AbstractString)
+    text = String(s)
+    value, at = parse_value(text, skip_space(text, firstindex(text)))
+    skip_space(text, at) > ncodeunits(text) || error("JSON: trailing text at byte $at")
+    return value
+end
+
+function skip_space(s, i)
+    while i <= ncodeunits(s) && codeunit(s, i) in (0x20, 0x09, 0x0a, 0x0d)
+        i += 1
+    end
+    return i
+end
+
+function parse_value(s, i)
+    i <= ncodeunits(s) || error("JSON: unexpected end")
+    c = s[i]
+    c == '{' && return parse_object(s, i)
+    c == '[' && return parse_array(s, i)
+    c == '"' && return parse_string(s, i)
+    startswith(SubString(s, i), "true") && return true, i + 4
+    startswith(SubString(s, i), "false") && return false, i + 5
+    startswith(SubString(s, i), "null") && return nothing, i + 4
+    stop = i
+    while stop <= ncodeunits(s) && codeunit(s, stop) in codeunits("+-.0123456789eE")
+        stop += 1
+    end
+    stop > i || error("JSON: unexpected character at byte $i")
+    number = SubString(s, i, stop - 1)
+    integer = tryparse(Int64, number)
+    return (integer === nothing ? something(tryparse(UInt64, number), parse(Float64, number)) : integer), stop
+end
+
+function parse_object(s, i)
+    object = Dict{String,Any}()
+    i = skip_space(s, i + 1)
+    s[i] == '}' && return object, i + 1
+    while true
+        key, i = parse_string(s, skip_space(s, i))
+        i = skip_space(s, i)
+        s[i] == ':' || error("JSON: expected ':' at byte $i")
+        value, i = parse_value(s, skip_space(s, i + 1))
+        object[key] = value
+        i = skip_space(s, i)
+        s[i] == '}' && return object, i + 1
+        s[i] == ',' || error("JSON: expected ',' at byte $i")
+        i += 1
+    end
+end
+
+function parse_array(s, i)
+    array = Any[]
+    i = skip_space(s, i + 1)
+    s[i] == ']' && return array, i + 1
+    while true
+        value, i = parse_value(s, skip_space(s, i))
+        push!(array, value)
+        i = skip_space(s, i)
+        s[i] == ']' && return array, i + 1
+        s[i] == ',' || error("JSON: expected ',' at byte $i")
+        i += 1
+    end
+end
+
+function parse_string(s, i)
+    s[i] == '"' || error("JSON: expected a string at byte $i")
+    out = IOBuffer()
+    i = nextind(s, i)
+    while true
+        c = s[i]
+        if c == '"'
+            return String(take!(out)), nextind(s, i)
+        elseif c == '\\'
+            i = nextind(s, i)
+            e = s[i]
+            if e == 'u'
+                code = parse(UInt16, SubString(s, i + 1, i + 4); base=16)
+                i += 4
+                if 0xd800 <= code < 0xdc00  # a surrogate pair
+                    low = parse(UInt16, SubString(s, i + 3, i + 6); base=16)
+                    write(out, Char(0x10000 + ((UInt32(code) - 0xd800) << 10) + (low - 0xdc00)))
+                    i += 6
+                else
+                    write(out, Char(code))
+                end
+            else
+                write(out, get(Dict('n' => '\n', 't' => '\t', 'r' => '\r', 'b' => '\b', 'f' => '\f'), e, e))
+            end
+        else
+            write(out, c)
+        end
+        i = nextind(s, i)
+    end
+end
+
+write_json(io, v::AbstractString) = (print(io, '"'); escape_json(io, v); print(io, '"'))
+write_json(io, v::Symbol) = write_json(io, String(v))
+write_json(io, v::Bool) = print(io, v)
+write_json(io, v::Integer) = print(io, v)
+write_json(io, v::AbstractFloat) = isfinite(v) ? print(io, Float64(v)) : print(io, "null")
+write_json(io, ::Nothing) = print(io, "null")
+function write_json(io, v::AbstractDict)
+    print(io, '{')
+    for (n, (key, value)) in enumerate(pairs(v))
+        n > 1 && print(io, ',')
+        write_json(io, string(key))
+        print(io, ':')
+        write_json(io, value)
+    end
+    print(io, '}')
+end
+function write_json(io, v::Union{AbstractVector,Tuple})
+    print(io, '[')
+    for (n, value) in enumerate(v)
+        n > 1 && print(io, ',')
+        write_json(io, value)
+    end
+    print(io, ']')
+end
+
+function escape_json(io, s)
+    for c in s
+        if c == '"' || c == '\\'
+            print(io, '\\', c)
+        elseif c < ' '
+            print(io, "\\u", string(UInt16(c); base=16, pad=4))
+        else
+            print(io, c)
+        end
+    end
+end
+
+json_text(v) = (io = IOBuffer(); write_json(io, v); String(take!(io)))
+
+# ---- The Card's side of the worker ---------------------------------------------
+
+struct Context
+    params::Dict{String,Any}
+    output_directory::String
+    temporary_directory::String
+    outputs::Dict{String,Any}
+end
+
+Context() = Context(parse_json(get(ENV, "TSUGUMI_PARAMS_JSON", "{}")), get(ENV, "TSUGUMI_OUTPUT_DIR", ""),
+                    get(ENV, "TSUGUMI_TMP_DIR", ""), Dict{String,Any}())
+
+# The message of an input port.
+function input(ctx::Context, port::AbstractString)
+    file = get(ENV, "JSON_" * uppercase(port), nothing)
+    file === nothing && error("no input port named $port")
+    return parse_json(read(file, String))
+end
+
+# The path a File or Directory input carries.
+function path(ctx::Context, port::AbstractString)
+    p = get(ENV, "FILE_" * uppercase(port), get(ENV, "DIR_" * uppercase(port), nothing))
+    p === nothing && error("no File or Directory input port named $port")
+    return p
+end
+
+output(ctx::Context, port::AbstractString, message) = (ctx.outputs[port] = message; nothing)
+
+function show_member(member)
+    target = ENV["TSUGUMI_DISPLAY"]
+    write(target * ".new", json_text(member))
+    mv(target * ".new", target; force=true)
+    return nothing
+end
+
+display_text(ctx::Context, text::AbstractString) = show_member(Dict("text" => text))
+display_markdown(ctx::Context, text::AbstractString) = show_member(Dict("markdown" => text))
+display_image(ctx::Context, file::AbstractString; alt::AbstractString="") = show_member(Dict("image" => Dict("path" => file, "alt" => alt)))
+display_module(ctx::Context, name::AbstractString, data) = show_member(Dict("module" => Dict("name" => name, "data" => data)))
+display_vegalite(ctx::Context, spec) = display_module(ctx, "vega-lite", spec)
+
+# columns: names; rows: vectors of cells, shown with `string`.
+function display_table(ctx::Context, columns, rows)
+    return show_member(Dict("table" => Dict("columns" => collect(string.(columns)), "rows" => [collect(string.(row)) for row in rows])))
+end
+
+finish(ctx::Context) = isempty(ctx.outputs) ? nothing : write(ENV["TSUGUMI_OUTPUT"], json_text(ctx.outputs))
+
+end  # module Tsugumi
+
+using .Tsugumi
+include(joinpath(ARGS[1], "main.jl"))
+let ctx = Tsugumi.Context()
+    Base.invokelatest(main, ctx)
+    Tsugumi.finish(ctx)
+end

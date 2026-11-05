@@ -24,7 +24,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 
 | 種類 | 役割 |
 | --- | --- |
-| コード Card | `default.nix` で実行環境を、`src/` で処理を定義する（C++ / Python / bash） |
+| コード Card | `default.nix` で実行環境を、`src/` で処理を定義する（C++ / Python / bash / R / Julia） |
 | trigger | Workflow の実行起点（出力ポート `out`） |
 | input | `_outputs.fbs` の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー） |
 | fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の `maxRuns` で反復の上限を決めます |
@@ -36,7 +36,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 
 - 出力ポートからの線は 1 本です。1 つの値を複数の Card に送るときは fork Card を通します（同じことを書く方法を 1 つにし、Canvas で分配が Card として見えるようにするため）。2 本以上の線が出ている出力は `fan_out` として報告され、実行できません。Canvas で使用中の出力からもう 1 本引くと、fork が自動で挟まります（出力が fork や fork につながっているときは、その fork に枝が増えます）。
 - 出力ポートの型は FlatBuffers スキーマ（`_outputs.fbs`）で宣言し、下流の入力ポートの型は上流から自動的に導出されます。配線時に構造的互換性を検査し、merge では自動的に union 型が構成されます。
-- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
+- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash（R と Julia は JSON に変換して）の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
 
 ### 実行の意味論（スケジューラー）
 

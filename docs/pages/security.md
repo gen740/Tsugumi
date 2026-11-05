@@ -93,6 +93,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
 ```text
 bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
+      --symlink <store の bash> /bin/sh
       --uid <nobody 相当> --gid <…>
       --ro-bind <保存済み入力・runs>  --bind <worker の一時領域>
       -- tsugumi-worker

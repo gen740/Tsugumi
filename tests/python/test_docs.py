@@ -1,7 +1,7 @@
 """The documents say what is true: their links and paths exist, every test
 file, demo and document is listed, Protocol.md and the static site are what
 their generators make, the tests Evidence.md names exist, and the Card written
-out in CardGuide.md runs (in Python, bash and C++), taken from the page itself."""
+out in CardGuide.md runs (in Python, bash, C++, R and Julia), taken from the page itself."""
 
 from __future__ import annotations
 
@@ -124,7 +124,8 @@ def guide_files() -> dict[str, dict[str, str]]:
     return files
 
 
-@pytest.mark.parametrize("variant, shown", [("", "21 × 2 = 42"), ("bash", None), ("C++", "21 × 2 = 42")])
+@pytest.mark.parametrize("variant, shown", [("", "21 × 2 = 42"), ("bash", None), ("C++", "21 × 2 = 42"),
+                                            ("R", "21 × 2 = 42"), ("Julia", "21 × 2 = 42")])
 def test_card_guide_runs_as_written(tmp_path, variant, shown):
     files = guide_files()
     root = tmp_path / "guide"

@@ -15,7 +15,8 @@
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
-// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT.
+// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT and what it
+// shows as JSON to $TSUGUMI_DISPLAY (read when it ends; see BashDisplay).
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
@@ -563,6 +564,73 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
   }
 }
 
+// $TSUGUMI_DISPLAY of a bash body, which is also how R and Julia Cards show
+// things: exactly one member. A relative image path is from the working directory.
+struct BashDisplayTable {
+  tsugumi::schema::Opt<"columns", tsugumi::schema::v::Array<tsugumi::schema::v::String>> columns;
+  tsugumi::schema::Opt<"rows", tsugumi::schema::v::Array<tsugumi::schema::v::Array<tsugumi::schema::v::String>>> rows;
+};
+struct BashDisplayImage {
+  tsugumi::schema::Opt<"path", tsugumi::schema::v::String> path;
+  tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
+};
+struct BashDisplayModule {
+  tsugumi::schema::Opt<"name", tsugumi::schema::v::String> name;
+  tsugumi::schema::Opt<"data", tsugumi::schema::Json> data;
+};
+struct BashDisplay {
+  tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
+  tsugumi::schema::Opt<"markdown", tsugumi::schema::v::String> markdown;
+  tsugumi::schema::Opt<"table", tsugumi::schema::Obj<BashDisplayTable>> table;
+  tsugumi::schema::Opt<"image", tsugumi::schema::Obj<BashDisplayImage>> image;
+  tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>> module;
+};
+
+void bash_display(const std::string& path, const std::string& cwd) {
+  namespace sc = tsugumi::schema;
+  if (::access(path.c_str(), R_OK) != 0) return;
+  auto invalid = [](const std::string& why) {
+    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_DISPLAY: " + why);
+  };
+  BashDisplay d;
+  if (auto err = sc::decode(read_text(path), d)) return invalid(err->message);
+  if (const auto* t = sc::get(d.text)) {
+    display_text_impl(nullptr, t->c_str());
+  } else if (const auto* m = sc::get(d.markdown)) {
+    display_markdown_impl(nullptr, m->c_str());
+  } else if (const auto* table = sc::get(d.table)) {
+    const auto* columns = sc::get(table->columns);
+    if (!columns) return invalid("a table needs columns");
+    std::vector<const char*> names, cells;
+    for (const auto& c : *columns) names.push_back(c.c_str());
+    size_t row_count = 0;
+    if (const auto* rows = sc::get(table->rows))
+      for (const auto& row : *rows) {
+        if (row.size() != names.size()) return invalid("a table row has " + std::to_string(row.size()) + " cells, not " + std::to_string(names.size()));
+        for (const auto& c : row) cells.push_back(c.c_str());
+        ++row_count;
+      }
+    display_table_impl(nullptr, names.data(), names.size(), cells.data(), row_count);
+  } else if (const auto* image = sc::get(d.image)) {
+    const auto* file = sc::get(image->path);
+    if (!file) return invalid("an image needs a path");
+    std::string full = file->starts_with("/") ? *file : cwd + "/" + *file;
+    if (::access(full.c_str(), R_OK) != 0) return invalid("cannot read the image " + *file);
+    std::string bytes = read_text(full);
+    const char* media = bytes.starts_with("\x89PNG") ? "image/png" : bytes.starts_with("\xFF\xD8") ? "image/jpeg" : nullptr;
+    if (!media) return invalid(*file + " is neither PNG nor JPEG");
+    const auto* alt = sc::get(image->alt);
+    display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
+  } else if (const auto* module = sc::get(d.module)) {
+    const auto* name = sc::get(module->name);
+    const auto* data = sc::get(module->data);
+    if (!name || !data) return invalid("a module needs a name and data");
+    display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str());
+  } else {
+    invalid("name one of text, markdown, table, image or module");
+  }
+}
+
 void execute(const Options& opt, Call& call) {
   const auto* m = call.msg;
   std::string work = m->working_directory()->str();
@@ -645,10 +713,17 @@ void execute(const Options& opt, Call& call) {
     std::string out_json = tmp + "/output.json";
     ::unlink(out_json.c_str());
     set_env(run_env, "TSUGUMI_OUTPUT", out_json);
+    std::string display_json = tmp + "/display.json";
+    ::unlink(display_json.c_str());
+    set_env(run_env, "TSUGUMI_DISPLAY", display_json);
     if (!call.failure) {
       int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
-      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) step_failed("run", st);
-      else bash_outputs(m, out_json);
+      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
+        step_failed("run", st);
+      } else {
+        bash_display(display_json, cwd);
+        if (!call.failure) bash_outputs(m, out_json);
+      }
     }
   }
   // postRun also runs after a failed step (cleanup), but never after a

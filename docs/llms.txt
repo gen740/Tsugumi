@@ -16,7 +16,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 
 - [インストールと開発用ビルド](https://gen740.github.io/Tsugumi/pages/install.md): GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順
 - [操作ガイド](https://gen740.github.io/Tsugumi/pages/usage.md): 画面ごとの基本操作と、同梱デモの試し方
-- [はじめての Card](https://gen740.github.io/Tsugumi/pages/cardguide.md): はじめての Card: 入力を受け取って計算する Card を Python・bash・C++ で作る（テストがこのページのコードを実行する）
+- [はじめての Card](https://gen740.github.io/Tsugumi/pages/cardguide.md): はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する）
 - [同梱デモのしくみ](https://gen740.github.io/Tsugumi/pages/demos.md): 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと
 - [Web UI](https://gen740.github.io/Tsugumi/pages/webui.md): ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離）
 - [Claude Code から使う](https://gen740.github.io/Tsugumi/pages/claude-code.md): Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう

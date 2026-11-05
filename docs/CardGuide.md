@@ -1,7 +1,7 @@
 # はじめての Card
 
 入力の数を掛け算するだけの Card を作り、実行して、条件を変えて試します。
-Python で作ったあと、同じ Card を bash と C++ に置き換えます。
+Python で作ったあと、同じ Card を bash・C++・R・Julia に置き換えます。
 
 このページのコードは飾りではありません。[tests/python/test_docs.py](../tests/python/test_docs.py) が**この文書からファイルを取り出して実際に実行**します。
 
@@ -171,7 +171,9 @@ def main(ctx):
 }
 ```
 
-ここでは `"nix": true` を付けて、`factor` を Nix の式から読んでいます。この param は Nix に渡るので、変えると Card をビルドし直します。
+ここでは `"nix": true` を付けて、`factor` を Nix の式から読んでいます。この param は Nix に渡るので、変えると Card をビルドし直します。実行時に読むなら、すべての param は `$TSUGUMI_PARAMS_JSON`（JSON の本文）にあります。
+
+表示は `$TSUGUMI_DISPLAY` に JSON を書きます。`{"markdown": "**太字**"}` のほか、`text`、`table`（`columns` と `rows`）、`image`（`path` と `alt`）、`module`（`name` と `data`）のどれか 1 つで、スクリプトが正常に終わったときに表示されます。
 
 ### C++
 
@@ -215,6 +217,76 @@ auto run(Card::Input& input) -> Card::Output {
   return out;
 }
 ```
+
+### R
+
+R には FlatBuffers の生成器がないので、R の Card は別プロセスで動き、ポートの値を JSON でやり取りします（worker がポートの型で変換します）。
+
+`definitions/multiply/_card.json`（R）
+
+```json
+{
+  "language": "r",
+  "inputs": [{"name": "number"}],
+  "params": [{"name": "factor", "type": "uint64", "data": 2}]
+}
+```
+
+`definitions/multiply/default.nix`（R）
+
+```nix
+{ pkgs, inputs, params }: {
+  run = inputs.tsugumi.rCard { src = ./src; };
+}
+```
+
+`definitions/multiply/src/main.R`（R）
+
+```r
+main <- function(ctx) {
+  n <- ctx$input("number")$value
+  factor <- ctx$params$factor
+  ctx$output("result", list(value = n * factor))
+  ctx$display_text(sprintf("%d × %d = %d", n, factor, n * factor))
+}
+```
+
+パッケージは nixpkgs の `rPackages` から選びます（`packages = ps: [ ps.survival ps.ggplot2 ];`）。図は `ctx$plot(expr, alt = "説明")` で Card の表示に描けます（基本のグラフィックスと ggplot のどちらも）。表は `ctx$display_table(data.frame)` です。
+
+### Julia
+
+Julia の Card も別プロセスで、値を JSON でやり取りします。
+
+`definitions/multiply/_card.json`（Julia）
+
+```json
+{
+  "language": "julia",
+  "inputs": [{"name": "number"}],
+  "params": [{"name": "factor", "type": "uint64", "data": 2}]
+}
+```
+
+`definitions/multiply/default.nix`（Julia）
+
+```nix
+{ pkgs, inputs, params }: {
+  run = inputs.tsugumi.juliaCard { src = ./src; };
+}
+```
+
+`definitions/multiply/src/main.jl`（Julia）
+
+```julia
+function main(ctx)
+    n = input(ctx, "number")["value"]
+    factor = ctx.params["factor"]
+    output(ctx, "result", Dict("value" => n * factor))
+    display_text(ctx, "$n × $factor = $(n * factor)")
+end
+```
+
+標準ライブラリだけで動きます。General レジストリのパッケージは `packages = [ "JuMP" ];` でビルド時に固定します。図は `display_vegalite(ctx, spec)` に Vega-Lite の spec を Dict で渡すと、操作できるグラフとして表示されます。
 
 ## 次に読むもの
 

@@ -25,7 +25,7 @@
 <article class="doc">
 <h1 id="はじめての-card">はじめての Card</h1>
 <p>入力の数を掛け算するだけの Card を作り、実行して、条件を変えて試します。
-Python で作ったあと、同じ Card を bash と C++ に置き換えます。</p>
+Python で作ったあと、同じ Card を bash・C++・R・Julia に置き換えます。</p>
 <p>このページのコードは飾りではありません。<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_docs.py" rel="noopener">tests/python/test_docs.py</a> が<strong>この文書からファイルを取り出して実際に実行</strong>します。</p>
 <p>詳しい仕様は <a href="https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md" rel="noopener">agent/Reference/card-guide.md</a>（英語）にあります。アプリの Agent が読むものと同じ文書です。</p>
 <h2 id="作るもの">作るもの</h2>
@@ -141,7 +141,8 @@ def main(ctx):
   &#39;&#39;;
 }
 </code></pre>
-<p>ここでは <code>&quot;nix&quot;: true</code> を付けて、<code>factor</code> を Nix の式から読んでいます。この param は Nix に渡るので、変えると Card をビルドし直します。</p>
+<p>ここでは <code>&quot;nix&quot;: true</code> を付けて、<code>factor</code> を Nix の式から読んでいます。この param は Nix に渡るので、変えると Card をビルドし直します。実行時に読むなら、すべての param は <code>$TSUGUMI_PARAMS_JSON</code>（JSON の本文）にあります。</p>
+<p>表示は <code>$TSUGUMI_DISPLAY</code> に JSON を書きます。<code>{&quot;markdown&quot;: &quot;**太字**&quot;}</code> のほか、<code>text</code>、<code>table</code>（<code>columns</code> と <code>rows</code>）、<code>image</code>（<code>path</code> と <code>alt</code>）、<code>module</code>（<code>name</code> と <code>data</code>）のどれか 1 つで、スクリプトが正常に終わったときに表示されます。</p>
 <h3 id="c">C++</h3>
 <p>入力ポートと出力ポートが、そのまま <code>Card::Input</code>・<code>Card::Output</code> のメンバーになります。</p>
 <p><code>definitions/multiply/_card.json</code>（C++）</p>
@@ -174,6 +175,52 @@ auto run(Card::Input&amp; input) -&gt; Card::Output {
   return out;
 }
 </code></pre>
+<h3 id="r">R</h3>
+<p>R には FlatBuffers の生成器がないので、R の Card は別プロセスで動き、ポートの値を JSON でやり取りします（worker がポートの型で変換します）。</p>
+<p><code>definitions/multiply/_card.json</code>（R）</p>
+<pre><code class="language-json">{
+  &quot;language&quot;: &quot;r&quot;,
+  &quot;inputs&quot;: [{&quot;name&quot;: &quot;number&quot;}],
+  &quot;params&quot;: [{&quot;name&quot;: &quot;factor&quot;, &quot;type&quot;: &quot;uint64&quot;, &quot;data&quot;: 2}]
+}
+</code></pre>
+<p><code>definitions/multiply/default.nix</code>（R）</p>
+<pre><code class="language-nix">{ pkgs, inputs, params }: {
+  run = inputs.tsugumi.rCard { src = ./src; };
+}
+</code></pre>
+<p><code>definitions/multiply/src/main.R</code>（R）</p>
+<pre><code class="language-r">main &lt;- function(ctx) {
+  n &lt;- ctx$input(&quot;number&quot;)$value
+  factor &lt;- ctx$params$factor
+  ctx$output(&quot;result&quot;, list(value = n * factor))
+  ctx$display_text(sprintf(&quot;%d × %d = %d&quot;, n, factor, n * factor))
+}
+</code></pre>
+<p>パッケージは nixpkgs の <code>rPackages</code> から選びます（<code>packages = ps: [ ps.survival ps.ggplot2 ];</code>）。図は <code>ctx$plot(expr, alt = &quot;説明&quot;)</code> で Card の表示に描けます（基本のグラフィックスと ggplot のどちらも）。表は <code>ctx$display_table(data.frame)</code> です。</p>
+<h3 id="julia">Julia</h3>
+<p>Julia の Card も別プロセスで、値を JSON でやり取りします。</p>
+<p><code>definitions/multiply/_card.json</code>（Julia）</p>
+<pre><code class="language-json">{
+  &quot;language&quot;: &quot;julia&quot;,
+  &quot;inputs&quot;: [{&quot;name&quot;: &quot;number&quot;}],
+  &quot;params&quot;: [{&quot;name&quot;: &quot;factor&quot;, &quot;type&quot;: &quot;uint64&quot;, &quot;data&quot;: 2}]
+}
+</code></pre>
+<p><code>definitions/multiply/default.nix</code>（Julia）</p>
+<pre><code class="language-nix">{ pkgs, inputs, params }: {
+  run = inputs.tsugumi.juliaCard { src = ./src; };
+}
+</code></pre>
+<p><code>definitions/multiply/src/main.jl</code>（Julia）</p>
+<pre><code class="language-julia">function main(ctx)
+    n = input(ctx, &quot;number&quot;)[&quot;value&quot;]
+    factor = ctx.params[&quot;factor&quot;]
+    output(ctx, &quot;result&quot;, Dict(&quot;value&quot; =&gt; n * factor))
+    display_text(ctx, &quot;$n × $factor = $(n * factor)&quot;)
+end
+</code></pre>
+<p>標準ライブラリだけで動きます。General レジストリのパッケージは <code>packages = [ &quot;JuMP&quot; ];</code> でビルド時に固定します。図は <code>display_vegalite(ctx, spec)</code> に Vega-Lite の spec を Dict で渡すと、操作できるグラフとして表示されます。</p>
 <h2 id="次に読むもの">次に読むもの</h2>
 <div class="table-wrap"><table><thead><tr><th>知りたいこと</th><th>文書</th></tr></thead><tbody><tr><td>分岐・合流・ループ、ファイルの受け渡し、Nix で固定したデータ</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md" rel="noopener">Card の仕様</a>、<a href="demos.html">同梱デモのしくみ</a></td></tr><tr><td>動くコードの例</td><td><a href="https://github.com/gen740/Tsugumi/tree/main/demos/" rel="noopener">demos/</a>（<code>report</code>・<code>collatz</code> など）</td></tr><tr><td>実装を Agent に任せる</td><td><a href="features.html#9-agent">主要機能の Agent</a>、<a href="agentrun.html">実際の Claude API での実行記録</a></td></tr><tr><td>言葉の意味</td><td><a href="glossary.html">用語集</a></td></tr></tbody></table></div>
 </article>

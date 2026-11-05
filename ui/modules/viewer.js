@@ -54,7 +54,8 @@ async function plotly(spec, interactive) {
   })
 }
 
-async function vegaLite(spec, interactive) {
+// Not named vegaLite: the library sets that global, and a second chart on the page would call it.
+async function drawVegaLite(spec, interactive) {
   for (const s of ['vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) await load(s)
   const composite = ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'].some((k) => k in spec)
   if (!composite) {
@@ -80,7 +81,7 @@ async function render({ name, json, interactive }) {
     document.body.classList.toggle('still', !interactive)
     if (drawn === 'plotly' && name !== 'plotly') window.Plotly?.purge(view)
     if (name === 'plotly') await plotly(spec, interactive)
-    else if (name === 'vega-lite') await vegaLite(spec, interactive)
+    else if (name === 'vega-lite') await drawVegaLite(spec, interactive)
     else throw new Error(`no viewer for the module ${name}`)
     drawn = name
     if (n === current) done('ok')

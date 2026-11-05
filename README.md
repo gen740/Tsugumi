@@ -211,7 +211,7 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 
 | 目的 | 文書 |
 | --- | --- |
-| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](docs/CardGuide.md)（Python・bash・C++ で作る） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
+| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](docs/CardGuide.md)（Python・bash・C++・R・Julia で作る） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
 | **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) · [作った人](docs/Author.md) · [まだできないこと](docs/Limitations.md) |
 | **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) · [RPC 契約](docs/Protocol.md) · [用語集](docs/Glossary.md) |
 | **記録と開発** | [主張と、それを確かめる方法](docs/Evidence.md) · [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [制作記録](docs/Making.md) · [ライセンス調査](docs/LicenseAudit.md) |

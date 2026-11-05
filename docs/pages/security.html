@@ -92,6 +92,7 @@ Card 自身はデフォルトでネットワーク名前空間から切り離さ
 <h3 id="sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</h3>
 <pre><code class="language-text">bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
+      --symlink &lt;store の bash&gt; /bin/sh
       --uid &lt;nobody 相当&gt; --gid &lt;…&gt;
       --ro-bind &lt;保存済み入力・runs&gt;  --bind &lt;worker の一時領域&gt;
       -- tsugumi-worker
