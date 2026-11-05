@@ -7,8 +7,9 @@ See [制作範囲と事前準備](provenance.md) for the authorship boundary.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh)).
-This is **not a corresponding-source offer** for the VM's GPL / LGPL software;
-what remains is recorded in [ライセンス調査](licenseaudit.md). Versions
+The corresponding source of the VM's boot disk is in that disk's release of
+[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
+[ライセンス調査](licenseaudit.md). Versions
 below were audited at `0ec6460` (2026-11-04) and checked again on 2026-11-05;
 lock files and build recipes are authoritative when dependencies change.
 
@@ -141,9 +142,10 @@ licensed dependencies. [third-party/vm-boot/](https://github.com/gen740/Tsugumi/
 lists what the released image really contains, with each package's license as
 nixpkgs declares it, its sources and patches, the license files of those sources
 and the kernel's configuration; the app and the VM's releases carry that folder.
-It and `flake.lock` provide provenance, but are not by themselves a
-corresponding-source distribution or written offer; providing one is
-[still to be decided](licenseaudit.md#vm-の対応ソースの提供方法).
+The corresponding source is `sources.tar.gz` in the disk's release of
+[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); its URL for this disk
+is in that folder's README. See
+[how it is provided](licenseaudit.md#vm-の対応ソースの提供方法).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
 

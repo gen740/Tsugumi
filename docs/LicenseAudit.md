@@ -2,7 +2,7 @@
 
 調査日: 2026-11-04（[0ec6460 のソース](https://github.com/gen740/Tsugumi/tree/0ec64607f3a6348386694077e098f85a0f0ca73a)、その lock file に一致する SwiftPM checkout、Web の lock file、Dawn のローカルビルド設定と生成されたリンク規則）。2026-11-05 に、公開中の [v0.2.0](https://github.com/gen740/Tsugumi/releases/tag/v0.2.0) の ZIP と VM イメージを展開して照合し、残っていた対応を進めました。
 
-**Tsugumi 自身のコードを MIT で公開する方針は、確認した Tree-sitter の MIT / BSD ライセンスと両立します。** アプリの配布物に入る物のライセンス全文は、次のリリースから同梱されます（[配布経路で残っている対応](#配布経路で残っている対応)）。**VM の GPL / LGPL ソフトウェアに対応するソースの提供は、まだ行っていません。** 提供の方法は作者の判断待ちです。
+**Tsugumi 自身のコードを MIT で公開する方針は、確認した Tree-sitter の MIT / BSD ライセンスと両立します。** アプリの配布物に入る物のライセンス全文は、次のリリースから同梱されます（[配布経路で残っている対応](#配布経路で残っている対応)）。**VM の GPL / LGPL ソフトウェアに対応するソースは、起動ディスクのリリースに置きます**（[VM の対応ソースの提供方法](#vm-の対応ソースの提供方法)）。
 
 この文書はコード・ビルド手順・成果物から確認できた範囲の記録で、法的な結論ではありません。
 
@@ -16,11 +16,11 @@
 | 宣言と上流の文書に任せる | VM の各パッケージのライセンス名（nixpkgs の `meta.license`）と、そのソースのルートにあるライセンス文書 | 93 パッケージのソースを 1 ファイルずつ監査する費用に見合わない。宣言であって監査ではないと明記する |
 | 減らして解消する | 使っていない数式フォント 11 個 | 上流との照合より、配らないほうが確実で安い |
 | 追わない（理由を残す） | plotly.js の minified build に入っている依存の全文 | 下の「Plotly の依存」を参照 |
-| 作者が決める | VM の対応ソースの提供方法、公開済みリリースの扱い | 費用と責任を負うのが作者で、法的判断を含む |
+| 作者が決める | VM の対応ソースの提供方法、公開済みリリースの扱い（どちらも決定済み、下記） | 費用と責任を負うのが作者で、法的判断を含む |
 
 ## 配布物の照合結果（v0.2.0）
 
-`Tsugumi.zip` を展開して確かめた、対応前の状態です。ライセンス文書は SwiftMath の resource bundle に入っていた 3 つ（`LICENSE`、`OFL.txt`、`GUST-FONT-LICENSE.txt`）だけで、root の `LICENSE` も `THIRD_PARTY_NOTICES.md` もありませんでした。`tsugumi-source/` にも `LICENSE` はありません。v0.1.0・v0.1.2 は展開していませんが、そのタグの `build-app.sh` と `vm-source.txt` にも root の `LICENSE` をコピーする処理はありません。
+`Tsugumi.zip` を展開して確かめた、対応前の状態です。ライセンス文書は SwiftMath の resource bundle に入っていた 3 つ（`LICENSE`、`OFL.txt`、`GUST-FONT-LICENSE.txt`）だけで、root の `LICENSE` も `THIRD_PARTY_NOTICES.md` もありませんでした。`tsugumi-source/` にも `LICENSE` はありません。v0.1.0・v0.1.2 は展開していませんが、そのタグの `build-app.sh` にも root の `LICENSE` をコピーする処理はなく、`vm-source.txt` にも載っていません。
 
 ## Tree-sitter の内訳
 
@@ -100,36 +100,38 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 | フォントの一覧・全文を完成させる | **解消** | 上の「SwiftMath 1.7.3 のフォント」。配るのは Latin Modern Math と Yusei Magic だけになる |
 | 持ち込んだ kernel config の由来を確定する | **解消** | Kata Containers 3.17.0 の kernel に埋め込まれた config と 1 バイトも違わないことを確認した（[SOURCES.md](../macOS/Container/kernel/SOURCES.md)） |
 | VM の中身の一覧とライセンス全文 | **解消** | [third-party/vm-boot/](../third-party/vm-boot/README.md)。イメージの `/store-paths` と derivation graph から生成し、アプリと VM のリリースに同梱する。別のイメージを配ろうとすると検査が止める |
-| VM の対応ソースをリリースと結び付けて提供する | **作者の判断待ち** | 下の「VM の対応ソースの提供方法」 |
-| 公開済みのリリースの扱い | **作者の判断待ち** | 下の「公開済みのリリース」 |
+| VM の対応ソースをリリースと結び付けて提供する | **解消** | 下の「VM の対応ソースの提供方法」 |
+| 公開済みのリリースの扱い | **作者が決定（次の版で直す）** | 下の「公開済みのリリース」 |
 | plotly.js の bundle に入っている依存の全文 | **追わない（作者が変えられる）** | 下の「Plotly の依存」 |
 
 ### VM の対応ソースの提供方法
 
-調べた事実です。
+作者の決定: **起動ディスクのリリース（[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm)）に一式を置きます。** `macOS/tools/publish-vm.sh` が、ディスクごとに `sources.tar.gz`（現行のディスクで 754 MiB）と `licenses.tar.gz` を、バイナリと同じリリースへ置きます。アプリの `licenses/vm-boot/README.md` にその URL があり、ソースが公開されていないディスクを載せたアプリは、リリースの検査（`check-app-licenses.sh`）で止まります。
 
-- 配っている物: `Tsugumi.zip` の中と [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) のリリースの `vmlinux` と `rootfs.erofs`。ソースも書面による申出も付いていません。
-- 中身: 103 のストアパスと kernel で、93 パッケージです。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージで、Linux・BusyBox・Bash・coreutils・glibc・Nix などです。GPL-3.0 のものもあるので [GPLv3 §6](https://www.gnu.org/licenses/gpl-3.0.html#section6) も関係します。
-- ソースの量: [inventory.json](../third-party/vm-boot/inventory.json) の全ソースは、ストア上で約 1.2 GiB です（アーカイブ 662 MiB ＋ 展開済みディレクトリ 501 MiB。sqlite の文書など、なくてよいものを含む）。これらに加えて、ローカルパッチと nixpkgs のレシピが要ります。
-- 再現性: 2026-11-05 時点で、全ソースを `cache.nixos.org` から取得できました。ただし第三者のキャッシュは今後の提供を約束しません。`flake.lock` と上流の URL だけでは、対応ソースの配布としない方針は変えていません。
-- kernel の生成後の config は、バイナリの中（`CONFIG_IKCONFIG`）と `third-party/vm-boot/kernel-config` にあります。
+一式の中身は [vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) が `inventory.json` から作ります。
 
-選択肢です。どれも `inventory.json` からソース一式を組み立てるスクリプトが必要で、方法が決まってから書きます。
+- 各パッケージのソースと、取得するパッチ（126 件）
+- 固定した revision の nixpkgs。各パッケージの設定・ビルド・インストールの手順と、nixpkgs の中にあるパッチを含みます
+- ディスクを組み立てる Tsugumi の部分（`flake.nix`、`macOS/Container/` など）と、ビルドの手順
 
-| | 方法 | 費用 | 確認が要る点 |
-| --- | --- | --- | --- |
-| A | VM のリリースごとに、ソース一式を gen740/tsugumi-vm のリリースへ置き、URL をアプリの `licenses/` に書く | VM を更新するたびに約 1 GiB のアセット。アプリの ZIP は増えない | [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) の「同じ場所からのアクセス」に、別のリポジトリのリリースが当たるか |
-| B | ソース一式を `Tsugumi.zip` と同じリリースに毎回置く | アプリのリリースごとに約 1 GiB。場所の問いはなくなる | リリースの頻度に対して重い |
-| C | ソース一式をアプリの ZIP に入れる | 116 MB の ZIP が 1 GiB 前後になり、全利用者と自動更新が負担する | なし。文言に最も素直だが費用が最大 |
-| D | 書面による申出（GPLv2 §3(b)、GPLv3 §6(b)） | 3 年以上ソースを保管し、問い合わせ先を維持する。作者個人の継続的な約束になる | 有効期間と連絡先を作者が引き受けるか |
+展開した一式を使って `vm-boot` を評価すると、公開中のディスクと同じストアパスになることを確かめました。アーカイブの一部（38 件）は `inventory.json` のハッシュとも照合しました。実際に一からビルドし直して、同じバイナリになるかは確かめていません。
 
-提案は A です。費用が小さく、VM のバイナリとソースが同じリリースに並びます。§3 の読み方が気になる場合は B か、A に D を併せてください。どれを選んでも法的な確認を代えるものではありません。
+| 確認した事実 | |
+| --- | --- |
+| 配っている物 | `Tsugumi.zip` の中と gen740/tsugumi-vm のリリースの `vmlinux` と `rootfs.erofs` |
+| 中身 | 103 のストアパスと kernel で、93 パッケージ。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージ（Linux・BusyBox・Bash・coreutils・glibc・Nix など）。GPL-3.0 のものもあるので [GPLv3 §6](https://www.gnu.org/licenses/gpl-3.0.html#section6) も関係する |
+| kernel の生成後の config | バイナリの中（`CONFIG_IKCONFIG`）と `third-party/vm-boot/kernel-config` |
+
+残る論点は 2 つです。法的な結論ではありません。
+
+- **置き場所:** [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) は、ダウンロードで配るなら「同じ場所」からソースを取れれば、ソースの配布として扱うと定めています。`vmlinux` の単体は同じリリースにありますが、`Tsugumi.zip` は gen740/Tsugumi のリリースにあり、別のリポジトリです。GPLv3 §6(d) は案内があれば別のサーバーでよいと明記していますが、GPLv2 にはその明記がありません。同じ持ち主の同じ GitHub で、アプリの中に URL があるので、作者はこの形を選びました。
+- **保管:** バイナリを配っている間は、そのソースを消しません。ディスクのリリースを整理するときは、そのディスクを載せたアプリのリリースも確かめます。
 
 ### 公開済みのリリース
 
-v0.1.0・v0.1.2・v0.2.0 の ZIP と gen740/tsugumi-vm の既存リリースには、上の対応が入っていません。次の版で正しいものを出しても、公開済みの物は残ります。取り下げるか、残して次の版で直すかは作者が決めます。
+作者の決定: **次の版で直します。** v0.1.0・v0.1.2・v0.2.0 は取り下げません。
 
-gen740/tsugumi-vm の現行リリースへは、`macOS/tools/publish-vm.sh` を実行すれば `licenses.tar.gz` が追加されます（イメージ自体は変わりません）。
+版番号はライセンスの条件に関係しないので、v1.0.0 より前であることは対応しない理由になりません。これらの ZIP にはライセンス全文が入っていないままです。3 つのタグの nixpkgs の revision と `vm-boot.nix` は現在と同じで、v0.2.0 の VM は同じディスクだと展開して確かめました（v0.1.x は展開していません）。したがって、VM のソースは今回の公開でこれらの版にも対応します。
 
 ### Plotly の依存
 
@@ -151,6 +153,6 @@ GitHub Pages の図の手書きに使う Yusei Magic（[SIL OFL 1.1](site/assets
 
 ## 更新時の確認
 
-自動で止まるもの: アプリの全文の欠け、`Package.resolved` や hosq の pin と notices のずれ（[test_licenses.py](../tests/python/test_licenses.py)）、VM イメージと `third-party/vm-boot/` のずれ（リリースの検査と `publish-vm.sh`）。VM の起動ディスクを変えたら `macOS/tools/vm-inventory.py` で生成し直します。
+自動で止まるもの: アプリの全文の欠け、`Package.resolved` や hosq の pin と notices のずれ（[test_licenses.py](../tests/python/test_licenses.py)）、VM イメージと `third-party/vm-boot/` のずれ（リリースの検査と `publish-vm.sh`）、ソースが未公開のディスク（リリースの検査）。VM の起動ディスクを変えたら `macOS/tools/vm-inventory.py` で生成し直します。
 
 人が見るもの: Dawn の pin を変えたときの `third_party/` の内訳と、`web/package-lock.json` を更新したときの notices の版です。Tree-sitter のコピーしたライセンス全文も上流の同じ版と照合します。公開する ZIP を最後に確認し、ソース上の一覧を更新しただけで配布対応を完了としないようにします。

@@ -30,8 +30,9 @@ the author&#39;s pre-existing <a href="https://github.com/CLI20-dev/hosq" rel="n
 See <a href="provenance.html">制作範囲と事前準備</a> for the authorship boundary.</p>
 <p>The app carries these notices and the full license texts in
 <code>Contents/Resources/licenses/</code> (<a href="https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh" rel="noopener">bundle-licenses.sh</a>).
-This is <strong>not a corresponding-source offer</strong> for the VM&#39;s GPL / LGPL software;
-what remains is recorded in <a href="licenseaudit.html">ライセンス調査</a>. Versions
+The corresponding source of the VM&#39;s boot disk is in that disk&#39;s release of
+<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>; see
+<a href="licenseaudit.html">ライセンス調査</a>. Versions
 below were audited at <code>0ec6460</code> (2026-11-04) and checked again on 2026-11-05;
 lock files and build recipes are authoritative when dependencies change.</p>
 <h2 id="tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</h2>
@@ -104,9 +105,10 @@ licensed dependencies. <a href="https://github.com/gen740/Tsugumi/blob/main/thir
 lists what the released image really contains, with each package&#39;s license as
 nixpkgs declares it, its sources and patches, the license files of those sources
 and the kernel&#39;s configuration; the app and the VM&#39;s releases carry that folder.
-It and <code>flake.lock</code> provide provenance, but are not by themselves a
-corresponding-source distribution or written offer; providing one is
-<a href="licenseaudit.html#vm-の対応ソースの提供方法">still to be decided</a>.
+The corresponding source is <code>sources.tar.gz</code> in the disk&#39;s release of
+<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>; its URL for this disk
+is in that folder&#39;s README. See
+<a href="licenseaudit.html#vm-の対応ソースの提供方法">how it is provided</a>.
 See <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3" rel="noopener">GPLv2 §3</a>
 and <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" rel="noopener">LGPLv2.1 §§4–6</a>.</p>
 <h3 id="downloaded--built-after-installation">Downloaded / built after installation</h3>
