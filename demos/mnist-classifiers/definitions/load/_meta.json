@@ -1,0 +1,10 @@
+{
+  "description": "本物の MNIST を Nix で固定する",
+  "content": "MNIST の IDX 形式 4 ファイル（訓練 60000 枚・テスト 10000 枚）を公開ミラー https://ossci-datasets.s3.amazonaws.com/mnist/ から default.nix の fetchurl で取得し、hash で内容を固定する。ダウンロードは最初の 1 回だけで、実行中にネットワークは使わない。ヘッダーと枚数を確かめ、数字ごとの見本を並べて表示し、ストアのフォルダのパスを次へ渡す。",
+  "outputs": [
+    {
+      "name": "dataset",
+      "description": "展開した IDX ファイルのフォルダ（Nix ストアのパス）、出典、枚数"
+    }
+  ]
+}

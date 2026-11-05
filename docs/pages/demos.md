@@ -12,6 +12,7 @@
 | [Plots](#plotsplots) | ランダムウォークの拡散 | ふつうの matplotlib（`plt.show()`・`FuncAnimation`）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgbcasa) | 超新星残骸の X 線観測 | Nix で固定した観測データ、Card 単位の再実行、版の履歴 |
 | [科学デモ](#科学デモ公開データの取得と解析) | 重力波・タンパク質・系外惑星・地震 | 公開データの取得（大きさと SHA-256）と解析・図示 |
+| [MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers) | 手書き数字の分類（kNN から CNN まで 7 種） | 1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
@@ -178,6 +179,54 @@ Cas A の `load` が Nix で取得を固定するのに対し、こちらは実�
 
 **試すこと**: そのまま実行してから、解析の Card のパラメータ（通過帯域、`cutoff`、`window_days`、緯度帯、`mc` など）を変えて、その Card だけを実行し直す。取得し直さずに、保存された入力で解析だけをやり直せます。
 
+## 手元で完結する計算のデモ
+
+実行中にネットワークを使わないデモです。データは合成するか、パッケージに同梱のものを使うか、Nix で固定します（取得はビルドのときに 1 回だけ）。実行は `TSUGUMI_TEST_DEMO_RUNS=1` のテストで確かめています。
+
+### MNIST · 手書き数字の分類器くらべ（`mnist-classifiers`）
+
+```
+start → load → prepare → share ─┬→ knn ──────┐
+                                ├→ logistic ─┤
+                                ├→ svm ──────┤
+                                ├→ forest ───┤
+                                ├→ boosting ─┼→ compare → views ─┬→ tradeoff
+                                ├→ mlp ──────┤                   ├→ recall
+                                ├→ cnn ──────┤                   └→ hard
+                                └────────────┘（テスト画像とラベル）
+```
+
+| Card | 中身 | すること |
+| --- | --- | --- |
+| `start` | trigger | 実行の起点 |
+| `load` | Python（numpy, matplotlib） | MNIST の IDX 4 ファイルを `default.nix` の `fetchurl` と hash で固定する。ヘッダーと枚数を確かめ、数字ごとの見本を並べて出典とともに表示する。実行中にネットワークは使わない |
+| `prepare` | Python（numpy） | `seed`・`train_size`（既定 10000）・`test_size`（既定 2000）で層化抽出し、画素を 0〜1 に揃えて npz（File ポート、成果物として保持）で渡す。数字ごとの枚数を表示する |
+| `share` | fork | 7 つの分類器と `compare` に同じ部分データを渡す |
+| `knn` | scikit-learn | k 近傍法（`k`）。間違えた数字とその近傍を表示する |
+| `logistic` | scikit-learn | ロジスティック回帰（`c`, `max_iter`）。数字ごとの重みの画像を表示する |
+| `svm` | scikit-learn | RBF カーネルの SVM（`c`, `gamma`）。数字ごとのサポートベクター数を表示する |
+| `forest` | scikit-learn | ランダムフォレスト（`trees`, `max_depth`, `seed`）。効いた画素の画像を表示する |
+| `boosting` | xgboost | 勾配ブースティング（`rounds`, `max_depth`, `eta`, `seed`）。回数ごとのテスト誤り率を表示する |
+| `mlp` | torch（CPU） | 隠れ層 2 つの全結合ネット（`hidden`, `epochs`, `seed`）。損失の推移を表示する |
+| `cnn` | torch（CPU） | 畳み込み 2 層の小さなネット（`channels`, `epochs`, `seed`）。1 層目がテスト画像から取り出したものを表示する |
+| `compare` | Python（numpy） | 全分岐を待つ。同じテスト画像か（digest）を確かめ、正解率を予測から計算し直して照合し、順位表と、1 位と 2 位の差に意味があるかを文章で表示する |
+| `views` | fork | 比較結果を 3 つの図に渡す |
+| `tradeoff` | Plotly | 正解率と学習時間・予測時間の散布図（対数軸、パレート最適を線で結ぶ、ホバーで詳細） |
+| `recall` | matplotlib | モデル × 数字の再現率の表 |
+| `hard` | matplotlib | 間違えたモデルが多いテスト画像 32 枚と、多かった誤答 |
+
+分類器の Card は共通して、正解率・1 スレッドの CPU 時間（学習と予測）・間違いの内訳を表示し、型付きのメッセージ（`Result`）でテスト全枚の予測を `compare` に渡します。
+
+**試すこと**
+
+- そのまま実行する。7 つの分岐が同時に動きます（同時に動く数は設定の「並列実行数」、既定 4）。
+- `forest` の `max_depth` を 3 にして、その Card だけを実行する。他の分岐は動かず、`forest` の正解率だけが 0.9475 から 0.7570 に下がります。
+- 比べ直すときは `share` から実行する。`compare` はすべての分岐の結果を待つためです。シードと 1 スレッドで固定しているので、変えていない分岐の正解率は同じです。
+- `knn` の `k`、`svm` の `gamma`、`cnn` の `epochs` を変える。
+- `prepare` の `train_size` を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（`svm` と `knn` の予測時間が伸びます）。
+
+データは LeCun・Cortes・Burges の MNIST で、PyTorch のミラー `https://ossci-datasets.s3.amazonaws.com/mnist/` から取得します。
+
 ## Draft 版（Agent に実装させる）
 
 `casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
@@ -214,6 +263,7 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
+| **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`share` から実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |

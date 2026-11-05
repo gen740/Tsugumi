@@ -1,0 +1,12 @@
+namespace mnist;
+table Result {
+  model:string;
+  settings:string;
+  digest:string;
+  accuracy:double;
+  fit_seconds:double;
+  predict_seconds:double;
+  predictions:[ubyte] (required);
+}
+table Outputs { result:Result (required); }
+root_type Outputs;

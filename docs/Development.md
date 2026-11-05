@@ -174,6 +174,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_web_server.py` | Web UI のホストサーバー: 表示した URL の key（その後は cookie）を持つページだけが `/api/`（`/api/settings` を含む）に届くこと、変更には cross-origin から送れないヘッダーが要ること、不正な要求はそれだけが失敗しページの外のファイルを返さないこと（node と `web/dist` が必要）。グラフの表示部品（`/modules/`）だけがこのページからの埋め込みを許され、常に sandbox（opaque origin）で、何も読み込まず（スクリプトは埋め込み、ライブラリはページが渡す）どこにも接続しないこと |
 | `tests/python/test_frame_fuzz.py` | 固定 seed の fuzz: Unix と WebSocket のフレーム（任意のバイト列・偽の長さ・任意のヘッダー bit・マスクなし・順不同の fragment と制御フレーム・Hello の前後でバイトを書き換えた要求）で tsugumid が落ちず止まらず、ほかの接続に正しく答え続けること（`TSUGUMI_FUZZ_CASES` で件数、既定 300） |
 | `tests/python/test_en_strings.py` | 英語 UI の訳が原文と同じ引数を同じ順に取ること（順を変える訳は `%2$llu` のような位置指定）、同梱の `Localizable.strings` が生成済みであること。ビルドが出す文字列のうち訳のないものは `en_strings.py --check <stringsdata のフォルダ>` で一覧できる |
+| `tests/python/test_demo_mnist.py` | MNIST のデモ（`TSUGUMI_TEST_DEMO_RUNS=1` のときだけ実行。Nix の取得が大きいため CI では動かしません）: 公表されている数字ごとの枚数、numpy だけの kNN と Card の一致、再実行で正解率が変わらないこと、1 つの分岐だけの実行 |
 | `tests/python/test_licenses.py` | アプリが同梱する唯一の数式フォントだけを使っていること |
 | `tests/python/test_docs.py` | 文書の検査: リンク・アンカー・パスの実在、文書・テスト・デモの一覧の漏れ、`Protocol.md` と静的サイトが生成元と一致すること、[Evidence.md](Evidence.md) のテスト名の実在、[CardGuide.md](CardGuide.md) のコードをそのページから取り出して Python・bash・C++ で実行すること |
 | `tests/python/test_release.py` | 版番号が `VERSION` 1 つから core・Nix・CMake・アプリに入ること、アプリが Swift Build でビルドされ、ビルドしたマシンのパス（パッケージのリソースの場所）を含まないこと、ビルドしたマシンのパス（`#filePath`）が debug ビルドの中にしかないこと、アプリと Web UI が API キーに同じ Keychain 項目を使うこと |

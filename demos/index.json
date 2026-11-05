@@ -178,6 +178,20 @@
       ]
     },
     {
+      "id": "mnist-classifiers",
+      "title": "MNIST · 手書き数字の分類器くらべ",
+      "description": "The real MNIST, fixed by Nix, sent down seven branches at once: kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a small CNN, each Card in its own Nix environment on one CPU thread. They meet at a comparison: a leaderboard that says whether the gap means anything, accuracy against time, per-digit recall and the digits most models get wrong.",
+      "path": "mnist-classifiers",
+      "tags": [
+        "Python",
+        "機械学習",
+        "分岐・分配・合流",
+        "matplotlib",
+        "Plotly",
+        "成果物"
+      ]
+    },
+    {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
       "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",
