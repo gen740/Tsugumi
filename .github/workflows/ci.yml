@@ -97,3 +97,8 @@ jobs:
           TSUGUMI_FLATC="$(nix develop -c which flatc)"
           export TSUGUMI_FLATC
           cd macOS && swift test
+      # The release's step, here so that a missing file shows before a release.
+      - name: Licenses the app bundles
+        run: |
+          nix develop -c npm ci --prefix web --ignore-scripts
+          macOS/tools/bundle-licenses.sh "$RUNNER_TEMP/licenses"

@@ -61,6 +61,11 @@ if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$'
 fi
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
+# SwiftMath's bundle has 12 math fonts, each with its own terms; the app draws
+# with one, the default of MTMathUILabel, loaded on demand. The others stay out.
+math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle"
+[ -f "$math_fonts/latinmodern-math.otf" ]
+find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The module viewer (ui/modules) and the plot libraries it loads: the web UI's
 # pinned npm packages (web/package-lock.json), the same files the web UI serves.
@@ -98,6 +103,8 @@ grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
   mkdir -p "$src/$(dirname "$entry")"
   cp -R "$repo/$entry" "$src/$entry"
 done
+# The licenses of all of the above (checked before a release: check-app-licenses.sh).
+"$repo/macOS/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST

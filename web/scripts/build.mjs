@@ -3,6 +3,7 @@ import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { VIEWER_PACKAGES, withDependencies, writeLicenses } from './licenses.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = path.join(root, 'dist')
@@ -59,5 +60,15 @@ const client = {
 if (watch) {
   for (const o of [server, client]) await (await esbuild.context(o)).watch()
 } else {
-  await Promise.all([esbuild.build(server), esbuild.build(client)])
+  const results = await Promise.all([server, client].map((o) => esbuild.build({ ...o, metafile: true })))
+  // The licenses of what dist/ contains: the packages esbuild put in the bundles
+  // (their inputs, not the lock file) and the plot viewer's libraries.
+  const bundled = new Set(results.flatMap((r) => Object.keys(r.metafile.inputs)).flatMap((input) => {
+    const at = input.match(/^(?:.*\/)?((?:node_modules\/(?:@[^/]+\/)?[^/]+\/?)+)/)
+    return at ? [at[1].replace(/\/$/, '')] : []
+  }))
+  const licenses = path.join(out, 'licenses')
+  fs.rmSync(licenses, { recursive: true, force: true })
+  writeLicenses(new Set([...bundled, ...withDependencies(VIEWER_PACKAGES)]), licenses)
+  for (const f of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) fs.copyFileSync(path.join(root, '..', f), path.join(licenses, f))
 }

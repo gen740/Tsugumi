@@ -1,10 +1,26 @@
 # ライセンス調査
 
-調査日: 2026-11-04。対象: [0ec6460 のソース](https://github.com/gen740/Tsugumi/tree/0ec64607f3a6348386694077e098f85a0f0ca73a)、その lock file に一致する SwiftPM checkout、Web の lock file、Dawn のローカルビルド設定と生成されたリンク規則。
+調査日: 2026-11-04（[0ec6460 のソース](https://github.com/gen740/Tsugumi/tree/0ec64607f3a6348386694077e098f85a0f0ca73a)、その lock file に一致する SwiftPM checkout、Web の lock file、Dawn のローカルビルド設定と生成されたリンク規則）。2026-11-05 に、公開中の [v0.2.0](https://github.com/gen740/Tsugumi/releases/tag/v0.2.0) の ZIP と VM イメージを展開して照合し、残っていた対応を進めました。
 
-**Tsugumi 自身のコードを MIT で公開する方針は、確認した Tree-sitter の MIT / BSD ライセンスと両立します。ただし、現状の配布物について「ルートの LICENSE 一つで必要な対応が完了している」とは言えません。** 著作権表示とライセンス全文の同梱、フォントの扱い、VM の対応ソース提供に未対応・未確認の部分があります。
+**Tsugumi 自身のコードを MIT で公開する方針は、確認した Tree-sitter の MIT / BSD ライセンスと両立します。** アプリの配布物に入る物のライセンス全文は、次のリリースから同梱されます（[配布経路で残っている対応](#配布経路で残っている対応)）。**VM の GPL / LGPL ソフトウェアに対応するソースの提供は、まだ行っていません。** 提供の方法は作者の判断待ちです。
 
-この文書はコードとビルド手順から確認できた範囲の記録です。公開済みの全リリースを展開して照合した結果や、VM の全依存 closure の監査完了を示すものではありません。
+この文書はコード・ビルド手順・成果物から確認できた範囲の記録で、法的な結論ではありません。
+
+## どこまで厳密にするか
+
+個人が MIT で公開し、ad-hoc 署名の ZIP を GitHub で配っているプロジェクトとして、次の線で分けています。
+
+| 扱い | 対象 | 理由 |
+| --- | --- | --- |
+| 実物で確かめ、機械的に検査する | アプリと VM に入る物の全文・表示。アプリが実際にリンク・コピーする依存の一覧 | ライセンスが配布の条件として明示しており、費用も小さい。人手の確認は依存の更新で必ず古くなる |
+| 宣言と上流の文書に任せる | VM の各パッケージのライセンス名（nixpkgs の `meta.license`）と、そのソースのルートにあるライセンス文書 | 93 パッケージのソースを 1 ファイルずつ監査する費用に見合わない。宣言であって監査ではないと明記する |
+| 減らして解消する | 使っていない数式フォント 11 個 | 上流との照合より、配らないほうが確実で安い |
+| 追わない（理由を残す） | plotly.js の minified build に入っている依存の全文 | 下の「Plotly の依存」を参照 |
+| 作者が決める | VM の対応ソースの提供方法、公開済みリリースの扱い | 費用と責任を負うのが作者で、法的判断を含む |
+
+## 配布物の照合結果（v0.2.0）
+
+`Tsugumi.zip` を展開して確かめた、対応前の状態です。ライセンス文書は SwiftMath の resource bundle に入っていた 3 つ（`LICENSE`、`OFL.txt`、`GUST-FONT-LICENSE.txt`）だけで、root の `LICENSE` も `THIRD_PARTY_NOTICES.md` もありませんでした。`tsugumi-source/` にも `LICENSE` はありません。v0.1.0・v0.1.2 は展開していませんが、そのタグの `build-app.sh` と `vm-source.txt` にも root の `LICENSE` をコピーする処理はありません。
 
 ## Tree-sitter の内訳
 
@@ -27,15 +43,30 @@ MIT は著作権表示と許諾文の維持を求めます。BSD-3-Clause はバ
 - **hosq**: 事前に開発した自作ライブラリも独立した依存です。`flake.lock` の固定 revision の LICENSE は MIT です。制作範囲の区分にも記載しました。
 - **libgit2**: core のリンク対象です。固定した [nixpkgs の定義](https://github.com/NixOS/nixpkgs/blob/1c89083e451e891152365b799595cf7790a43325/pkgs/by-name/li/libgit2/package.nix) は 1.9.7 を指定しています。GPLv2 と特別な linking exception があり、単に「GPL なのでアプリ全体も GPL」と解釈するのは不正確です。[上流の COPYING](https://github.com/libgit2/libgit2/blob/v1.9.7/COPYING) に従って、組み合わせた実行形式とライブラリ自体の配布を区別します。
 - **Web の推移的依存**: React などに加えて `loose-envify` / `js-tokens` が lock file にあります。`commander` は KaTeX CLI 用です。lock file に入っているものと、esbuild が実際に出力するものは分けて確認します。
-- **Dawn の推移的依存**: Metal 向けのモノリシック静的ライブラリが renderer dylib に入ります。ローカルの `libwebgpu_dawn.a` の Ninja 規則で Abseil の object を確認しました。無効にしている Vulkan / SPIR-V 向け部品を無条件に列挙せず、実際の object とヘッダー由来のコードを追って一覧を完成させる必要があります。
+- **Dawn の推移的依存**: Metal 向けのモノリシック静的ライブラリが renderer dylib に入ります。下の「Dawn が実際に取り込むもの」で追いました。
 
 Apache-2.0 の依存については、ライセンスのコピー、適用される NOTICE、変更時の表示なども対象です。[Apache-2.0 §4](https://www.apache.org/licenses/LICENSE-2.0) を参照してください。
 
+## Dawn が実際に取り込むもの
+
+Dawn `1716e88` の `libwebgpu_dawn.a`（652 object）について、`ninja -t deps` が記録したコンパイル入力のうち SDK 以外の 1547 ファイルを調べました。`third_party/` から入るのは Abseil だけで、SPIRV-Tools などは入りません。
+
+| 入るもの | ファイル数 | ライセンス | 同梱する全文 |
+| --- | --- | --- | --- |
+| Dawn / Tint 本体と生成コード | 1244 | BSD-3-Clause | `dawn.LICENSE` |
+| `gen/include/dawn/webgpu.h`（生成ファイル。webgpu-headers と同じ表示を持つ） | 1 | BSD-3-Clause（"WebGPU native" developers） | `webgpu-headers.LICENSE` |
+| `src/dawn/common/LinkedList.h`（Chromium からの改変コピー） | 1 | BSD-style。参照先の Chromium の LICENSE は Dawn のソースにない | `chromium.LICENSE`（[third-party/chromium/](https://github.com/gen740/Tsugumi/blob/main/third-party/chromium/README.md)） |
+| Abseil（`af5aede`、Chromium の取り込み） | 301 | Apache-2.0。NOTICE はない | `abseil-cpp.LICENSE` |
+
+各ファイル冒頭の著作権表示の種類で分類した結果です。Dawn の `LICENSE` にある Apache-2.0 の節は `generator/templates/art/*` と `tools/android/webgpu/*` 向けで、ここには入りません。Dawn の pin を変えたら、renderer をビルドしたあと `ninja -C build-renderer -t deps` で `third_party/` の内訳を見直します。
+
 ## SwiftMath 1.7.3 のフォント
 
-`macOS/build-app.sh` は SwiftPM の resource bundle をコピーします。SwiftMath の `mathFonts.bundle` には 12 個の `.otf` があり、実際に選択しているフォントだけが配布対象になるわけではありません。
+アプリが数式の描画に使うのは、`MTMathUILabel` の既定である Latin Modern Math だけです（`macOS/Sources` はフォントを選んでいません。[test_licenses.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_licenses.py) で検査）。フォントは必要になったときに読み込まれ、[SwiftMath の `MathFont.swift`](https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/Sources/SwiftMath/MathBundle/MathFont.swift) は他のファイルに触れません。そこで `macOS/build-app.sh` は、これ以外の 11 個を bundle から取り除きます。v0.2.0 までの配布物には 12 個すべてが入っています。Latin Modern だけを残した bundle で `MTMathUILabel` が数式を組めることは、同じ呼び方の小さな実行ファイルで確かめました。
 
-以下は固定 revision の [mathFonts.bundle](https://github.com/mgriebling/SwiftMath/tree/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/Sources/SwiftMath/mathFonts.bundle) に含まれるライセンスファイルと、OTF の `name` テーブル（copyright / license / license URL）を読み取った結果です。
+Latin Modern Math は上流パッケージの説明によると GUST Font License で、これは LPPL の一形態です。[LPPL 1.3c](https://www.latex-project.org/lppl/lppl-1-3c.txt) の条項 2 は Work の一部だけの配布を改変として扱うため、SwiftMath の bundle にある `.otf` と license だけでは足りない読み方ができます。bundle の `latinmodern-math.otf` は上流 [latinmodern-math-1959.zip](https://www.gust.org.pl/projects/e-foundry/lm-math/download/latinmodern-math-1959.zip) の中のものと SHA-256 が一致するので、1 MB に満たない上流パッケージ全体を nixpkgs の固定した `lmmath.src` からそのまま `licenses/fonts/latin-modern-math/` に同梱します。
+
+以下は記録として残す、固定 revision の [mathFonts.bundle](https://github.com/mgriebling/SwiftMath/tree/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/Sources/SwiftMath/mathFonts.bundle) に含まれるライセンスファイルと、OTF の `name` テーブル（copyright / license / license URL）を読み取った結果です。
 
 | ファイル | 読み取れたライセンス情報 |
 | --- | --- |
@@ -52,7 +83,7 @@ Apache-2.0 の依存については、ライセンスのコピー、適用され
 | `NotoSansMath-Regular.otf` | SIL Open Font License 1.1 |
 | `xits-math.otf` | 埋め込み情報は SIL OFL を基にした条件に言及。bundle の `OFL.txt` は **STIX Font License** という表題で、一般的な OFL 本文と同一とは扱えない |
 
-bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの一括ライセンスではありません。`GUST-FONT-LICENSE.txt` は LPPL 1.3c 以降の条件を参照しています。配布する各ファイルに対応する上流の著作権表示、ライセンス、必要な関連文書を揃えることが残っています。特に XITS / KpMath Sans は、ファイル名から許諾を推定せず上流配布物と照合します。
+bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの一括ライセンスではありません。`GUST-FONT-LICENSE.txt` は LPPL 1.3c 以降の条件を参照しています。XITS と KpMath Sans の条件は上流と照合していません。配らなくなるので、照合はしないことにしました。別のフォントを使うようにするときは、その時点で照合して同梱します。
 
 ## ヘルプ > Tsugumi を知る のフォント
 
@@ -60,22 +91,57 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 
 ## 配布経路で残っている対応
 
-以下は、この文書追加では解消していない配布上の作業です。
-
-| 優先する対応 | ソース上の根拠 | 完了を確認する方法 |
+| 事項 | 状態 | 対応と確かめる場所 |
 | --- | --- | --- |
-| アプリへライセンス全文・NOTICE・出典をまとめて同梱する | `macOS/build-app.sh` に root `LICENSE` / `THIRD_PARTY_NOTICES.md` をコピーする処理がない。grammar の LICENSE と query の SOURCES は `Package.swift` の exclude に入っている | release ZIP を展開し、実際にリンク・コピーした依存に対応する全文・著作権表示を確認する。Swift の resource bundle に偶然含まれるものだけに頼らない |
-| VM に渡す Tsugumi ソースにもライセンスを保持する | `macOS/Container/vm-source.txt` に `LICENSE` / notices がない | allowlist から作った配布用 source ディレクトリに確認用の文書を含める |
-| Web の配布物に必要な全文を含める | `web/scripts/build.mjs` は HTML / icon / schema をコピーし、JS を bundle するが、パッケージの LICENSE を集約しない | server / browser それぞれの esbuild metafile と最終 `dist/` を照合する。自動保持されたコメントや `.LEGAL.txt` だけで必要な全文が足りるか確認する |
-| Dawn とフォントの一覧・全文を完成させる | Dawn の build graph と SwiftMath resource bundle が、直接依存名だけの一覧より広い | リリースの実際のバイナリ・resource を対象に、版・由来・適用ライセンスを記録して同梱する |
-| VM の対応ソースをリリースと結び付けて提供する | `macOS/tools/publish-vm.sh` は kernel / rootfs / version / checksum を公開するが、対応ソースまたは書面による提供申出を作らない | boot image の closure、各ソース・パッチ、生成後の kernel config、ビルド・インストール手順を保存し、採用する GPL/LGPL の提供方法を満たす形で配布する |
-| 持ち込んだ kernel config の由来を確定する | `kernel.nix` は Kata ベースの設定と説明するが、元 revision / ファイルへの参照がない | 元の配布物と改変を特定し、必要な出典・表示を保持する |
+| アプリへライセンス全文・NOTICE・出典をまとめて同梱する | **解消**（次のリリースから） | [bundle-licenses.sh](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh) が、ビルドに使った checkout の文書を `Contents/Resources/licenses/` にコピーする。足りなければビルドが止まる。公開の前に [check-app-licenses.sh](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/check-app-licenses.sh) が完成したアプリを検査する（`release.yml`）。CI でも同じコピーを実行する |
+| VM に渡す Tsugumi ソースにもライセンスを保持する | **解消** | `macOS/Container/vm-source.txt` に追加。上の検査の対象 |
+| Web の配布物に必要な全文を含める | **解消** | `web/scripts/build.mjs` が esbuild の metafile から実際に bundle したパッケージを取り、viewer のライブラリと一緒に全文を `dist/licenses/` へコピーする。[test_licenses.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_licenses.py) で検査 |
+| Dawn の一覧・全文を完成させる | **解消** | 上の「Dawn が実際に取り込むもの」 |
+| フォントの一覧・全文を完成させる | **解消** | 上の「SwiftMath 1.7.3 のフォント」。配るのは Latin Modern Math と Yusei Magic だけになる |
+| 持ち込んだ kernel config の由来を確定する | **解消** | Kata Containers 3.17.0 の kernel に埋め込まれた config と 1 バイトも違わないことを確認した（[SOURCES.md](https://github.com/gen740/Tsugumi/blob/main/macOS/Container/kernel/SOURCES.md)） |
+| VM の中身の一覧とライセンス全文 | **解消** | [third-party/vm-boot/](https://github.com/gen740/Tsugumi/blob/main/third-party/vm-boot/README.md)。イメージの `/store-paths` と derivation graph から生成し、アプリと VM のリリースに同梱する。別のイメージを配ろうとすると検査が止める |
+| VM の対応ソースをリリースと結び付けて提供する | **作者の判断待ち** | 下の「VM の対応ソースの提供方法」 |
+| 公開済みのリリースの扱い | **作者の判断待ち** | 下の「公開済みのリリース」 |
+| plotly.js の bundle に入っている依存の全文 | **追わない（作者が変えられる）** | 下の「Plotly の依存」 |
+
+### VM の対応ソースの提供方法
+
+調べた事実です。
+
+- 配っている物: `Tsugumi.zip` の中と [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) のリリースの `vmlinux` と `rootfs.erofs`。ソースも書面による申出も付いていません。
+- 中身: 103 のストアパスと kernel で、93 パッケージです。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージで、Linux・BusyBox・Bash・coreutils・glibc・Nix などです。GPL-3.0 のものもあるので [GPLv3 §6](https://www.gnu.org/licenses/gpl-3.0.html#section6) も関係します。
+- ソースの量: [inventory.json](https://github.com/gen740/Tsugumi/blob/main/third-party/vm-boot/inventory.json) の全ソースは、ストア上で約 1.2 GiB です（アーカイブ 662 MiB ＋ 展開済みディレクトリ 501 MiB。sqlite の文書など、なくてよいものを含む）。これらに加えて、ローカルパッチと nixpkgs のレシピが要ります。
+- 再現性: 2026-11-05 時点で、全ソースを `cache.nixos.org` から取得できました。ただし第三者のキャッシュは今後の提供を約束しません。`flake.lock` と上流の URL だけでは、対応ソースの配布としない方針は変えていません。
+- kernel の生成後の config は、バイナリの中（`CONFIG_IKCONFIG`）と `third-party/vm-boot/kernel-config` にあります。
+
+選択肢です。どれも `inventory.json` からソース一式を組み立てるスクリプトが必要で、方法が決まってから書きます。
+
+| | 方法 | 費用 | 確認が要る点 |
+| --- | --- | --- | --- |
+| A | VM のリリースごとに、ソース一式を gen740/tsugumi-vm のリリースへ置き、URL をアプリの `licenses/` に書く | VM を更新するたびに約 1 GiB のアセット。アプリの ZIP は増えない | [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) の「同じ場所からのアクセス」に、別のリポジトリのリリースが当たるか |
+| B | ソース一式を `Tsugumi.zip` と同じリリースに毎回置く | アプリのリリースごとに約 1 GiB。場所の問いはなくなる | リリースの頻度に対して重い |
+| C | ソース一式をアプリの ZIP に入れる | 116 MB の ZIP が 1 GiB 前後になり、全利用者と自動更新が負担する | なし。文言に最も素直だが費用が最大 |
+| D | 書面による申出（GPLv2 §3(b)、GPLv3 §6(b)） | 3 年以上ソースを保管し、問い合わせ先を維持する。作者個人の継続的な約束になる | 有効期間と連絡先を作者が引き受けるか |
+
+提案は A です。費用が小さく、VM のバイナリとソースが同じリリースに並びます。§3 の読み方が気になる場合は B か、A に D を併せてください。どれを選んでも法的な確認を代えるものではありません。
+
+### 公開済みのリリース
+
+v0.1.0・v0.1.2・v0.2.0 の ZIP と gen740/tsugumi-vm の既存リリースには、上の対応が入っていません。次の版で正しいものを出しても、公開済みの物は残ります。取り下げるか、残して次の版で直すかは作者が決めます。
+
+gen740/tsugumi-vm の現行リリースへは、`macOS/tools/publish-vm.sh` を実行すれば `licenses.tar.gz` が追加されます（イメージ自体は変わりません）。
+
+### Plotly の依存
+
+`plotly.min.js` は上流が公開した minified build で、そのまま配っています。全体の `LICENSE` と一部の依存のコメントは残っていますが、中の依存の全文はありません。参考に上流の `plotly.js@3.6.0` の依存を解決すると 258 パッケージ、うち 31 はライセンスファイルがありません。実際に bundle に入るのはこの一部で、上流の metafile がないのでどれかは分かりません。
+
+無関係なものを含む一覧を手で抱えるより、上流の配布形態のまま配ることにしました。厳密にするなら、依存の解決結果から全文を生成して同梱する（約 270 KB と、31 件の手作業）か、plotly.js を自分で bundle して metafile を取る方法があります。Vega は lock file に依存があるので、全文を同梱しています。
 
 ### VM は「Nix が取得するから対象外」にはならない
 
 アプリが同梱する boot image は Linux、Nix、Bash などとその依存を含みます。一方、`vm-system.nix` の daemon・追加ツールや、各 Card の処理系はインストール後に取得します。この二つを区別する必要があります。
 
-Linux は `kernel.nix` で 6.12.115 を独自設定でビルドしています。`flake.lock` で nixpkgs を固定することや、上流ソースを取得できるコマンドを示すことだけでは、このバイナリに対応するソースを配布したことにはなりません。`kernel.nix` は生成後の config を `$out/config` に保存しますが、現在の VM 配布スクリプトはそれを公開していません。
+Linux は `kernel.nix` で 6.12.115 を独自設定でビルドしています。`flake.lock` で nixpkgs を固定することや、上流ソースを取得できるコマンドを示すことだけでは、このバイナリに対応するソースを配布したことにはなりません。
 
 [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) は、対応ソースの同梱や条件を満たす書面での提供申出などを定め、ソースにはビルド・インストールを制御するスクリプトも含めています。[LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html) も、ライブラリのコピーを配る場合とライブラリを利用するプログラムを配る場合を区別します。動的リンクであることだけをもって、表示・全文同梱・ソース提供やライブラリ差し替えに関する確認が不要になるとは扱いません。
 
@@ -85,4 +151,6 @@ GitHub Pages の図の手書きに使う Yusei Magic（[SIL OFL 1.1](../site/ass
 
 ## 更新時の確認
 
-依存を更新したら、`macOS/Package.resolved`、`web/package-lock.json`、`flake.lock`、Dawn の pin と、ここに記載した版・ライセンス・同梱範囲を照合します。Tree-sitter のコピーしたライセンス全文も上流の同じ版と照合します。公開する ZIP / Web dist / VM image を最後に確認し、ソース上の一覧を更新しただけで配布対応を完了としないようにします。
+自動で止まるもの: アプリの全文の欠け、`Package.resolved` や hosq の pin と notices のずれ（[test_licenses.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_licenses.py)）、VM イメージと `third-party/vm-boot/` のずれ（リリースの検査と `publish-vm.sh`）。VM の起動ディスクを変えたら `macOS/tools/vm-inventory.py` で生成し直します。
+
+人が見るもの: Dawn の pin を変えたときの `third_party/` の内訳と、`web/package-lock.json` を更新したときの notices の版です。Tree-sitter のコピーしたライセンス全文も上流の同じ版と照合します。公開する ZIP を最後に確認し、ソース上の一覧を更新しただけで配布対応を完了としないようにします。
