@@ -1,9 +1,13 @@
 """k nearest neighbours: a test digit takes the majority label of the k closest training digits."""
+import os
+
+# One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-from threadpoolctl import threadpool_limits
 from sklearn.neighbors import KNeighborsClassifier
 
 from inputs.data.mnist.SubsetFile import SubsetFile
@@ -40,7 +44,6 @@ def send(ctx, name, settings, digest, y, pred, fit, predict):
 
 
 def main(ctx):
-    threadpool_limits(1)  # one thread: the numbers repeat and the times compare
     k = ctx.params().K()
     data = np.load(ctx.input("data", SubsetFile).Value().decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]

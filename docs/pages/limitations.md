@@ -34,7 +34,7 @@
 
 ## 機能
 
-- **Card の言語は C++・Python・bash・R・Julia です。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で検討中です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます。常駐 worker の状態保持とライブ表示はなく、R の 2^63 以上の整数は丸められます）。JSON への変換は FlatBuffers のテキスト変換を使うので、受け取る値の有効数字は double で 12 桁、float で 6 桁です（bash の Card も同じです）。厳密な値はファイルで渡します。残りは [#12](https://github.com/gen740/Tsugumi/issues/12) にあります。
+- **Card の言語は C++・Python・bash・R・Julia です。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で検討中です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます。常駐 worker の状態保持とライブ表示はなく、R の 2^63 以上の整数は丸められます）。残りは [#12](https://github.com/gen740/Tsugumi/issues/12) にあります。
 - **marimo と R Markdown / Quarto の専用 Card はありません**（[#15](https://github.com/gen740/Tsugumi/issues/15)、[#16](https://github.com/gen740/Tsugumi/issues/16)）。
 - **図の雛形を選んで作る専用の Visualization Card はありません。** matplotlib・Plotly・Altair はふつうの Python の Card で描けます（[#19](https://github.com/gen740/Tsugumi/issues/19)）。
 - **外部 Logger の DB は `sqlite:<name>` だけです**（[実装状況](development.md#実装状況)）。

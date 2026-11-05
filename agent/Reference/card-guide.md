@@ -177,7 +177,6 @@ What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);
 outputs are written as `{"<port>": {...}}` JSON to `$TSUGUMI_OUTPUT`; `jq` is available.
 
-A double arrives in `$JSON_<PORT>` with 12 significant digits (a float with 6): pass exact values in a file. This holds for R and Julia too.
 Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, write one JSON member to
 `$TSUGUMI_DISPLAY`: `{"markdown": "..."}`, `{"text": "..."}`, `{"table": {"columns": [...], "rows": [[...]]}}`
 (cells are strings), `{"image": {"path": "plot.png", "alt": "..."}}` or `{"module": {"name": "vega-lite", "data":
