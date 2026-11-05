@@ -1,9 +1,13 @@
 """A random forest: the vote of many decision trees, each grown on a random draw of the digits."""
+import os
+
+# One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-from threadpoolctl import threadpool_limits
 from sklearn.ensemble import RandomForestClassifier
 
 from inputs.data.mnist.SubsetFile import SubsetFile
@@ -40,7 +44,6 @@ def send(ctx, name, settings, digest, y, pred, fit, predict):
 
 
 def main(ctx):
-    threadpool_limits(1)  # one thread: the numbers repeat and the times compare
     params = ctx.params()
     trees, max_depth, seed = params.Trees(), params.MaxDepth(), params.Seed()
     data = np.load(ctx.input("data", SubsetFile).Value().decode())
