@@ -27,6 +27,7 @@ def display_image(media_type, data, alt): modules.append(("image", alt))
 def fail(kind, message): failures.append((kind, message))
 def inputs(): return []
 def info(): return {}
+def environ(): return list(__import__("os").environb.items())
 def cancelled(): return False
 def remaining_ms(): return 60000
 '''

@@ -19,12 +19,20 @@ start ──out→ settings ──number→ multiply
 | `settings` | 入力値（input） | Canvas で書き換えられる数を流す |
 | `multiply` | 処理（Python） | 受け取った数に `factor` を掛け、結果を出して表示する |
 
+完成すると、Canvas はこうなります。下は実際の画面と同じ Card で、インストールなしで動かせます。▶ 実行で流れを見て、`multiply` を押すとこのページの Python のコードが読めます（Web 版のみ）。
+
+<div data-player="card-guide"></div>
+
 ## 画面で作る
 
 1. ホームの「新規プロジェクト…」でプロジェクトを作ります。
 2. Canvas を右クリックして「Card を追加」から「開始」「入力値」「処理（Python）」を置き、名前を `start`、`settings`、`multiply` にします。
 3. `start` の出力から `settings` へ、`settings` の出力から `multiply` へ線を引きます。
 4. 各 Card を開き（`s` キーか右クリックの「設定」）、次の節のファイルと同じ内容にします。
+
+Card の設定は次のような画面です。左の一覧で「ソース」「入出力」「Nix 定義」を切り替えて編集し、「適用」で Workflow に反映します。
+
+![Card の設定で、ソースコードを編集する画面](assets/screenshots/card-source.png)
 
 Card の実体はプロジェクトフォルダの中のふつうのファイルなので、エディターで直接書いても同じです。
 

@@ -11,17 +11,28 @@
 <link rel="describedby" href="../llms.txt">
 <link rel="icon" href="../assets/tsugumi-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../site/site.css">
+<script>try { if (localStorage.getItem('tsugumi.side') === 'closed') document.documentElement.classList.add('side-closed') } catch { /* the page works without it */ }</script>
 </head>
 <body>
+<button type="button" class="side-open" aria-label="サイドバーを開く" title="サイドバーを開く"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button>
 <div class="layout">
 <nav class="side" aria-label="文書">
-  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="../llms.txt" title="AI 向けの案内">llms.txt</a><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener">GitHub</a></span></div>
-  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="../index.html">Tsugumi が解決しようとしている課題<small>README.md</small></a></li><li><a href="philosophy.html">AI に使われないために、何を作るか<small>docs/Philosophy.md</small></a></li><li><a href="name.html">Tsugumi という名前に込めた意味<small>docs/Name.md</small></a></li><li><a href="author.html">この道具を作った人<small>docs/Author.md</small></a></li></ul></div><div class="nav-group"><h2>全体</h2><ul><li class="on" aria-current="page"><a href="#">README</a></li><li><a href="documents.html">ドキュメント一覧</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="install.html">インストールと開発用ビルド</a></li><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="demos.html">同梱デモのしくみ</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li><li><a href="limitations.html">まだできないこと</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li><a href="security.html">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li><a href="development.html">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="making.html">制作記録</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
-  <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
+  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a><button type="button" class="side-close" aria-label="サイドバーを閉じる" title="サイドバーを閉じる"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button></span></div>
+  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="problem.html">Tsugumi が解決しようとしている課題</a></li><li><a href="philosophy.html">AI に使われないために、何を作るか</a></li><li><a href="name.html">Tsugumi という名前に込めた意味</a></li><li><a href="author.html">この道具を作った人</a></li><li><a href="origin.html">私にしかない深さ</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li><a href="security.html">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li><a href="development.html">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
+  <script>{
+    const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
+    const side = fold.parentElement, on = fold.querySelector('li.on')
+    if (on && on.offsetTop + on.offsetHeight > side.clientHeight) side.scrollTop = on.offsetTop - side.clientHeight / 2
+    const root = document.documentElement, turn = (closed) => { root.classList.toggle('side-closed', closed); try { localStorage.setItem('tsugumi.side', closed ? 'closed' : 'open') } catch { /* the page works without it */ } }
+    side.querySelector('.side-close').addEventListener('click', () => turn(true))
+    document.querySelector('.side-open').addEventListener('click', () => turn(false))
+  }</script>
 </nav>
 <main class="main">
 
-<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/README.md" rel="noopener"><code>README.md</code></a> と同じ文書です（<a href="../index.md">Markdown</a>）</p>
+<div class="reading">
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#ai-を研究に積極的に活用できていますか">AI を研究に積極的に活用できていますか？</a></li><li class="d2"><a href="#確かめるたびに次の問いが生まれる">確かめるたびに、次の問いが生まれる</a></li><li class="d2"><a href="#ai-に頼みたいことは本来単純なはずです">AI に頼みたいことは、本来単純なはずです</a></li><li class="d2"><a href="#処理の形を描くai-と実装する実行して確かめる">処理の形を描く。AI と実装する。実行して確かめる。</a></li><li class="d2"><a href="#処理を細かく分けても試行錯誤を重くしない">処理を細かく分けても、試行錯誤を重くしない</a></li><li class="d2"><a href="#画面でたどる実験と検証">画面でたどる、実験と検証</a></li><li class="d3"><a href="#全体の流れを見渡す">全体の流れを見渡す</a></li><li class="d3"><a href="#コードを読み条件を変えて試す">コードを読み、条件を変えて試す</a></li><li class="d3"><a href="#実際に何が動いたかを振り返る">実際に何が動いたかを振り返る</a></li><li class="d3"><a href="#気になる処理の中へ入る">気になる処理の中へ入る</a></li><li class="d3"><a href="#ツグミに案内してもらう">ツグミに案内してもらう</a></li><li class="d2"><a href="#使ってみる">使ってみる</a></li><li class="d2"><a href="#処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</a></li><li class="d2"><a href="#ドキュメント">ドキュメント</a></li><li class="d3"><a href="#文書も人と-ai-が同じものを読む">文書も、人と AI が同じものを読む</a></li><li class="d2"><a href="#ライセンス">ライセンス</a></li></ul></details>
+<script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <p align="center">
   <img src="../assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
@@ -32,7 +43,8 @@
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="install.html"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
   <a href="provenance.html"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
-  <a href="making.html"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+  
+  <a href="provenance.html"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="../llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
 </p><h1 id="tsugumi">Tsugumi</h1>
 <p><strong>AI と描いた解析を、そのまま動かし、自分の手で確かめる。</strong></p>
@@ -53,11 +65,10 @@
 <li><strong>完成した Workflow に LLM は要らない。</strong> 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。</li>
 </ul>
 <h2 id="ai-を研究に積極的に活用できていますか">AI を研究に積極的に活用できていますか？</h2>
-<p>数学や科学の分野ではいま、AI が長年の難問そのものに挑み始めています。
-2026 年 8 月から 9 月にかけて、OpenAI による <a href="https://openai.com/index/ten-advances-in-mathematics/" rel="noopener"><strong>10 件の未解決問題の解決または大幅な前進</strong></a>や、Anthropic の Claude による<a href="https://www.anthropic.com/research/riemann-zeta" rel="noopener"><strong>リーマンゼータ関数の下界更新</strong></a>・<a href="https://www.anthropic.com/research/formalizing-fermats-last-theorem" rel="noopener"><strong>フェルマーの最終定理の完全形式化</strong></a>が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 <strong>Lean</strong> などで形式化し、コンピュータが<a href="https://lean-lang.org/doc/reference/latest/ValidatingProofs/" rel="noopener">機械的に検証</a>できる証明として公開したことです。さらに 10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かすことで、数十年間解けなかった素粒子物理の積分計算を突破しました（<a href="https://www.anthropic.com/news/claude-shaped-science" rel="noopener">Claude-shaped science</a>）。</p>
-<p>AI が生み出した議論や計算を、独立した仕組みで確かめられる形にする。その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。</p>
+<p>AI は、数学や科学の長年の難問に挑み始めています。2026 年 8 月から 9 月にかけて、OpenAI は <a href="https://openai.com/index/ten-advances-in-mathematics/" rel="noopener">10 件の未解決問題の解決または大幅な前進</a>を、Anthropic の Claude は<a href="https://www.anthropic.com/research/riemann-zeta" rel="noopener">リーマンゼータ関数の下界更新</a>と<a href="https://www.anthropic.com/research/formalizing-fermats-last-theorem" rel="noopener">フェルマーの最終定理の完全形式化</a>を発表しました。どれも議論を証明支援系 Lean などで形式化し、コンピュータが<a href="https://lean-lang.org/doc/reference/latest/ValidatingProofs/" rel="noopener">機械的に検証</a>できる証明として公開しています。10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、数十年間解けなかった素粒子物理の積分計算を突破しました（<a href="https://www.anthropic.com/news/claude-shaped-science" rel="noopener">Claude-shaped science</a>）。</p>
+<p>人間が成果を吟味し、意味を理解して、次の問いを立てられるのは、AI の議論や計算を独立した仕組みで確かめられるからです。</p>
 <p><strong>AI に仕事を任せるには、その仕事を確かめられる仕組みが必要です。</strong></p>
-<p><strong>では、日々の研究で、AI にもっと多くの仕事を任せるのをためらってしまうのはなぜでしょうか？</strong></p>
+<p>では、日々の研究で AI にもっと多くの仕事を任せるのをためらってしまうのは、なぜでしょうか。</p>
 <ol>
 <li><strong>再現性を担保できない。</strong> 結果を生んだコード・入力・実行環境が揃っておらず、同じ計算をもう一度確かめられない。</li>
 <li><strong>結論に至るプロセスが見えない。</strong> どのデータにどんな処理を施し、どこで何を判断したのかを追えない。</li>
@@ -70,10 +81,11 @@
 <p>そう思うたびにまた新しい試行を頼み、返ってきた長いレポートを読み直す。何千行ものコードや説明の中から、いつの間にか変わった前提を探し、結論の根拠を確かめる——。実験そのものは速く回せても、人間がその過程を消化し、次の発想へとつなげる段階で足が止まってしまいます。</p>
 <p><strong>結果を吟味し、何を根拠として採用し、次に何を問うかを決める。それは、他ならぬ研究者が担う仕事です。</strong>
 検証は、新しい発想が生まれる創造的な場でもあります。背景の推定方法を変えても、同じ傾向が見えるだろうか。別のモデルなら、説明できなかった差を説明できるだろうか。条件を変えて結果を比べるたびに、仮説の成り立つ範囲が見え、次に調べたいことが生まれます。</p>
-<p>Tsugumi では、その疑問が生まれた箇所に直接手を入れられます。
-Card のコードを読み、パラメータを変え、保存された入力で試す。版の履歴から以前の方針へ戻り、別のアプローチを始める。部分実行で調整を進め、最後は Workflow 全体を通して結果を確かめます。</p>
+<p>Tsugumi では、その疑問が生まれた箇所に直接手を入れられます。Card のコードを読み、パラメータを変え、保存された入力で試す。版の履歴から以前の方針へ戻り、別のアプローチを始める。部分実行で調整を進め、最後は Workflow 全体を通して結果を確かめます。</p>
 <p><strong>解析の過程を理解することから、自分の問いを試すことへ。その距離を短くしたい。</strong>
 AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説と結果を深く考えるための時間と、次の試行へ進む余地を広げます。</p>
+<h2 id="ai-に頼みたいことは本来単純なはずです">AI に頼みたいことは、本来単純なはずです</h2>
+<p>観測データをダウンロードして、エネルギーで区切って、描画する。やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。それなのに今は、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直しています。</p>
 <h2 id="処理の形を描くai-と実装する実行して確かめる">処理の形を描く。AI と実装する。実行して確かめる。</h2>
 <p>Tsugumi は、計算やデータ処理を <strong>Card のグラフ（Workflow）として組み立てる macOS アプリ</strong>です。</p>
 <ol>
@@ -93,12 +105,10 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <h3 id="全体の流れを見渡す">全体の流れを見渡す</h3>
 <p>ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に <code>load</code> → <code>bands</code> → <code>rgb</code> / <code>spectrum</code> の流れが並んでいます。実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。右側のチャットからは、Agent に実装や変更を依頼できます。</p>
 <h3 id="コードを読み条件を変えて試す">コードを読み、条件を変えて試す</h3>
-<p>Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義（<code>default.nix</code>）を確認できます。
-<code>spectrum</code> は、ウィンドウ向けに書くのと同じ matplotlib のコードです。<code>plt.show()</code> で描いた図が、そのまま Card の表示に出ます。帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。</p>
+<p>Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義（<code>default.nix</code>）を確認できます。<code>spectrum</code> は、ウィンドウ向けに書くのと同じ matplotlib のコードです。<code>plt.show()</code> で描いた図が、そのまま Card の表示に出ます。帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。</p>
 <p><img src="../assets/screenshots/card-source.png" alt="spectrum の Card 設定で、matplotlib のソースコードを確認する画面" loading="lazy"></p>
 <h3 id="実際に何が動いたかを振り返る">実際に何が動いたかを振り返る</h3>
-<p>画面下部のタイムラインでは、どの Card がいつ、どれだけの時間をかけて動いたかを時間軸で追えます。
-520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります。さらに各 Card の実行履歴やログ、成果物を開き、結論に至るまでの過程を隅々まで確かめられます。</p>
+<p>画面下部のタイムラインでは、どの Card がいつ、どれだけの時間をかけて動いたかを時間軸で追えます。520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります。さらに各 Card の実行履歴やログ、成果物を開き、結論に至るまでの過程を隅々まで確かめられます。</p>
 <p><img src="../assets/screenshots/timeline.png" alt="各 Card の実行を時間軸で確認するタイムライン" loading="lazy"></p>
 <h3 id="気になる処理の中へ入る">気になる処理の中へ入る</h3>
 <p>大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。</p>
@@ -112,13 +122,11 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 </code></pre>
 <p>Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。詳しい手順・自動更新・ソースからのビルドは <a href="install.html">INSTALL.md</a> を参照してください。</p>
 <p>起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。</p>
-<p>Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
-Claude Code を使っているなら、plugin <code>tsugumi</code> で Claude Code に Web UI のプロジェクトを任せることもできます（<a href="claude-code.html">Claude Code から使う</a>）。なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>を参照してください。</p>
+<p>Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。Claude Code を使っているなら、plugin <code>tsugumi</code> で Claude Code に Web UI のプロジェクトを任せることもできます（<a href="claude-code.html">Claude Code から使う</a>）。なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>を参照してください。</p>
 <p>各デモの Card のつながりと動きは<a href="demos.html">同梱デモのしくみ</a>にまとめています。</p>
 <div class="table-wrap"><table><thead><tr><th>デモ</th><th>試せること</th></tr></thead><tbody><tr><td>データからレポートへ</td><td>データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する</td></tr><tr><td>Collatz (C++ / Python)</td><td>二つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する</td></tr><tr><td>Live Stream</td><td>時系列の出力をリアルタイムにグラフで描画し、停止・再実行する</td></tr><tr><td>Plots</td><td>ウィンドウ向けに書いた matplotlib のコード（<code>plt.show()</code>・<code>FuncAnimation</code>）が、そのまま Card の表示に描かれる。Plotly の <code>fig.show()</code> と Altair の <code>chart.show()</code> は対話できるグラフになる</td></tr><tr><td>Cas A · Chandra RGB</td><td>Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する</td></tr><tr><td>GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面</td><td>公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する</td></tr><tr><td>MNIST · 手書き数字の分類器くらべ</td><td>同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す</td></tr><tr><td>各科学デモの Draft 版</td><td>計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる</td></tr><tr><td>力学系ギャラリー（Draft）</td><td>互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する</td></tr></tbody></table></div>
 <h2 id="処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</h2>
-<p>「何をしてほしいか」「何を実行したか」「次にどこを変えるか」。
-Tsugumi は、この三つを同じ Workflow の上で共有します。</p>
+<p>「何をしてほしいか」「何を実行したか」「次にどこを変えるか」。Tsugumi は、この三つを同じ Workflow の上で共有します。</p>
 <p>人間が Draft で描いた処理の関係を、AI が実装する。実行結果を見て、気になる Card を開き、条件を変えて確かめる。その試行を版として残し、別のアプローチへ進む。意図を伝えるところから、結果を吟味して次の問いを立てるところまで、同じ構造を使って仕事を進められます。</p>
 <p>この仕組みは、研究を出発点に、学ぶこと、作ること、仕事を引き継ぐことへと広がります。</p>
 <ul>
@@ -132,18 +140,21 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 <p>また、研究者が自らの判断を手放さないための問題意識と、1 週間のハッカソンでこの基盤を作り上げた体験を <strong><a href="philosophy.html">AI に使われないために、何を作るか</a></strong> にまとめました。事前に用意した自作 JSON parser の hosq と仕様プロンプト、Tsugumi として実装した部分、利用した OSS の区分は <strong><a href="provenance.html">制作範囲と事前準備</a></strong> に記載しています。「継ぐ・積む・組む」「紡ぐ」、そして冬に口を噤む鳥・ツグミに重ねた思いについては、<strong><a href="name.html">名前の由来</a></strong> をご覧ください。</p>
 <h2 id="ドキュメント">ドキュメント</h2>
 <p>動く図つきの Web 版を <strong><a href="https://gen740.github.io/Tsugumi/" rel="noopener">https://gen740.github.io/Tsugumi/</a></strong> で公開しています。内容はこのリポジトリの Markdown と同じです。</p>
-<div class="table-wrap"><table><thead><tr><th>目的</th><th>文書</th></tr></thead><tbody><tr><td><strong>はじめる</strong></td><td><a href="install.html">インストール</a>（リリース版・自動更新・ソースからのビルド） · <a href="usage.html">操作ガイド</a>（画面ごとの操作とデモの試し方） · <a href="cardguide.html">はじめての Card</a>（Python・bash・C++ で作る） · <a href="demos.html">同梱デモのしくみ</a>（各デモの Card のつながりと動き） · <a href="webui.html">Web UI</a>（ブラウザから使う） · <a href="claude-code.html">Claude Code から使う</a>（plugin で Web UI のプロジェクトを任せる）</td></tr><tr><td><strong>考え方を知る</strong></td><td><a href="qa.html">Q&amp;A</a>（課題意識・Draft・再現性・記録と再実行） · <a href="novelty.html">設計の独自性</a>（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · <a href="vision.html">構想と応用</a> · <a href="philosophy.html">AI に使われないために、何を作るか</a> · <a href="name.html">名前の由来</a> · <a href="author.html">作った人</a> · <a href="limitations.html">まだできないこと</a></td></tr><tr><td><strong>仕組みを知る</strong></td><td><a href="features.html">主要機能</a>（Card・Nix・SDK と worker・記録・Agent） · <a href="versions.html">版の管理</a>（git と実行結果、版のツリー） · <a href="security.html">セキュリティと隔離</a>（隔離の境界・データの置き場所・モデルに送られるもの） · <a href="ui-view.html">画面の仕様</a> · <a href="protocol.html">RPC 契約</a> · <a href="glossary.html">用語集</a></td></tr><tr><td><strong>記録と開発</strong></td><td><a href="evidence.html">主張と、それを確かめる方法</a> · <a href="agentrun.html">実際の Claude API での実行記録</a> · <a href="development.html">開発資料</a>（設計上の決定・テスト・計測・実装状況） · <a href="lock.html">固定しているバージョン</a> · <a href="provenance.html">制作範囲と事前準備</a>（ハッカソン前の準備と OSS・生成物の境界） · <a href="making.html">制作記録</a> · <a href="licenseaudit.html">ライセンス調査</a></td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>目的</th><th>文書</th></tr></thead><tbody><tr><td><strong>はじめる</strong></td><td><a href="install.html">インストール</a>（リリース版・自動更新・ソースからのビルド） · <a href="usage.html">操作ガイド</a>（画面ごとの操作とデモの試し方） · <a href="cardguide.html">はじめての Card</a>（Python・bash・C++ で作る） · <a href="demos.html">同梱デモのしくみ</a>（各デモの Card のつながりと動き） · <a href="webui.html">Web UI</a>（ブラウザから使う） · <a href="claude-code.html">Claude Code から使う</a>（plugin で Web UI のプロジェクトを任せる）</td></tr><tr><td><strong>考え方を知る</strong></td><td><a href="qa.html">Q&amp;A</a>（課題意識・Draft・再現性・記録と再実行） · <a href="novelty.html">設計の独自性</a>（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · <a href="vision.html">構想と応用</a> · <a href="philosophy.html">AI に使われないために、何を作るか</a> · <a href="name.html">名前の由来</a> · <a href="author.html">作った人</a> · <a href="origin.html">私にしかない深さ</a> · <a href="limitations.html">まだできないこと</a></td></tr><tr><td><strong>仕組みを知る</strong></td><td><a href="features.html">主要機能</a>（Card・Nix・SDK と worker・記録・Agent） · <a href="versions.html">版の管理</a>（git と実行結果、版のツリー） · <a href="security.html">セキュリティと隔離</a>（隔離の境界・データの置き場所・モデルに送られるもの） · <a href="ui-view.html">画面の仕様</a> · <a href="protocol.html">RPC 契約</a> · <a href="glossary.html">用語集</a></td></tr><tr><td><strong>記録と開発</strong></td><td><a href="evidence.html">主張と、それを確かめる方法</a> · <a href="agentrun.html">実際の Claude API での実行記録</a> · <a href="development.html">開発資料</a>（設計上の決定・テスト・計測・実装状況） · <a href="lock.html">固定しているバージョン</a> · <a href="provenance.html">制作範囲と事前準備</a>（ハッカソン前の準備と OSS・生成物の境界） · 制作記録（別のリポジトリに移します。リンクは準備中です） · <a href="licenseaudit.html">ライセンス調査</a></td></tr></tbody></table></div>
 <p>すべての文書の一覧は <a href="documents.html">docs/README.md</a> にあります。</p>
 <h3 id="文書も人と-ai-が同じものを読む">文書も、人と AI が同じものを読む</h3>
 <p>Workflow と同じように、文書も人と AI で同じものを読めるようにしています。正本は 1 つの Markdown です。</p>
 <div class="table-wrap"><table><thead><tr><th>読む人</th><th>入口</th></tr></thead><tbody><tr><td>人</td><td><a href="https://gen740.github.io/Tsugumi/" rel="noopener">動く図つきの Web 版</a>、GitHub 上の Markdown</td></tr><tr><td>AI</td><td><a href="../llms.txt">llms.txt</a>（各ページの Markdown 版の案内）、<a href="https://github.com/gen740/Tsugumi/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a>（リポジトリで作業するエージェントへ）</td></tr></tbody></table></div>
 <p>Web を読む AI は、本文ではなく小さなモデルの要約を受け取ることがあります。そのため、主張の隣に確かめる場所を書き、コード・テスト・コマンドへ直接たどれるようにしています（<a href="evidence.html">主張と、それを確かめる方法</a>）。</p>
 <h2 id="ライセンス">ライセンス</h2>
-<p>Tsugumi 自身のコードは MIT License（<a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE" rel="noopener">LICENSE</a>）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は <a href="third-party-notices.html">THIRD_PARTY_NOTICES.md</a>、配布物へのライセンス同梱や VM の対応ソース提供など、残っている対応は <a href="licenseaudit.html">ライセンス調査</a> を参照してください。</p>
+<p>Tsugumi 自身のコードは MIT License（<a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE" rel="noopener">LICENSE</a>）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は <a href="third-party-notices.html">THIRD_PARTY_NOTICES.md</a>、配布物への同梱と VM の対応ソースの提供は <a href="licenseaudit.html">ライセンス調査</a> を参照してください。</p>
 
 </article>
+</div>
+<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/README.md" rel="noopener"><code>README.md</code></a> と同じ文書です（<a href="../index.md">Markdown</a>）</p>
 </main>
 </div>
+<script src="../site/js/toc.js" defer></script>
 
 </body>
 </html>

@@ -12,6 +12,11 @@
 // cleared by a later step's success. One deadline covers all steps, and
 // cancel/deadline are checked before each step starts.
 //
+// The environment of a package body, weakest first: what the worker was
+// started with, the call's, what the package set while loading (the top of a
+// Python Card's main.py), preRun's exports. A package is loaded before any
+// preRun, so preRun cannot reach what a library reads as it is loaded.
+//
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
@@ -28,6 +33,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -442,6 +448,14 @@ tsugumi_main_fn g_main = nullptr;
 tsugumi_main_fn g_run_start = nullptr;
 std::string g_load_error;
 std::string g_last_run;
+std::vector<std::string> g_loaded_env;  // the process environment once the package was loaded
+std::vector<std::string> g_set_by_load;  // the part of it that loading set or changed
+
+std::vector<std::string> process_env() {
+  std::vector<std::string> out;
+  for (char** e = environ; *e; ++e) out.emplace_back(*e);
+  return out;
+}
 
 void load_package(const Options& opt) {
   std::string lib = opt.package + "/lib/main.so";
@@ -491,6 +505,22 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   c.display_module = display_module_impl;
   c.display_markdown = display_markdown_impl;
   return c;
+}
+
+// The environment of a package body (the order is at the top of this file):
+// `step` is the call's environment with preRun's exports, `call` without them.
+std::vector<std::string> body_env(const std::vector<std::string>& call, const std::vector<std::string>& step) {
+  auto out = g_loaded_env;
+  for (const auto& e : step) {
+    auto eq = e.find('=');
+    set_env(out, e.substr(0, eq), e.substr(eq + 1));
+  }
+  for (const auto& e : g_set_by_load) {
+    auto eq = e.find('=');
+    std::string name = e.substr(0, eq);
+    if (get_env(step, name) == get_env(call, name)) set_env(out, name, e.substr(eq + 1));
+  }
+  return out;
 }
 
 // Replaces the process environment with the step environment.
@@ -574,6 +604,7 @@ void execute(const Options& opt, Call& call) {
   set_env(env, "TSUGUMI_TMP_DIR", tmp);
   if (!out_dir.empty()) set_env(env, "TSUGUMI_OUTPUT_DIR", out_dir);
   set_env(env, "TMPDIR", tmp);
+  const auto call_env = env;
   bool timed_out = false;
   std::string cwd = work;
   // Nothing starts after a cancel or once the single call deadline passed.
@@ -621,7 +652,7 @@ void execute(const Options& opt, Call& call) {
       for (const auto* in : *m->inputs())
         values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
                           in->value()->bytes()->size()});
-      apply_env(env);
+      apply_env(body_env(call_env, env));
       if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
       tsugumi_call c = make_call(call, values, work, tmp, out_dir);
       // The first invocation of each run starts it (onRunStart / on_run_start).
@@ -736,7 +767,13 @@ int main(int argc, char** argv) {
     else if (k == "--run") opt.run = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];
   }
-  if (!opt.package.empty()) load_package(opt);
+  if (!opt.package.empty()) {
+    auto before = process_env();
+    load_package(opt);
+    g_loaded_env = process_env();
+    for (const auto& e : g_loaded_env)
+      if (std::find(before.begin(), before.end(), e) == before.end()) g_set_by_load.push_back(e);
+  }
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
   while (true) {
