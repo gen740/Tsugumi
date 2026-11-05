@@ -2,6 +2,15 @@
   <img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
 </p>
 
+<p align="center">
+  <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
+  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
+  <a href="docs/Making.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+</p>
+
 # Tsugumi
 
 **AI と描いた解析を、そのまま動かし、自分の手で確かめる。**

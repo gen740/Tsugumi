@@ -139,12 +139,15 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
             p = root / name
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
+    # A host tsugumid runs code Cards without the sandbox, as conftest.demo_environment does.
+    card_file = root / "definitions/multiply/_card.json"
+    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": False}))
     d = Daemon(root).start()
     try:
         c = d.client()
         c.hello()
         run_id, status = run_and_wait(c, "start", timeout=1800)
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.message)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         if shown:
             record = c.call("RunRecordRequest", runId=run_id, card=path("multiply"))
             assert text(record.record.display.value.text) == shown
