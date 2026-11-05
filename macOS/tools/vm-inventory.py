@@ -225,8 +225,8 @@ def main():
                 shutil.copyfile(Path(path) / LICENSE_IN[name], dest / LICENSE_IN[name])
                 copied += 1
             size = int(run("du", "-sk", path).split()[0]) * 1024
-            out = graph[d]["outputs"]["out"]
-            sources.append({"name": base(path)[33:], "store_path": base(path), "hash": out.get("hash", ""),
+            fixed_output = graph[d]["outputs"]["out"]
+            sources.append({"name": base(path)[33:], "store_path": base(path), "hash": fixed_output.get("hash", ""),
                             "urls": source_urls(graph[d]), "bytes": size})
         if name not in OWN and name not in TEXT_FROM and not copied:
             missing.append(name)
