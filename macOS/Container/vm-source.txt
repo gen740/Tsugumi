@@ -3,6 +3,8 @@
 flake.nix
 flake.lock
 VERSION
+LICENSE
+THIRD_PARTY_NOTICES.md
 CMakeLists.txt
 cmake
 core

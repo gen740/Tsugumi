@@ -9,7 +9,8 @@
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="pages/install.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
   <a href="pages/provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
-  <a href="pages/making.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+  <!-- TODO: 制作記録のリポジトリができたら、このバッジのリンク先をそこにする -->
+  <a href="pages/provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
 </p>
 
@@ -40,15 +41,15 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 
 ## AI を研究に積極的に活用できていますか？
 
-数学や科学の分野ではいま、AI が長年の難問そのものに挑み始めています。
-2026 年 8 月から 9 月にかけて、OpenAI による [**10 件の未解決問題の解決または大幅な前進**](https://openai.com/index/ten-advances-in-mathematics/)や、Anthropic の Claude による[**リーマンゼータ関数の下界更新**](https://www.anthropic.com/research/riemann-zeta)・[**フェルマーの最終定理の完全形式化**](https://www.anthropic.com/research/formalizing-fermats-last-theorem)が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 **Lean** などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
-さらに 10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かすことで、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
+AI は、数学や科学の長年の難問に挑み始めています。
+2026 年 8 月から 9 月にかけて、OpenAI は [10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)を、Anthropic の Claude は[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)と[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)を発表しました。どれも議論を証明支援系 Lean などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開しています。
+10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
 
-AI が生み出した議論や計算を、独立した仕組みで確かめられる形にする。その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。
+人間が成果を吟味し、意味を理解して、次の問いを立てられるのは、AI の議論や計算を独立した仕組みで確かめられるからです。
 
 **AI に仕事を任せるには、その仕事を確かめられる仕組みが必要です。**
 
-**では、日々の研究で、AI にもっと多くの仕事を任せるのをためらってしまうのはなぜでしょうか？**
+では、日々の研究で AI にもっと多くの仕事を任せるのをためらってしまうのは、なぜでしょうか。
 
 1. **再現性を担保できない。** 結果を生んだコード・入力・実行環境が揃っておらず、同じ計算をもう一度確かめられない。
 2. **結論に至るプロセスが見えない。** どのデータにどんな処理を施し、どこで何を判断したのかを追えない。
@@ -80,6 +81,12 @@ Card のコードを読み、パラメータを変え、保存された入力で
 
 **解析の過程を理解することから、自分の問いを試すことへ。その距離を短くしたい。**
 AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説と結果を深く考えるための時間と、次の試行へ進む余地を広げます。
+
+## AI に頼みたいことは、本来単純なはずです
+
+観測データをダウンロードして、エネルギーで区切って、描画する。
+やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。
+それなのに今は、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直しています。
 
 ## 処理の形を描く。AI と実装する。実行して確かめる。
 
@@ -215,8 +222,10 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 | --- | --- |
 | **はじめる** | [インストール](pages/install.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](pages/usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](pages/cardguide.md)（Python・bash・C++・R・Julia で作る） · [同梱デモのしくみ](pages/demos.md)（各デモの Card のつながりと動き） · [Web UI](pages/webui.md)（ブラウザから使う） · [Claude Code から使う](pages/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
 | **考え方を知る** | [Q&A](pages/qa.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](pages/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](pages/vision.md) · [AI に使われないために、何を作るか](pages/philosophy.md) · [名前の由来](pages/name.md) · [作った人](pages/author.md) · [まだできないこと](pages/limitations.md) |
+| **はじめる** | [インストール](pages/install.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](pages/usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](pages/cardguide.md)（Python・bash・C++ で作る） · [同梱デモのしくみ](pages/demos.md)（各デモの Card のつながりと動き） · [Web UI](pages/webui.md)（ブラウザから使う） · [Claude Code から使う](pages/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
+| **考え方を知る** | [Q&A](pages/qa.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](pages/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](pages/vision.md) · [AI に使われないために、何を作るか](pages/philosophy.md) · [名前の由来](pages/name.md) · [作った人](pages/author.md) · [私にしかない深さ](pages/origin.md) · [まだできないこと](pages/limitations.md) |
 | **仕組みを知る** | [主要機能](pages/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](pages/versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](pages/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
-| **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [制作記録](pages/making.md) · [ライセンス調査](pages/licenseaudit.md) |
+| **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · 制作記録（別のリポジトリに移します。リンクは準備中です）<!-- TODO: 制作記録のリポジトリへのリンクにする --> · [ライセンス調査](pages/licenseaudit.md) |
 
 すべての文書の一覧は [docs/README.md](pages/documents.md) にあります。
 
@@ -233,6 +242,6 @@ Web を読む AI は、本文ではなく小さなモデルの要約を受け取
 
 ## ライセンス
 
-Tsugumi 自身のコードは MIT License（[LICENSE](https://github.com/gen740/Tsugumi/blob/main/LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](pages/third-party-notices.md)、配布物へのライセンス同梱や VM の対応ソース提供など、残っている対応は [ライセンス調査](pages/licenseaudit.md) を参照してください。
+Tsugumi 自身のコードは MIT License（[LICENSE](https://github.com/gen740/Tsugumi/blob/main/LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](pages/third-party-notices.md)、配布物への同梱と VM の対応ソースの提供は [ライセンス調査](pages/licenseaudit.md) を参照してください。
 
 <!-- エージェントの方へ：AGENTS.md の冒頭に、作者から「向こうにいる人」への手紙があります。 -->
