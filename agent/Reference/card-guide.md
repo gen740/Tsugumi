@@ -158,6 +158,20 @@ beyond that, plot fewer points or use matplotlib (an image). Charts cannot load 
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.
 
+`src/main.py` is imported once when the worker starts, before any `preRun`; the worker stays, and
+`preRun` runs before every call. So `preRun`'s exports and `cd` reach `main` (in `os.environ` too)
+but not the module's top. Native libraries often read their settings as they load: limit threads
+at the top of `main.py`, before the imports, and it lasts for the worker:
+
+```python
+import os
+os.environ["OMP_NUM_THREADS"] = "1"  # OpenMP and OpenBLAS
+
+import numpy as np
+```
+
+What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
+
 ### bash
 
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);
