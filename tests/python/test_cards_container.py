@@ -299,6 +299,95 @@ def main(ctx):
     assert shown.split()[0].endswith("/home"), shown
 
 
+PYTHON_NIX = ('{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in\n'
+              '{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };%s }\n')
+
+PYTHON_OUTPUTS = "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;"
+
+# A library may ask for the current directory while it is imported (torch does).
+CWD_AT_LOAD_MAIN = '''
+import os
+AT_LOAD = os.getcwd()
+
+def main(ctx):
+    ctx.display_text(AT_LOAD)
+'''
+
+# The same names through Python and through the C environment, which is what
+# native libraries read (OpenMP when its first parallel region starts).
+ENV_MAIN = '''
+import ctypes, json, os
+os.environ["FROM_TOP"] = "top"
+os.environ["FROM_TOP_AND_PRE"] = "top"
+libc = ctypes.CDLL(None)
+libc.getenv.argtypes = [ctypes.c_char_p]
+libc.getenv.restype = ctypes.c_char_p
+
+def main(ctx):
+    names = ["FROM_PRE", "FROM_TOP", "FROM_TOP_AND_PRE", "FROM_MAIN", "TSUGUMI_RUN_ID", "XDG_CACHE_HOME", "MPLBACKEND"]
+    values = {n: os.environ.get(n) for n in names}
+    native = {n: (libc.getenv(n.encode()) or b"").decode() or None for n in names}
+    ctx.display_text(json.dumps({"pid": os.getpid(), "cwd": os.getcwd(), "python": values, "native": native}))
+    os.environ["FROM_MAIN"] = "main"
+'''
+
+ENV_PRE_RUN = "mkdir -p there && cd there && export FROM_PRE=pre FROM_TOP_AND_PRE=pre"
+
+
+def python_probe_project(main: str, pre: str | None = None) -> tuple:
+    """(defs, cards, conns, files) of a trigger and a Python Card `show`."""
+    attrs = f" preRun = {nix_string(pre)};" if pre else ""
+    defs = {"trigger": {"template": "trigger"},
+            "show": {"language": "python", "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
+    return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
+
+
+def shown_by_probe(c, timeout=1800) -> tuple[str, str]:
+    """A run from the trigger: its id and what `show` displayed."""
+    run_id, st = run_and_wait(c, "start", timeout=timeout)
+    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
+    return run_id, text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
+
+
+def check_python_card_environment(c) -> None:
+    """preRun's exports and `cd`, and what the module's top set, reach main
+    through both os.environ and the C environment, on every run of the worker;
+    what main itself set lasts for that call."""
+    first_id, first = shown_by_probe(c)
+    first = json.loads(first)
+    second_id, second = shown_by_probe(c)
+    second = json.loads(second)
+    assert first["pid"] == second["pid"], "the second run needs the same worker"
+    assert first["cwd"].endswith("/work/there"), first
+    for seen, run_id in ((first, first_id), (second, second_id)):
+        for values in (seen["python"], seen["native"]):
+            assert values["FROM_PRE"] == "pre", seen
+            assert values["FROM_TOP"] == "top", seen
+            assert values["FROM_TOP_AND_PRE"] == "pre", seen  # preRun runs later, so it wins
+            assert values["FROM_MAIN"] is None, seen
+            assert values["TSUGUMI_RUN_ID"] == run_id, seen
+            # What the worker was started with and the SDK's own setting stay.
+            assert values["XDG_CACHE_HOME"].endswith("/home/.cache"), seen
+            assert values["MPLBACKEND"] == "module://tsugumi.mpl", seen
+
+
+def test_python_card_can_ask_for_its_directory_while_it_loads(env):
+    defs, cards, conns, files = python_probe_project(CWD_AT_LOAD_MAIN)
+    write(env.project, defs, cards, conns, files)
+    c = env.client()
+    reload(c)
+    _, shown = shown_by_probe(c)
+    assert shown.endswith("/work"), shown
+
+
+def test_python_card_environment(env):
+    defs, cards, conns, files = python_probe_project(ENV_MAIN, ENV_PRE_RUN)
+    write(env.project, defs, cards, conns, files)
+    c = env.client()
+    reload(c)
+    check_python_card_environment(c)
+
+
 def test_python_displays(env):
     main = '''
 import struct, zlib
