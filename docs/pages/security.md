@@ -6,23 +6,23 @@
 ## 1. 信頼境界の全体像
 
 ```text
-┌─ macOS（ユーザー権限） ──────────────────────────────────────────────┐
-│  Tsugumi.app                                                        │
-│   ├ SwiftUI UI                                                      │
-│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）   │
-│   └ LoopbackBridge 127.0.0.1:<空きポート>  ◀── 外部クライアント       │
-│        │ vsock                                                      │
-│  ┌─ 共通 Linux VM（Virtualization.framework） ────────────────────┐ │
-│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）       │ │
-│  │  ┌─ project A ───────────────────────┐ ┌─ project B ────────┐  │ │
-│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │  │ │
-│  │  │ cgroup tsugumi/<A>                 │ │                    │  │ │
-│  │  │ tsugumid                           │ │ tsugumid           │  │ │
-│  │  │  └ worker（bubblewrap: 全 ns 分離、 │ │  └ worker          │  │ │
-│  │  │     デフォルトで通信・cap なし）    │ │                    │  │ │
-│  │  └────────────────────────────────────┘ └────────────────────┘  │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌─ macOS（ユーザー権限） ────────────────────────────────────────────────┐
+│  Tsugumi.app                                                           │
+│   ├ SwiftUI UI                                                         │
+│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）     │
+│   └ LoopbackBridge 127.0.0.1:<空きポート>  ◀── 外部クライアント        │
+│        │ vsock                                                         │
+│  ┌─ 共通 Linux VM（Virtualization.framework） ──────────────────────┐  │
+│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）      │  │
+│  │  ┌─ project A ────────────────────────┐ ┌─ project B ────────┐   │  │
+│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │   │  │
+│  │  │ cgroup tsugumi/<A>                 │ │                    │   │  │
+│  │  │ tsugumid                           │ │ tsugumid           │   │  │
+│  │  │  └ worker（bubblewrap: 全 ns 分離、│ │  └ worker          │   │  │
+│  │  │     デフォルトで通信・cap なし）   │ │                    │   │  │
+│  │  └────────────────────────────────────┘ └────────────────────┘   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 隔離の境界は、最も内側から外側へ向かって 4 段あります。

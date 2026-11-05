@@ -11,35 +11,44 @@
 <link rel="describedby" href="../llms.txt">
 <link rel="icon" href="../assets/tsugumi-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../site/site.css">
+<script>try { if (localStorage.getItem('tsugumi.side') === 'closed') document.documentElement.classList.add('side-closed') } catch { /* the page works without it */ }</script>
 </head>
 <body>
+<button type="button" class="side-open" aria-label="サイドバーを開く" title="サイドバーを開く"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button>
 <div class="layout">
 <nav class="side" aria-label="文書">
-  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="../llms.txt" title="AI 向けの案内">llms.txt</a><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener">GitHub</a></span></div>
-  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="../index.html">Tsugumi が解決しようとしている課題<small>README.md</small></a></li><li><a href="philosophy.html">AI に使われないために、何を作るか<small>docs/Philosophy.md</small></a></li><li><a href="name.html">Tsugumi という名前に込めた意味<small>docs/Name.md</small></a></li><li><a href="author.html">この道具を作った人<small>docs/Author.md</small></a></li></ul></div><div class="nav-group"><h2>全体</h2><ul><li><a href="readme.html">README</a></li><li><a href="documents.html">ドキュメント一覧</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="install.html">インストールと開発用ビルド</a></li><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="demos.html">同梱デモのしくみ</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li><li><a href="limitations.html">まだできないこと</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li><a href="security.html">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li class="on" aria-current="page"><a href="#">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="making.html">制作記録</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
-  <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
+  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a><button type="button" class="side-close" aria-label="サイドバーを閉じる" title="サイドバーを閉じる"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button></span></div>
+  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="problem.html">Tsugumi が解決しようとしている課題</a></li><li><a href="philosophy.html">AI に使われないために、何を作るか</a></li><li><a href="name.html">Tsugumi という名前に込めた意味</a></li><li><a href="author.html">この道具を作った人</a></li><li><a href="origin.html">私にしかない深さ</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li><a href="security.html">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li class="on" aria-current="page"><a href="#">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
+  <script>{
+    const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
+    const side = fold.parentElement, on = fold.querySelector('li.on')
+    if (on && on.offsetTop + on.offsetHeight > side.clientHeight) side.scrollTop = on.offsetTop - side.clientHeight / 2
+    const root = document.documentElement, turn = (closed) => { root.classList.toggle('side-closed', closed); try { localStorage.setItem('tsugumi.side', closed ? 'closed' : 'open') } catch { /* the page works without it */ } }
+    side.querySelector('.side-close').addEventListener('click', () => turn(true))
+    document.querySelector('.side-open').addEventListener('click', () => turn(false))
+  }</script>
 </nav>
 <main class="main">
 
-<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/Development.md" rel="noopener"><code>docs/Development.md</code></a> と同じ文書です（<a href="development.md">Markdown</a>）</p>
+<div class="reading">
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#実行基盤">実行基盤</a></li><li class="d2"><a href="#ディレクトリ">ディレクトリ</a></li><li class="d2"><a href="#主な設計上の決定">主な設計上の決定</a></li><li class="d2"><a href="#リリース">リリース</a></li><li class="d2"><a href="#文書サイト">文書サイト</a></li><li class="d2"><a href="#テスト">テスト</a></li><li class="d2"><a href="#計測2026-11-03高速化後共通-vm">計測（2026-11-03、高速化後・共通 VM）</a></li><li class="d2"><a href="#計測2026-11-03共通-vm高速化前">計測（2026-11-03、共通 VM、高速化前）</a></li><li class="d2"><a href="#計測2026-11-02apple-container-時代">計測（2026-11-02、Apple container 時代）</a></li><li class="d2"><a href="#実装状況">実装状況</a></li><li class="d2"><a href="#確認範囲">確認範囲</a></li><li class="d2"><a href="#解決済みの記録">解決済みの記録</a></li><li class="d2"><a href="#今後の拡張">今後の拡張</a></li></ul></details>
+<script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="開発資料">開発資料</h1>
 <p>Tsugumi の実行基盤・設計上の意思決定・テストスイート・パフォーマンス計測・実装状況をまとめた開発者向け資料です。アプリの導入とビルド手順は <a href="install.html">INSTALL.md</a>、依存ライブラリの固定バージョンは <a href="lock.html">Lock.md</a>、利用者向けの全体像は <a href="readme.html">README</a> を参照してください。本文中のファイルパスとコマンドは、リポジトリのルートを基準としています。現在の機能は<a href="#実装状況">実装状況</a>、確認方法は<a href="#確認範囲">確認範囲</a>、以前の構成で直した不具合は<a href="#解決済みの記録">解決済みの記録</a>に分けて記載します。計測は各見出しの日付・構成での記録です。</p>
 <h2 id="実行基盤">実行基盤</h2>
 <p>ポートの型スキーマで配線の整合性を検査し、Nix によって Card ごとの実行環境をハッシュ単位で固定します。実行履歴と成果物を永続化し、各 Card の入出力値も設定に応じて記録します。</p>
 <p>macOS アプリの計算は Mac 上の隔離された Linux VM 内で実行され、Card からの外部ネットワークアクセスはデフォルトで遮断されます。Web UI は Mac 上の <code>tsugumid</code> を直接使い、Card を Seatbelt で隔離します（<a href="webui.html">Web UI の実行環境と範囲</a>）。一方、外部 LLM を利用する Agent には会話内容やツールが読み取った情報（ソースコード・ログ・入出力値など）が送信されるため、計算環境の隔離と外部モデルへのデータ送信範囲は区別して管理する必要があります。詳細は<a href="security.html#モデルに送られるもの">セキュリティと隔離</a>を参照してください。</p>
-<p>グラフの実行エンジンは、条件分岐（branch）・合流（merge）・有限のフィードバックループ・入れ子の子 Workflow（Card in Card）をサポートします。
-macOS アプリでは、アプリ全体で 1 台の共通 Linux VM（<code>Virtualization.framework</code> を直接使用）の中で、開いているプロジェクトごとに独立した <code>tsugumid</code> プロセスが実行を担います。
-macOS 側の SwiftUI アプリと Agent は、どちらも同じ FlatBuffers RPC 契約を介して <code>tsugumid</code> と通信する対等なクライアントです。</p>
-<pre><code class="language-text">共通 VM（アプリに 1 台、Virtualization.framework）              macOS
- tsugumi-vmd（vsock: 制御 1024 / RPC 1025）
- nix-daemon ── 共通 /nix/store（store ディスク）
- project A: tsugumid（uid・mount/PID 名前空間・cgroup を分離）── vsock ─ 127.0.0.1 中継 ── SwiftUI UI（+ Dawn 描画）
-   ├ 文書・journal・receipt（/project = virtiofs）                                     └ Agent（モデル接続・会話・tool）
-   ├ SQLite 履歴・ログ・成果物                                         ── 同じ RPC ──┘
-   ├ スケジューラー・Nix 評価器（libnixexpr をプロセス内に組み込み）
-   └ worker プール（実行をまたいで常駐・待機 worker、bubblewrap で隔離）
- project B: tsugumid（同上。A の停止は B に影響しない）
+<p>グラフの実行エンジンは、条件分岐（branch）・合流（merge）・有限のフィードバックループ・入れ子の子 Workflow（Card in Card）をサポートします。macOS アプリでは、アプリ全体で 1 台の共通 Linux VM（<code>Virtualization.framework</code> を直接使用）の中で、開いているプロジェクトごとに独立した <code>tsugumid</code> プロセスが実行を担います。macOS 側の SwiftUI アプリと Agent は、どちらも同じ FlatBuffers RPC 契約を介して <code>tsugumid</code> と通信する対等なクライアントです。</p>
+<pre><code class="language-text"><span class="wide">共</span><span class="wide">通</span> VM<span class="wide">（</span><span class="wide">ア</span><span class="wide">プ</span><span class="wide">リ</span><span class="wide">に</span> 1 <span class="wide">台</span><span class="wide">、</span>Virtualization.framework<span class="wide">）</span>              macOS
+ tsugumi-vmd<span class="wide">（</span>vsock: <span class="wide">制</span><span class="wide">御</span> 1024 / RPC 1025<span class="wide">）</span>
+ nix-daemon ── <span class="wide">共</span><span class="wide">通</span> /nix/store<span class="wide">（</span>store <span class="wide">デ</span><span class="wide">ィ</span><span class="wide">ス</span><span class="wide">ク</span><span class="wide">）</span>
+ project A: tsugumid<span class="wide">（</span>uid<span class="wide">・</span>mount/PID <span class="wide">名</span><span class="wide">前</span><span class="wide">空</span><span class="wide">間</span><span class="wide">・</span>cgroup <span class="wide">を</span><span class="wide">分</span><span class="wide">離</span><span class="wide">）</span>── vsock ─ 127.0.0.1 <span class="wide">中</span><span class="wide">継</span> ── SwiftUI UI<span class="wide">（</span>+ Dawn <span class="wide">描</span><span class="wide">画</span><span class="wide">）</span>
+   ├ <span class="wide">文</span><span class="wide">書</span><span class="wide">・</span>journal<span class="wide">・</span>receipt<span class="wide">（</span>/project = virtiofs<span class="wide">）</span>                                     └ Agent<span class="wide">（</span><span class="wide">モ</span><span class="wide">デ</span><span class="wide">ル</span><span class="wide">接</span><span class="wide">続</span><span class="wide">・</span><span class="wide">会</span><span class="wide">話</span><span class="wide">・</span>tool<span class="wide">）</span>
+   ├ SQLite <span class="wide">履</span><span class="wide">歴</span><span class="wide">・</span><span class="wide">ロ</span><span class="wide">グ</span><span class="wide">・</span><span class="wide">成</span><span class="wide">果</span><span class="wide">物</span>                                         ── <span class="wide">同</span><span class="wide">じ</span> RPC ──┘
+   ├ <span class="wide">ス</span><span class="wide">ケ</span><span class="wide">ジ</span><span class="wide">ュ</span><span class="wide">ー</span><span class="wide">ラ</span><span class="wide">ー</span><span class="wide">・</span>Nix <span class="wide">評</span><span class="wide">価</span><span class="wide">器</span><span class="wide">（</span>libnixexpr <span class="wide">を</span><span class="wide">プ</span><span class="wide">ロ</span><span class="wide">セ</span><span class="wide">ス</span><span class="wide">内</span><span class="wide">に</span><span class="wide">組</span><span class="wide">み</span><span class="wide">込</span><span class="wide">み</span><span class="wide">）</span>
+   └ worker <span class="wide">プ</span><span class="wide">ー</span><span class="wide">ル</span><span class="wide">（</span><span class="wide">実</span><span class="wide">行</span><span class="wide">を</span><span class="wide">ま</span><span class="wide">た</span><span class="wide">い</span><span class="wide">で</span><span class="wide">常</span><span class="wide">駐</span><span class="wide">・</span><span class="wide">待</span><span class="wide">機</span> worker<span class="wide">、</span>bubblewrap <span class="wide">で</span><span class="wide">隔</span><span class="wide">離</span><span class="wide">）</span>
+ project B: tsugumid<span class="wide">（</span><span class="wide">同</span><span class="wide">上</span><span class="wide">。</span>A <span class="wide">の</span><span class="wide">停</span><span class="wide">止</span><span class="wide">は</span> B <span class="wide">に</span><span class="wide">影</span><span class="wide">響</span><span class="wide">し</span><span class="wide">な</span><span class="wide">い</span><span class="wide">）</span>
 </code></pre>
 <h2 id="ディレクトリ">ディレクトリ</h2>
 <pre><code class="language-text">CMakeLists.txt, flake.nix/flake.lock  C++ ビルド（CMake/Ninja）と依存固定（Nix）
@@ -118,9 +127,9 @@ in
 }
 </code></pre>
 <pre><code class="language-nix">{ pkgs, inputs, params }: {
-  run = &#39;&#39;
-    jq &#39;{out: {value: (.value + 1)}}&#39; &quot;$JSON_IN&quot; &gt; &quot;$TSUGUMI_OUTPUT&quot;
-  &#39;&#39;;                                                           # bash
+  run = ''
+    jq '{out: {value: (.value + 1)}}' &quot;$JSON_IN&quot; &gt; &quot;$TSUGUMI_OUTPUT&quot;
+  '';                                                           # bash
 }
 </code></pre>
 <pre><code class="language-cpp">#include &lt;card.hh&gt;
@@ -161,9 +170,9 @@ auto run(Card::Input&amp; input) -&gt; Card::Output {
 <h2 id="文書サイト">文書サイト</h2>
 <p><a href="https://gen740.github.io/Tsugumi/" rel="noopener">GitHub Pages</a> で読む文書は、<code>docs/</code> の Markdown から生成します。リポジトリの設定で、Pages の公開元を <code>main</code> ブランチの <code>/docs</code> にします。</p>
 <ul>
-<li><strong>生成</strong>: <code>node docs/site/build.mjs</code>（<code>web/node_modules</code> の marked を使う）で <code>docs/index.html</code> と <code>docs/pages/*.html</code> を作ります。手で編集しません。一覧とグループは <code>docs/README.md</code> から作ります。</li>
+<li><strong>生成</strong>: <code>node docs/site/build.mjs</code>（<code>web/node_modules</code> の marked を使う）で <code>docs/index.html</code> と <code>docs/pages/*.html</code> を作ります。手で編集しません。一覧とグループは <code>docs/README.md</code> から作ります。文書や図を直しながら見るときは <code>node docs/site/serve.mjs</code>（<a href="http://localhost:4100/）で、変更のたびに生成し直して開いているページを更新します。" rel="noopener">http://localhost:4100/）で、変更のたびに生成し直して開いているページを更新します。</a></li>
 <li><strong>AI 向け</strong>: 同じ生成で、各ページの Markdown 版（<code>docs/pages/*.md</code>、README は <code>docs/index.md</code>。リンクはサイト上で切れないよう書き換える）と、それらの案内 <code>docs/llms.txt</code>（<a href="https://llmstxt.org/" rel="noopener">llms.txt</a>）を作ります。HTML は <code>rel=&quot;alternate&quot;</code> で Markdown 版を、<code>rel=&quot;describedby&quot;</code> で <code>llms.txt</code> を指します。静的配信なので、<code>Accept: text/markdown</code> での出し分けはしません。</li>
-<li><strong>動く図</strong>: <code>docs/site/js/</code> は、アプリの「Tsugumi を知る」（<code>macOS/Sources/App/Explainer/</code>）の描画を Canvas 2D に移したものです。図を入れる位置は <code>build.mjs</code> の <code>STORY</code> に文の一部で書き、その文がなくなると生成が失敗します。</li>
+<li><strong>動く図</strong>: <code>docs/site/js/</code> は、アプリの「Tsugumi を知る」（<code>macOS/Sources/App/Explainer/</code>）の描画を Canvas 2D に移したものです（図を画面に留めてスクロールで進める見せ方は Web だけのものです）。Home のギャラリーと「はじめての Card」のデモは <code>docs/site/player/</code>（Web UI の Card をそのまま使い、実際の実行の記録を再生するもの）で、<code>node docs/site/player/build.mjs</code> で作り直します。図を入れる位置は <code>build.mjs</code> の <code>STORY</code> に文の一部で書き、その文がなくなると生成が失敗します。</li>
 <li><strong>確認</strong>: <code>test_docs.py</code> が、生成物が文書と一致することと、未解釈の <code>**</code> が残っていないことを確かめます。</li>
 <li><strong>JS なし</strong>: 本文は静的な HTML なので読めます。動きを減らす設定では、図はスクロールに追従し、時計で動く部分は止まります。</li>
 </ul>
@@ -177,8 +186,7 @@ auto run(Card::Input&amp; input) -&gt; Card::Output {
 <code>/proc/self/fd/3</code> に書き込めて元のファイルが変わり、パスでは読み取り専用の bind で拒否されます。</p>
 <h2 id="計測2026-11-03共通-vm高速化前">計測（2026-11-03、共通 VM、高速化前）</h2>
 <p>高速化前の比較用記録です。ここで調べていた履歴保存の待ち時間には、常駐 worker・VM 内の一時領域・履歴用ディスクの分離などで対処しています。変更後の値と条件は<a href="#計測2026-11-03高速化後共通-vm">高速化後の計測</a>を参照してください。</p>
-<p>条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。
-<code>tests/python/measure_stages.py collatz</code>（VM、<code>--host</code> で Mac 上の tsugumid）と、アプリの smoke モード（<code>TSUGUMI_SMOKE_RERUN=1</code>）で計測。いずれも 2 回目（ビルド済み・worker 再利用）の値です。</p>
+<p>条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。<code>tests/python/measure_stages.py collatz</code>（VM、<code>--host</code> で Mac 上の tsugumid）と、アプリの smoke モード（<code>TSUGUMI_SMOKE_RERUN=1</code>）で計測。いずれも 2 回目（ビルド済み・worker 再利用）の値です。</p>
 <div class="table-wrap"><table><thead><tr><th>指標</th><th>共通 VM</th><th>Mac 上の tsugumid</th><th>読み方</th></tr></thead><tbody><tr><td>Run の所要時間（core の記録）</td><td>4.6〜4.8 s</td><td>1.3 s</td><td>差の大半は下の「保存」</td></tr><tr><td>保存段階（履歴 SQLite・成果物の記録）</td><td>合計 7.9〜8.1 s、中央値 6 ms</td><td>合計 0.64 s、中央値 0 ms</td><td>VM ではプロジェクトフォルダが virtiofs 越し。同期書き込み自体は 1 回 0.14 ms（<code>dd oflag=dsync</code>）で、fsync が主因ではない。SQLite の WAL・ロックとファイル操作の往復が候補（未断定）</td></tr><tr><td>実行段階</td><td>合計 2.9〜3.2 s、中央値 1 ms</td><td>合計 1.0 s、中央値 1 ms</td><td>worker は再利用（<code>build/reused</code>・<code>evaluate/reused</code> 662 回、0 ms）</td></tr><tr><td>評価・ビルド</td><td>キャッシュ（0 ms）</td><td>キャッシュ（0 ms）</td><td>実行のたびに SDK 準備・build を繰り返していない</td></tr><tr><td>終了から通知まで</td><td>中央値 8.3 ms、最大 22 ms</td><td>中央値 3.8 ms、最大 6 ms</td><td>VM の時計は 30 秒ごとに Mac に合わせる（合わせる前は 0.38 s 進んでいた）</td></tr><tr><td>core の終了 → アプリが終了を表示</td><td>20〜60 ms（Collatz 4.63 s → 4.68 s）</td><td>—</td><td>core は UI を待たない。アプリは 1.3 万件の通知を 262〜325 回にまとめて反映</td></tr><tr><td>アプリ起動 → 操作可能（VM 起動を含む）</td><td>6.2〜9.8 s</td><td>—</td><td>VM の起動・store の mount・nix-daemon・DHCP・tsugumid</td></tr></tbody></table></div>
 <h2 id="計測2026-11-02apple-container-時代">計測（2026-11-02、Apple container 時代）</h2>
 <p>現在の共通 VM に移る前の記録です。下表のイメージ・プロジェクトごとの store・起動時間は当時の構成に対する値です。</p>
@@ -201,8 +209,11 @@ auto run(Card::Input&amp; input) -&gt; Card::Output {
 <h2 id="今後の拡張">今後の拡張</h2>
 <p>N-Queens・200 Card の大規模デモ、WASM 表示は次段階の拡張として残しています。提供中のデモは <a href="https://github.com/gen740/Tsugumi/blob/main/demos/index.json" rel="noopener">demos/index.json</a>、今できないことの一覧は <a href="limitations.html">Limitations.md</a> を参照してください。</p>
 </article>
+</div>
+<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/Development.md" rel="noopener"><code>docs/Development.md</code></a> と同じ文書です（<a href="development.md">Markdown</a>）</p>
 </main>
 </div>
+<script src="../site/js/toc.js" defer></script>
 
 </body>
 </html>

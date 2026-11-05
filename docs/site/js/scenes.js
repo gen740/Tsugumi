@@ -17,10 +17,107 @@ const Ink = {
 const css = (c) => mixColor(c, c, 0)
 const maxX = (r) => r.x + r.w, maxY = (r) => r.y + r.h, midX = (r) => r.x + r.w / 2, midY = (r) => r.y + r.h / 2
 
-// ---- The wall: a researcher, an AI, its output, a wall of reasons ----
+// ---- A person, seen a little from the side, facing right ----
+
+/** A limb in two facets, so it has a lit side and a shaded side. */
+function limb(g, a, b, w0, w1, light, dark) {
+  const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1, nx = -dy / l, ny = dx / l
+  poly(g, [pt(a.x + nx * w0, a.y + ny * w0), pt(b.x + nx * w1, b.y + ny * w1), b, a], dark)
+  poly(g, [pt(a.x - nx * w0, a.y - ny * w0), pt(b.x - nx * w1, b.y - ny * w1), b, a], light)
+  ellipse(g, b.x, b.y, w1, w1, dark)
+}
+
+/** A hand: a palm, a block of fingers and a thumb, pointing along `angle`. */
+function hand(g, at, angle, skin, shade) {
+  g.save()
+  g.translate(at.x, at.y)
+  g.rotate(angle)
+  poly(g, [pt(-1, -5.2), pt(8, -5.6), pt(9, 4.6), pt(-1, 4.4)], skin)
+  poly(g, [pt(8, -5.6), pt(16, -4.6), pt(17, 3.4), pt(9, 4.6)], shade)
+  poly(g, [pt(1, -5), pt(8, -9), pt(11, -6.5), pt(6, -3)], skin)
+  g.restore()
+}
+
+export const Person = {
+  skin: 0xf0dcc0, shade: 0xd9bf9e, hair: 0x2f2722, hairLight: 0x453a31,
+  coat: [0xa9c9c3, 0x8bb0ab, 0x6d938f],
+  /** `puzzled` brings the near hand to the chin; `reach`, a point relative to the feet, takes it there instead. Returns the top of the shoulders. */
+  draw(g, f, t, { scale = 1.2, puzzled = 0, reach = null, coat = Person.coat, trousers = [0x24464a, 0x1b3739], tilt = null, hair = Person.hair } = {}) {
+    g.save()
+    g.translate(f.x, f.y)
+    g.scale(scale, scale)
+    const breathe = Math.sin(t * 1.6) * 0.9
+    const skin = hex(Person.skin), shade = hex(Person.shade), c0 = hex(coat[0]), c1 = hex(coat[1]), c2 = hex(coat[2])
+    const shoe = hex(0x2a2320), shoeTop = hex(0x3a302a)
+    const sh = -170 + breathe, waist = -100
+    // the far arm and far leg, behind everything
+    const farShoulder = pt(-20, sh + 8), farElbow = pt(-29, sh + 50), farWrist = pt(-25, sh + 88)
+    limb(g, farShoulder, farElbow, 9, 7.5, c2, hex(coat[2]))
+    limb(g, farElbow, farWrist, 7.5, 5.5, c2, hex(coat[2]))
+    hand(g, pt(farWrist.x, farWrist.y + 2), 1.72, shade, shade)
+    limb(g, pt(-9, waist), pt(-11, -52), 10.5, 8, hex(trousers[1]), hex(trousers[1]))
+    limb(g, pt(-11, -52), pt(-11, -8), 8, 6, hex(trousers[1]), hex(trousers[1]))
+    poly(g, [pt(-19, 0), pt(10, 0), pt(9, -6), pt(-3, -10), pt(-18, -10)], shoe)
+    // the near leg
+    limb(g, pt(9, waist), pt(10, -52), 11, 8.5, hex(trousers[0]), hex(trousers[1]))
+    limb(g, pt(10, -52), pt(10, -8), 8.5, 6.5, hex(trousers[0]), hex(trousers[1]))
+    poly(g, [pt(1, 0), pt(33, 0), pt(32, -6), pt(19, -11), pt(2, -11)], shoe)
+    poly(g, [pt(19, -11), pt(32, -6), pt(24, -6), pt(14, -8)], shoeTop)
+    // the coat
+    poly(g, [pt(-27, sh + 10), pt(-30, -78), pt(-4, -74), pt(-2, sh + 4)], c1)
+    poly(g, [pt(-2, sh + 4), pt(-4, -74), pt(30, -78), pt(26, sh + 10)], c0)
+    poly(g, [pt(26, sh + 10), pt(30, -78), pt(18, -76), pt(16, sh + 22)], c2)
+    poly(g, [pt(-27, sh + 10), pt(-14, sh + 1), pt(-2, sh + 4), pt(-16, sh + 26)], c0)
+    poly(g, [pt(26, sh + 10), pt(14, sh + 1), pt(-2, sh + 4), pt(12, sh + 26)], c1)
+    poly(g, [pt(-8, sh + 3), pt(9, sh + 3), pt(1, sh + 34)], hex(0xf3ead6))
+    stroke(g, [pt(1, sh + 34), pt(0, -78)], hex(coat[2], 0.8), 1)
+    // the head
+    g.save()
+    g.translate(1, sh + 1)
+    g.rotate(tilt ?? puzzled * 0.1 * (1 + 0.15 * Math.sin(t * 1.3)))
+    poly(g, [pt(-7, 5), pt(8, 5), pt(7, -9), pt(-6, -9)], shade)
+    const face = [pt(-11, -41), pt(13, -41), pt(17, -30), pt(21, -22), pt(17, -19), pt(16, -12), pt(10, -5), pt(-5, -5), pt(-13, -16)]
+    poly(g, face, skin)
+    poly(g, [pt(-13, -16), pt(-5, -5), pt(10, -5), pt(4, -15)], shade)
+    poly(g, [pt(17, -30), pt(21, -22), pt(17, -19), pt(13, -24)], shade)
+    const hairDark = hex(hair)
+    poly(g, [pt(-6, -50), pt(10, -49), pt(18, -39), pt(15, -35), pt(5, -38), pt(-4, -34), pt(-7, -21), pt(-15, -18), pt(-19, -31), pt(-15, -44)], hairDark)
+    poly(g, [pt(-6, -50), pt(10, -49), pt(18, -39), pt(5, -43), pt(-9, -42)], hex(Person.hairLight))
+    ellipse(g, -6, -22, 3.4, 4.6, shade)
+    ellipse(g, 11, -29, 1.7, 2.3, hex(0x2a2320))
+    stroke(g, [pt(7, -34.5), pt(15, -35.5)], hairDark, 1.3)
+    stroke(g, [pt(10, -13), pt(14.5, -13.5)], hex(0xb08a70), 1.1)
+    g.restore()
+    // the near arm: down at the side, up to the chin, or out to what it reaches for
+    const shoulder = pt(19, sh + 8)
+    const wristDown = pt(24, sh + 90), elbowDown = pt(25, sh + 50)
+    const wristChin = pt(13, sh - 5), elbowChin = pt(44, sh + 46)
+    let wrist = mixP(wristDown, wristChin, puzzled), elbow = mixP(elbowDown, elbowChin, puzzled)
+    if (reach) {
+      // an arm has its length: the hand goes as far as that, and the elbow bends down to take up the rest
+      const upper = 42, fore = 40
+      const dx = reach.x / scale - shoulder.x, dy = reach.y / scale - shoulder.y
+      const far = Math.hypot(dx, dy) || 1, d = Math.min(far, upper + fore - 1)
+      const ux = dx / far, uy = dy / far
+      const along = (upper * upper - fore * fore + d * d) / (2 * d), rise = Math.sqrt(Math.max(0, upper * upper - along * along))
+      const side = -ux >= 0 ? -1 : 1  // towards the ground, whichever way it reaches
+      wrist = pt(shoulder.x + ux * d, shoulder.y + uy * d)
+      elbow = pt(shoulder.x + ux * along - uy * rise * side, shoulder.y + uy * along + ux * rise * side)
+    }
+    limb(g, shoulder, elbow, 9.5, 7.8, c0, c2)
+    limb(g, elbow, wrist, 7.8, 5.6, c0, c2)
+    const angle = Math.atan2(wrist.y - elbow.y, wrist.x - elbow.x)
+    fillRound(g, rect(wrist.x - 5, wrist.y - 3, 10, 6), 2, c1)
+    hand(g, wrist, angle, skin, shade)
+    g.restore()
+    return f.y + sh * scale
+  },
+}
+
+// ---- The wall: a researcher, an AI, its output, a heap of reasons ----
 
 export const Wall = {
-  groundY: 700, human: pt(165, 700), wallX: [400, 600], brickH: 34, rows: 13, hole: pt(500, 404),
+  groundY: 700, human: pt(165, 700), wallX: [362, 638], brickH: 30, rows: 13, heap: null, over: pt(505, 268),
   temari: { center: pt(268, 678), radius: 22 }, aiCenter: pt(835, 450), tie: pt(758, 452),
   get wallTop() { return this.groundY - this.rows * this.brickH },
   get temariTop() { return temariLead(this.temari.center, this.temari.radius) },
@@ -34,7 +131,7 @@ export const Wall = {
     faded(g, enter, () => Wall.drawHuman(g, Wall.human, t, span(p, 0.45, 1.2) * (1 - span(p, 4.6, 5.0)), p))
     const temariIn = pop(lin(p, 3.55, 3.85))
     if (temariIn > 0.01) drawTemari(g, Wall.temari.center, Wall.temari.radius * temariIn, -lin(p, 4.0, 4.7) * 16)
-    Wall.drawWall(g, p, t)
+    Wall.drawWall(g, p)
     Wall.drawStones(g, p)
   },
 
@@ -55,58 +152,18 @@ export const Wall = {
   },
 
   drawHuman(g, f, t, puzzled, p) {
-    g.save()
-    g.translate(f.x, f.y); g.scale(1.22, 1.22); g.translate(-f.x, -f.y)
-    const x = f.x, y = f.y
-    const breathe = Math.sin(t * 1.6) * 1.2
-    const tiltHead = puzzled * 0.16 * (1 + 0.15 * Math.sin(t * 1.3))
-    const coat = [hex(0x9fc0bb), hex(0x82a7a3), hex(0x6a908d)]
-    const legs = hex(0x24464a), legsDark = hex(0x1b3739), skin = hex(0xf0dcc0), skinShade = hex(0xd9bf9e), hair = hex(0x2f2722)
-    poly(g, [pt(x - 20, y - 86), pt(x - 3, y - 86), pt(x - 6, y), pt(x - 19, y)], legs)
-    poly(g, [pt(x + 3, y - 86), pt(x + 20, y - 86), pt(x + 19, y), pt(x + 6, y)], legsDark)
-    poly(g, [pt(x - 22, y), pt(x - 4, y), pt(x - 6, y - 7)], hex(0x2a2320))
-    poly(g, [pt(x + 4, y), pt(x + 25, y), pt(x + 6, y - 7)], hex(0x2a2320))
-    const sh = y - 172 + breathe
-    poly(g, [pt(x - 34, sh + 6), pt(x, sh), pt(x - 26, y - 80)], coat[0])
-    poly(g, [pt(x, sh), pt(x + 34, sh + 6), pt(x + 26, y - 80)], coat[2])
-    poly(g, [pt(x, sh), pt(x - 26, y - 80), pt(x + 26, y - 80)], coat[1])
-    poly(g, [pt(x - 6, sh + 2), pt(x + 6, sh + 2), pt(x, sh + 30)], hex(0xf3ead6))
-    poly(g, [pt(x - 34, sh + 6), pt(x - 24, sh + 14), pt(x - 34, y - 92), pt(x - 42, y - 96)], coat[1])
-    poly(g, [pt(x - 42, y - 96), pt(x - 34, y - 92), pt(x - 37, y - 82)], skin)
-    const hand = mixP(pt(x + 40, y - 96), pt(x + 14, sh - 8), puzzled), elbow = mixP(pt(x + 40, y - 120), pt(x + 36, sh + 34), puzzled)
-    poly(g, [pt(x + 24, sh + 6), pt(x + 34, sh + 6), elbow], coat[2])
-    poly(g, [pt(x + 30, sh + 4), elbow, pt(elbow.x - 9, elbow.y + 4)], coat[1])
-    poly(g, [elbow, pt(elbow.x - 9, elbow.y + 4), pt(hand.x - 4, hand.y + 4), pt(hand.x + 4, hand.y - 2)], coat[0])
-    poly(g, [pt(hand.x - 6, hand.y), pt(hand.x + 5, hand.y - 6), pt(hand.x + 6, hand.y + 6)], skin)
-
-    g.save()
-    g.translate(x, sh - 8)
-    g.rotate(tiltHead)
-    poly(g, [pt(-6, 0), pt(6, 0), pt(5, 10), pt(-5, 10)], skinShade)
-    const r = 25, cy = -26
-    const h = [0, 1, 2, 3, 4, 5].map((i) => { const a = (i * Math.PI) / 3 + Math.PI / 6; return pt(r * Math.cos(a), cy + r * Math.sin(a) * 1.08) })
-    poly(g, [pt(0, cy), h[0], h[1]], skinShade)
-    poly(g, [pt(0, cy), h[1], h[2]], skin)
-    poly(g, [pt(0, cy), h[2], h[3]], skin)
-    poly(g, [pt(0, cy), h[3], h[4]], hair)
-    poly(g, [pt(0, cy), h[4], h[5]], hair)
-    poly(g, [pt(0, cy), h[5], h[0]], hex(0x3b322b))
-    poly(g, [h[3], h[4], pt(-r - 3, cy + 6)], hair)
-    ellipse(g, 11, cy + 4.5, 2, 2.5, hex(0x2a2320))
-    g.restore()
-
+    const sh = Person.draw(g, f, t, { scale: 1.2, puzzled })
     for (let i = 0; i < 3; i++) {
-      const o = span(p, 0.5 + i * 0.35, 0.75 + i * 0.35) * puzzled
+      const o = span(p, 0.5 + i * 0.25, 0.7 + i * 0.25) * puzzled
       if (o <= 0.01) continue
       const bob = Math.sin(t * 2 + i * 1.7) * 4
-      text(g, '?', pt(x + 18 + i * 26, sh - 92 - i * 22 + bob), 30 + i * 6, { weight: 800, opacity: o * 0.85 })
+      text(g, '?', pt(f.x + 34 + i * 30, sh - 62 - i * 26 + bob), 34 + i * 7, { weight: 800, opacity: o * 0.85 })
     }
     const lit = span(p, 4.75, 5.05)
     if (lit > 0.01) {
-      glow(g, x + 30, sh - 90, 34, 34, 0xf6d79a, 0.6 * lit)
-      text(g, '!', pt(x + 30, sh - 90), 34, { weight: 800, color: hex(0xf6d79a), opacity: lit })
+      glow(g, f.x + 42, sh - 66, 40, 40, 0xf6d79a, 0.6 * lit)
+      text(g, '!', pt(f.x + 42, sh - 66), 40, { weight: 800, color: hex(0xf6d79a), opacity: lit })
     }
-    g.restore()
   },
 
   /** A faceted gem turning slowly. */
@@ -174,78 +231,74 @@ export const Wall = {
     }
   },
 
+  /** A heap, not a wall: bricks of any length, askew, thrown on top of each other. */
   bricks() {
-    const out = []
-    let k = 0
-    for (let r = 0; r < Wall.rows; r++) {
-      const y = Wall.groundY - (r + 1) * Wall.brickH
-      const edges = r % 2 === 0 ? [400, 450, 500, 550, 600] : [400, 425, 475, 525, 575, 600]
-      for (let i = 0; i < edges.length - 1; i++) out.push({ rect: rect(edges[i], y, edges[i + 1] - edges[i], Wall.brickH), order: k++ })
+    if (Wall.heap) return Wall.heap
+    const rng = seeded(41), out = []
+    const rows = Wall.rows
+    for (let r = 0; r < rows; r++) {
+      const up = r / (rows - 1)
+      const half = 138 * Math.pow(1 - up, 0.55) + 26
+      const y = Wall.groundY - (r + 1) * Wall.brickH + rng(-2, 2)
+      let x = 500 - half + rng(-14, 14) + (r % 3 - 1) * 7
+      while (x < 500 + half - 14) {
+        const w = rng(38, 78), tilt = rng(-1, 1) * (0.04 + 0.16 * up + (rng(0, 1) < 0.2 ? 0.1 : 0))
+        out.push({ rect: rect(x, y + rng(-5, 5), w, Wall.brickH + rng(-3, 2)), tilt, shade: rng(-0.08, 0.08), lean: rng(-14, 14), row: r, jitter: rng(0, 1) })
+        x += w + rng(-6, 3)
+      }
     }
+    // what rolled off the heap
+    for (const [x, w, tilt] of [[338, 46, -0.26], [386, 36, 0.32], [630, 52, 0.2], [604, 30, -0.34]]) {
+      out.push({ rect: rect(x, Wall.groundY - 25, w, 25), tilt, shade: rng(-0.08, 0.08), lean: 8, row: 0, jitter: rng(0, 1) })
+    }
+    out.sort((a, b) => a.row + a.jitter * 0.8 - (b.row + b.jitter * 0.8))
+    out.forEach((b, k) => { b.order = k })
+    Wall.heap = out
     return out
   },
-  holeRadius(p) { return 15 * pop(lin(p, 4.27, 4.37)) },
 
-  drawWall(g, p, t) {
+  drawWall(g, p) {
     const all = Wall.bricks()
-    const holeR = Wall.holeRadius(p)
-    g.save()
-    if (holeR > 0.5) {
-      const clip = new Path2D()
-      clip.rect(0, 0, artW, artH)
-      clip.ellipse(Wall.hole.x, Wall.hole.y, holeR, holeR, 0, 0, Math.PI * 2)
-      g.clip(clip, 'evenodd')
-    }
-    const rng = seeded(17)
-    for (const { rect: b, order: k } of all) {
-      const start = 1.05 + (k / all.length) * 2.05
-      const u = lin(p, start, start + 0.12)
-      const shade = rng(-0.06, 0.06)
+    for (const b of all) {
+      const start = 1.05 + (b.order / all.length) * 2.05
+      const u = lin(p, start, start + 0.14)
       if (u <= 0) continue
-      const drop = (1 - easeOut(u)) * -46
-      const r = rect(b.x + 1, b.y + drop + 1, b.w - 2, b.h - 2)
+      const drop = (1 - easeOut(u)) * -90
+      const r = b.rect
       faded(g, Math.min(1, u * 3), () => {
-        const base = 0.33 + shade
-        const c = (k1, k2, k3) => `rgb(${base * k1 * 255},${base * k2 * 255},${base * k3 * 255})`
-        const top = c(0.95, 1.05, 1.08), bottom = c(0.72, 0.8, 0.85)
-        const m = pt(midX(r) + shade * 60, midY(r))
-        poly(g, [pt(r.x, r.y), pt(maxX(r), r.y), m], top)
-        poly(g, [pt(maxX(r), r.y), pt(maxX(r), maxY(r)), m], bottom)
-        poly(g, [pt(maxX(r), maxY(r)), pt(r.x, maxY(r)), m], bottom)
-        poly(g, [pt(r.x, maxY(r)), pt(r.x, r.y), m], top)
+        g.save()
+        g.translate(midX(r), midY(r) + drop)
+        g.rotate(b.tilt + (1 - u) * b.tilt * 3)
+        const hw = r.w / 2 - 0.5, hh = r.h / 2 - 0.5
+        const base = 0.36 + b.shade
+        const c = (k1, k2, k3) => `rgb(${Math.min(1, base * k1) * 255},${Math.min(1, base * k2) * 255},${Math.min(1, base * k3) * 255})`
+        const top = c(1.06, 1.0, 0.96), left = c(0.92, 0.86, 0.84), right = c(0.74, 0.7, 0.72), bottom = c(0.6, 0.58, 0.62)
+        const m = pt(b.lean * 0.5, -hh * 0.2)
+        poly(g, [pt(-hw, -hh), pt(hw, -hh), m], top)
+        poly(g, [pt(hw, -hh), pt(hw, hh), m], right)
+        poly(g, [pt(hw, hh), pt(-hw, hh), m], bottom)
+        poly(g, [pt(-hw, hh), pt(-hw, -hh), m], left)
+        g.restore()
       })
-    }
-    g.restore()
-    if (holeR > 0.5) {
-      const lit = span(p, 4.4, 5.0)
-      g.beginPath()
-      g.ellipse(Wall.hole.x, Wall.hole.y, holeR + 2, holeR + 2, 0, 0, Math.PI * 2)
-      g.strokeStyle = hex(0xf6d79a, 0.35 * lit + 0.1 * lit * Math.sin(t * 3))
-      g.lineWidth = 6
-      g.stroke()
-      g.beginPath()
-      g.ellipse(Wall.hole.x, Wall.hole.y, holeR, holeR, 0, 0, Math.PI * 2)
-      g.strokeStyle = 'rgba(0,0,0,0.4)'
-      g.lineWidth = 1.5
-      g.stroke()
     }
   },
 
   drawStones(g, p) {
-    for (const [label, y, at] of [['再現できない', 628, 1.45], ['過程が見えない', 522, 2.05], ['データが怖い', 342, 2.65]]) {
+    for (const [label, y, at] of [['再現できない', 632, 1.45], ['過程が見えない', 534, 2.05], ['データを渡せない', 436, 2.65]]) {
       const u = pop(lin(p, at - 0.12, at + 0.12))
       if (u <= 0.01) continue
-      const w = 250, h = 50
+      const w = label.length * 20 + 28, h = 46  // the size of its words, so it lies on the heap wherever the heap has narrowed
       g.save()
       g.translate(500, y)
       g.scale(u, u)
+      g.rotate(y === 534 ? 0.018 : -0.016)
       const r = rect(-w / 2, -h / 2, w, h)
       fillRound(g, rect(r.x, r.y + 4, w, h), 6, 'rgba(0,0,0,0.3)')
       poly(g, [pt(r.x, r.y), pt(maxX(r), r.y), pt(maxX(r) - 20, 0), pt(r.x + 30, 4)], hex(0x5d4b40))
       poly(g, [pt(r.x, r.y), pt(r.x + 30, 4), pt(r.x, maxY(r))], hex(0x4a3b32))
       poly(g, [pt(maxX(r), r.y), pt(maxX(r), maxY(r)), pt(maxX(r) - 20, 0)], hex(0x433630))
       poly(g, [pt(r.x, maxY(r)), pt(r.x + 30, 4), pt(maxX(r) - 20, 0), pt(maxX(r), maxY(r))], hex(0x3b2f29))
-      text(g, label, pt(0, 0), 22, { weight: 700 })
+      text(g, label, pt(0, 0), 20, { weight: 700 })
       g.restore()
     }
   },
@@ -260,8 +313,7 @@ export const Wall = {
       if (!toAI) f = 1 - f
       const q = line.at(f)
       const w = label.length * 15 + 34, h = 30
-      const inWall = smooth((Math.abs(q.x - 500) - 100) / 24)
-      faded(g, o * smooth(Math.min(f, 1 - f) / 0.06) * inWall, () => {
+      faded(g, o * smooth(Math.min(f, 1 - f) / 0.06), () => {
         const r = rect(q.x - w / 2, q.y - h - 8, w, h)
         fillRound(g, rect(r.x, r.y + 3, w, h), 15, 'rgba(0,0,0,0.25)')
         fillRound(g, r, 15, hex(toAI ? 0xf6ead2 : 0xd7ecef))
@@ -285,15 +337,22 @@ export const CasA = {
   sketchRect: (k) => rect(137 + k * 265, 400, 196, 140),
   cardRect: (k) => rect(195 + k * 240, 312, 210, 92),
   startRect: rect(52, 339, 104, 38),
+  runButton: rect(396, 130, 92, 28),
   get startPort() { return pt(maxX(this.startRect), midY(this.startRect)) },
   inPort: (r) => pt(r.x, r.y + 64),
   outPort: (r) => pt(maxX(r), r.y + 64),
-  runButton: rect(396, 130, 92, 28),
   drawn: (k) => [0.8 + k * 0.18, 0.98 + k * 0.18],
   morph: [1.85, 2.4],
-  implement: (k) => [2.95 + k * 0.16, 3.07 + k * 0.16],
-  press: 3.5,
-  run: (k) => [3.56 + k * 0.14, 3.7 + k * 0.14],
+  // the bird takes its time over each Card, and the run comes after it has gone
+  implement: (k) => [2.8 + k * 0.42, 3.1 + k * 0.42],
+  press: 4.0,
+  run: (k) => [4.06 + k * 0.2, 4.26 + k * 0.2],
+  // What the Agent writes as it crosses each Card: lines of the demo's own files.
+  code: [
+    { file: 'load/default.nix', lines: ['raw = pkgs.fetchurl {', '  inherit url;', '  curlOptsList = [ "--ssl-reqd" ];', '  hash = params.hash;', '};'] },
+    { file: 'bands/src/main.py', lines: ['import numpy as np', 'from astropy.io import fits', '', 'def main(ctx):', '    events = ctx.input("input", Events)'] },
+    { file: 'rgb/src/main.py', lines: ['from PIL import Image', '', 'def main(ctx):', '    p = ctx.params()', '    percentile, q = p.Percentile(), p.Q()'] },
+  ],
   state(k, p) { const r = CasA.run(k); return p < r[0] ? 'idle' : p < r[1] ? 'running' : 'done' },
   slant: 0.4,
   wipeX(u, y) { return CasA.paper.x - 300 + (CasA.paper.w + 700) * u - (y - CasA.paper.y) * CasA.slant },
@@ -551,13 +610,15 @@ export const CasA = {
     const df = lin(p, d0, d1)
     if (df <= 0) return
     const r = mixR(CasA.sketchRect(k), CasA.cardRect(k), u)
-    const impl = span(p, CasA.implement(k)[0], CasA.implement(k)[1])
+    const [i0, i1] = CasA.implement(k)
+    // How much of the Card is real by now, left to right: the seam is under the bird.
+    const made = lin(p, i0, i1)
     const st = CasA.state(k, p)
     const wobble = 7 * (1 - smooth(u * 1.25))
     const outline = new Polyline(CasA.sketchOutline(r, mix(18, 10, u), wobble, k * 2.3))
     const shape = outline.upTo(u > 0.01 ? 1 : df)
     if (u > 0.01) faded(g, u, () => fillRound(g, r, 10, css(Ink.cardFill)))
-    const draftDash = span(u, 0.5, 0.85) * (1 - impl)
+    const draftShown = span(u, 0.5, 0.85)
     let color = mixColor(Ink.pen, Ink.cardStroke, u), width = mix(3.2, 1.4, u)
     if (st === 'running') {
       const pulse = 0.5 + 0.5 * Math.sin(t * 7)
@@ -567,8 +628,21 @@ export const CasA = {
       color = hex(Ink.done)
       width = 1.8
     }
-    faded(g, 1 - draftDash, () => stroke(g, shape, color, width))
-    if (draftDash > 0.01) faded(g, draftDash, () => strokeRound(g, r, 10, hex(0x9aa0a8), 1.4, [6, 4]))
+    const solid = () => stroke(g, shape, color, width)
+    const dashed = () => strokeRound(g, r, 10, hex(0x9aa0a8), 1.4, [6, 4])
+    const seam = r.x + r.w * made
+    const between = (x0, x1, draw) => {
+      g.save()
+      g.beginPath()
+      g.rect(x0, r.y - 14, x1 - x0, r.h + 28)
+      g.clip()
+      draw()
+      g.restore()
+    }
+    if (made <= 0) {
+      faded(g, 1 - draftShown, solid)
+      if (draftShown > 0.01) faded(g, draftShown, dashed)
+    }
     if (st === 'running') strokeRound(g, r, 10, hex(Ink.wire, 0.25 + 0.15 * Math.sin(t * 7)), 6)
 
     const hand = span(p, d1 - 0.08, d1 + 0.12) * (1 - span(u, 0, 0.45))
@@ -585,15 +659,14 @@ export const CasA = {
     }
 
     const face = span(u, 0.55, 1)
-    faded(g, face, () => {
+    const faceOf = (real) => faded(g, face, () => {
       const title = hex(0xe8e8ea), sub = hex(0x9a9ca2)
-      text(g, impl > 0.5 ? '</>' : '✎', pt(r.x + 18, r.y + 17), 10, { weight: 600, color: sub, mono: true })
+      text(g, real ? '</>' : '✎', pt(r.x + 18, r.y + 17), 10, { weight: 600, color: sub, mono: true })
       text(g, box.name, pt(r.x + 34, r.y + 17), 14, { weight: 600, color: title, align: 'left' })
-      const badge = 1 - impl
-      if (badge > 0.01) {
+      if (!real) {
         const br = rect(r.x + 34 + box.name.length * 8.4 + 8, r.y + 9, 44, 16)
-        faded(g, badge, () => fillRound(g, br, 8, hex(Ink.badge, 0.22)))
-        text(g, '未実装', pt(midX(br), midY(br)), 9.5, { weight: 600, color: hex(0xf3c088), opacity: badge })
+        fillRound(g, br, 8, hex(Ink.badge, 0.22))
+        text(g, '未実装', pt(midX(br), midY(br)), 9.5, { weight: 600, color: hex(0xf3c088) })
       }
       const sr = pt(maxX(r) - 16, r.y + 17)
       if (st === 'running') {
@@ -612,18 +685,46 @@ export const CasA = {
       const ip = CasA.inPort(r), op = CasA.outPort(r)
       fillRect(g, rect(ip.x - 3.5, ip.y - 3.5, 7, 7), hex(0xd8d8dc))
       ellipse(g, op.x, op.y, 4, 4, hex(0x3b82f6))
-      const row = st === 'done' ? '実行 #1 · 成功' : impl > 0.5 ? box.stack : ''
-      if (row) text(g, row, pt(r.x + 14, r.y + 81), 9.5, { color: st === 'done' ? hex(Ink.done, 0.9) : sub, align: 'left', opacity: span(p, CasA.implement(k)[1] - 0.05, CasA.implement(k)[1] + 0.05) })
+      if (real) text(g, st === 'done' ? '実行 #1 · 成功' : box.stack, pt(r.x + 14, r.y + 81), 9.5, { color: st === 'done' ? hex(Ink.done, 0.9) : sub, align: 'left' })
     })
-    const sp = lin(p, CasA.implement(k)[0], CasA.implement(k)[1] + 0.08)
-    if (sp > 0 && sp < 1) {
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * 2 * Math.PI + k, d = 30 + 70 * easeOut(sp)
-        const q = pt(midX(r) + Math.cos(a) * d * 1.3, midY(r) + Math.sin(a) * d * 0.6)
-        const s = 5 * Math.sin(sp * Math.PI)
-        poly(g, [pt(q.x, q.y - s), pt(q.x + s * 0.3, q.y - s * 0.3), pt(q.x + s, q.y), pt(q.x + s * 0.3, q.y + s * 0.3), pt(q.x, q.y + s), pt(q.x - s * 0.3, q.y + s * 0.3), pt(q.x - s, q.y), pt(q.x - s * 0.3, q.y - s * 0.3)], hex(0xf6d79a, Math.sin(sp * Math.PI)))
-      }
+    if (made <= 0) faceOf(false)
+    else if (made >= 1) {
+      solid()
+      faceOf(true)
+      const settle = 1 - span(p, i1, i1 + 0.12)
+      if (settle > 0.01 && st === 'idle') strokeRound(g, r, 10, hex(0xf6d79a, 0.75 * settle), 3)
+    } else {
+      // the seam: real behind the bird, still the Draft ahead of it
+      between(r.x - 14, seam, () => { solid(); faceOf(true) })
+      between(seam, maxX(r) + 14, () => { dashed(); faceOf(false) })
+      stroke(g, [pt(seam, r.y - 3), pt(seam, maxY(r) + 3)], hex(0xf6d79a, 0.28), 9, { cap: 'butt' })
+      stroke(g, [pt(seam, r.y - 3), pt(seam, maxY(r) + 3)], hex(0xfff3d6, 0.95), 1.6, { cap: 'butt' })
     }
+    CasA.drawCode(g, k, p)
+  },
+
+  /** The file being written above the Card: it types itself as the bird crosses. */
+  drawCode(g, k, p) {
+    const [i0, i1] = CasA.implement(k)
+    const o = span(p, i0 - 0.05, i0 + 0.02) * (1 - span(p, i1 + 0.04, i1 + 0.11))
+    if (o <= 0.01) return
+    const c = CasA.code[k], card = CasA.cardRect(k)
+    const r = rect(midX(card) - 140, card.y - 122 - (1 - o) * 8, 280, 108)
+    const total = c.lines.reduce((a, l) => a + l.length, 0)
+    let left = Math.floor(total * lin(p, i0 + 0.01, i1 - 0.01))
+    faded(g, o, () => {
+      fillRound(g, rect(r.x - 2, r.y + 4, r.w + 4, r.h + 2), 9, 'rgba(0,0,0,0.3)')
+      fillRound(g, r, 8, hex(0x17181a))
+      strokeRound(g, r, 8, hex(0x4d5157), 1)
+      text(g, c.file, pt(r.x + 12, r.y + 14), 9.5, { color: hex(0x9a9ca2), align: 'left', mono: true })
+      c.lines.forEach((line, n) => {
+        const shown = line.slice(0, Math.max(0, left))
+        left -= line.length
+        if (shown) text(g, shown, pt(r.x + 12, r.y + 32 + n * 15), 10.5, { color: hex(0xd6dde0), align: 'left', mono: true })
+      })
+    })
+    // the line where the Card meets what is written for it
+    faded(g, o, () => stroke(g, [pt(midX(card), r.y + r.h), pt(midX(card), card.y)], hex(0xf6d79a, 0.5), 1.2, { dash: [3, 3] }))
   },
 
   panel(g, r, title, sub) {
@@ -696,7 +797,7 @@ export const CasA = {
   },
 }
 /** The rgb Card's own output from a run of the demo (ObsID 25628, the counts in the table). */
-const casaImage = new Image()
+export const casaImage = new Image()
 casaImage.src = new URL('../assets/casa-rgb-25628.png', import.meta.url).href
 
 // ---- この道具を作った人: Yasuda Auditorium under stars joined into a network ----
@@ -908,34 +1009,45 @@ export const Name = {
 
 const wallCrop = rect(0, 150, 1000, 610)
 const casaCrop = rect(0, 95, 1000, 720)
-const wallRect = () => rect(Wall.wallX[0], Wall.wallTop, Wall.wallX[1] - Wall.wallX[0], Wall.groundY - Wall.wallTop)
 const inP = (k) => CasA.inPort(CasA.cardRect(k)), outP = (k) => CasA.outPort(CasA.cardRect(k))
 const nameGape = birdGape(Name.feet, Name.scale, pose())
+const wallTall = rect(90, 20, 830, 880)
+/** The thread through the Cards, in step with CasA.implement: each port is reached as that Card begins and ends becoming real. */
+const wiring = (start, end) => [...start, [CasA.startPort, 0.055], [inP(0), 0.069], [outP(0), 0.172], [inP(1), 0.214], [outP(1), 0.317], [inP(2), 0.359], [outP(2), 0.462], ...end]
+const cardsOccluding = () => [CasA.startRect, CasA.cardRect(0), CasA.cardRect(1), CasA.cardRect(2)]
 
+// `pace` is how much scrolling a figure takes; `stops`, where its story is at each slide of the slide show; `deck`, how it fits the slide: a crop for its half of the screen, or `wide` to take the width above the words.
 export const Figures = {
-  author: { draw: Author.draw, from: 0, to: 1, crop: rect(0, 90, 1000, 620), route: [[pt(40, 90), 0], [pt(40, 710), 1]] },
+  author: { draw: Author.draw, from: 0, to: 1, crop: rect(0, 90, 1000, 620), route: [[pt(40, 90), 0], [pt(40, 710), 1]], deck: { crop: rect(120, 20, 760, 760) } },
   wall: {
-    draw: Wall.draw, from: 0.15, to: 3.3, crop: wallCrop, route: [[pt(40, 150), 0], [pt(40, 760), 1]],
-    flights: [{ item: '再現性を担保できない', label: '再現できない', to: pt(500, 628), at: 1.45 },
-      { item: '結論に至るプロセスが見えない', label: '過程が見えない', to: pt(500, 522), at: 2.05 },
-      { item: 'データを AI に渡すのが怖い', label: 'データが怖い', to: pt(500, 342), at: 2.65 }],
+    draw: Wall.draw, from: 0.15, to: 3.3, crop: wallCrop, route: [[pt(40, 150), 0], [pt(40, 760), 1]], pace: 0.55,
+    flights: [{ item: '再現性を担保できない', label: '再現できない', to: pt(500, 632), at: 1.45 },
+      { item: '結論に至るプロセスが見えない', label: '過程が見えない', to: pt(500, 534), at: 2.05 },
+      { item: 'データを AI に渡すのが怖い', label: 'データを渡せない', to: pt(500, 436), at: 2.65 }],
+    stops: [3.0, 3.3], deck: { crop: wallTall },
   },
   thread: {
-    draw: Wall.draw, from: 3.45, to: 5.4, crop: wallCrop,
-    route: [[pt(40, 150), 0], [pt(46, 690), 0.13], [pt(236, 696), 0.19], [Wall.temariTop, 0.24], [Wall.hole, 0.45], [Wall.tie, 0.64], [pt(770, 712), 0.8], [pt(160, 758), 1]],
-    occluders: () => [wallRect()],
-    holes: (p) => [[Wall.hole, Wall.holeRadius(p)]],
-    beads: { from: 0.24, to: 0.64, appear: 4.7 },
+    draw: Wall.draw, from: 3.45, to: 5.4, crop: wallCrop, pace: 1.7,
+    // up the heap from the temari, over the top and down to the AI
+    route: [[pt(40, 150), 0], [pt(46, 690), 0.1], [pt(236, 696), 0.15], [Wall.temariTop, 0.19], [pt(372, 452), 0.3], [Wall.over, 0.44], [pt(650, 340), 0.55], [Wall.tie, 0.66], [pt(770, 712), 0.82], [pt(160, 758), 1]],
+    beads: { from: 0.19, to: 0.66, appear: 4.7 },
+    stops: [4.75, 5.4], deck: { crop: wallTall },
   },
-  sketch: { draw: CasA.draw, from: 0.1, to: 2.5, crop: casaCrop, route: [[pt(10, 95), 0], [pt(10, 815), 1]], trigger: pt(792, 224), triggerAt: 0.6 },
+  sketch: {
+    draw: CasA.draw, from: 0.1, to: 1.7, crop: casaCrop, route: [[pt(10, 95), 0], [pt(10, 815), 1]], trigger: pt(792, 224), triggerAt: 0.6, pace: 0.9,
+    deck: { wide: true },
+  },
+  draft: {
+    draw: CasA.draw, from: 1.7, to: 2.5, crop: casaCrop, route: [[pt(10, 95), 0], [pt(10, 815), 1]], doodleDone: true, pace: 1.3,
+    deck: { wide: true },
+  },
   run: {
-    draw: CasA.draw, from: 2.6, to: 5.5, crop: casaCrop,
-    route: [[pt(10, 95), 0], [pt(14, 330), 0.06], [pt(CasA.startRect.x, midY(CasA.startRect)), 0.09], [CasA.startPort, 0.105],
-      [inP(0), 0.12], [outP(0), 0.155], [inP(1), 0.176], [outP(1), 0.21], [inP(2), 0.232], [outP(2), 0.27],
-      [pt(915, 430), 0.31], [pt(918, 700), 0.6], [pt(160, 800), 1]],
-    occluders: () => [CasA.startRect, CasA.cardRect(0), CasA.cardRect(1), CasA.cardRect(2)],
-    cues: [{ item: '実装する。', from: 2.75, to: 3.45 }, { item: '確かめる。', from: 3.5, to: 4.6 }],
-    triggerAt: 0,
+    draw: CasA.draw, from: 2.6, to: 5.5, crop: casaCrop, pace: 1.9, birdOverCards: true,
+    route: wiring([[pt(10, 95), 0], [pt(14, 330), 0.03], [pt(CasA.startRect.x, midY(CasA.startRect)), 0.045]], [[pt(915, 430), 0.5], [pt(918, 700), 0.78], [pt(160, 800), 1]]),
+    occluders: cardsOccluding,
+    cues: [{ item: '実装する。', from: 2.75, to: 3.98 }, { item: '確かめる。', from: 4.0, to: 5.0 }],
+    doodleDone: true, listStops: [2.6, 3.98, 5.5],
+    deck: { wide: true },
   },
   name: {
     draw: Name.draw, from: 0.4, to: 2.7, crop: rect(0, 120, 1000, 610),
@@ -945,7 +1057,9 @@ export const Figures = {
       [pt(Name.card(2).x, midY(Name.card(2))), 0.68], [pt(maxX(Name.card(2)), midY(Name.card(2))), 0.73],
       [pt(985, 480), 0.77], [pt(975, 700), 0.88], [pt(160, 728), 1]],
     occluders: () => [Name.card(0), Name.card(1), Name.card(2)],
-    birdAway: [0, 1],
+    birdAway: [0, 1], pace: 1.1,
+    // 名前 / 「つぐみ」 / 継ぐ・積む・組む / 紡ぐ、そして手毬と糸
+    stops: [0.45, 0.5, 1.12, 2.7], deck: { crop: rect(60, -40, 900, 840) },
   },
 }
 
