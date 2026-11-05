@@ -187,12 +187,25 @@ class Context:
 _card_module = None
 
 
+def _adopt_environment() -> None:
+    """os.environ is a copy from when the interpreter started, and the worker
+    sets the real environment for each call (preRun's exports among it)."""
+    current = dict(_host.environ())
+    for name in os.environb.keys() - current.keys():
+        del os.environb[name]
+    for name, value in current.items():
+        if os.environb.get(name) != value:
+            os.environb[name] = value
+
+
 def _guard(body, report: bool = True) -> bool:
     global _in_call, _card_displayed
     _in_call = report  # report is False only while loading, outside any call
     _card_displayed = False
     done = False
     try:
+        if report:
+            _adopt_environment()
         body()
         _finish_figures(show=True)
         done = True
