@@ -56,6 +56,7 @@ import base64
 import hashlib
 import json
 import re
+import socketserver
 import threading
 import time
 import uuid
@@ -778,6 +779,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+class LocalServer(ThreadingHTTPServer):
+    """Without the reverse DNS lookup of HTTPServer.server_bind (socket.getfqdn),
+    which comes before listening: the fixture only ever serves 127.0.0.1, and a
+    CI runner can spend half a minute on that lookup in every test."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
@@ -790,7 +801,7 @@ def main():
     Handler.slow = a.slow
     Handler.drop_once = a.drop_once
     Handler.cut_once = a.cut_once
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv = LocalServer(("127.0.0.1", a.port), Handler)
     print(f"model fixture on http://127.0.0.1:{srv.server_address[1]}", flush=True)
     srv.serve_forever()
 
