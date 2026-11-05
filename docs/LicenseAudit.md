@@ -87,7 +87,7 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 
 ## ヘルプ > Tsugumi を知る のフォント
 
-図の手書きに使う Yusei Magic（[SIL OFL 1.1](../macOS/Resources/explainer/YuseiMagic-OFL.txt)）は、`macOS/build-app.sh` が OFL の全文と一緒に `Contents/Resources/explainer/` へコピーします。改変はせず、アプリのプロセスにだけ登録します。単体での販売や、改変版での予約フォント名の使用はしません。由来と hash は [SOURCES.md](../macOS/Resources/explainer/SOURCES.md) にあります。
+「Tsugumi を知る」は文書サイトのページをそのまま表示するので、フォントは次の「文書サイトのフォント」と同じものです。`macOS/build-app.sh` が OFL の全文と一緒に `Contents/Resources/explainer/site/assets/` へコピーします。
 
 ## 配布経路で残っている対応
 

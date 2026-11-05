@@ -84,12 +84,21 @@ done
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
-# Help > Tsugumi を知る: the documents it reads as they are, its font (with
-# the OFL text) and the Cas A image (macOS/Resources/explainer/SOURCES.md).
-mkdir -p "$app/Contents/Resources/explainer"
-cp "$repo/README.md" "$repo/docs/Author.md" "$repo/docs/Philosophy.md" "$repo/docs/Name.md" \
-  "$repo/macOS/Resources/explainer/YuseiMagic-Regular.ttf" "$repo/macOS/Resources/explainer/YuseiMagic-OFL.txt" \
-  "$repo/macOS/Resources/explainer/casa-rgb-25628.png" "$app/Contents/Resources/explainer/"
+# Help > Tsugumi を知る: the documentation site's story pages, as they are, with
+# what they use (Sources/App/Explainer/ExplainerWindow.swift).
+explainer="$app/Contents/Resources/explainer"
+mkdir -p "$explainer/pages" "$explainer/site/js" "$explainer/site/assets" "$explainer/assets"
+stories=$(grep -l 'class="story"' "$repo"/docs/pages/*.html)
+[ -n "$stories" ] || { echo "no story pages in docs/pages" >&2; exit 1; }
+cp $stories "$explainer/pages/"
+cp "$repo/docs/site/site.css" "$explainer/site/"
+cp "$repo"/docs/site/js/{reader,art,scenes,scenes2}.js "$explainer/site/js/"
+cp "$repo"/docs/site/assets/* "$explainer/site/assets/"
+# The images the pages name, and no others: docs/assets holds all the screenshots.
+for used in $(grep -oh 'src="\.\./assets/[^"]*"\|href="\.\./assets/[^"]*"' $stories | sed 's/.*"\.\.\/\(.*\)"/\1/' | sort -u); do
+  mkdir -p "$explainer/$(dirname "$used")"
+  cp "$repo/docs/$used" "$explainer/$used"
+done
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
