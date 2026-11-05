@@ -8,6 +8,8 @@
 
 [GitHub Releases](https://github.com/gen740/Tsugumi/releases) の最新版を `/Applications` に入れます。
 
+`Tsugumi.dmg` を開いて `Applications` へドラッグするか、次のコマンドで入れます。
+
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
