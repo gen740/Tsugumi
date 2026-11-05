@@ -122,7 +122,11 @@ class Server {
 
   ServerOptions opts_;
   RequestSink* sink_;
-  int unix_fd_ = -1, ws_unix_fd_ = -1, tcp_fd_ = -1, wake_r_ = -1, wake_w_ = -1;
+  int unix_fd_ = -1;
+  int ws_unix_fd_ = -1;
+  int tcp_fd_ = -1;
+  int wake_r_ = -1;
+  int wake_w_ = -1;
   int bound_port_ = -1;
   std::thread thread_;
   std::atomic<bool> stopping_{false};

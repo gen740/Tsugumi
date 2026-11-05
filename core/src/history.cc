@@ -250,7 +250,8 @@ History::History(const std::filesystem::path& db_path, std::string cursor_secret
 // transaction when older, after a copy of it (history.sqlite.v<N>).
 void History::migrate() {
   sql::Db db(path_.string());
-  int64_t version = 0, tables = 0;
+  int64_t version = 0;
+  int64_t tables = 0;
   {
     auto v = db.prepare("PRAGMA user_version");
     if (v.step()) version = v.i64(0);
@@ -331,7 +332,8 @@ void History::flush() {
 void History::write_sync(const Work& work) {
   std::mutex m;
   std::condition_variable cv;
-  bool finished = false, ok = false;
+  bool finished = false;
+  bool ok = false;
   submit(work, [&](bool r) {
     std::lock_guard<std::mutex> l(m);
     ok = r;
@@ -1115,7 +1117,8 @@ class Txn {
 // Copies the finished runs `from` has and `to` lacks; inside a transaction.
 // A run or artifact id names a folder: only UUIDs are taken from a copy.
 const std::string kUuidGlob = [] {
-  std::string h = "[0-9a-fA-F]", g;
+  std::string h = "[0-9a-fA-F]";
+  std::string g;
   for (int n : {8, 4, 4, 4, 12}) {
     if (!g.empty()) g += "-";
     for (int i = 0; i < n; ++i) g += h;

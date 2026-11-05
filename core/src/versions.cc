@@ -165,7 +165,8 @@ std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
   std::string line;
   while (std::getline(in, line)) {
     std::istringstream w(line);
-    std::string word, secs;
+    std::string word;
+    std::string secs;
     VersionRunNote r;
     if (!(w >> word) || word != "run" || !(w >> r.run_id >> r.state >> r.ended)) continue;
     if (w >> secs) r.seconds = std::atof(secs.c_str());
@@ -407,7 +408,8 @@ VersionGraphData Versions::graph(size_t limit) {
   }
   if (!head) return g;
   // Branch and tag names by the commit they point at.
-  std::map<std::string, std::vector<std::string>> branches, tags;
+  std::map<std::string, std::vector<std::string>> branches;
+  std::map<std::string, std::vector<std::string>> tags;
   {
     RefIter it;
     check(git_reference_iterator_new(it.out(), r.get()), "refs");
@@ -444,7 +446,8 @@ VersionGraphData Versions::graph(size_t limit) {
     Note n;
     if (git_note_read(n.out(), r.get(), kNotesRef, &oid) == 0) vc.runs = parse_note(git_note_message(n.get()));
     // What changed from the first parent, by Card.
-    Tree mine, theirs;
+    Tree mine;
+    Tree theirs;
     git_commit_tree(mine.out(), c.get());
     if (git_commit_parentcount(c.get()) > 0) {
       Commit p;

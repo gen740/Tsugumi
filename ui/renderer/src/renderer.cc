@@ -35,13 +35,21 @@ struct VOut {
 )";
 
 struct Vertex {
-  float x, y;
-  float r, g, b, a;
+  float x;
+  float y;
+  float r;
+  float g;
+  float b;
+  float a;
 };
 
 struct Series {
-  std::vector<double> x, y;
-  float r, g, b, a;
+  std::vector<double> x;
+  std::vector<double> y;
+  float r;
+  float g;
+  float b;
+  float a;
 };
 
 }  // namespace
@@ -57,7 +65,8 @@ struct tsg_renderer {
   wgpu::Buffer vertices;
   uint64_t vertex_capacity = 0;
   uint32_t vertex_count = 0;
-  uint32_t width = 0, height = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
   float scale = 1;
   bool configured = false;
   bool dirty = true;
@@ -90,20 +99,27 @@ void configure(tsg_renderer* r) {
 // Appends a segment as two triangles of `px` pixel width.
 void segment(std::vector<Vertex>& out, float x0, float y0, float x1, float y1, float px, const tsg_renderer* r,
              const float* c) {
-  float dx = (x1 - x0) * r->width, dy = (y1 - y0) * r->height;
+  float dx = (x1 - x0) * r->width;
+  float dy = (y1 - y0) * r->height;
   float len = std::sqrt(dx * dx + dy * dy);
   if (len < 1e-6f) return;
   // Normal in pixels, converted back to NDC per axis.
-  float nx = -dy / len * px / r->width, ny = dx / len * px / r->height;
-  Vertex a{x0 + nx, y0 + ny, c[0], c[1], c[2], c[3]}, b{x0 - nx, y0 - ny, c[0], c[1], c[2], c[3]};
-  Vertex d{x1 + nx, y1 + ny, c[0], c[1], c[2], c[3]}, e{x1 - nx, y1 - ny, c[0], c[1], c[2], c[3]};
+  float nx = -dy / len * px / r->width;
+  float ny = dx / len * px / r->height;
+  Vertex a{x0 + nx, y0 + ny, c[0], c[1], c[2], c[3]};
+  Vertex b{x0 - nx, y0 - ny, c[0], c[1], c[2], c[3]};
+  Vertex d{x1 + nx, y1 + ny, c[0], c[1], c[2], c[3]};
+  Vertex e{x1 - nx, y1 - ny, c[0], c[1], c[2], c[3]};
   out.insert(out.end(), {a, b, d, d, b, e});
 }
 
 std::vector<Vertex> build(const tsg_renderer* r) {
   std::vector<Vertex> v;
   if (r->width == 0 || r->height == 0) return v;
-  double xmin = INFINITY, xmax = -INFINITY, ymin = INFINITY, ymax = -INFINITY;
+  double xmin = INFINITY;
+  double xmax = -INFINITY;
+  double ymin = INFINITY;
+  double ymax = -INFINITY;
   for (const auto& s : r->series)
     for (size_t i = 0; i < s.x.size(); ++i) {
       xmin = std::min(xmin, s.x[i]);
@@ -112,8 +128,12 @@ std::vector<Vertex> build(const tsg_renderer* r) {
       ymax = std::max(ymax, s.y[i]);
     }
   // Plot area in NDC with a margin of 12 points.
-  float mx = 12.0f * r->scale * 2.0f / r->width, my = 12.0f * r->scale * 2.0f / r->height;
-  float left = -1 + mx, right = 1 - mx, bottom = -1 + my, top = 1 - my;
+  float mx = 12.0f * r->scale * 2.0f / r->width;
+  float my = 12.0f * r->scale * 2.0f / r->height;
+  float left = -1 + mx;
+  float right = 1 - mx;
+  float bottom = -1 + my;
+  float top = 1 - my;
   const float grid[4] = {0.35f, 0.38f, 0.45f, 1.0f};
   float hair = std::max(1.0f, r->scale) * 0.5f;
   segment(v, left, bottom, right, bottom, hair, r, grid);

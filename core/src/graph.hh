@@ -39,7 +39,9 @@ struct HostFolder {
 };
 
 struct Settings {
-  std::string name, symbol, description;  // name: the Card id
+  std::string name;  // the Card id
+  std::string symbol;
+  std::string description;
   std::string language;  // "", cpp, python, bash
   bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;

@@ -159,7 +159,10 @@ bool worker_uid_on_host() {
 }
 
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
-  int data[2], control[2], out[2], err[2];
+  int data[2];
+  int control[2];
+  int out[2];
+  int err[2];
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 ||
       ::pipe(out) != 0 || ::pipe(err) != 0)
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
@@ -543,7 +546,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   auto evv = b.CreateVector(ev);
   auto run = b.CreateString(run_id);
   auto cp = wire::path(b, card);
-  auto w = b.CreateString(work), t = b.CreateString(tmp);
+  auto w = b.CreateString(work);
+  auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
   flatbuffers::Offset<flatbuffers::Vector<int32_t>> pf;

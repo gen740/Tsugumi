@@ -17,8 +17,9 @@
 namespace tsugumi {
 
 struct NixCall {
-  std::string pin_url, pin_hash;  // nixpkgs: a fetchTarball URL and its sha256 (SRI)
-  std::string args;               // Nix expression of the entry's arguments (sdk, gen, card)
+  std::string pin_url;   // nixpkgs: a fetchTarball URL
+  std::string pin_hash;  // nixpkgs: its sha256 (SRI)
+  std::string args;      // Nix expression of the entry's arguments (sdk, gen, card)
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;

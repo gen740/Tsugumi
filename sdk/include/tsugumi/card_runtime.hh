@@ -39,7 +39,9 @@ struct Context {
   std::string run_id;
   std::string card;  // full Card path joined with '/'
   uint64_t invocation = 0;
-  std::string working_directory, temporary_directory, output_directory;
+  std::string working_directory;
+  std::string temporary_directory;
+  std::string output_directory;
 };
 const Context& context();
 bool cancelled();
@@ -48,8 +50,10 @@ void log(const std::string& message);  // a line in the invocation's stderr log
 
 namespace visualization {
 struct Series {
-  std::string id, label;
-  std::vector<double> x, y;
+  std::string id;
+  std::string label;
+  std::vector<double> x;
+  std::vector<double> y;
 };
 void text(const std::string& text);
 /// Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted.

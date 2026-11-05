@@ -175,8 +175,10 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string package;          // a package body: <package>/lib/main.so
-  std::string pre, run, post;   // files with bash text (run: a bash body)
+  std::string package;  // a package body: <package>/lib/main.so
+  std::string pre;      // a file with bash text
+  std::string run;      // a file with bash text (a bash body)
+  std::string post;     // a file with bash text
 };
 
 struct Call {
@@ -318,7 +320,9 @@ int display_image_impl(void*, const char* media_type, const uint8_t* data, size_
 
 int display_points_impl(void*, const float* x, const float* y, const float* z, const uint32_t* colors, size_t count) {
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto xv = b.CreateVector(x, count), yv = b.CreateVector(y, count), zv = b.CreateVector(z, count);
+    auto xv = b.CreateVector(x, count);
+    auto yv = b.CreateVector(y, count);
+    auto zv = b.CreateVector(z, count);
     auto cv = b.CreateVector(colors, colors ? count : 0);
     return std::make_pair(D::DisplayValue::DisplayPointCloud, D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
   });
@@ -327,7 +331,8 @@ int display_points_impl(void*, const float* x, const float* y, const float* z, c
 
 int display_module_impl(void*, const char* name, const char* data_json) {
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(name), d = b.CreateString(data_json);
+    auto n = b.CreateString(name);
+    auto d = b.CreateString(data_json);
     return std::make_pair(D::DisplayValue::DisplayModule, D::CreateDisplayModule(b, n, d).Union());
   });
   return 0;

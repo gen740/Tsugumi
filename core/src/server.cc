@@ -516,7 +516,8 @@ void Server::parse_ws(Conn& c) {
   while (!c.closing) {
     auto& b = c.rbuf;
     if (b.size() < 2) return;
-    auto b0 = static_cast<uint8_t>(b[0]), b1 = static_cast<uint8_t>(b[1]);
+    auto b0 = static_cast<uint8_t>(b[0]);
+    auto b1 = static_cast<uint8_t>(b[1]);
     bool fin = b0 & 0x80;
     int opcode = b0 & 0x0F;
     if (b0 & 0x70) return drop(c, "websocket reserved bits");

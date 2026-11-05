@@ -50,7 +50,8 @@ class WorkerPool {
 
  private:
   struct Idle {
-    std::string card, key;
+    std::string card;
+    std::string key;
     std::unique_ptr<WorkerProc> worker;
     std::chrono::steady_clock::time_point since;
   };

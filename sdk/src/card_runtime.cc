@@ -48,7 +48,8 @@ void line_chart(const std::vector<Series>& series) {
 }
 
 void table(const std::vector<std::string>& columns, const std::vector<std::vector<std::string>>& rows) {
-  std::vector<const char*> cols, cells;
+  std::vector<const char*> cols;
+  std::vector<const char*> cells;
   for (const auto& c : columns) cols.push_back(c.c_str());
   for (const auto& r : rows) {
     if (r.size() != columns.size()) throw Failure("output_invalid", "table rows need one cell per column");

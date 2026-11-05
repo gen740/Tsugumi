@@ -41,7 +41,8 @@ std::optional<std::string> DisplayData::validate() const {
   } else if (const auto* s = std::get_if<Scalar>(&value)) {
     if (!std::isfinite(s->value)) return "display scalar must be finite";
   } else if (const auto* c = std::get_if<LineChart>(&value)) {
-    size_t points = 0, bytes = 0;
+    size_t points = 0;
+    size_t bytes = 0;
     for (const auto& series : c->series) {
       if (series.x.size() != series.y.size()) return "series " + series.id + ": x and y differ in length";
       for (double v : series.x)
