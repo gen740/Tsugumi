@@ -1,5 +1,6 @@
 #include "types.hh"
 
+#include "message_json.hh"
 #include "util/crypto.hh"
 
 #include <flatbuffers/idl.h>
@@ -696,7 +697,7 @@ bool flatbuffer_to_json(const Type& t, const std::string& bytes, std::string* ou
   }
   auto p = parser_from_type(t, error);
   if (!p) return false;
-  if (const char* e = flatbuffers::GenText(*p, bytes.data(), out)) {
+  if (const char* e = message_json::gen_text(*p, bytes.data(), out)) {
     *error = e;
     return false;
   }

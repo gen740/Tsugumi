@@ -1,9 +1,13 @@
 """Gradient boosting: each round adds small trees that correct what the earlier ones got wrong."""
+import os
+
+# One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-from threadpoolctl import threadpool_limits
 import xgboost as xgb
 
 from inputs.data.mnist.SubsetFile import SubsetFile
@@ -40,7 +44,6 @@ def send(ctx, name, settings, digest, y, pred, fit, predict):
 
 
 def main(ctx):
-    threadpool_limits(1)  # one thread: the numbers repeat and the times compare
     params = ctx.params()
     rounds, max_depth, eta, seed = params.Rounds(), params.MaxDepth(), params.Eta(), params.Seed()
     data = np.load(ctx.input("data", SubsetFile).Value().decode())
