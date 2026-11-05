@@ -1,0 +1,141 @@
+{
+  "name": "細胞画像の計数",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "begin"
+      },
+      {
+        "id": "generate"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "preprocess"
+      },
+      {
+        "id": "segment"
+      },
+      {
+        "id": "score"
+      },
+      {
+        "id": "sweep"
+      },
+      {
+        "id": "mitosis"
+      },
+      {
+        "id": "real"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "begin",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "begin",
+          "port": "synthetic"
+        },
+        "to": {
+          "card": "generate",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "begin",
+          "port": "real"
+        },
+        "to": {
+          "card": "mitosis",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "scene"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "preprocess"
+        },
+        "to": {
+          "card": "preprocess",
+          "port": "scene"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "score"
+        },
+        "to": {
+          "card": "score",
+          "port": "scene"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "sweep"
+        },
+        "to": {
+          "card": "sweep",
+          "port": "scene"
+        }
+      },
+      {
+        "from": {
+          "card": "preprocess",
+          "port": "cleaned"
+        },
+        "to": {
+          "card": "segment",
+          "port": "cleaned"
+        }
+      },
+      {
+        "from": {
+          "card": "segment",
+          "port": "labels"
+        },
+        "to": {
+          "card": "score",
+          "port": "labels"
+        }
+      },
+      {
+        "from": {
+          "card": "mitosis",
+          "port": "image"
+        },
+        "to": {
+          "card": "real",
+          "port": "image"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Lipinski の Rule of Five",
+  "content": "分子量 ≤ 500、logP ≤ 5、NH と OH の数 ≤ 5、N と O の数 ≤ 10 を確かめ、違反が max_violations 以下なら通過とする。",
+  "outputs": [
+    {
+      "name": "checked",
+      "description": "違反の数と、どの規則に違反したか"
+    }
+  ]
+}

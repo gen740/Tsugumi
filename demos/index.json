@@ -228,6 +228,42 @@
       ]
     },
     {
+      "id": "dose-response",
+      "title": "濃度–反応曲線",
+      "description": "A four-parameter logistic fit to seeded synthetic plate data for two fictional compounds, with residual-bootstrap intervals on the EC50 and Hill slope and their relative potency. The intervals contain the true values, and blow up with a warning when the concentration range does not bracket the EC50.",
+      "path": "dose-response",
+      "tags": [
+        "Python",
+        "合成データ",
+        "統計",
+        "当てはめ"
+      ]
+    },
+    {
+      "id": "molecules",
+      "title": "分子の物性",
+      "description": "RDKit computes molecular weight, Crippen logP, TPSA and hydrogen-bond counts for well-known molecules given as SMILES, draws them, checks Lipinski's rule of five, plots weight against logP interactively and compares Morgan fingerprints. Paste a new SMILES and rerun; an invalid one gets a clear message instead of a crash.",
+      "path": "molecules",
+      "tags": [
+        "Python",
+        "化学",
+        "RDKit",
+        "対話できるグラフ"
+      ]
+    },
+    {
+      "id": "cell-count",
+      "title": "細胞画像の計数",
+      "description": "Seeded synthetic fluorescence-like images with known cell centres: background subtraction, Otsu threshold and a distance-transform watershed, scored by matching to the true centres. Threshold alone against watershed, and a sweep over density and noise that shows where the method fails. The same steps also run on a real image of nuclei fixed by Nix.",
+      "path": "cell-count",
+      "tags": [
+        "Python",
+        "合成データ",
+        "画像",
+        "生物"
+      ]
+    },
+    {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
       "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",

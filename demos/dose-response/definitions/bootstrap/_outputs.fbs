@@ -1,0 +1,21 @@
+namespace dose;
+// Per compound: EC50 and Hill slope with their intervals, the true values and
+// the bootstrap samples (compounds x n_boot).
+table Intervals {
+  names:[string];
+  ec50:[double];
+  ec50_low:[double];
+  ec50_high:[double];
+  ec50_true:[double];
+  hill:[double];
+  hill_low:[double];
+  hill_high:[double];
+  hill_true:[double];
+  n_boot:ulong;
+  log_ec50_samples:[double];
+  hill_samples:[double];
+  conc_low:double;
+  conc_high:double;
+}
+table Outputs { intervals:Intervals (required); }
+root_type Outputs;
