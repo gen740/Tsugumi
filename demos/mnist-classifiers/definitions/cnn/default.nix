@@ -6,6 +6,6 @@ in
   run = inputs.tsugumi.pythonCard {
     inherit sdk;
     src = ./src;
-    packages = ps: [ ps.numpy ps.matplotlib ps.threadpoolctl ps.torch ];
+    packages = ps: [ ps.numpy ps.matplotlib ps.torch ];
   };
 }

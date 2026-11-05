@@ -1,9 +1,15 @@
 """A small convolutional network: it sees the digit as an image, trained on the CPU with a fixed seed."""
+import os
+
+# One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-from threadpoolctl import threadpool_limits
+import torch
+from torch import nn
 
 from inputs.data.mnist.SubsetFile import SubsetFile
 import outputs.result.mnist.Result as out
@@ -41,11 +47,6 @@ def send(ctx, name, settings, digest, y, pred, fit, predict):
 
 
 def main(ctx):
-    # Imported here, not at the top: torch asks for the current directory while it
-    # loads, which the Web UI's sandbox refuses until the Card's call has started.
-    import torch
-    from torch import nn
-
     params = ctx.params()
     channels, epochs, seed = params.Channels(), params.Epochs(), params.Seed()
     data = np.load(ctx.input("data", SubsetFile).Value().decode())
@@ -54,7 +55,6 @@ def main(ctx):
     train_y = torch.from_numpy(data["train_labels"]).long()
     test_x = torch.from_numpy(data["test_images"]).reshape(-1, 1, 28, 28)
 
-    threadpool_limits(1)  # one thread: the numbers repeat and the times compare
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
     generator = torch.manual_seed(seed)
