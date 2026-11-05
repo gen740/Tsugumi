@@ -36,7 +36,7 @@ a:hover { color: var(--strong); }
   background: var(--side); padding: 18px 14px 40px; font-size: 13.5px; line-height: 1.5; z-index: 5;
 }
 .brand { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 14px; }
-.brand a:first-child { display: flex; align-items: center; gap: 9px; color: var(--heading); font-weight: 700; font-size: 16px; text-decoration: none; }
+.brand > a:first-child { display: flex; align-items: center; gap: 9px; color: var(--heading); font-weight: 700; font-size: 16px; text-decoration: none; }
 .brand img { border-radius: 7px; }
 .brand-links { display: flex; gap: 10px; }
 .repo { font-size: 12px; color: var(--secondary); }

@@ -242,7 +242,7 @@ function page({ outRel, title, source, markdown, description, body, nav, story, 
 <nav class="side" aria-label="文書">
   <div class="brand"><a href="${asset('index.html')}"><img src="${asset('assets/tsugumi-icon.svg')}" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="${asset('llms.txt')}" title="AI 向けの案内">llms.txt</a><a class="repo" href="${REPO}" rel="noopener">GitHub</a></span></div>
   <details class="nav-fold" open><summary>文書の一覧</summary>${nav}</details>
-  <script>if (matchMedia('(max-width: 820px)').matches) document.currentScript.previousElementSibling.open = false</script>
+  <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 </nav>
 <main class="main">
 ${hero ?? ''}${story ? '<div class="mode" role="group" aria-label="読み方"><button type="button" data-mode="read" aria-pressed="true">読む</button><button type="button" data-mode="cards" aria-pressed="false">カード</button></div>' : ''}
