@@ -25,7 +25,7 @@
 <article class="doc">
 <h1 id="同梱デモのしくみ">同梱デモのしくみ</h1>
 <p>アプリに同梱しているデモが、どんな Card をどうつなぎ、実行すると何が起きるのかをまとめます。ホーム画面の「デモを見る」から「コピーを開く」を選ぶと、<code>~/Documents/Tsugumi/&lt;demo&gt;</code> に編集できるコピーができます（同梱の原本は変わりません）。画面の操作は<a href="usage.html">操作ガイド</a>、Card の種類と実行の規則は<a href="features.html#2-card-と-workflow">主要機能</a>を参照してください。</p>
-<div class="table-wrap"><table><thead><tr><th>デモ</th><th>題材</th><th>このデモで分かること</th></tr></thead><tbody><tr><td><a href="#データからレポートへreport">データからレポートへ</a></td><td>売上表の集計とレポート</td><td>seed による再現、失敗と <code>blocked</code>、保存入力での単体再実行、成果物、子 Workflow</td></tr><tr><td><a href="#collatz-c--pythoncollatz">Collatz (C++ / Python)</a></td><td>コラッツ数列</td><td>2 言語での独立実装の照合、分岐・合流・ループ、<code>maxRuns</code>、整数あふれの検出</td></tr><tr><td><a href="#live-streamlive-stream">Live Stream</a></td><td>ランダムウォークの逐次描画</td><td>フィードバックループによるストリーム、即時の停止、Dawn の折れ線</td></tr><tr><td><a href="#plotsplots">Plots</a></td><td>ランダムウォークの拡散</td><td>ふつうの matplotlib（<code>plt.show()</code>・<code>FuncAnimation</code>）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる</td></tr><tr><td><a href="#cas-a--chandra-rgbcasa">Cas A · Chandra RGB</a></td><td>超新星残骸の X 線観測</td><td>Nix で固定した観測データ、Card 単位の再実行、版の履歴</td></tr><tr><td><a href="#科学デモ公開データの取得と解析">科学デモ</a></td><td>重力波・タンパク質・系外惑星・地震</td><td>公開データの取得（大きさと SHA-256）と解析・図示</td></tr><tr><td><a href="#mnist--手書き数字の分類器くらべmnist-classifiers">MNIST · 手書き数字の分類器くらべ</a></td><td>手書き数字の分類（kNN から CNN まで 7 種）</td><td>1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる</td></tr><tr><td><a href="#draft-版agent-に実装させる">Draft 版</a></td><td>上の科学デモと Cas A の計画だけ</td><td>Draft から Agent が Card を生成し、実行して確かめる</td></tr><tr><td><a href="#力学系ギャラリーdynamics-draft">力学系ギャラリー</a></td><td>6 つの力学系</td><td>独立した Draft を Agent が helper に手分けして同時に実装する</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>デモ</th><th>題材</th><th>このデモで分かること</th></tr></thead><tbody><tr><td><a href="#データからレポートへreport">データからレポートへ</a></td><td>売上表の集計とレポート</td><td>seed による再現、失敗と <code>blocked</code>、保存入力での単体再実行、成果物、子 Workflow</td></tr><tr><td><a href="#collatz-c--pythoncollatz">Collatz (C++ / Python)</a></td><td>コラッツ数列</td><td>2 言語での独立実装の照合、分岐・合流・ループ、<code>maxRuns</code>、整数あふれの検出</td></tr><tr><td><a href="#live-streamlive-stream">Live Stream</a></td><td>ランダムウォークの逐次描画</td><td>フィードバックループによるストリーム、即時の停止、Dawn の折れ線</td></tr><tr><td><a href="#plotsplots">Plots</a></td><td>ランダムウォークの拡散</td><td>ふつうの matplotlib（<code>plt.show()</code>・<code>FuncAnimation</code>）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる</td></tr><tr><td><a href="#cas-a--chandra-rgbcasa">Cas A · Chandra RGB</a></td><td>超新星残骸の X 線観測</td><td>Nix で固定した観測データ、Card 単位の再実行、版の履歴</td></tr><tr><td><a href="#科学デモ公開データの取得と解析">科学デモ</a></td><td>重力波・タンパク質・系外惑星・地震</td><td>公開データの取得（大きさと SHA-256）と解析・図示</td></tr><tr><td><a href="#mnist--手書き数字の分類器くらべmnist-classifiers">MNIST · 手書き数字の分類器くらべ</a></td><td>手書き数字の分類（kNN から CNN まで 7 種）</td><td>1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる</td></tr><tr><td><a href="#newton-法newton">Newton 法</a></td><td>複素平面での Newton 法</td><td>初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う</td></tr><tr><td><a href="#薬物動態pharmacokinetics">薬物動態</a></td><td>架空の薬物の血中濃度</td><td>投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない）</td></tr><tr><td><a href="#最大流と最小カットmax-flow">最大流と最小カット</a></td><td>最大流と最小カット</td><td>最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る</td></tr><tr><td><a href="#draft-版agent-に実装させる">Draft 版</a></td><td>上の科学デモと Cas A の計画だけ</td><td>Draft から Agent が Card を生成し、実行して確かめる</td></tr><tr><td><a href="#力学系ギャラリーdynamics-draft">力学系ギャラリー</a></td><td>6 つの力学系</td><td>独立した Draft を Agent が helper に手分けして同時に実装する</td></tr></tbody></table></div>
 <p>図の矢印は Card の線（<code>出力ポート → 入力ポート</code>）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。</p>
 <h2 id="基本のデモ">基本のデモ</h2>
 <h3 id="データからレポートへreport">データからレポートへ（<code>report</code>）</h3>
@@ -131,6 +131,49 @@ Cas A の <code>load</code> が Nix で取得を固定するのに対し、こ�
 <li><code>prepare</code> の <code>train_size</code> を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（<code>svm</code> と <code>knn</code> の予測時間が伸びます）。</li>
 </ul>
 <p>データは LeCun・Cortes・Burges の MNIST で、PyTorch のミラー <code>https://ossci-datasets.s3.amazonaws.com/mnist/</code> から取得します。</p>
+<h3 id="newton-法newton">Newton 法（<code>newton</code>）</h3>
+<p>$z^3 - 1 = 0$ を複素平面で解き、初期値が行き先と収束の速さをどう決めるかを見ます。2 次収束の見積もりと収束先の地図に加えて、2 次収束を失う場合と収束しない場合を並べます。</p>
+<pre><code class="language-text">start → settings → roots ─ share ─┬→ orbits ─errors→ order
+                                  ├→ basins
+                                  └→ trouble
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>settings</code></td><td>input</td><td>多項式の実数係数 <code>coeffs</code>（高次から、既定は <code>[1, 0, 0, -1]</code>）、減衰係数 <code>damping</code>、<code>tolerance</code>、<code>max_iter</code> を流す</td></tr><tr><td><code>roots</code></td><td>Python</td><td>Newton 法を使わず、コンパニオン行列の固有値（<code>numpy.roots</code>）で根と重複度、臨界点を求める。根と係数の関係で確かめ、$z^n = c$ の形なら閉じた式とも比べる</td></tr><tr><td><code>share</code></td><td>fork</td><td>問題を <code>orbits</code>・<code>basins</code>・<code>trouble</code> に配る</td></tr><tr><td><code>orbits</code></td><td>Python</td><td><code>start_re</code>・<code>start_im</code> の初期値ごとに、誤差を反復に対して対数軸で描く</td></tr><tr><td><code>order</code></td><td>Python</td><td>誤差の列から収束の次数 $q$ と定数を見積もり、重複度と $\lambda$ から決まる理論値と並べて表にする</td></tr><tr><td><code>basins</code></td><td>Python</td><td>格子の全点を初期値にして、どの根に着くかと反復の回数を描く。<code>center_re</code>・<code>center_im</code>・<code>half_width</code> で拡大できる</td></tr><tr><td><code>trouble</code></td><td>Python</td><td>基準の場合、臨界点の近く（<code>offset</code>）、重根、$\lambda = 2$ で 2 次に戻した重根、周期 2 の閉路を並べる（多項式は固定）</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li><code>basins</code> の <code>center_re</code> を -0.8、<code>half_width</code> を 0.2 にして、その Card だけを実行し直す。境界のどこを拡大しても 3 色が集まっている。</li>
+<li><code>trouble</code> の <code>offset</code> を 1e-5 にする。最初の一歩が $1/(3 z_0^2)$ まで飛ばされ、遠くでは 1 回に 2/3 ずつしか戻らないので、反復が 37 回から 60 回に増える（既定の <code>max_iter</code> ちょうど。さらに小さくすると <code>max_iter</code> を増やす必要がある）。</li>
+<li><code>settings</code> の <code>damping</code> を 0.5 にして全体を実行する。どの初期値でも次数が 1、比が 0.5 になり、地図の境界の形も変わる。</li>
+<li><code>settings</code> の <code>coeffs</code> を <code>[1, 0, -3, 2]</code>（$(z-1)^2(z+2)$）にする。重複度 2 の根で次数が 1、比が 0.5 に落ち、誤差はおよそ $10^{-8}$ で止まる。</li>
+<li><code>settings</code> の <code>coeffs</code> を <code>[1, 0, -2, 2]</code>（$z^3 - 2z + 2$）にする。0 の周りに黒い領域（周期 2 の閉路に吸い込まれて収束しない初期値）が現れる。</li>
+</ul>
+<h3 id="薬物動態pharmacokinetics">薬物動態（<code>pharmacokinetics</code>）</h3>
+<p>架空の薬物「ツグミシン」の 1 コンパートメント経口モデルで、投与間隔を変えると濃度がどう動くかを比べます。<strong>教育用の架空のモデルです。実在の薬の値ではなく、医療上の助言や投与の指針でもありません。</strong> 有効域も作り物です。</p>
+<pre><code class="language-text">start → settings → simulate ─curves→ share ─┬→ check
+                                            ├→ window
+                                            └→ missed
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>settings</code></td><td>input</td><td>比べる投与計画（<code>doses_mg</code>・<code>intervals_h</code>）、<code>half_life_h</code>、<code>ka_per_h</code>、<code>volume_l</code>、<code>bioavailability</code>、作り物の有効域（<code>low_mg_l</code>・<code>high_mg_l</code>）、<code>days</code> を流す</td></tr><tr><td><code>simulate</code></td><td>Python</td><td>微分方程式を投与ごとに区切って <code>solve_ivp</code> で解き、投与計画を並べて濃度の推移を Plotly で描く</td></tr><tr><td><code>share</code></td><td>fork</td><td>結果を <code>check</code>・<code>window</code>・<code>missed</code> に配る</td></tr><tr><td><code>check</code></td><td>Python</td><td>閉じた式の重ね合わせ、定常状態の蓄積比 $R$、平均濃度を数値解と比べて表にする。差が大きければ失敗する</td></tr><tr><td><code>window</code></td><td>Python</td><td>最後の投与間隔の濃度を重ね、山、谷、有効域の中にいる時間の割合を比べる</td></tr><tr><td><code>missed</code></td><td>Python</td><td><code>missed_at_h</code> 以降の投与を <code>missed_count</code> 回抜いたときの濃度を、閉じた式で投与計画ごとに描く</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li>そのまま実行して <code>window</code> を見る。400 mg を 24 時間ごとと 200 mg を 12 時間ごとは平均濃度が同じ（<code>check</code> の表）で、間隔を詰めると山と谷の差が縮む。</li>
+<li><code>missed</code> の <code>missed_count</code> を 2 にして、その Card だけを実行し直す。1 日量が同じなら、間隔が長い計画ほど有効域の下にいる時間が大きく増える。</li>
+<li><code>settings</code> の <code>half_life_h</code> を 16 にして全体を実行する。蓄積比が大きくなり、定常に着くまでの時間も延びる。</li>
+<li><code>settings</code> の <code>days</code> を短くすると、定常に着かないことが <code>check</code> の「定常への到達」に出る。</li>
+</ul>
+<h3 id="最大流と最小カットmax-flow">最大流と最小カット（<code>max-flow</code>）</h3>
+<p>seed から作った架空の層状ネットワークで、最大流と最小カットが等しいことを確かめます。どの辺の容量を増やせば最大流が増え、どの辺では増えないのかを、比べて見られます。</p>
+<pre><code class="language-text">start → settings → network → flow → cut ─ share ─┬→ verify
+                                                 ├→ whatif
+                                                 └→ sweep
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>settings</code></td><td>input</td><td><code>seed</code>（53）、<code>layers</code>、<code>width</code>、<code>edge_probability</code>、<code>max_capacity</code> を流す</td></tr><tr><td><code>network</code></td><td>Python</td><td>seed から層状の容量つき有向グラフを作る（架空のデータ）</td></tr><tr><td><code>flow</code></td><td>Python</td><td>networkx で最大流を求め、各辺の流量/容量を図に描く。容量と保存則を確かめる</td></tr><tr><td><code>cut</code></td><td>Python</td><td>networkx で最小カットを求め、$s$ 側、$t$ 側、カットの辺を図に描く。最大流 = 最小カットでなければ失敗する</td></tr><tr><td><code>share</code></td><td>fork</td><td>結果を <code>verify</code>・<code>whatif</code>・<code>sweep</code> に配る</td></tr><tr><td><code>verify</code></td><td>Python</td><td>scipy の <code>maximum_flow</code> と全カットの総当たりで同じ値が出ることを確かめ、最小カットの数を数える</td></tr><tr><td><code>whatif</code></td><td>Python</td><td>カット上の辺とカット外の辺の容量を <code>raise_by</code> だけ増やし、最大流と新しいカットを表で比べる。<code>edge</code>（例: <code>a1-&gt;b1</code>）で辺を選べる</td></tr><tr><td><code>sweep</code></td><td>Python</td><td>すべての辺について、容量を <code>raise_by</code> だけ増やしたときの最大流の増分を棒で並べる</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li>そのまま実行して <code>sweep</code> を見る。カットの 3 本のうち増えるのは 2 本だけで、<code>a2-&gt;b2</code> は別の最小カットが残っているので増えない（<code>verify</code> が最小カット 2 個と数える）。</li>
+<li><code>whatif</code> の <code>edge</code> を <code>s-&gt;a2</code> にして、<code>raise_by</code> を 1000 にする。容量いっぱいに流れている辺でも、カット外なら最大流は増えない。</li>
+<li><code>whatif</code> の <code>edge</code> を <code>b3-&gt;c3</code> にする。10 増やしても 8 しか増えない。次のカットが詰まるからで、<code>raise_by</code> を増やしても増分はそこで止まる。</li>
+<li><code>settings</code> の <code>seed</code> を変えて全体を実行する。別のネットワークでも <code>verify</code> の値はすべて一致する。</li>
+</ul>
 <h2 id="draft-版agent-に実装させる">Draft 版（Agent に実装させる）</h2>
 <p><code>casa-draft</code>・<code>gw150914-draft</code>・<code>protein-6lu7-draft</code>・<code>exoplanet-transit-draft</code>・<code>seismic-trench-draft</code> は、上のデモと同じ計画を Draft だけで持つプロジェクトです。開始 Card と 3 つの Draft があり、各 Draft の説明には、何を受け取り、何をして、何を渡すかが書かれています（実装済みのデモの Card の説明と同じ文です）。</p>
 <p>Canvas の右上の「Card を生成」を押すと、Agent が Draft の説明と前後の接続を読み、コード・出力型・Nix の環境定義を作って保存し、実行して確かめます。途中で失敗したり取り消したりしても、中途半端な変更は保存されず、計画は残ります。実際の Claude API で <code>casa-draft</code> を実装させた記録は <a href="agentrun.html">AgentRun.md</a> にあります。</p>

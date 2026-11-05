@@ -192,6 +192,42 @@
       ]
     },
     {
+      "id": "newton",
+      "title": "Newton 法 · 初期値と収束",
+      "description": "Newton's method on z^3 - 1 in the complex plane: error against iteration from a list of starts with the order estimated numerically, the fractal basins of attraction with iteration counts, and the cases that lose quadratic convergence or never converge (a start near a critical point, a double root, a 2-cycle). Checked against the exact roots.",
+      "path": "newton",
+      "tags": [
+        "Python",
+        "数値計算",
+        "フラクタル",
+        "分岐・分配・合流"
+      ]
+    },
+    {
+      "id": "pharmacokinetics",
+      "title": "薬物動態 · 架空の薬物ツグミシン",
+      "description": "A one-compartment oral model of a fictional drug (a teaching model, not medical advice or dosing guidance): several dosing regimens side by side in an interactive plot, accumulation to steady state, peak and trough against a made-up window and missed doses. The numerical solution is compared with the closed-form superposition and the steady-state accumulation ratio.",
+      "path": "pharmacokinetics",
+      "tags": [
+        "Python",
+        "数値計算",
+        "対話できるグラフ",
+        "分岐・分配・合流"
+      ]
+    },
+    {
+      "id": "max-flow",
+      "title": "最大流と最小カット",
+      "description": "A seeded synthetic layered network: the maximum flow by networkx, the minimum cut with max-flow = min-cut asserted, both drawn on the network, verified by scipy and a brute force over all cuts. Raising an edge off the cut changes nothing; a comparison Card and a sweep over every edge show which edges do move the result.",
+      "path": "max-flow",
+      "tags": [
+        "Python",
+        "グラフ理論",
+        "数値計算",
+        "分岐・分配・合流"
+      ]
+    },
+    {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
       "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",

@@ -1,0 +1,10 @@
+{
+  "description": "ネットワークの作り方",
+  "content": "乱数の seed、層の数と幅、隣り合う層の間に辺を張る確率、容量の上限を次へ渡す。",
+  "outputs": [
+    {
+      "name": "settings",
+      "description": "ネットワークを作る設定"
+    }
+  ]
+}

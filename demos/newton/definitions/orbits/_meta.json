@@ -1,0 +1,10 @@
+{
+  "description": "初期値ごとの誤差の落ち方",
+  "content": "start_re と start_im の初期値から Newton 法を回し、基準の根までの誤差を反復ごとに対数軸で描く。各軌道の誤差列を次へ渡す。",
+  "outputs": [
+    {
+      "name": "errors",
+      "description": "初期値ごとの誤差の列と行き着いた根"
+    }
+  ]
+}
