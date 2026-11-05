@@ -54,6 +54,10 @@ Apache-2.0 の依存については、ライセンスのコピー、適用され
 
 bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの一括ライセンスではありません。`GUST-FONT-LICENSE.txt` は LPPL 1.3c 以降の条件を参照しています。配布する各ファイルに対応する上流の著作権表示、ライセンス、必要な関連文書を揃えることが残っています。特に XITS / KpMath Sans は、ファイル名から許諾を推定せず上流配布物と照合します。
 
+## ヘルプ > Tsugumi を知る のフォント
+
+図の手書きに使う Yusei Magic（[SIL OFL 1.1](../macOS/Resources/explainer/YuseiMagic-OFL.txt)）は、`macOS/build-app.sh` が OFL の全文と一緒に `Contents/Resources/explainer/` へコピーします。改変はせず、アプリのプロセスにだけ登録します。単体での販売や、改変版での予約フォント名の使用はしません。由来と hash は [SOURCES.md](../macOS/Resources/explainer/SOURCES.md) にあります。
+
 ## 配布経路で残っている対応
 
 以下は、この文書追加では解消していない配布上の作業です。
