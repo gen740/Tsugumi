@@ -28,6 +28,7 @@
 <p>対応環境は <strong>Apple silicon Mac / macOS 26 以降</strong>です。初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。</p>
 <h3 id="リリース版を入れる">リリース版を入れる</h3>
 <p><a href="https://github.com/gen740/Tsugumi/releases" rel="noopener">GitHub Releases</a> の最新版を <code>/Applications</code> に入れます。</p>
+<p><code>Tsugumi.dmg</code> を開いて <code>Applications</code> へドラッグするか、次のコマンドで入れます。</p>
 <pre><code class="language-bash">curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip &amp;&amp; ditto -x -k /tmp/Tsugumi.zip /Applications &amp;&amp; open /Applications/Tsugumi.app
 </code></pre>
 <p>リリース版は Apple の Developer ID による署名と公証をしていない ad-hoc 署名（VM を動かすための virtualization entitlement つき）です。ブラウザでダウンロードした zip から取り出したアプリは Gatekeeper に止められるので、上のように <code>curl</code> で取得するか、取り出したあとに隔離属性を外してください。</p>
