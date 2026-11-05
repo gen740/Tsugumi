@@ -8,10 +8,8 @@
 | 文書 | 内容 |
 | --- | --- |
 | [INSTALL.md](../INSTALL.md) | GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順 |
-| [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
-| [CardGuide.md](CardGuide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する） |
 | [Usage.md](Usage.md) | デモの案内に沿って始める手順と、よく使う操作 |
-| [CardGuide.md](CardGuide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++ で作る（テストがこのページのコードを実行する） |
+| [CardGuide.md](CardGuide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する） |
 | [Demos.md](Demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
 | [claude-code.md](claude-code.md) | Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう |
