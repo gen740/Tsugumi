@@ -140,9 +140,19 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
          "(deny file-write* (subpath " + quote(scripts) + "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
-         // own ports and sockets, the web server, other local services.
-         (sp.network ? "(allow network*)\n(allow mach-lookup)\n(deny network-outbound (remote ip \"localhost:*\"))\n"
+         // own ports and sockets, the web server, other local services. For
+         // Seatbelt "localhost" is every address of this host (LAN, VPN,
+         // 0.0.0.0), not only loopback; it accepts no other host, so other
+         // machines cannot be denied one by one. The one exception is
+         // mDNSResponder: getaddrinfo asks its socket for every name not in
+         // /etc/hosts. The last matching rule wins, so it comes after the
+         // denial. Of the Mach services only trustd: Security.framework (Go,
+         // NSURLSession) verifies certificates through it. The others are the
+         // user's session: the clipboard, LaunchServices, Apple events.
+         (sp.network ? "(allow network*)\n(allow mach-lookup (global-name \"com.apple.trustd.agent\"))\n"
+                       "(deny network-outbound (remote ip \"localhost:*\"))\n"
                        "(deny network-outbound (remote unix-socket))\n"
+                       "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n"
                      : "");
 }
 #endif

@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="https://img.shields.io/badge/docs-gen740.github.io%2FTsugumi-c97d3d" alt="Web 版のドキュメント"></a>
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
@@ -209,6 +210,8 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 「継ぐ・積む・組む」「紡ぐ」、そして冬に口を噤む鳥・ツグミに重ねた思いについては、**[名前の由来](pages/name.md)** をご覧ください。
 
 ## ドキュメント
+
+動く図つきの Web 版を **<https://gen740.github.io/Tsugumi/>** で公開しています。内容はこのリポジトリの Markdown と同じです。
 
 | 目的 | 文書 |
 | --- | --- |

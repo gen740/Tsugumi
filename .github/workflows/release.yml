@@ -1,7 +1,8 @@
 # Builds the app for a version and publishes it as a GitHub release:
 # Tsugumi.zip (the app, ad-hoc signed, `build-app.sh --release`) and
-# Tsugumi.zip.sha256. Installed release builds read the latest release and
-# update themselves to it (macOS/Sources/App/Model/Updater.swift).
+# Tsugumi.zip.sha256, which installed release builds read to update themselves
+# (macOS/Sources/App/Model/Updater.swift), and Tsugumi.dmg, for people
+# installing it from a browser.
 #
 # Started by a tag v<major.minor.patch> that matches VERSION
 # (macOS/tools/release.sh makes and pushes one), or by hand with a version:
@@ -71,7 +72,11 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :TsugumiChannel' "$app/Contents/Info.plist")" = release
           test "v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$TAG"
           (cd dist && ditto -c -k --sequesterRsrc --keepParent Tsugumi.app Tsugumi.zip && shasum -a 256 Tsugumi.zip > Tsugumi.zip.sha256)
-          ls -l dist/Tsugumi.zip
+          mkdir dist/dmg && ditto "$app" dist/dmg/Tsugumi.app && ln -s /Applications dist/dmg/Applications
+          codesign --verify --deep --strict dist/dmg/Tsugumi.app
+          hdiutil create -volname Tsugumi -srcfolder dist/dmg -ov -format UDZO dist/Tsugumi.dmg
+          rm -rf dist/dmg
+          ls -l dist/Tsugumi.zip dist/Tsugumi.dmg
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,11 +84,13 @@ jobs:
           cat > notes.md <<'NOTES'
           Apple silicon Mac / macOS 26 以降。インストール済みの Tsugumi は自動でこの版に更新されます（次に終了したとき）。
 
-          新しく入れる場合（ad-hoc 署名のため、ブラウザでダウンロードすると Gatekeeper に止められます。curl で取得してください）:
+          新しく入れる場合は Tsugumi.dmg を開いて Applications へ入れます。ad-hoc 署名のため、ブラウザでダウンロードしたものは Gatekeeper に止められます。一度だけ `xattr -dr com.apple.quarantine /Applications/Tsugumi.app` を実行してください。
+
+          curl で入れる場合（Gatekeeper に止められません）:
 
           ```bash
           curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
           ```
           NOTES
-          gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 \
+          gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg \
             --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes
