@@ -4,3 +4,7 @@ macOS/Sources/Grammars/TreeSitterNix/** linguist-vendored
 macOS/Sources/Grammars/TreeSitterPython/** linguist-vendored
 # Our FlatBuffers grammar is grammar.js; src/ is generated from it.
 macOS/Sources/Grammars/TreeSitterFBS/src/** linguist-generated
+# Made by docs/site/build.mjs from the Markdown documents.
+docs/index.html linguist-generated
+docs/pages/** linguist-generated
+docs/Protocol.md linguist-generated

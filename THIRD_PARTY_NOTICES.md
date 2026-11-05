@@ -151,6 +151,15 @@ starts bundling their binaries or a populated Nix store, its redistribution
 inventory and obligations must expand accordingly. The same applies when
 distributing a standalone daemon or a different container image.
 
+## Documentation site
+
+The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image:
+
+| Component | Version / license text | Use |
+| --- | --- | --- |
+| Yusei Magic | [google/fonts `f58dfb9`](https://github.com/google/fonts/tree/f58dfb9001f31a5eb15b4960b9548b8fd0fa6168/ofl/yuseimagic), [SIL OFL 1.1](docs/site/assets/YuseiMagic-OFL.txt) (Copyright 2020 The Yusei Magic Project Authors; no Reserved Font Name) | `docs/site/assets/YuseiMagic-subset.woff`, subset to the characters of the figures with fonttools |
+| Cas A RGB image | Output of the Cas A demo's `rgb` Card (Chandra ObsID 25628) | `docs/site/assets/casa-rgb-25628.png`, the result in a figure; derived from Chandra observation data (see External data below) |
+
 ## External data
 
 The Cas A demo fetches Chandra observation data from HEASARC on demand.

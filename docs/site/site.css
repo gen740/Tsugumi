@@ -1,0 +1,157 @@
+/* The documentation site: the same dark page as the app's "Tsugumi を知る". */
+:root {
+  color-scheme: dark;
+  --page: #1b1d1f;
+  --side: #141618;
+  --text: #e2dfd8;
+  --secondary: #9b9d9f;
+  --heading: #f3ede2;
+  --strong: #f0b57a;
+  --link: #d9a06a;
+  --rule: rgba(255, 255, 255, 0.08);
+  --rufous: #c97d3d;
+  --thread: #efe0c3;
+  --code: rgba(255, 255, 255, 0.06);
+  --sidebar: 268px;
+  --column: 680px;
+}
+* { box-sizing: border-box; }
+html { background: var(--page); scroll-padding-top: 24px; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font: 17px/1.85 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  overflow-wrap: anywhere;
+}
+a { color: var(--link); text-underline-offset: 3px; }
+a:hover { color: var(--strong); }
+:focus-visible { outline: 2px solid var(--strong); outline-offset: 2px; border-radius: 3px; }
+
+.layout { display: flex; align-items: flex-start; }
+
+/* The list of documents */
+.side {
+  position: sticky; top: 0; flex: 0 0 var(--sidebar); width: var(--sidebar); height: 100vh; overflow-y: auto;
+  background: var(--side); padding: 18px 14px 40px; font-size: 13.5px; line-height: 1.5; z-index: 5;
+}
+.brand { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 14px; }
+.brand a:first-child { display: flex; align-items: center; gap: 9px; color: var(--heading); font-weight: 700; font-size: 16px; text-decoration: none; }
+.brand img { border-radius: 7px; }
+.repo { font-size: 12px; color: var(--secondary); }
+.nav-fold > summary { display: none; }
+.nav-group h2 { margin: 18px 6px 6px; font-size: 11.5px; font-weight: 700; color: var(--secondary); letter-spacing: 0.04em; }
+.nav-group ul { list-style: none; margin: 0; padding: 0; }
+.nav-group li a { display: block; padding: 5px 8px 5px 12px; color: var(--secondary); text-decoration: none; border-left: 2px solid transparent; border-radius: 0 6px 6px 0; }
+.nav-group li a:hover { color: var(--heading); background: rgba(255, 255, 255, 0.04); }
+.nav-group li.on a { color: var(--heading); font-weight: 600; border-left-color: var(--thread); }
+.nav-group small { display: block; font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.6; }
+
+/* The page */
+.main { position: relative; flex: 1 1 auto; min-width: 0; padding: 56px 40px 45vh; }
+html:not(.story) .main { padding-bottom: 120px; }
+.doc, .source, .hero, .mode { max-width: var(--column); margin-left: auto; margin-right: auto; }
+html:not(.story) .doc, html:not(.story) .source { max-width: 860px; }
+.doc { position: relative; z-index: 1; }
+.source { position: relative; z-index: 1; margin-bottom: 18px; color: var(--secondary); font-size: 12.5px; }
+.source a { color: var(--secondary); }
+
+.hero { position: relative; z-index: 1; margin-bottom: 48px; }
+.hero img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.hero p { margin: 18px 0 14px; color: var(--heading); font-size: 22px; font-weight: 700; line-height: 1.5; }
+.cta { display: inline-block; padding: 7px 18px; border-radius: 8px; background: var(--rufous); color: #1b1d1f; font-size: 15px; font-weight: 700; text-decoration: none; }
+.cta:hover { background: var(--strong); color: #1b1d1f; }
+
+.mode { position: relative; z-index: 3; display: flex; gap: 2px; width: max-content; margin-left: max(0px, calc((100% - var(--column)) / 2)); margin-bottom: 14px; padding: 2px; background: rgba(255, 255, 255, 0.06); border-radius: 8px; }
+.mode button { padding: 3px 14px; border: 0; border-radius: 6px; background: none; color: var(--secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.mode button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.14); color: var(--heading); }
+
+h1, h2, h3, h4 { color: var(--heading); line-height: 1.45; }
+h1 { margin: 0 0 26px; font-size: 34px; }
+h2 { margin: 46px 0 16px; font-size: 25px; }
+h3 { margin: 30px 0 10px; font-size: 20px; }
+h4 { margin: 24px 0 8px; font-size: 17px; }
+p, ul, ol { margin: 0 0 18px; }
+.doc li { margin-bottom: 10px; }
+.doc li > ul, .doc li > ol { margin: 10px 0 0; }
+.doc li::marker { color: var(--rufous); font-weight: 600; }
+strong { color: var(--strong); }
+h1 strong, h2 strong, h3 strong { color: inherit; }
+code { padding: 0.1em 0.35em; border-radius: 4px; background: var(--code); font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { margin: 0 0 20px; padding: 14px 16px; overflow-x: auto; border-radius: 8px; background: rgba(0, 0, 0, 0.28); line-height: 1.55; overflow-wrap: normal; }
+pre code { padding: 0; background: none; font-size: 13.5px; }
+img { max-width: 100%; height: auto; }
+.doc img { border-radius: 8px; }
+hr { height: 1px; margin: 28px 0; border: 0; background: var(--rule); }
+blockquote { margin: 0 0 18px; padding-left: 16px; border-left: 2px solid var(--rule); color: var(--secondary); }
+.table-wrap { margin: 0 0 22px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.65; }
+th, td { padding: 9px 18px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; overflow-wrap: break-word; }
+th { color: var(--heading); font-weight: 600; white-space: nowrap; }
+
+/* A figure, wider than the text; the page's canvas draws it in this place. */
+.ex-fig { margin: 4px 0 34px; }
+.ex-fig figcaption { color: var(--secondary); font-size: 13.5px; line-height: 1.7; text-align: center; }
+html.no-figures .ex-fig { display: none; }
+.ex-fig-space { position: relative; left: 50%; transform: translateX(-50%); width: min(1000px, calc(100vw - var(--sidebar) - 40px)); }
+
+.ex-layer { position: fixed; top: 0; pointer-events: none; }
+.ex-layer.back { z-index: 0; }
+.ex-layer.front { z-index: 2; }
+
+/* A card at a time */
+.deck { position: fixed; top: 0; right: 0; bottom: 0; left: var(--sidebar); z-index: 4; display: flex; flex-direction: column; background: var(--page); }
+.deck-stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 44px; padding: 40px 40px 0; cursor: pointer; overflow: auto; }
+.deck-figure { flex: 0 1 auto; min-width: 0; }
+.deck-figure canvas { display: block; }
+.deck-figure p { margin: 10px 0 0; color: var(--secondary); font-size: 13px; line-height: 1.7; text-align: center; }
+.deck-text { flex: 0 0 auto; width: 480px; max-width: 100%; font-size: 19px; animation: deck-in 0.45s ease; }
+.deck-text.wide { width: var(--column); }
+.deck-text h1 { font-size: 38px; }
+.deck-text h2 { margin-top: 0; font-size: 29px; }
+@keyframes deck-in { from { opacity: 0; transform: translateY(14px); } }
+.deck-controls { flex: 0 0 56px; display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--secondary); }
+.deck-controls button { width: 34px; height: 34px; border: 0; border-radius: 8px; background: none; color: inherit; font-size: 20px; cursor: pointer; }
+.deck-controls button:disabled { opacity: 0.3; cursor: default; }
+.deck-controls button:not(:disabled):hover { background: rgba(255, 255, 255, 0.08); }
+.deck-dots { display: flex; flex-wrap: wrap; gap: 5px; max-width: 60vw; justify-content: center; }
+.deck-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(155, 157, 159, 0.35); }
+.deck-dots i.on { background: var(--thread); }
+.deck-close { position: absolute; top: 14px; right: 18px; display: flex; gap: 2px; padding: 2px; background: rgba(255, 255, 255, 0.06); border-radius: 8px; }
+.deck-close button { padding: 3px 14px; border: 0; border-radius: 6px; background: none; color: var(--secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.deck-close button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.14); color: var(--heading); }
+
+@media (max-width: 1100px) {
+  .deck-stage { flex-direction: column; justify-content: flex-start; gap: 18px; padding-top: 56px; }
+  .deck-text, .deck-text.wide { width: min(100%, 680px); }
+}
+
+/* Phone width: the list folds above the page */
+@media (max-width: 820px) {
+  :root { --sidebar: 0px; }
+  body { font-size: 16px; }
+  .layout { display: block; }
+  .side { position: static; width: auto; height: auto; padding: 12px 16px; overflow: visible; }
+  .brand { margin: 0 0 8px; }
+  .nav-fold > summary { display: block; cursor: pointer; color: var(--secondary); font-size: 13px; }
+  .main { padding: 28px 16px 45vh; }
+  html:not(.story) .main { padding-bottom: 80px; }
+  html.story .doc, html.story .source, html.story .mode { padding-left: 24px; }
+  html.story .mode { margin-left: 0; }
+  h1 { font-size: 27px; }
+  h2 { font-size: 22px; }
+  .hero p { font-size: 19px; }
+  .ex-fig-space { width: calc(100vw - 16px); margin-left: -12px; }
+  .ex-fig figcaption { margin-top: 6px; }
+  .deck { left: 0; }
+  .deck-stage { padding: 52px 16px 0; }
+  .deck-text, .deck-text.wide { font-size: 17px; }
+  .deck-text h1 { font-size: 27px; }
+  .deck-text h2 { font-size: 22px; }
+}
+
+@font-face {
+  font-family: "Yusei Magic Subset";
+  src: url("assets/YuseiMagic-subset.woff") format("woff");
+  font-display: swap;
+}

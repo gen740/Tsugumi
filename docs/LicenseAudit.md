@@ -75,6 +75,10 @@ Linux は `kernel.nix` で 6.12.115 を独自設定でビルドしています�
 
 [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) は、対応ソースの同梱や条件を満たす書面での提供申出などを定め、ソースにはビルド・インストールを制御するスクリプトも含めています。[LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html) も、ライブラリのコピーを配る場合とライブラリを利用するプログラムを配る場合を区別します。動的リンクであることだけをもって、表示・全文同梱・ソース提供やライブラリ差し替えに関する確認が不要になるとは扱いません。
 
+## 文書サイトのフォント
+
+GitHub Pages の図の手書きに使う Yusei Magic（[SIL OFL 1.1](site/assets/YuseiMagic-OFL.txt)）は、図で使う文字だけに絞った WOFF を OFL の全文と一緒に `docs/site/assets/` に置いています。Reserved Font Name の指定がないので、同じ名前のまま改変できます。ページでは `Yusei Magic Subset` として読み込みます。
+
 ## 更新時の確認
 
 依存を更新したら、`macOS/Package.resolved`、`web/package-lock.json`、`flake.lock`、Dawn の pin と、ここに記載した版・ライセンス・同梱範囲を照合します。Tree-sitter のコピーしたライセンス全文も上流の同じ版と照合します。公開する ZIP / Web dist / VM image を最後に確認し、ソース上の一覧を更新しただけで配布対応を完了としないようにします。
