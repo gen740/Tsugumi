@@ -18,6 +18,7 @@
 
 #include "graph.hh"
 #include "history.hh"
+#include "message_json.hh"
 #include "nix_refs.hh"
 #include "scheduler.hh"
 #include "schema.hh"
@@ -260,6 +261,121 @@ TEST(merge_union_keeps_origin) {
   std::string back;
   CHECK(types::flatbuffer_to_json(**m, bytes, &back, &err));
   CHECK(back.find("right") != std::string::npos);
+}
+
+// ---- a message as JSON for the Cards that read JSON ------------------------------
+
+// A parser as the worker has one: from the binary schema the core makes for a port.
+static std::unique_ptr<flatbuffers::Parser> message_parser(const std::string& schema, const std::string& root) {
+  std::string error;
+  auto type = types::compile(schema, root, &error);
+  if (!type) fail(__FILE__, __LINE__, error);
+  flatbuffers::IDLOptions o;
+  o.strict_json = true;
+  o.natural_utf8 = true;
+  o.output_default_scalars_in_json = true;
+  auto p = std::make_unique<flatbuffers::Parser>(o);
+  p->known_attributes_["tsugumi"] = true;
+  CHECK(p->Deserialize(reinterpret_cast<const uint8_t*>((*type)->bfbs.data()), (*type)->bfbs.size()));
+  CHECK(p->SetRootType(root.c_str()));
+  return p;
+}
+
+TEST(message_json_writes_what_gentext_writes_except_for_floats) {
+  auto p = message_parser(R"(
+    namespace t;
+    enum Color : byte { Red, Green = 3 }
+    enum Flags : ubyte (bit_flags) { A, B, C }
+    enum Wide : ulong { Low, High = 18446744073709551615 }
+    struct Inner { a:[int:3]; c:Color; }
+    struct Point { x:double; y:float; ok:bool; inner:Inner; many:[Inner:2]; }
+    table Leaf { name:string; v:long = -7; }
+    table Nested { n:int; s:string; }
+    union Either { Leaf, Nested }
+    table Message {
+      flag:bool; on:bool = true; i8:byte = -5; u8:ubyte = 200; i16:short; u16:ushort = 65535; i32:int; u32:uint;
+      i64:long = -9000000000000000000; u64:ulong = 18446744073709551615; f:float = 1.5; d:double = 2.25; zero:double;
+      absent:int = null; set:int = null; absent_d:double = null; set_d:double = null;
+      nan_d:double; inf_d:double; minus_inf:float; whole:double; thousands:double;
+      color:Color = Green; other:Color; unnamed:Color; flags:Flags; no_flag:Flags; bad_flag:Flags; wide:Wide; dep:int (deprecated);
+      text:string; empty_text:string; point:Point; leaf:Leaf; default_leaf:Leaf; missing:Leaf;
+      either:Either; none:Either; eithers:[Either];
+      doubles:[double]; floats:[float]; bytes:[ubyte]; bools:[bool]; colors:[Color]; flag_list:[Flags]; texts:[string];
+      leaves:[Leaf]; points:[Point]; nothing:[int]; no_tables:[Leaf];
+      nested:[ubyte] (nested_flatbuffer: "Nested"); flex:[ubyte] (flexbuffer);
+    }
+    root_type Message;
+  )", "t.Message");
+  const bool parsed = p->ParseJson(R"({
+    "flag": true, "on": false, "i8": -128, "u32": 4294967295, "d": -2.5, "f": 0.25, "set": 0, "set_d": 0.5,
+    "nan_d": nan, "inf_d": inf, "minus_inf": -inf, "whole": 3.0, "thousands": 100000.0,
+    "other": "Red", "unnamed": 7, "flags": "A C", "no_flag": 0, "bad_flag": 128, "wide": "High",
+    "text": "日本語 \"quoted\" \\ \n\t \u0001 /", "empty_text": "",
+    "point": {"x": 0.5, "y": -0.125, "ok": true, "inner": {"a": [1, 2, 3], "c": "Green"},
+              "many": [{"a": [4, 5, 6], "c": "Red"}, {"a": [7, 8, 9], "c": 7}]},
+    "leaf": {"name": "葉", "v": 1}, "default_leaf": {},
+    "either_type": "Nested", "either": {"n": 1, "s": "x"},
+    "eithers_type": ["Leaf", "Nested"], "eithers": [{"name": "a"}, {"n": 2}],
+    "doubles": [0.5, 1.0, -1000000.0, 0.001, -0.0], "floats": [0.5, 1.0, -0.125], "bytes": [0, 255], "bools": [true, false],
+    "colors": ["Green", "Red", 9], "flag_list": ["B", "A B", 0], "texts": ["x", "", "語"],
+    "leaves": [{"name": "a"}, {}], "points": [],
+    "nothing": [], "no_tables": [],
+    "nested": [1, 2], "flex": [3, 4]
+  })");
+  if (!parsed) fail(__FILE__, __LINE__, p->error_);
+  const void* buffer = p->builder_.GetBufferPointer();
+  for (const int indent_step : {2, -1}) {  // a Card's input, a Logger's one line
+    p->opts.indent_step = indent_step;
+    std::string theirs, ours;
+    CHECK(!flatbuffers::GenText(*p, buffer, &theirs));
+    CHECK(!message_json::gen_text(*p, buffer, &ours));
+    if (ours != theirs) fail(__FILE__, __LINE__, "GenText:\n" + theirs + "\nmessage_json:\n" + ours);
+  }
+}
+
+TEST(message_json_writes_floats_exactly) {
+  auto p = message_parser("namespace t; table M { d:double; f:float; } root_type M;", "t.M");
+  const auto written = [&](const std::string& json) {
+    if (!p->ParseJson(json.c_str())) fail(__FILE__, __LINE__, p->error_);
+    const std::string bytes(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()), p->builder_.GetSize());
+    std::string out;
+    CHECK(!message_json::gen_text(*p, p->builder_.GetBufferPointer(), &out));
+    if (!p->ParseJson(out.c_str())) fail(__FILE__, __LINE__, p->error_);
+    // The same value when read back.
+    if (bytes != std::string(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()), p->builder_.GetSize()))
+      fail(__FILE__, __LINE__, "not the same when read back: " + out);
+    return out;
+  };
+  for (const auto& [in, out] : std::vector<std::pair<std::string, std::string>>{
+           {"0.042169650342858", "0.042169650342858"},
+           {"0.30000000000000004", "0.30000000000000004"},
+           {"123456.78901234567", "123456.78901234567"},
+           {"1e-20", "1e-20"},
+           {"-1.5e-7", "-1.5e-07"},
+           {"5e-324", "5e-324"},
+           {"1.7976931348623157e308", "1.7976931348623157e+308"},
+           {"1e16", "1e+16"},
+           {"9999999999999998", "9999999999999998.0"},
+           {"0.0001", "0.0001"},
+           {"3", "3.0"}}) {
+    const std::string json = written(R"({"d": )" + in + "}");
+    if (json.find(R"("d": )" + out + ",") == std::string::npos) fail(__FILE__, __LINE__, in + " -> " + json);
+  }
+  for (const auto& [in, out] : std::vector<std::pair<std::string, std::string>>{
+           {"0.1", "0.1"}, {"16777216", "16777216.0"}, {"1.17549435e-38", "1.1754944e-38"}, {"3.4028235e38", "3.4028235e+38"}, {"1e-7", "1e-07"}}) {
+    const std::string json = written(R"({"f": )" + in + "}");
+    if (json.find(R"("f": )" + out + "\n") == std::string::npos) fail(__FILE__, __LINE__, in + " -> " + json);
+  }
+}
+
+TEST(what_a_logger_shows_is_exact_and_on_one_line) {
+  std::string err;
+  auto type = types::compile("namespace t; table M { d:double; tiny:double; f:float; many:[double]; } root_type M;", "t.M", &err);
+  CHECK(type.has_value());
+  std::string bytes, shown;
+  CHECK(types::json_to_flatbuffer(**type, R"({"d": 0.042169650342858, "tiny": 1e-20, "f": 0.1, "many": [1e-20, 3]})", &bytes, &err));
+  CHECK(types::flatbuffer_to_json(**type, bytes, &shown, &err));
+  CHECK_EQ(shown, R"({"d": 0.042169650342858,"tiny": 1e-20,"f": 0.1,"many": [1e-20,3.0]})");
 }
 
 // ---- graph and upstream analysis -------------------------------------------------
