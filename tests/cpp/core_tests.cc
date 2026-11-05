@@ -324,10 +324,13 @@ TEST(message_json_writes_what_gentext_writes_except_for_floats) {
   })");
   if (!parsed) fail(__FILE__, __LINE__, p->error_);
   const void* buffer = p->builder_.GetBufferPointer();
-  std::string theirs, ours;
-  CHECK(!flatbuffers::GenText(*p, buffer, &theirs));
-  CHECK(!message_json::gen_text(*p, buffer, &ours));
-  if (ours != theirs) fail(__FILE__, __LINE__, "GenText:\n" + theirs + "\nmessage_json:\n" + ours);
+  for (const int indent_step : {2, -1}) {  // a Card's input, a Logger's one line
+    p->opts.indent_step = indent_step;
+    std::string theirs, ours;
+    CHECK(!flatbuffers::GenText(*p, buffer, &theirs));
+    CHECK(!message_json::gen_text(*p, buffer, &ours));
+    if (ours != theirs) fail(__FILE__, __LINE__, "GenText:\n" + theirs + "\nmessage_json:\n" + ours);
+  }
 }
 
 TEST(message_json_writes_floats_exactly) {
@@ -363,6 +366,16 @@ TEST(message_json_writes_floats_exactly) {
     const std::string json = written(R"({"f": )" + in + "}");
     if (json.find(R"("f": )" + out + "\n") == std::string::npos) fail(__FILE__, __LINE__, in + " -> " + json);
   }
+}
+
+TEST(what_a_logger_shows_is_exact_and_on_one_line) {
+  std::string err;
+  auto type = types::compile("namespace t; table M { d:double; tiny:double; f:float; many:[double]; } root_type M;", "t.M", &err);
+  CHECK(type.has_value());
+  std::string bytes, shown;
+  CHECK(types::json_to_flatbuffer(**type, R"({"d": 0.042169650342858, "tiny": 1e-20, "f": 0.1, "many": [1e-20, 3]})", &bytes, &err));
+  CHECK(types::flatbuffer_to_json(**type, bytes, &shown, &err));
+  CHECK_EQ(shown, R"({"d": 0.042169650342858,"tiny": 1e-20,"f": 0.1,"many": [1e-20,3.0]})");
 }
 
 // ---- graph and upstream analysis -------------------------------------------------
