@@ -130,7 +130,7 @@ rec {
   # the binary cache for the VM (aarch64-linux), and their tests pull large
   # builds (narwhals: duckdb; plotly: nodejs, bokeh, xarray): a Card using
   # plotly or altair took over half an hour to build the first time, against
-  # a minute or two without the tests.
+  # a minute or two without the tests. scikit-learn's suite adds over ten minutes.
   cardPython =
     let
       noCheck = p: p.overridePythonAttrs { doCheck = false; };
@@ -140,6 +140,7 @@ rec {
           narwhals = noCheck super.narwhals;
           plotly = noCheck super.plotly;
           altair = noCheck super.altair;
+          scikit-learn = noCheck super.scikit-learn;
         };
       };
     in

@@ -1,0 +1,28 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "dataset"
+    }
+  ],
+  "filesystem": true,
+  "retainArtifact": true,
+  "artifactOutput": "subset",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 0
+    },
+    {
+      "name": "train_size",
+      "type": "uint64",
+      "data": 10000
+    },
+    {
+      "name": "test_size",
+      "type": "uint64",
+      "data": 2000
+    }
+  ]
+}

@@ -177,6 +177,7 @@ in
 | `plots` | ウィンドウ向けの matplotlib のコード（`plt.show()`・`FuncAnimation`）がそのまま Card の表示に描かれる。静止図とライブのアニメーション、Plotly と Altair の対話できるグラフ |
 | `casa` | Nix で固定した Chandra の観測（取得は最初の 1 回だけ）、エネルギー帯の分割と RGB 画像、matplotlib のエネルギースペクトル（帯域と輝線）、Card 単位の再実行 |
 | `gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench` | 公開データの取得（出典・大きさ・SHA-256 の表示）と解析・図示 |
+| `mnist-classifiers`（MNIST · 手書き数字の分類器くらべ） | 1 つの入力から 7 つの分岐が別々の Nix 環境（scikit-learn, xgboost, torch）で同時に動き、1 つの比較に合流する。データは Nix で固定、シードと 1 スレッドで数値が再現し、差に意味があるかを比較 Card が文章で示す。1 つの分岐だけを条件を変えて実行し直せる |
 | `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
 | `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
 
