@@ -88,11 +88,11 @@ Nix 評価器を `tsugumid` に組み込み、nixpkgs の評価状態と daemon 
 
 途中の処理だけを直して試すには、直前に何を入力したかが必要です。パスだけを保存しても元の一時ファイルが消えれば使えず、複数の入力を別々の呼び出しから混ぜれば、前回と違う条件になってしまいます。
 
-Tsugumi は、最新の呼び出しの入力一式と、各ポートの最新入力を保存します。`all` では一回の呼び出しで使った組を保ち、`any` では各ポートの最新値を使います。File / Directory は実体を保存領域へコピーするため、実行キャッシュを消しても再利用できます。再実行時には現在の入力型との整合性とファイルの存在を確認し、不足があれば理由を返します。子 Workflow の単体実行にも、この入力を境界から渡します。
+Tsugumi は、最新の呼び出しの入力一式と、各ポートの最新入力を保存します。`all` では一回の呼び出しで使った組を保ち、`any` では各ポートの最新値を使います。File / Directory は実体を保存領域へコピーするため、実行キャッシュを消しても再利用できます。再実行時には現在の入力型との整合性とファイルの存在を確認し、不足があれば理由を返します。子 Workflow の単体実行にも、この入力を境界から渡します。分岐の 1 つから下流へ進めるときは、合流する Card のうち今回の実行で届かないポートだけをこの入力で埋めるので、変えた分岐の新しい値と他の分岐の値で比べ直せます。どの実行の値を使ったかは実行のジャーナルに残します。
 
 **研究者は、入力を手作業で集め直さず、気になった箇所の変更を試せます。** この最新入力は、`recordIO` で選ぶ全呼び出しの入出力履歴とは別に保存します。保存時点と使い方は [Q&A](qa.md) にまとめています。
 
-実装: [部分実行と入力保存](https://github.com/gen740/Tsugumi/blob/main/core/src/scheduler.cc)（`seed_boundary`・`take_ready`・`save_last_inputs`）。検証: [キャッシュ削除・再起動後の File 入力と入力不足の回帰テスト](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py)、[子 Workflow の部分実行テスト](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py)。
+実装: [部分実行と入力保存](https://github.com/gen740/Tsugumi/blob/main/core/src/scheduler.cc)（`seed_saved`・`take_ready`・`save_last_inputs`）。検証: [キャッシュ削除・再起動後の File 入力と入力不足の回帰テスト](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py)、[子 Workflow と分岐からの部分実行テスト](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py)。
 
 ### 「完了した」という表示に、保存済みの記録が伴うようにする
 

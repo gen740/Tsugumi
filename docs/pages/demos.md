@@ -224,7 +224,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 
 - そのまま実行する。7 つの分岐が同時に動きます（同時に動く数は設定の「並列実行数」、既定 4）。
 - `forest` の `max_depth` を 3 にして、その Card だけを実行する。他の分岐は動かず、`forest` の正解率だけが 0.9475 から 0.7570 に下がります。
-- 比べ直すときは `share` から実行する。`compare` はすべての分岐の結果を待つためです。シードと 1 スレッドで固定しているので、変えていない分岐の正解率は同じです。
+- 比べ直すときは `forest` から先を実行する（「ここから実行」）。動くのは `forest` と `compare` から先だけで、`compare` は新しい `forest` の結果と、他の分岐・`share` の保存された入力で比べます。変えていない分岐は動かないので、その正解率は同じです。
 - `knn` の `k`、`svm` の `gamma`、`cnn` の `epochs` を変える。
 - `prepare` の `train_size` を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（`svm` と `knn` の予測時間が伸びます）。
 
@@ -349,6 +349,7 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **Newton 法**（`newton`） | そのまま実行する。`orbits` の初期値、`basins` の拡大、`trouble` の `offset` を変えてその Card だけを実行し直す。`settings` の `coeffs`（`[1, 0, -3, 2]` で重根、`[1, 0, -2, 2]` で閉路）や `damping` を変えて全体を実行する | `orbits` の誤差が対数軸で 2 次に落ち、`order` の表で推定次数が理論値と並ぶ。`basins` にフラクタルの境界が描かれ、`roots` で閉じた式との差が表示される。`trouble` では重根で次数 1 に落ち、$z^3 - 2z + 2$ の $z_0 = 0$ が収束しない |
 | **薬物動態**（`pharmacokinetics`、架空の薬物の教育用モデル） | そのまま実行し、`simulate` の表示を拡大してズーム・ホバーする。`settings` の `doses_mg`・`intervals_h`・`half_life_h` を変えて全体を実行する。`missed` の `missed_at_h`・`missed_count` を変えてその Card だけを実行し直す | 投与計画ごとの濃度が定常状態へ近づく様子を並べて見られる。`check` で数値解と閉じた式の差と蓄積比が表になり、`window` で山、谷、作り物の有効域の中にいる時間の割合、`missed` で飲み忘れの影響が表示される |
 | **最大流と最小カット**（`max-flow`） | そのまま実行する。`whatif` の `edge`・`raise_by`、`sweep` の `raise_by` を変えてその Card だけを実行し直す。`settings` の `seed` を変えて全体を実行する | `flow` と `cut` の図に流量とカットの辺が描かれ、最大流と最小カットの値が一致する。`verify` で scipy と全カットの総当たりも同じ値になる。`whatif` と `sweep` で、カット外の辺を太くしても最大流が変わらないことを確かめられる |
+| **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`forest` から先を実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
