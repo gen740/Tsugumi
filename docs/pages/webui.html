@@ -55,7 +55,14 @@
 <li>書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（<code>runs/&lt;run&gt;/work/…/out</code>）だけです。Linux では出力フォルダを <code>/proc/self/fd</code> 経由で渡しますが、macOS にはないためパスで渡します。</li>
 <li>bubblewrap と違い、ファイルの存在確認（<code>stat</code>）は全体で許可しています（中身は読めません）。また、uid の分離はしません。</li>
 <li>Mac のフォルダを Card に共有する機能（<code>/host/&lt;name&gt;</code>）は共通 VM が必要なため、Web UI では使えません。</li>
-<li>ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。例外は <code>mDNSResponder</code> のソケット（<code>/var/run/mDNSResponder</code>）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。</li>
+<li>ネットワークを許可した Card も、このマシン自身には接続できません（tsugumid や Web サーバーに触れないため）。loopback だけでなく、LAN や VPN のアドレス、<code>0.0.0.0</code> 宛ても同じです（Seatbelt の <code>localhost</code> はこのマシンのアドレス全体を指します）。Unix ソケットも閉じています。例外は <code>mDNSResponder</code> のソケット（<code>/var/run/mDNSResponder</code>）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。</li>
+<li>ネットワークを許可した Card が使える Mach サービスは、証明書の検証に使う <code>com.apple.trustd.agent</code> だけです。クリップボードや LaunchServices（アプリや URL を開く）、Apple Event には届きません。名前解決と HTTPS はこれで動きます（Python・curl・Go・NSURLSession で確認）。代わりに、ネットワークなしの Card と同じくユーザー情報（<code>getpwuid</code>）を引けないので、<code>ssh</code> は <code>No user exists for uid</code> で失敗します。システム設定のプロキシも読みません。</li>
+<li>塞げない経路が 3 つあります。これらが問題になるネットワークでは、他人の Card に <code>network: true</code> を与えないでください。<ul>
+<li><strong>同じ LAN や VPN の他の機器には届きます。</strong> Seatbelt で宛先に書けるのは <code>*</code> と <code>localhost</code> だけで、アドレスや範囲を指定して拒否できません。</li>
+<li><strong>UDP のブロードキャストとマルチキャストは、このマシンにも届きます。</strong> <code>0.0.0.0</code> で UDP を待ち受けるサービスには届き、返事も受け取れます。ブロードキャストだけを止める指定がなく、止めるなら UDP 全体を閉じることになるので、開けてあります。tsugumid と Web サーバーは UDP を使わないので対象外です。</li>
+<li><strong>Card は待ち受けを開けます。</strong> このマシンから接続できることを確認しました。LAN の他の機器からも、ファイアウォールが通せば届きます。</li>
+</ul>
+</li>
 <li>チャットに添付したフォルダは、サーバーが control フォルダの <code>attached.json</code> に書いたものだけを tsugumid が読みます（RPC からは変えられません）。</li>
 <li><code>sandbox: false</code> の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（<code>tsugumid</code> 自身は判断しません）。Linux で他人の Card を動かすときは、<code>tsugumid</code> を隔離されたコンテナの中で動かしてください。</li>
 </ul>
