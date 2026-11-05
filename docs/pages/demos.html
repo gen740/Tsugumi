@@ -126,7 +126,7 @@ Cas A の <code>load</code> が Nix で取得を固定するのに対し、こ�
 <ul>
 <li>そのまま実行する。7 つの分岐が同時に動きます（同時に動く数は設定の「並列実行数」、既定 4）。</li>
 <li><code>forest</code> の <code>max_depth</code> を 3 にして、その Card だけを実行する。他の分岐は動かず、<code>forest</code> の正解率だけが 0.9475 から 0.7570 に下がります。</li>
-<li>比べ直すときは <code>share</code> から実行する。<code>compare</code> はすべての分岐の結果を待つためです。シードと 1 スレッドで固定しているので、変えていない分岐の正解率は同じです。</li>
+<li>比べ直すときは <code>forest</code> から先を実行する（「ここから実行」）。動くのは <code>forest</code> と <code>compare</code> から先だけで、<code>compare</code> は新しい <code>forest</code> の結果と、他の分岐・<code>share</code> の保存された入力で比べます。変えていない分岐は動かないので、その正解率は同じです。</li>
 <li><code>knn</code> の <code>k</code>、<code>svm</code> の <code>gamma</code>、<code>cnn</code> の <code>epochs</code> を変える。</li>
 <li><code>prepare</code> の <code>train_size</code> を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（<code>svm</code> と <code>knn</code> の予測時間が伸びます）。</li>
 </ul>

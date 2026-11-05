@@ -11,7 +11,7 @@ import pytest
 
 from conftest import Daemon
 from projects import card, card_in_card, conn, run_and_wait, write
-from tsugumi_client import RpcFailure, path, text
+from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.StageOutcome import StageOutcome
@@ -156,6 +156,96 @@ def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
     _, st = run_and_wait(c, "s1", propagate=False)
     assert st.state == RunState.failed
     assert st.failure.kind == 18 and "saved" in text(st.failure.diagnostic)
+
+
+def set_param(c, card_id, name, value):
+    snap = c.call("ProjectInspectRequest")
+    body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == card_id)
+    next(p for p in body["params"] if p["name"] == name)["data"] = value
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+           changes=[change("PutDefinition", id=card_id, cardJson=json.dumps(body), keepMeta=True)])
+
+
+FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"])}
+FAN_CARDS = [card("start", "trigger"), card("fan", "fork"), card("words", "words"), card("cond", "cond"),
+             card("gate", "branch"), card("yes", "log"), card("no", "log")]
+FAN_CONNS = [conn("start", "out", "fan", "in"), conn("fan", "out1", "words", "start"), conn("fan", "out2", "cond", "start"),
+             conn("words", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"),
+             conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")]
+
+
+def test_run_from_one_branch_meets_the_saved_values_of_the_others(env):
+    c = env(FAN_CARDS, FAN_CONNS, FAN_DEFS)
+    first, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert "hello" in logs(c, first, "yes")[0]
+
+    # Only this branch runs; the join takes its new value and the saved condition.
+    set_param(c, "words", "text", "changed")
+    run_id, st = run_and_wait(c, "words")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert states(c, run_id, "words") == [CardState.succeeded]
+    assert states(c, run_id, "cond") == [] and states(c, run_id, "fan") == []
+    assert states(c, run_id, "gate") == [CardState.succeeded]
+    assert "changed" in logs(c, run_id, "yes")[0]
+    # Only the branch that ran is a source; the record says where the saved value came from.
+    rec = c.call("RunRecordRequest", runId=run_id, card=path("gate")).record
+    assert [text(s.port) for s in rec.inputSources] == ["value"]
+    journal = c.call("LogRangeRequest", runId=run_id, stream=3)
+    assert any(first in line and "gate.condition" in line for line in text(journal.text).splitlines())
+
+    # The other branch next: the saved value is now the one that just went through.
+    set_param(c, "cond", "value", False)
+    run_id, st = run_and_wait(c, "cond")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert states(c, run_id, "words") == []
+    assert "changed" in logs(c, run_id, "no")[0]
+
+    # The join alone reuses that set as it is.
+    run_id, st = run_and_wait(c, "gate", propagate=False)
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert states(c, run_id, "gate") == [CardState.succeeded]
+
+
+def test_run_from_one_branch_without_saved_values_says_so(env):
+    c = env([card("words", "words"), card("cond", "cond"), card("gate", "branch"), card("yes", "log")],
+            [conn("words", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"), conn("gate", "a", "yes", "in")],
+            FAN_DEFS)
+    run_id, st = run_and_wait(c, "words")
+    assert st.state == RunState.failed
+    assert st.failure.kind == 18 and "saved inputs for gate" in text(st.failure.diagnostic)
+    assert states(c, run_id, "words") == [CardState.succeeded]  # the branch itself still ran
+    assert states(c, run_id, "yes") == [CardState.blocked]
+
+
+def test_a_saved_value_never_goes_ahead_of_the_new_one_on_a_shared_port(env):
+    """A port fed by a Card that runs gets that Card's value, even when another
+    feeder of the same port stays out of the run."""
+    defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
+    c = env(FAN_CARDS + [card("other", "other")],
+            FAN_CONNS + [conn("other", "msg", "gate", "value")], defs)
+    _, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    set_param(c, "words", "text", "changed")
+    run_id, st = run_and_wait(c, "words")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert [("changed" in line) for line in logs(c, run_id, "yes")] == [True]
+
+
+def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env):
+    """An `any` Card takes values as they arrive, so nothing is added to them."""
+    defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
+    c = env([card("start", "trigger"), card("fan", "fork"), card("words", "words"), card("other", "other"),
+             card("join", "merge"), card("out", "log")],
+            [conn("start", "out", "fan", "in"), conn("fan", "out1", "words", "start"), conn("fan", "out2", "other", "start"),
+             conn("words", "msg", "join", "a"), conn("other", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
+    _, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    set_param(c, "words", "text", "changed")
+    run_id, st = run_and_wait(c, "words")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert states(c, run_id, "join") == [CardState.succeeded]
+    assert ["changed" in line for line in logs(c, run_id, "out")] == [True]
 
 
 def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
