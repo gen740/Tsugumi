@@ -1,8 +1,9 @@
 # 制作範囲と事前準備
 
 Tsugumi は、Claude のハッカソンで制作を始めた研究ワークベンチです。
-**開始前からあった自作コードは JSON parser の hosq だけです。** また、最初の仕様プロンプトは、開始前に ChatGPT と入念に練っていました。
-この二つを事前準備として区別し、それ以外に利用した OSS と、Tsugumi として実装した部分を以下に示します。
+**開始前からあった自作コードは JSON parser の hosq だけです。**
+
+最初の仕様は開始前からずーーっと温め続けていたものでした（[私にしかない深さ](Origin.md)）。
 
 この区分は作者の申告と Git 履歴に基づきます。コミット日時はリポジトリへの記録日時であり、その内容を作った日時そのものではありません。
 
@@ -11,7 +12,7 @@ Tsugumi は、Claude のハッカソンで制作を始めた研究ワークベ�
 | 対象 | 内容と確認先 |
 | --- | --- |
 | [hosq](https://github.com/CLI20-dev/hosq) | 作者が以前から開発している C++ の JSON parser。Tsugumi の文書・設定の JSON 処理に使用しています。ハッカソンで新しく作った parser ではありません。採用する版は [flake.lock](../flake.lock) で固定しています。 |
-| 最初の仕様プロンプト | ChatGPT とともに、Card・Workflow、実行環境、通信契約、UI・Agent の境界などを事前に検討したものです。[最初のコミットの instruction.md](https://github.com/gen740/Tsugumi/blob/98f90945ed92477e6e65ff48f1f410271edaaf96/instruction.md) に全文が残っています。実装コードではありませんが、設計の事前準備に含めます。 |
+| 最初の仕様プロンプト | Card・Workflow、実行環境、通信契約、UI・Agent の境界などを事前に検討したものです。[最初のコミットの instruction.md](https://github.com/gen740/Tsugumi/blob/98f90945ed92477e6e65ff48f1f410271edaaf96/instruction.md) に全文が残っています。実装コードではありませんが、設計の事前準備に含めます。 |
 
 ## Tsugumi として制作したもの
 
@@ -26,7 +27,7 @@ Tsugumi は、Claude のハッカソンで制作を始めた研究ワークベ�
 | `web/` | 同じ RPC 契約を使う Web クライアントとホスト側サーバー | React、marked、KaTeX、FlatBuffers |
 | `nix/`、`macOS/Container/`、テスト・ビルドスクリプト | 環境の固定、隔離の設定、VM とアプリの組み立て、実行・UI・契約の検証 | nixpkgs、Linux、bubblewrap、既存のビルド・テストツール |
 
-実装は、人間が仕様・判断・レビューを担い、AI エージェントと往復しながら進めました。事前の仕様検討に ChatGPT を使ったことと、開発中に AI を使って実装・修正したことの両方を制作過程に含めています。
+実装は、人間が仕様・判断・レビューを担い、AI エージェントと往復しながら進めました。開発中に AI を使って実装・修正したことも制作過程に含めています。
 
 初期の進行は、たとえば次の履歴で確認できます。
 
