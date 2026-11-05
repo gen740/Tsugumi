@@ -92,11 +92,15 @@ export interface ParamData {
 }
 
 /** Everything a Card view needs, with no dependency on a session. */
+/** What a wire names to end at a Draft's next port (`session.connect` makes the port). */
+export const NEW_PORT = '+'
+
 export interface CardNodeData {
   title: string
   kind: CardKind
   symbol?: string
-  /** Short description (one line on the Card; the whole text on hover). */
+  /** Short description (one line on the Card, a Draft's content in a few;
+   *  the whole text on hover). */
   summary?: string
   inputs: PortData[]
   outputs: PortData[]
@@ -116,6 +120,10 @@ export interface CardNodeData {
   hasDisplay: boolean
   /** What it may do beyond computing (network, no sandbox, host folders). */
   permissions?: PermissionKind[]
+  /** A Draft being written on the canvas: the Card opens up for it. */
+  draftEditing?: boolean
+  /** A Draft without a name of its own: its content is all it shows. */
+  untitled?: boolean
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'
@@ -133,6 +141,11 @@ export class CardGeometry {
   static readonly paramRow = 26
   static readonly resultRow = 18
   static readonly stageRow = 22
+  /** A Draft's content on the Card (three lines), and while it is being written. */
+  static readonly draftRow = 50
+  static readonly draftEditRow = 120
+  /** What is left of the header over the content of a Draft without a name. */
+  static readonly untitledTop = 8
   /** Labels narrower than this are hidden (shown on hover instead). */
   static readonly minLabel = 26
 
@@ -144,16 +157,22 @@ export class CardGeometry {
   readonly result: boolean
   readonly stages: boolean
   readonly shape: CardShape
+  readonly draft: boolean
+  readonly draftEditing: boolean
+  readonly untitled: boolean
 
   constructor(d: CardNodeData, readonly flow: FlowDirection) {
     this.inputs = d.inputs.map((p) => p.name)
     this.outputs = d.outputs.map((p) => p.name)
     this.collapsed = d.collapsed
-    this.summary = d.summary !== undefined && !isRouting(d)
+    this.draft = d.kind === 'draft'
+    this.draftEditing = this.draft && !!d.draftEditing
+    this.untitled = this.draft && !!d.untitled && !this.draftEditing && !d.collapsed
+    this.summary = d.summary !== undefined && !isRouting(d) && !this.draft
     this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     this.result = d.kind === 'logger' || d.hasDisplay
-    this.stages = d.kind === 'code' || d.kind === 'draft'
+    this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
   }
 
@@ -175,7 +194,17 @@ export class CardGeometry {
   }
 
   get portBand() {
-    return this.flow === 'leftToRight' && this.shape === 'card' ? Math.max(this.inputs.length, this.outputs.length, 1) * CardGeometry.portRow : 0
+    // A Draft has no port names to give a row: its ports are at the middle of its sides.
+    if (this.flow !== 'leftToRight' || this.shape !== 'card' || this.draft) return 0
+    return Math.max(this.inputs.length, this.outputs.length, 1) * CardGeometry.portRow
+  }
+  /** The header, or what is left of it over the content of a Draft without a name. */
+  get headerRow() {
+    return this.untitled ? CardGeometry.untitledTop : CardGeometry.header
+  }
+  /** The room for a Draft's content under its header. */
+  get draftRow() {
+    return !this.draft ? 0 : this.draftEditing ? CardGeometry.draftEditRow : CardGeometry.draftRow
   }
   get topLabels() {
     return this.shape === 'card' && this.flow === 'topToBottom' && this.showLabels(true) ? CardGeometry.portRow : 0
@@ -190,7 +219,7 @@ export class CardGeometry {
       return this.flow === 'topToBottom' ? { width: r.width, height: this.bandIn + r.height + this.bandOut } : { width: r.height + 60, height: r.width }
     }
     if (this.collapsed) return { width: CardGeometry.width, height: CardGeometry.header }
-    const h = this.topLabels + CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0) + this.portBand + this.params * CardGeometry.paramRow +
+    const h = this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.portBand + this.params * CardGeometry.paramRow +
       (this.result ? CardGeometry.resultRow : 0) + (this.stages ? CardGeometry.stageRow : 0) + this.bottomLabels + 4
     return { width: CardGeometry.width, height: h }
   }
@@ -257,13 +286,36 @@ export class CardGeometry {
   showLabels(input: boolean): boolean {
     const list = input ? this.inputs : this.outputs
     if (!list.length) return false
+    // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
+    if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
     if (this.shape === 'fork' || this.shape === 'merge') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
   }
 
+  /** Where a wire starts from a side of a Draft that has no port yet (the middle
+   *  of the side, where the port will be). A side with ports starts from them. */
+  newPort(output: boolean): Pt | undefined {
+    if (!this.draft || this.collapsed || (output ? this.outputs : this.inputs).length) return undefined
+    const r = this.outlineRect
+    return this.flow === 'topToBottom'
+      ? { x: CardGeometry.width / 2, y: output ? r.y + r.height : r.y }
+      : { x: output ? CardGeometry.width : 0, y: r.y + r.height / 2 }
+  }
+
+  /** A Draft's ports are around the middle of its side, closer together when there are many. */
+  private draftPortY(index: number, count: number) {
+    const r = this.outlineRect
+    const pitch = Math.min(CardGeometry.portRow, (r.height - 8) / (count + 1))
+    return r.y + r.height / 2 + (index - (count - 1) / 2) * pitch
+  }
+
   port(name: string, output: boolean): Pt {
+    if (name === NEW_PORT) {
+      const p = this.newPort(output)
+      if (p) return p
+    }
     const list = output ? this.outputs : this.inputs
     const index = Math.max(0, list.indexOf(name))
     const n = Math.max(list.length, 1)
@@ -285,6 +337,7 @@ export class CardGeometry {
     }
     const x = output ? CardGeometry.width : 0
     if (this.collapsed) return { x, y: CardGeometry.header / 2 }
+    if (this.draft) return { x, y: this.draftPortY(index, list.length) }
     const top = CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
     return { x, y: top + index * CardGeometry.portRow + CardGeometry.portRow / 2 }
   }

@@ -434,14 +434,15 @@ class Builder {
           n.input_defs = {{"in", false}};
           break;
         case Template::Draft:
-          // Provisional outputs let a Draft be wired before it is implemented:
-          // typed ones from _outputs.fbs, otherwise the names (and purposes)
-          // in _meta.json, carrying an empty message until implemented.
+          // A Draft can be wired before it is implemented: its outputs are the
+          // typed ones of _outputs.fbs and the names in _meta.json (a wire drawn
+          // from the Draft adds one there), carrying an empty message until
+          // implemented.
           load_catalog(n);
-          if (n.outputs.empty() && def && def->meta)
+          if (def && def->meta)
             if (const auto* outs = schema::get(def->meta->outputs))
               for (const auto& o : *outs)
-                if (const auto* name = schema::get(o.name); name && valid_id(*name))
+                if (const auto* name = schema::get(o.name); name && valid_id(*name) && !n.output(*name))
                   n.outputs.push_back({*name, PortKind::FlatBuffer, true, types::empty_type()});
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;

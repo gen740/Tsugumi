@@ -27,7 +27,6 @@ struct MainWindow: View {
       guard let r else { return }
       switch r {
       case .card(let ref): openWindow(id: "card", value: ref)
-      case .draft(let ref): openWindow(id: "draft", value: ref)
       case .visual(let ref): openWindow(id: "visual", value: ref)
       case .definitions(let ref): openWindow(id: "definitions", value: ref)
       case .versions(let ref): openWindow(id: "versions", value: ref)

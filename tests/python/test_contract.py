@@ -662,6 +662,27 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert "draft" in [text(d.code) for d in v.diagnostics]
 
 
+def test_draft_outputs_are_its_schema_and_its_wires(client):
+    """A wire drawn from a Draft adds an output in _meta.json, also when the
+    Draft already has typed outputs in an _outputs.fbs."""
+    snap = client.call("ProjectInspectRequest")
+    doc = project_json(snap)
+    doc["canvas"]["cards"] += [{"id": "plan"}, {"id": "next"}]
+    doc["canvas"]["connections"].append({"from": {"card": "plan", "port": "out"}, "to": {"card": "next", "port": "in"}})
+    fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
+    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft"}),
+               metaJson=json.dumps({"content": "p", "outputs": [{"name": "summary", "description": "d"}, {"name": "out"}]})),
+        change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
+        change("PutDefinition", id="next", cardJson=json.dumps({"template": "draft", "inputs": [{"name": "in"}]}), metaJson=json.dumps({"content": "q"})),
+        change("SetProject", json=json.dumps(doc)),
+    ])
+    plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
+    assert [text(p.name) for p in plan.outputs] == ["summary", "out"]
+    codes = [text(d.code) for r in res.delta.resolution for d in r.diagnostics]
+    assert "unknown_port" not in codes, codes
+
+
 def test_resolution_follows_meta_and_outputs_not_layout(client):
     """The resolution is kept across layout-only saves and redone when a
     Draft's planned outputs (_meta.json) or an _outputs.fbs change."""
@@ -689,7 +710,7 @@ def test_resolution_follows_meta_and_outputs_not_layout(client):
         extra = {"baseHash": hashlib.sha256(prev).hexdigest()} if prev else {}
         res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
                           changes=[change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(body), **extra)])
-        assert ports(res, "plan") == [("summary", "d." + t)]
+        assert ports(res, "plan") == [("summary", "d." + t), ("second", "tsugumi.builtin.Empty")]
         prev = body
 
 

@@ -459,14 +459,46 @@ struct GraphCanvas: View {
                         onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
                         onRun: data.kind == .trigger && session.connected && !session.runActive
-                          ? { RunActions.run(session, card: k, propagate: true) } : nil)
+                          ? { RunActions.run(session, card: k, propagate: true) } : nil,
+                        draftEdit: draftEdit(k))
       .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
       .guideTarget("card:\(k)", radius: 12)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
+      .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }
       .onTapGesture { select(k) }
       .contextMenu { CardMenu(workspace: workspace, session: session, tab: tab, cardKey: k, onGroup: groupSelection) }
+  }
+
+  /// Writing this Card's Draft, when it is the one being written.
+  private func draftEdit(_ k: CardKey) -> DraftEdit? {
+    guard let e = session.inlineDraft, e.card == k else { return nil }
+    return DraftEdit(name: Binding(get: { session.inlineDraft?.name ?? "" }, set: { session.inlineDraft?.name = $0 }),
+                     content: Binding(get: { session.inlineDraft?.content ?? "" }, set: { session.inlineDraft?.content = $0 }),
+                     nameProblem: session.draftNameProblem(k, e.name),
+                     onDone: { byKey in
+                       finishDraftEdit()
+                       if byKey { canvasFocused = true }
+                     })
+  }
+
+  /// Starts writing a Draft on its Card, at a zoom where the text can be read.
+  func writeDraft(_ k: CardKey) {
+    session.startDraftEdit(k)
+    if camera.zoom < 0.8 { setZoom(1, around: screen(cardRect(k).center)) }
+    reveal(k)
+  }
+
+  /// Keeps what was written on a Draft's Card; a new name moves what points at the Card.
+  private func finishDraftEdit() {
+    guard let from = session.inlineDraft?.card else { return }
+    Task {
+      guard let to = await session.finishDraftEdit() else { return }
+      NotificationCenter.default.post(name: .cardRenamed, object: nil,
+                                      userInfo: ["from": from, "to": to, "project": session.identity.url.path])
+      if tab.selection.remove(from) != nil { tab.selection.insert(to) }
+    }
   }
 
   private func groupFrame(_ id: String) -> some View {
@@ -611,12 +643,17 @@ struct GraphCanvas: View {
     }
   }
 
-  /// E: a new Draft Card in the middle of the canvas, its editor open.
+  /// E: a new Draft Card in the middle of the canvas, written on the Card.
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
     let k = session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)))
     tab.selection = [k]
-    openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
+    writeDraft(k)
+  }
+
+  /// The Card menu's "名前と内容を書く".
+  func handleWriteDraft(_ n: Notification) {
+    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.isEditable { writeDraft(k) }
   }
 
   func handleReveal(_ n: Notification) {
@@ -684,7 +721,8 @@ struct GraphCanvas: View {
     let w = world(p)
     var target: HoverTarget?
     if let k = cardKeys.reversed().first(where: { cardRect($0).contains(w) }) {
-      target = .card(k)
+      // A Draft being written has its details in front of it.
+      target = k == session.inlineDraft?.card ? nil : .card(k)
     } else {
       // About 8 points on screen either side of the line, at any zoom.
     let tolerance = 8 / camera.zoom
@@ -735,8 +773,7 @@ struct GraphCanvas: View {
     switch t {
     case .card(let k):
       let d = session.nodeData(k)
-      var lines: [String] = []
-      if let desc = session.cardDescription(k) { lines.append(desc) }
+      let lines = session.cardDetails(k)
       var status = d.runText ?? d.idleText
       if let id = session.currentRunId, d.invocation > 0 {
         status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
@@ -845,21 +882,41 @@ struct GraphCanvas: View {
   private func open(_ k: CardKey) {
     switch session.kind(k) {
     case .subgraph: tab.enter(path(k))
-    case .draft: openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k))
+    case .draft where session.isEditable:
+      if session.inlineDraft?.card != k { writeDraft(k) }
     default: openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k))
     }
   }
 
   private func finishConnect(from: (CardKey, String), at pt: CGPoint) {
     pending = nil
-    guard session.isEditable, let to = nearestPort(at: pt, output: false, except: from.0) else { return }
-    session.connect(from: from, to: to, in: tab.scope)
+    guard session.isEditable, let to = wireTarget(at: pt, output: false, except: from.0) else { return }
+    session.connect(from: wireStart(from, output: true), to: to, in: tab.scope)
   }
 
   private func finishConnect(toInput to: (CardKey, String), at pt: CGPoint) {
     pending = nil
-    guard session.isEditable, let from = nearestPort(at: pt, output: true, except: to.0) else { return }
-    session.connect(from: from, to: to, in: tab.scope)
+    guard session.isEditable, let from = wireTarget(at: pt, output: true, except: to.0) else { return }
+    session.connect(from: from, to: wireStart(to, output: false), in: tab.scope)
+  }
+
+  /// Another wire from a Draft's port is another port.
+  private func wireStart(_ end: (CardKey, String), output: Bool) -> (CardKey, String) {
+    session.kind(end.0) == .draft && session.portWired(end.0, end.1, output: output, in: tab.scope) ? (end.0, CardGeometry.newPort) : end
+  }
+
+  /// Where a dropped wire ends. A Draft takes it anywhere on the Card: a port
+  /// of its own that has no wire, or a new one (never replacing another wire).
+  private func wireTarget(at pt: CGPoint, output: Bool, except: CardKey) -> (CardKey, String)? {
+    if let near = nearestPort(at: pt, output: output, except: except) {
+      let taken = session.kind(near.0) == .draft && session.portWired(near.0, near.1, output: output, in: tab.scope)
+      return taken ? (near.0, CardGeometry.newPort) : near
+    }
+    let w = world(pt)
+    let margin = 18 / camera.zoom + 6
+    return cardKeys.reversed().first {
+      $0 != except && session.kind($0) == .draft && cardRect($0).insetBy(dx: -margin, dy: -margin).contains(w)
+    }.map { ($0, CardGeometry.newPort) }
   }
 
   /// The port under a point (screen), within a finger's width.
@@ -902,13 +959,13 @@ struct GraphCanvas: View {
     editingGroup = session.addGroup(tab.selection, in: tab.scope)
   }
 
-  /// A built-in Card (from the + button or the canvas menu), its editor
-  /// opened for a Draft.
+  /// A built-in Card (from the + button or the canvas menu); a Draft is
+  /// written on its Card.
   func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
     guard session.isEditable else { return }
     let k = session.addCard(template: t, in: tab.scope, at: w)
     tab.selection = [k]
-    if t == .draft { openWindow(id: "draft", value: CardRef(path: session.identity.url.path, card: k)) }
+    if t == .draft { writeDraft(k) }
   }
 
   private func addNote(at w: CGPoint? = nil) {
@@ -987,6 +1044,7 @@ private struct CommandHandlers: ViewModifier {
       .onReceive(NotificationCenter.default.publisher(for: .canvasDelete)) { n in canvas.handleDelete(n) }
       .onReceive(NotificationCenter.default.publisher(for: .canvasGroup)) { n in canvas.handleGroup(n) }
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddDraft)) { n in canvas.handleAddDraft(n) }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasWriteDraft)) { n in canvas.handleWriteDraft(n) }
   }
 }
 
@@ -1059,6 +1117,10 @@ struct HoverBubble: View {
 
   let content: Content
 
+  private var wraps: Bool {
+    (content.lines + content.problems + content.warnings + [content.status ?? ""]).contains { $0.count > 28 }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
@@ -1072,12 +1134,16 @@ struct HoverBubble: View {
       if let s = content.status { Text(s).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       ForEach(Array(content.problems.enumerated()), id: \.offset) { _, p in
         Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).lineLimit(4)
+          .fixedSize(horizontal: false, vertical: true)
       }
       ForEach(Array(content.warnings.enumerated()), id: \.offset) { _, p in
         Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(3)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
-    .frame(maxWidth: 340, alignment: .leading)
+    // A fixed width for text that wraps: the bubble takes its ideal size, and
+    // a text's ideal is one line, however long.
+    .frame(width: wraps ? 340 : nil, alignment: .leading)
     .padding(10)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))

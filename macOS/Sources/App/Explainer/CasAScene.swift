@@ -397,13 +397,6 @@ extension Explainer {
       let icon = impl > 0.5 ? "chevron.left.forwardslash.chevron.right" : "pencil.and.outline"
       f.draw(Text(Image(systemName: icon)).font(.system(size: 11, weight: .semibold)).foregroundStyle(sub), at: pt(r.minX + 18, r.minY + 17))
       f.text(box.name, at: pt(r.minX + 34, r.minY + 17), size: 14, weight: .semibold, color: titleColor, anchor: .leading)
-      let badge = 1 - impl
-      if badge > 0.01 {
-        let bx = r.minX + 34 + CGFloat(box.name.count) * 8.4 + 8
-        let br = CGRect(x: bx, y: r.minY + 9, width: 44, height: 16)
-        f.faded(badge).fill(Path(roundedRect: br, cornerRadius: 8), with: .color(Ink.badge.opacity(0.22)))
-        f.text("未実装", at: pt(br.midX, br.midY), size: 9.5, weight: .semibold, color: TsugumiPalette.hex(0xf3c088), opacity: badge)
-      }
       // run state at the top right
       let sr = pt(r.maxX - 16, r.minY + 17)
       if st == .running {

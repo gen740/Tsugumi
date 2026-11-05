@@ -1,5 +1,6 @@
 // Run entry points shared by the canvas control, menus and shortcuts.
 import { app } from '../model/app'
+import { canvasFor } from '../model/canvas'
 import type { Stage } from '../model/canvasKit'
 import { CardKey, errorText, key, path, ProjectSession } from '../model/session'
 import type { Workspace, WorkflowTab } from '../model/workspace'
@@ -40,11 +41,16 @@ export function runCard(s: ProjectSession, card: CardKey, propagate: boolean) {
   })()
 }
 
-/** Double click: a Card in Card opens in place, a Draft in its editor, others in settings. */
+/** Double click: a Card in Card opens in place, a Draft is written on its Card, others open in settings. */
 export function openCard(s: ProjectSession, k: CardKey, tab: WorkflowTab) {
   switch (s.kind(k)) {
     case 'subgraph': tab.enter(path(k)); break
-    case 'draft': app.openWindow(s, { kind: 'draft', card: k }); break
+    case 'draft':
+      if (s.isEditable) {
+        canvasFor(s, tab).writeDraft(k)
+        break
+      }
+    // falls through
     default: app.openWindow(s, { kind: 'card', card: k })
   }
 }

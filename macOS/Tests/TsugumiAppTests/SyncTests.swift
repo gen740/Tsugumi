@@ -110,6 +110,77 @@ import Testing
     #expect(!s.connected)
   }
 
+  /// A Draft's wires make its ports and take them away, and what is written on
+  /// its Card is kept, under a new name too.
+  @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func ports(_ k: CardKey) -> [[String]] {
+      let p = s.portData(k)
+      return [p.inputs.map(\.name), p.outputs.map(\.name)]
+    }
+    func wires() -> [String] {
+      s.connections(in: []).map { c in
+        "\(c["from"]?["card"]?.string ?? "").\(c["from"]?["port"]?.string ?? "")>\(c["to"]?["card"]?.string ?? "").\(c["to"]?["port"]?.string ?? "")"
+      }
+    }
+    let a = s.addCard(template: .draft, in: [], at: .zero, name: "p")
+    let b = s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "q")
+    #expect(ports(a) == [[], []])
+
+    s.connect(from: (a, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
+    #expect(wires() == ["p.out>q.in"])
+    #expect(ports(a) == [[], ["out"]] && ports(b) == [["in"], []])
+    let c = s.addCard(template: .draft, in: [], at: CGPoint(x: 600, y: 0), name: "r")
+    s.connect(from: (a, CardGeometry.newPort), to: (c, CardGeometry.newPort), in: [])
+    s.connect(from: (c, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
+    #expect(ports(a) == [[], ["out", "out2"]] && ports(b) == [["in", "in2"], []])
+    #expect(s.connections(in: []).count == 3, "no fork, nothing replaced")
+
+    // The core agrees (no unknown_port), and takes the ports away with the wires.
+    await s.save()
+    #expect(!s.dirty, "\(s.saveError ?? "")")
+    for k in [a, b, c] {
+      #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.message.contains("port") }, "\(k)")
+    }
+    s.removeConnection(at: 0, in: [])
+    #expect(ports(a) == [[], ["out2"]] && ports(b) == [["in2"], []])
+    s.disconnect(c, inputs: false, in: [])
+    #expect(ports(b) == [[], []])
+
+    s.startDraftEdit(a)
+    s.inlineDraft?.content = "count words"
+    s.inlineDraft?.name = "renamed"
+    #expect(CardGeometry(s.nodeData(a), flow: .topToBottom).draftRow == CardGeometry.draftEditRow)
+    let to = await s.finishDraftEdit()
+    #expect(to == key(["renamed"]) && s.inlineDraft == nil)
+    // The new name arrives with the saved state.
+    for _ in 0..<200 where s.cardMeta(key(["renamed"])) == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.cardMeta(key(["renamed"]))?["content"]?.string == "count words")
+    #expect(s.nodeData(key(["renamed"])).summary == "count words")
+
+    // No name is fine: the Card shows its content only, and keeps the id made for it.
+    let plain = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 300))
+    #expect(s.draftUntitled(plain) && s.nodeData(plain).untitled)
+    s.startDraftEdit(plain)
+    #expect(s.inlineDraft?.name == "" && s.draftNameProblem(plain, "") == nil)
+    let same = await s.finishDraftEdit()
+    #expect(same == nil && s.instance(plain) != nil)
+
+    // A name the Card cannot take is reported and not kept.
+    s.startDraftEdit(b)
+    s.inlineDraft?.name = "日本語"
+    #expect(s.cardNameProblem(b, "日本語") != nil)
+    let kept = await s.finishDraftEdit()
+    #expect(kept == nil && s.notice != nil && s.instance(b) != nil)
+    await s.close()
+  }
+
   @Test func agentChangesAndUIEditsBothStay() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

@@ -123,7 +123,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 - **bash の入力**: ポート `P` ごとに `JSON_P`（JSON ファイルのパス、大きさの制限なし。`jq` が使える）、File/Directory は `FILE_P`/`DIR_P`。入力の JSON とその変換器は bash の `run` を動かすときだけ作ります。出力は `$TSUGUMI_OUTPUT` の JSON をポートごとに型検証します（成果物の `out` とは別なので、成果物のない Card でも動く）。
 - **Nix の上流参照**: `default.nix` は `inputs.upstream."<Card path>"`（`inputs.local.<id>` は同じ階層）で、**どの経路で発火しても必ず先に実行される**コード Card の属性集合（`run`・`preRun`・`exports` の関数や値・store context）を参照できます。同じポートへの複数経路は共通部分、`all` は必須入力の和、`any` は全入力の共通部分、ループは最大不動点で求め、分岐の片側だけの Card や下流・自分自身は渡しません（静的診断 `nix_reference_*`）。参照されたものだけが遅延評価され、非選択分岐は build しません。Nix に渡すのはソース（`_card.json`・`_meta.json` を除く）・入力型・Nix 用 params・参照する上流定義で、実行時だけの params は含みません。Tsugumi 独自のビルドキーやキャッシュの記録はなく、評価した derivation の結果（outPath）が store にあれば build しません。評価器は tsugumid に 1 つで、nixpkgs の読み込み・評価状態・daemon 接続を Card と実行をまたいで使い回します（取消・`buildTimeoutSeconds` は評価器のスレッドだけを止める）。
 - **Card in Card**: 子 Workflow は `boundary.inputs/outputs` で外側のポートを内部 Card のポートに対応づけ、外からは通常の Card として接続・実行できます（Run の対象にでき、単体実行では境界入力に保存済みの値を使う）。状態と履歴は完全な Card path で区別します。見た目だけのグループ（layout.json）とは別物です。
-- **Draft**: `_meta.json` に概要・処理内容・制約・完了条件・入出力の用途を持ち、型なしの仮ポートで配線できます。実行も成功扱いもせず、Draft に依存する Card は理由付きで blocked、独立した部分はそのまま実行します。「Card を生成」は Agent に Draft・配線・説明を渡し、PutDefinition/PutSource の 1 トランザクションで型・Nix・ソースを保存してから検証・実行させます（途中の失敗や取消では何も保存されず、計画は残ります）。
+- **Draft**: `_meta.json` に概要・処理内容・制約・完了条件・入出力の用途を持ちます。ポートは線をつなぐと自動で作られ（入力は `_card.json`、出力は `_meta.json`。最後の線を切ると消える）、型なしのまま配線できます。実行も成功扱いもせず、Draft に依存する Card は理由付きで blocked、独立した部分はそのまま実行します。「Card を生成」は Agent に Draft・配線・説明を渡し、PutDefinition/PutSource の 1 トランザクションで型・Nix・ソースを保存してから検証・実行させます（途中の失敗や取消では何も保存されず、計画は残ります）。
 - **Agent**: `agent/` の独立パッケージ。tool 定義は `tsugumi.bfbs`（FBS の doc comment 付き）から生成し、tool 引数⇄FlatBuffers も同じ BFBS で変換します（64 bit は 10 進文字列）。op_id は tool 呼び出しごとに Agent が付け、会話・tool 証跡と一緒にホスト側へ永続化します。応答を失った変更は OperationGet で照合し、盲目的に再送しません。モデルの API キーは Keychain に保存し core/worker には渡しません。取消はモデル通信と未送信 tool を止め、受理済み run は止めません。
 
 ## リリース
@@ -255,7 +255,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | --- | --- |
 | FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
 | tsugumid: [Protocol.md](Protocol.md) の全 RPC（36 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
-| 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft の仮ポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
+| 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft のポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
 | 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
 | スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |
 | 型導出（_outputs.fbs、merge union、File/Directory、構造的互換性） | 実装済み |
