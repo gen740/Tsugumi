@@ -1,10 +1,12 @@
 """A tsugumid on a Mac (the Web UI) isolates sandboxed Cards with Seatbelt:
 a Card allowed the network resolves names but reaches nothing else on this
-host (tsugumid's ports and sockets, the web server), and it writes only its
-own output folders."""
+host (tsugumid's ports and sockets, the web server, by any of its addresses)
+and nothing of the user's session (the clipboard, LaunchServices), and it
+writes only its own output folders."""
 
 from __future__ import annotations
 
+import ctypes
 import socket
 import subprocess
 import sys
@@ -16,7 +18,7 @@ import pytest
 
 from conftest import Daemon
 from projects import card, conn, run_and_wait, write
-from test_cards_container import TXT, bash
+from test_cards_container import TXT, bash, nix_string
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -27,9 +29,15 @@ def log_of(c, run_id: str, card_id: str) -> str:
     return text(c.call("LogRangeRequest", runId=run_id, card=path(card_id), stream=1, limitBytes=65536).text)
 
 
-def stdout_of_network_card(tmp_path, script: str) -> str:
-    """Run a script as a sandboxed Card allowed the network; what it printed."""
+def stdout_of_network_card(tmp_path, script: str, python: str | None = None) -> str:
+    """Run a script as a sandboxed Card allowed the network; what it printed.
+    With `python`, that program is $PROBE in the script, $PYTHON its interpreter."""
     probe = bash(script + '\nprintf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT, network=True)
+    if python:
+        probe["_nix"] = probe["_nix"].replace(
+            "run = ",
+            f'run = "PYTHON=${{pkgs.python3}}/bin/python3 PROBE=${{pkgs.writeText "probe.py" {nix_string(python)}}}\\n" + ',
+            1)
     root = tmp_path / "p"
     write(root, {"start": {"template": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
           [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
@@ -76,6 +84,75 @@ def test_a_card_with_network_reaches_nothing_on_this_host(tmp_path):
             'echo "loopback: $r"')
         assert "loopback: refused" in out
         assert not accepted
+
+
+def an_address_of_this_host() -> str:
+    """The address this Mac goes out with (no packet is sent), which it answers
+    on itself: a LAN or VPN address, not loopback."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("192.0.2.1", 9))
+        except OSError:
+            pytest.skip("this Mac has no route out")
+        return s.getsockname()[0]
+
+
+def test_a_card_with_network_reaches_this_host_by_none_of_its_addresses(tmp_path):
+    """A service listening on 0.0.0.0 answers on every address of this Mac. To
+    Seatbelt they are all "localhost", so the denial covers them too."""
+    address = an_address_of_this_host()
+    with socket.socket() as listener:
+        listener.bind(("0.0.0.0", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        # Outside the sandbox it does answer there.
+        socket.create_connection((address, port), timeout=5).close()
+        listener.accept()[0].close()
+        accepted = accept_in_background(listener)
+        out = stdout_of_network_card(
+            tmp_path,
+            f'for a in {address} 0.0.0.0; do\n'
+            f'  if (exec 3<>/dev/tcp/$a/{port}) 2>/dev/null; then r=connected; else r=refused; fi\n'
+            '  echo "$a: $r"\n'
+            'done')
+        assert f"{address}: refused" in out
+        assert "0.0.0.0: refused" in out
+        assert not accepted
+
+
+MACH_LOOKUP = """
+import ctypes, sys
+libsystem = ctypes.CDLL(None)
+bootstrap = ctypes.c_uint.in_dll(libsystem, "bootstrap_port")
+for name in sys.argv[1:]:
+    port = ctypes.c_uint()
+    found = libsystem.bootstrap_look_up(bootstrap, name.encode(), ctypes.byref(port)) == 0
+    print(name, "reached" if found else "denied")
+"""
+
+
+def reached_on_this_host(names: list[str]) -> list[str]:
+    libsystem = ctypes.CDLL(None)
+    bootstrap = ctypes.c_uint.in_dll(libsystem, "bootstrap_port")
+    return [n for n in names if libsystem.bootstrap_look_up(bootstrap, n.encode(), ctypes.byref(ctypes.c_uint())) == 0]
+
+
+def test_a_card_with_network_reaches_no_mach_service_of_the_session(tmp_path):
+    """Only the name of a service is looked up: nothing is read from it. A
+    Card that reached the pasteboard could read the clipboard (pbpaste does)."""
+    session = ["com.apple.pasteboard.1", "com.apple.coreservices.launchservicesd", "com.apple.lsd.open",
+               "com.apple.lsd.mapdb", "com.apple.coreservices.appleevents", "com.apple.windowserver.active",
+               "com.apple.dock.server", "com.apple.tccd", "com.apple.SecurityServer"]
+    session = reached_on_this_host(session)
+    if not session:
+        pytest.skip("no GUI session on this host: nothing to keep the Card from")
+    certificates = "com.apple.trustd.agent"
+    assert reached_on_this_host([certificates])
+    out = stdout_of_network_card(tmp_path, f'"$PYTHON" "$PROBE" {" ".join(session)} {certificates}', python=MACH_LOOKUP)
+    for name in session:
+        assert f"{name} denied" in out
+    # Go and NSURLSession verify certificates through it.
+    assert f"{certificates} reached" in out
 
 
 def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(tmp_path):

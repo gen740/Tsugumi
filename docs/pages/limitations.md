@@ -29,7 +29,7 @@
 - **アプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。
 - **リリース版は ad-hoc 署名で、公証していません。** ブラウザで入れると Gatekeeper に止められます（[インストール](install.md#リリース版を入れる)）。
 - **v1.0.0 までは版の間の互換性を保ちません。** プロジェクトの文書や設定の移行はしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
-- **Web UI には Mac のフォルダの共有がありません。** Seatbelt ではファイルの存在確認（`stat`）を全体で許可し、uid を分けません（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
+- **Web UI には Mac のフォルダの共有がありません。** Seatbelt ではファイルの存在確認（`stat`）を全体で許可し、uid を分けません。`network: true` の Card は同じ LAN や VPN の他の機器に届き、`ssh` は使えません（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
 - **Claude Code の plugin は Mac アプリに対応していません。** Web UI で開いたプロジェクトだけです（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
 
 ## 機能
