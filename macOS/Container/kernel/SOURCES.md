@@ -12,4 +12,4 @@ Checked on 2026-11-05 against the copy `container` installed under
 `~/Library/Application Support/com.apple.container/kernels/`. The file is the
 output of Linux's Kconfig for Kata's configuration; Kata Containers is under
 Apache-2.0. `kernel.nix` applies its changes to it when it builds, and the result
-is in [third-party/vm-boot/kernel-config](../../../third-party/vm-boot/kernel-config).
+is `kernel-config` in `licenses.tar.gz` of the boot disk's release.

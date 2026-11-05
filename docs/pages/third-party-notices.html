@@ -77,14 +77,14 @@ module viewer (<code>ui/modules</code>) with these minified browser builds, pinn
 <code>web/package-lock.json</code>. The web build serves them from <code>/modules/</code> and
 <code>macOS/build-app.sh</code> copies them to <code>Contents/Resources/modules/</code>, each with
 its license file (<code>LICENSE.&lt;package&gt;.txt</code>). The licenses of the packages the
-Vega builds were made from are in <code>licenses/</code> of <code>web/dist/</code> and of the app.</p>
+Vega builds were made from are in the app&#39;s <code>licenses/plot-viewer/</code>.</p>
 <div class="table-wrap"><table><thead><tr><th>Component</th><th>Version</th><th>License</th></tr></thead><tbody><tr><td>plotly.js (<code>plotly.js-dist-min</code>)</td><td>3.6.0</td><td>MIT; the bundle, shipped as upstream publishes it, includes dependencies (d3 modules and others). Some of their notices are in its comments; the rest are not reproduced here, see <a href="licenseaudit.html">LicenseAudit.md</a></td></tr><tr><td>Vega (<code>vega</code>)</td><td>6.4.0</td><td>BSD-3-Clause; the build includes d3 modules (ISC, BSD-3-Clause)</td></tr><tr><td>Vega-Lite (<code>vega-lite</code>)</td><td>6.4.3</td><td>BSD-3-Clause</td></tr><tr><td>vega-embed</td><td>7.3.0</td><td>BSD-3-Clause</td></tr></tbody></table></div>
 <p>The Python packages a Card asks for (<code>matplotlib</code>, <code>plotly</code>, <code>altair</code>, …)
 come from nixpkgs when the Card is built; a Card that uses matplotlib also
 gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.</p>
-<p>The web build copies the license files of the packages esbuild really bundled
-(its metafile) into <code>web/dist/licenses/</code>. esbuild, TypeScript and type
-declarations are build-time dependencies.</p>
+<p><code>web/dist/</code> is built from a checkout, not distributed by this project; each
+installed package in <code>web/node_modules/</code> contains its license text. esbuild,
+TypeScript and type declarations are build-time dependencies.</p>
 <h2 id="core-daemon-and-execution-environment">Core daemon and execution environment</h2>
 <p>The shipped macOS app contains Tsugumi source and a <strong>boot VM image</strong>.
 <code>macOS/Container/vm-system.nix</code> builds the daemon and project tools in the
@@ -101,13 +101,12 @@ runtime closure. <a href="https://github.com/gen740/Tsugumi/blob/main/macOS/Cont
 <a href="https://github.com/gen740/Tsugumi/blob/main/macOS/Container/kernel/SOURCES.md" rel="noopener">that of Kata Containers 3.17.0</a>. This is not
 simply an unchanged nixpkgs kernel.</p>
 <p>The boot closure contains GPL / LGPL software as well as permissively
-licensed dependencies. <a href="https://github.com/gen740/Tsugumi/blob/main/third-party/vm-boot/README.md" rel="noopener">third-party/vm-boot/</a>
-lists what the released image really contains, with each package&#39;s license as
-nixpkgs declares it, its sources and patches, the license files of those sources
-and the kernel&#39;s configuration; the app and the VM&#39;s releases carry that folder.
-The corresponding source is <code>sources.tar.gz</code> in the disk&#39;s release of
-<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>; its URL for this disk
-is in that folder&#39;s README. See
+licensed dependencies. <code>licenses.tar.gz</code> in the disk&#39;s release of
+<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>, which the app also
+carries in <code>licenses/vm-boot/</code>, lists what the image really contains, with each
+package&#39;s license as nixpkgs declares it, its sources and patches, the license
+files of those sources and the kernel&#39;s configuration. The corresponding source
+is <code>sources.tar.gz</code> in the same release. See
 <a href="licenseaudit.html#vm-の対応ソースの提供方法">how it is provided</a>.
 See <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3" rel="noopener">GPLv2 §3</a>
 and <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" rel="noopener">LGPLv2.1 §§4–6</a>.</p>

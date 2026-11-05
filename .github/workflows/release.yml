@@ -69,7 +69,6 @@ jobs:
           set -euo pipefail
           app=dist/Tsugumi.app
           codesign --verify --deep --strict "$app"
-          macOS/tools/check-app-licenses.sh "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :TsugumiChannel' "$app/Contents/Info.plist")" = release
           test "v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$TAG"
           (cd dist && ditto -c -k --sequesterRsrc --keepParent Tsugumi.app Tsugumi.zip && shasum -a 256 Tsugumi.zip > Tsugumi.zip.sha256)

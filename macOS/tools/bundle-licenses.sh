@@ -44,7 +44,4 @@ chmod -R u+w "$dest/fonts/latin-modern-math"
 cp "$repo/macOS/Resources/explainer/YuseiMagic-OFL.txt" "$dest/fonts/"
 
 # The plot viewer's libraries and what they were built from (web/package-lock.json).
-nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" viewer "$dest/plot-viewer"
-
-# The VM's boot disk (macOS/tools/vm-inventory.py).
-cp -R "$repo/third-party/vm-boot" "$dest/vm-boot"
+nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" "$dest/plot-viewer"

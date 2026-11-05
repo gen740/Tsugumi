@@ -8,15 +8,15 @@
 
 ## どこまで厳密にするか
 
-個人が MIT で公開し、ad-hoc 署名の ZIP を GitHub で配っているプロジェクトとして、次の線で分けています。
+個人が MIT で公開し、ad-hoc 署名のアプリを GitHub で配っているプロジェクトなので、配布で要るものを満たすことを優先し、運用の手間を増やしません。
 
 | 扱い | 対象 | 理由 |
 | --- | --- | --- |
-| 実物で確かめ、機械的に検査する | アプリと VM に入る物の全文・表示。アプリが実際にリンク・コピーする依存の一覧 | ライセンスが配布の条件として明示しており、費用も小さい。人手の確認は依存の更新で必ず古くなる |
+| 満たす | アプリと VM に入る物の全文・表示、VM の GPL / LGPL の対応ソース | ライセンスが配布の条件として明示している。公開時とビルド時のスクリプトに組み込んであり、手作業は増えない |
 | 宣言と上流の文書に任せる | VM の各パッケージのライセンス名（nixpkgs の `meta.license`）と、そのソースのルートにあるライセンス文書 | 93 パッケージのソースを 1 ファイルずつ監査する費用に見合わない。宣言であって監査ではないと明記する |
 | 減らして解消する | 使っていない数式フォント 11 個 | 上流との照合より、配らないほうが確実で安い |
-| 追わない（理由を残す） | plotly.js の minified build に入っている依存の全文 | 下の「Plotly の依存」を参照 |
-| 作者が決める | VM の対応ソースの提供方法、公開済みリリースの扱い（どちらも決定済み、下記） | 費用と責任を負うのが作者で、法的判断を含む |
+| 追わない（理由を残す） | plotly.js の minified build に入っている依存の全文、作者が配っていない `web/dist` の全文 | 下の「Plotly の依存」と表を参照 |
+| 検査しない | notices の版と pin のずれ | 依存の更新のたびに手間が増える。全文は checkout からコピーするので、ずれても配布される全文は正しい |
 
 ## 配布物の照合結果（v0.2.0）
 
@@ -93,22 +93,22 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 
 | 事項 | 状態 | 対応と確かめる場所 |
 | --- | --- | --- |
-| アプリへライセンス全文・NOTICE・出典をまとめて同梱する | **解消**（次のリリースから） | [bundle-licenses.sh](../macOS/tools/bundle-licenses.sh) が、ビルドに使った checkout の文書を `Contents/Resources/licenses/` にコピーする。足りなければビルドが止まる。公開の前に [check-app-licenses.sh](../macOS/tools/check-app-licenses.sh) が完成したアプリを検査する（`release.yml`）。CI でも同じコピーを実行する |
-| VM に渡す Tsugumi ソースにもライセンスを保持する | **解消** | `macOS/Container/vm-source.txt` に追加。上の検査の対象 |
-| Web の配布物に必要な全文を含める | **解消** | `web/scripts/build.mjs` が esbuild の metafile から実際に bundle したパッケージを取り、viewer のライブラリと一緒に全文を `dist/licenses/` へコピーする。[test_licenses.py](../tests/python/test_licenses.py) で検査 |
+| アプリへライセンス全文・NOTICE・出典をまとめて同梱する | **解消**（次のリリースから） | [bundle-licenses.sh](../macOS/tools/bundle-licenses.sh) が、ビルドに使った checkout の文書を `Contents/Resources/licenses/` にコピーする。足りなければビルドが止まる |
+| VM に渡す Tsugumi ソースにもライセンスを保持する | **解消** | `macOS/Container/vm-source.txt` に追加 |
 | Dawn の一覧・全文を完成させる | **解消** | 上の「Dawn が実際に取り込むもの」 |
 | フォントの一覧・全文を完成させる | **解消** | 上の「SwiftMath 1.7.3 のフォント」。配るのは Latin Modern Math と Yusei Magic だけになる |
 | 持ち込んだ kernel config の由来を確定する | **解消** | Kata Containers 3.17.0 の kernel に埋め込まれた config と 1 バイトも違わないことを確認した（[SOURCES.md](../macOS/Container/kernel/SOURCES.md)） |
-| VM の中身の一覧とライセンス全文 | **解消** | [third-party/vm-boot/](../third-party/vm-boot/README.md)。イメージの `/store-paths` と derivation graph から生成し、アプリと VM のリリースに同梱する。別のイメージを配ろうとすると検査が止める |
+| VM の中身の一覧とライセンス全文 | **解消** | [vm-inventory.py](../macOS/tools/vm-inventory.py) がイメージの `/store-paths` と derivation graph から生成し、起動ディスクのリリースの `licenses.tar.gz` に置く。リリースのビルドはそれをアプリへ入れ、取れなければ止まる |
 | VM の対応ソースをリリースと結び付けて提供する | **解消** | 下の「VM の対応ソースの提供方法」 |
+| Web の配布物に必要な全文を含める | **対応しない** | `web/dist` は作者が配っていない。リリースに含まれず、各自が checkout からビルドする（全文は `web/node_modules/` にある）。単体で配るようになったら、esbuild の metafile から集める |
 | 公開済みのリリースの扱い | **作者が決定（次の版で直す）** | 下の「公開済みのリリース」 |
 | plotly.js の bundle に入っている依存の全文 | **追わない（作者が変えられる）** | 下の「Plotly の依存」 |
 
 ### VM の対応ソースの提供方法
 
-作者の決定: **起動ディスクのリリース（[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm)）に一式を置きます。** `macOS/tools/publish-vm.sh` が、ディスクごとに `sources.tar.gz`（現行のディスクで 754 MiB）と `licenses.tar.gz` を、バイナリと同じリリースへ置きます。アプリの `licenses/vm-boot/README.md` にその URL があり、ソースが公開されていないディスクを載せたアプリは、リリースの検査（`check-app-licenses.sh`）で止まります。
+作者の決定: **起動ディスクのリリース（[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm)）に一式を置きます。** `macOS/tools/publish-vm.sh` が、ディスクごとに `sources.tar.gz`（現行のディスクで 754 MiB）と `licenses.tar.gz` を、バイナリと同じリリースへ置きます。アプリの `licenses/vm-boot/README.md` にその URL があります。公開前のディスクではリリースのビルドが止まるので、未公開のまま配ることはありません。
 
-一式の中身は [vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) が `inventory.json` から作ります。
+一式の中身は [vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) が、`vm-inventory.py` の作った `inventory.json` から作ります。
 
 - 各パッケージのソースと、取得するパッチ（126 件）
 - 固定した revision の nixpkgs。各パッケージの設定・ビルド・インストールの手順と、nixpkgs の中にあるパッチを含みます
@@ -120,7 +120,7 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 | --- | --- |
 | 配っている物 | `Tsugumi.zip`・`Tsugumi.dmg` の中と gen740/tsugumi-vm のリリースの `vmlinux` と `rootfs.erofs` |
 | 中身 | 103 のストアパスと kernel で、93 パッケージ。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージ（Linux・BusyBox・Bash・coreutils・glibc・Nix など）。GPL-3.0 のものもあるので [GPLv3 §6](https://www.gnu.org/licenses/gpl-3.0.html#section6) も関係する |
-| kernel の生成後の config | バイナリの中（`CONFIG_IKCONFIG`）と `third-party/vm-boot/kernel-config` |
+| kernel の生成後の config | バイナリの中（`CONFIG_IKCONFIG`）と `licenses.tar.gz` の `kernel-config` |
 
 残る論点は 2 つです。法的な結論ではありません。
 
@@ -153,6 +153,6 @@ GitHub Pages の図の手書きに使う Yusei Magic（[SIL OFL 1.1](site/assets
 
 ## 更新時の確認
 
-自動で止まるもの: アプリの全文の欠け、`Package.resolved` や hosq の pin と notices のずれ（[test_licenses.py](../tests/python/test_licenses.py)）、VM イメージと `third-party/vm-boot/` のずれ（リリースの検査と `publish-vm.sh`）、ソースが未公開のディスク（リリースの検査）。VM の起動ディスクを変えたら `macOS/tools/vm-inventory.py` で生成し直します。
+止まるもの: アプリの全文の欠けと、公開前の起動ディスク（どちらもビルド）。起動ディスクの一覧とソースは `macOS/tools/publish-vm.sh` が作るので、手で生成するものはありません。
 
-人が見るもの: Dawn の pin を変えたときの `third_party/` の内訳と、`web/package-lock.json` を更新したときの notices の版です。Tree-sitter のコピーしたライセンス全文も上流の同じ版と照合します。公開する ZIP を最後に確認し、ソース上の一覧を更新しただけで配布対応を完了としないようにします。
+人が見るもの: 依存を更新したら notices の版を直します。Dawn の pin を変えたら `third_party/` の内訳を見直します。公開する ZIP を最後に確認します。

@@ -92,7 +92,7 @@ module viewer (`ui/modules`) with these minified browser builds, pinned in
 `web/package-lock.json`. The web build serves them from `/modules/` and
 `macOS/build-app.sh` copies them to `Contents/Resources/modules/`, each with
 its license file (`LICENSE.<package>.txt`). The licenses of the packages the
-Vega builds were made from are in `licenses/` of `web/dist/` and of the app.
+Vega builds were made from are in the app's `licenses/plot-viewer/`.
 
 | Component | Version | License |
 | --- | --- | --- |
@@ -105,9 +105,9 @@ The Python packages a Card asks for (`matplotlib`, `plotly`, `altair`, …)
 come from nixpkgs when the Card is built; a Card that uses matplotlib also
 gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.
 
-The web build copies the license files of the packages esbuild really bundled
-(its metafile) into `web/dist/licenses/`. esbuild, TypeScript and type
-declarations are build-time dependencies.
+`web/dist/` is built from a checkout, not distributed by this project; each
+installed package in `web/node_modules/` contains its license text. esbuild,
+TypeScript and type declarations are build-time dependencies.
 
 ## Core daemon and execution environment
 
@@ -138,13 +138,12 @@ runtime closure. [`kernel.nix`](macOS/Container/kernel.nix) builds Linux
 simply an unchanged nixpkgs kernel.
 
 The boot closure contains GPL / LGPL software as well as permissively
-licensed dependencies. [third-party/vm-boot/](third-party/vm-boot/README.md)
-lists what the released image really contains, with each package's license as
-nixpkgs declares it, its sources and patches, the license files of those sources
-and the kernel's configuration; the app and the VM's releases carry that folder.
-The corresponding source is `sources.tar.gz` in the disk's release of
-[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); its URL for this disk
-is in that folder's README. See
+licensed dependencies. `licenses.tar.gz` in the disk's release of
+[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), which the app also
+carries in `licenses/vm-boot/`, lists what the image really contains, with each
+package's license as nixpkgs declares it, its sources and patches, the license
+files of those sources and the kernel's configuration. The corresponding source
+is `sources.tar.gz` in the same release. See
 [how it is provided](docs/LicenseAudit.md#vm-の対応ソースの提供方法).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).

@@ -103,8 +103,15 @@ grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
   mkdir -p "$src/$(dirname "$entry")"
   cp -R "$repo/$entry" "$src/$entry"
 done
-# The licenses of all of the above (checked before a release: check-app-licenses.sh).
+# The licenses of all of the above, and the boot disk's from its release
+# (publish-vm.sh, with its source). A release needs them; a disk not published
+# yet can still be tried in a dev build.
 "$repo/macOS/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
+vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/tsugumi-vm}/releases/download/$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
+if ! curl -fsSL "$vm_licenses" | tar -xz -C "$app/Contents/Resources/licenses"; then
+  [ "$channel" != release ] || { echo "no licenses at $vm_licenses: run macOS/tools/publish-vm.sh" >&2; exit 1; }
+  echo "warning: no licenses of the boot disk at $vm_licenses" >&2
+fi
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST

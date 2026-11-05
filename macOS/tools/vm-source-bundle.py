@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Writes the corresponding source of the VM's boot disk as one archive, from
-third-party/vm-boot/inventory.json: every package's sources and fetched patches,
+the folder vm-inventory.py wrote: every package's sources and fetched patches,
 nixpkgs at the pinned revision (the recipes and the patches it keeps itself), and
 the part of this repository that builds the disk. publish-vm.sh uploads it.
 
-    macOS/tools/vm-source-bundle.py <file.tar.gz>
+    macOS/tools/vm-source-bundle.py <inventory folder> <file.tar.gz>
 
 The source paths come from cache.nixos.org through the Nix store; nothing is built.
 """
@@ -16,7 +16,6 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-VM_BOOT = REPO / "third-party" / "vm-boot"
 # What `nix build .#packages.aarch64-linux.vm-boot` reads of this repository.
 BUILD_FILES = ["flake.nix", "flake.lock", "VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", "nix", "macOS/Container"]
 GITHUB_ASSET_LIMIT = 2 * 2**30
@@ -61,10 +60,10 @@ def add(tar, path, name):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
-    out = Path(sys.argv[1]).resolve()
-    inventory = json.loads((VM_BOOT / "inventory.json").read_text())
+    vm_boot, out = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+    inventory = json.loads((vm_boot / "inventory.json").read_text())
     top = f"tsugumi-vm-source-{inventory['vm_version'].split('-')[0]}"
     sources = sorted({s["store_path"] for p in inventory["packages"] for s in p["sources"]})
     store = [f"/nix/store/{s}" for s in sources]
@@ -76,7 +75,7 @@ def main():
         text = Path(tmp) / "README.md"
         text.write_text(readme(inventory))
         add(tar, text, f"{top}/README.md")
-        add(tar, VM_BOOT, f"{top}/vm-boot")
+        add(tar, vm_boot, f"{top}/vm-boot")
         add(tar, nixpkgs, f"{top}/nixpkgs")
         for path in store:
             add(tar, path, f"{top}/sources/{Path(path).name}")
