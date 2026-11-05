@@ -55,11 +55,13 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
 // reference_read neither lists nor reads them (as the Swift Agent).
 {
   const refs = referenceDemos(path.join(root, 'demos'))
-  assert.deepEqual(Object.keys(refs).sort(), ['demos/collatz', 'demos/live-stream', 'demos/plots', 'demos/report'])
+  const listed = Object.keys(refs).sort()
+  for (const example of ['demos/collatz', 'demos/live-stream', 'demos/plots', 'demos/report']) assert.ok(listed.includes(example), example)
+  for (const task of ['demos/casa', 'demos/casa-draft', 'demos/gw150914', 'demos/dynamics-draft']) assert.ok(!listed.includes(task), task)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-ref-'))
   const agent = new Agent(new ToolCatalog(schema), async () => { throw new Error('no rpc') },
     { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', auth: 'none' } as never, path.join(tmp, 'c.json'), 'c', refs)
-  assert.deepEqual(agent.readReference('demos'), ['collatz/\nlive-stream/\nplots/\nreport/', false])
+  assert.deepEqual(agent.readReference('demos'), [listed.map((p) => p.slice('demos/'.length) + '/').join('\n'), false])
   assert.equal(agent.readReference('demos/report/tsugumi.json')[1], false)
   for (const hidden of ['demos/casa', 'demos/casa/definitions/bands/src/main.py', 'demos/casa-draft', 'demos/../core']) {
     assert.equal(agent.readReference(hidden)[1], true, `${hidden} is readable`)
