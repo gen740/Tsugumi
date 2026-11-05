@@ -1,0 +1,20 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "fits"
+    }
+  ],
+  "params": [
+    {
+      "name": "years",
+      "type": "uint64",
+      "data": 100
+    },
+    {
+      "name": "dt",
+      "type": "double",
+      "data": 0.05
+    }
+  ]
+}

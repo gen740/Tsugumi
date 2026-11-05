@@ -1,0 +1,105 @@
+{
+  "name": "蓄電池の最適運用",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "market"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "schedule"
+      },
+      {
+        "id": "capacities"
+      },
+      {
+        "id": "tariffs"
+      },
+      {
+        "id": "check"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "market",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "market",
+          "port": "scenario"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "schedule"
+        },
+        "to": {
+          "card": "schedule",
+          "port": "scenario"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "capacities"
+        },
+        "to": {
+          "card": "capacities",
+          "port": "scenario"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "tariffs"
+        },
+        "to": {
+          "card": "tariffs",
+          "port": "scenario"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "check"
+        },
+        "to": {
+          "card": "check",
+          "port": "scenario"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "電池と契約の条件",
+  "content": "電池の容量・充放電の上限・往復効率、売電価格の買値に対する比、蓄電量の刻み、架空データの seed と日数を次へ渡す。",
+  "outputs": [
+    {
+      "name": "settings",
+      "description": "条件の値"
+    }
+  ]
+}

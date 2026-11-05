@@ -1,0 +1,30 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 3
+    },
+    {
+      "name": "cells",
+      "type": "uint64",
+      "data": 100
+    },
+    {
+      "name": "alpha",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "final_time",
+      "type": "double",
+      "data": 0.002
+    },
+    {
+      "name": "noise",
+      "type": "double",
+      "data": 0.2
+    }
+  ]
+}

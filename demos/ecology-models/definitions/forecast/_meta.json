@@ -1,0 +1,10 @@
+{
+  "description": "残した年を予測する",
+  "content": "fit_until 年までだけで当てはめ、残した年をシミュレーションで予測して、当てはめの誤差と予測の誤差を比べる。",
+  "outputs": [
+    {
+      "name": "forecast",
+      "description": "モデルごとの当てはめと予測の対数 RMSE"
+    }
+  ]
+}
