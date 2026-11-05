@@ -139,7 +139,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 [GitHub Pages](https://gen740.github.io/Tsugumi/) で読む文書は、`docs/` の Markdown から生成します。リポジトリの設定で、Pages の公開元を `main` ブランチの `/docs` にします。
 
 - **生成**: `node docs/site/build.mjs`（`web/node_modules` の marked を使う）で `docs/index.html` と `docs/pages/*.html` を作ります。手で編集しません。一覧とグループは `docs/README.md` から作ります。
-- **動く図**: `docs/site/js/` は、アプリの「Tsugumi を知る」（[PR #33](https://github.com/gen740/Tsugumi/pull/33)）の描画を Canvas 2D に移したものです。図を入れる位置は `build.mjs` の `STORY` に文の一部で書き、その文がなくなると生成が失敗します。
+- **動く図**: `docs/site/js/` は、アプリの「Tsugumi を知る」（`macOS/Sources/App/Explainer/`）の描画を Canvas 2D に移したものです。図を入れる位置は `build.mjs` の `STORY` に文の一部で書き、その文がなくなると生成が失敗します。
 - **確認**: `test_docs.py` が、生成物が文書と一致することと、未解釈の `**` が残っていないことを確かめます。
 - **JS なし**: 本文は静的な HTML なので読めます。動きを減らす設定では、図はスクロールに追従し、時計で動く部分は止まります。
 

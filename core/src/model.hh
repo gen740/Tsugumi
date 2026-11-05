@@ -57,8 +57,11 @@ class Failed : public std::exception {
 struct RunStatusData {
   std::optional<std::string> run_id;
   RunState state = RunState::idle;
-  std::optional<uint64_t> rev, execution_rev;
-  std::optional<int64_t> accepted_at, started_at, ended_at;
+  std::optional<uint64_t> rev;
+  std::optional<uint64_t> execution_rev;
+  std::optional<int64_t> accepted_at;
+  std::optional<int64_t> started_at;
+  std::optional<int64_t> ended_at;
   std::optional<FailureData> failure;
   std::optional<std::string> commit;  // the project's version the run started from
   bool active() const {
@@ -101,7 +104,8 @@ struct InvocationSummaryData {
   uint64_t invocation = 0;
   CardState state = CardState::not_started;
   std::optional<Phase> phase;
-  std::optional<int64_t> started_at, ended_at;
+  std::optional<int64_t> started_at;
+  std::optional<int64_t> ended_at;
   std::optional<uint64_t> duration_ms;
   std::optional<FailureData> failure;
   std::vector<WaitingInputData> waiting;
@@ -128,8 +132,10 @@ struct InputSourceData {
 };
 
 struct LineSeriesData {
-  std::string id, label;
-  std::vector<double> x, y;
+  std::string id;
+  std::string label;
+  std::vector<double> x;
+  std::vector<double> y;
 };
 
 // The kinds of display, outside DisplayData: clang with libstdc++ does not
@@ -144,7 +150,12 @@ struct Scalar { double value = 0; std::string label; };
 struct LineChart { std::vector<LineSeriesData> series; };
 struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
 struct Image { std::string media_type; std::string data; std::string alt; };
-struct PointCloud { std::vector<float> x, y, z; std::vector<uint32_t> colors; };
+struct PointCloud {
+  std::vector<float> x;
+  std::vector<float> y;
+  std::vector<float> z;
+  std::vector<uint32_t> colors;
+};
 struct Module { std::string module; std::string data_json; };
 }  // namespace display
 
@@ -173,7 +184,8 @@ struct ArtifactMemberData {
 };
 
 struct ArtifactData {
-  std::string artifact_id, run_id;
+  std::string artifact_id;
+  std::string run_id;
   CardPath card;
   uint64_t invocation = 0;
   std::string output;

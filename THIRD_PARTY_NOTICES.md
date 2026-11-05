@@ -151,6 +151,18 @@ starts bundling their binaries or a populated Nix store, its redistribution
 inventory and obligations must expand accordingly. The same applies when
 distributing a standalone daemon or a different container image.
 
+## Help > Tsugumi を知る (macOS app)
+
+The window that reads `README.md` and `docs/*.md` with figures bundles a
+font and an image; `build-app.sh` copies them, with the font's license text,
+to `Contents/Resources/explainer/` (sources in
+[`macOS/Resources/explainer/SOURCES.md`](macOS/Resources/explainer/SOURCES.md)).
+
+| Component | Version / license text | Use |
+| --- | --- | --- |
+| Yusei Magic | [google/fonts `f58dfb9`](https://github.com/google/fonts/tree/f58dfb9001f31a5eb15b4960b9548b8fd0fa6168/ofl/yuseimagic), [SIL OFL 1.1](macOS/Resources/explainer/YuseiMagic-OFL.txt) (Copyright 2020 The Yusei Magic Project Authors) | `YuseiMagic-Regular.ttf`, unmodified, registered for the app's own process only: the handwriting in the figures' sketches. The OFL text ships next to it; the font is not sold by itself and its Reserved Font Name is not used for modified versions. |
+| Cas A RGB image | Output of the Cas A demo's `rgb` Card (Chandra ObsID 25628) | `casa-rgb-25628.png`, the result in a figure; derived from Chandra observation data (see External data below) |
+
 ## Documentation site
 
 The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image:

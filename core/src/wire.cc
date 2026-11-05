@@ -104,7 +104,8 @@ Off<D::Port> port(FBB& b, const types::PortType& p) {
 }
 
 Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
-  std::vector<Off<D::Port>> ins, outs;
+  std::vector<Off<D::Port>> ins;
+  std::vector<Off<D::Port>> outs;
   for (const auto& p : n.inputs) ins.push_back(port(b, p));
   for (const auto& p : n.outputs) outs.push_back(port(b, p));
   auto diags = n.diags;
@@ -250,12 +251,15 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
     value = D::CreateDisplayImage(b, mt, data, alt).Union();
     type = D::DisplayValue::DisplayImage;
   } else if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) {
-    auto x = b.CreateVector(p->x), y = b.CreateVector(p->y), z = b.CreateVector(p->z);
+    auto x = b.CreateVector(p->x);
+    auto y = b.CreateVector(p->y);
+    auto z = b.CreateVector(p->z);
     auto c = b.CreateVector(p->colors);
     value = D::CreateDisplayPointCloud(b, x, y, z, c).Union();
     type = D::DisplayValue::DisplayPointCloud;
   } else if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
-    auto name = b.CreateString(m->module), data = b.CreateString(m->data_json);
+    auto name = b.CreateString(m->module);
+    auto data = b.CreateString(m->data_json);
     value = D::CreateDisplayModule(b, name, data).Union();
     type = D::DisplayValue::DisplayModule;
   }

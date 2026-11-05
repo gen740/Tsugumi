@@ -31,7 +31,7 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 | 環境 | commit | 結果 |
 | --- | --- | --- |
 | Linux・macOS（GitHub Actions） | [228587d](https://github.com/gen740/Tsugumi/actions/runs/41882476921) | 成功（2026-11-04）。範囲は [ci.yml](../.github/workflows/ci.yml) |
-| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | 228587d に文書の変更を加えたもの | C++ は全件成功。Python は 152 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
+| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | 94000c7 に文書の変更を加えたもの | C++ は全件成功。Python は 152 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
 | 共通 VM | | **この commit では未確認。** 26 件はこの環境で流していません |
 | Swift のテスト（`macOS/CoreTests`・`macOS/Tests`） | 228587d | 上の GitHub Actions でのみ確認 |
 

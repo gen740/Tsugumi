@@ -80,7 +80,8 @@ std::string nix_quote(const std::string& s) {
 // File name of a project GC root: the Card (readable, plus a hash against
 // collisions) and the result.
 std::string root_prefix(const CardPath& card) {
-  std::string k = path_key(card), out;
+  std::string k = path_key(card);
+  std::string out;
   for (char c : k) out += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' ? c : '_';
   return out + "-" + crypto::sha256_hex(k).substr(0, 8) + "--";
 }
@@ -188,7 +189,8 @@ stdfs::path NixRunner::gcroots_dir() const {
 }
 
 std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
-  std::string url, hash;
+  std::string url;
+  std::string hash;
   if (pkgs == "tsugumi:default") {
     std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
     hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
@@ -230,7 +232,8 @@ std::string NixRunner::params_json(const Node& node, bool nix_only) {
 
 std::string NixRunner::params_buffer(const Node& node) {
   auto t = params_type(node);
-  std::string out, err;
+  std::string out;
+  std::string err;
   if (!types::json_to_flatbuffer(*t, params_json(node, false), &out, &err))
     throw Failed(FailureKind::validation_failed, "params: " + err);
   return out;
@@ -402,7 +405,8 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   std::vector<size_t> allowed;
   for (size_t u : graph.nix_upstream(self))
     if (in_project_of(graph.nodes[u].path, node.path)) allowed.push_back(u);
-  std::string cards_json = "[", deps_json = "[";
+  std::string cards_json = "[";
+  std::string deps_json = "[";
   for (size_t i = 0; i < allowed.size(); ++i) {
     const Node& u = graph.nodes[allowed[i]];
     auto ugen = schema::string_value(generated_dir(generate(u)).string());
