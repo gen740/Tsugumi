@@ -39,11 +39,13 @@
 copied code, fonts and external data retain their own licenses, including
 the author&#39;s pre-existing <a href="https://github.com/CLI20-dev/hosq" rel="noopener">hosq</a> library.
 See <a href="provenance.html">制作範囲と事前準備</a> for the authorship boundary.</p>
-<p>This is a source-level inventory, <strong>not a complete binary-distribution
-license bundle or corresponding-source offer</strong>. Packaging gaps and release
-work still required are recorded in <a href="licenseaudit.html">ライセンス調査</a>.
-Versions below were audited at <code>0ec6460</code> (2026-11-04); lock files and build
-recipes are authoritative when dependencies change.</p>
+<p>The app carries these notices and the full license texts in
+<code>Contents/Resources/licenses/</code> (<a href="https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh" rel="noopener">bundle-licenses.sh</a>).
+The corresponding source of the VM&#39;s boot disk is in that disk&#39;s release of
+<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>; see
+<a href="licenseaudit.html">ライセンス調査</a>. Versions
+below were audited at <code>0ec6460</code> (2026-11-04) and checked again on 2026-11-05;
+lock files and build recipes are authoritative when dependencies change.</p>
 <h2 id="tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</h2>
 <p>The editor uses the runtime, language grammars and highlight queries.
 Their MIT licenses permit use alongside Tsugumi&#39;s own MIT code, while
@@ -62,14 +64,15 @@ The copied queries&#39; upstream license texts are retained in
 <code>SwiftTreeSitter</code> product that Tsugumi links. It is not an app dependency
 in the audited <code>macOS/Package.swift</code> / <code>Package.resolved</code> graph.</p>
 <h2 id="other-macos-app-dependencies">Other macOS app dependencies</h2>
-<div class="table-wrap"><table><thead><tr><th>Component</th><th>Pinned version / license text</th><th>License and scope</th></tr></thead><tbody><tr><td>FlatBuffers</td><td><a href="https://github.com/google/flatbuffers/blob/7e163021e59cca4f8e1e35a7c828b5c6b7915953/LICENSE" rel="noopener">25.12.19</a></td><td>Apache-2.0; Swift runtime (also used by core / SDKs)</td></tr><tr><td>SwiftTerm</td><td><a href="https://github.com/migueldeicaza/SwiftTerm/blob/b1262db5b6bea699a8260a8c66999436c508ca56/LICENSE" rel="noopener">1.11.2</a></td><td>MIT; includes xterm.js / SourceLair / Christopher Jeffrey attributions</td></tr><tr><td>Swift Markdown</td><td><a href="https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/LICENSE.txt" rel="noopener">0.7.3 LICENSE</a>, <a href="https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/NOTICE.txt" rel="noopener">NOTICE</a></td><td>Apache-2.0 with Swift runtime exception; retain NOTICE too</td></tr><tr><td>swift-cmark</td><td><a href="https://github.com/swiftlang/swift-cmark/blob/08ddb528923cc1a6527e02b7a1aee9e516ca749a/COPYING" rel="noopener">0.9.0 COPYING</a></td><td>BSD-2-Clause and embedded MIT notices for derived code; test/spec material has separate terms in COPYING</td></tr><tr><td>SwiftMath</td><td><a href="https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE" rel="noopener">1.7.3</a></td><td>MIT for code; its 12 bundled OTF fonts have <strong>separate</strong> GUST / OFL / STIX-related terms; see <a href="licenseaudit.html">LicenseAudit.md</a></td></tr><tr><td>Dawn / Tint</td><td><a href="https://github.com/google/dawn/blob/1716e88cc9e58398fab5d4473f7f2e858667b677/LICENSE" rel="noopener">v20261023.194543</a></td><td>BSD-3-Clause; statically incorporated into <code>libtsugumi_renderer.dylib</code></td></tr></tbody></table></div>
-<p>Dawn&#39;s Metal build also incorporates third-party code. The inspected Ninja
-archive rule includes Abseil objects (Apache-2.0); Dawn&#39;s source tree has
-additional component licenses and file-level notices. A complete inventory
-must follow the actual compiled objects and included headers. Merely listing
-everything fetched under <code>third_party/</code>, or listing SPIRV-Tools regardless
-of the disabled SPIR-V / Vulkan options, does not establish what is shipped.
-See <code>ui/renderer/CMakeLists.txt</code> and the release audit tasks.</p>
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Pinned version / license text</th><th>License and scope</th></tr></thead><tbody><tr><td>FlatBuffers</td><td><a href="https://github.com/google/flatbuffers/blob/7e163021e59cca4f8e1e35a7c828b5c6b7915953/LICENSE" rel="noopener">25.12.19</a></td><td>Apache-2.0; Swift runtime (also used by core / SDKs)</td></tr><tr><td>SwiftTerm</td><td><a href="https://github.com/migueldeicaza/SwiftTerm/blob/b1262db5b6bea699a8260a8c66999436c508ca56/LICENSE" rel="noopener">1.11.2</a></td><td>MIT; includes xterm.js / SourceLair / Christopher Jeffrey attributions</td></tr><tr><td>Swift Markdown</td><td><a href="https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/LICENSE.txt" rel="noopener">0.7.3 LICENSE</a>, <a href="https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/NOTICE.txt" rel="noopener">NOTICE</a></td><td>Apache-2.0 with Swift runtime exception; retain NOTICE too</td></tr><tr><td>swift-cmark</td><td><a href="https://github.com/swiftlang/swift-cmark/blob/08ddb528923cc1a6527e02b7a1aee9e516ca749a/COPYING" rel="noopener">0.9.0 COPYING</a></td><td>BSD-2-Clause and embedded MIT notices for derived code; test/spec material has separate terms in COPYING</td></tr><tr><td>SwiftMath</td><td><a href="https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE" rel="noopener">1.7.3</a></td><td>MIT for code. Of its 12 OTF fonts, which have <strong>separate</strong> terms, the app ships only Latin Modern Math 1.959 (GUST Font License, an instance of the LPPL), the one it draws with, and with it the font&#39;s complete upstream package; see <a href="licenseaudit.html">LicenseAudit.md</a></td></tr><tr><td>Dawn / Tint</td><td><a href="https://github.com/google/dawn/blob/1716e88cc9e58398fab5d4473f7f2e858667b677/LICENSE" rel="noopener">v20261023.194543</a></td><td>BSD-3-Clause; statically incorporated into <code>libtsugumi_renderer.dylib</code></td></tr></tbody></table></div>
+<p>Dawn&#39;s Metal build also incorporates third-party code. Following the compile
+inputs of the static library&#39;s 652 objects (<code>ninja -t deps</code>), what comes from
+outside Dawn and Tint is Abseil (Apache-2.0; <code>af5aede</code> of Chromium&#39;s copy), the
+notice of webgpu-headers in the generated <code>webgpu.h</code> (BSD-3-Clause) and
+<code>src/dawn/common/LinkedList.h</code>, a modified copy of Chromium&#39;s
+<a href="https://github.com/gen740/Tsugumi/blob/main/third-party/chromium/README.md" rel="noopener">linked_list.h</a> (BSD-style). Nothing else under
+Dawn&#39;s <code>third_party/</code> is compiled, including SPIRV-Tools. See
+<a href="licenseaudit.html">LicenseAudit.md</a> and <code>ui/renderer/CMakeLists.txt</code>.</p>
 <p>Swift Argument Parser 1.8.2 (Apache-2.0 with Swift runtime exception) is
 resolved for dependency command-line / example targets; it is not a direct
 Tsugumi app product dependency. A lock file entry alone is not proof that
@@ -84,20 +87,20 @@ only code reachable from the server and browser entry points.</p>
 module viewer (<code>ui/modules</code>) with these minified browser builds, pinned in
 <code>web/package-lock.json</code>. The web build serves them from <code>/modules/</code> and
 <code>macOS/build-app.sh</code> copies them to <code>Contents/Resources/modules/</code>, each with
-its license file (<code>LICENSE.&lt;package&gt;.txt</code>).</p>
-<div class="table-wrap"><table><thead><tr><th>Component</th><th>Version</th><th>License</th></tr></thead><tbody><tr><td>plotly.js (<code>plotly.js-dist-min</code>)</td><td>3.6.0</td><td>MIT; the bundle includes its dependencies (d3 modules and others), whose notices are in the file&#39;s header comments</td></tr><tr><td>Vega (<code>vega</code>)</td><td>6.4.0</td><td>BSD-3-Clause; the build includes d3 modules (ISC, BSD-3-Clause)</td></tr><tr><td>Vega-Lite (<code>vega-lite</code>)</td><td>6.4.3</td><td>BSD-3-Clause</td></tr><tr><td>vega-embed</td><td>7.3.0</td><td>BSD-3-Clause</td></tr></tbody></table></div>
+its license file (<code>LICENSE.&lt;package&gt;.txt</code>). The licenses of the packages the
+Vega builds were made from are in the app&#39;s <code>licenses/plot-viewer/</code>.</p>
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Version</th><th>License</th></tr></thead><tbody><tr><td>plotly.js (<code>plotly.js-dist-min</code>)</td><td>3.6.0</td><td>MIT; the bundle, shipped as upstream publishes it, includes dependencies (d3 modules and others). Some of their notices are in its comments; the rest are not reproduced here, see <a href="licenseaudit.html">LicenseAudit.md</a></td></tr><tr><td>Vega (<code>vega</code>)</td><td>6.4.0</td><td>BSD-3-Clause; the build includes d3 modules (ISC, BSD-3-Clause)</td></tr><tr><td>Vega-Lite (<code>vega-lite</code>)</td><td>6.4.3</td><td>BSD-3-Clause</td></tr><tr><td>vega-embed</td><td>7.3.0</td><td>BSD-3-Clause</td></tr></tbody></table></div>
 <p>The Python packages a Card asks for (<code>matplotlib</code>, <code>plotly</code>, <code>altair</code>, …)
 come from nixpkgs when the Card is built; a Card that uses matplotlib also
 gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.</p>
-<p>Each installed package contains its license text. Keeping these only in
-<code>web/node_modules/</code> does not make them part of the separately distributed
-<code>web/dist/</code>; the build must preserve the notices for the emitted code.
-esbuild, TypeScript and type declarations are build-time dependencies.</p>
+<p><code>web/dist/</code> is built from a checkout, not distributed by this project; each
+installed package in <code>web/node_modules/</code> contains its license text. esbuild,
+TypeScript and type declarations are build-time dependencies.</p>
 <h2 id="core-daemon-and-execution-environment">Core daemon and execution environment</h2>
 <p>The shipped macOS app contains Tsugumi source and a <strong>boot VM image</strong>.
 <code>macOS/Container/vm-system.nix</code> builds the daemon and project tools in the
 user&#39;s VM on first boot. These are different distribution boundaries.</p>
-<div class="table-wrap"><table><thead><tr><th>Component used by core</th><th>License / source</th></tr></thead><tbody><tr><td>hosq, <code>38c3c8e21f570a9698006c361fc58bf0365896e0</code></td><td><a href="https://github.com/CLI20-dev/hosq/blob/38c3c8e21f570a9698006c361fc58bf0365896e0/LICENSE" rel="noopener">MIT</a>; pre-existing author library, included as headers</td></tr><tr><td>Nix libraries (<code>nix-expr</code>, <code>nix-store</code>, <code>nix-fetchers</code>, <code>nix-util</code>)</td><td>LGPL-2.1-or-later; dynamically linked by the Nix build</td></tr><tr><td>Boehm–Demers–Weiser GC</td><td>Its MIT-style license; transitive Nix dependency</td></tr><tr><td>FlatBuffers</td><td>Apache-2.0</td></tr><tr><td>SQLite</td><td>Public domain</td></tr><tr><td>libgit2 1.9.7</td><td>GPL-2.0-only with its linking exception; see <a href="https://github.com/libgit2/libgit2/blob/v1.9.7/COPYING" rel="noopener">COPYING</a>. The exception permits combinations with differently licensed programs; libgit2 itself retains its own license.</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Component used by core</th><th>License / source</th></tr></thead><tbody><tr><td>hosq, <code>1eb894224b0feffbb5b81d075d3e2c76160f99a1</code></td><td><a href="https://github.com/CLI20-dev/hosq/blob/1eb894224b0feffbb5b81d075d3e2c76160f99a1/LICENSE" rel="noopener">MIT</a>; pre-existing author library, included as headers</td></tr><tr><td>Nix libraries (<code>nix-expr</code>, <code>nix-store</code>, <code>nix-fetchers</code>, <code>nix-util</code>)</td><td>LGPL-2.1-or-later; dynamically linked by the Nix build</td></tr><tr><td>Boehm–Demers–Weiser GC</td><td>Its MIT-style license; transitive Nix dependency</td></tr><tr><td>FlatBuffers</td><td>Apache-2.0</td></tr><tr><td>SQLite</td><td>Public domain</td></tr><tr><td>libgit2 1.9.7</td><td>GPL-2.0-only with its linking exception; see <a href="https://github.com/libgit2/libgit2/blob/v1.9.7/COPYING" rel="noopener">COPYING</a>. The exception permits combinations with differently licensed programs; libgit2 itself retains its own license.</td></tr></tbody></table></div>
 <p>The core&#39;s full runtime closure also includes transitive libraries; this
 table is not a closure-wide license manifest. Package versions and recipes
 are fixed by <a href="https://github.com/gen740/Tsugumi/blob/main/flake.lock" rel="noopener">flake.lock</a> and <a href="https://github.com/gen740/Tsugumi/blob/main/nix/core.nix" rel="noopener">nix/core.nix</a>.</p>
@@ -105,13 +108,17 @@ are fixed by <a href="https://github.com/gen740/Tsugumi/blob/main/flake.lock" re
 <p><a href="https://github.com/gen740/Tsugumi/blob/main/macOS/Container/vm-boot.nix" rel="noopener"><code>vm-boot.nix</code></a> includes Nix, CA certificates,
 Bash, coreutils, findutils, util-linux, e2fsprogs, BusyBox, gawk, and their
 runtime closure. <a href="https://github.com/gen740/Tsugumi/blob/main/macOS/Container/kernel.nix" rel="noopener"><code>kernel.nix</code></a> builds Linux
-6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from a Kata
-VM configuration. This is not simply an unchanged nixpkgs kernel.</p>
+6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from
+<a href="https://github.com/gen740/Tsugumi/blob/main/macOS/Container/kernel/SOURCES.md" rel="noopener">that of Kata Containers 3.17.0</a>. This is not
+simply an unchanged nixpkgs kernel.</p>
 <p>The boot closure contains GPL / LGPL software as well as permissively
-licensed dependencies. Its <strong>actual closure</strong>, corresponding source,
-patches, configuration and build scripts need a release-specific inventory.
-<code>flake.lock</code> and upstream download URLs provide useful provenance, but are
-not by themselves a corresponding-source distribution or written offer.
+licensed dependencies. <code>licenses.tar.gz</code> in the disk&#39;s release of
+<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a>, which the app also
+carries in <code>licenses/vm-boot/</code>, lists what the image really contains, with each
+package&#39;s license as nixpkgs declares it, its sources and patches, the license
+files of those sources and the kernel&#39;s configuration. The corresponding source
+is <code>sources.tar.gz</code> in the same release. See
+<a href="licenseaudit.html#vm-の対応ソースの提供方法">how it is provided</a>.
 See <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3" rel="noopener">GPLv2 §3</a>
 and <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" rel="noopener">LGPLv2.1 §§4–6</a>.</p>
 <h3 id="downloaded--built-after-installation">Downloaded / built after installation</h3>

@@ -1,7 +1,7 @@
 # Guest kernel of the shared Tsugumi VM (Virtualization.framework), 6.12 LTS.
 #
-# The configuration (kernel/base-6.12.28.config) is that of a kata based VM
-# kernel, brought to this version with olddefconfig, without:
+# The configuration (kernel/base-6.12.28.config, origin in kernel/SOURCES.md) is
+# that of a kata based VM kernel, brought to this version with olddefconfig, without:
 #   SELinux    its inode release hook (selinux_inode_free_security) oopsed on
 #              NULL when a mount namespace was torn down while its inodes were
 #              evicted -- all the time here (Nix build sandboxes, bubblewrap),

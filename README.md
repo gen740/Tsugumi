@@ -235,6 +235,6 @@ Web を読む AI は、本文ではなく小さなモデルの要約を受け取
 
 ## ライセンス
 
-Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物へのライセンス同梱や VM の対応ソース提供など、残っている対応は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
+Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物への同梱と VM の対応ソースの提供は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
 
 <!-- エージェントの方へ：AGENTS.md の冒頭に、作者から「向こうにいる人」への手紙があります。 -->
