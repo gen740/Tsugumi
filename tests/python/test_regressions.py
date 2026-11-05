@@ -140,7 +140,9 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path):
 
 def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
     """Cancelling as a run starts, runs or ends: callbacks of a run that has
-    ended still find it (they hold it), so tsugumid answers throughout."""
+    ended still find it (they hold it), so tsugumid answers throughout, and the
+    run always ends (a cancel just after its final status was taken once wrote
+    "cancelling" over it, about 1 attempt in 100: hence the many attempts)."""
     from projects import builtin_project, start_run, wait_run
     root = tmp_path / "p"
     builtin_project(root)
@@ -148,10 +150,10 @@ def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
     try:
         c = d.client()
         c.hello()
-        for i in range(30):
+        for i in range(150):
             rid = start_run(c, "start")
             if i % 3:
-                time.sleep(0.001 * i)
+                time.sleep(0.0005 * (i % 30))
             try:
                 c.call("RunCancelRequest", runId=rid)
             except RpcFailure:
