@@ -1,0 +1,10 @@
+{
+  "description": "DESeq2 で発現変動を検定する",
+  "content": "paired が On なら ~ cell + dex、Off なら ~ dex で DESeq2 を実行し、全遺伝子の結果を CSV にして MA プロットを描く。",
+  "outputs": [
+    {
+      "name": "results",
+      "description": "遺伝子ごとの log2FC・p 値・FDR の CSV"
+    }
+  ]
+}

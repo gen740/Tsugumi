@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace lung;
+table Specifications { value:string; }
+table Outputs { specifications:Specifications (required, tsugumi: "file"); }
+root_type Outputs;

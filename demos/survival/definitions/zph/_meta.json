@@ -1,0 +1,5 @@
+{
+  "description": "比例ハザードの確認",
+  "content": "cox.zph でスケール化 Schoenfeld 残差の時間変化を描き、変数ごとと全体の p 値を示す。線が水平なら比例ハザードと矛盾しない。transform で時間軸の変換を選べる。",
+  "outputs": []
+}

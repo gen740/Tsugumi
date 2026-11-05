@@ -1,0 +1,10 @@
+{
+  "description": "ペンギンの計測値を読む",
+  "content": "palmerpenguins の実測データから、くちばしの長さと厚さが両方そろう個体を CSV にし、種と島ごとの個体数を表で示す。",
+  "outputs": [
+    {
+      "name": "penguins",
+      "description": "種・性別・島・くちばしの長さと厚さの CSV"
+    }
+  ]
+}

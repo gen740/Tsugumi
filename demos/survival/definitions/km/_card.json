@@ -1,0 +1,18 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "cohort"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "km",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "group",
+      "type": "string",
+      "data": "sex"
+    }
+  ]
+}

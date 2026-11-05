@@ -1,0 +1,16 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "volcano",
+        "thresholds",
+        "top",
+        "compare",
+        "design"
+      ]
+    }
+  ]
+}

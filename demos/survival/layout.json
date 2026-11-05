@@ -1,0 +1,91 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 240,
+      "y": 0
+    },
+    "share": {
+      "x": 480,
+      "y": 0
+    },
+    "cohort": {
+      "x": 760,
+      "y": -280
+    },
+    "split": {
+      "x": 1060,
+      "y": -280
+    },
+    "km": {
+      "x": 1320,
+      "y": -560
+    },
+    "cox": {
+      "x": 1320,
+      "y": 20
+    },
+    "zph": {
+      "x": 1900,
+      "y": 20
+    },
+    "specs": {
+      "x": 760,
+      "y": 340
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 生存時間解析: 結果は「誰を」「何で」で動く\n\nデータは **survival** パッケージ同梱の `lung`。北中部がん治療グループ（NCCTG）の進行肺がん患者 228 人の実データです（Loprinzi et al., *J Clin Oncol* 1994;12:601–607）。\n\n打ち切りを含む生存割合は Kaplan–Meier 推定で、ハザード比は Cox モデルで求めます。\n\n$$\\hat S(t)=\\prod_{t_i\\le t}\\Bigl(1-\\frac{d_i}{n_i}\\Bigr),\\qquad h(t\\mid x)=h_0(t)\\,e^{\\beta x}$$\n\n**cohort** の年齢と ECOG、**cox** の `covariates`、**specs** の `subsets` と `adjustments` を変えて、その Card だけを実行し直せます。**specs** の図が、同じ問いの答えが仕様でどれだけ動くかを並べます。部分集団の値は 1 列ごとに人数が違い、調整の変数が欠損する人は落ちます。\n\n**zph** は比例ハザードの確認です。`covariates` に `ph.karno` を加えると、仮定が怪しくなるのが見えます。\n\nこれは古い試験データの中の関連で、原因を示すものではなく、治療や予後についての助言でもありません。",
+      "x": -40,
+      "y": -640,
+      "width": 680,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 60,
+      "y": 130,
+      "width": 640,
+      "height": 340
+    },
+    "cohort": {
+      "x": 700,
+      "y": -160,
+      "width": 420,
+      "height": 150
+    },
+    "km": {
+      "x": 1280,
+      "y": -430,
+      "width": 600,
+      "height": 410
+    },
+    "cox": {
+      "x": 1280,
+      "y": 150,
+      "width": 560,
+      "height": 210
+    },
+    "zph": {
+      "x": 1860,
+      "y": 150,
+      "width": 760,
+      "height": 300
+    },
+    "specs": {
+      "x": 620,
+      "y": 470,
+      "width": 620,
+      "height": 640
+    }
+  }
+}

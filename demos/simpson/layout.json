@@ -1,0 +1,91 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 300
+    },
+    "branches": {
+      "x": 240,
+      "y": 300
+    },
+    "penguins": {
+      "x": 500,
+      "y": 0
+    },
+    "share": {
+      "x": 800,
+      "y": 0
+    },
+    "correlate": {
+      "x": 1060,
+      "y": -200
+    },
+    "figure": {
+      "x": 1640,
+      "y": -200
+    },
+    "survey": {
+      "x": 1060,
+      "y": 260
+    },
+    "admissions": {
+      "x": 500,
+      "y": 900
+    },
+    "applications": {
+      "x": 1240,
+      "y": 900
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 集計と層別で逆転する関係\n\n相関や比率は、データをまとめて見るか層に分けて見るかで符号まで変わることがあります（Simpson のパラドックス）。全体の相関は、層内の相関と層間の差の足し合わせです。\n\n$$\\operatorname{Cov}(X,Y) = \\underbrace{\\mathrm{E}[\\operatorname{Cov}(X,Y \\mid Z)]}_{\\text{層内}} + \\underbrace{\\operatorname{Cov}(\\mathrm{E}[X \\mid Z],\\, \\mathrm{E}[Y \\mid Z])}_{\\text{層間}}$$\n\n**上の枝** Palmer Penguins（Gorman, Williams & Fraser 2014、南極 Palmer 基地の実測。palmerpenguins パッケージ）。くちばしの長さと厚さの相関です。**correlate** の `stratify` を species / sex / island に変えて、その先を実行し直せます。**survey** は 3 つを並べて見せます。種では全層で逆転し、性別では逆転せず、島では Biscoe（アデリーとジェンツーが混ざる）だけ負のまま残ります。\n\n**下の枝** 1973 年 Berkeley 大学院の出願（Bickel, Hammel & O'Connell 1975、R の `UCBAdmissions`）。全体では男性が通りやすく、学科で調整すると差はほぼ消えます。\n\n**層別したほうが常に正しいわけではありません。** どちらを読むかは因果の問いで決まります。応募先の選択が性別の結果として生じるなら（媒介）、「性別の総合的な影響」を問うときに応募先で調整してはいけません。学科ごとの審査で差別があったかを問うなら、層別が答えに近づきます。ただしそれにも、学科内の応募者の違いという未測定の交絡が残ります。データだけではこの区別はつかず、値を読む前に問いを決める必要があります。",
+      "x": -40,
+      "y": -560,
+      "width": 760,
+      "height": 520
+    }
+  ],
+  "displays": {
+    "penguins": {
+      "x": 460,
+      "y": 130,
+      "width": 300,
+      "height": 170
+    },
+    "correlate": {
+      "x": 1020,
+      "y": -70,
+      "width": 560,
+      "height": 230
+    },
+    "figure": {
+      "x": 1600,
+      "y": -70,
+      "width": 620,
+      "height": 440
+    },
+    "survey": {
+      "x": 1020,
+      "y": 390,
+      "width": 620,
+      "height": 440
+    },
+    "admissions": {
+      "x": 460,
+      "y": 1030,
+      "width": 680,
+      "height": 330
+    },
+    "applications": {
+      "x": 1200,
+      "y": 1030,
+      "width": 620,
+      "height": 440
+    }
+  }
+}

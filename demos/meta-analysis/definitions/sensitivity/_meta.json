@@ -1,0 +1,10 @@
+{
+  "description": "1 試験を除く・推定量を変える",
+  "content": "1 試験ずつ除いたときの併合値（固定効果と DL）と、τ² の推定量（estimators）を変えたときの併合値を並べて描く。",
+  "outputs": [
+    {
+      "name": "sensitivity",
+      "description": "除いた試験・推定量ごとの併合値の CSV"
+    }
+  ]
+}

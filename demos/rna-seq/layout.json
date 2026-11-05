@@ -1,0 +1,141 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 240,
+      "y": 0
+    },
+    "filter": {
+      "x": 640,
+      "y": 0
+    },
+    "share": {
+      "x": 1140,
+      "y": 0
+    },
+    "normalize": {
+      "x": 1400,
+      "y": -640
+    },
+    "pca": {
+      "x": 2160,
+      "y": -640
+    },
+    "deseq": {
+      "x": 1400,
+      "y": 0
+    },
+    "fan": {
+      "x": 2000,
+      "y": 0
+    },
+    "volcano": {
+      "x": 2260,
+      "y": -60
+    },
+    "thresholds": {
+      "x": 2900,
+      "y": -60
+    },
+    "top": {
+      "x": 2900,
+      "y": 300
+    },
+    "edger": {
+      "x": 1400,
+      "y": 620
+    },
+    "compare": {
+      "x": 2260,
+      "y": 620
+    },
+    "design": {
+      "x": 2960,
+      "y": 880
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## RNA-seq: デキサメタゾンで動く遺伝子\n\nデータは Bioconductor の **airway**。気道平滑筋細胞の 4 細胞株をデキサメタゾンで 18 時間処理した実データです（Himes et al., *PLoS One* 2014;9:e99625、GEO GSE52778）。サンプルは 4 株 × 処理の有無で 8 つです。\n\n負の二項分布の一般化線形モデルで、遺伝子ごとに処理の効果 $\\beta$ を推定します。\n\n$$K_{ij}\\sim \\mathrm{NB}(s_j q_{ij},\\ \\alpha_i),\\qquad \\log_2 q_{ij}=\\beta_{\\text{細胞株}(j)}+\\beta_i\\,x_j$$\n\n$s_j$ がサイズ因子（読みの深さ）、$\\alpha_i$ が分散の大きさです。\n\n**動かすところ**\n\n- **filter** の `min_total`: 少数しか読まれない遺伝子を除く基準。\n- **deseq** の `paired`: 細胞株の項を入れるか。**design** が両方を並べます。株ごとの差を説明に回すと、同じ推定値でも不確かさが小さくなります。\n- **volcano** の `fdr` と `lfc`、**thresholds** の格子: 遺伝子の数は閾値で大きく変わり、「発現変動遺伝子の数」はデータだけで決まる値ではありません。\n- **compare**: DESeq2 と edgeR の一致。\n\nFKBP5、DUSP1、TSC22D3、KLF15、PER1、CRISPLD2 はグルココルチコイドで上がることが知られており、結果の確認に使っています。細胞培養の実験で、治療の効果を示すものではなく、医学的な助言でもありません。",
+      "x": -40,
+      "y": -700,
+      "width": 800,
+      "height": 660
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 60,
+      "y": 130,
+      "width": 500,
+      "height": 300
+    },
+    "filter": {
+      "x": 600,
+      "y": 130,
+      "width": 480,
+      "height": 280
+    },
+    "normalize": {
+      "x": 1360,
+      "y": -510,
+      "width": 660,
+      "height": 360
+    },
+    "pca": {
+      "x": 2120,
+      "y": -510,
+      "width": 540,
+      "height": 370
+    },
+    "deseq": {
+      "x": 1360,
+      "y": 130,
+      "width": 600,
+      "height": 380
+    },
+    "volcano": {
+      "x": 2220,
+      "y": 70,
+      "width": 620,
+      "height": 430
+    },
+    "thresholds": {
+      "x": 2860,
+      "y": 70,
+      "width": 480,
+      "height": 200
+    },
+    "top": {
+      "x": 2860,
+      "y": 430,
+      "width": 560,
+      "height": 420
+    },
+    "edger": {
+      "x": 1360,
+      "y": 750,
+      "width": 360,
+      "height": 210
+    },
+    "compare": {
+      "x": 2220,
+      "y": 750,
+      "width": 600,
+      "height": 430
+    },
+    "design": {
+      "x": 2920,
+      "y": 1010,
+      "width": 700,
+      "height": 370
+    }
+  }
+}

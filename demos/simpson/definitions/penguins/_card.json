@@ -1,0 +1,11 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "penguins",
+  "filesystem": true
+}

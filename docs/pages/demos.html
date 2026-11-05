@@ -25,7 +25,7 @@
 <article class="doc">
 <h1 id="同梱デモのしくみ">同梱デモのしくみ</h1>
 <p>アプリに同梱しているデモが、どんな Card をどうつなぎ、実行すると何が起きるのかをまとめます。ホーム画面の「デモを見る」から「コピーを開く」を選ぶと、<code>~/Documents/Tsugumi/&lt;demo&gt;</code> に編集できるコピーができます（同梱の原本は変わりません）。画面の操作は<a href="usage.html">操作ガイド</a>、Card の種類と実行の規則は<a href="features.html#2-card-と-workflow">主要機能</a>を参照してください。</p>
-<div class="table-wrap"><table><thead><tr><th>デモ</th><th>題材</th><th>このデモで分かること</th></tr></thead><tbody><tr><td><a href="#データからレポートへreport">データからレポートへ</a></td><td>売上表の集計とレポート</td><td>seed による再現、失敗と <code>blocked</code>、保存入力での単体再実行、成果物、子 Workflow</td></tr><tr><td><a href="#collatz-c--pythoncollatz">Collatz (C++ / Python)</a></td><td>コラッツ数列</td><td>2 言語での独立実装の照合、分岐・合流・ループ、<code>maxRuns</code>、整数あふれの検出</td></tr><tr><td><a href="#live-streamlive-stream">Live Stream</a></td><td>ランダムウォークの逐次描画</td><td>フィードバックループによるストリーム、即時の停止、Dawn の折れ線</td></tr><tr><td><a href="#plotsplots">Plots</a></td><td>ランダムウォークの拡散</td><td>ふつうの matplotlib（<code>plt.show()</code>・<code>FuncAnimation</code>）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる</td></tr><tr><td><a href="#cas-a--chandra-rgbcasa">Cas A · Chandra RGB</a></td><td>超新星残骸の X 線観測</td><td>Nix で固定した観測データ、Card 単位の再実行、版の履歴</td></tr><tr><td><a href="#科学デモ公開データの取得と解析">科学デモ</a></td><td>重力波・タンパク質・系外惑星・地震</td><td>公開データの取得（大きさと SHA-256）と解析・図示</td></tr><tr><td><a href="#mnist--手書き数字の分類器くらべmnist-classifiers">MNIST · 手書き数字の分類器くらべ</a></td><td>手書き数字の分類（kNN から CNN まで 7 種）</td><td>1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる</td></tr><tr><td><a href="#newton-法newton">Newton 法</a></td><td>複素平面での Newton 法</td><td>初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う</td></tr><tr><td><a href="#薬物動態pharmacokinetics">薬物動態</a></td><td>架空の薬物の血中濃度</td><td>投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない）</td></tr><tr><td><a href="#最大流と最小カットmax-flow">最大流と最小カット</a></td><td>最大流と最小カット</td><td>最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る</td></tr><tr><td><a href="#濃度反応曲線dose-response">濃度–反応曲線</a></td><td>濃度–反応曲線（合成データ）</td><td>4 パラメータのロジスティックのあてはめとブートストラップ区間。濃度範囲が EC50 を挟まないと区間が開く</td></tr><tr><td><a href="#分子の物性molecules">分子の物性</a></td><td>公開された分子の物性（RDKit）</td><td>SMILES から物性・構造・類似度を求める。分子を貼り付けて試せて、不正な SMILES は理由を示す</td></tr><tr><td><a href="#細胞画像の計数cell-count">細胞画像の計数</a></td><td>細胞画像の計数（合成データと実画像）</td><td>正解のある画像で閾値と watershed を採点し、どこで破綻するかを見る</td></tr><tr><td><a href="#draft-版agent-に実装させる">Draft 版</a></td><td>上の科学デモと Cas A の計画だけ</td><td>Draft から Agent が Card を生成し、実行して確かめる</td></tr><tr><td><a href="#力学系ギャラリーdynamics-draft">力学系ギャラリー</a></td><td>6 つの力学系</td><td>独立した Draft を Agent が helper に手分けして同時に実装する</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>デモ</th><th>題材</th><th>このデモで分かること</th></tr></thead><tbody><tr><td><a href="#データからレポートへreport">データからレポートへ</a></td><td>売上表の集計とレポート</td><td>seed による再現、失敗と <code>blocked</code>、保存入力での単体再実行、成果物、子 Workflow</td></tr><tr><td><a href="#collatz-c--pythoncollatz">Collatz (C++ / Python)</a></td><td>コラッツ数列</td><td>2 言語での独立実装の照合、分岐・合流・ループ、<code>maxRuns</code>、整数あふれの検出</td></tr><tr><td><a href="#live-streamlive-stream">Live Stream</a></td><td>ランダムウォークの逐次描画</td><td>フィードバックループによるストリーム、即時の停止、Dawn の折れ線</td></tr><tr><td><a href="#plotsplots">Plots</a></td><td>ランダムウォークの拡散</td><td>ふつうの matplotlib（<code>plt.show()</code>・<code>FuncAnimation</code>）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる</td></tr><tr><td><a href="#cas-a--chandra-rgbcasa">Cas A · Chandra RGB</a></td><td>超新星残骸の X 線観測</td><td>Nix で固定した観測データ、Card 単位の再実行、版の履歴</td></tr><tr><td><a href="#科学デモ公開データの取得と解析">科学デモ</a></td><td>重力波・タンパク質・系外惑星・地震</td><td>公開データの取得（大きさと SHA-256）と解析・図示</td></tr><tr><td><a href="#mnist--手書き数字の分類器くらべmnist-classifiers">MNIST · 手書き数字の分類器くらべ</a></td><td>手書き数字の分類（kNN から CNN まで 7 種）</td><td>1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる</td></tr><tr><td><a href="#newton-法newton">Newton 法</a></td><td>複素平面での Newton 法</td><td>初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う</td></tr><tr><td><a href="#薬物動態pharmacokinetics">薬物動態</a></td><td>架空の薬物の血中濃度</td><td>投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない）</td></tr><tr><td><a href="#最大流と最小カットmax-flow">最大流と最小カット</a></td><td>最大流と最小カット</td><td>最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る</td></tr><tr><td><a href="#濃度反応曲線dose-response">濃度–反応曲線</a></td><td>濃度–反応曲線（合成データ）</td><td>4 パラメータのロジスティックのあてはめとブートストラップ区間。濃度範囲が EC50 を挟まないと区間が開く</td></tr><tr><td><a href="#分子の物性molecules">分子の物性</a></td><td>公開された分子の物性（RDKit）</td><td>SMILES から物性・構造・類似度を求める。分子を貼り付けて試せて、不正な SMILES は理由を示す</td></tr><tr><td><a href="#細胞画像の計数cell-count">細胞画像の計数</a></td><td>細胞画像の計数（合成データと実画像）</td><td>正解のある画像で閾値と watershed を採点し、どこで破綻するかを見る</td></tr><tr><td><a href="#生存時間解析survival">生存時間解析</a></td><td>肺がんの生存時間（survival パッケージの lung）</td><td>対象者と調整変数でハザード比がどう動くかを並べて見る。比例ハザードの仮定も確かめる</td></tr><tr><td><a href="#メタ解析-bcg-ワクチンmeta-analysis">メタ解析: BCG ワクチン</a></td><td>BCG ワクチンのメタ解析（metafor の dat.bcg）</td><td>固定効果と変量効果、異質性、1 試験を除いたときの動き、緯度によるメタ回帰</td></tr><tr><td><a href="#rna-seq-airway-とデキサメタゾンrna-seq">RNA-seq: airway とデキサメタゾン</a></td><td>RNA-seq（airway とデキサメタゾン）</td><td>DESeq2 と edgeR を別の分岐で比べ、細胞株の項を入れるかで遺伝子の数が大きく変わるのを見る</td></tr><tr><td><a href="#集計と層別で逆転する相関simpson">集計と層別で逆転する相関</a></td><td>シンプソンのパラドックス（ペンギンと Berkeley の入学）</td><td>集計と層別で向きが逆転する相関と、どちらを読むかは問い次第であること</td></tr><tr><td><a href="#draft-版agent-に実装させる">Draft 版</a></td><td>上の科学デモと Cas A の計画だけ</td><td>Draft から Agent が Card を生成し、実行して確かめる</td></tr><tr><td><a href="#力学系ギャラリーdynamics-draft">力学系ギャラリー</a></td><td>6 つの力学系</td><td>独立した Draft を Agent が helper に手分けして同時に実装する</td></tr></tbody></table></div>
 <p>図の矢印は Card の線（<code>出力ポート → 入力ポート</code>）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。</p>
 <h2 id="基本のデモ">基本のデモ</h2>
 <h3 id="データからレポートへreport">データからレポートへ（<code>report</code>）</h3>
@@ -215,6 +215,68 @@ Canvas の <code>paste</code> に SMILES を貼れば、その分子が全部の
 <li><code>generate</code> の <code>cells</code> を 320 にして実行する。閾値のみの再現率は 0.24 に落ち、watershed は 0.79 を保つ。</li>
 <li><code>generate</code> の <code>noise</code> を上げる。<code>sweep</code> の表の左上のとおり、細胞が少ないほど閾値が雑音に落ちて数えすぎる。</li>
 <li><code>segment</code> の <code>min_distance</code> を変えて、その Card だけを実行し直す。大きくすると切り分けが減る。</li>
+</ul>
+<h3 id="生存時間解析survival">生存時間解析（<code>survival</code>）</h3>
+<p>survival パッケージ同梱の <code>lung</code>（NCCTG 進行肺がん試験の実データ、228 人。Loprinzi et al., J Clin Oncol 1994）で、Kaplan–Meier 曲線、log-rank 検定、Cox モデルを求めます。同じハザード比が「誰を含めるか」「何で調整するか」でどれだけ動くかを、Canvas の 1 枚の図で並べます。古い試験データの中の関連で、原因を示すものでも助言でもありません。</p>
+<pre><code class="language-text">start → load ─lung→ share ─┬→ cohort ─cohort→ split ─┬→ km
+                           │                         └→ cox ─fit→ zph
+                           └→ specs
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>load</code></td><td>R</td><td><code>lung</code> に <code>event</code>・<code>female</code> の列を足して CSV にし、変数の中央値・範囲・欠損を表で示す</td></tr><tr><td><code>share</code></td><td>fork</td><td>データを <code>cohort</code> と <code>specs</code> に配る</td></tr><tr><td><code>cohort</code></td><td>R</td><td><code>age_min</code>・<code>age_max</code>・<code>ecog_max</code> で対象者を選ぶ。人数と死亡数を全体と並べる</td></tr><tr><td><code>split</code></td><td>fork</td><td>選んだ人を <code>km</code> と <code>cox</code> に配る</td></tr><tr><td><code>km</code></td><td>R</td><td><code>group</code>（sex / ecog / age）で分けた Kaplan–Meier 曲線、中央値、log-rank 検定。曲線の値を <code>curves.csv</code> に残す</td></tr><tr><td><code>cox</code></td><td>R</td><td><code>covariates</code> の変数で Cox モデルを当てはめ、ハザード比と 95% 信頼区間を表で示す</td></tr><tr><td><code>zph</code></td><td>R</td><td><code>cox.zph</code> のスケール化 Schoenfeld 残差を描き、変数ごとと全体の p 値を示す</td></tr><tr><td><code>specs</code></td><td>R</td><td><code>exposure</code> のハザード比を <code>subsets</code> × <code>adjustments</code> のすべての組み合わせで求め、森林図のように並べる</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li><code>specs</code> の図を読む。女性のハザード比は全員で 0.59 ですが、65 歳未満で ECOG まで調整すると 0.76（信頼区間は 1 をまたぐ）、ECOG 2 以上で 4 変数を調整すると 0.39 になります。後者は体重減少の欠損で 51 人が 46 人に減っています。</li>
+<li><code>km</code> の <code>group</code> を <code>ecog</code> にして実行する。log-rank の χ² が 10.33 から 18.98 に変わる。</li>
+<li><code>cox</code> の <code>covariates</code> に <code>ph.karno</code> を入れ、<code>cox</code> から先を実行する。<code>zph</code> の全体の p 値が 0.216 から 0.016 に下がり、比例ハザードの仮定が怪しくなる（単体の実行では <code>zph</code> の入力は更新されないので、<code>cox</code> からつなげて実行する）。</li>
+<li><code>cohort</code> の <code>age_min</code> を 65 にして実行し、<code>km</code> と <code>cox</code> の変化を見る。</li>
+</ul>
+<h3 id="メタ解析-bcg-ワクチンmeta-analysis">メタ解析: BCG ワクチン（<code>meta-analysis</code>）</h3>
+<p>metafor 同梱の <code>dat.bcg</code>（結核に対する BCG ワクチンの 13 試験、Colditz et al., JAMA 1994）で、固定効果と変量効果の併合、異質性、緯度に対するメタ回帰を比べます。
+1 試験を除く、推定量を変えるといった選択で、結論がどれだけ動くかを Canvas で見られます。統計手法の例で、接種についての助言ではありません。</p>
+<pre><code class="language-text">start → trials ─trials→ share ─┬→ pool
+                               ├→ funnel
+                               ├→ moderator
+                               └→ sensitivity
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>trials</code></td><td>R</td><td>人数から各試験の log リスク比と分散（<code>escalc</code>）を求め、表と CSV にする</td></tr><tr><td><code>share</code></td><td>fork</td><td>同じ効果量を 4 つの解析に配る</td></tr><tr><td><code>pool</code></td><td>R</td><td>固定効果と変量効果（<code>method</code>）で併合し、両方の菱形を載せた森林図と I²・τ²・Q を示す。<code>exclude</code> に試験番号を書くと除く</td></tr><tr><td><code>funnel</code></td><td>R</td><td>ファンネルプロットに回帰検定と trim and fill の結果を添える</td></tr><tr><td><code>moderator</code></td><td>R</td><td><code>moderator</code>（既定は緯度の絶対値）でメタ回帰を行い、傾き・残差 τ²・説明された割合を図に示す</td></tr><tr><td><code>sensitivity</code></td><td>R</td><td>1 試験ずつ除いたとき（固定効果と DL）と、τ² の推定量を変えたときの併合リスク比を並べる</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li><code>pool</code> の森林図で、固定効果 0.65 と変量効果 0.49 の菱形を比べる。I² は 92.1%。</li>
+<li><code>pool</code> の <code>exclude</code> を <code>[8]</code>（TPT Madras、最も大きい試験）にして <code>pool</code> だけを実行する。固定効果は 0.65 から 0.48 に動く。</li>
+<li><code>pool</code> の <code>method</code> を <code>REML</code> にする。τ² は 0.309 から 0.313 に変わるが、併合リスク比はほとんど動かない。</li>
+<li><code>moderator</code> で、緯度が τ² を 0.313 から 0.076 に減らすのを見る。<code>moderator</code> を <code>year</code> にして比べる。</li>
+</ul>
+<h3 id="rna-seq-airway-とデキサメタゾンrna-seq">RNA-seq: airway とデキサメタゾン（<code>rna-seq</code>）</h3>
+<p>Bioconductor の airway（気道平滑筋細胞の 4 細胞株をデキサメタゾンで処理した実データ。Himes et al., PLoS One 2014、GEO GSE52778）で、発現が動く遺伝子を DESeq2 と edgeR で求めます。「発現変動遺伝子の数」は閾値とデザインでどれだけ変わるのかを、それぞれの Card で確かめられます。細胞培養の実験で、治療の効果を示すものでも医学的な助言でもありません。</p>
+<pre><code class="language-text">start → load ─airway→ filter ─counts→ share ─┬→ normalize ─normalized→ pca
+                                             ├→ deseq ─results→ fan ─┬→ volcano
+                                             │                       ├→ thresholds
+                                             │                       ├→ top
+                                             │                       ├→ compare ←─results─ edger
+                                             │                       └→ design
+                                             ├→ edger
+                                             └→ design
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>load</code></td><td>R</td><td>airway のカウント行列（63,677 遺伝子 × 8 サンプル）と遺伝子名を CSV にし、サンプルの一覧を表で示す</td></tr><tr><td><code>filter</code></td><td>R</td><td>合計リード数が <code>min_total</code> 未満の遺伝子を除き、分布と基準を図で示す</td></tr><tr><td><code>share</code></td><td>fork</td><td>カウントを 4 つの Card に配る</td></tr><tr><td><code>normalize</code></td><td>R</td><td>中央値の比でサイズ因子を求め、正規化の前後の分布を比べる。PCA のために vst を渡す</td></tr><tr><td><code>pca</code></td><td>R</td><td>分散の大きい <code>top_genes</code> 個の遺伝子で主成分分析を行い、処理と細胞株で塗り分ける</td></tr><tr><td><code>deseq</code></td><td>R</td><td><code>paired</code> で <code>~ cell + dex</code> か <code>~ dex</code> を選び、DESeq2 の結果を CSV にして MA プロットを描く</td></tr><tr><td><code>fan</code></td><td>fork</td><td>DESeq2 の結果を配る</td></tr><tr><td><code>volcano</code></td><td>R</td><td><code>fdr</code>・<code>lfc</code> の閾値で数え、<code>known</code> の遺伝子に名前を付けて火山プロットを描く</td></tr><tr><td><code>thresholds</code></td><td>R</td><td>FDR と log2FC の格子ごとの遺伝子の数を表にする</td></tr><tr><td><code>top</code></td><td>R</td><td>FDR の順に上位 <code>top</code> 個を表にし、<code>known</code> の既知の応答遺伝子の順位を添える</td></tr><tr><td><code>edger</code></td><td>R</td><td>同じカウントを edgeR の準尤度 F 検定で検定する</td></tr><tr><td><code>compare</code></td><td>R</td><td>DESeq2 と edgeR の log2FC を重ね、両方と片方だけの遺伝子を数える</td></tr><tr><td><code>design</code></td><td>R</td><td><code>~ dex</code> でも DESeq2 を実行し、<code>~ cell + dex</code> と推定値・統計量を並べる</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li><code>design</code> の図を読む。細胞株の項を入れると FDR &lt; 0.05 の遺伝子は 2713 から 4030 に増える。log2FC はほぼ同じで、統計量だけが大きくなる。</li>
+<li><code>volcano</code> の <code>lfc</code> を 1 から 2 に、<code>fdr</code> を変えて <code>volcano</code> だけを実行する。<code>thresholds</code> の表にある数と同じになる。</li>
+<li><code>filter</code> の <code>min_total</code> を 100 にして、<code>filter</code> から先を実行する。</li>
+<li><code>top</code> で FKBP5、DUSP1、TSC22D3 の順位を見る。遺伝子ごとの FDR の順位と倍率の大きさは同じ順ではない（FKBP5 は 16.5 倍で 143 位、DUSP1 は 7.7 倍で 3 位）。</li>
+</ul>
+<h3 id="集計と層別で逆転する相関simpson">集計と層別で逆転する相関（<code>simpson</code>）</h3>
+<p>全体で見た関係と層に分けた関係で、符号が逆になることがあります。2 つの実データで確かめます。ペンギンのくちばしの長さと厚さ（palmerpenguins、Gorman et al. 2014）と、1973 年の Berkeley の出願（R の <code>UCBAdmissions</code>）です。どちらの値を読むべきかはデータだけでは決まらず、因果の問いで決まることをノートに書いています。</p>
+<pre><code class="language-text">start → branches ─┬→ penguins ─penguins→ share ─┬→ correlate ─points, correlations→ figure
+                  │                             └→ survey
+                  └→ admissions ─admissions→ applications
+</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Card</th><th>種類</th><th>していること</th></tr></thead><tbody><tr><td><code>branches</code></td><td>fork</td><td>実行を 2 つの枝に配る</td></tr><tr><td><code>penguins</code></td><td>R</td><td>くちばしの長さと厚さがそろう 342 羽を CSV にし、種と島ごとの数を表で示す</td></tr><tr><td><code>share</code></td><td>fork</td><td>データを <code>correlate</code> と <code>survey</code> に配る</td></tr><tr><td><code>correlate</code></td><td>R</td><td><code>stratify</code>（species / sex / island）で分け、全体と各層の r、信頼区間、傾きを表にする</td></tr><tr><td><code>figure</code></td><td>R</td><td>同じ点に全体の回帰直線（破線）と層ごとの回帰直線を重ねる</td></tr><tr><td><code>survey</code></td><td>R</td><td>3 つの層別の r を 1 枚に並べ、どこで逆転するかを示す</td></tr><tr><td><code>admissions</code></td><td>R</td><td>学科ごとと全体の合格率とオッズ比、Mantel–Haenszel の共通オッズ比を表にする</td></tr><tr><td><code>applications</code></td><td>R</td><td>合格率を応募者数の大きさの点で描き、全体の合格率を破線で重ねる</td></tr></tbody></table></div>
+<p><strong>試すこと</strong></p>
+<ul>
+<li><code>correlate</code> の <code>stratify</code> を <code>sex</code> にして、<code>correlate</code> から先を実行する。r は全層で負のままで、逆転しない。</li>
+<li><code>stratify</code> を <code>island</code> にする。Biscoe では負のまま、Dream と Torgersen では正になる。</li>
+<li><code>admissions</code> の表で、全体のオッズ比 1.84 が学科で調整すると 0.90 になるのを見る。<code>applications</code> の図で、応募先の偏りを見る。</li>
 </ul>
 <h2 id="draft-版agent-に実装させる">Draft 版（Agent に実装させる）</h2>
 <p><code>casa-draft</code>・<code>gw150914-draft</code>・<code>protein-6lu7-draft</code>・<code>exoplanet-transit-draft</code>・<code>seismic-trench-draft</code> は、上のデモと同じ計画を Draft だけで持つプロジェクトです。開始 Card と 3 つの Draft があり、各 Draft の説明には、何を受け取り、何をして、何を渡すかが書かれています（実装済みのデモの Card の説明と同じ文です）。</p>

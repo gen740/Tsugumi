@@ -1,0 +1,15 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "fit"
+    }
+  ],
+  "params": [
+    {
+      "name": "transform",
+      "type": "string",
+      "data": "km"
+    }
+  ]
+}

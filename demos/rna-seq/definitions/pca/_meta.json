@@ -1,0 +1,10 @@
+{
+  "description": "サンプルの主成分分析",
+  "content": "分散の大きい top_genes 個の遺伝子で主成分分析を行い、処理と細胞株で塗り分けて描く。PC1 と PC2 の寄与率を示す。",
+  "outputs": [
+    {
+      "name": "pca",
+      "description": "サンプルごとの PC1・PC2 の CSV"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "description": "緯度に対するメタ回帰",
+  "content": "moderator（既定は ablat: 緯度の絶対値）を説明変数にした混合効果メタ回帰を当てはめ、傾き・残差 τ²・説明された割合を図に示す。",
+  "outputs": [
+    {
+      "name": "regression",
+      "description": "メタ回帰の係数と τ² の CSV"
+    }
+  ]
+}

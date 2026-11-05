@@ -19,6 +19,10 @@
 | [濃度–反応曲線](#濃度反応曲線dose-response) | 濃度–反応曲線（合成データ） | 4 パラメータのロジスティックのあてはめとブートストラップ区間。濃度範囲が EC50 を挟まないと区間が開く |
 | [分子の物性](#分子の物性molecules) | 公開された分子の物性（RDKit） | SMILES から物性・構造・類似度を求める。分子を貼り付けて試せて、不正な SMILES は理由を示す |
 | [細胞画像の計数](#細胞画像の計数cell-count) | 細胞画像の計数（合成データと実画像） | 正解のある画像で閾値と watershed を採点し、どこで破綻するかを見る |
+| [生存時間解析](#生存時間解析survival) | 肺がんの生存時間（survival パッケージの lung） | 対象者と調整変数でハザード比がどう動くかを並べて見る。比例ハザードの仮定も確かめる |
+| [メタ解析: BCG ワクチン](#メタ解析-bcg-ワクチンmeta-analysis) | BCG ワクチンのメタ解析（metafor の dat.bcg） | 固定効果と変量効果、異質性、1 試験を除いたときの動き、緯度によるメタ回帰 |
+| [RNA-seq: airway とデキサメタゾン](#rna-seq-airway-とデキサメタゾンrna-seq) | RNA-seq（airway とデキサメタゾン） | DESeq2 と edgeR を別の分岐で比べ、細胞株の項を入れるかで遺伝子の数が大きく変わるのを見る |
+| [集計と層別で逆転する相関](#集計と層別で逆転する相関simpson) | シンプソンのパラドックス（ペンギンと Berkeley の入学） | 集計と層別で向きが逆転する相関と、どちらを読むかは問い次第であること |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
@@ -392,6 +396,126 @@ start → begin ┬→ generate ─scene→ share ┬→ preprocess ─cleaned�
 - `generate` の `cells` を 320 にして実行する。閾値のみの再現率は 0.24 に落ち、watershed は 0.79 を保つ。
 - `generate` の `noise` を上げる。`sweep` の表の左上のとおり、細胞が少ないほど閾値が雑音に落ちて数えすぎる。
 - `segment` の `min_distance` を変えて、その Card だけを実行し直す。大きくすると切り分けが減る。
+
+### 生存時間解析（`survival`）
+
+survival パッケージ同梱の `lung`（NCCTG 進行肺がん試験の実データ、228 人。Loprinzi et al., J Clin Oncol 1994）で、Kaplan–Meier 曲線、log-rank 検定、Cox モデルを求めます。
+同じハザード比が「誰を含めるか」「何で調整するか」でどれだけ動くかを、Canvas の 1 枚の図で並べます。古い試験データの中の関連で、原因を示すものでも助言でもありません。
+
+```text
+start → load ─lung→ share ─┬→ cohort ─cohort→ split ─┬→ km
+                           │                         └→ cox ─fit→ zph
+                           └→ specs
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `load` | R | `lung` に `event`・`female` の列を足して CSV にし、変数の中央値・範囲・欠損を表で示す |
+| `share` | fork | データを `cohort` と `specs` に配る |
+| `cohort` | R | `age_min`・`age_max`・`ecog_max` で対象者を選ぶ。人数と死亡数を全体と並べる |
+| `split` | fork | 選んだ人を `km` と `cox` に配る |
+| `km` | R | `group`（sex / ecog / age）で分けた Kaplan–Meier 曲線、中央値、log-rank 検定。曲線の値を `curves.csv` に残す |
+| `cox` | R | `covariates` の変数で Cox モデルを当てはめ、ハザード比と 95% 信頼区間を表で示す |
+| `zph` | R | `cox.zph` のスケール化 Schoenfeld 残差を描き、変数ごとと全体の p 値を示す |
+| `specs` | R | `exposure` のハザード比を `subsets` × `adjustments` のすべての組み合わせで求め、森林図のように並べる |
+
+**試すこと**
+- `specs` の図を読む。女性のハザード比は全員で 0.59 ですが、65 歳未満で ECOG まで調整すると 0.76（信頼区間は 1 をまたぐ）、ECOG 2 以上で 4 変数を調整すると 0.39 になります。後者は体重減少の欠損で 51 人が 46 人に減っています。
+- `km` の `group` を `ecog` にして実行する。log-rank の χ² が 10.33 から 18.98 に変わる。
+- `cox` の `covariates` に `ph.karno` を入れ、`cox` から先を実行する。`zph` の全体の p 値が 0.216 から 0.016 に下がり、比例ハザードの仮定が怪しくなる（単体の実行では `zph` の入力は更新されないので、`cox` からつなげて実行する）。
+- `cohort` の `age_min` を 65 にして実行し、`km` と `cox` の変化を見る。
+
+### メタ解析: BCG ワクチン（`meta-analysis`）
+
+metafor 同梱の `dat.bcg`（結核に対する BCG ワクチンの 13 試験、Colditz et al., JAMA 1994）で、固定効果と変量効果の併合、異質性、緯度に対するメタ回帰を比べます。
+1 試験を除く、推定量を変えるといった選択で、結論がどれだけ動くかを Canvas で見られます。統計手法の例で、接種についての助言ではありません。
+
+```text
+start → trials ─trials→ share ─┬→ pool
+                               ├→ funnel
+                               ├→ moderator
+                               └→ sensitivity
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `trials` | R | 人数から各試験の log リスク比と分散（`escalc`）を求め、表と CSV にする |
+| `share` | fork | 同じ効果量を 4 つの解析に配る |
+| `pool` | R | 固定効果と変量効果（`method`）で併合し、両方の菱形を載せた森林図と I²・τ²・Q を示す。`exclude` に試験番号を書くと除く |
+| `funnel` | R | ファンネルプロットに回帰検定と trim and fill の結果を添える |
+| `moderator` | R | `moderator`（既定は緯度の絶対値）でメタ回帰を行い、傾き・残差 τ²・説明された割合を図に示す |
+| `sensitivity` | R | 1 試験ずつ除いたとき（固定効果と DL）と、τ² の推定量を変えたときの併合リスク比を並べる |
+
+**試すこと**
+- `pool` の森林図で、固定効果 0.65 と変量効果 0.49 の菱形を比べる。I² は 92.1%。
+- `pool` の `exclude` を `[8]`（TPT Madras、最も大きい試験）にして `pool` だけを実行する。固定効果は 0.65 から 0.48 に動く。
+- `pool` の `method` を `REML` にする。τ² は 0.309 から 0.313 に変わるが、併合リスク比はほとんど動かない。
+- `moderator` で、緯度が τ² を 0.313 から 0.076 に減らすのを見る。`moderator` を `year` にして比べる。
+
+### RNA-seq: airway とデキサメタゾン（`rna-seq`）
+
+Bioconductor の airway（気道平滑筋細胞の 4 細胞株をデキサメタゾンで処理した実データ。Himes et al., PLoS One 2014、GEO GSE52778）で、発現が動く遺伝子を DESeq2 と edgeR で求めます。
+「発現変動遺伝子の数」は閾値とデザインでどれだけ変わるのかを、それぞれの Card で確かめられます。細胞培養の実験で、治療の効果を示すものでも医学的な助言でもありません。
+
+```text
+start → load ─airway→ filter ─counts→ share ─┬→ normalize ─normalized→ pca
+                                             ├→ deseq ─results→ fan ─┬→ volcano
+                                             │                       ├→ thresholds
+                                             │                       ├→ top
+                                             │                       ├→ compare ←─results─ edger
+                                             │                       └→ design
+                                             ├→ edger
+                                             └→ design
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `load` | R | airway のカウント行列（63,677 遺伝子 × 8 サンプル）と遺伝子名を CSV にし、サンプルの一覧を表で示す |
+| `filter` | R | 合計リード数が `min_total` 未満の遺伝子を除き、分布と基準を図で示す |
+| `share` | fork | カウントを 4 つの Card に配る |
+| `normalize` | R | 中央値の比でサイズ因子を求め、正規化の前後の分布を比べる。PCA のために vst を渡す |
+| `pca` | R | 分散の大きい `top_genes` 個の遺伝子で主成分分析を行い、処理と細胞株で塗り分ける |
+| `deseq` | R | `paired` で `~ cell + dex` か `~ dex` を選び、DESeq2 の結果を CSV にして MA プロットを描く |
+| `fan` | fork | DESeq2 の結果を配る |
+| `volcano` | R | `fdr`・`lfc` の閾値で数え、`known` の遺伝子に名前を付けて火山プロットを描く |
+| `thresholds` | R | FDR と log2FC の格子ごとの遺伝子の数を表にする |
+| `top` | R | FDR の順に上位 `top` 個を表にし、`known` の既知の応答遺伝子の順位を添える |
+| `edger` | R | 同じカウントを edgeR の準尤度 F 検定で検定する |
+| `compare` | R | DESeq2 と edgeR の log2FC を重ね、両方と片方だけの遺伝子を数える |
+| `design` | R | `~ dex` でも DESeq2 を実行し、`~ cell + dex` と推定値・統計量を並べる |
+
+**試すこと**
+- `design` の図を読む。細胞株の項を入れると FDR < 0.05 の遺伝子は 2713 から 4030 に増える。log2FC はほぼ同じで、統計量だけが大きくなる。
+- `volcano` の `lfc` を 1 から 2 に、`fdr` を変えて `volcano` だけを実行する。`thresholds` の表にある数と同じになる。
+- `filter` の `min_total` を 100 にして、`filter` から先を実行する。
+- `top` で FKBP5、DUSP1、TSC22D3 の順位を見る。遺伝子ごとの FDR の順位と倍率の大きさは同じ順ではない（FKBP5 は 16.5 倍で 143 位、DUSP1 は 7.7 倍で 3 位）。
+
+### 集計と層別で逆転する相関（`simpson`）
+
+全体で見た関係と層に分けた関係で、符号が逆になることがあります。2 つの実データで確かめます。ペンギンのくちばしの長さと厚さ（palmerpenguins、Gorman et al. 2014）と、1973 年の Berkeley の出願（R の `UCBAdmissions`）です。
+どちらの値を読むべきかはデータだけでは決まらず、因果の問いで決まることをノートに書いています。
+
+```text
+start → branches ─┬→ penguins ─penguins→ share ─┬→ correlate ─points, correlations→ figure
+                  │                             └→ survey
+                  └→ admissions ─admissions→ applications
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `branches` | fork | 実行を 2 つの枝に配る |
+| `penguins` | R | くちばしの長さと厚さがそろう 342 羽を CSV にし、種と島ごとの数を表で示す |
+| `share` | fork | データを `correlate` と `survey` に配る |
+| `correlate` | R | `stratify`（species / sex / island）で分け、全体と各層の r、信頼区間、傾きを表にする |
+| `figure` | R | 同じ点に全体の回帰直線（破線）と層ごとの回帰直線を重ねる |
+| `survey` | R | 3 つの層別の r を 1 枚に並べ、どこで逆転するかを示す |
+| `admissions` | R | 学科ごとと全体の合格率とオッズ比、Mantel–Haenszel の共通オッズ比を表にする |
+| `applications` | R | 合格率を応募者数の大きさの点で描き、全体の合格率を破線で重ねる |
+
+**試すこと**
+- `correlate` の `stratify` を `sex` にして、`correlate` から先を実行する。r は全層で負のままで、逆転しない。
+- `stratify` を `island` にする。Biscoe では負のまま、Dream と Torgersen では正になる。
+- `admissions` の表で、全体のオッズ比 1.84 が学科で調整すると 0.90 になるのを見る。`applications` の図で、応募先の偏りを見る。
 
 ## Draft 版（Agent に実装させる）
 

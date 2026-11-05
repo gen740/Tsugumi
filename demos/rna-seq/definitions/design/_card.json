@@ -1,0 +1,21 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "counts"
+    },
+    {
+      "name": "results"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "design",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "fdr",
+      "type": "double",
+      "data": 0.05
+    }
+  ]
+}

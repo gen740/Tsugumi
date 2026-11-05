@@ -264,6 +264,61 @@
       ]
     },
     {
+      "id": "survival",
+      "title": "Survival analysis",
+      "description": "Kaplan-Meier curves, the log-rank test and a Cox model on the survival package's lung data (NCCTG advanced lung cancer trial), in R. The hazard ratio is compared across who is included and what is adjusted for in a forest-like figure, with cox.zph as the check of proportional hazards. KM and Cox are checked by hand-written estimates in the test.",
+      "path": "survival",
+      "tags": [
+        "R",
+        "統計",
+        "医学",
+        "画像",
+        "分岐・分配・合流",
+        "成果物"
+      ]
+    },
+    {
+      "id": "meta-analysis",
+      "title": "Meta-analysis: BCG vaccine",
+      "description": "Fixed and random effects pooling of metafor's dat.bcg (13 BCG vaccine trials, Colditz et al. 1994), in R: forest and funnel plots, heterogeneity (I2, tau2), meta-regression on absolute latitude, leave-one-out and a choice of estimators. The pooled estimates are checked by hand-written inverse-variance weighting and DerSimonian-Laird in the test.",
+      "path": "meta-analysis",
+      "tags": [
+        "R",
+        "統計",
+        "医学",
+        "画像",
+        "分岐・分配・合流",
+        "成果物"
+      ]
+    },
+    {
+      "id": "rna-seq",
+      "title": "RNA-seq: airway and dexamethasone",
+      "description": "Differential expression on the airway data (Himes et al. 2014, airway smooth muscle cells with dexamethasone) in R: normalization, sample PCA, DESeq2 and edgeR on two branches, MA and volcano plots, top genes with known responders, thresholds, and the paired design against the unpaired one. Size factors and fold changes of known responders are checked by hand in the test.",
+      "path": "rna-seq",
+      "tags": [
+        "R",
+        "統計",
+        "生物",
+        "画像",
+        "分岐・分配・合流",
+        "成果物"
+      ]
+    },
+    {
+      "id": "simpson",
+      "title": "Simpson's paradox",
+      "description": "A correlation and a rate that reverse when stratified, in R: bill length against depth in palmerpenguins (Gorman et al. 2014), with a param choosing the stratifying variable, and the 1973 Berkeley admissions in UCBAdmissions with the Mantel-Haenszel odds ratio. The note says why the stratified one is not automatically right. Pearson's r and the odds ratio are checked by hand in the test.",
+      "path": "simpson",
+      "tags": [
+        "R",
+        "統計",
+        "画像",
+        "分岐・分配・合流",
+        "成果物"
+      ]
+    },
+    {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
       "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",

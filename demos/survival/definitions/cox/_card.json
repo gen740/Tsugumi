@@ -1,0 +1,22 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "cohort"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "fit",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "covariates",
+      "type": "string[]",
+      "data": [
+        "female",
+        "age",
+        "ph.ecog"
+      ]
+    }
+  ]
+}

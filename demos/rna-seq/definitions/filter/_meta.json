@@ -1,0 +1,10 @@
+{
+  "description": "読まれない遺伝子を除く",
+  "content": "全サンプルの合計リード数が min_total 未満の遺伝子を除き、合計リード数の分布と基準を図で示す。",
+  "outputs": [
+    {
+      "name": "counts",
+      "description": "残した遺伝子の counts.csv と samples.csv"
+    }
+  ]
+}

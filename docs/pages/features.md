@@ -184,6 +184,10 @@ in
 | `dose-response` | 真の値を知っている合成データで、当てはめと信頼区間が回復できるかを確かめる。濃度範囲が EC50 を挟まないと区間が開き、Card がそう言う |
 | `molecules` | Canvas に SMILES を貼って再実行できる RDKit の物性計算。読めない入力は理由を示して飛ばし、分子量と logP の地図は対話できるグラフになる |
 | `cell-count` | 正解が分かっている合成画像で数え方を採点し、閾値のみと watershed を比べる。密度とノイズを変えて破綻する場所を表に示し、Nix で固定した実画像にも同じ手順をかける |
+| `survival` | R の survival と ggplot2。Kaplan–Meier・log-rank・Cox に加え、対象者と調整の組み合わせでハザード比がどう動くかを 1 枚の図で比べ、`cox.zph` で仮定を確かめる。テストは手書きの KM・log-rank・Cox と照合する |
+| `meta-analysis` | R の metafor。固定効果と変量効果、森林図とファンネル、緯度によるメタ回帰、1 試験を除く比較と推定量の比較。テストは手書きの逆分散重みと DerSimonian–Laird、公表の REML の値と照合する |
+| `rna-seq` | R の DESeq2 と edgeR（Bioconductor を Nix でビルド）。正規化、PCA、MA・火山プロット、上位遺伝子、閾値の格子、2 手法の比較、細胞株の項の有無の比較。テストは手書きのサイズ因子と既知の応答遺伝子の倍率変化と照合する |
+| `simpson` | R と ggplot2。集計と層別で符号が変わる相関と比率を、層別の変数を param で変えながら比べる。どちらを読むかは因果の問いで決まることをノートで述べる。テストは手書きの Pearson の r と Mantel–Haenszel と照合する |
 | `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
 | `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
 

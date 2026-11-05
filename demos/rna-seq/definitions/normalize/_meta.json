@@ -1,0 +1,10 @@
+{
+  "description": "サイズ因子で正規化する",
+  "content": "DESeq2 の中央値の比でサイズ因子を求め、正規化の前後の分布を図で比べる。PCA のために分散安定化変換（vst）を渡す。",
+  "outputs": [
+    {
+      "name": "normalized",
+      "description": "size_factors.csv と vst.rds"
+    }
+  ]
+}
