@@ -42,9 +42,15 @@
 .cv-card-body { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; pointer-events: auto; }
 .cv-card-header { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.cv-draft-badge { font-weight: 600; border-radius: 999px; background: color-mix(in srgb, var(--orange) 20%, transparent); white-space: nowrap; flex: none; }
 .cv-state { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
 .cv-collapse { border: 0; background: none; padding: 0 1px; display: inline-flex; align-items: center; cursor: pointer; flex: none; }
+.cv-draft-text { flex: none; box-sizing: border-box; overflow: hidden; }
+.cv-draft-text span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cv-draft-text.placeholder { opacity: 0.6; }
+.cv-draft-edit { flex: none; box-sizing: border-box; display: flex; flex-direction: column; pointer-events: auto; }
+.cv-draft-edit textarea { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; outline: none; border: 0; padding: 0; margin: 0; overflow: auto; font-family: inherit; color: var(--secondary); background: none; scrollbar-width: thin; }
+.cv-draft-name { flex: 1; min-width: 0; font-weight: 600; pointer-events: auto; outline: none; border: 0; background: none; color: inherit; padding: 0; }
+.cv-draft-problem { color: var(--red); flex: none; }
 .cv-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
 .cv-param-row { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-result { display: flex; align-items: center; flex: none; white-space: nowrap; overflow: hidden; min-width: 0; }
@@ -54,6 +60,8 @@
 .cv-port-label { position: absolute; transform: translateY(-50%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; line-height: 1.2; }
 .cv-port { position: absolute; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
 .cv-port.connectable { cursor: crosshair; }
+.cv-port-new { display: block; border-radius: 50%; background: var(--accent); opacity: 0; }
+.cv-port:hover .cv-port-new { opacity: 1; }
 .cv-port-out { border-radius: 50%; background: var(--accent); display: block; }
 .cv-port-in { display: block; background: var(--control-bg); border: 1.4px solid var(--secondary); box-sizing: border-box; }
 .cv-port-in.condition { background: color-mix(in srgb, var(--green) 35%, transparent); border-color: var(--green); }

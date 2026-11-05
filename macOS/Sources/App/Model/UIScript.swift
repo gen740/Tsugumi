@@ -11,7 +11,7 @@ import TsugumiRPC
 ///   wait <seconds>                  sidebar hide|show
 ///   size <width> <height>           chat show|hide
 ///   select <card path>              open card <card path> <category>
-///   open draft <card path>          open definitions | workflow-settings
+///   open definitions | workflow-settings
 ///   settings <category>             close settings
 ///   edit <card path> <param> <v>    external <card path> <field> <value>
 ///   capture <name>                  arrange
@@ -34,7 +34,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), draft(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
+    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
   }
 
   var request: Request?
@@ -109,7 +109,6 @@ final class UIScript {
         case "card":
           let cat = CardEditorCategory(rawValue: w.count > 3 ? w[3] : "general") ?? .general
           request = .card(CardRef(path: ref.path, card: w[2], category: cat))
-        case "draft": request = .draft(CardRef(path: ref.path, card: w[2]))
         case "visual": request = .visual(CardRef(path: ref.path, card: w[2]))
         case "definitions": request = .definitions(ref)
         case "versions": request = .versions(ref)

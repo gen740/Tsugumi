@@ -1,4 +1,4 @@
-/* detail area: Card settings, sources, Draft, definitions, history */
+/* detail area: Card settings, sources, definitions, history */
 
 :root {
   --sx-teal: #30b0c7; --sx-cyan: #32ade6; --sx-indigo: #5856d6; --sx-tertiary: rgba(60, 60, 67, 0.3);
@@ -108,7 +108,3 @@
 .symbol-cell:hover { background: var(--hover); }
 .symbol-cell.selected { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); }
 
-/* ---- Draft ---- */
-.draft-form { padding: 20px; }
-.draft-form .field { width: 100%; }
-.draft-form textarea.field { resize: vertical; }

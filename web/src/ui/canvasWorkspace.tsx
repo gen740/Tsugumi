@@ -179,7 +179,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       <MenuButton icon="plus" disabled={!session.isEditable} help="組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）"
         items={() => builtinCardItems((t) => {
           const k = canvasFor(session, tab).addBuiltin(t)
-          if (k && t === 'draft') app.openWindow(session, { kind: 'draft', card: k })
+          if (k && t === 'draft') canvasFor(session, tab).writeDraft(k)
         })} />
     </div>
   )

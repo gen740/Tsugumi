@@ -30,7 +30,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 | fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の `maxRuns` で反復の上限を決めます |
 | logger | 受け取った値を外部 DB に記録する（現在は `.tsugumi/logger/` 配下の `sqlite:<name>` に対応） |
 | subgraph（Card in Card） | 子 Workflow を 1 つの Card として扱う。`boundary` で外側のポートを内部の Card に対応づける |
-| Draft | 型のない仮ポートで先に配線できる「未実装の Card」。後から Agent に実装を生成させられる |
+| Draft | 名前と内容をカードに直接書き、線を落とすだけでつなげる「未実装の Card」（ポートは線に合わせて作られ、型はない）。後から Agent に実装を生成させられる |
 
 ### 型付きのポート
 
@@ -158,7 +158,7 @@ in
 - `agent/` として分離された独立パッケージです。Anthropic Messages API および OpenAI Responses API に対応し、ストリーミングで応答します。OpenAI は API キーのほか、利用者の ChatGPT プラン（Sign in with ChatGPT、オープンソースのツール向けの手順）でも使えます（[セキュリティ](security.md#chatgpt-プランsign-in-with-chatgpt)）。
 - Agent が使う tool 定義は `tsugumi.bfbs`（FlatBuffers スキーマの doc comment 付き）から自動生成され、tool 引数と FlatBuffers メッセージの相互変換も同一のスキーマで行います。RPC 契約を更新すれば Agent の tool も自動的に追従します。
 - 変更を伴う tool 呼び出しには Agent が一意な `op_id` を付与し、UI とまったく同じリビジョン検査・競合検出・確定通知の経路を通ります。
-- **Draft から Card を生成**：Draft の概要・処理内容・仮ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させたうえで、ビルドと実行による検証まで行わせます。途中の失敗やキャンセルでは中途半端な変更を保存せず、計画は残ります。
+- **Draft から Card を生成**：Draft の概要・処理内容・ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させたうえで、ビルドと実行による検証まで行わせます。途中の失敗やキャンセルでは中途半端な変更を保存せず、計画は残ります。
 - Skill（プロジェクト内の `skills/` や設定で追加したフォルダ）を `$` で呼び出せます。会話の一覧・全文検索・要約圧縮に対応しています。
 - **手分け（delegate）**：互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。helper はそれぞれ自分の会話と同じツールを持ち、受け持った Card の定義だけを保存できます（`tsugumi.json`・配置・他の Card は変えられません）。helper 同士の保存と実行がぶつかったとき（実行中の `busy`、`revision_conflict`）は、Agent の側で実行の終わりを待ち、最新のリビジョンから送り直します。helper の報告がそろうと Agent がそれぞれの Card を確かめて報告します。helper の会話は元の会話の隣（`<会話>.helpers/`）に残ります。
 - Mac のフォルダをチャットに添付すると、Agent が `AttachedFolderRead` ツールで読み取れます（そのプロジェクトだけに読み取り専用で共有されます。読み取った内容はモデルに送信されます）。

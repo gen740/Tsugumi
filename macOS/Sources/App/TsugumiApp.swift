@@ -40,11 +40,6 @@ struct TsugumiApp: App {
     .defaultSize(width: 860, height: 620)
     .windowToolbarStyle(.unifiedCompact(showsTitle: true))
 
-    WindowGroup("Draft", id: "draft", for: CardRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { DraftEditor(session: $0, cardKey: ref.card) } }
-    }
-    .defaultSize(width: 640, height: 560)
-
     WindowGroup("Card 定義", id: "definitions", for: ProjectRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardDatabaseView(session: $0, initial: ref.definition) } }
     }
@@ -388,6 +383,7 @@ extension Notification.Name {
   static let canvasDelete = Notification.Name("tsugumi.canvas.delete")
   static let canvasGroup = Notification.Name("tsugumi.canvas.group")
   static let canvasAddDraft = Notification.Name("tsugumi.canvas.addDraft")
+  static let canvasWriteDraft = Notification.Name("tsugumi.canvas.writeDraft")
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
   static let canvasAddBuiltin = Notification.Name("tsugumi.canvas.addBuiltin")

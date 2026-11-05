@@ -7,7 +7,7 @@ import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
 import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, uuid, webSocketTransport } from '../shared/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, ParamData, PortData, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
 } from './canvasKit'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
@@ -91,6 +91,13 @@ export interface TimelineEntry {
   startedAt?: number
   endedAt?: number
   stages: StageRecord[]
+}
+
+/** A Draft being written on its Card: its name and content as typed so far. */
+export interface InlineDraft {
+  card: CardKey
+  name: string
+  content: string
 }
 
 /** Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
@@ -299,6 +306,8 @@ export class ProjectSession extends Observable {
   sourceEdits = new Map<string, string>() // path -> new text
   sourceRemovals = new Set<string>()
   definitionEdits = new Map<string, DefinitionDraft>()
+  /** The Draft being written on the canvas (geometry opens its Card up). */
+  inlineDraft?: InlineDraft
   /** Edited externals (by folder), written back as their files. */
   externalEdits = new Map<string, ExternalProject>()
   /** Base hashes chosen by an editor that read the file before this draft started. */
@@ -441,6 +450,10 @@ export class ProjectSession extends Observable {
       else d.set(id, e.meta)
     }
     return d
+  }
+
+  hasSource(p: string): boolean {
+    return !this.sourceRemovals.has(p) && (this.sources.has(p) || this.sourceEdits.has(p))
   }
 
   /** Source paths of the draft (confirmed, plus new files, minus removed ones). */
@@ -1580,6 +1593,16 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
+  /** Changes a Card's _meta.json in the draft. */
+  updateMeta(k: CardKey, fn: (m: JObj) => void) {
+    const d = this.cardDefinitionDraft(k)
+    if (!d || d.link !== undefined) return
+    const n = cloneDef(d)
+    if (!isObj(n.meta)) n.meta = obj()
+    fn(n.meta as JObj)
+    this.setCardDefinition(k, n)
+  }
+
   /** A setting of the Card (its _card.json). */
   cardSetting(k: CardKey, name: string): J | undefined {
     return get(this.cardDefinition(k), name)
@@ -1959,16 +1982,72 @@ export class ProjectSession extends Observable {
 
   /** Renames a Card (its id, its definition folder): saved at once, with its
    *  connections and positions following (and its run history). */
+  /** Why a Card cannot take a name (undefined: it can). */
+  cardNameProblem(k: CardKey, raw: string): string | undefined {
+    const nw = raw.trim()
+    if (nw === path(k).pop()) return undefined
+    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return '名前に使えるのは英数字と - _ . だけです（128 文字まで）。'
+    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return `「${nw}」はすでに使われています。`
+    return undefined
+  }
+
+  // ---- A Draft written on the canvas -------------------------------------------------
+
+  /** Whether a Draft has no name of its own: its id is one made for it. */
+  draftUntitled(k: CardKey): boolean {
+    return this.kind(k) === 'draft' && /^draft(-[0-9]+)?$/.test(this.displayName(k))
+  }
+
+  /** Starts writing a Draft's name and content on its Card. */
+  startDraftEdit(k: CardKey) {
+    this.inlineDraft = { card: k, name: this.draftUntitled(k) ? '' : this.displayName(k), content: str(get(this.cardMeta(k), 'content')) ?? '' }
+    this.changed()
+  }
+
+  /** Why the name typed on a Draft's Card cannot be taken (no name is fine). */
+  draftNameProblem(k: CardKey, name: string): string | undefined {
+    return name.trim() ? this.cardNameProblem(k, name) : undefined
+  }
+
+  setDraftEdit(change: Partial<Pick<InlineDraft, 'name' | 'content'>>) {
+    if (!this.inlineDraft) return
+    this.inlineDraft = { ...this.inlineDraft, ...change }
+    this.changed()
+  }
+
+  /** Keeps what was written. A name the Card cannot take stays as it was, with
+   *  a notice. The Card's key when it was renamed. */
+  async finishDraftEdit(): Promise<CardKey | undefined> {
+    const e = this.inlineDraft
+    if (!e) return undefined
+    this.inlineDraft = undefined
+    this.changed()
+    if (!this.instance(e.card)) return undefined
+    if (e.content !== (str(get(this.cardMeta(e.card), 'content')) ?? '')) {
+      this.edit((x) => x.updateMeta(e.card, (m) => m.set('content', e.content || undefined)))
+    }
+    // No name: an id is made for it (a Draft that has none keeps the one it has).
+    if (!e.name.trim() && this.draftUntitled(e.card)) return undefined
+    const name = e.name.trim() || this.uniqueId('draft', path(e.card).slice(0, -1))
+    if (name === this.displayName(e.card)) return undefined
+    try {
+      await this.renameCard(e.card, name)
+      return key([...path(e.card).slice(0, -1), name])
+    } catch (err) {
+      this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
+      this.changed()
+      return undefined
+    }
+  }
+
   async renameCard(k: CardKey, raw: string): Promise<void> {
     const old = path(k).pop()
     if (!old) return
     const scope = path(k).slice(0, -1)
     const nw = raw.trim()
     if (nw === old) return
-    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) {
-      throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: '名前に使えるのは英数字と - _ . だけです（128 文字まで）。' })
-    }
-    if (this.uniqueId(nw, scope) !== nw) throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: `「${nw}」はすでに使われています。` })
+    const problem = this.cardNameProblem(k, nw)
+    if (problem) throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: problem })
     if (this.dirty) await this.save()
     if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? '変更を保存できませんでした。' })
     const rpc = this.client
@@ -2071,11 +2150,12 @@ export class ProjectSession extends Observable {
         if (ext) x.removeExternal(ext)
         x.removeCardDefinition(k)
       }
+      const cut = x.connections(scope).filter((c) => ids.has(str(get(c, 'from', 'card')) ?? '') || ids.has(str(get(c, 'to', 'card')) ?? ''))
       x.updateGraph(scope, (g) => {
         g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
-        g.set('connections', (arr(g.get('connections')) ?? []).filter(
-          (c) => !ids.has(str(get(c, 'from', 'card')) ?? '') && !ids.has(str(get(c, 'to', 'card')) ?? '')))
+        g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
       })
+      x.dropDraftPorts(cut, scope)
       if (prefix) {
         // Boundary ports of removed Cards go too.
         x.updateExternal(prefix, (e) => {
@@ -2106,30 +2186,85 @@ export class ProjectSession extends Observable {
   connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop()
     if (!fromId || !toId) return
-    // One wire per output: a value goes to several Cards through a fork Card.
-    // A second wire from an output inserts one (or, from a fork, adds a branch).
-    const taken = this.connections(scope).filter((c) =>
-      str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === from[1]
-      && !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === to[1]))
     this.edit((x) => {
-      let source: [string, string] = [fromId, from[1]]
+      // An end at NEW_PORT makes the Draft's port now.
+      const fromPort = x.draftPort(from, true, to[1], scope)
+      const toPort = x.draftPort(to, false, fromPort, scope)
+      // One wire per output: a value goes to several Cards through a fork Card.
+      // A second wire from an output inserts one (or, from a fork, adds a branch).
+      const taken = x.connections(scope).filter((c) =>
+        str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === fromPort
+        && !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === toPort))
+      let source: [string, string] = [fromId, fromPort]
       if (taken.length) {
         const nextId = taken.length === 1 ? str(get(taken[0], 'to', 'card')) : undefined
         const next = nextId ? key([...scope, nextId]) : undefined
         if (x.kind(from[0]) === 'fork') source = [fromId, x.addForkBranch(from[0], toId)]
         else if (next && nextId && x.kind(next) === 'fork') source = [nextId, x.addForkBranch(next, toId)]  // one more branch of it
         else {
-          const fork = x.insertFork([fromId, from[1]], taken, scope)
+          const fork = x.insertFork([fromId, fromPort], taken, scope)
           source = [fork, x.addForkBranch(key([...scope, fork]), toId)]
         }
       }
+      // One connection per input port: a new wire replaces the old one.
+      const replaced = x.connections(scope).filter((c) => str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === toPort)
       x.updateGraph(scope, (g) => {
-        // One connection per input port: a new wire replaces the old one.
-        const conns = (arr(g.get('connections')) ?? []).filter((c) => !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === to[1]))
-        conns.push(obj([['from', obj([['card', source[0]], ['port', source[1]]])], ['to', obj([['card', toId], ['port', to[1]]])]]))
+        const conns = (arr(g.get('connections')) ?? []).filter((c) => !replaced.includes(c))
+        conns.push(obj([['from', obj([['card', source[0]], ['port', source[1]]])], ['to', obj([['card', toId], ['port', toPort]])]]))
         g.set('connections', conns)
       })
+      x.dropDraftPorts(replaced, scope)
     })
+  }
+
+  /** Whether a wire of the scope ends at this port. */
+  portWired(k: CardKey, port: string, output: boolean, scope: string[]): boolean {
+    const id = path(k).pop()
+    const side = output ? 'from' : 'to'
+    return this.connections(scope).some((c) => str(get(c, side, 'card')) === id && str(get(c, side, 'port')) === port)
+  }
+
+  /** The port a wire's end names. At NEW_PORT: a Draft's port without a wire
+   *  or a new one, named after the port at the wire's other end when that says
+   *  more than "in" or "out". A Draft's ports are declared by its wires. */
+  private draftPort(end: [CardKey, string], output: boolean, other: string, scope: string[]): string {
+    if (end[1] !== NEW_PORT) return end[1]
+    const ports = this.portData(end[0])
+    const names = (output ? ports.outputs : ports.inputs).map((p) => p.name)
+    const free = names.find((n) => !this.portWired(end[0], n, output, scope))
+    if (free) return free
+    const plain = output ? 'out' : 'in'
+    const base = /^[A-Za-z_][A-Za-z0-9_]*$/.test(other) && !/^(in|out)[0-9]*$/.test(other) ? other : plain
+    let name = base
+    for (let n = 2; names.includes(name); n++) name = `${base}${n}`
+    const note = obj([['name', name]])
+    if (output) this.updateMeta(end[0], (m) => m.set('outputs', [...(arr(m.get('outputs')) ?? []), note]))
+    else this.updateCard(end[0], (c) => c.set('inputs', [...(arr(c.get('inputs')) ?? []), note]))
+    return name
+  }
+
+  /** After wires are gone: a Draft's port goes with its last wire. */
+  private dropDraftPorts(removed: J[], scope: string[]) {
+    const held = (k: CardKey, port: string, output: boolean) => {
+      if (this.portWired(k, port, output, scope)) return true
+      // Inside a Card in Card, the outer Card's boundary may name it.
+      const side = get(scope.length ? this.boundary(key(scope)) : undefined, output ? 'outputs' : 'inputs')
+      return isObj(side) && side.entries().some(([, e]) => str(get(e, 'card')) === path(k).pop() && str(get(e, 'port')) === port)
+    }
+    const without = (list: J | undefined, port: string) => {
+      const rest = (arr(list) ?? []).filter((p) => str(get(p, 'name')) !== port)
+      return rest.length ? rest : undefined
+    }
+    for (const c of removed) {
+      for (const [side, output] of [['from', true], ['to', false]] as const) {
+        const id = str(get(c, side, 'card')), port = str(get(c, side, 'port'))
+        if (!id || !port) continue
+        const k = key([...scope, id])
+        if (!this.instance(k) || this.kind(k) !== 'draft' || held(k, port, output)) continue
+        if (!output) this.updateCard(k, (d) => d.set('inputs', without(d.get('inputs'), port)))
+        this.updateMeta(k, (m) => m.set(output ? 'outputs' : 'inputs', without(m.get(output ? 'outputs' : 'inputs'), port)))
+      }
+    }
   }
 
   /** A fork Card after an output: the output's wires (`wires`) now leave the
@@ -2173,25 +2308,31 @@ export class ProjectSession extends Observable {
 
   removeConnection(index: number, scope: string[]) {
     this.edit((x) => {
-      x.updateGraph(scope, (g) => {
-        const conns = [...(arr(g.get('connections')) ?? [])]
-        if (index >= conns.length) return
-        conns.splice(index, 1)
-        g.set('connections', conns)
-      })
+      const conns = [...x.connections(scope)]
+      if (index >= conns.length) return
+      const [removed] = conns.splice(index, 1)
+      x.updateGraph(scope, (g) => g.set('connections', conns))
+      x.dropDraftPorts([removed], scope)
     })
   }
 
   /** Removes connections (as they are in the scope's canvas). */
   removeConnections(list: J[], scope: string[]) {
     if (!list.length) return
-    this.edit((x) => x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !list.some((l) => jeq(l, c))))))
+    this.edit((x) => {
+      x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !list.some((l) => jeq(l, c)))))
+      x.dropDraftPorts(list, scope)
+    })
   }
 
   disconnect(k: CardKey, inputs: boolean, scope: string[]) {
     const id = path(k).pop()
     if (!id) return
-    this.edit((x) => x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => (str(get(c, inputs ? 'to' : 'from', 'card')) ?? '') !== id))))
+    this.edit((x) => {
+      const removed = x.connections(scope).filter((c) => (str(get(c, inputs ? 'to' : 'from', 'card')) ?? '') === id)
+      x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !removed.includes(c))))
+      x.dropDraftPorts(removed, scope)
+    })
   }
 
   setCollapsed(keys: Iterable<CardKey>, value: boolean) {
@@ -2683,7 +2824,9 @@ auto run(Card::Input& input) -> Card::Output {
     const m = meta ?? this.cardMeta(k)
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
     const r = this.resolution.get(k)
-    if (definition === undefined && r) {
+    // A Draft's ports change with its wires, before they are resolved again.
+    const draft = this.kind(k) === 'draft'
+    if (definition === undefined && r && !draft) {
       return {
         inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
         outputs: r.outputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) })),
@@ -2692,11 +2835,18 @@ auto run(Card::Input& input) -> Card::Output {
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: r?.inputs.find((p) => p.name === n)?.rootType, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
     })
-    let outs: PortData[] = r?.outputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) })) ?? []
-    const declared = arr(get(m, 'outputs'))
-    if (!outs.length && declared) outs = declared.flatMap((o) => (str(get(o, 'name')) ? [{ name: str(get(o, 'name'))!, note: str(get(o, 'description')) }] : []))
+    // A Draft's resolved outputs beyond the declared ones are those of its _outputs.fbs.
+    const dir = draft ? this.definitionDir(k) : undefined
+    const typed = !draft || (dir !== undefined && this.hasSource(dir + '_outputs.fbs'))
+    const outs: PortData[] = (typed ? r?.outputs ?? [] : []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
+    if (draft || !outs.length) {
+      for (const o of arr(get(m, 'outputs')) ?? []) {
+        const n = str(get(o, 'name'))
+        if (n && !outs.some((p) => p.name === n)) outs.push({ name: n, typeName: r?.outputs.find((p) => p.name === n)?.rootType, note: str(get(o, 'description')) })
+      }
+    }
     return { inputs: ins, outputs: outs }
   }
 
@@ -2713,6 +2863,13 @@ auto run(Card::Input& input) -> Card::Output {
 
   cardDescription(k: CardKey): string | undefined {
     return str(get(this.cardDefinition(k), 'description')) || str(get(this.cardMeta(k), 'description')) || undefined
+  }
+
+  /** What a Card says about itself on hover: a Draft's summary and content. */
+  cardDetails(k: CardKey): string[] {
+    const desc = this.cardDescription(k)
+    const content = this.kind(k) === 'draft' ? str(get(this.cardMeta(k), 'content')) : undefined
+    return [desc, content].filter((x): x is string => !!x)
   }
 
   /** Whether a Card does not run because it needs a Draft's output. */
@@ -2808,12 +2965,16 @@ auto run(Card::Input& input) -> Card::Output {
     const diags = this.resolution.get(k)?.diagnostics ?? []
     const ports = this.portData(k, opts.definition, opts.meta)
     const def = opts.definition ?? this.cardDefinition(k)
+    const m = opts.meta ?? this.cardMeta(k)
     let summary = str(get(def, 'description'))
-    if (!summary) summary = str(get(opts.meta ?? this.cardMeta(k), 'description'))
+    if (!summary) summary = str(get(m, 'description'))
+    // What a Draft shows on its Card is what it says it will do.
+    if (kind === 'draft') summary = str(get(m, 'content')) || summary
     const frame = this.displayFrame(k)
     const display = (this.displays.has(k) || frame !== undefined) && bool(get(frame, 'hidden')) !== true
     const d = this.displays.get(k)
     const sym = str(get(def, 'symbol'))
+    const editing = kind === 'draft' && this.inlineDraft?.card === k
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
       inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
@@ -2822,7 +2983,8 @@ auto run(Card::Input& input) -> Card::Output {
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
-      collapsed: opts.collapsed ?? this.collapsed(k), hasDisplay: display, permissions: cardPermissions(def),
+      collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
+      draftEditing: editing, untitled: this.draftUntitled(k),
     }
   }
 

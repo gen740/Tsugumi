@@ -236,6 +236,15 @@ final class ProjectSession {
   private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
   var notice: String?
+  /// The Draft being written on the canvas (geometry opens its Card up).
+  var inlineDraft: InlineDraft?
+
+  /// A Draft being written on its Card: its name and content as typed so far.
+  struct InlineDraft: Equatable {
+    var card: CardKey
+    var name: String
+    var content: String
+  }
 
   struct Snapshot: Equatable {
     var project: JSONValue
@@ -1407,6 +1416,15 @@ final class ProjectSession {
   func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
     guard var d = cardDefinitionDraft(k), d.link == nil else { return }
     fn(&d.card)
+    setCardDefinition(k, d)
+  }
+
+  /// Changes a Card's _meta.json in the draft.
+  func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
+    guard var d = cardDefinitionDraft(k), d.link == nil else { return }
+    var meta = d.meta ?? .object([])
+    fn(&meta)
+    d.meta = meta
     setCardDefinition(k, d)
   }
 

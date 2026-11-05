@@ -5,7 +5,7 @@
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
 import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import type { Pt, Rect } from '../model/canvasKit'
+import { NEW_PORT, Pt, Rect } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
@@ -17,6 +17,7 @@ import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
 import { CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
+import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
@@ -100,7 +101,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const el = root.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest('.cv-find, .display-scroll')) return
+      if ((e.target as HTMLElement).closest('.cv-find, .display-scroll, .cv-draft-edit')) return
       e.preventDefault()
       clearHover()
       const r = el.getBoundingClientRect()
@@ -141,7 +142,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const w = cv.world(p)
     let target: HoverTarget | undefined
     const k = scene.cardAt(w)
-    if (k) target = { kind: 'card', k }
+    // A Draft being written has its details in front of it.
+    if (k) target = k === session.inlineDraft?.card ? undefined : { kind: 'card', k }
     else {
       // About 8 points on screen either side of the line, at any zoom.
       const i = scene.wireAt(w, 8 / z)
@@ -209,6 +211,30 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     return best
   }
 
+  /** Where a dropped wire ends. A Draft takes it anywhere on the Card: a port
+   *  of its own that has no wire, or a new one (never replacing another wire). */
+  const wireTarget = (p: Pt, output: boolean, except: CardKey): [CardKey, string] | undefined => {
+    const near = nearestPort(p, output, except)
+    if (near) return session.kind(near[0]) === 'draft' && session.portWired(near[0], near[1], output, scope) ? [near[0], NEW_PORT] : near
+    const w = cv.world(p), m = 18 / z + 6
+    const k = [...scene.cardKeys].reverse().find((x) => {
+      if (x === except || session.kind(x) !== 'draft') return false
+      const r = scene.cardRect(x)
+      return w.x >= r.x - m && w.x <= r.x + r.width + m && w.y >= r.y - m && w.y <= r.y + r.height + m
+    })
+    return k ? [k, NEW_PORT] : undefined
+  }
+
+  /** Keeps what was written on a Draft's Card; a new name moves what points at the Card. */
+  const finishDraftEdit = () => {
+    const from = session.inlineDraft?.card
+    void session.finishDraftEdit().then((to) => {
+      if (!from || !to) return
+      retargetWindows(session, from, to)
+      if (tab.selection.has(from)) tab.setSelection([...tab.selection].map((x) => (x === from ? to : x)))
+    })
+  }
+
   const commitParam = (k: CardKey, name: string, text: string) => {
     if (!session.isEditable) return
     const type = str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
@@ -217,7 +243,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
     const k = cv.addBuiltin(t, at)
-    if (k && t === 'draft') app.openWindow(session, { kind: 'draft', card: k })
+    if (k && t === 'draft') cv.writeDraft(k)
   }
 
   const single = () => (tab.selection.size === 1 ? [...tab.selection][0] : undefined)
@@ -230,7 +256,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       case 'openLog': if (k) showLog(workspace, k); break
       case 'addDraft': {
         const d = cv.addDraft()
-        if (d) app.openWindow(session, { kind: 'draft', card: d })
+        if (d) cv.writeDraft(d)
         break
       }
       case 'generateDrafts': {
@@ -372,10 +398,12 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     drive(e, 1, (ev) => setPending({ from: [k, port], fromOutput: output, point: local(ev) }), (ev) => {
       setPending(undefined)
       if (!session.isEditable) return
-      const other = nearestPort(local(ev), !output, k)
+      const other = wireTarget(local(ev), !output, k)
       if (!other) return
-      if (output) session.connect([k, port], other, scope)
-      else session.connect(other, [k, port], scope)
+      // Another wire from a Draft's port is another port.
+      const own: [CardKey, string] = [k, session.kind(k) === 'draft' && session.portWired(k, port, output, scope) ? NEW_PORT : port]
+      if (output) session.connect(own, other, scope)
+      else session.connect(other, own, scope)
     })
   }
 
@@ -517,10 +545,19 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const g = scene.geometry(k)
         return (
           <CardNodeView key={k} data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
-            style={placed(screen(scene.origin(k)), g.size.width * z, g.size.height * z)}
+            style={placed(screen(scene.origin(k)), g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
             onParamCommit={data.kind === 'input' ? (name, text) => commitParam(k, name, text) : undefined}
             paramsEditable={session.isEditable}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
+            draftEdit={session.inlineDraft?.card === k ? {
+              draft: session.inlineDraft,
+              nameProblem: session.draftNameProblem(k, session.inlineDraft.name),
+              onChange: (change) => session.setDraftEdit(change),
+              onDone: (byKey) => {
+                finishDraftEdit()
+                if (byKey) focus()
+              },
+            } : undefined}
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
             onPointerDown={(e) => onCardDown(k, e)}
@@ -734,7 +771,7 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
       { label: '別ウインドウで開く', action: () => openWorkflowWindow(session, path(k)) },
       'divider' as const,
     ] : []),
-    kind === 'draft' && { label: 'Draft を編集…', action: () => app.openWindow(session, { kind: 'draft', card: k }) },
+    kind === 'draft' && { label: '名前と内容を書く', disabled: !editable, action: () => canvasFor(session, tab).writeDraft(k) },
     { label: '設定…', action: () => app.openWindow(session, { kind: 'card', card: k }) },
     { label: '実行履歴…', action: () => app.openWindow(session, { kind: 'executions', card: k }) },
     { label: '成果物…', action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
@@ -941,9 +978,7 @@ interface BubbleContent {
 function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget): BubbleContent {
   if (t.kind === 'card') {
     const d = session.nodeData(t.k)
-    const lines: string[] = []
-    const desc = session.cardDescription(t.k)
-    if (desc) lines.push(desc)
+    const lines = session.cardDetails(t.k)
     let status = runText(d) ?? idleText(d)
     const id = session.currentRunId
     if (id && d.invocation > 0n) status += `（Run ${id.slice(0, 8)} の中でこの Card の ${d.invocation} 回目の実行）`

@@ -6,11 +6,11 @@
 import { CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Camera, CardGeometry, CardNodeData, currentStage, fitCamera, isRouting, ParamData, PortData, Pt, Rect, Stage, STAGE_INFO,
-  STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus, union, WireRouter,
+  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
-import { cardState, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
+import { cardState, formatDuration, InlineDraft, KIND_ICON, KIND_LABEL } from '../model/session'
 import { D } from '../shared/rpc'
 import { Button } from './controls'
 import { Icon } from './icons'
@@ -44,6 +44,16 @@ const fade = (c: string, opacity: number) => `color-mix(in srgb, ${colorVar(c)} 
 
 // ---- Card view -----------------------------------------------------------------------
 
+/** Writing a Draft on its Card: what is typed so far, where it goes, and how it ends. */
+export interface DraftEdit {
+  draft: InlineDraft
+  /** Why the Card cannot take the name typed so far. */
+  nameProblem?: string
+  onChange: (change: Partial<Pick<InlineDraft, 'name' | 'content'>>) => void
+  /** Done, the focus having moved elsewhere (undefined) or by the keyboard (true). */
+  onDone: (byKey?: boolean) => void
+}
+
 export interface CardNodeProps {
   data: CardNodeData
   flow: FlowDirection
@@ -56,6 +66,7 @@ export interface CardNodeProps {
   paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
   onPortDown?: (port: string, output: boolean, e: React.PointerEvent) => void
+  draftEdit?: DraftEdit
   onStageTap?: (stage: Stage) => void
   onToggleCollapse?: () => void
   style?: CSSProperties
@@ -114,8 +125,54 @@ export function CardNodeView(p: CardNodeProps) {
           </div>
         )
       })}
+      {p.onPortDown && [false, true].map((output) => {
+        const pt = g.newPort(output)
+        if (!pt) return null
+        const hit = Math.max(16, s(18)), mark = Math.max(6, s(8))
+        return (
+          <div key={output ? 'new-o' : 'new-i'} className="cv-port connectable"
+            style={{ left: s(pt.x) - hit / 2, top: s(pt.y) - hit / 2, width: hit, height: hit }}
+            title={output ? 'ドラッグして次の Card へ接続（出力は線に合わせて作られます）' : 'ドラッグして前の Card から接続（入力は線に合わせて作られます）'}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              p.onPortDown!(NEW_PORT, output, e)
+            }}>
+            <span className="cv-port-new" style={{ width: mark, height: mark }} />
+          </div>
+        )
+      })}
     </div>
   )
+}
+
+/** A Draft's name in its header and its content below, written on the Card. */
+function useDraftFields(edit: DraftEdit | undefined) {
+  const name = useRef<HTMLInputElement>(null)
+  const content = useRef<HTMLTextAreaElement>(null)
+  const editing = !!edit
+  // The content is what is written first: a name is not needed.
+  useEffect(() => {
+    if (!editing) return
+    const c = content.current
+    c?.focus({ preventScroll: true })
+    c?.setSelectionRange(c.value.length, c.value.length)
+  }, [editing])
+  const keys = (e: React.KeyboardEvent, field: 'name' | 'content') => {
+    if (!edit || e.nativeEvent.isComposing) return
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) edit.onDone(true)
+    else if (field === 'name' && e.key === 'Enter') {
+      if (!edit.nameProblem) content.current?.focus({ preventScroll: true })
+    } else return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  return { name, content, keys }
+}
+
+const stopping = {
+  onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+  onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
 }
 
 function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
@@ -124,14 +181,20 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const s = (v: number) => v * z
   const font = (size: number) => Math.max(6, size * z)
   const rt = runText(data)
+  const edit = g.draftEditing ? p.draftEdit : undefined
+  const fields = useDraftFields(edit)
   return (
-    <div className="cv-card-body" style={{ width: s(CardGeometry.width) }}>
+    <div className="cv-card-body" style={{ width: s(CardGeometry.width) }}
+      onBlur={edit ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) edit.onDone() } : undefined}>
       <div style={{ height: s(g.topLabels) }} />
-      <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
+      {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
         <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
-        <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
-        {data.kind === 'draft' && <span className="cv-draft-badge" style={{ fontSize: font(9), padding: `0 ${s(4)}px` }}>未実装</span>}
-        <span style={{ flex: 1, minWidth: s(2) }} />
+        {edit
+          ? <input ref={fields.name} className="cv-draft-name" style={{ fontSize: font(12) }} value={edit.draft.name} placeholder="名前" spellCheck={false}
+              aria-label="Draft の名前" aria-invalid={!!edit.nameProblem} {...stopping}
+              onChange={(e) => edit.onChange({ name: e.target.value })} onKeyDown={(e) => fields.keys(e, 'name')} />
+          : <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>}
+        {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
         {data.permissions?.map((p) => (
           <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
             style={{ color: p === 'sandbox_off' ? 'var(--orange)' : 'var(--secondary)' }} />
@@ -144,16 +207,29 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             {data.invocation > 0n && <span className="secondary mono-digits">#{String(data.invocation)}</span>}
           </span>
         )}
-        {p.onToggleCollapse && data.kind !== 'trigger' && (
+        {p.onToggleCollapse && data.kind !== 'trigger' && !edit && (
           <button type="button" className="cv-collapse secondary" title={data.collapsed ? '展開' : '折りたたむ（実行には影響しません）'}
             onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); p.onToggleCollapse!() }}>
             <Icon name={data.collapsed ? 'chevron.down' : 'chevron.up'} size={font(9)} />
           </button>
         )}
-      </div>
+      </div>}
       {!g.collapsed && (
         <>
+          {g.draft && (edit ? (
+            <div className="cv-draft-edit" style={{ height: s(g.draftRow), padding: `0 ${s(10)}px ${s(8)}px`, gap: s(2) }} {...stopping}>
+              {edit.nameProblem && <span className="cv-draft-problem" role="alert" style={{ fontSize: font(9.5) }}>{edit.nameProblem}</span>}
+              <textarea ref={fields.content} style={{ fontSize: font(11), lineHeight: `${s(14)}px` }} value={edit.draft.content}
+                placeholder="何を受け取り、何を出し、どう処理するかを書きます" aria-label="Draft の内容"
+                onChange={(e) => edit.onChange({ content: e.target.value })} onKeyDown={(e) => fields.keys(e, 'content')} />
+            </div>
+          ) : (
+            <div className={`cv-draft-text secondary${data.summary ? '' : ' placeholder'}`}
+              style={{ height: s(g.draftRow), padding: `0 ${s(10)}px`, fontSize: font(11), lineHeight: `${s(14)}px` }}>
+              <span>{data.summary ?? 'ダブルクリックで内容を書く'}</span>
+            </div>
+          ))}
           {g.summary && data.summary && (
             <div className="cv-summary secondary" style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px` }}>{data.summary}</div>
           )}
@@ -234,6 +310,7 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
     }
   } else if (g.shape === 'card' && !g.collapsed) {
     const w = CardGeometry.width / 2 - 14
+    if (g.draft) return null
     for (const p of data.inputs) {
       const pt = g.port(p.name, false)
       out.push(<span key={'i:' + p.name} className="cv-port-label secondary" style={{ left: s(pt.x + 10), top: s(pt.y), width: s(w), fontSize: font(10) }}>{p.name}</span>)

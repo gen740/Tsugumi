@@ -83,7 +83,7 @@ enum SmokeTest {
         report["layout_extras"] = s.saveError ?? "ok"
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
-        // A Draft with provisional outputs can be wired before it is implemented.
+        // A Draft's declared outputs can be wired before it is implemented.
         let dk = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
         let draft = path(dk)[0]
         s.edit { s in

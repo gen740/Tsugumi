@@ -10,7 +10,7 @@ Tsugumi の文書と画面で使う言葉です。詳しくは各行のリンク
 | **Card** | 処理の単位。入出力のポートと設定を持つ（[Card と Workflow](features.md#2-card-と-workflow)） |
 | **コード Card** | `default.nix` で環境を、`src/` で処理を定義する Card（C++ / Python / bash、[はじめての Card](CardGuide.md)） |
 | **組み込み Card** | コードのない Card。開始（trigger）・入力値（input）・分配（fork）・分岐（branch）・合流（merge）・記録（logger） |
-| **Draft** | 説明と仮のポートだけを持つ未実装の Card。線でつないで計画を描き、Agent に実装させる |
+| **Draft** | 名前と内容だけを持つ未実装の Card。線でつないで計画を描き（ポートは線に合わせて作られる）、Agent に実装させる |
 | **Card in Card（子 Workflow）** | 中に Workflow を持つ Card。外からは 1 つの Card に見え、開くと中へ降りられる |
 | **定義** | Card の実体である `definitions/<id>/` のフォルダ。Card ごとに 1 つ |
 | **ポート** | Card の入出力の口。出力の型は `_outputs.fbs` に書き、入力の型はつないだ出力から導出する |
