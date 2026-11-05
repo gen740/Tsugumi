@@ -9,7 +9,6 @@
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="pages/install.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
   <a href="pages/provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
-  <!-- TODO: 制作記録のリポジトリができたら、このバッジのリンク先をそこにする -->
   <a href="pages/provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
 </p>
@@ -218,7 +217,7 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 | **はじめる** | [インストール](pages/install.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](pages/usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](pages/cardguide.md)（Python・bash・C++ で作る） · [同梱デモのしくみ](pages/demos.md)（各デモの Card のつながりと動き） · [Web UI](pages/webui.md)（ブラウザから使う） · [Claude Code から使う](pages/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
 | **考え方を知る** | [Q&A](pages/qa.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](pages/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](pages/vision.md) · [AI に使われないために、何を作るか](pages/philosophy.md) · [名前の由来](pages/name.md) · [作った人](pages/author.md) · [私にしかない深さ](pages/origin.md) · [まだできないこと](pages/limitations.md) |
 | **仕組みを知る** | [主要機能](pages/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](pages/versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](pages/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
-| **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · 制作記録（別のリポジトリに移します。リンクは準備中です）<!-- TODO: 制作記録のリポジトリへのリンクにする --> · [ライセンス調査](pages/licenseaudit.md) |
+| **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](pages/licenseaudit.md) |
 
 すべての文書の一覧は [docs/README.md](pages/documents.md) にあります。
 

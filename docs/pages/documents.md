@@ -48,5 +48,3 @@
 | [Lock.md](lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
 | [Provenance.md](provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
 | [LicenseAudit.md](licenseaudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |
-
-<!-- TODO: 制作記録のリポジトリができたら、ここからリンクする -->

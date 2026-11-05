@@ -56,6 +56,6 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 | 文書のとおりに Card を作って動かせる | `test_docs.py::test_card_guide_runs_as_written` | [はじめての Card](cardguide.md) |
 | AI にも同じ文書を渡せる（Markdown 版と `llms.txt`） | `test_docs.py::test_llms_txt_guides_agents_to_every_document`、`test_docs.py::test_markdown_pages_have_links_that_work_on_the_site`、`test_docs.py::test_pages_point_to_their_markdown_and_the_guide` | [llms.txt](../llms.txt) |
 | 文書のリンク・パス・一覧が実物と合っている | `test_docs.py::test_links_and_anchors_exist`、`test_docs.py::test_paths_named_in_backticks_exist`、`test_docs.py::test_protocol_page_is_generated_from_the_schema` | [test_docs.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_docs.py) |
-| 何をハッカソン前に用意し、何を期間中に作ったか | テストなし。Git の履歴を見る | [制作範囲と事前準備](provenance.md)、制作記録（別のリポジトリに移します。リンクは準備中です）<!-- TODO: 制作記録のリポジトリへのリンクにする --> |
+| 何をハッカソン前に用意し、何を期間中に作ったか | テストなし。Git の履歴を見る | [制作範囲と事前準備](provenance.md) |
 
 できないことは[まだできないこと](limitations.md)に分けています。
