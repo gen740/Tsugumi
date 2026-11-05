@@ -140,9 +140,13 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
          "(deny file-write* (subpath " + quote(scripts) + "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
-         // own ports and sockets, the web server, other local services.
+         // own ports and sockets, the web server, other local services. The
+         // one exception is mDNSResponder: getaddrinfo asks its socket for
+         // every name not in /etc/hosts. The last matching rule wins, so it
+         // comes after the denial.
          (sp.network ? "(allow network*)\n(allow mach-lookup)\n(deny network-outbound (remote ip \"localhost:*\"))\n"
                        "(deny network-outbound (remote unix-socket))\n"
+                       "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n"
                      : "");
 }
 #endif

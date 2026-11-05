@@ -170,7 +170,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_versions.py` | 版の管理: プロジェクトは git のリポジトリで、実行は保存内容を（変わっていれば）commit してその commit を記録し、結果は commit の note に、名前を付けた版は annotated tag に、古い版から始めると branch になること、デモの履歴ファイルが版になること |
 | `tests/python/test_permissions.py` | モデル（origin `agent`）の保存が Card の権限（ネットワーク・sandbox off・ホストのフォルダ、Card in Card の中も）を広げるときは `approval_required` で拒否され、その広がりを承認として付けたときだけ通ること。利用者自身の保存には承認が要らないこと |
 | `tests/python/test_untrusted_project.py` | 他人から来たプロジェクトの `.tsugumi/`（保存 journal・実行履歴のコピー）を使う前に検査し、プロジェクトの外を書き・読み・消しできないこと |
-| `tests/python/test_host_sandbox.py` | Mac 上の tsugumid（Web UI）が sandbox の Card を Seatbelt で隔離し、ネットワークを許した Card でもこのホストの tsugumid・Web サーバーに届かず、自分の出力フォルダにだけ書けること |
+| `tests/python/test_host_sandbox.py` | Mac 上の tsugumid（Web UI）が sandbox の Card を Seatbelt で隔離し、ネットワークを許した Card は名前を解決できるが、このホストの loopback と `mDNSResponder` 以外の Unix ソケットには届かず、自分の出力フォルダにだけ書けること |
 | `tests/python/test_web_server.py` | Web UI のホストサーバー: 表示した URL の key（その後は cookie）を持つページだけが `/api/`（`/api/settings` を含む）に届くこと、変更には cross-origin から送れないヘッダーが要ること、不正な要求はそれだけが失敗しページの外のファイルを返さないこと（node と `web/dist` が必要）。グラフの表示部品（`/modules/`）だけがこのページからの埋め込みを許され、常に sandbox（opaque origin）で、何も読み込まず（スクリプトは埋め込み、ライブラリはページが渡す）どこにも接続しないこと |
 | `tests/python/test_frame_fuzz.py` | 固定 seed の fuzz: Unix と WebSocket のフレーム（任意のバイト列・偽の長さ・任意のヘッダー bit・マスクなし・順不同の fragment と制御フレーム・Hello の前後でバイトを書き換えた要求）で tsugumid が落ちず止まらず、ほかの接続に正しく答え続けること（`TSUGUMI_FUZZ_CASES` で件数、既定 300） |
 | `tests/python/test_en_strings.py` | 英語 UI の訳が原文と同じ引数を同じ順に取ること（順を変える訳は `%2$llu` のような位置指定）、同梱の `Localizable.strings` が生成済みであること。ビルドが出す文字列のうち訳のないものは `en_strings.py --check <stringsdata のフォルダ>` で一覧できる |
