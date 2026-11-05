@@ -26,6 +26,7 @@ def cancelled(): return cancel_at is not None and time.monotonic() >= cancel_at
 def remaining_ms(): return 60000
 def inputs(): return []
 def info(): return {}
+def environ(): return list(__import__("os").environb.items())
 failures = []
 def fail(kind, message): failures.append((kind, message))
 texts = []

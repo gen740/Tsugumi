@@ -5,11 +5,13 @@ copied code, fonts and external data retain their own licenses, including
 the author's pre-existing [hosq](https://github.com/CLI20-dev/hosq) library.
 See [制作範囲と事前準備](docs/Provenance.md) for the authorship boundary.
 
-This is a source-level inventory, **not a complete binary-distribution
-license bundle or corresponding-source offer**. Packaging gaps and release
-work still required are recorded in [ライセンス調査](docs/LicenseAudit.md).
-Versions below were audited at `0ec6460` (2026-11-04); lock files and build
-recipes are authoritative when dependencies change.
+The app carries these notices and the full license texts in
+`Contents/Resources/licenses/` ([bundle-licenses.sh](macOS/tools/bundle-licenses.sh)).
+The corresponding source of the VM's boot disk is in that disk's release of
+[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
+[ライセンス調査](docs/LicenseAudit.md). Versions
+below were audited at `0ec6460` (2026-11-04) and checked again on 2026-11-05;
+lock files and build recipes are authoritative when dependencies change.
 
 ## Tree-sitter: copied sources and linked packages
 
@@ -50,16 +52,17 @@ in the audited `macOS/Package.swift` / `Package.resolved` graph.
 | SwiftTerm | [1.11.2](https://github.com/migueldeicaza/SwiftTerm/blob/b1262db5b6bea699a8260a8c66999436c508ca56/LICENSE) | MIT; includes xterm.js / SourceLair / Christopher Jeffrey attributions |
 | Swift Markdown | [0.7.3 LICENSE](https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/LICENSE.txt), [NOTICE](https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/NOTICE.txt) | Apache-2.0 with Swift runtime exception; retain NOTICE too |
 | swift-cmark | [0.9.0 COPYING](https://github.com/swiftlang/swift-cmark/blob/08ddb528923cc1a6527e02b7a1aee9e516ca749a/COPYING) | BSD-2-Clause and embedded MIT notices for derived code; test/spec material has separate terms in COPYING |
-| SwiftMath | [1.7.3](https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE) | MIT for code; its 12 bundled OTF fonts have **separate** GUST / OFL / STIX-related terms; see [LicenseAudit.md](docs/LicenseAudit.md) |
+| SwiftMath | [1.7.3](https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE) | MIT for code. Of its 12 OTF fonts, which have **separate** terms, the app ships only Latin Modern Math 1.959 (GUST Font License, an instance of the LPPL), the one it draws with, and with it the font's complete upstream package; see [LicenseAudit.md](docs/LicenseAudit.md) |
 | Dawn / Tint | [v20261023.194543](https://github.com/google/dawn/blob/1716e88cc9e58398fab5d4473f7f2e858667b677/LICENSE) | BSD-3-Clause; statically incorporated into `libtsugumi_renderer.dylib` |
 
-Dawn's Metal build also incorporates third-party code. The inspected Ninja
-archive rule includes Abseil objects (Apache-2.0); Dawn's source tree has
-additional component licenses and file-level notices. A complete inventory
-must follow the actual compiled objects and included headers. Merely listing
-everything fetched under `third_party/`, or listing SPIRV-Tools regardless
-of the disabled SPIR-V / Vulkan options, does not establish what is shipped.
-See `ui/renderer/CMakeLists.txt` and the release audit tasks.
+Dawn's Metal build also incorporates third-party code. Following the compile
+inputs of the static library's 652 objects (`ninja -t deps`), what comes from
+outside Dawn and Tint is Abseil (Apache-2.0; `af5aede` of Chromium's copy), the
+notice of webgpu-headers in the generated `webgpu.h` (BSD-3-Clause) and
+`src/dawn/common/LinkedList.h`, a modified copy of Chromium's
+[linked_list.h](third-party/chromium/README.md) (BSD-style). Nothing else under
+Dawn's `third_party/` is compiled, including SPIRV-Tools. See
+[LicenseAudit.md](docs/LicenseAudit.md) and `ui/renderer/CMakeLists.txt`.
 
 Swift Argument Parser 1.8.2 (Apache-2.0 with Swift runtime exception) is
 resolved for dependency command-line / example targets; it is not a direct
@@ -88,11 +91,12 @@ Plotly figures and Altair (Vega-Lite) charts of Cards are drawn by the
 module viewer (`ui/modules`) with these minified browser builds, pinned in
 `web/package-lock.json`. The web build serves them from `/modules/` and
 `macOS/build-app.sh` copies them to `Contents/Resources/modules/`, each with
-its license file (`LICENSE.<package>.txt`).
+its license file (`LICENSE.<package>.txt`). The licenses of the packages the
+Vega builds were made from are in the app's `licenses/plot-viewer/`.
 
 | Component | Version | License |
 | --- | --- | --- |
-| plotly.js (`plotly.js-dist-min`) | 3.6.0 | MIT; the bundle includes its dependencies (d3 modules and others), whose notices are in the file's header comments |
+| plotly.js (`plotly.js-dist-min`) | 3.6.0 | MIT; the bundle, shipped as upstream publishes it, includes dependencies (d3 modules and others). Some of their notices are in its comments; the rest are not reproduced here, see [LicenseAudit.md](docs/LicenseAudit.md) |
 | Vega (`vega`) | 6.4.0 | BSD-3-Clause; the build includes d3 modules (ISC, BSD-3-Clause) |
 | Vega-Lite (`vega-lite`) | 6.4.3 | BSD-3-Clause |
 | vega-embed | 7.3.0 | BSD-3-Clause |
@@ -101,10 +105,9 @@ The Python packages a Card asks for (`matplotlib`, `plotly`, `altair`, …)
 come from nixpkgs when the Card is built; a Card that uses matplotlib also
 gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.
 
-Each installed package contains its license text. Keeping these only in
-`web/node_modules/` does not make them part of the separately distributed
-`web/dist/`; the build must preserve the notices for the emitted code.
-esbuild, TypeScript and type declarations are build-time dependencies.
+`web/dist/` is built from a checkout, not distributed by this project; each
+installed package in `web/node_modules/` contains its license text. esbuild,
+TypeScript and type declarations are build-time dependencies.
 
 ## Core daemon and execution environment
 
@@ -114,7 +117,7 @@ user's VM on first boot. These are different distribution boundaries.
 
 | Component used by core | License / source |
 | --- | --- |
-| hosq, `38c3c8e21f570a9698006c361fc58bf0365896e0` | [MIT](https://github.com/CLI20-dev/hosq/blob/38c3c8e21f570a9698006c361fc58bf0365896e0/LICENSE); pre-existing author library, included as headers |
+| hosq, `1eb894224b0feffbb5b81d075d3e2c76160f99a1` | [MIT](https://github.com/CLI20-dev/hosq/blob/1eb894224b0feffbb5b81d075d3e2c76160f99a1/LICENSE); pre-existing author library, included as headers |
 | Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
 | Boehm–Demers–Weiser GC | Its MIT-style license; transitive Nix dependency |
 | FlatBuffers | Apache-2.0 |
@@ -130,14 +133,18 @@ are fixed by [flake.lock](flake.lock) and [nix/core.nix](nix/core.nix).
 [`vm-boot.nix`](macOS/Container/vm-boot.nix) includes Nix, CA certificates,
 Bash, coreutils, findutils, util-linux, e2fsprogs, BusyBox, gawk, and their
 runtime closure. [`kernel.nix`](macOS/Container/kernel.nix) builds Linux
-6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from a Kata
-VM configuration. This is not simply an unchanged nixpkgs kernel.
+6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from
+[that of Kata Containers 3.17.0](macOS/Container/kernel/SOURCES.md). This is not
+simply an unchanged nixpkgs kernel.
 
 The boot closure contains GPL / LGPL software as well as permissively
-licensed dependencies. Its **actual closure**, corresponding source,
-patches, configuration and build scripts need a release-specific inventory.
-`flake.lock` and upstream download URLs provide useful provenance, but are
-not by themselves a corresponding-source distribution or written offer.
+licensed dependencies. `licenses.tar.gz` in the disk's release of
+[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), which the app also
+carries in `licenses/vm-boot/`, lists what the image really contains, with each
+package's license as nixpkgs declares it, its sources and patches, the license
+files of those sources and the kernel's configuration. The corresponding source
+is `sources.tar.gz` in the same release. See
+[how it is provided](docs/LicenseAudit.md#vm-の対応ソースの提供方法).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
 

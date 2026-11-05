@@ -11,38 +11,49 @@
 <link rel="describedby" href="../llms.txt">
 <link rel="icon" href="../assets/tsugumi-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../site/site.css">
+<script>try { if (localStorage.getItem('tsugumi.side') === 'closed') document.documentElement.classList.add('side-closed') } catch { /* the page works without it */ }</script>
 </head>
 <body>
+<button type="button" class="side-open" aria-label="サイドバーを開く" title="サイドバーを開く"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button>
 <div class="layout">
 <nav class="side" aria-label="文書">
-  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="../llms.txt" title="AI 向けの案内">llms.txt</a><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener">GitHub</a></span></div>
-  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="../index.html">Tsugumi が解決しようとしている課題<small>README.md</small></a></li><li><a href="philosophy.html">AI に使われないために、何を作るか<small>docs/Philosophy.md</small></a></li><li><a href="name.html">Tsugumi という名前に込めた意味<small>docs/Name.md</small></a></li><li><a href="author.html">この道具を作った人<small>docs/Author.md</small></a></li></ul></div><div class="nav-group"><h2>全体</h2><ul><li><a href="readme.html">README</a></li><li><a href="documents.html">ドキュメント一覧</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="install.html">インストールと開発用ビルド</a></li><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="demos.html">同梱デモのしくみ</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li><li><a href="limitations.html">まだできないこと</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li class="on" aria-current="page"><a href="#">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li><a href="development.html">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="making.html">制作記録</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
-  <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
+  <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a><button type="button" class="side-close" aria-label="サイドバーを閉じる" title="サイドバーを閉じる"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button></span></div>
+  <details class="nav-fold" open><summary>文書の一覧</summary><div class="nav-group"><h2>Tsugumi を知る</h2><ul><li><a href="problem.html">Tsugumi が解決しようとしている課題</a></li><li><a href="philosophy.html">AI に使われないために、何を作るか</a></li><li><a href="name.html">Tsugumi という名前に込めた意味</a></li><li><a href="author.html">この道具を作った人</a></li><li><a href="origin.html">私にしかない深さ</a></li></ul></div><div class="nav-group"><h2>はじめる</h2><ul><li><a href="usage.html">操作ガイド</a></li><li><a href="cardguide.html">はじめての Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Claude Code から使う</a></li></ul></div><div class="nav-group"><h2>考え方を知る</h2><ul><li><a href="qa.html">Tsugumi Q&amp;A</a></li><li><a href="novelty.html">なぜ今、設計・実装・検証を同じ Workflow にするのか</a></li><li><a href="vision.html">Tsugumi の構想と応用</a></li></ul></div><div class="nav-group"><h2>仕組みを知る</h2><ul><li><a href="features.html">Tsugumi の主要機能</a></li><li><a href="versions.html">版の管理（git）</a></li><li class="on" aria-current="page"><a href="#">セキュリティと隔離</a></li><li><a href="ui-view.html">macOS UI の構成と操作仕様</a></li><li><a href="protocol.html">RPC 契約</a></li><li><a href="glossary.html">用語集</a></li></ul></div><div class="nav-group"><h2>記録と開発</h2><ul><li><a href="evidence.html">主張と、それを確かめる方法</a></li><li><a href="agentrun.html">実際の Claude API での実行記録</a></li><li><a href="development.html">開発資料</a></li><li><a href="lock.html">固定しているバージョン</a></li><li><a href="provenance.html">制作範囲と事前準備</a></li><li><a href="licenseaudit.html">ライセンス調査</a></li></ul></div></details>
+  <script>{
+    const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
+    const side = fold.parentElement, on = fold.querySelector('li.on')
+    if (on && on.offsetTop + on.offsetHeight > side.clientHeight) side.scrollTop = on.offsetTop - side.clientHeight / 2
+    const root = document.documentElement, turn = (closed) => { root.classList.toggle('side-closed', closed); try { localStorage.setItem('tsugumi.side', closed ? 'closed' : 'open') } catch { /* the page works without it */ } }
+    side.querySelector('.side-close').addEventListener('click', () => turn(true))
+    document.querySelector('.side-open').addEventListener('click', () => turn(false))
+  }</script>
 </nav>
 <main class="main">
 
-<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/security.md" rel="noopener"><code>docs/security.md</code></a> と同じ文書です（<a href="security.md">Markdown</a>）</p>
+<div class="reading">
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-信頼境界の全体像">1. 信頼境界の全体像</a></li><li class="d2"><a href="#2-vm--macos">2. VM ⇄ macOS</a></li><li class="d3"><a href="#vm-に渡しているもの">VM に渡しているもの</a></li><li class="d3"><a href="#vm-のネットワーク">VM のネットワーク</a></li><li class="d2"><a href="#3-project--projectvm-内">3. project ⇄ project（VM 内）</a></li><li class="d3"><a href="#プロジェクト間で共有しているもの">プロジェクト間で共有しているもの</a></li><li class="d2"><a href="#4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</a></li><li class="d3"><a href="#sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</a></li><li class="d3"><a href="#sandbox-false"><code>sandbox: false</code></a></li><li class="d3"><a href="#worker-の寿命管理">worker の寿命管理</a></li><li class="d3"><a href="#card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</a></li><li class="d2"><a href="#5-nix-評価の制限">5. Nix 評価の制限</a></li><li class="d2"><a href="#6-rpc-の認証">6. RPC の認証</a></li><li class="d3"><a href="#待ち受け経路">待ち受け経路</a></li><li class="d3"><a href="#認証-token">認証 token</a></li><li class="d3"><a href="#websocket-の保護">WebSocket の保護</a></li><li class="d3"><a href="#ページング-cursor-の署名">ページング cursor の署名</a></li><li class="d2"><a href="#7-ファイルの取り込みimport-grant">7. ファイルの取り込み（import grant）</a></li><li class="d2"><a href="#8-モデルの-api-キーagent">8. モデルの API キー（Agent）</a></li><li class="d3"><a href="#chatgpt-プランsign-in-with-chatgpt">ChatGPT プラン（Sign in with ChatGPT）</a></li><li class="d3"><a href="#モデルに送られるもの">モデルに送られるもの</a></li><li class="d3"><a href="#agent-の権限境界">Agent の権限境界</a></li><li class="d2"><a href="#9-データの置き場所と削除方法">9. データの置き場所と削除方法</a></li><li class="d2"><a href="#10-既知の制限と注意事項">10. 既知の制限と注意事項</a></li></ul></details>
+<script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="セキュリティと隔離">セキュリティと隔離</h1>
 <p>この文書では、Tsugumi が設ける「4 段階の信頼境界（どこからどこまでを隔離しているか）」と、「秘密情報（外部モデルの API キーや RPC の認証トークン）の扱い」をまとめています。すべての記述は現在の実装（<code>core/src/vmd_main.cc</code>・<code>core/src/worker_proc.cc</code>・<code>core/src/server.cc</code>・<code>macOS/Sources/Launcher/</code>・<code>agent/Sources/TsugumiAgent/Provider.swift</code>）に基づいています。</p>
 <h2 id="1-信頼境界の全体像">1. 信頼境界の全体像</h2>
-<pre><code class="language-text">┌─ macOS（ユーザー権限） ──────────────────────────────────────────────┐
-│  Tsugumi.app                                                        │
-│   ├ SwiftUI UI                                                      │
-│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）   │
-│   └ LoopbackBridge 127.0.0.1:&lt;空きポート&gt;  ◀── 外部クライアント       │
-│        │ vsock                                                      │
-│  ┌─ 共通 Linux VM（Virtualization.framework） ────────────────────┐ │
-│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）       │ │
-│  │  ┌─ project A ───────────────────────┐ ┌─ project B ────────┐  │ │
-│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │  │ │
-│  │  │ cgroup tsugumi/&lt;A&gt;                 │ │                    │  │ │
-│  │  │ tsugumid                           │ │ tsugumid           │  │ │
-│  │  │  └ worker（bubblewrap: 全 ns 分離、 │ │  └ worker          │  │ │
-│  │  │     デフォルトで通信・cap なし）    │ │                    │  │ │
-│  │  └────────────────────────────────────┘ └────────────────────┘  │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+<pre><code class="language-text">┌─ macOS<span class="wide">（</span><span class="wide">ユ</span><span class="wide">ー</span><span class="wide">ザ</span><span class="wide">ー</span><span class="wide">権</span><span class="wide">限</span><span class="wide">）</span> ────────────────────────────────────────────────┐
+│  Tsugumi.app                                                           │
+│   ├ SwiftUI UI                                                         │
+│   ├ Agent ── HTTPS ──▶ <span class="wide">モ</span><span class="wide">デ</span><span class="wide">ル</span> provider<span class="wide">（</span>API <span class="wide">キ</span><span class="wide">ー</span><span class="wide">は</span> Keychain <span class="wide">か</span><span class="wide">ら</span><span class="wide">）</span>     │
+│   └ LoopbackBridge 127.0.0.1:&lt;<span class="wide">空</span><span class="wide">き</span><span class="wide">ポ</span><span class="wide">ー</span><span class="wide">ト</span>&gt;  ◀── <span class="wide">外</span><span class="wide">部</span><span class="wide">ク</span><span class="wide">ラ</span><span class="wide">イ</span><span class="wide">ア</span><span class="wide">ン</span><span class="wide">ト</span>        │
+│        │ vsock                                                         │
+│  ┌─ <span class="wide">共</span><span class="wide">通</span> Linux VM<span class="wide">（</span>Virtualization.framework<span class="wide">）</span> ──────────────────────┐  │
+│  │  tsugumi-vmd<span class="wide">（</span>root<span class="wide">、</span>VM <span class="wide">の</span><span class="wide">管</span><span class="wide">理</span><span class="wide">役</span><span class="wide">）</span>  nix-daemon<span class="wide">（</span><span class="wide">共</span><span class="wide">通</span> store<span class="wide">）</span>      │  │
+│  │  ┌─ project A ────────────────────────┐ ┌─ project B ────────┐   │  │
+│  │  │ <span class="wide">専</span><span class="wide">用</span> uid / mount<span class="wide">・</span>PID<span class="wide">・</span>IPC<span class="wide">・</span>UTS ns │ │ <span class="wide">同</span><span class="wide">左</span><span class="wide">（</span><span class="wide">別</span> uid<span class="wide">）</span>     │   │  │
+│  │  │ cgroup tsugumi/&lt;A&gt;                 │ │                    │   │  │
+│  │  │ tsugumid                           │ │ tsugumid           │   │  │
+│  │  │  └ worker<span class="wide">（</span>bubblewrap: <span class="wide">全</span> ns <span class="wide">分</span><span class="wide">離</span><span class="wide">、</span>│ │  └ worker          │   │  │
+│  │  │     <span class="wide">デ</span><span class="wide">フ</span><span class="wide">ォ</span><span class="wide">ル</span><span class="wide">ト</span><span class="wide">で</span><span class="wide">通</span><span class="wide">信</span><span class="wide">・</span>cap <span class="wide">な</span><span class="wide">し</span><span class="wide">）</span>   │ │                    │   │  │
+│  │  └────────────────────────────────────┘ └────────────────────┘   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p>隔離の境界は、最も内側から外側へ向かって 4 段あります。</p>
 <div class="table-wrap"><table><thead><tr><th>境界</th><th>守る対象</th><th>仕組み</th></tr></thead><tbody><tr><td>Card（worker）⇄ tsugumid</td><td>プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（デフォルト）</td><td>bubblewrap による全名前空間分離と capability 破棄</td></tr><tr><td>project ⇄ project</td><td>他プロジェクトのファイル・プロセス・実行履歴・ビルド root</td><td>専用 uid・名前空間・cgroup（<code>tsugumi-vmd</code> が管理）</td></tr><tr><td>VM ⇄ macOS</td><td>Mac 側のファイル全体・ホームフォルダ</td><td><code>Virtualization.framework</code>。共有するのは開いているプロジェクトのフォルダと、Card 定義やチャットで指定されたフォルダ（§2）のみ</td></tr><tr><td>macOS 上の RPC ⇄ 他のプロセス・ネットワーク</td><td>core の操作権限</td><td><code>127.0.0.1</code> 限定の待ち受け、token 認証、WebSocket の <code>Origin</code> 検査</td></tr></tbody></table></div>
@@ -61,8 +72,7 @@
 <li>VM は <code>vm/vm.lock</code> のファイルロック（<code>flock</code>）を取得した 1 つのアプリプロセスだけが起動します。</li>
 </ul>
 <h3 id="vm-のネットワーク">VM のネットワーク</h3>
-<p>VM の NAT は、<strong><code>nix-daemon</code> が <code>cache.nixos.org</code> からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため</strong>に存在します。
-Card 自身はデフォルトでネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（<code>_card.json</code> の <code>network: true</code>、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。</p>
+<p>VM の NAT は、<strong><code>nix-daemon</code> が <code>cache.nixos.org</code> からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため</strong>に存在します。Card 自身はデフォルトでネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（<code>_card.json</code> の <code>network: true</code>、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。</p>
 <h2 id="3-project--projectvm-内">3. project ⇄ project（VM 内）</h2>
 <p>VM 内の管理プロセス <code>tsugumi-vmd</code> が、プロジェクトごとに次の隔離条件で <code>tsugumid</code> を起動します（<code>core/src/vmd_main.cc</code>）。</p>
 <ul>
@@ -230,8 +240,11 @@ Card 自身はデフォルトでネットワーク名前空間から切り離さ
 <li>リリース版もソースからビルドしたアプリも ad-hoc 署名であり、Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（<code>.github/workflows/release.yml</code>）、自動更新は GitHub の最新リリースの <code>Tsugumi.zip</code> を、同じリリースの <code>Tsugumi.zip.sha256</code>・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。</li>
 </ul>
 </article>
+</div>
+<p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/security.md" rel="noopener"><code>docs/security.md</code></a> と同じ文書です（<a href="security.md">Markdown</a>）</p>
 </main>
 </div>
+<script src="../site/js/toc.js" defer></script>
 
 </body>
 </html>

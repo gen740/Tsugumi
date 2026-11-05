@@ -8,6 +8,13 @@
 
 #include "tsugumi/sdk/abi.h"
 
+#ifdef __APPLE__
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron()) /* a shared library has no `environ` to link to */
+#else
+extern char** environ;
+#endif
+
 static const tsugumi_call* g_call = NULL;
 
 static PyObject* host_inputs(PyObject* self, PyObject* args) {
@@ -30,6 +37,20 @@ static PyObject* host_info(PyObject* self, PyObject* args) {
                        (unsigned long long)g_call->invocation, "working_directory", g_call->working_directory,
                        "temporary_directory", g_call->temporary_directory, "output_directory",
                        g_call->output_directory);
+}
+
+/* The process environment as (name, value) bytes: os.environ is a copy from
+ * when the interpreter started. */
+static PyObject* host_environ(PyObject* self, PyObject* args) {
+  PyObject* list = PyList_New(0);
+  for (char** e = environ; *e; ++e) {
+    const char* eq = strchr(*e, '=');
+    if (!eq) continue;
+    PyObject* item = Py_BuildValue("(y#y)", *e, (Py_ssize_t)(eq - *e), eq + 1);
+    PyList_Append(list, item);
+    Py_DECREF(item);
+  }
+  return list;
 }
 
 static PyObject* host_emit_output(PyObject* self, PyObject* args) {
@@ -221,6 +242,7 @@ static PyMethodDef host_methods[] = {
     {"inputs", host_inputs, METH_NOARGS, NULL},
     {"params", host_params, METH_NOARGS, NULL},
     {"info", host_info, METH_NOARGS, NULL},
+    {"environ", host_environ, METH_NOARGS, NULL},
     {"emit_output", host_emit_output, METH_VARARGS, NULL},
     {"display_text", host_display_text, METH_VARARGS, NULL},
     {"display_markdown", host_display_markdown, METH_VARARGS, NULL},
