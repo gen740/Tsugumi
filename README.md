@@ -9,6 +9,7 @@
   <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
   <a href="docs/Making.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+  <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
 </p>
 
 # Tsugumi
@@ -210,6 +211,17 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 | **記録と開発** | [主張と、それを確かめる方法](docs/Evidence.md) · [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [制作記録](docs/Making.md) · [ライセンス調査](docs/LicenseAudit.md) |
 
 すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
+
+### 文書も、人と AI が同じものを読む
+
+Workflow と同じように、文書も人と AI で同じものを読めるようにしています。正本は 1 つの Markdown です。
+
+| 読む人 | 入口 |
+| --- | --- |
+| 人 | [動く図つきの Web 版](https://gen740.github.io/Tsugumi/)、GitHub 上の Markdown |
+| AI | [llms.txt](docs/llms.txt)（各ページの Markdown 版の案内）、[AGENTS.md](AGENTS.md)（リポジトリで作業するエージェントへ） |
+
+Web を読む AI は、本文ではなく小さなモデルの要約を受け取ることがあります。そのため、主張の隣に確かめる場所を書き、コード・テスト・コマンドへ直接たどれるようにしています（[主張と、それを確かめる方法](docs/Evidence.md)）。
 
 ## ライセンス
 

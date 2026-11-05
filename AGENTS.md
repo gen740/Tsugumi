@@ -39,7 +39,7 @@
 | [web/](web/) | ブラウザ UI とホストサーバー |
 | [demos/](demos/) | 同梱デモと、その Draft 版（実装前の処理の形だけ） |
 | [tests/](tests/) | 契約・スケジューラー・履歴・隔離・デモ・fuzz などのテスト |
-| [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md)。Web 版の生成は `node docs/site/build.mjs` |
+| [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md)。Web 版と AI 向けの [docs/llms.txt](docs/llms.txt) の生成は `node docs/site/build.mjs` |
 
 構成の全体図とディレクトリの詳細は [docs/Development.md](docs/Development.md) の「実行基盤」「ディレクトリ」にあります。
 

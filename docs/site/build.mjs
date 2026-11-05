@@ -2,6 +2,8 @@
 // and docs/pages/*.html, for GitHub Pages serving docs/. The Markdown files stay
 // the single source. Four pages ("Tsugumi を知る") get figures set in after
 // phrases of their text; a phrase or section that is gone fails the build.
+// For agents, each page also has its Markdown next to it (pages/x.md, with links
+// that work on the site) and docs/llms.txt lists them (https://llmstxt.org/).
 // Run after changing a document (tests/python/test_docs.py checks that it was):
 //   node docs/site/build.mjs [--check]
 import fs from 'node:fs'
@@ -12,6 +14,9 @@ import { Marked } from '../../web/node_modules/marked/lib/marked.esm.js'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
+const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
+/** Documents an agent can skip when it needs less context ("Optional" in llms.txt). */
+const SECONDARY = ['docs/Name.md', 'docs/Author.md', 'docs/Lock.md', 'docs/LicenseAudit.md', 'docs/ui-view.md']
 
 /** Pages read with the thread and the moving figures. */
 const STORY = [
@@ -48,6 +53,7 @@ function slug(heading) {
 const titleOf = (rel) => /^# (.+)$/m.exec(read(rel))?.[1].replace(/[`*]/g, '') ?? rel
 
 /** Every other document: docs/README.md is the list, grouped as it groups them. */
+const notes = new Map()
 function documentGroups() {
   const groups = []
   let group = null
@@ -56,6 +62,8 @@ function documentGroups() {
     if (h) { group = { title: h[1], docs: [] }; groups.push(group); continue }
     const row = /^\| \[[^\]]+\]\(([^)]+)\) \|/.exec(line)
     if (row && group) group.docs.push(path.normalize(path.join('docs', row[1])))
+    const note = /^\| \[[^\]]+\]\(([^)]+)\) \| (.+) \|$/.exec(line)
+    if (note) notes.set(path.normalize(path.join('docs', note[1])), note[2])
   }
   return groups
 }
@@ -88,7 +96,7 @@ function linker(sourceRel, outRel, pages) {
       const to = pages.get(rel)
       return (to === outRel ? '' : up(to)) + tail || tail
     }
-    if (rel.startsWith('docs/assets/') || rel.startsWith('docs/site/')) return up(rel.slice('docs/'.length))
+    if (rel.startsWith('docs/assets/') || rel.startsWith('docs/site/') || rel === 'docs/llms.txt') return up(rel.slice('docs/'.length))
     const abs = path.join(ROOT, rel)
     const kind = fs.existsSync(abs) && fs.statSync(abs).isDirectory() ? 'tree' : 'blob'
     return `${REPO}/${kind}/main/${rel}${tail}`
@@ -178,7 +186,41 @@ function sidebar(groups, pages, outRel) {
   return out
 }
 
-function page({ outRel, title, source, description, body, nav, story, hero }) {
+/** Where a document's Markdown is on the site: next to its page; the README at the top. */
+const markdownOut = (source, pages) => (source === 'README.md' ? 'index.md' : pages.get(source).replace(/\.html$/, '.md'))
+
+/** A document as it is, with links that work on the site (outside code blocks). */
+function markdownPage(source, outRel, mdPages) {
+  const link = linker(source, outRel, mdPages)
+  return read(source).split(/(^```[\s\S]*?^```)/m).map((part, i) => (i % 2
+    ? part
+    : part.replace(/\]\(([^)\s]+)\)/g, (_, to) => `](${link(to)})`).replace(/\b(src|href)="([^"]+)"/g, (_, a, to) => `${a}="${link(to)}"`))).join('')
+}
+
+/** The guide for agents: https://llmstxt.org/ */
+function llmsTxt(groups, mdPages, tagline) {
+  const readme = read('README.md').split('\n')
+  const start = readme.indexOf(`**${tagline}**`) + 2
+  const about = readme.slice(start, readme.indexOf('', start)).join('\n')
+  const item = (d) => `- [${titleOf(d)}](${SITE}${mdPages.get(d)})${notes.has(d) ? `: ${notes.get(d)}` : ''}`
+  const out = [
+    '# Tsugumi', '', `> ${tagline}`, '', about, '',
+    '文書は人間と AI の両方に向けて書いています。下の URL は各ページの Markdown 版です。主張の確かめ方は「主張と、それを確かめる方法」に、コード・テスト・コマンドと一緒に並べています。', '',
+    '## 全体', '', `- [README](${SITE}index.md): 課題意識、使い方、実画面の説明`, '',
+  ]
+  for (const g of groups) {
+    const docs = g.docs.filter((d) => !SECONDARY.includes(d))
+    out.push(`## ${g.title}`, '', ...docs.map(item), '')
+  }
+  out.push('## リポジトリ', '',
+    `- [AGENTS.md](${RAW}/AGENTS.md): 地図、主張と確かめる場所、このリポジトリで作業するエージェントへの指示`,
+    `- [Card の仕様](${RAW}/agent/Reference/card-guide.md): アプリの Agent が読むものと同じ文書`,
+    `- [RPC の契約](${RAW}/protocol/tsugumi.fbs): UI・Web・Agent が使う契約の正本`, '')
+  out.push('## Optional', '', ...SECONDARY.map(item), '')
+  return out.join('\n')
+}
+
+function page({ outRel, title, source, markdown, description, body, nav, story, hero }) {
   const asset = (p) => path.relative(path.dirname(outRel), p).split(path.sep).join('/')
   const canonical = SITE + (outRel === 'index.html' ? '' : outRel)
   return `<!doctype html>
@@ -190,19 +232,21 @@ function page({ outRel, title, source, description, body, nav, story, hero }) {
 <title>${esc(title)} · Tsugumi</title>
 <meta name="description" content="${esc(description)}">
 <link rel="canonical" href="${canonical}">
+<link rel="alternate" type="text/markdown" href="${asset(markdown)}">
+<link rel="describedby" href="${asset('llms.txt')}">
 <link rel="icon" href="${asset('assets/tsugumi-icon.svg')}" type="image/svg+xml">
 <link rel="stylesheet" href="${asset('site/site.css')}">
 </head>
 <body>
 <div class="layout">
 <nav class="side" aria-label="文書">
-  <div class="brand"><a href="${asset('index.html')}"><img src="${asset('assets/tsugumi-icon.svg')}" alt="" width="28" height="28">Tsugumi</a><a class="repo" href="${REPO}" rel="noopener">GitHub</a></div>
+  <div class="brand"><a href="${asset('index.html')}"><img src="${asset('assets/tsugumi-icon.svg')}" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="${asset('llms.txt')}" title="AI 向けの案内">llms.txt</a><a class="repo" href="${REPO}" rel="noopener">GitHub</a></span></div>
   <details class="nav-fold" open><summary>文書の一覧</summary>${nav}</details>
   <script>if (matchMedia('(max-width: 820px)').matches) document.currentScript.previousElementSibling.open = false</script>
 </nav>
 <main class="main">
 ${hero ?? ''}${story ? '<div class="mode" role="group" aria-label="読み方"><button type="button" data-mode="read" aria-pressed="true">読む</button><button type="button" data-mode="cards" aria-pressed="false">カード</button></div>' : ''}
-<p class="source"><a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> と同じ文書です</p>
+<p class="source"><a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> と同じ文書です（<a href="${asset(markdown)}">Markdown</a>）</p>
 <article class="doc">
 ${body}</article>
 </main>
@@ -226,7 +270,7 @@ function build() {
       ? `<header class="hero"><img src="assets/tsugumi-hero.svg" alt="Tsugumi"><p>${esc(tagline)}</p><a class="cta" href="pages/readme.html#使ってみる">使ってみる</a></header>\n`
       : ''
     out.set(s.out, page({
-      outRel: s.out, title: s.title ?? titleOf(s.source), source: s.source, description: tagline,
+      outRel: s.out, title: s.title ?? titleOf(s.source), source: s.source, markdown: markdownOut(s.source, pages), description: tagline,
       body: storyBody(s, marked), nav: sidebar(groups, pages, s.out), story: true, hero,
     }))
   }
@@ -234,10 +278,13 @@ function build() {
     if (out.has(outRel) || STORY.some((s) => s.out === outRel)) continue
     const marked = makeMarked(linker(source, outRel, pages))
     out.set(outRel, page({
-      outRel, title: titleOf(source), source, description: tagline,
+      outRel, title: titleOf(source), source, markdown: markdownOut(source, pages), description: tagline,
       body: marked.parse(read(source)), nav: sidebar(groups, pages, outRel), story: false,
     }))
   }
+  const mdPages = new Map([...pages.keys()].map((source) => [source, markdownOut(source, pages)]))
+  for (const [source, rel] of mdPages) out.set(rel, markdownPage(source, rel, mdPages))
+  out.set('llms.txt', llmsTxt(groups, mdPages, tagline))
   return out
 }
 
@@ -258,5 +305,5 @@ if (process.argv.includes('--check')) {
   for (const rel of existing) if (!made.has(rel)) fs.rmSync(path.join(docs, rel))
   for (const [rel, html] of made) fs.writeFileSync(path.join(docs, rel), html)
   fs.writeFileSync(path.join(docs, '.nojekyll'), '')
-  console.log(`${made.size} pages`)
+  console.log(`${made.size} files`)
 }
