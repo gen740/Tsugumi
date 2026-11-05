@@ -54,7 +54,7 @@ TypeScript の binding と `tsugumi.bfbs` は `npm run gen`（`flatc` 25.12.19�
 - 書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（`runs/<run>/work/…/out`）だけです。Linux では出力フォルダを `/proc/self/fd` 経由で渡しますが、macOS にはないためパスで渡します。
 - bubblewrap と違い、ファイルの存在確認（`stat`）は全体で許可しています（中身は読めません）。また、uid の分離はしません。
 - Mac のフォルダを Card に共有する機能（`/host/<name>`）は共通 VM が必要なため、Web UI では使えません。
-- ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。
+- ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。例外は `mDNSResponder` のソケット（`/var/run/mDNSResponder`）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。
 - チャットに添付したフォルダは、サーバーが control フォルダの `attached.json` に書いたものだけを tsugumid が読みます（RPC からは変えられません）。
 - `sandbox: false` の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（`tsugumid` 自身は判断しません）。Linux で他人の Card を動かすときは、`tsugumid` を隔離されたコンテナの中で動かしてください。
 

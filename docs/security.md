@@ -105,7 +105,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 - **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
 - **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。
 - **`bubblewrap` が利用できない環境では、`sandbox: true` の Card を実行せず即座に拒否します**（`permission_denied`）。暗黙のうちに隔離なしで実行することはありません。
-- 例外は [Web UI](WebUI.md) のように `tsugumid` を macOS ホストで直接動かす場合で、bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離します（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。`sandbox-exec` がない場合は同じく拒否します。
+- 例外は [Web UI](WebUI.md) のように `tsugumid` を macOS ホストで直接動かす場合で、bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離します（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。`network: true` の Card にはネットワークを開きますが、loopback と Unix ソケットは閉じたままで、例外は名前解決に必要な `mDNSResponder` のソケットだけです。`sandbox-exec` がない場合は同じく拒否します。
 
 ### `sandbox: false`
 
