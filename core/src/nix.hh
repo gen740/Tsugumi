@@ -25,7 +25,8 @@ struct CardBuild {
   // The body (`run`): a package whose lib/main.so the worker loads, or a bash script.
   std::optional<std::string> package;
   std::optional<std::string> bash;
-  std::string pre_run, post_run;
+  std::string pre_run;
+  std::string post_run;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };
@@ -44,7 +45,8 @@ struct BuildRequest {
 };
 
 struct CacheClearOutcome {
-  std::vector<std::string> deleted, retained;
+  std::vector<std::string> deleted;
+  std::vector<std::string> retained;
   uint64_t freed_bytes = 0;
 };
 

@@ -52,7 +52,8 @@ struct WorkerSpawn {
   // own network namespace with nothing in it) and folders of the Mac.
   bool network = false;
   struct Bind {
-    std::string source, target;
+    std::string source;
+    std::string target;
     bool write = false;
   };
   std::vector<Bind> binds;
@@ -109,14 +110,18 @@ class WorkerProc {
   void send(int fd, const std::string& frame, const std::vector<int>& fds = {});
 
   pid_t pid_ = -1;
-  int data_fd_ = -1, control_fd_ = -1, out_fd_ = -1, err_fd_ = -1;
+  int data_fd_ = -1;
+  int control_fd_ = -1;
+  int out_fd_ = -1;
+  int err_fd_ = -1;
   bool alive_ = false;
   bool passes_dirs_ = false;
   std::string scratch_;
   uint64_t call_id_ = 0;
   LogSink logs_;
   std::mutex log_mu_;
-  Utf8Decoder out_dec_, err_dec_;
+  Utf8Decoder out_dec_;
+  Utf8Decoder err_dec_;
   std::thread log_thread_;
   std::atomic<bool> stop_logs_{false};
 };

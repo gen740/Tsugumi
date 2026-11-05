@@ -164,7 +164,9 @@ void Service::run_plan(RequestIn& req) {
     for (const auto& p : v) o.push_back(wire::path(b, p));
     return b.CreateVector(o);
   };
-  auto t = paths(plan.targets), s = paths(plan.starts), c = paths(plan.build_candidates);
+  auto t = paths(plan.targets);
+  auto s = paths(plan.starts);
+  auto c = paths(plan.build_candidates);
   auto d = wire::diagnostics(b, plan.diagnostics);
   R::RunPlanResultBuilder pb(b);
   pb.add_rev(doc->rev);
@@ -298,8 +300,10 @@ void Service::run_record(RequestIn& req) {
     std::optional<uint64_t> selected;
     std::optional<InvocationRecordData> record;
     std::optional<InvocationSummaryData> status;
-    std::vector<StoredValueMeta> in_meta, out_meta;
-    std::vector<std::string> in_bytes, out_bytes;
+    std::vector<StoredValueMeta> in_meta;
+    std::vector<StoredValueMeta> out_meta;
+    std::vector<std::string> in_bytes;
+    std::vector<std::string> out_bytes;
     History::Aggregate agg;
     std::optional<FailureData> past_failure;
   };
@@ -450,7 +454,8 @@ void Service::run_value_read(RequestIn& req) {
     throw Failed(FailureKind::invalid_request, "side must be input or output");
   bool input = r->side() == D::ValueSide::input;
   std::string port = r->port()->str();
-  uint64_t offset = r->offset().value_or(0), limit = content_limit(r->limit_bytes());
+  uint64_t offset = r->offset().value_or(0);
+  uint64_t limit = content_limit(r->limit_bytes());
   auto page = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     auto rec = History::invocation(db, run_id, card, *r->invocation());
@@ -531,7 +536,8 @@ void Service::artifact_read(RequestIn& req) {
     if (!member) throw Failed(FailureKind::not_found, "no member " + m);
   }
   auto file = store_->state_dir() / "runs" / a->run_id / "artifacts" / a->artifact_id / member->path;
-  uint64_t offset = r->offset().value_or(0), limit = content_limit(r->limit_bytes());
+  uint64_t offset = r->offset().value_or(0);
+  uint64_t limit = content_limit(r->limit_bytes());
   struct stat st{};
   if (::stat(file.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) throw Failed(FailureKind::not_found, "the artifact content is missing");
   auto size = static_cast<uint64_t>(st.st_size);

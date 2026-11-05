@@ -90,12 +90,15 @@ namespace fs = std::filesystem;
 namespace {
 
 struct Options {
-  std::string tsugumid, tini, bash;
+  std::string tsugumid;
+  std::string tini;
+  std::string bash;
   std::string path;       // PATH for project processes
   std::string cert_file;  // CA bundle
   std::string host = "/mnt/slots";
   std::string state = "/persist/tsugumi";
-  int control_port = 1024, rpc_port = 1025;
+  int control_port = 1024;
+  int rpc_port = 1025;
 };
 Options opt;
 
@@ -204,7 +207,11 @@ void ensure_user(const std::string& id, uid_t uid) {
 // What a project's first process does, prepared by the parent: the child of
 // this multithreaded process only makes system calls (no allocation).
 struct ProjectView {
-  std::string project, control, history, rpc, slots;
+  std::string project;
+  std::string control;
+  std::string history;
+  std::string rpc;
+  std::string slots;
   std::vector<std::pair<std::string, std::string>> extra;  // folders of the Mac / of chats: source, target
 };
 
@@ -214,8 +221,10 @@ struct ChildArgs {
   int sync_fd;  // read end: the parent has put the child into its cgroup
   int log_fd;
   ProjectView view;
-  std::vector<std::string> argv, env;
-  std::vector<char*> av, ev;
+  std::vector<std::string> argv;
+  std::vector<std::string> env;
+  std::vector<char*> av;
+  std::vector<char*> ev;
 };
 
 // In a child of this multithreaded process: no stdio locks, no allocation.
@@ -279,7 +288,8 @@ ProjectView project_view(int slot, const std::string& id) {
   std::error_code ec;
   for (const auto& e : fs::directory_iterator(dir, ec)) {
     std::string name = e.path().filename().string();
-    bool host = name.starts_with("host-"), chat = name.starts_with("chat-");
+    bool host = name.starts_with("host-");
+    bool chat = name.starts_with("chat-");
     // host-<tag> / chat-<tag>: the tag is 16 hex digits, like a project id.
     if (!(host || chat) || !valid_id(name.substr(5))) continue;
     v.extra.emplace_back(e.path().string(), std::string(host ? "/run/tsugumi/host/" : "/run/tsugumi/chat/") + name.substr(5));
@@ -332,8 +342,10 @@ std::vector<char*> cstrings(std::vector<std::string>& v) {
 std::string collect_garbage() {
   int out[2];
   if (::pipe2(out, O_CLOEXEC) != 0) return "error pipe";
-  std::vector<std::string> argv = {opt.bash, "-c", "exec nix-store --gc"}, env = {"PATH=" + opt.path};
-  auto av = cstrings(argv), ev = cstrings(env);
+  std::vector<std::string> argv = {opt.bash, "-c", "exec nix-store --gc"};
+  std::vector<std::string> env = {"PATH=" + opt.path};
+  auto av = cstrings(argv);
+  auto ev = cstrings(env);
   pid_t pid = ::fork();
   if (pid == 0) {
     ::dup2(out[1], 1);
@@ -421,7 +433,8 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   for (const auto& [other, op] : projects)
     if (op.running && op.slot == slot) return "error slot " + std::to_string(slot) + " is in use";
   if (auto err = mount_slot(slot); !err.empty()) return err;
-  std::string p = slot_dir(slot) + "/project", c = slot_dir(slot) + "/control";
+  std::string p = slot_dir(slot) + "/project";
+  std::string c = slot_dir(slot) + "/control";
   if (!fs::is_regular_file(p + "/tsugumi.json")) return "error the project folder is not shared";
   if (!fs::is_directory(c)) return "error the control folder is not shared";
   Project pr;
@@ -631,7 +644,8 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     target = it->second.pid;
     uid = it->second.uid;
   }
-  int master, slave;
+  int master;
+  int slave;
   winsize ws{static_cast<unsigned short>(rows), static_cast<unsigned short>(cols), 0, 0};
   if (::openpty(&master, &slave, nullptr, nullptr, &ws) != 0) {
     reply(conn, "error openpty");
@@ -648,7 +662,8 @@ void shell(int conn, const std::string& id, int rows, int cols) {
   env.push_back("TERM=xterm-256color");
   env.push_back("PS1=\\[\\e[1;32m\\]\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ ");
   std::vector<std::string> argv = {opt.bash, "--noprofile", "--norc", "-i"};
-  auto av = cstrings(argv), ev = cstrings(env);
+  auto av = cstrings(argv);
+  auto ev = cstrings(env);
   pid_t pid = ::fork();
   if (pid == 0) {
     // Join the project's namespaces (the PID namespace applies to the next
@@ -853,7 +868,8 @@ void serve(int port, void (*handler)(int)) {
 
 int main(int argc, char** argv) {
   for (int i = 1; i + 1 < argc; i += 2) {
-    std::string k = argv[i], v = argv[i + 1];
+    std::string k = argv[i];
+    std::string v = argv[i + 1];
     if (k == "--tsugumid") opt.tsugumid = v;
     else if (k == "--tini") opt.tini = v;
     else if (k == "--bash") opt.bash = v;

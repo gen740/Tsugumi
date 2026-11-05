@@ -125,7 +125,8 @@ class Comparator {
  private:
   const reflection::Schema& a_;
   const reflection::Schema& b_;
-  std::set<std::pair<int, int>> seen_obj_, seen_enum_;
+  std::set<std::pair<int, int>> seen_obj_;
+  std::set<std::pair<int, int>> seen_enum_;
 };
 
 // Renders reachable declarations of a schema under a namespace prefix.
@@ -276,7 +277,8 @@ class Renderer {
   const reflection::Schema& s_;
   std::string prefix_;
   bool nested_ = false;
-  std::set<int> objs_, enums_;
+  std::set<int> objs_;
+  std::set<int> enums_;
   std::vector<std::pair<bool, int>> order_;
 };
 
@@ -332,7 +334,8 @@ namespace {
 // Positions of the tokens of a schema text (identifiers and single
 // punctuation), skipping comments and string literals.
 struct Tok {
-  size_t begin, end;
+  size_t begin;
+  size_t end;
   char punct;  // 0 for an identifier or literal
 };
 
@@ -404,7 +407,8 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text, const s
   const auto& s = fbs_text;
   auto t = tokens(s);
   auto text_of = [&](const Tok& k) { return s.substr(k.begin, k.end - k.begin); };
-  size_t body = 0, body_end = 0;
+  size_t body = 0;
+  size_t body_end = 0;
   for (size_t i = 0; i + 2 < t.size(); ++i) {
     if (!t[i].punct && text_of(t[i]) == "table" && !t[i + 1].punct && text_of(t[i + 1]) == catalog->name) {
       size_t j = i + 2;
@@ -422,7 +426,8 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text, const s
     *error = "table " + catalog->name + " not found";
     return std::nullopt;
   }
-  size_t field = 0, semi = 0;
+  size_t field = 0;
+  size_t semi = 0;
   bool at_start = true;
   for (size_t i = body; i < body_end; ++i) {
     if (at_start && !t[i].punct && text_of(t[i]) == port && i + 1 < body_end && t[i + 1].punct == ':') {
@@ -533,7 +538,8 @@ bool compatible(const Type& a, const Type& b) {
   const auto* ra = sa->root_table();
   const auto* rb = sb->root_table();
   if (!ra || !rb) return false;
-  int ia = -1, ib = -1;
+  int ia = -1;
+  int ib = -1;
   for (flatbuffers::uoffset_t i = 0; i < sa->objects()->size(); ++i)
     if (sa->objects()->Get(i) == ra) ia = static_cast<int>(i);
   for (flatbuffers::uoffset_t i = 0; i < sb->objects()->size(); ++i)

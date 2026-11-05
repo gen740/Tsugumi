@@ -21,14 +21,19 @@ typedef struct tsg_series {
   const double* x;
   const double* y;
   size_t count;
-  float r, g, b, a; /* line color, linear sRGB */
+  /* line color, linear sRGB */
+  float r;
+  float g;
+  float b;
+  float a;
 } tsg_series;
 
 typedef struct tsg_renderer_stats {
   uint64_t frames;          /* frames presented */
   uint64_t updates;         /* set_* calls */
   uint64_t vertex_bytes;    /* current GPU vertex buffer size */
-  uint32_t width, height;   /* surface size in pixels */
+  uint32_t width;           /* surface width in pixels */
+  uint32_t height;          /* surface height in pixels */
 } tsg_renderer_stats;
 
 /* `metal_layer` is a CAMetalLayer*. Returns NULL and fills `error` on failure. */

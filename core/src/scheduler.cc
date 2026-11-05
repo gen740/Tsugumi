@@ -1025,7 +1025,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             }
             members.emplace_back(prm.name, val);
           }
-          std::string bytes, err;
+          std::string bytes;
+          std::string err;
           if (!types::json_to_flatbuffer(*port.type, schema::object_text(members), &bytes, &err))
             throw Failed(FailureKind::output_invalid, "input " + port.name + ": " + err);
           p.outputs.push_back({port.name, port.kind, port.type, std::move(bytes), {}});
@@ -1063,7 +1064,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       case Template::Logger: {
         const Value* v = input(in, "in");
         if (!v) throw Failed(FailureKind::input_missing, "logger input missing");
-        std::string text, err;
+        std::string text;
+        std::string err;
         if (!types::flatbuffer_to_json(*v->type, v->bytes, &text, &err)) throw Failed(FailureKind::output_invalid, err);
         card_log(node.path, s.invocation, LogStream::stdout, text + "\n");
         DisplayData d;
@@ -1184,7 +1186,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool needs_out = false;
     for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
     auto dir = invocation_dir(node, s.invocation);
-    std::string work = worker.work_dir(), tmp = worker.tmp_dir(), out;
+    std::string work = worker.work_dir();
+    std::string tmp = worker.tmp_dir();
+    std::string out;
     std::vector<std::pair<std::string, int32_t>> project_dirs;  // real path, descriptor slot
     auto make_dir = [&](const stdfs::path& d) {
       stdfs::create_directories(d);
@@ -1397,7 +1401,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   stdfs::path run_dir_;
   std::thread thread_;
   std::mutex mu_;
-  std::condition_variable cv_, task_cv_;
+  std::condition_variable cv_;
+  std::condition_variable task_cv_;
   std::vector<NodeRt> nodes_;
   std::map<std::pair<size_t, std::string>, std::vector<std::pair<size_t, std::string>>> out_edges_;
   std::deque<Work> tasks_;
@@ -1407,7 +1412,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint64_t token_seq_ = 0;
   std::atomic<bool> cancel_{false};
   bool interrupted_ = false;
-  std::optional<FailureData> first_failure_, start_failure_, stall_failure_;
+  std::optional<FailureData> first_failure_;
+  std::optional<FailureData> start_failure_;
+  std::optional<FailureData> stall_failure_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
 };
@@ -1467,7 +1474,8 @@ std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
       if (res.nodes[i].is_virtual || waits.count(i)) continue;
       for (const auto& p : res.nodes[i].inputs) {
         if (p.optional) continue;
-        bool fed = false, only_waiting = true;
+        bool fed = false;
+        bool only_waiting = true;
         for (const auto& e : res.edges)
           if (e.to == i && e.to_port == p.name) {
             fed = true;
@@ -1490,7 +1498,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
   if (!target) throw Failed(FailureKind::not_found, "unknown card " + path_key(card), {{"card", path_key(card)}});
   size_t t = res.index.at(path_key(card));
   std::set<size_t> targets;
-  std::vector<size_t> starts, seeds;
+  std::vector<size_t> starts;
+  std::vector<size_t> seeds;
   auto inside = [&](size_t i) {
     const auto& p = res.nodes[i].path;
     return p.size() > card.size() && std::equal(card.begin(), card.end(), p.begin());
@@ -1501,7 +1510,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
     for (size_t i = 0; i < res.nodes.size(); ++i) {
       if (!inside(i) || res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft) continue;
       targets.insert(i);
-      bool from_outside = false, any_in = false;
+      bool from_outside = false;
+      bool any_in = false;
       for (const auto& e : res.edges)
         if (e.to == i) {
           any_in = true;

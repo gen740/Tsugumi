@@ -25,9 +25,12 @@ struct VersionRunNote {
 struct VersionCommit {
   std::string id;
   std::vector<std::string> parents;
-  std::string summary, message, author;
+  std::string summary;
+  std::string message;
+  std::string author;
   int64_t time_ms = 0;
-  std::vector<std::string> branches, tags;
+  std::vector<std::string> branches;
+  std::vector<std::string> tags;
   std::vector<VersionRunNote> runs;
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
@@ -36,8 +39,9 @@ struct VersionCommit {
 
 struct VersionGraphData {
   bool enabled = false;
-  std::string head, branch;  // branch: empty on a detached HEAD
-  bool dirty = false;        // saved changes not committed yet
+  std::string head;
+  std::string branch;                  // empty on a detached HEAD
+  bool dirty = false;                  // saved changes not committed yet
   std::vector<VersionCommit> commits;  // newest first, parents after children
 };
 

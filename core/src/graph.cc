@@ -167,7 +167,10 @@ class Builder {
  private:
   struct RawEdge {
     CardPath scope;
-    std::string from, from_port, to, to_port;
+    std::string from;
+    std::string from_port;
+    std::string to;
+    std::string to_port;
   };
 
   Template template_of(const DefinitionDoc* def) {
@@ -533,7 +536,8 @@ class Builder {
       }
     }
     for (const auto& e : raw_) {
-      CardPath from = e.scope, to = e.scope;
+      CardPath from = e.scope;
+      CardPath to = e.scope;
       from.push_back(e.from);
       to.push_back(e.to);
       auto src = leaf(from, e.from_port, true, from);
