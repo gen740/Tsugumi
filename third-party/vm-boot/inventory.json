@@ -494,7 +494,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz"
      ],
-     "bytes": 12255232
+     "bytes": 11358208
     },
     {
      "name": "bash53-018",
@@ -623,7 +623,7 @@
      "store_path": "kwm524zjlnnq4yfhhmb5r14f2wxf8a2j-bash-5.3.tar.gz",
      "hash": "sha256-DVzYaWX4aaJs9k9Lcb57lvkKO6iz104n6OnZ1VUPMbo=",
      "urls": [],
-     "bytes": 12255232
+     "bytes": 11358208
     },
     {
      "name": "bash53-005",
@@ -714,7 +714,7 @@
      "store_path": "dcv7x77m23r3bvz693h7bfcybcz3z990-boost_1_89_0.tar.bz2",
      "hash": "sha256-haM/oiYhtPMU+OheGl4qk2PSLk9JkpJdS7O8YxtaDHo=",
      "urls": [],
-     "bytes": 167837696
+     "bytes": 154701824
     },
     {
      "name": "0921b9fd5c776aec7748475c6c10807e0d51bc6d.patch",
@@ -778,14 +778,14 @@
      "store_path": "w0nav088zbmc6vr9qq3h0dmjhpg639pk-busybox-1.37.0.tar.bz2",
      "hash": "sha256-MxHf8y50ZJn03w1d8E1+s5Y4LX4Qi7klDntRm4NwQ6Q=",
      "urls": [],
-     "bytes": 3211264
+     "bytes": 2568192
     },
     {
      "name": "source",
      "store_path": "4wbq5vgb43mhxd4cdc7fzs6cdaq6pp00-source",
      "hash": "sha256-6r0RXtmqGXtJbvLSD1Ma1xpqR8oXL2bBKaUE/cSENL8=",
      "urls": [],
-     "bytes": 26370048
+     "bytes": 25567232
     },
     {
      "name": "CVE-2026-26157_CVE-2026-26158-2.patch",
@@ -865,7 +865,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/coreutils/coreutils-9.12.tar.xz"
      ],
-     "bytes": 7405568
+     "bytes": 6705152
     }
    ],
    "patches": [
@@ -887,7 +887,7 @@
      "store_path": "a9rs1bl0n1m4wc0zfky8h4w46lkc55j1-curl-8.22.0.tar.xz",
      "hash": "sha256-9+866KIuUh8omAP+k1Q+tkwym1iqc6niJN/ZFaKl9Pc=",
      "urls": [],
-     "bytes": 3211264
+     "bytes": 2953216
     }
    ],
    "patches": []
@@ -914,7 +914,7 @@
      "store_path": "9kz8agh164kiklpvpfg2q7pigw961xsa-db-4.8.30.tar.gz",
      "hash": "sha256-4EkaB82yH7mqgnc7u+2ut2OcvQ5/lhR6tGFB4ARdtyo=",
      "urls": [],
-     "bytes": 23134208
+     "bytes": 22888448
     }
    ],
    "patches": [
@@ -942,7 +942,7 @@
      "store_path": "sygrxh6mxc57j6csp36vbmckj0xvnzlz-e2fsprogs-1.47.4.tar.xz",
      "hash": "sha256-/VvziMvb4Aaj07MY2YOylIOCRArMhah/Hn0QhlPo2ws=",
      "urls": [],
-     "bytes": 7405568
+     "bytes": 7340032
     }
    ],
    "patches": []
@@ -984,7 +984,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/findutils/findutils-4.11.0.tar.xz"
      ],
-     "bytes": 3211264
+     "bytes": 2453504
     }
    ],
    "patches": [
@@ -1008,7 +1008,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/gawk/gawk-5.4.1.tar.xz"
      ],
-     "bytes": 4259840
+     "bytes": 3842048
     }
    ],
    "patches": [
@@ -1033,7 +1033,7 @@
      "urls": [
       "https://mirrorservice.org/sites/sourceware.org/pub/gcc/releases/gcc-16.2.0/gcc-16.2.0.tar.xz"
      ],
-     "bytes": 117506048
+     "bytes": 107204608
     }
    ],
    "patches": [
@@ -1063,7 +1063,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/glibc/glibc-2.44.tar.xz"
      ],
-     "bytes": 21037056
+     "bytes": 20623360
     }
    ],
    "patches": [
@@ -1099,7 +1099,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/gmp/gmp-6.3.0.tar.bz2"
      ],
-     "bytes": 3211264
+     "bytes": 2646016
     }
    ],
    "patches": []
@@ -1159,7 +1159,7 @@
      "store_path": "fqc2qy7hlf3cxmrfiq7c4bx7jcxzl0km-icu4c-78.3-sources.tgz",
      "hash": "sha256-Oi56R2BLpwLzRYeDCOb+/sphLuiVz0pfIi55Vfq/4MA=",
      "urls": [],
-     "bytes": 28377088
+     "bytes": 27979776
     }
    ],
    "patches": []
@@ -1210,7 +1210,7 @@
      "store_path": "mqn63gvfy2rpzy4q15qx7jfwba82c7ap-krb5-1.22.2.tar.gz",
      "hash": "sha256-MkP/vI6k1Kwi3cfdKh3FTFeHTEBki2D/lwCXY1VOrxM=",
      "urls": [],
-     "bytes": 9502720
+     "bytes": 8749056
     }
    ],
    "patches": [
@@ -1233,7 +1233,7 @@
      "store_path": "ajhkl7nckj740h3ihf31pcg21xq29ccd-source",
      "hash": "sha256-/CoInUlOiFvR83mEeV3Tx+2SQGywWDQ4nY+NstE/cP4=",
      "urls": [],
-     "bytes": 24752128
+     "bytes": 24080384
     }
    ],
    "patches": []
@@ -1279,7 +1279,7 @@
      "store_path": "ck47pk105nw2dsd6xrx7b16x7adr3xmg-libbsd-0.12.2.tar.xz",
      "hash": "sha256-uIzJFj0MZSqvOamZkdl03bocOpcR248bWDivKhRzEBQ=",
      "urls": [],
-     "bytes": 458752
+     "bytes": 446464
     }
    ],
    "patches": [
@@ -1359,7 +1359,7 @@
      "urls": [
       "https://ftp.gnu.org/gnu/libidn/libidn2-2.3.8.tar.gz"
      ],
-     "bytes": 3211264
+     "bytes": 2236416
     }
    ],
    "patches": []
@@ -1410,7 +1410,7 @@
      "store_path": "mkgbzcbcfi0wnb9cf243rp3vk3djaj5l-libpsl-0.21.5.tar.lz",
      "hash": "sha256-mp9qjG7bplDPnqVUdc0XLdKEhzFoBOnHMgLZdXLNOi0=",
      "urls": [],
-     "bytes": 2162688
+     "bytes": 2019328
     }
    ],
    "patches": []
@@ -1430,7 +1430,7 @@
      "store_path": "0nj4q96pxsd2kc2rdnc2kfkslxzghm9w-libseccomp-2.6.1.tar.gz",
      "hash": "sha256-UB9mxmciXVN5G5fh18+Fq3ZMKX0EiB9g849FHEsO4b4=",
      "urls": [],
-     "bytes": 720896
+     "bytes": 659456
     }
    ],
    "patches": []
@@ -1450,7 +1450,7 @@
      "store_path": "6z7srkn642gwmdripgcgc5m9gczp6dzl-source",
      "hash": "sha256-QQlxeUgQDdFweGqsUOso+II64zMfjmmB2sUuF3Vu53o=",
      "urls": [],
-     "bytes": 11407360
+     "bytes": 11304960
     }
    ],
    "patches": []
@@ -1470,7 +1470,7 @@
      "store_path": "j04yfblg6sk5abb4n067xv0x0dfraf73-libssh2-1.11.1.tar.gz",
      "hash": "sha256-2ex2y+NNuY7sNTn+LImdJrDIN8s+tGalaw8QnKv2WPc=",
      "urls": [],
-     "bytes": 1114112
+     "bytes": 1093632
     },
     {
      "name": "CVE-2026-66035.patch",
@@ -1564,7 +1564,7 @@
      "urls": [
       "https://ftpmirror.gnu.org/libunistring/libunistring-1.4.2.tar.gz"
      ],
-     "bytes": 5308416
+     "bytes": 5050368
     }
    ],
    "patches": []
@@ -1626,7 +1626,7 @@
      "store_path": "y57iwa59g3nazq9sr297hg9c3yfiyr5p-linux-6.12.115.tar.xz",
      "hash": "sha256-DskP5LIEIrG2ZLd+bS3eIrQL1B5+ssrYrIc5pHScsbs=",
      "urls": [],
-     "bytes": 151060480
+     "bytes": 148762624
     }
    ],
    "patches": []
@@ -1743,7 +1743,7 @@
      "store_path": "1hkx09zxzwwhqwnr5rdi7r2v7jbiki00-ncurses-6.6.tar.gz",
      "hash": "sha256-NVtMu+2ICwOBoExGYXt2VuNiWF1S6c+Epn4gCbdJ/xE=",
      "urls": [],
-     "bytes": 4259840
+     "bytes": 3792896
     }
    ],
    "patches": []
@@ -1763,7 +1763,7 @@
      "store_path": "p2ll1dnghhlljhl8x927md5v0nz8wz15-nghttp2-1.70.0.tar.bz2",
      "hash": "sha256-j6yh94qpmsO8F2ina34PazbY5qYsE4GHUbHSBfAvlAU=",
      "urls": [],
-     "bytes": 3211264
+     "bytes": 2486272
     }
    ],
    "patches": []
@@ -1803,7 +1803,7 @@
      "store_path": "i6rkckfzklvk3cgi4hw6kkq74fwr2hzv-ngtcp2-1.23.0.tar.bz2",
      "hash": "sha256-3kuZ/8kNm5V0TESg2rYcnyqYSLiBuP3rl0rrXqEIAso=",
      "urls": [],
-     "bytes": 917504
+     "bytes": 901120
     }
    ],
    "patches": []
@@ -2069,7 +2069,7 @@
      "store_path": "pv5imjz1sglx59fjg1927pbjzavhvxc2-openssl-3.5.9.tar.gz",
      "hash": "sha256-YD9WAuLu8A13+9Qp003NWCK7MBdXobyc2yTGcPHrhZo=",
      "urls": [],
-     "bytes": 53542912
+     "bytes": 53280768
     }
    ],
    "patches": [
@@ -2105,7 +2105,7 @@
      "urls": [
       "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.bz2"
      ],
-     "bytes": 3211264
+     "bytes": 2187264
     }
    ],
    "patches": []
@@ -2152,7 +2152,7 @@
      "store_path": "4wzrbkgi3m2dz7acyg2224l2kw7f1pc2-readline-8.3.tar.gz",
      "hash": "sha256-/lODIERngozUle6NHTwDen66E4nCK8agQfYnl2+QYcw=",
      "urls": [],
-     "bytes": 4259840
+     "bytes": 3420160
     },
     {
      "name": "readline83-002",
@@ -2247,14 +2247,14 @@
      "store_path": "bc1m3wk0917fy7yrj6mys6r3wizvy8fd-sqlite-src-3530300.zip",
      "hash": "sha256-u4C/ijv/wZJBzoq6WkvHTpw5gAE8sLXw8JdqmVFpQq8=",
      "urls": [],
-     "bytes": 14745600
+     "bytes": 14540800
     },
     {
      "name": "sqlite-doc-3530300.zip",
      "store_path": "bkbn9h3c6v29d4hs934wqdvdwdxz4l95-sqlite-doc-3530300.zip",
      "hash": "sha256-Fo+Zhph2vPTbjZPvoqSDqcgVNlN9AZAMWM110KZ8yic=",
      "urls": [],
-     "bytes": 12648448
+     "bytes": 11816960
     }
    ],
    "patches": []
@@ -2282,7 +2282,7 @@
      "store_path": "hgvj3r5rf0hxx242vx92z8p6a0bzr3zf-source",
      "hash": "sha256-oGzFW2dD8abLXBwDczr1hvl712s03CHTUqOz6uPfhmQ=",
      "urls": [],
-     "bytes": 125685760
+     "bytes": 124686336
     }
    ],
    "patches": [
@@ -2373,7 +2373,7 @@
      "store_path": "v0mhpv9im04ijn94l26fn6ldvn66lykh-util-linux-2.42.4.tar.xz",
      "hash": "sha256-+9YqEAq3u4dGugZhJVw8SBhbHpAhUHxiTaAfvGljMOw=",
      "urls": [],
-     "bytes": 11599872
+     "bytes": 10731520
     }
    ],
    "patches": [
@@ -2407,7 +2407,7 @@
      "urls": [
       "https://cdn.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.4.tar.xz"
      ],
-     "bytes": 11599872
+     "bytes": 10731520
     }
    ],
    "patches": [
@@ -2431,7 +2431,7 @@
      "urls": [
       "https://mirrorservice.org/sites/sourceware.org/pub/gcc/releases/gcc-16.2.0/gcc-16.2.0.tar.xz"
      ],
-     "bytes": 117506048
+     "bytes": 107204608
     }
    ],
    "patches": [
@@ -2461,7 +2461,7 @@
      "urls": [
       "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.xz"
      ],
-     "bytes": 2162688
+     "bytes": 1568768
     }
    ],
    "patches": []
@@ -2483,7 +2483,7 @@
      "urls": [
       "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz"
      ],
-     "bytes": 2162688
+     "bytes": 1503232
     }
    ],
    "patches": [

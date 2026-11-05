@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks a built Tsugumi.app before it is published: its licenses are in it, for
-# the packages it pins and the boot disk it carries, and the only math font it
-# carries is the one it draws with.
+# the packages it pins and the boot disk it carries, that disk's source is
+# published, and the only math font it carries is the one it draws with.
 #
 #   macOS/tools/check-app-licenses.sh dist/Tsugumi.app
 set -euo pipefail
@@ -31,6 +31,10 @@ done
 vm="$(cat "$res/tsugumi-vm/vm-version")"
 listed="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["vm_version"])' "$res/licenses/vm-boot/inventory.json")"
 [ "$vm" = "$listed" ] || { echo "the app's boot disk is $vm, third-party/vm-boot describes $listed: run macOS/tools/vm-inventory.py" >&2; fail=1; }
+
+# The corresponding source of that disk is published.
+source_url="https://github.com/gen740/tsugumi-vm/releases/download/${vm%%-*}/sources.tar.gz"
+curl -fsIL -o /dev/null "$source_url" || { echo "the source of the boot disk is not at $source_url: run macOS/tools/publish-vm.sh" >&2; fail=1; }
 
 # Math fonts: only SwiftMath's default (build-app.sh removes the others).
 fonts="$(find "$res/SwiftMath_SwiftMath.bundle" -name '*.otf' -exec basename {} \;)"
