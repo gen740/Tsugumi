@@ -118,13 +118,13 @@ bundle の `LICENSE` は MathChat の MIT 表示であり、12 フォントの�
 
 | 確認した事実 | |
 | --- | --- |
-| 配っている物 | `Tsugumi.zip` の中と gen740/tsugumi-vm のリリースの `vmlinux` と `rootfs.erofs` |
+| 配っている物 | `Tsugumi.zip`・`Tsugumi.dmg` の中と gen740/tsugumi-vm のリリースの `vmlinux` と `rootfs.erofs` |
 | 中身 | 103 のストアパスと kernel で、93 パッケージ。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージ（Linux・BusyBox・Bash・coreutils・glibc・Nix など）。GPL-3.0 のものもあるので [GPLv3 §6](https://www.gnu.org/licenses/gpl-3.0.html#section6) も関係する |
 | kernel の生成後の config | バイナリの中（`CONFIG_IKCONFIG`）と `third-party/vm-boot/kernel-config` |
 
 残る論点は 2 つです。法的な結論ではありません。
 
-- **置き場所:** [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) は、ダウンロードで配るなら「同じ場所」からソースを取れれば、ソースの配布として扱うと定めています。`vmlinux` の単体は同じリリースにありますが、`Tsugumi.zip` は gen740/Tsugumi のリリースにあり、別のリポジトリです。GPLv3 §6(d) は案内があれば別のサーバーでよいと明記していますが、GPLv2 にはその明記がありません。同じ持ち主の同じ GitHub で、アプリの中に URL があるので、作者はこの形を選びました。
+- **置き場所:** [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3) は、ダウンロードで配るなら「同じ場所」からソースを取れれば、ソースの配布として扱うと定めています。`vmlinux` の単体は同じリリースにありますが、`Tsugumi.zip` と `Tsugumi.dmg` は gen740/Tsugumi のリリースにあり、別のリポジトリです。GPLv3 §6(d) は案内があれば別のサーバーでよいと明記していますが、GPLv2 にはその明記がありません。同じ持ち主の同じ GitHub で、アプリの中に URL があるので、作者はこの形を選びました。
 - **保管:** バイナリを配っている間は、そのソースを消しません。ディスクのリリースを整理するときは、そのディスクを載せたアプリのリリースも確かめます。
 
 ### 公開済みのリリース

@@ -68,10 +68,10 @@
 <li>ディスクを組み立てる Tsugumi の部分（<code>flake.nix</code>、<code>macOS/Container/</code> など）と、ビルドの手順</li>
 </ul>
 <p>展開した一式を使って <code>vm-boot</code> を評価すると、公開中のディスクと同じストアパスになることを確かめました。アーカイブの一部（38 件）は <code>inventory.json</code> のハッシュとも照合しました。実際に一からビルドし直して、同じバイナリになるかは確かめていません。</p>
-<div class="table-wrap"><table><thead><tr><th>確認した事実</th><th></th></tr></thead><tbody><tr><td>配っている物</td><td><code>Tsugumi.zip</code> の中と gen740/tsugumi-vm のリリースの <code>vmlinux</code> と <code>rootfs.erofs</code></td></tr><tr><td>中身</td><td>103 のストアパスと kernel で、93 パッケージ。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージ（Linux・BusyBox・Bash・coreutils・glibc・Nix など）。GPL-3.0 のものもあるので <a href="https://www.gnu.org/licenses/gpl-3.0.html#section6" rel="noopener">GPLv3 §6</a> も関係する</td></tr><tr><td>kernel の生成後の config</td><td>バイナリの中（<code>CONFIG_IKCONFIG</code>）と <code>third-party/vm-boot/kernel-config</code></td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>確認した事実</th><th></th></tr></thead><tbody><tr><td>配っている物</td><td><code>Tsugumi.zip</code>・<code>Tsugumi.dmg</code> の中と gen740/tsugumi-vm のリリースの <code>vmlinux</code> と <code>rootfs.erofs</code></td></tr><tr><td>中身</td><td>103 のストアパスと kernel で、93 パッケージ。nixpkgs の宣言で GPL か LGPL を含むものは 37 パッケージ（Linux・BusyBox・Bash・coreutils・glibc・Nix など）。GPL-3.0 のものもあるので <a href="https://www.gnu.org/licenses/gpl-3.0.html#section6" rel="noopener">GPLv3 §6</a> も関係する</td></tr><tr><td>kernel の生成後の config</td><td>バイナリの中（<code>CONFIG_IKCONFIG</code>）と <code>third-party/vm-boot/kernel-config</code></td></tr></tbody></table></div>
 <p>残る論点は 2 つです。法的な結論ではありません。</p>
 <ul>
-<li><strong>置き場所:</strong> <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3" rel="noopener">GPLv2 §3</a> は、ダウンロードで配るなら「同じ場所」からソースを取れれば、ソースの配布として扱うと定めています。<code>vmlinux</code> の単体は同じリリースにありますが、<code>Tsugumi.zip</code> は gen740/Tsugumi のリリースにあり、別のリポジトリです。GPLv3 §6(d) は案内があれば別のサーバーでよいと明記していますが、GPLv2 にはその明記がありません。同じ持ち主の同じ GitHub で、アプリの中に URL があるので、作者はこの形を選びました。</li>
+<li><strong>置き場所:</strong> <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3" rel="noopener">GPLv2 §3</a> は、ダウンロードで配るなら「同じ場所」からソースを取れれば、ソースの配布として扱うと定めています。<code>vmlinux</code> の単体は同じリリースにありますが、<code>Tsugumi.zip</code> と <code>Tsugumi.dmg</code> は gen740/Tsugumi のリリースにあり、別のリポジトリです。GPLv3 §6(d) は案内があれば別のサーバーでよいと明記していますが、GPLv2 にはその明記がありません。同じ持ち主の同じ GitHub で、アプリの中に URL があるので、作者はこの形を選びました。</li>
 <li><strong>保管:</strong> バイナリを配っている間は、そのソースを消しません。ディスクのリリースを整理するときは、そのディスクを載せたアプリのリリースも確かめます。</li>
 </ul>
 <h3 id="公開済みのリリース">公開済みのリリース</h3>
