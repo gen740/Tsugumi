@@ -55,7 +55,7 @@
 <li>書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（<code>runs/&lt;run&gt;/work/…/out</code>）だけです。Linux では出力フォルダを <code>/proc/self/fd</code> 経由で渡しますが、macOS にはないためパスで渡します。</li>
 <li>bubblewrap と違い、ファイルの存在確認（<code>stat</code>）は全体で許可しています（中身は読めません）。また、uid の分離はしません。</li>
 <li>Mac のフォルダを Card に共有する機能（<code>/host/&lt;name&gt;</code>）は共通 VM が必要なため、Web UI では使えません。</li>
-<li>ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。</li>
+<li>ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。例外は <code>mDNSResponder</code> のソケット（<code>/var/run/mDNSResponder</code>）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。</li>
 <li>チャットに添付したフォルダは、サーバーが control フォルダの <code>attached.json</code> に書いたものだけを tsugumid が読みます（RPC からは変えられません）。</li>
 <li><code>sandbox: false</code> の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（<code>tsugumid</code> 自身は判断しません）。Linux で他人の Card を動かすときは、<code>tsugumid</code> を隔離されたコンテナの中で動かしてください。</li>
 </ul>
