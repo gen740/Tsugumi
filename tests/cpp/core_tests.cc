@@ -530,6 +530,24 @@ TEST(run_plans_whole_partial_and_subgraph) {
   CHECK_EQ(sub_down.targets.size(), size_t(2));
 }
 
+TEST(run_plan_a_branch_reaches_its_join_on_saved_values) {
+  Project p;
+  p.builtin("trigger", R"({"template":"trigger"})");
+  p.code("a", {});
+  p.code("join", {"x", "y"});
+  auto r = p.resolve(c("go", "trigger") + "," + c("a", "a") + "," + c("b", "a") + "," + c("j", "join"),
+                     e("a", "out", "j", "x") + "," + e("b", "out", "j", "y"));
+  auto branch = Scheduler::plan(*r, {"a"}, true);
+  CHECK_EQ(branch.targets.size(), size_t(2));
+  CHECK_EQ(branch.joins.size(), size_t(1));
+  CHECK(branch.joins[0].card == (CardPath{"j"}));
+  CHECK(branch.joins[0].saved_ports == (std::set<std::string>{"y"}));
+  // Started on its own, or with every feeder in the run, a Card takes nothing extra.
+  CHECK(Scheduler::plan(*r, {"j"}, true).joins.empty());
+  CHECK(Scheduler::plan(*r, {"a"}, false).joins.empty());
+  CHECK(Scheduler::plan(*r, {"go"}, true).joins.empty());
+}
+
 // ---- history ------------------------------------------------------------------------
 
 TEST(history_completion_never_hides_newer_progress) {

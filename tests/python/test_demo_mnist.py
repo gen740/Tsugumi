@@ -139,10 +139,13 @@ def test_mnist_classifiers(mnist):
     print("forest at depth 3:", shown.group(1))
     assert float(shown.group(1)) < scores["forest"] - 0.05
 
-    # compare waits for every branch, so comparing again runs them all from share:
-    # the new forest takes its place, and the seeds keep the other branches' numbers.
-    onward = start_run(c, ["share"], concurrency=8)
+    # From that branch onward: compare takes the new forest and the saved values
+    # of the others, none of which runs again.
+    onward = start_run(c, ["forest"])
     succeeded(c, onward)
+    assert ran(c, onward, "forest") and ran(c, onward, "compare") and ran(c, onward, "tradeoff")
+    for card in [m for m in MODELS if m != "forest"] + ["share", "prepare"]:
+        assert not ran(c, onward, card), card
     moved = leaderboard(c, onward)
     assert moved["forest"] == pytest.approx(float(shown.group(1)), abs=1e-4)
     assert {m: a for m, a in moved.items() if m != "forest"} == {m: a for m, a in scores.items() if m != "forest"}
