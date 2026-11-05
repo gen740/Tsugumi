@@ -8,7 +8,7 @@
 | 文書 | 内容 |
 | --- | --- |
 | [INSTALL.md](../INSTALL.md) | GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順 |
-| [Usage.md](Usage.md) | 画面ごとの基本操作と、同梱デモの試し方 |
+| [Usage.md](Usage.md) | デモの案内に沿って始める手順と、よく使う操作 |
 | [CardGuide.md](CardGuide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++ で作る（テストがこのページのコードを実行する） |
 | [Demos.md](Demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
 | [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
@@ -24,6 +24,7 @@
 | [Philosophy.md](Philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
 | [Name.md](Name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
 | [Author.md](Author.md) | この道具を作った人 |
+| [Origin.md](Origin.md) | 作者が自分の言葉で書いた、この道具の出発点 |
 | [Limitations.md](Limitations.md) | まだできないこと、保証していないことの一覧 |
 
 ## 仕組みを知る
@@ -46,5 +47,6 @@
 | [Development.md](Development.md) | 実行基盤の設計決定、テストと確認範囲、構成ごとの計測、現在の実装状況と解決済みの記録 |
 | [Lock.md](Lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
 | [Provenance.md](Provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
-| [Making.md](Making.md) | 制作記録: 人間と AI の往復、経過、変えた判断 |
 | [LicenseAudit.md](LicenseAudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |
+
+<!-- TODO: 制作記録のリポジトリができたら、ここからリンクする -->
