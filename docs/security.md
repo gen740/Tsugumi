@@ -82,7 +82,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
 
 ### プロジェクト間で共有しているもの
 
-- `nix-daemon` と `/nix/store` を共有しています。store 内のパスはすべて入力のハッシュで識別され、ビルドは `nix-daemon` のサンドボックス（`sandbox = true`）内で行われるため、あるプロジェクトが他プロジェクトのビルド成果物を書き換えることはできません。ただし、Nix の仕様上**「どのパスが store 内に存在するか」は全プロジェクトから参照可能**です。秘密情報を Nix store に入れないでください。
+- `nix-daemon` と `/nix/store` を共有しています。store 内のパスはすべて入力のハッシュで識別され、ビルドは `nix-daemon` のサンドボックス（`sandbox = true`）内で行われるため、あるプロジェクトが他プロジェクトのビルド成果物を書き換えることはできません。ただし、Nix の仕様上、**「どのパスが store 内に存在するか」は全プロジェクトから参照可能**です。秘密情報を Nix store に入れないでください。
 
 ## 4. Card（worker）⇄ tsugumid
 
@@ -143,8 +143,10 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 
 ### 待ち受け経路
 
-- `tsugumid` は VM 内の `127.0.0.1:<7700 + n>` で待ち受け、Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`）。LAN や外部ネットワークには一切公開されません。
-- `tsugumid` 自体はネットワーク名前空間を共有しているため、VM 内の `127.0.0.1` はプロジェクト間で共通です。別プロジェクトの `tsugumid` へソケット接続すること自体は可能ですが、認証 token を持たないため最初の `SessionHello` で拒否されます（なお、Card の worker はネットワーク名前空間が分離されているため、ソケット接続自体ができません）。
+- `tsugumid` は VM の中では TCP ポートを開かず、Unix ソケット `/run/tsugumi/rpc/s` で WebSocket を待ち受けます（`--listen-unix-ws`、`core/src/vmd_main.cc`）。実体はそのプロジェクトの uid だけが入れる 0700 のフォルダ `/run/tsugumi-rpc/<id>` にあります（§3）。
+- Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`、vsock 1025 で `tsugumi-vmd` がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには一切公開されません。
+- VM の loopback にポートがないので、別のプロジェクトや、ネットワークを許可した Card から `tsugumid` へ接続する経路はありません。
+- Web UI では `tsugumid` がホストで直接動き、`127.0.0.1` の WebSocket で待ち受けます（[Web UI](WebUI.md)）。
 - Unix ドメインソケットを使う場合は `umask 0177`（パーミッション `0600`）で作成します。アプリの標準経路は WebSocket であり、常に token 認証が必須です。
 
 ### 認証 token

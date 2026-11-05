@@ -41,7 +41,7 @@
 //                                              the app's clock then agree)
 //           shutdown                        -> ok (then the VM powers off)
 //   1025  RPC: the first line names the project id, then the bytes go to
-//         and from that project's tsugumid (127.0.0.1:<port> in the VM).
+//         and from that project's tsugumid (its Unix socket, under kRpc).
 //
 // Everything is logged to stderr, which is the VM console.
 

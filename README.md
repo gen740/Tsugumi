@@ -2,6 +2,15 @@
   <img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
 </p>
 
+<p align="center">
+  <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
+  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
+  <a href="docs/Making.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+</p>
+
 # Tsugumi
 
 **AI と描いた解析を、そのまま動かし、自分の手で確かめる。**
@@ -17,7 +26,8 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
   <a href="#ドキュメント">ドキュメント</a> ·
   <a href="docs/Philosophy.md">なぜ作ったか</a> ·
-  <a href="docs/Name.md">名前の由来</a>
+  <a href="docs/Name.md">名前の由来</a> ·
+  <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
 </p>
 
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
@@ -29,7 +39,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 ## AI を研究に積極的に活用できていますか？
 
 数学や科学の分野ではいま、AI が長年の難問そのものに挑み始めています。
-2026 年 8 月から 9 月にかけて、OpenAI による **[10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)**や、Anthropic の Claude による**[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)**・**[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)**が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 **Lean** などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
+2026 年 8 月から 9 月にかけて、OpenAI による [**10 件の未解決問題の解決または大幅な前進**](https://openai.com/index/ten-advances-in-mathematics/)や、Anthropic の Claude による[**リーマンゼータ関数の下界更新**](https://www.anthropic.com/research/riemann-zeta)・[**フェルマーの最終定理の完全形式化**](https://www.anthropic.com/research/formalizing-fermats-last-theorem)が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 **Lean** などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
 さらに 10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かすことで、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
 
 AI が生み出した議論や計算を、独立した仕組みで確かめられる形にする。その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。
@@ -194,10 +204,10 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 
 | 目的 | 文書 |
 | --- | --- |
-| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
-| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) · [作った人](docs/Author.md) |
-| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) |
-| **記録と開発** | [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](docs/LicenseAudit.md) |
+| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](docs/CardGuide.md)（Python・bash・C++ で作る） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
+| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) · [作った人](docs/Author.md) · [まだできないこと](docs/Limitations.md) |
+| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) · [RPC 契約](docs/Protocol.md) · [用語集](docs/Glossary.md) |
+| **記録と開発** | [主張と、それを確かめる方法](docs/Evidence.md) · [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [制作記録](docs/Making.md) · [ライセンス調査](docs/LicenseAudit.md) |
 
 すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
 
