@@ -20,7 +20,7 @@ from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
 DOCS = ROOT / "docs"
-PAGES = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "INSTALL.md", ROOT / "THIRD_PARTY_NOTICES.md", *sorted(DOCS.glob("*.md"))]
+PAGES = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "INSTALL.md", ROOT / "THIRD_PARTY_NOTICES.md", *sorted(p for p in DOCS.glob("*.md") if p.name != "index.md")]
 
 # Paths made by a build or at run time, and files of an earlier setup named as history.
 NOT_IN_GIT = {"web/src/gen", "web/dist", "web/node_modules", "agent/guide/", "tests/python/stress_shutdown.py"}
@@ -70,7 +70,7 @@ def test_paths_named_in_backticks_exist():
 
 def test_every_document_is_in_the_index():
     index = (DOCS / "README.md").read_text()
-    missing = [p.name for p in DOCS.glob("*.md") if p.name != "README.md" and f"({p.name})" not in index]
+    missing = [p.name for p in DOCS.glob("*.md") if p.name not in ("README.md", "index.md") and f"({p.name})" not in index]
     assert not missing
 
 
@@ -153,6 +153,38 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
             assert text(record.record.display.value.text) == shown
     finally:
         d.cleanup()
+
+
+def test_llms_txt_guides_agents_to_every_document():
+    site = "https://gen740.github.io/Tsugumi/"
+    guide = (DOCS / "llms.txt").read_text()
+    assert re.match(r"# Tsugumi\n\n> \S", guide), "an H1, then the summary as a blockquote"
+    links = re.findall(r"^- \[[^\]]+\]\((https://[^)\s]+)\)", guide, flags=re.M)
+    listed = {u[len(site):] for u in links if u.startswith(site)}
+    assert not [u for u in listed if not (DOCS / u).exists()]
+    documents = re.findall(r"^\| \[[^\]]+\]\(([^)]+)\) \|", (DOCS / "README.md").read_text(), flags=re.M)
+    expected = {f"pages/{Path(d).stem.lower().replace('_', '-')}.md" for d in documents}
+    assert not expected - listed
+    assert guide.index("## リポジトリ") < guide.index("## Optional"), "Optional comes last: agents may skip it"
+
+
+def test_markdown_pages_have_links_that_work_on_the_site():
+    bad = []
+    for page in [DOCS / "index.md", *sorted((DOCS / "pages").glob("*.md"))]:
+        for m in re.finditer(r"\]\(([^)\s]+)\)|href=\"([^\"]+)\"|src=\"([^\"]+)\"", strip_code(page.read_text())):
+            link = (m.group(1) or m.group(2) or m.group(3)).partition("#")[0]
+            if link and not re.match(r"[a-z]+:", link) and not (page.parent / link).exists():
+                bad.append(f"{page.name}: {link}")
+    assert not bad, bad
+
+
+def test_pages_point_to_their_markdown_and_the_guide():
+    for page in [DOCS / "index.html", *sorted((DOCS / "pages").glob("*.html"))]:
+        head = page.read_text().split("</head>", 1)[0]
+        markdown = re.search(r'<link rel="alternate" type="text/markdown" href="([^"]+)">', head)
+        guide = re.search(r'<link rel="describedby" href="([^"]+)">', head)
+        assert markdown and (page.parent / markdown.group(1)).exists(), page.name
+        assert guide and (page.parent / guide.group(1)).resolve() == DOCS / "llms.txt", page.name
 
 
 def test_no_bold_marker_is_left_unparsed():

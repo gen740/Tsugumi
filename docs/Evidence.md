@@ -30,10 +30,10 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 
 | 環境 | commit | 結果 |
 | --- | --- | --- |
-| Linux・macOS（GitHub Actions） | [228587d](https://github.com/gen740/Tsugumi/actions/runs/41882476921) | 成功（2026-11-04）。範囲は [ci.yml](../.github/workflows/ci.yml) |
-| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | 94000c7 に文書の変更を加えたもの | C++ は全件成功。Python は 152 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
+| Linux・macOS（GitHub Actions） | [1d3d419](https://github.com/gen740/Tsugumi/actions/runs/41985403435) | [PR #35](https://github.com/gen740/Tsugumi/pull/35) で成功（2026-11-05）。範囲は [ci.yml](../.github/workflows/ci.yml) |
+| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | dd3dd0c に文書の変更を加えたもの | C++ は全件成功。Python は 155 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
 | 共通 VM | | **この commit では未確認。** 26 件はこの環境で流していません |
-| Swift のテスト（`macOS/CoreTests`・`macOS/Tests`） | 228587d | 上の GitHub Actions でのみ確認 |
+| Swift のテスト（`macOS/CoreTests`・`macOS/Tests`） | 1d3d419 | 上の GitHub Actions でのみ確認 |
 
 ## 主張ごとの確かめ方
 
@@ -54,6 +54,7 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 | 常駐 worker で、試行錯誤を重くしない | `test_workers.py::test_resident_worker_serves_later_runs`（VM）、`tests/python/measure_stages.py collatz` | [計測](Development.md#計測2026-11-03高速化後共通-vm) |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | 記録のみ（1 題材）。実 API のテストは `TSUGUMI_LIVE_API=1` で `macOS/CoreTests` の `liveModelChangesRunsAndReports` | [実行記録](AgentRun.md)。テスト用モデルでの自動テストは [Development.md](Development.md#テスト) |
 | 文書のとおりに Card を作って動かせる | `test_docs.py::test_card_guide_runs_as_written` | [はじめての Card](CardGuide.md) |
+| AI にも同じ文書を渡せる（Markdown 版と `llms.txt`） | `test_docs.py::test_llms_txt_guides_agents_to_every_document`、`test_docs.py::test_markdown_pages_have_links_that_work_on_the_site`、`test_docs.py::test_pages_point_to_their_markdown_and_the_guide` | [llms.txt](llms.txt) |
 | 文書のリンク・パス・一覧が実物と合っている | `test_docs.py::test_links_and_anchors_exist`、`test_docs.py::test_paths_named_in_backticks_exist`、`test_docs.py::test_protocol_page_is_generated_from_the_schema` | [test_docs.py](../tests/python/test_docs.py) |
 | 何をハッカソン前に用意し、何を期間中に作ったか | テストなし。Git の履歴を見る | [制作範囲と事前準備](Provenance.md)、[制作記録](Making.md) |
 

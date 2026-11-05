@@ -139,6 +139,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 [GitHub Pages](https://gen740.github.io/Tsugumi/) で読む文書は、`docs/` の Markdown から生成します。リポジトリの設定で、Pages の公開元を `main` ブランチの `/docs` にします。
 
 - **生成**: `node docs/site/build.mjs`（`web/node_modules` の marked を使う）で `docs/index.html` と `docs/pages/*.html` を作ります。手で編集しません。一覧とグループは `docs/README.md` から作ります。
+- **AI 向け**: 同じ生成で、各ページの Markdown 版（`docs/pages/*.md`、README は `docs/index.md`。リンクはサイト上で切れないよう書き換える）と、それらの案内 `docs/llms.txt`（[llms.txt](https://llmstxt.org/)）を作ります。HTML は `rel="alternate"` で Markdown 版を、`rel="describedby"` で `llms.txt` を指します。静的配信なので、`Accept: text/markdown` での出し分けはしません。
 - **動く図**: `docs/site/js/` は、アプリの「Tsugumi を知る」（`macOS/Sources/App/Explainer/`）の描画を Canvas 2D に移したものです。図を入れる位置は `build.mjs` の `STORY` に文の一部で書き、その文がなくなると生成が失敗します。
 - **確認**: `test_docs.py` が、生成物が文書と一致することと、未解釈の `**` が残っていないことを確かめます。
 - **JS なし**: 本文は静的な HTML なので読めます。動きを減らす設定では、図はスクロールに追従し、時計で動く部分は止まります。
