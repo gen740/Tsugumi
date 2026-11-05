@@ -2,7 +2,8 @@
 a Card allowed the network resolves names but reaches nothing else on this
 host (tsugumid's ports and sockets, the web server, by any of its addresses)
 and nothing of the user's session (the clipboard, LaunchServices), and it
-writes only its own output folders."""
+writes only its own output folders. A Python Card works there as anywhere:
+it can ask for its directory while it loads and `main` gets its environment."""
 
 from __future__ import annotations
 
@@ -18,7 +19,8 @@ import pytest
 
 from conftest import Daemon
 from projects import card, conn, run_and_wait, write
-from test_cards_container import TXT, bash, nix_string
+from test_cards_container import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, TXT, bash, check_python_card_environment,
+                                  nix_string, python_probe_project, shown_by_probe)
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -170,6 +172,35 @@ def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(tmp_pa
         assert "resolver: connected" in out
         assert "other: refused" in out
         assert not accepted
+
+
+def python_probe_client(root: Path, main: str, pre: str | None = None):
+    """A tsugumid on this Mac serving a sandboxed Python Card `show`."""
+    defs, cards, conns, files = python_probe_project(main, pre)
+    write(root, defs, cards, conns, files)
+    d = Daemon(root).start()
+    c = d.client()
+    c.hello()
+    return d, c
+
+
+def test_a_python_card_can_ask_for_its_directory_while_it_loads(tmp_path):
+    """The worker is started from where tsugumid runs, which the sandbox does
+    not let it read: torch failed on getcwd when imported at the top of main.py."""
+    d, c = python_probe_client(tmp_path / "p", CWD_AT_LOAD_MAIN)
+    try:
+        _, shown = shown_by_probe(c, timeout=600)
+        assert shown.endswith("/work"), shown
+    finally:
+        d.cleanup()
+
+
+def test_a_python_card_gets_its_environment(tmp_path):
+    d, c = python_probe_client(tmp_path / "p", ENV_MAIN, ENV_PRE_RUN)
+    try:
+        check_python_card_environment(c)
+    finally:
+        d.cleanup()
 
 
 def test_a_card_with_network_resolves_a_name(tmp_path):
