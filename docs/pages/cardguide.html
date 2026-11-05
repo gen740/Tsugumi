@@ -131,7 +131,7 @@ def main(ctx):
 </ol>
 <h2 id="条件を変えて試す">条件を変えて試す</h2>
 <ul>
-<li><strong>パラメータだけを変える。</strong> <code>multiply</code> の <code>factor</code> を 3 にして、右クリックの「ここから実行」で <code>multiply</code> だけを実行します。<code>settings</code> は動かず、保存された入力で <code>21 × 3 = 63</code> になります。<code>factor</code> は Nix に渡らないので、ビルドもやり直しません。</li>
+<li><strong>パラメータだけを変える。</strong> <code>multiply</code> の <code>factor</code> を 3 にして、右クリックの「この Card だけ実行（最後の入力）」で <code>multiply</code> だけを実行します。<code>settings</code> は動かず、保存された入力で <code>21 × 3 = 63</code> になります。<code>factor</code> は Nix に渡らないので、ビルドもやり直しません。</li>
 <li><strong>上流を変える。</strong> <code>settings</code> の <code>value</code> を変えたら、<code>start</code> から実行し直します。部分実行は保存された入力を使うので、上流の変更は全体を実行するまで届きません（<a href="qa.html#q5-解析の途中からやり直せることにはどんな意味がありますか">Q&amp;A の Q5</a>）。</li>
 <li><strong>前の版に戻る。</strong> 実行のたびに変更が git に commit されます。Workflow メニューの「版の履歴…」（⌥⌘Y）から、前の版に戻って別の試行を始められます（<a href="versions.html">版の管理</a>）。</li>
 </ul>
