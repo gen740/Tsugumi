@@ -160,10 +160,23 @@ def last_delegate_task(messages):
 
 def decide_delegate(messages, cards, start):
     results = tool_results(messages[start + 1:])
+    together = any("run them together" in b.get("text", "") for b in blocks(messages[start]))
     if not results:
-        return ("tool", "delegate", {"tasks": [
-            {"name": c, "cards": [c], "instruction": f"Implement the Draft {c} and run it."} for c in cards]})
+        tasks = [{"name": c, "cards": [c], "instruction": f"Implement the Draft {c} and run it."} for c in cards]
+        return ("tool", "delegate", {"runs": "together", "tasks": tasks} if together else {"tasks": tasks})
     name, res, is_error = results[-1]
+    value = res.get("value", {}) if isinstance(res, dict) else {}
+    # Together: the helpers have written; the one run is this Agent's.
+    if together and not is_error:
+        if name == "delegate":
+            return ("tool", "project_inspect", {})
+        if name == "project_inspect":
+            return ("tool", "run", {"base_rev": str(value["rev"]), "card": {"segments": [trigger_of(value)]}})
+        if name in ("run", "run_status"):
+            status = value.get("run", value)
+            if status.get("state") not in TERMINAL:
+                return ("tool", "run_status", {"run_id": status.get("run_id")})
+            return ("text", f"Ran once: {status.get('state')}.")
     text = res.get("error", json.dumps(res)) if isinstance(res, dict) else str(res)
     return ("text", ("Delegation failed: " if is_error else "The helpers reported. ") + text)
 
@@ -189,6 +202,7 @@ def decide_helper(messages, helper, cards):
         if is_error:
             return ("text", f"{helper}: saving failed: {value.get('kind')} {value.get('diagnostic')}")
         inspect = next(r for n, r, _ in tool_results(messages) if n == "project_inspect")
+        # (told to run together, it tries anyway: the app must refuse)
         return ("tool", "run", {"base_rev": str(value["rev"]), "card": {"segments": [trigger_of(inspect["value"])]}})
     if name in ("run", "run_status"):
         if is_error:

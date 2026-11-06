@@ -526,7 +526,7 @@ export function referenceDemos(demos: string): Record<string, string> {
 
 /** A helper started by `delegate`: its name, the root-level Cards it owns
  *  and its task. Its saves may change only those Cards' definitions. */
-export interface Helper { name: string; cards: string[]; instruction: string }
+export interface Helper { name: string; cards: string[]; instruction: string; /** How the helpers meet ("runs": "together"): it writes and checks but never runs; the main Agent runs once after all have reported. */ runsTogether?: boolean }
 
 const DELEGATE_TOOL: ToolSpec = { ...AGENT.delegateTool, payloadType: -1, object: -1, mutating: false }
 /** How long a helper's save or run waits for the others' (busy), ms. */
@@ -536,11 +536,15 @@ const HELPER_STEPS = 40
 /** The tasks of a delegate call, or why they cannot be done. */
 export function delegateTasks(input: string): Helper[] | string {
   let raw: unknown
+  let runs: unknown = 'each'
   try {
-    raw = JSON.parse(input)?.tasks
+    const parsed = JSON.parse(input)
+    raw = parsed?.tasks
+    runs = parsed?.runs ?? 'each'
   } catch {}
   if (!Array.isArray(raw)) return 'tasks is not a list of tasks'
   if (raw.length < 2 || raw.length > 8) return `${raw.length} tasks`
+  if (runs !== 'each' && runs !== 'together') return `runs is ${String(runs)}`
   const helpers: Helper[] = []
   const owner = new Map<string, string>()
   for (const t of raw as Record<string, unknown>[]) {
@@ -555,7 +559,7 @@ export function delegateTasks(input: string): Helper[] | string {
       if (owner.has(c)) return `${c} is in both ${owner.get(c)} and ${name}`
       owner.set(c, name)
     }
-    helpers.push({ name, cards, instruction })
+    helpers.push({ name, cards, instruction, runsTogether: runs === 'together' })
   }
   return helpers
 }
@@ -704,8 +708,10 @@ export class Agent {
     if (this.role === 'guide') return GUIDE_PROMPT
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
     if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote
-    return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
-      name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
+    const h = AGENT.helper, together = this.helper.runsTogether
+    return SYSTEM_PROMPT + '\n\n' + fill(h.prompt, {
+      name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction,
+      running: together ? h.together : h.each, report: together ? h.togetherReport : h.eachReport })
   }
 
   /** One tool call from an agent outside the web UI (Claude Code through the
@@ -749,7 +755,8 @@ export class Agent {
     }
     this.save()
     const text = tasks.map((h, i) => `## ${h.name} (${h.cards.join(', ')}): ${reports[i].outcome}\n${reports[i].report || '(no report)'}`).join('\n\n')
-    return ['Reports of the helpers. Check each Card with run_record before reporting to the user.\n\n' + text,
+    const header = tasks.some((h) => h.runsTogether) ? AGENT.helper.reportsTogether : AGENT.helper.reportsEach
+    return [header + '\n\n' + text,
       !reports.some((r) => r.outcome === 'finished')]
   }
 
@@ -1109,6 +1116,10 @@ export class Agent {
     const outside = this.helper && name === 'project_save' ? helperOutside(this.helper, full.changes) : undefined
     if (this.helper && outside) {
       return this.finish(record, fill(AGENT.helper.outside, { name: this.helper.name, cards: this.helper.cards.join(', '), what: outside }), true, events)
+    }
+    // A helper told only to write leaves the run to the main Agent.
+    if (this.helper?.runsTogether && name === 'run') {
+      return this.finish(record, fill(AGENT.helper.runRefused, { name: this.helper.name }), true, events)
     }
     if (spec.mutating) {
       record.opId = record.opId ?? randomUUID()
