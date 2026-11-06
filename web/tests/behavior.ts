@@ -23,3 +23,5 @@ await import("./table")
 await import("./draft")
 
 await import("./modelMenu")
+
+await import("./projectActions")

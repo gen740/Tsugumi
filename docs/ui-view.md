@@ -18,7 +18,7 @@ TsugumiApp
 |           +-- 中央: CanvasWorkspace > GraphCanvas
 |           |   +-- Card / 接続 / グループ / 付箋 / 出力表示
 |           |   +-- 上中央: CanvasRunControl
-|           |   +-- 右上: CanvasDraftControls
+|           |   +-- 右上: CanvasDraftControls、Home へ戻る・チャットのボタン
 |           |   `-- 左下: 表示・整理の操作バー
 |           +-- 下: 状態表示 / ログ・タイムライン
 |           `-- 右: ChatPanel（表示切替・別ウインドウ化）
