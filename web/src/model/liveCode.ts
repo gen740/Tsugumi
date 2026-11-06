@@ -2,8 +2,7 @@
 // read out of a save's arguments while the model writes them, shown as far as
 // they have arrived, and placed clear of the bird by its Card.
 
-/** A file as it arrives in the arguments of a save (project_save,
- *  project_validate): `path` is undefined until its key has come, `text` is what
+/** A file as it arrives in the arguments of a save (project_save): `path` is undefined until its key has come, `text` is what
  *  has come of `bytes`, and `done` says the change is complete. */
 export interface SourceWriting { path?: string; text: string; done: boolean }
 
@@ -87,7 +86,7 @@ export class SourceWritingScanner {
 }
 
 /** The tools whose arguments carry whole files, shown as they are written. */
-export const writesSources = (tool: string) => tool === 'project_save' || tool === 'project_validate'
+export const writesSources = (tool: string) => tool === 'project_save'
 
 /** `definitions/<id>/<file>` → its Card and file. */
 export function fileOfCard(path: string): { card: string; file: string } | undefined {

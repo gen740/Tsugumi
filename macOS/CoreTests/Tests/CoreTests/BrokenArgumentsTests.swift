@@ -38,7 +38,7 @@ import TsugumiRPC
     _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
     let agent = try makeAgent(h, client)
     let shown = try await agent.runTool(id: "t", name: "guide_show", input: #"{"text":"hi"#) { _ in }
-    guard case .toolResult(_, let content, let isError) = shown else { Issue.record("a result expected"); return }
+    guard case .toolResult(_, let content, let isError, _) = shown else { Issue.record("a result expected"); return }
     #expect(isError && content.contains("INVALID_JSON"), "\(content)")
     await client.close()
   }
