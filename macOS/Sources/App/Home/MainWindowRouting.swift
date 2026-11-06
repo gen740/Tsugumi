@@ -104,7 +104,8 @@ extension AppModel {
     }
   }
 
-  /// Back to Home in this window: allowed only when nothing runs and the needed save succeeded.
+  /// Back to Home in this window: nothing may be running. What cannot be saved
+  /// is not left behind silently: the window asks whether to give it up.
   func leaveProject(in w: Workspace) {
     guard let s = w.session else { return }
     if s.runActive {
@@ -114,12 +115,20 @@ extension AppModel {
     Task {
       if s.dirty { await s.save() }
       if s.dirty {
-        w.alert = String(localized: "変更を保存できませんでした: \(s.saveError ?? "")。変更は保持しています。")
+        w.unsavedReason = s.saveError ?? s.connectionMessage ?? String(localized: "変更を保存できませんでした。")
         return
       }
       w.close()
       await release(s)
     }
+  }
+
+  /// The answer to that question: the changes go, and the window goes back to Home.
+  func discardAndLeave(in w: Workspace) {
+    guard let s = w.session else { return }
+    s.discardDraft()
+    w.close()
+    Task { await release(s) }
   }
 
   /// A main window closed with its project: saved, then given back like leaving it.

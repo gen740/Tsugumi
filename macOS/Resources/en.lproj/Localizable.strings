@@ -115,6 +115,7 @@
 "Got it" = "Got it";
 "Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。" = "Whether the Tsugumi on Home and while loading moves. By default it follows macOS “Reduce motion”.";
 "Home へ戻る" = "Back to Home";
+"Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: %@" = "To go back to Home, the changes that cannot be saved are discarded. Discarded changes cannot be recovered.\n\nWhy they cannot be saved: %@";
 "JSON として読めません: %@" = "Not readable as JSON: %@";
 "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。" = "Saved in the Keychain. The key is never passed to core or Cards, and is not left in projects, settings or logs.";
 "Mac のフォルダに書く" = "Write to folders of the Mac";
@@ -587,6 +588,7 @@
 "保存しました。" = "Saved.";
 "保存せずに終了" = "Quit Without Saving";
 "保存できていない変更は保持しています（起動すると保存します）" = "Changes not saved yet are kept (saved once it starts)";
+"保存できない変更があります" = "Some changes cannot be saved";
 "保存できない変更を破棄して、保存済みの内容に戻しますか？" = "Discard the changes that cannot be saved and go back to the saved contents?";
 "保存できなかったため終了しませんでした" = "Not quitting: the changes could not be saved";
 "保存できませんでした: " = "Could not save: ";
@@ -739,10 +741,10 @@
 "変更を保存" = "Save changes";
 "変更を保存しています" = "Saving changes";
 "変更を保存できないため実行できません。" = "Cannot run: the changes cannot be saved.";
-"変更を保存できませんでした: %@。変更は保持しています。" = "Could not save the changes: %@. The changes are kept.";
 "変更を保存できませんでした。" = "Could not save the changes.";
 "変更を破棄" = "Discard Changes";
 "変更を破棄…" = "Discard Changes…";
+"変更を破棄して Home へ戻る" = "Discard Changes and Go Back to Home";
 "変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
 "外部の変更を再読込" = "Reload External Changes";

@@ -30,6 +30,8 @@ export function App() {
   const [workspace] = useState(() => new Workspace())
   useObserve(workspace)
   const [switchError, setSwitchError] = useState<string>()
+  // Leaving was asked for and the changes cannot be saved: the way out is to give them up.
+  const [unsaved, setUnsaved] = useState<{ reason: string; answer: (giveUp: boolean) => void }>()
   const [duplicating, setDuplicating] = useState(false)
   const params = new URLSearchParams(location.search)
   const detachedScope = params.get('scope')
@@ -76,11 +78,8 @@ export function App() {
       setSwitchError('実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。')
       return false
     }
-    if (s.dirty) await s.save()
-    if (s.dirty) {
-      setSwitchError(`変更を保存できませんでした: ${s.saveError ?? ''}。変更は保持しています。`)
-      return false
-    }
+    const settled = await s.settleBeforeLeaving((reason) => new Promise((answer) => setUnsaved({ reason, answer })))
+    if (!settled) return false
     workspace.close()
     reportPageProject(undefined)
     const u = new URL(location.href)
@@ -253,6 +252,19 @@ export function App() {
       {duplicating && workspace.session && (
         <DuplicateProjectSheet dir={workspace.session.dir} onClose={() => setDuplicating(false)}
           onError={(m) => setSwitchError(m)} onCreated={(p) => void openProject(p)} />
+      )}
+      {unsaved && (
+        <Sheet onClose={() => { setUnsaved(undefined); unsaved.answer(false) }} width={420}>
+          <div className="confirm">
+            <div className="confirm-title">保存できない変更があります</div>
+            <div className="secondary">Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。</div>
+            <div className="secondary selectable">保存できない理由: {unsaved.reason}</div>
+            <div className="row end gap8">
+              <Button onClick={() => { setUnsaved(undefined); unsaved.answer(false) }}>キャンセル</Button>
+              <Button kind="danger" onClick={() => { setUnsaved(undefined); unsaved.answer(true) }}>変更を破棄して Home へ戻る</Button>
+            </div>
+          </div>
+        </Sheet>
       )}
       {switchError && (
         <Sheet onClose={() => setSwitchError(undefined)} width={420}>

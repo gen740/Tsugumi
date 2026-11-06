@@ -48,3 +48,5 @@ await import("./arrange")
 await import("./freeSpot")
 
 await import("./deleteCard")
+
+await import("./saveFailure")

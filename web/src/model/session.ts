@@ -1141,6 +1141,12 @@ export class ProjectSession extends Observable {
   /** Drops every unsaved edit and follows the latest confirmed document
    *  (only for edits that cannot be saved). */
   discardDraft() {
+    this.dropDraft()
+    // A save on its way answers about the draft that went: nothing of it stays.
+    void this.saveTask?.then(() => this.dropDraft())
+  }
+
+  private dropDraft() {
     this.project = clone(this.confirmedProject)
     this.layout = clone(this.confirmedLayout)
     this.sourceEdits = new Map()
@@ -1150,9 +1156,22 @@ export class ProjectSession extends Observable {
     this.sourceBases = new Map()
     this.draftBase = undefined
     this.externalBases = new Map()
+    this.pendingCardRenames = []
+    this.saveAgain = false
+    this.conflictRetries = 0
     this.saveError = undefined
     this.savingAfterRun = false
     this.changed()
+  }
+
+  /** Before leaving the project: what it holds is saved, or the user is asked why it
+   *  cannot be and may give it up. Whether the project can be left now. */
+  async settleBeforeLeaving(giveUp: (reason: string) => Promise<boolean>): Promise<boolean> {
+    if (this.dirty) await this.save()
+    if (!this.dirty) return true
+    if (!(await giveUp(this.saveError ?? this.connectionMessage ?? '変更を保存できませんでした。'))) return false
+    this.discardDraft()
+    return true
   }
 
   /** The unsaved edits as text, for copying them out when they cannot be saved. */
@@ -1216,10 +1235,18 @@ export class ProjectSession extends Observable {
    *  their way, so the save is tried again once they arrived. */
   private async saveOnce(): Promise<void> {
     const client = this.client
-    if (!this.dirty || !client) return
+    if (!client) return
+    // Nothing left to save (undone, or met by what arrived): no failure is left either.
+    if (!this.dirty) {
+      this.saveError = undefined
+      return
+    }
     await this.fillUndoSources()
     if (this.draftBase && this.draftBase.rev !== this.rev) this.rebase()
-    if (!this.dirty) return
+    if (!this.dirty) {
+      this.saveError = undefined
+      return
+    }
     this.saving = true
     this.changed()
     try {
@@ -2862,6 +2889,10 @@ export class ProjectSession extends Observable {
             }
             ;(d as JObj).set('x', real(f.x))
             ;(d as JObj).set('y', real(f.y))
+            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+            const size = frames.find((x) => x.id === f.id)!
+            ;(d as JObj).set('width', real(size.width))
+            ;(d as JObj).set('height', real(size.height))
           }
         }
         if (placed.notes.length) {
