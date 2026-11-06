@@ -53,7 +53,7 @@ struct GraphCanvas: View {
         ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
           groupFrame(id)
         }
-        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, thread: $0.thread) },
+        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
                   animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
         if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
@@ -268,6 +268,7 @@ struct GraphCanvas: View {
     var connection: Int?   // index in the scope's connections (nil: boundary wire or display link)
     var path: Path         // world units
     var style: WireDraw.Style
+    var dotted = false     // an end of it is a Draft
     var thread: AgentPresence.Wire? = nil  // a connection, as the Agent's thread knows it
   }
 
@@ -276,6 +277,7 @@ struct GraphCanvas: View {
     let shown = Set(cardKeys)
     return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
                             wire: { w in routed.first { $0.thread == w }?.path },
+                            dotted: { w in session.isDraftWire(from: w.from, to: w.to) },
                             screen: { screen($0) }, zoom: camera.zoom)
   }
 
@@ -297,18 +299,20 @@ struct GraphCanvas: View {
       ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
       out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
+                            dotted: session.isDraftWire(from: fk, to: tk),
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
-        out.append(RoutedWire(connection: nil, path: Path(), style: .normal))
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal, dotted: session.isDraftWire(from: inner.0, to: nil)))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((portWorld(inner.0, inner.1, output: true), p.point))
-        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil)))
+        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil),
+                              dotted: session.isDraftWire(from: inner.0, to: nil)))
       }
     }
     for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }

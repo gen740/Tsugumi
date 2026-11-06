@@ -1286,6 +1286,8 @@ struct WireDraw {
   enum Style { case normal, carried, active, selected, display }
   var path: Path
   var style: Style
+  /// A wire to or from a Draft is dotted, whatever its style.
+  var dotted = false
   /// The connection, when the Agent may be threading it (drawn by the
   /// presence layer meanwhile).
   var thread: AgentPresence.Wire? = nil
@@ -1735,6 +1737,13 @@ struct WireLayer: View {
   /// The active wires' dashes, and how fast they flow (points per second).
   static let dash: [CGFloat] = [8, 6]
   static let flow: Double = 30
+  /// A Draft's wires: round dots, spaced so that they flow without a jump
+  /// at the phase of the active wires' dashes (a whole number per period),
+  /// and never smaller than can be seen on a Canvas zoomed out.
+  static let dot: [CGFloat] = [0, dash.reduce(0, +) / 3]
+  static let dotMin: CGFloat = 2.2
+  /// A selected wire is thicker: further apart, its dots still read as dots.
+  static let dotSelected: [CGFloat] = [0, dash.reduce(0, +) / 2]
 
   var body: some View {
     let anyActive = animate && wires.contains { $0.style == .active }
@@ -1751,17 +1760,18 @@ struct WireLayer: View {
         for wire in wires {
           // A wire the Agent is threading is drawn by the presence layer.
           if let th = wire.thread, presences.contains(where: { $0.thread(th, at: t.date) != .plain }) { continue }
-          let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
+          let dots = wire.dotted ? Self.dot : []
+          let width = { (w: CGFloat) in wire.dotted ? max(w, Self.dotMin) : w }
           switch wire.style {
           case .normal:
-            ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: round)
+            ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: StrokeStyle(lineWidth: width(w), lineCap: .round, lineJoin: .round, dash: dots))
           case .carried:
-            ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: w + 0.4, lineCap: .round, lineJoin: .round))
+            ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: width(w + 0.4), lineCap: .round, lineJoin: .round, dash: dots))
           case .active:
-            ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: w + 0.6, lineCap: .round, lineJoin: .round,
-                                                                             dash: anyActive ? Self.dash : [], dashPhase: phase))
+            ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: width(w + 0.6), lineCap: .round, lineJoin: .round,
+                                                                             dash: wire.dotted ? dots : anyActive ? Self.dash : [], dashPhase: phase))
           case .selected:
-            ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: w + 1.4, lineCap: .round, lineJoin: .round))
+            ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: width(w + 1.4), lineCap: .round, lineJoin: .round, dash: wire.dotted ? Self.dotSelected : []))
           case .display:
             ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
           }

@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import Testing
+@testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
@@ -120,6 +121,56 @@ import Testing
   let long = size([String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)])
   #expect(long.width <= 361)
   #expect(long.height >= short.height + 40, "\(short) \(long)")
+}
+
+/// A wire to or from a Draft is dotted until the Draft has code. The web checks
+/// the same (web/tests/draftWires.tsx).
+@MainActor @Test func draftWiresAreDotted() throws {
+  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
+  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  s.project = try JSONValue.parse(document)
+  let start = s.addCard(template: .trigger, in: [], at: .zero, name: "start")
+  let log = s.addCard(template: .logger, in: [], at: CGPoint(x: 600, y: 0), name: "log")
+  let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
+
+  #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
+  #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
+  #expect(s.isDraftWire(from: draft, to: draft), "between Drafts")
+  #expect(s.isDraftWire(from: draft, to: nil), "from a Draft to the bar of a Card in Card")
+  #expect(!s.isDraftWire(from: start, to: log), "between Cards with code")
+  #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
+
+  // Code written for the Draft: its wires are solid again, without any other change.
+  s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
+  #expect(s.kind(draft) == .code)
+  #expect(!s.isDraftWire(from: draft, to: log))
+  #expect(!s.isDraftWire(from: start, to: draft))
+
+  // The dots flow with the active wires' phase, which wraps at one dash period.
+  let (on, off) = (WireLayer.dot[0], WireLayer.dot[1])
+  #expect(on == 0, "round dots")
+  #expect(off > 0)
+  let dots = WireLayer.dash.reduce(0, +) / off
+  #expect(abs(dots - dots.rounded()) < 1e-9, "a whole number of dots per period")
+}
+
+/// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
+@MainActor @Test func aThumbnailDotsADraftsWires() throws {
+  let card = { (id: String, kind: String) in
+    "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": [{\"name\": \"in\"}], \"outputs\": [{\"name\": \"out\"}], \"params\": [], \"permissions\": []}"
+  }
+  let wire = { (a: String, b: String) in "{\"from\": \"\(a)\", \"fromPort\": \"out\", \"to\": \"\(b)\", \"toPort\": \"in\"}" }
+  let json = """
+    {"flow": "topToBottom", "draftOnly": true, "frames": {}, "steps": [], "final": {}, "outputs": {},
+     "cards": [\(card("a", "code")), \(card("b", "code")), \(card("d", "draft"))],
+     "wires": [\(wire("a", "b")), \(wire("b", "d")), \(wire("d", "a"))]}
+    """
+  let scene = DemoScene(try JSONDecoder().decode(DemoPlayerData.self, from: Data(json.utf8)))
+  #expect(scene.wires.map(\.dotted) == [false, true, true])
 }
 
 @Test func aDraftOffersItsNextPortAndOpensWhileWritten() {

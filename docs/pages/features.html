@@ -222,6 +222,7 @@ in
 <h3 id="draft-から-card-を生成">Draft から Card を生成</h3>
 <ul>
 <li>Draft の概要・処理内容・追加コンテキスト・ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させてから、ビルドと実行による検証まで行わせます。</li>
+<li>順序は「先に書いて、あとで実行」です。Agent は Card をできるだけ書き終えてから、トリガーから 1 回で実行して確かめます。途中で実行するのは、次を書くのに実行でしか得られない情報が要るときだけです（ダウンロードしたファイルの列など）。</li>
 <li>途中の失敗やキャンセルでは、中途半端な変更を保存しません（計画は残ります）。</li>
 <li>Draft に書かれていた意図はそのまま残ります。空だった概要と追加コンテキストは、チャットでの指示と Draft の内容から Agent が埋めます（書かれていないことは足しません）。埋めない保存と、書かれていた内容を変える保存は <code>tsugumid</code> が拒否します。</li>
 </ul>
@@ -230,7 +231,7 @@ in
 <li>互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。</li>
 <li>helper はそれぞれ自分の会話と同じツールを持ち、受け持った Card の定義だけを保存できます（<code>tsugumi.json</code>・配置・ほかの Card は変えられません）。</li>
 <li>helper どうしの保存と実行がぶつかったとき（実行中の <code>busy</code>、<code>revision_conflict</code>）は、Agent の側で実行の終わりを待ち、最新のリビジョンから送り直します。</li>
-<li>待ち合わせの戦術は、Agent が手分けするときに選びます（<code>delegate</code> の <code>runs</code>）。<code>each</code>（既定）では helper がそれぞれ実行し、1 つの実行が終わるまでほかの helper の保存と実行は待ちます。<code>together</code> では helper は書いて検証するだけで（実行しようとしても断られます）、全員の報告がそろってから Agent が 1 回で実行します。同じグラフの枝を手分けするときは <code>together</code> が向いています。</li>
+<li>待ち合わせの戦術は、Agent が手分けするときに選びます（<code>delegate</code> の <code>runs</code>）。<code>each</code>（既定）では helper がそれぞれ実行し、1 つの実行が終わるまでほかの helper の保存と実行は待ちます。<code>together</code> では helper は書いて検証するだけで（実行しようとしても断られます）、全員の報告がそろってから Agent が 1 回で実行します。Agent は、helper が書くのに自分の実行の結果を必要とするときを除いて <code>together</code> を選びます。</li>
 <li>helper の報告がそろうと、Agent がそれぞれの Card を確かめて報告します。helper の会話は元の会話の隣（<code>&lt;会話&gt;.helpers/</code>）に残ります。</li>
 </ul>
 <h3 id="skill-と会話">Skill と会話</h3>

@@ -10,7 +10,7 @@ import { createRoot } from 'react-dom/client'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import {
   applicableStages, Camera, CardGeometry, CardNodeData, displayLink, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
-  StageProgress, StageStatus, union, WireRouter,
+  isDraftWire, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
 import { cardState, displaySummary, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
 import { permissionInfo, PermissionKind } from '../model/permissions'
@@ -365,6 +365,7 @@ function Canvas({ data, frame, base, compact, selected, onSelect, motion, childr
   const draws: WireDraw[] = data.wires.map((w) => ({
     d: pathToScreen(router.route(point(w.from, w.fromPort, true), point(w.to, w.toPort, false)).d, camera),
     style: wireStyle(data, stepOf, w, frame),
+    dotted: isDraftWire((id) => byId.get(id)?.doc.kind, w.from, w.to),
   }))
   const shownFrames = frames.filter(({ p }) => {
     const phase = phaseOf(stepOf, p.doc.id, frame)
