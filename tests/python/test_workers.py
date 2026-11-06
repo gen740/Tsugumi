@@ -238,6 +238,14 @@ def number(c, run_id, card_id):
     return log(c, run_id, card_id)
 
 
+def fan_out(names):
+    """The trigger's value to each named Card: an output feeds one input, so
+    through a fork with one branch per Card (its Card, wires)."""
+    fork = {"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": list(names)}]}
+    wires = [conn("start", "out", "fan", "in")] + [conn("fan", n, n, "go") for n in names]
+    return fork, wires
+
+
 def test_network_is_off_unless_the_card_allows_it(env):
     """Experimental network setting: without it no worker step (preRun, run,
     postRun) reaches outside; with it, the run step does. Sandboxed and not."""
@@ -247,8 +255,8 @@ def test_network_is_off_unless_the_card_allows_it(env):
         cards[name] = bash(REACH + '; echo "reach=$v"', inputs=["go"],
                            pre=REACH.replace('> "$TSUGUMI_OUTPUT"', "> /dev/null") + '; echo "pre=$v" >&2', **settings)
     names = [n for n in cards if n != "trigger"]
-    c = load(env, cards, [card("start", "trigger")] + [card(n, n) for n in names],
-             [conn("start", "out", n, "go") for n in names])
+    cards["fan"], wires = fan_out(names)
+    c = load(env, cards, [card("start", "trigger"), card("fan", "fan")] + [card(n, n) for n in names], wires)
     run_id, st = run_and_wait(c, "start", timeout=900)
     for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
         out = number(c, run_id, name)
@@ -271,9 +279,10 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
                   hostFolders=[{"path": str(shared), "name": "out", "write": True}])
     other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
-    load(env, {"trigger": {"template": "trigger"}, "read": read, "write": write_, "other": other},
-         [card("start", "trigger"), card("read", "read"), card("write", "write"), card("other", "other")],
-         [conn("start", "out", n, "go") for n in ("read", "write", "other")])
+    fork, wires = fan_out(["read", "write", "other"])
+    load(env, {"trigger": {"template": "trigger"}, "fan": fork, "read": read, "write": write_, "other": other},
+         [card("start", "trigger"), card("fan", "fan"), card("read", "read"), card("write", "write"),
+          card("other", "other")], wires)
     # The share is set when the project's environment starts.
     env.stop()
     env.start()
