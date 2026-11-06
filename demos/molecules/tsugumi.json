@@ -1,0 +1,105 @@
+{
+  "name": "分子の物性",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "paste"
+      },
+      {
+        "id": "properties"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "structures"
+      },
+      {
+        "id": "lipinski"
+      },
+      {
+        "id": "chemspace"
+      },
+      {
+        "id": "similarity"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "paste",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "paste",
+          "port": "pasted"
+        },
+        "to": {
+          "card": "properties",
+          "port": "pasted"
+        }
+      },
+      {
+        "from": {
+          "card": "properties",
+          "port": "molecules"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "structures"
+        },
+        "to": {
+          "card": "structures",
+          "port": "molecules"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "lipinski"
+        },
+        "to": {
+          "card": "lipinski",
+          "port": "molecules"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "similarity"
+        },
+        "to": {
+          "card": "similarity",
+          "port": "molecules"
+        }
+      },
+      {
+        "from": {
+          "card": "lipinski",
+          "port": "checked"
+        },
+        "to": {
+          "card": "chemspace",
+          "port": "checked"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "description": "構造の似かた",
+  "content": "Morgan フィンガープリント（半径 radius）の Tanimoto 係数を分子の組ごとに求め、ヒートマップにする。",
+  "outputs": []
+}

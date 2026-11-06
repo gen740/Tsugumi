@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "molecules"
+    }
+  ],
+  "params": [
+    {
+      "name": "radius",
+      "type": "uint64",
+      "data": 2
+    },
+    {
+      "name": "bits",
+      "type": "uint64",
+      "data": 2048
+    }
+  ]
+}

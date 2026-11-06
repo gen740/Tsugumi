@@ -1,0 +1,17 @@
+namespace dose;
+// True parameters per compound; responses are compounds x concentrations x replicates.
+table Plate {
+  names:[string];
+  bottom:[double];
+  top:[double];
+  ec50:[double];
+  hill:[double];
+  conc:[double];
+  replicates:ulong;
+  response:[double];
+  seed:ulong;
+  noise_sd:double;
+  dilution:double;
+}
+table Outputs { plate:Plate (required); }
+root_type Outputs;

@@ -16,6 +16,9 @@
 | [Newton 法](#newton-法newton) | 複素平面での Newton 法 | 初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う |
 | [薬物動態](#薬物動態pharmacokinetics) | 架空の薬物の血中濃度 | 投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない） |
 | [最大流と最小カット](#最大流と最小カットmax-flow) | 最大流と最小カット | 最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る |
+| [濃度–反応曲線](#濃度反応曲線dose-response) | 濃度–反応曲線（合成データ） | 4 パラメータのロジスティックのあてはめとブートストラップ区間。濃度範囲が EC50 を挟まないと区間が開く |
+| [分子の物性](#分子の物性molecules) | 公開された分子の物性（RDKit） | SMILES から物性・構造・類似度を求める。分子を貼り付けて試せて、不正な SMILES は理由を示す |
+| [細胞画像の計数](#細胞画像の計数cell-count) | 細胞画像の計数（合成データと実画像） | 正解のある画像で閾値と watershed を採点し、どこで破綻するかを見る |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
@@ -309,6 +312,87 @@ start → settings → network → flow → cut ─ share ─┬→ verify
 - `whatif` の `edge` を `b3->c3` にする。10 増やしても 8 しか増えない。次のカットが詰まるからで、`raise_by` を増やしても増分はそこで止まる。
 - `settings` の `seed` を変えて全体を実行する。別のネットワークでも `verify` の値はすべて一致する。
 
+### 濃度–反応曲線（`dose-response`）
+
+架空の化合物 A・B のプレートを乱数で作り（合成データ）、4 パラメータロジスティック（Hill 曲線）を当てはめて、EC50 と Hill 勾配に信頼区間を付けます。
+真の値を知っているので、回復できたかをその場で確かめられます。実在の薬ではなく、医療上の助言でもありません。
+
+```text
+start → generate ─plate→ share ┬→ fit ─fit─────────→ bootstrap ─intervals→ compare
+                               ├──────── plate ────→ bootstrap
+                               └→ range
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `generate` | Python | `seed` の乱数で、真の曲線に正規ノイズを乗せた反応を作る。濃度は `top_um` から `dilution` 倍ずつ薄めた `concentrations` 点、各濃度 `replicates` 反復 |
+| `share` | fork | プレートを `fit`・`bootstrap`・`range` に配る |
+| `fit` | Python | scipy の `curve_fit` で bottom・top・log10 EC50・Hill 勾配を求め、データと曲線を描く |
+| `bootstrap` | Python | 残差ブートストラップ（`n_boot` 回）で EC50 と Hill 勾配の 95% 区間を求め、真の値が入るかを表にする。区間が測定範囲を出ると、理由を添えて警告する |
+| `compare` | Python | EC50 の比（相対力価）と区間、Hill 勾配の差を示す。区間が 1 を含めば「差は言えない」と表示する |
+| `range` | Python | 最高濃度だけを変えた合成プレートを作り直し、EC50 の区間の幅を最高濃度に対して描く |
+
+**試すこと**
+- `generate` の `noise_sd` を 12 にして実行する。区間が広がる（B の EC50 で 1.2 倍から 1.7 倍）。
+- `generate` の `top_um` を 1 にして実行する。B の曲線は上がりきらず、区間の幅が 1000 倍を超えて `bootstrap` が「濃度範囲が EC50 を挟んでいません」と警告し、`compare` は「力価の差は言えない」と表示する。
+- `concentrations` や `replicates` を減らす。`bootstrap` の `n_boot` を変えて、その Card だけを実行し直す。
+
+### 分子の物性（`molecules`）
+
+分子を文字列で表す SMILES から、RDKit で物性を計算し、構造式、Lipinski の Rule of Five、分子量と logP の地図、構造の似かたを並べます。
+Canvas の `paste` に SMILES を貼れば、その分子が全部の Card に加わります。
+
+```text
+start → paste ─pasted→ properties ─molecules→ share ┬→ structures
+                                                    ├→ lipinski ─checked→ chemspace
+                                                    └→ similarity
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `paste` | input | 試したい分子の `name` と `smiles` を流す（既定は dopamine。`smiles` を空にすると一覧だけになる） |
+| `properties` | Python | `molecules`（「名前: SMILES」の一覧）と貼られた分子を読み、分子量・logP（Crippen）・TPSA・HBD・HBA・回転可能結合を表にする。読めない SMILES は理由を示して飛ばす |
+| `share` | fork | 物性を 3 つの Card に配る |
+| `structures` | Python | 構造式を名前と分子式を添えて格子状に描く |
+| `lipinski` | Python | 分子量 ≤ 500、logP ≤ 5、NH+OH ≤ 5、N+O ≤ 10 を確かめ、違反が `max_violations` 以下なら通過とする |
+| `chemspace` | Python（Plotly） | 分子量と logP の散布図。ホバーで名前・分子式・TPSA・違反した規則が分かる |
+| `similarity` | Python | Morgan フィンガープリント（半径 `radius`）の Tanimoto 係数をヒートマップにする |
+
+**試すこと**
+- `paste` の `smiles` に別の SMILES を貼って実行する。
+- `paste` の `smiles` を `C1CC(` や `C(C)(C)(C)(C)C` にして実行する。落ちずに、`properties` の表の上に読めない理由が出て、ほかの分子は計算される。
+- `lipinski` の `max_violations` を 0 にして、その Card だけを実行し直す。cholesterol が不通過になる。
+- `similarity` の `radius` を 0 にして、その Card だけを実行し直す。見分けが粗くなり、似かたの平均が上がる。
+
+### 細胞画像の計数（`cell-count`）
+
+中心が分かっている蛍光風の合成画像（synthetic）を作り、閾値と watershed で細胞を数えて採点します。
+接した細胞を切り分けると何が得られるか、どこから数えられなくなるかが分かります。下の列では同じ手順を実際の核の画像にかけます（正解がないので採点はしません）。
+
+```text
+start → begin ┬→ generate ─scene→ share ┬→ preprocess ─cleaned→ segment ─labels→ score
+              │                         ├──────────────── scene ───────────────→ score
+              │                         └→ sweep
+              └→ mitosis ─image→ real
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `begin` | fork | 実行の起点を合成画像と実画像の両方に配る |
+| `generate` | Python | `seed` の乱数で `cells` 個の細胞を置く（`touching_pairs` 組は接する）。照明のむら `unevenness` とノイズ `noise` を乗せる |
+| `share` | fork | 画像と真の中心を `preprocess`・`score`・`sweep` に配る |
+| `preprocess` | Python | グレースケール開放で背景を見積もって引き、ガウスぼかしをかける |
+| `segment` | Python | 大津の閾値で前景を求めて領域に番号を振り（閾値のみ）、距離変換の極大を種に watershed で切り分ける |
+| `score` | Python | 重心を真の中心と 1 対 1 に対応づけ、個数の誤差・適合率・再現率・F1 を出す。見つけたもの・余分なもの・見逃したものを両方の方法で重ね描きする |
+| `sweep` | Python | 細胞の数とノイズを変えた画像を作り直し、同じ手順の F1 を表にする |
+| `mitosis` | bash | ヒト培養細胞の核の蛍光画像を Nix のハッシュで固定して渡す（Moffat et al., Cell 2006、CC0。scikit-image のデータ集から。取得は Nix のビルド時に 1 回だけで、実行中はネットワークを使わない） |
+| `real` | Python | 同じ手順を実画像にかけ、個数と輪郭を示す |
+
+**試すこと**
+- `generate` の `cells` を 320 にして実行する。閾値のみの再現率は 0.24 に落ち、watershed は 0.79 を保つ。
+- `generate` の `noise` を上げる。`sweep` の表の左上のとおり、細胞が少ないほど閾値が雑音に落ちて数えすぎる。
+- `segment` の `min_distance` を変えて、その Card だけを実行し直す。大きくすると切り分けが減る。
+
 ## Draft 版（Agent に実装させる）
 
 `casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
@@ -349,6 +433,9 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **Newton 法**（`newton`） | そのまま実行する。`orbits` の初期値、`basins` の拡大、`trouble` の `offset` を変えてその Card だけを実行し直す。`settings` の `coeffs`（`[1, 0, -3, 2]` で重根、`[1, 0, -2, 2]` で閉路）や `damping` を変えて全体を実行する | `orbits` の誤差が対数軸で 2 次に落ち、`order` の表で推定次数が理論値と並ぶ。`basins` にフラクタルの境界が描かれ、`roots` で閉じた式との差が表示される。`trouble` では重根で次数 1 に落ち、$z^3 - 2z + 2$ の $z_0 = 0$ が収束しない |
 | **薬物動態**（`pharmacokinetics`、架空の薬物の教育用モデル） | そのまま実行し、`simulate` の表示を拡大してズーム・ホバーする。`settings` の `doses_mg`・`intervals_h`・`half_life_h` を変えて全体を実行する。`missed` の `missed_at_h`・`missed_count` を変えてその Card だけを実行し直す | 投与計画ごとの濃度が定常状態へ近づく様子を並べて見られる。`check` で数値解と閉じた式の差と蓄積比が表になり、`window` で山、谷、作り物の有効域の中にいる時間の割合、`missed` で飲み忘れの影響が表示される |
 | **最大流と最小カット**（`max-flow`） | そのまま実行する。`whatif` の `edge`・`raise_by`、`sweep` の `raise_by` を変えてその Card だけを実行し直す。`settings` の `seed` を変えて全体を実行する | `flow` と `cut` の図に流量とカットの辺が描かれ、最大流と最小カットの値が一致する。`verify` で scipy と全カットの総当たりも同じ値になる。`whatif` と `sweep` で、カット外の辺を太くしても最大流が変わらないことを確かめられる |
+| **濃度–反応曲線**（`dose-response`） | そのまま実行する。`generate` の `noise_sd`・`concentrations`・`top_um` を変えて再実行する。`bootstrap` の `n_boot` を変えて、その Card だけを実行し直す | 架空の化合物 A・B の合成データで、EC50 と Hill 勾配の 95% 区間が真の値を含み、相対力価（真の値 15）が 14.4（11.6 – 18.6）と出る。`top_um` を 1 にすると B の区間が 1000 倍を超え、濃度範囲が EC50 を挟んでいないと Card が警告する。`range` は同じことを最高濃度を変えながら 1 枚の図で示す |
+| **分子の物性**（`molecules`） | そのまま実行する。`paste` の `smiles` に SMILES を貼って再実行する。`lipinski` の `max_violations` や `similarity` の `radius` を変えて、その Card だけを実行し直す。`chemspace` の表示を拡大してホバーする | 15 分子の物性の表と構造式が出る。Rule of Five は atorvastatin と cyclosporin A だけが不通過、いちばん似ているのは morphine と codeine（Tanimoto 0.76）。読めない SMILES は落ちずに、理由が表の上に表示される |
+| **細胞画像の計数**（`cell-count`） | そのまま実行する。`generate` の `cells`・`noise` を変えて再実行する。`segment` の `min_distance` を変えて、その Card だけを実行し直す | 真の個数 80 に対して閾値のみは 60 個（再現率 0.75）、watershed は 74 個（再現率 0.93）。見つけたものと見逃したものが画像に重なる。`sweep` の表で、混みすぎると見逃し、少ない細胞に強いノイズで数えすぎることが分かる。実際の核の画像では閾値のみ 271 個、watershed 311 個（正解がないので輪郭を目で確かめる） |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |

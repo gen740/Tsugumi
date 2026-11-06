@@ -1,0 +1,81 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "paste": {
+      "x": 200,
+      "y": 0
+    },
+    "properties": {
+      "x": 500,
+      "y": 0
+    },
+    "share": {
+      "x": 1200,
+      "y": 0
+    },
+    "lipinski": {
+      "x": 1420,
+      "y": 0
+    },
+    "chemspace": {
+      "x": 2080,
+      "y": 0
+    },
+    "similarity": {
+      "x": 1420,
+      "y": 780
+    },
+    "structures": {
+      "x": 1420,
+      "y": 1600
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 分子の物性と Rule of Five\n\n分子を文字列で表す SMILES から、RDKit が物性を計算します。分子量は原子量の和です。\n\n$$M = \\sum_i n_i\\, A_i$$\n\n**Lipinski の Rule of Five** は、経口で吸収されやすい分子の経験則で、次のうち 2 つ以上に違反すると吸収されにくいとされます。\n\n$$M \\le 500,\\quad \\log P \\le 5,\\quad \\mathrm{NH{+}OH} \\le 5,\\quad \\mathrm{N{+}O} \\le 10$$\n\n**paste** の smiles に SMILES を貼って実行すると、その分子が全部の Card に加わります。読めない SMILES は、落ちずに理由を表示します。\n\nlogP は原子の寄与の和（Crippen）による推定で、測定値ではありません。経験則には例外があり、薬としての良し悪しを決めるものではありません。",
+      "x": 160,
+      "y": -560,
+      "width": 620,
+      "height": 500
+    }
+  ],
+  "displays": {
+    "properties": {
+      "x": 460,
+      "y": 200,
+      "width": 700,
+      "height": 540
+    },
+    "lipinski": {
+      "x": 1380,
+      "y": 200,
+      "width": 620,
+      "height": 540
+    },
+    "chemspace": {
+      "x": 2040,
+      "y": 200,
+      "width": 640,
+      "height": 460
+    },
+    "similarity": {
+      "x": 1380,
+      "y": 980,
+      "width": 640,
+      "height": 540
+    },
+    "structures": {
+      "x": 1380,
+      "y": 1800,
+      "width": 880,
+      "height": 510
+    }
+  }
+}

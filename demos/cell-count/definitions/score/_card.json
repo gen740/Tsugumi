@@ -1,0 +1,11 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "scene"
+    },
+    {
+      "name": "labels"
+    }
+  ]
+}

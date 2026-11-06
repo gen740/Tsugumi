@@ -1,0 +1,5 @@
+namespace dose;
+// One row per compound: bottom, top, log10 EC50, Hill slope.
+table Fit { params:[double]; residual_sd:[double]; }
+table Outputs { fit:Fit (required); }
+root_type Outputs;

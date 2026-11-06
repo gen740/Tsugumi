@@ -1,0 +1,30 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "image"
+    }
+  ],
+  "params": [
+    {
+      "name": "background_radius",
+      "type": "uint64",
+      "data": 30
+    },
+    {
+      "name": "sigma",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "min_distance",
+      "type": "uint64",
+      "data": 4
+    },
+    {
+      "name": "min_area",
+      "type": "uint64",
+      "data": 10
+    }
+  ]
+}
