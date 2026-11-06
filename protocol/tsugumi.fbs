@@ -117,8 +117,8 @@ table PutDefinition {
 }
 table RemoveDefinition { id:string (id: 0, required); }
 /// A Card's new name: its definition folder (with its sources) moves, and
-/// its run history follows. The client sends the matching SetProject and
-/// SetLayout in the same save.
+/// its run history and its entries in layout.json follow. The client sends
+/// the matching SetProject in the same save.
 table RenameDefinition {
   id:string (id: 0, required);
   to:string (id: 1, required);
