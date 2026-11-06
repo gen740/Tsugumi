@@ -101,7 +101,7 @@ let package = Package(
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
-      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp"],
+      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", .product(name: "TsugumiAgent", package: "agent")],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Drawing benchmarks: TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks.

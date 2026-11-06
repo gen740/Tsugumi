@@ -14,6 +14,8 @@ await import("./recovery")
 
 await import("./approval")
 
+await import("./chatStopped")
+
 await import("./compaction")
 
 await import("./storage")
