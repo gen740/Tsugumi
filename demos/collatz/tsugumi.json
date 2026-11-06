@@ -1,5 +1,5 @@
 {
-  "name": "Collatz (C++ / Python)",
+  "name": "Collatz (C++ / Python / Julia / R)",
   "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
   "databaseConnections": [],
   "canvas": {
@@ -18,6 +18,12 @@
       },
       {
         "id": "collatz-py"
+      },
+      {
+        "id": "collatz-jl"
+      },
+      {
+        "id": "collatz-r"
       },
       {
         "id": "compare"
@@ -69,6 +75,26 @@
       },
       {
         "from": {
+          "card": "both",
+          "port": "julia"
+        },
+        "to": {
+          "card": "collatz-jl",
+          "port": "n"
+        }
+      },
+      {
+        "from": {
+          "card": "both",
+          "port": "r"
+        },
+        "to": {
+          "card": "collatz-r",
+          "port": "n"
+        }
+      },
+      {
+        "from": {
           "card": "collatz-cpp",
           "port": "sequence"
         },
@@ -85,6 +111,26 @@
         "to": {
           "card": "compare",
           "port": "python"
+        }
+      },
+      {
+        "from": {
+          "card": "collatz-jl",
+          "port": "sequence"
+        },
+        "to": {
+          "card": "compare",
+          "port": "julia"
+        }
+      },
+      {
+        "from": {
+          "card": "collatz-r",
+          "port": "sequence"
+        },
+        "to": {
+          "card": "compare",
+          "port": "r"
         }
       },
       {

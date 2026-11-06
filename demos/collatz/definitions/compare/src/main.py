@@ -1,5 +1,7 @@
 from inputs.cpp.collatz.Sequence import Sequence as CppSequence
+from inputs.julia.collatz.Sequence import Sequence as JuliaSequence
 from inputs.python.collatz.Sequence import Sequence as PySequence
+from inputs.r.collatz.Sequence import Sequence as RSequence
 import outputs.sequence.collatz.Sequence as seq_out
 import outputs.verdict.collatz.Verdict as verdict_out
 
@@ -11,12 +13,17 @@ def values(seq):
 
 
 def main(ctx):
-    a = values(ctx.input("cpp", CppSequence))
-    b = values(ctx.input("python", PySequence))
-    if a != b:
-        raise Failure("output_invalid", f"sequences differ: C++ {len(a)} values, Python {len(b)} values")
+    found = {
+        "C++": values(ctx.input("cpp", CppSequence)),
+        "Python": values(ctx.input("python", PySequence)),
+        "Julia": values(ctx.input("julia", JuliaSequence)),
+        "R": values(ctx.input("r", RSequence)),
+    }
+    a = found["C++"]
+    if any(v != a for v in found.values()):
+        raise Failure("output_invalid", "sequences differ: " + ", ".join(f"{n} {len(v)} values" for n, v in found.items()))
     ctx.display_markdown(
-        f"**C++ and Python agree**: {len(a)} values, $a_0 = {a[0]}$ reaches $1$ "
+        f"**C++, Python, Julia and R agree**: {len(a)} values, $a_0 = {a[0]}$ reaches $1$ "
         f"after ${len(a) - 1}$ steps (peak $\\max_k a_k = {max(a)}$)."
     )
     builder = ctx.builder()
