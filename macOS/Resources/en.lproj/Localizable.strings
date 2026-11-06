@@ -645,7 +645,6 @@
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
 "別のプロジェクトを開く…" = "Open Another Project…";
-"別のプロジェクトを開く（必要な保存の後に切り替えます）" = "Open another project (switches after the needed save)";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
@@ -760,7 +759,6 @@
 "実行中は Card を変更できません。実行が終わってから適用してください。" = "Cards cannot change while running. Apply after the run ends.";
 "実行中はデモを開けません。停止するか終了を待ってください。" = "A demo cannot be opened while a run is going. Stop it or wait for it to end.";
 "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。" = "Projects cannot be switched while running. Stop the run or wait for it to end.";
-"実行中は切り替えられません" = "Cannot switch while running";
 "実行中は別の版に移れません。" = "You cannot move to another version while a run is in progress.";
 "実行中は変更できません" = "Cannot change while running";
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
