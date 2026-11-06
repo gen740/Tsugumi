@@ -40,7 +40,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 ## 使い方
 
 - `/tsugumi:open <プロジェクトのフォルダ>` か、「この Tsugumi のプロジェクトで…して」と頼みます。Claude Code は `tsugumi_open` でプロジェクトを開いてから作業します。
-- `tsugumi_open` は、動いている Web UI のサーバー（データフォルダの `server.json`）を探し、なければ起動します（Claude Code を閉じても動き続けます。止めるときはそのプロセスを止めます）。ブラウザのページが開いていればそのページがプロジェクトを開き、なければブラウザで開きます。
+- `tsugumi_open` は、動いている Web UI のサーバー（データフォルダの `server.json`）を探し、なければ起動します（Claude Code を閉じても動き続けます。止めるときはそのプロセスを止めます）。ブラウザのページが開いていればそのページがプロジェクトを開き、なければサーバーがブラウザで開きます（`server.json` の鍵はページの鍵ではなく、Card の権限を広げる保存の承認に答えられないためです）。
 - 新しいプロジェクトは `tsugumi_open` の `create: true` で作れます（まだないフォルダに限ります）。
 - 最初の `tsugumi_open` は、道具を使うときの決まり（チャットの Agent と同じ `agent/Shared/system-prompt.md`）を返します。
 
