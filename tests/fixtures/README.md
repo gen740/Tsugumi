@@ -2,6 +2,7 @@
 
 macOS（Swift）と Web（TypeScript）は同じ JSON の入力と期待値で検証する。片方の実装だけに合わせて期待値を変更せず、意味が変わる場合は両実装と fixture を同時に更新する。
 
+- `agent-contract.json` の `modelOptions`: 接続・モデル・メニューで選んだ effort と Fast mode の組ごとに、選択肢（レベル、既定、Fast の料金の倍率）と、リクエスト本文に入る項目・入らない項目。
 - `merge-contract.json`: 名前付きレコードの同時編集、配列の順序・重複・削除・追加、connections の集合としての扱い。
 - `agent-behavior.json` の `recovery`: OperationGet の reply / value と期待するエラー状態。`error: null` は未確定（sent を維持）、`false` は成功、`true` は失敗。両実装で実際の BFBS から応答を encode / decode し、Agent の復帰処理と保存後の履歴を検証する。
 - `agent-behavior.json` の `compaction`: 保存形式の messages と圧縮境界 cut。ツール呼び出しと結果を分断せず、圧縮対象と残すメッセージを合わせると元の履歴になることを検証する。

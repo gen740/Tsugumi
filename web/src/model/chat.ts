@@ -55,6 +55,10 @@ export interface ProviderInfo {
   remote: boolean
   /** Requests use the user's ChatGPT plan (Sign in with ChatGPT). */
   plan: boolean
+  /** What goes into the requests, from the model menu: the effort the model
+   *  takes (none: its default) and Fast mode. */
+  effort?: string
+  fast?: boolean
   /** Display names of the models (the ChatGPT account's catalog). */
   modelNames: Record<string, string>
 }

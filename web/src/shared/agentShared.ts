@@ -5,6 +5,30 @@ import shared from '../../../agent/Shared/agent.json'
 
 export const AGENT = shared
 
+/** What a connection offers for a model (agent/Shared/agent.json, from the
+ *  providers' documents). A model not listed offers nothing: nothing is sent
+ *  that the provider might refuse. */
+export interface ModelOptions {
+  efforts: string[]
+  /** The level the model uses when none is sent, when its documents say. */
+  defaultEffort?: string
+  /** Fast mode's price as a multiple of the normal one; none when not offered. */
+  fastPrice?: number
+}
+
+export function modelOptions(connection: string, model: string): ModelOptions {
+  const c = (shared.modelOptions.connections as Record<string, { effort: { default: string | null; levels: string[]; models: string[] }[]; fast: Record<string, number> } | undefined>)[connection]
+  const group = c?.effort.find((g) => g.models.includes(model))
+  return { efforts: group?.levels ?? [], defaultEffort: group?.default ?? undefined, fastPrice: c?.fast[model] }
+}
+
+/** What goes into the chat's requests: the chosen level if the model takes it,
+ *  and Fast mode for the model it was turned on for. */
+export function modelChoices(connection: string, model: string, effort: string, fastModel: string): { effort?: string; fast: boolean } {
+  const o = modelOptions(connection, model)
+  return { effort: o.efforts.includes(effort) ? effort : undefined, fast: o.fastPrice !== undefined && fastModel === model }
+}
+
 /** `{name}` in a text replaced by its value, in one pass (values are not read again). */
 export function fill(text: string, values: Record<string, string>): string {
   return text.replace(/\{(\w+)\}/g, (m, k: string) => values[k] ?? m)

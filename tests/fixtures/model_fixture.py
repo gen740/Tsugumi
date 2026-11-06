@@ -59,7 +59,8 @@ Like the API it refuses a request that sends the blocks back wrongly: without
 the tool, without encrypted_content or encrypted_index, or with a search left
 without its result. Without the tool it says it cannot search.
 GET /fixture/requests lists every model request it saw (path, tools, include,
-and whether its text names web_search).
+whether its text names web_search, and the effort, speed and output limit it
+asked for). Like the APIs it refuses an effort or a speed they do not know.
 
 Options:
   --slow SECONDS   delay between streamed chunks (cancellation tests)
@@ -656,7 +657,8 @@ def plan_violations(body: dict) -> list[tuple[str, str]]:
         out.append(("store", "store must be false"))
     if body.get("stream") is not True:
         out.append(("stream", "stream must be true"))
-    for f in ("max_output_tokens", "temperature", "top_p", "metadata", "previous_response_id", "user", "truncation"):
+    # "service-tier override" is among what errors and recovery says to remove.
+    for f in ("max_output_tokens", "temperature", "top_p", "metadata", "previous_response_id", "user", "truncation", "service_tier"):
         if f in body:
             out.append((f, f"{f} is not supported"))
     for t in body.get("tools", []):
@@ -842,6 +844,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(raw)
         names = [t["name"] for t in body.get("tools", [])]
         self._note_request(names, raw)
+        if bad := self._refused_option(body):
+            self._error(400, bad)
+            return
         missing = unanswered_tool_uses(body["messages"])
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
@@ -912,9 +917,22 @@ class Handler(BaseHTTPRequestHandler):
         self._event("message_stop", {"type": "message_stop"})
 
     def _note_request(self, tools, raw, include=None):
+        body = json.loads(raw)
         with Handler.lock:
             Handler.requests.append({"path": self.path, "tools": tools, "include": include,
-                                     "names_web_search": b"web_search" in raw})
+                                     "names_web_search": b"web_search" in raw,
+                                     "effort": body.get("output_config", body.get("reasoning", {})).get("effort"),
+                                     "speed": body.get("speed", body.get("service_tier")),
+                                     "output_limit": body.get("max_tokens", body.get("max_output_tokens"))})
+
+    def _refused_option(self, body):
+        """An effort or a speed the APIs do not know (a 400 there)."""
+        effort = body.get("output_config", body.get("reasoning", {})).get("effort")
+        if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
+            return f"unknown effort {effort}"
+        if body.get("speed", "fast") != "fast" or body.get("service_tier", "fast") != "fast":
+            return "unknown speed"
+        return None
 
     def _search_reply(self, body, query, kind, rest):
         """A reply with the provider's search, block by block as the API streams it."""
@@ -984,6 +1002,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
         elif self.headers.get("authorization") != "Bearer fixture-key":
             self.send_error(401)
+            return
+        if bad := self._refused_option(body):
+            self._error(400, bad)
             return
         messages = []
         for item in body.get("input", []):

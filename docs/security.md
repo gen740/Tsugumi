@@ -227,7 +227,7 @@ API キーの代わりに、利用者の ChatGPT（Plus・Pro）プランで Age
 - アクセストークン（1 時間）は期限の 5 分前から更新し、API に拒まれた（401）ときは 1 度だけ更新して送り直します。更新が `invalid_grant` などで終わったセッションのトークンは消し、同じ登録でのサインインを求めます。通信やサーバーの一時的な失敗ではトークンを消しません。
 - サインアウトは OpenAI の取り消し口（revocation endpoint）でリフレッシュトークンを取り消してから、手元のトークンを消します（登録とホスト ID は残ります）。取り消しを確かめられなかったときは、ChatGPT の設定から Tsugumi の接続を解除できることを伝えます。
 - トークンは API キーと同じく、`tsugumid`・Linux VM・Card worker・ページへ渡さず、プロジェクトファイル・設定・ログ・会話履歴にも記録しません。リクエストのヘッダー（`Authorization: Bearer`）にだけ載せ、送り先は `https://api.openai.com/v1/responses` と `/v1/models` だけです。
-- プランでのリクエストは `store: false`・`stream: true` で送り（会話は OpenAI 側に保存されません）、`max_output_tokens` を付けず、tool は名前空間 `tsugumi` にまとめます。利用上限（`subscription_sharing_usage_limit_exceeded`）では再試行せずに止め、チャットに「Manage usage」（`https://chatgpt.com/settings/usage`）を出します。別の課金方法へ黙って切り替えることはありません。Plus の 5 時間ごとの上限は、ほかのアプリと共有です。
+- プランでのリクエストは `store: false`・`stream: true` で送り（会話は OpenAI 側に保存されません）、`max_output_tokens` と `service_tier` を付けず、tool は名前空間 `tsugumi` にまとめます。利用上限（`subscription_sharing_usage_limit_exceeded`）では再試行せずに止め、チャットに「Manage usage」（`https://chatgpt.com/settings/usage`）を出します。別の課金方法へ黙って切り替えることはありません。Plus の 5 時間ごとの上限は、ほかのアプリと共有です。
 - 吹き出しの「思考の過程」の要約は、プランの利用枠を使わないよう、ChatGPT プランでは作りません（決まった文だけを出します）。
 
 ### モデルに送られるもの

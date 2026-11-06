@@ -11,7 +11,7 @@ import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
-import { savedComments } from '../shared/agentShared'
+import { AGENT, modelOptions, savedComments } from '../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
@@ -49,6 +49,13 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
 
 /** Asks whether the Agent may give Cards what its save needs; each kind can
  *  be allowed without asking from now on (as in the settings). */
+/** Why Fast mode cannot be chosen for the model in use. */
+function fastUnavailable(connection: string): string {
+  return connection === 'chatgpt' ? 'Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）'
+    : connection === 'openai' ? 'Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）'
+    : 'Fast mode: Claude Opus 5.5 でだけ選べます'
+}
+
 function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: string; onAnswer: (allow: boolean, always: string[]) => void }) {
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
@@ -327,6 +334,11 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
     void api('/api/settings', { provider, [key]: m }).then(() => { void chat.refreshProvider(); void guide.refresh() })
   }
 
+  /** The model menu's effort or Fast mode (from the next request on). */
+  const chooseOption = (setting: { effort: string } | { fastModel: string }) => {
+    void api('/api/settings', setting).then(() => { void chat.refreshProvider() })
+  }
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
     const mod = isMac ? e.metaKey : e.ctrlKey
@@ -410,11 +422,24 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
               // Every connection set up, with its models: choosing one switches to it.
               const items = (list: typeof connections) => {
                 const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
-                return list.flatMap((c, i) => [
-                  i > 0 ? 'divider' as const : null,
-                  { label: c.name, disabled: true },
-                  ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === chat.provider.model, action: () => choose(c.id, m) })),
-                ])
+                const options = modelOptions(current, model)
+                const { effort, fast } = chat.provider
+                return [
+                  { label: 'Effort', disabled: true },
+                  ...(options.efforts.length
+                    ? [{ label: options.defaultEffort ? `既定（${options.defaultEffort}）` : '既定', checked: !effort, action: () => chooseOption({ effort: '' }) },
+                       ...AGENT.modelOptions.efforts.filter((l) => options.efforts.includes(l)).map((l) => ({ label: l, checked: l === effort, action: () => chooseOption({ effort: l }) }))]
+                    : [{ label: 'このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）', disabled: true }]),
+                  'divider' as const,
+                  options.fastPrice === undefined
+                    ? { label: fastUnavailable(current), disabled: true }
+                    : { label: `Fast mode（料金は通常の ${options.fastPrice} 倍）`, checked: !!fast, action: () => chooseOption({ fastModel: fast ? '' : model }) },
+                  ...list.flatMap((c) => [
+                    'divider' as const,
+                    { label: c.name, disabled: true },
+                    ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === chat.provider.model, action: () => choose(c.id, m) })),
+                  ]),
+                ]
               }
               // The saved lists at once; each connection's new list when it comes.
               const menu = showMenu({ clientX: r.left, clientY: r.bottom + 2 }, items(connections))
@@ -426,7 +451,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
                 if (ok) void (id === 'chatgpt' ? chat.refreshProvider() : Promise.resolve()).then(show).catch(() => {})
               }))
             }}>
-            <span className="ellipsis">{modelName(model)}</span>
+            <span className="ellipsis">{[modelName(model), chat.provider.effort, chat.provider.fast && 'Fast'].filter(Boolean).join(' · ')}</span>
             <Icon name="chevron.down" size={8} />
           </button>
           <span className="spacer" />

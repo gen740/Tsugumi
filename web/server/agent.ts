@@ -259,6 +259,15 @@ export interface ProviderConfig {
   contextLimit: number
   /** The user's setting (Settings > API): the model may search the web. */
   webSearch?: boolean
+  /** The chat's choices in the model menu, already checked against the model
+   *  (modelChoices). None for the requests that are not the Agent's work. */
+  effort?: string
+  fast?: boolean
+}
+
+/** Room for a reply: the deep levels spend much of it on thinking. */
+function outputLimit(c: ProviderConfig): number {
+  return c.effort === 'xhigh' || c.effort === 'max' ? Math.max(c.maxTokens, AGENT.modelOptions.largeOutputTokens) : c.maxTokens
 }
 
 /** The provider runs the searches itself: the local fixture has none. */
@@ -366,9 +375,11 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
     if (at >= 0) last.content = last.content.map((b: unknown, i: number) => (i === at ? { ...(b as object), cache_control: cache } : b))
   }
   const body: Record<string, unknown> = {
-    model: c.model, max_tokens: c.maxTokens, stream: true,
+    model: c.model, max_tokens: outputLimit(c), stream: true,
     system: [{ type: 'text', text: system, cache_control: cache }], messages: wired,
   }
+  if (c.effort) body.output_config = { effort: c.effort }
+  if (c.fast) body.speed = 'fast'
   if (tools.length) {
     body.tools = tools.map((t, i) => (t.server ? WEB_SEARCH_WIRE : {
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
@@ -570,7 +581,9 @@ export function responsesBody(c: ProviderConfig, system: string, messages: ChatM
   const body: Record<string, unknown> = {
     model: c.model, instructions: system, input: responsesInput(messages, plan ? TOOL_NAMESPACE : undefined), stream: true, store: false,
   }
-  if (!plan) body.max_output_tokens = c.maxTokens
+  if (!plan) body.max_output_tokens = outputLimit(c)
+  if (c.effort) body.reasoning = { effort: c.effort }
+  if (c.fast) body.service_tier = 'fast'
   const own = tools.filter((t) => !t.server)
   const hosted: unknown[] = own.length === tools.length ? [] : [{ type: AGENT.webSearch.openAIType }]
   if (tools.length) {
@@ -1563,7 +1576,8 @@ export class Agent {
     }
     const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
     let summary = ''
-    for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
+    // A short summary: neither the chosen effort nor Fast mode's price.
+    for await (const e of stream({ ...this.provider, effort: undefined, fast: false }, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
     if (signal.aborted) throw new Cancelled()
     if (!summary.trim()) throw new Error('the context summary was empty; the conversation was kept')
     if (c.messages.length !== messages.length) return
