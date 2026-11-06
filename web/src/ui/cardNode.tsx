@@ -481,7 +481,17 @@ export interface WireDraw {
   /** Screen units. */
   d: string
   style: WireStyle
+  /** A wire to or from a Draft is dotted, whatever its style. */
+  dotted?: boolean
 }
+
+/** A Draft's wires: round dots, spaced so that they flow without a jump at the
+ *  phase of the active wires' dashes (a whole number per period, cv-dash), and
+ *  never smaller than can be seen on a Canvas zoomed out. */
+const WIRE_DOT = `0 ${14 / 3}`
+/** A selected wire is thicker: further apart, its dots still read as dots. */
+const WIRE_DOT_SELECTED = `0 ${14 / 2}`
+const WIRE_DOT_MIN = 2.2
 
 /** Wires drawn at screen scale; active wires move while a run is going on. */
 export function WireLayer({ wires, animate = false, zoom = 1, width, height }: { wires: WireDraw[]; animate?: boolean; zoom?: number; width: number; height: number }) {
@@ -499,8 +509,8 @@ export function WireLayer({ wires, animate = false, zoom = 1, width, height }: {
       {wires.map((wire, i) => {
         const st = stroke[wire.style]
         return (
-          <path key={i} d={wire.d} fill="none" stroke={st.color} strokeWidth={st.width} strokeLinecap="round" strokeLinejoin="round"
-            strokeDasharray={st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
+          <path key={i} d={wire.d} fill="none" stroke={st.color} strokeWidth={wire.dotted ? Math.max(st.width, WIRE_DOT_MIN) : st.width} strokeLinecap="round" strokeLinejoin="round"
+            strokeDasharray={wire.dotted ? (wire.style === 'selected' ? WIRE_DOT_SELECTED : WIRE_DOT) : st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
         )
       })}
     </svg>

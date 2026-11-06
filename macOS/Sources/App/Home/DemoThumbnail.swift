@@ -187,6 +187,7 @@ struct DemoScene {
   struct RoutedWire {
     var wire: DemoPlayerData.Wire
     var path: Path
+    var dotted: Bool
   }
 
   let data: DemoPlayerData
@@ -246,8 +247,10 @@ struct DemoScene {
       return CGPoint(x: p.rect.minX + at.x, y: p.rect.minY + at.y)
     }
     var router = WireRouter(flow: flow, obstacles: placed.map(\.rect) + shown.map(\.rect))
+    let drafts = Set(data.cards.filter { $0.kind == CardKind.draft.rawValue }.map(\.id))
     wires = data.wires.map { w in
-      RoutedWire(wire: w, path: router.route(port(w.from, w.fromPort, output: true), port(w.to, w.toPort, output: false)))
+      RoutedWire(wire: w, path: router.route(port(w.from, w.fromPort, output: true), port(w.to, w.toPort, output: false)),
+                 dotted: drafts.contains(w.from) || drafts.contains(w.to))
     }
     box = (placed.map(\.rect) + shown.map(\.rect)).reduce(CGRect.null) { $0.union($1) }
   }
@@ -545,7 +548,7 @@ struct DemoThumbnailCanvas: View {
   }
 
   private func wires(_ camera: CanvasCamera, _ shown: [DemoScene.Shown]) -> [WireDraw] {
-    scene.wires.map { WireDraw(path: $0.path.applying(camera.transform), style: scene.style($0.wire, at: frame)) }
+    scene.wires.map { WireDraw(path: $0.path.applying(camera.transform), style: scene.style($0.wire, at: frame), dotted: $0.dotted) }
       + shown.map { WireDraw(path: $0.link.applying(camera.transform), style: .display) }
   }
 }

@@ -22,6 +22,7 @@ await import("./table")
 
 await import("./draft")
 await import("./comments")
+await import("./draftWires")
 await import("./freedName")
 await import("./summary")
 await import("./versions")

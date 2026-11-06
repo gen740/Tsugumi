@@ -135,6 +135,11 @@ export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'b
 export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'start'
 export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' ? k : 'card')
 
+/** Whether a wire is drawn dotted: either end is a Draft, with no code behind
+ *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
+export const isDraftWire = (kind: (card: string) => CardKind | undefined, from: string, to?: string): boolean =>
+  kind(from) === 'draft' || (to !== undefined && kind(to) === 'draft')
+
 /** The nearest grid line. Not `Math.round`: that goes up on a tie and Swift's
  *  `.rounded()` goes away from zero, and a Card on a negative half would land
  *  one grid apart on the two. */
