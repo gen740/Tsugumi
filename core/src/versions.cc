@@ -156,7 +156,9 @@ std::string Versions::iso_utc(int64_t ms) { return iso(ms / 1000); }
 std::string Versions::format_note(const VersionRunNote& r) {
   char secs[32];
   std::snprintf(secs, sizeof secs, "%.1fs", r.seconds);
-  return "run " + r.run_id + " " + r.state + " " + r.ended + " " + secs;
+  std::string line = "run " + r.run_id + " " + r.state + " " + r.ended + " " + secs;
+  if (!r.summary.empty()) line += " " + r.summary;
+  return line;
 }
 
 std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
@@ -170,6 +172,7 @@ std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
     VersionRunNote r;
     if (!(w >> word) || word != "run" || !(w >> r.run_id >> r.state >> r.ended)) continue;
     if (w >> secs) r.seconds = std::atof(secs.c_str());
+    std::getline(w >> std::ws, r.summary);
     out.push_back(std::move(r));
   }
   return out;
