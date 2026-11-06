@@ -67,6 +67,51 @@ import TsugumiRPC
     await client.close()
   }
 
+  /// "runs": "together": the helpers only write, whatever they try, and the
+  /// main Agent runs once when all have reported. No helper's run holds up
+  /// another's save, and there is one run in the history.
+  @Test func helpersThatRunTogetherOnlyWrite() async throws {
+    var h = AgentHarness()
+    try #require(FileManager.default.fileExists(atPath: h.root.appendingPathComponent("build/sdk/tsugumi-worker").path),
+                 "build/sdk/tsugumi-worker is missing: ninja -C build tsugumi-worker")
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    try await addDrafts(client)
+    let before = try await client.history().runs.count
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("delegate the drafts alpha beta gamma, and run them together", context: []) { log.add($0) }
+    await waitFinished(log, seconds: 180)
+    #expect(log.text.contains("Ran once: succeeded"), "\(log.text)")
+    // Each helper tried to run and was told no.
+    let refused = log.all.filter { e in
+      if case .helper(_, .toolFinished(_, "run", false, let summary)) = e { return summary.contains("only writes") }
+      return false
+    }
+    #expect(refused.count == Self.drafts.count, "\(log.all)")
+    #expect(try await client.history().runs.count == before + 1, "one run, the main Agent's")
+    let after = try await client.inspect()
+    for d in Self.drafts {
+      let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == d })
+      #expect(try JSONValue.parse(def.cardJson)["language"]?.string == "bash", "\(d) is still a Draft")
+    }
+    await client.close()
+  }
+
+  @Test func howHelpersMeetIsChosenInTheCall() {
+    let tasks = #""tasks":[{"name":"a","cards":["a"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]"#
+    func together(_ json: String) -> [Bool]? {
+      if case .success(let h) = Agent.tasks(json) { return h.map(\.runsTogether) }
+      return nil
+    }
+    #expect(together("{\(tasks)}") == [false, false])
+    #expect(together(#"{"runs":"each","# + tasks + "}") == [false, false])
+    #expect(together(#"{"runs":"together","# + tasks + "}") == [true, true])
+    #expect(together(#"{"runs":"sometimes","# + tasks + "}") == nil)
+  }
+
   @Test func aDelegateCallIsCheckedBeforeAnyHelperStarts() {
     func why(_ json: String) -> String? {
       if case .failure(let e) = Agent.tasks(json) { return "\(e)" }

@@ -275,6 +275,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return summary_.status;
   }
 
+  std::string note_summary() {
+    std::lock_guard<std::mutex> l(mu_);
+    return note_summary_;
+  }
+
   RunStatusData request_cancel(bool interrupted) {
     std::lock_guard<std::mutex> l(mu_);
     // Once finalize() has taken the final status it is on its way to the history:
@@ -307,6 +312,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t invocations = 0;
     bool running = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
+    bool saved_inputs = false;  // some of its inputs are saved values, not this run's
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
     std::optional<CardBuild> build;
@@ -468,6 +474,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       t.from_inv = last->invocation;
       t.seq = ++token_seq_;
       n.queues[port].push_back(std::move(t));
+      n.saved_inputs = true;
       // No Card of this run sent it: the record says where it comes from.
       seed_notes_.push_back(path_key(n.node->path) + "." + port + " uses the saved value from run " +
                             (one ? one->run_id : last->run_id) + ", invocation " +
@@ -521,6 +528,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           }
         }
         w.from_saved = true;
+        n.saved_inputs = true;
         for (auto& v : last->inputs) {
           if (v.kind != PortKind::FlatBuffer) {
             auto p = path_value(v);
@@ -1283,6 +1291,45 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // ---- convergence ------------------------------------------------------------
 
+  // One line for the note of the run's commit, from what this run did rather
+  // than what it planned. Failure messages and logs stay out of git, as the
+  // outputs do: they are in the run's record.
+  std::string describe(const std::vector<CardState>& final) const {
+    const auto& res = *doc_->resolution;
+    const Node* target = res.find(p_.card);
+    const bool whole = p_.card.empty() || (p_.propagate && target && target->kind == Template::Trigger);
+    std::vector<std::string> ran;
+    std::vector<std::string> failed;
+    std::vector<std::string> never;
+    bool saved = false;
+    for (const auto& n : nodes_) {
+      if (!n.in_targets || n.node->is_virtual) continue;
+      const std::string key = path_key(n.node->path);
+      // The trigger of a whole run only starts it.
+      if (n.invocations > 0 && !(whole && n.node->kind == Template::Trigger)) {
+        ran.push_back(n.invocations > 1 ? key + " ×" + std::to_string(n.invocations) : key);
+        saved |= n.saved_inputs;
+      }
+      if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
+        failed.push_back(key + "（" + failure_kind_name(n.last_failure->kind) + "）");
+      else if (n.invocations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
+        never.push_back(key);
+    }
+    auto names = [](const std::vector<std::string>& v) {
+      constexpr size_t kShown = 6;
+      std::string s;
+      for (size_t i = 0; i < std::min(v.size(), kShown); ++i) s += (i ? "、" : "") + v[i];
+      if (v.size() > kShown) s += " ほか " + std::to_string(v.size() - kShown);
+      return s;
+    };
+    std::string out = whole ? "全体" : path_key(p_.card) + (p_.propagate ? " から" : " だけ");
+    if (saved) out += "（保存済みの入力で）";
+    if (!ran.empty()) out += ": " + names(ran);
+    if (!failed.empty()) out += " / 失敗: " + names(failed);
+    if (!never.empty()) out += " / 未実行: " + names(never);
+    return out;
+  }
+
   void finalize() {
     const auto& res = *doc_->resolution;
     std::vector<CardState> final(nodes_.size(), CardState::not_started);
@@ -1352,6 +1399,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard<std::mutex> l(mu_);
       finishing_ = true;
       sum = summary_;
+      note_summary_ = describe(final);
     }
     auto& st = sum.status;
     if (cancel_ && interrupted_) {
@@ -1408,6 +1456,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   DocumentPtr doc_;
   RunParams p_;
   RunSummaryData summary_;
+  std::string note_summary_;  // what ran (describe), for the commit's note
   std::string run_id_;
   stdfs::path run_dir_;
   std::thread thread_;
@@ -1713,7 +1762,7 @@ void Scheduler::finished(RunExec* exec) {
     std::lock_guard<std::mutex> l(mu_);
     reapers_.emplace_back([this, done] {
       done->join();
-      svc_.note_run_end(done->status());
+      svc_.note_run_end(done->status(), done->note_summary());
     });
   }
 }

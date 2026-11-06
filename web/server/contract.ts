@@ -81,6 +81,13 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
     '{"tasks":[{"name":"a","cards":["x/y"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]}']) {
     assert.equal(typeof delegateTasks(bad), 'string', bad)
   }
+  // How the helpers meet: each by default, together when asked, nothing else.
+  const tasks = '"tasks":[{"name":"a","cards":["a"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]'
+  const met = (json: string) => { const r = delegateTasks(json); return typeof r === 'string' ? r : r.map((t) => t.runsTogether) }
+  assert.deepEqual(met(`{${tasks}}`), [false, false])
+  assert.deepEqual(met(`{"runs":"each",${tasks}}`), [false, false])
+  assert.deepEqual(met(`{"runs":"together",${tasks}}`), [true, true])
+  assert.equal(typeof met(`{"runs":"sometimes",${tasks}}`), 'string')
   const h = { name: 'lorenz', cards: ['lorenz'], instruction: '' }
   assert.equal(helperOutside(h, [{ value_type: 'PutDefinition', value: { id: 'lorenz' } },
     { value_type: 'PutSource', value: { path: 'definitions/lorenz/src/main.py' } }]), undefined)

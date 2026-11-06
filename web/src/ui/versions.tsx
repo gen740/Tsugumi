@@ -1,7 +1,7 @@
 // The project's versions as a tree (core/src/versions.cc): each commit with its
-// branches, tags, runs (from its note) and changed Cards. A version can be
-// named, and the project can start again from any of them (a change there
-// opens a branch).
+// branches, tags, runs (from its note; hovering shows what ran) and changed
+// Cards. A version can be named, and the project can start again from any of
+// them (a change there opens a branch).
 import { useEffect, useState } from 'react'
 import * as R from '../gen/tsugumi/rpc'
 import { useObserve } from '../model/observable'
@@ -63,6 +63,17 @@ const list = (v: (string | Uint8Array | null)[] | undefined) => (v ?? []).map(st
 function changedText(changed: string[]) {
   const names = changed.map((k) => k || 'Workflow')
   return `変更: ${names.slice(0, 4).join('、')}${names.length > 4 ? ` ほか ${names.length - 4}` : ''}`
+}
+
+/** What a version's runs did, for the hover: newest first, each with its
+ *  result and the summary its note gives. */
+export function runsHelp(runs: Pick<R.VersionRunT, 'state' | 'seconds' | 'summary'>[]) {
+  if (runs.length === 0) return 'この版での実行はありません。'
+  const shown = 5
+  const lines = runs.slice(-shown).reverse().map((r) =>
+    [stateLabel(str(r.state)), `${r.seconds.toFixed(1)} 秒`, str(r.summary)].filter(Boolean).join(' · '))
+  if (runs.length > shown) lines.push(`ほか ${runs.length - shown} 回`)
+  return lines.join('\n')
 }
 
 function ago(ms: number) {
@@ -138,6 +149,12 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                   </g>
                 )
               })}
+              {/* Over the lines and nodes: the hover and the click work on a row's whole height. */}
+              {commits.map((c, i) => (
+                <rect key={str(c.id)} x={0} y={i * ROW} width="100%" height={ROW} fill="transparent" onClick={() => setSelected(str(c.id))}>
+                  <title>{runsHelp((c.runs ?? []).filter((x): x is R.VersionRunT => !!x))}</title>
+                </rect>
+              ))}
             </svg>
             <div className="col flex1">
               {commits.map((c) => {
@@ -147,7 +164,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                 const ok = runs.filter((x) => str(x.state) === 'succeeded').length
                 const ng = runs.filter((x) => str(x.state) === 'failed').length
                 return (
-                  <div key={id} className={`version-row${selected === id ? ' selected' : ''}`} style={{ height: ROW }} onClick={() => setSelected(id)}>
+                  <div key={id} className={`version-row${selected === id ? ' selected' : ''}`} style={{ height: ROW }} title={runsHelp(runs)} onClick={() => setSelected(id)}>
                     <div className="row gap6">
                       <span className="ellipsis" style={{ fontWeight: id === head ? 600 : 400 }}>{str(c.summary)}</span>
                       {list(c.tags).map((t) => <span key={t} className="version-tag"><Icon name="tag" />{t}</span>)}
@@ -180,12 +197,15 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                 <>
                   <div style={{ fontWeight: 600 }}>実行の結果</div>
                   {(sel.runs ?? []).filter((x): x is R.VersionRunT => !!x).map((r, i) => (
-                    <div key={i} className="row gap6 caption">
-                      <span style={{ width: 8, height: 8, borderRadius: 4, background: stateColor(str(r.state)) }} />
-                      <span>{stateLabel(str(r.state))}</span>
-                      <span className="secondary">{r.seconds.toFixed(1)} 秒</span>
-                      <span className="flex1" />
-                      <span className="secondary mono">{str(r.ended)}</span>
+                    <div key={i} className="col caption">
+                      <div className="row gap6">
+                        <span style={{ width: 8, height: 8, borderRadius: 4, background: stateColor(str(r.state)) }} />
+                        <span>{stateLabel(str(r.state))}</span>
+                        <span className="secondary">{r.seconds.toFixed(1)} 秒</span>
+                        <span className="flex1" />
+                        <span className="secondary mono">{str(r.ended)}</span>
+                      </div>
+                      {str(r.summary) && <div className="secondary selectable">{str(r.summary)}</div>}
                     </div>
                   ))}
                 </>

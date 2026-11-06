@@ -576,6 +576,9 @@ table VersionRun {
   state:string (id: 1, required);
   ended:string (id: 2);
   seconds:double (id: 3);
+  /// What ran, from what the run did: where it started, the Cards that ran,
+  /// those that failed or never ran. Absent for a run a demo's history lists.
+  summary:string (id: 4);
 }
 
 table VersionCommit {
