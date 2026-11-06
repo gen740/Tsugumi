@@ -294,11 +294,18 @@ for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWit
 type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[]; paths: (Pt[] | null)[] }
 const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
   .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(), ...grids[0].scenes.filter((s) => s.name === 'casa, grid 20' || s.name === 'rna-seq, grid 20'))
-const cases: Case[] = shared.map((s) => {
+const routed = (s: { flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }) => {
   const routes = new WireRouter(s.flow, s.obstacles).routeAll(s.wires)
-  return { name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routes.map((r) => (r.curved ? null : r.pts)) }
-})
+  return routes.map((r) => (r.curved ? null : r.pts))
+}
 const fixture = path.join(root, 'tests/fixtures/wire-routes.json')
-if (process.env.WIRE_ROUTES_WRITE) fs.writeFileSync(fixture, JSON.stringify(cases) + '\n')
-assert.deepEqual(cases, read(fixture), 'the paths Mac also has to find (WIRE_ROUTES_WRITE=1 npm test writes them)')
+// The scenes are samples kept in the file, so moving a Card of a demo does not
+// change this check. WIRE_ROUTES_WRITE=1 npm test takes new samples from the demos.
+if (process.env.WIRE_ROUTES_WRITE) {
+  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routed(s) }))
+  fs.writeFileSync(fixture, JSON.stringify(samples) + '\n')
+}
+const cases: Case[] = read(fixture)
+assert.ok(cases.length > 0)
+for (const c of cases) assert.deepEqual(routed(c), c.paths, `the paths Mac also has to find: ${c.name} (a change to the router on purpose: WIRE_ROUTES_WRITE=1 npm test)`)
 console.log('wire routes: passed')
