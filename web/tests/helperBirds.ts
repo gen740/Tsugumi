@@ -65,6 +65,9 @@ const noWriter = () => undefined
   assert.equal(team.bird('a')!.line(100.5)?.text, 'written を書いています')
   assert.ok(team.bird('a')!.writing(100.5))
   assert.equal(team.bird('b')!.card(100.5), 'two')
+  // A file of a Card not on the canvas yet: it says so from where it stands.
+  const perch = (c: string) => (c === 'one' ? { x: 1, y: 2 } : undefined)
+  assert.equal(team.bird('a')!.place(100.5, perch)?.x, 1)
   file = undefined
   assert.equal(team.bird('a')!.card(100.5), 'one')
 }

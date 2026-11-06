@@ -45,7 +45,7 @@ struct RecoveryTests {
       let saved = try Conversation.read(storage)
       #expect(saved.tools[0].state == (expected == nil ? .sent : .completed), "\(name)")
       if let expected { #expect(saved.tools[0].isError == expected, "\(name)") }
-      guard case .toolResult(_, let result, let isError) = saved.messages[0].content[0] else {
+      guard case .toolResult(_, let result, let isError, _) = saved.messages[0].content[0] else {
         Issue.record("missing tool result: \(name)"); continue
       }
       #expect(result != "old" && isError == (expected ?? true), "\(name)")

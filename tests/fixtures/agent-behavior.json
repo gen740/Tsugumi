@@ -438,5 +438,101 @@
         189
       ]
     }
+  ],
+  "toolImages": [
+    {
+      "name": "a_whole_png_goes_as_an_image",
+      "result": "{\"reply\": \"RecordResult\", \"value\": {\"record\": {\"display\": {\"value\": {\"alt\": \"a\", \"data\": {\"base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC\"}, \"media_type\": \"image/png\"}}}}}",
+      "text": {
+        "reply": "RecordResult",
+        "value": {
+          "record": {
+            "display": {
+              "value": {
+                "alt": "a",
+                "data": "PNG image, 69 bytes: shown with this result",
+                "media_type": "image/png"
+              }
+            }
+          }
+        }
+      },
+      "images": [
+        {
+          "media_type": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    {
+      "name": "a_whole_jpeg_goes_as_an_image",
+      "result": "{\"reply\": \"RecordResult\", \"value\": {\"record\": {\"display\": {\"value\": {\"alt\": \"a\", \"data\": {\"base64\": \"/9j/4AECA//Z\"}, \"media_type\": \"image/png\"}}}}}",
+      "text": {
+        "reply": "RecordResult",
+        "value": {
+          "record": {
+            "display": {
+              "value": {
+                "alt": "a",
+                "data": "JPEG image, 9 bytes: shown with this result",
+                "media_type": "image/png"
+              }
+            }
+          }
+        }
+      },
+      "images": [
+        {
+          "media_type": "image/jpeg",
+          "data": "/9j/4AECA//Z"
+        }
+      ]
+    },
+    {
+      "name": "a_cut_image_is_not_sent",
+      "result": "{\"reply\": \"RecordResult\", \"value\": {\"record\": {\"display\": {\"value\": {\"alt\": \"a\", \"data\": {\"base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQ\"}, \"media_type\": \"image/png\"}}}}}",
+      "text": {
+        "reply": "RecordResult",
+        "value": {
+          "record": {
+            "display": {
+              "value": {
+                "alt": "a",
+                "data": "PNG image, 30 bytes: only part of it, not shown",
+                "media_type": "image/png"
+              }
+            }
+          }
+        }
+      },
+      "images": []
+    },
+    {
+      "name": "other_bytes_stay_in_the_text",
+      "result": "{\"reply\": \"RecordResult\", \"value\": {\"record\": {\"display\": {\"value\": {\"alt\": \"a\", \"data\": {\"base64\": \"AAEC\"}, \"media_type\": \"image/png\"}}}}}",
+      "text": {
+        "reply": "RecordResult",
+        "value": {
+          "record": {
+            "display": {
+              "value": {
+                "alt": "a",
+                "data": {
+                  "base64": "AAEC"
+                },
+                "media_type": "image/png"
+              }
+            }
+          }
+        }
+      },
+      "images": []
+    },
+    {
+      "name": "a_result_that_is_not_json",
+      "result": "not json \"base64\": at all",
+      "text": null,
+      "images": []
+    }
   ]
 }

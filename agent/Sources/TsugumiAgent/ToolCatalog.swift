@@ -38,7 +38,7 @@ public struct ToolCatalog {
         throw AgentError.schema("request \(r) not found")
       }
       let gen = SchemaGenerator(schema: schema)
-      let input = gen.object(index, depth: 0, skip: ToolCatalog.agentFields)
+      let input = gen.object(index, depth: 0, skip: ToolCatalog.agentFields.union(Shared.data.notForModels[r] ?? []))
       let doc = obj.documentation.joined(separator: " ").trimmingCharacters(in: .whitespaces)
       out.append(ToolSpec(name: ToolCatalog.toolName(r), requestName: full, payloadType: UInt8(v.value), object: index,
                           description: "\(r.replacingOccurrences(of: "Request", with: "")): \(doc)",
@@ -86,6 +86,8 @@ extension Shared {
     }
     let requests: [String]
     let agentFields: Set<String>
+    /// Fields of a request that the apps use and the model is not offered.
+    let notForModels: [String: [String]]
     let referenceTool: Tool
     let delegateTool: Tool
     let helper: Helper
@@ -94,6 +96,7 @@ extension Shared {
     let comment: Comment
     let webSearch: WebSearch
     let permissionDeclined: String
+    let invalidArguments: String
   }
 
   static let data: Data = {
@@ -104,6 +107,7 @@ extension Shared {
     let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
     let w = o["webSearch"] as! [String: Any]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
+                notForModels: o["notForModels"] as! [String: [String]],
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
                 delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
@@ -121,7 +125,8 @@ extension Shared {
                 webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
                                  openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
                                  note: w["note"] as! String, sources: w["sources"] as! String, maxUses: w["maxUses"] as! Int),
-                permissionDeclined: o["permissionDeclined"] as! String)
+                permissionDeclined: o["permissionDeclined"] as! String,
+                invalidArguments: o["invalidArguments"] as! String)
   }()
 
   /// `{name}` in a text replaced by its value, in one pass (values are not read again).

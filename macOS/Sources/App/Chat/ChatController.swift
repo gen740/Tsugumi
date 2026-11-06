@@ -309,7 +309,7 @@ final class ChatController {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
         case .toolUse(_, let n, let a): out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(_, let c, let e):
+        case .toolResult(_, let c, let e, _):
           if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
             out[j].tool?.ok = !e
             out[j].text += "\n→ " + Agent.toolSummary(c)
@@ -601,6 +601,8 @@ final class ChatController {
   /// The tsugumi on the canvas follows what the Agent looks at and runs.
   private func showOnCanvas(tool: String, arguments: String, bird: AgentPresence? = nil) {
     let bird = bird ?? session.presence
+    // What was written is not on the screen once it runs.
+    if tool == "run" { bird.stopShowingCode() }
     switch PresenceEvents.look(tool: tool, arguments: arguments) {
     case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
     case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }

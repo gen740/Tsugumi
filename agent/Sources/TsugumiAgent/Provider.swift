@@ -68,10 +68,10 @@ public struct WebSearch: Codable, Equatable, Sendable {
 public enum ContentBlock: Codable, Equatable {
   case text(String)
   case toolUse(id: String, name: String, input: String)  // input: JSON text
-  case toolResult(toolUseId: String, content: String, isError: Bool)
+  case toolResult(toolUseId: String, content: String, isError: Bool, images: [ToolImage] = [])
   case webSearch(WebSearch)
 
-  enum CodingKeys: String, CodingKey { case type, text, id, name, input, tool_use_id, content, is_error, search }
+  enum CodingKeys: String, CodingKey { case type, text, id, name, input, tool_use_id, content, is_error, images, search }
 
   public init(from d: Decoder) throws {
     let c = try d.container(keyedBy: CodingKeys.self)
@@ -82,7 +82,8 @@ public enum ContentBlock: Codable, Equatable {
     case "web_search": self = .webSearch(try c.decode(WebSearch.self, forKey: .search))
     default: self = .toolResult(toolUseId: try c.decode(String.self, forKey: .tool_use_id),
                                 content: try c.decode(String.self, forKey: .content),
-                                isError: try c.decode(Bool.self, forKey: .is_error))
+                                isError: try c.decode(Bool.self, forKey: .is_error),
+                                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [])
     }
   }
 
@@ -97,15 +98,24 @@ public enum ContentBlock: Codable, Equatable {
       try c.encode(id, forKey: .id)
       try c.encode(name, forKey: .name)
       try c.encode(input, forKey: .input)
-    case .toolResult(let id, let content, let isError):
+    case .toolResult(let id, let content, let isError, let images):
       try c.encode("tool_result", forKey: .type)
       try c.encode(id, forKey: .tool_use_id)
       try c.encode(content, forKey: .content)
       try c.encode(isError, forKey: .is_error)
+      if !images.isEmpty { try c.encode(images, forKey: .images) }
     case .webSearch(let s):
       try c.encode("web_search", forKey: .type)
       try c.encode(s, forKey: .search)
     }
+  }
+
+  /// The arguments of a tool call as the object they must be; nil: broken JSON
+  /// or something else than an object (the API does not check them as they
+  /// stream). A broken call goes back as an empty one: the APIs want an object
+  /// there, and its text is in its result.
+  public static func arguments(_ input: String) -> [String: Any]? {
+    (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]
   }
 
   /// Wire JSON for the Messages API.
@@ -113,10 +123,14 @@ public enum ContentBlock: Codable, Equatable {
     switch self {
     case .text(let t): return ["type": "text", "text": t]
     case .toolUse(let id, let name, let input):
-      let obj = (try? JSONSerialization.jsonObject(with: Data(input.utf8))) ?? [String: Any]()
+      let obj = Self.arguments(input) ?? [:]
       return ["type": "tool_use", "id": id, "name": name, "input": obj]
-    case .toolResult(let id, let content, let isError):
-      return ["type": "tool_result", "tool_use_id": id, "content": content, "is_error": isError]
+    case .toolResult(let id, let content, let isError, let images):
+      let shown: [[String: Any]] = images.map {
+        ["type": "image", "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.data]]
+      }
+      let sent: Any = images.isEmpty ? content : [["type": "text", "text": content]] + shown
+      return ["type": "tool_result", "tool_use_id": id, "content": sent, "is_error": isError]
     case .webSearch(let s): return ["type": "text", "text": s.note]
     }
   }
@@ -411,7 +425,9 @@ public struct MessagesProvider: Sendable {
     let cache: [String: Any] = ["type": "ephemeral"]
     var wireTools: [[String: Any]] = tools.map {
       if $0.server { return Self.webSearchWire }
-      return ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema]
+      // Eager: the arguments come as the model writes them, not held back until
+      // each is whole, so the API no longer checks them (Agent.runTool does).
+      return ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema, "eager_input_streaming": true]
     }
     if !wireTools.isEmpty, tools.last?.server != true { wireTools[wireTools.count - 1]["cache_control"] = cache }
     // Search blocks go back only with the tool declared, and only whole.
@@ -569,12 +585,14 @@ extension MessagesProvider {
         case .webSearch(let s): texts.append(["type": "output_text", "text": s.note])
         case .toolUse(let id, let name, let input):
           flush()
-          var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": input]
+          var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": ContentBlock.arguments(input) == nil ? "{}" : input]
           if let namespace { call["namespace"] = namespace }
           out.append(call)
-        case .toolResult(let id, let content, _):
+        case .toolResult(let id, let content, _, let images):
           flush()
-          out.append(["type": "function_call_output", "call_id": id, "output": content])
+          let shown: [[String: Any]] = images.map { ["type": "input_image", "image_url": "data:\($0.mediaType);base64,\($0.data)"] }
+          let sent: Any = images.isEmpty ? content : [["type": "input_text", "text": content]] + shown
+          out.append(["type": "function_call_output", "call_id": id, "output": sent])
         }
       }
       flush()

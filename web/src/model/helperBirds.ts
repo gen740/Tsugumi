@@ -142,7 +142,9 @@ export class HelperBird {
   /** Where it is at `now` (world units), given where it stands on a Card
    *  (undefined: that Card is not in the scope shown). Still: at each place at once. */
   place(now: number, perch: (card: string) => Pt | undefined, still = false): BirdPlace | undefined {
-    const card = this.card(now)
+    // A new Card has no place until it is saved: the bird stays by its last one.
+    const file = this.writer()?.at(now)?.card
+    const card = file && perch(file) ? file : this.scene(now)?.card
     if (!card) return undefined
     if (card !== this.flight?.card) {
       const from = this.flight && !still ? this.point(now, perch) : undefined

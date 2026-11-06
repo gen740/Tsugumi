@@ -307,6 +307,7 @@ public actor Agent {
       cutReplies = 0
       var done = false
       var refusals = 0
+      var brokenReplies = 0
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
@@ -376,6 +377,11 @@ public actor Agent {
         try Task.checkCancellation()
         conversation.messages.append(ChatMessage(role: "user", content: results))
         try conversation.save(storage)
+        // Each try may be a whole file long: asked again a few times, as a cut reply is.
+        if uses.contains(where: { ContentBlock.arguments($0.2) == nil }) {
+          brokenReplies += 1
+          guard brokenReplies <= 3 else { throw AgentError.provider("the arguments of the model's tool calls were broken JSON three times") }
+        }
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? .finished : .stepLimit(steps: maxSteps, unconfirmedRun: unconfirmedRun))
@@ -456,6 +462,12 @@ public actor Agent {
           blocks.append(.toolUse(id: t.id, name: t.name, input: t.json.isEmpty ? "{}" : t.json))
         }
         return (blocks, stopReason, providerContent)
+      } catch let e as MessagesProvider.HTTPStatusError where e.status == 400 && e.body.lowercased().contains("image") && conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
+      } catch ChatGPTError.unsupported where conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
       } catch let e as MessagesProvider.HTTPStatusError where e.retryable && attempt < 3 {
         attempt += 1
         // The provider's retry-after when it gave one (rate limits), else backoff.
@@ -471,6 +483,15 @@ public actor Agent {
       }
       try await Task.sleep(for: .milliseconds(500 * (1 << attempt)))
     }
+  }
+
+  /// The provider refused a request with images (a model without vision, a
+  /// corrupt or oversized picture): asking again as it is would fail for good.
+  private func goOnWithoutImages(hadText: Bool, _ events: @escaping @Sendable (AgentEvent) -> Void) throws {
+    if hadText { events(.discardText) }
+    conversation.dropToolImages()
+    try conversation.save(storage)
+    events(.retrying("the model did not accept an image from a tool; going on without it"))
   }
 
   /// A search's result: in this reply's blocks, or in an earlier reply's when
@@ -605,24 +626,49 @@ public actor Agent {
     guard url.resolvingSymlinksInPath().path.hasPrefix(base.resolvingSymlinksInPath().path) else { return ("not found: \(rel)", true) }
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return ("not found: \(rel)", true) }
-    if isDir.boolValue {
-      let names = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-      return (names.filter { !$0.lastPathComponent.hasPrefix(".") }.map { u in
-        ((try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) ? u.lastPathComponent + "/" : u.lastPathComponent
-      }.sorted().joined(separator: "\n"), false)
-    }
+    if isDir.boolValue { return (Self.readFolder(url), false) }
     guard let data = try? Data(contentsOf: url) else { return ("cannot read \(rel)", true) }
     if data.count > 200_000 { return (String(decoding: data.prefix(200_000), as: UTF8.self) + "\n[cut at 200000 bytes]", false) }
     return (String(decoding: data, as: UTF8.self), false)
   }
+
+  /// A reference folder in one call, so that the model need not walk it a
+  /// level per reply: a Card's folder gives all its files, any other lists every
+  /// file under it. Hidden files and symbolic links are left out.
+  static func readFolder(_ url: URL) -> String {
+    let root = url.resolvingSymlinksInPath()
+    var files: [(rel: String, url: URL)] = []
+    let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+    while let u = walk?.nextObject() as? URL {
+      guard (try? u.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+      files.append((String(u.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1)), u))
+    }
+    files.sort { $0.rel < $1.rel }
+    guard files.contains(where: { $0.rel == "_card.json" }) else {
+      let shown = files.prefix(folderEntries).map(\.rel).joined(separator: "\n")
+      return files.count > folderEntries ? shown + "\n[\(files.count - folderEntries) more files]" : shown
+    }
+    return files.map { f in
+      let data = (try? Data(contentsOf: f.url)) ?? Data()
+      let text = data.count > folderFileLimit ? nil : String(data: data, encoding: .utf8)
+      return "--- \(f.rel)\n\(text ?? "(\(data.count) bytes, not shown: read it by its path)")\n"
+    }.joined()
+  }
+  static let folderEntries = 300
+  static let folderFileLimit = 50_000
 
   /// Validates arguments, executes the RPC and records the result.
   func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ContentBlock {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
+    // Broken arguments never run, whatever the tool: the model is told to write
+    // them again. (A reply cut at the output limit does not come this far: loop.)
+    guard let args = ContentBlock.arguments(input) else {
+      return try finish(&record, Self.invalidArgumentsText(input), isError: true, events)
+    }
     if name == Self.referenceTool.name, !references.isEmpty {
-      let path = (try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any])?["path"] as? String ?? ""
+      let path = args["path"] as? String ?? ""
       let (text, isError) = readReference(path)
       return try finish(&record, text, isError: isError, events)
     }
@@ -640,10 +686,6 @@ public actor Agent {
     }
     guard let spec = catalog.tool(named: name) else {
       return try finish(&record, "unknown tool \(name)", isError: true, events)
-    }
-    // Incomplete or invalid arguments are never executed.
-    guard let data = input.data(using: .utf8), let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-      return try finish(&record, "the arguments are not a complete JSON object", isError: true, events)
     }
     if name == "attached_folder_read" {
       let folder = Self.trimmedFolder(args["folder"] as? String ?? "")
@@ -834,7 +876,7 @@ public actor Agent {
       } : []
       let next = i + 1 < conversation.messages.count ? conversation.messages[i + 1] : nil
       let answered = Set(next?.role == "user" ? next!.content.compactMap { b -> String? in
-        if case .toolResult(let id, _, _) = b { return id }
+        if case .toolResult(let id, _, _, _) = b { return id }
         return nil
       } : [])
       let missing = ids.filter { !answered.contains($0) }
@@ -843,7 +885,7 @@ public actor Agent {
           let r = conversation.tools.first { $0.id == id }
           switch r?.state {
           case .completed?:
-            return .toolResult(toolUseId: id, content: Self.clip(r?.result ?? ""), isError: r?.isError ?? false)
+            return Self.resultBlock(id: id, result: r?.result ?? "", isError: r?.isError ?? false)
           case .sent?:
             return .toolResult(toolUseId: id, content: "sent, but the turn was stopped before the answer; check the outcome "
                                  + "with operation_get (op_id \(r?.opId ?? ""))", isError: true)
@@ -882,12 +924,25 @@ public actor Agent {
     return head + String(result.prefix(400))
   }
 
+  /// A tool's result as the model gets it: its images as images, its text clipped.
+  static func resultBlock(id: String, result: String, isError: Bool) -> ContentBlock {
+    let (text, images) = ToolImage.split(result)
+    return .toolResult(toolUseId: id, content: clip(text), isError: isError, images: images)
+  }
+
   /// How much of a tool's result the model gets; a longer one says it was cut.
   public static let resultLimit = 60_000
   public static func clip(_ s: String) -> String {
     guard s.count > resultLimit else { return s }
     return String(s.prefix(resultLimit)) + "\n[cut: showing the first \(resultLimit) of \(s.count) characters; "
       + "read the rest with a narrower request (an offset, a range or one file)]"
+  }
+
+  /// What the model is told of arguments that are not a JSON object: to write
+  /// them again, with the text it wrote (it may mend that instead of starting over).
+  static func invalidArgumentsText(_ input: String) -> String {
+    let wrapped = (try? JSONSerialization.data(withJSONObject: ["INVALID_JSON": input], options: [.withoutEscapingSlashes])) ?? Data()
+    return Shared.fill(Shared.data.invalidArguments, ["json": String(decoding: wrapped, as: UTF8.self)])
   }
 
   private func finish(_ record: inout ToolRecord, _ result: String, isError: Bool,
@@ -899,7 +954,7 @@ public actor Agent {
     conversation.tools.append(record)
     try conversation.save(storage)
     events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: Self.toolSummary(result)))
-    return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
+    return Self.resultBlock(id: record.id, result: result, isError: isError)
   }
 
   func renderReply(_ type: String, _ table: Table) -> String {
@@ -934,8 +989,8 @@ public actor Agent {
         // Replace that result too, so the next model request sees the receipt.
         for m in conversation.messages.indices {
           conversation.messages[m].content = conversation.messages[m].content.map { block in
-            if case .toolResult(let toolId, _, _) = block, toolId == id {
-              return .toolResult(toolUseId: id, content: Self.clip(json), isError: error ?? true)
+            if case .toolResult(let toolId, _, _, _) = block, toolId == id {
+              return Self.resultBlock(id: id, result: json, isError: error ?? true)
             }
             return block
           }
@@ -987,7 +1042,7 @@ public actor Agent {
   static func fitToolResults(_ messages: [ChatMessage], room: Int) -> [ChatMessage] {
     let note = contextCutNote.count
     let sizes = messages.flatMap { $0.content.compactMap { b -> Int? in
-      if case .toolResult(_, let c, _) = b { return c.count }
+      if case .toolResult(_, let c, _, _) = b { return c.count }
       return nil
     } }
     var cap = resultLimit
@@ -995,8 +1050,8 @@ public actor Agent {
     return messages.map { m in
       var m = m
       m.content = m.content.map { b in
-        if case .toolResult(let id, let c, let e) = b, c.count > cap + note {
-          return .toolResult(toolUseId: id, content: String(c.prefix(cap)) + contextCutNote, isError: e)
+        if case .toolResult(let id, let c, let e, let images) = b, c.count > cap + note {
+          return .toolResult(toolUseId: id, content: String(c.prefix(cap)) + contextCutNote, isError: e, images: images)
         }
         return b
       }
@@ -1012,7 +1067,7 @@ public actor Agent {
         switch b {
         case .text(let t): transcript += "\(m.role): \(t)\n"
         case .toolUse(_, let n, let a): transcript += "tool call \(n) \(a.prefix(500))\n"
-        case .toolResult(_, let c, let e): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
+        case .toolResult(_, let c, let e, _): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
         case .webSearch(let s): transcript += s.note + "\n"
         }
       }
