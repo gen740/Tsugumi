@@ -99,6 +99,12 @@ for used in $(grep -oh 'src="\.\./assets/[^"]*"\|href="\.\./assets/[^"]*"' $stor
   mkdir -p "$explainer/$(dirname "$used")"
   cp "$repo/docs/$used" "$explainer/$used"
 done
+# Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
+# each demo and the images it names, without what only builds that data.
+thumbs="$app/Contents/Resources/player-data"
+mkdir -p "$thumbs/assets"
+find "$repo/docs/site/player-data" -maxdepth 1 -name '*.json' ! -name index.json -exec cp {} "$thumbs/" \;
+find "$repo/docs/site/player-data/assets" -type f ! -name '*.json' -exec cp {} "$thumbs/assets/" \;
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
