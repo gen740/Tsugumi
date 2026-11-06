@@ -177,6 +177,8 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
+  /// What a model's save did to the comments on Cards.
+  comments:[VersionComment] (id: 4);
 }
 
 table IdMapping {
@@ -600,6 +602,21 @@ table VersionRun {
   summary:string (id: 4);
 }
 
+/// A comment on a Card that a version or a save changed.
+table VersionComment {
+  card:string (id: 0, required);
+  text:string (id: 1, required);
+  /// added, edited, resolved, reopened or removed. A comment written and
+  /// resolved within one version is resolved.
+  change:string (id: 2, required);
+  resolution:string (id: 3);
+  /// Who did it, as the comment records it: agent or user. Absent when it is
+  /// not recorded, as for a comment that is gone.
+  by:string (id: 4);
+  /// The Cards the save that resolved it changed.
+  cards:[string] (id: 5);
+}
+
 table VersionCommit {
   id:string (id: 0, required);
   parents:[string] (id: 1);
@@ -616,6 +633,8 @@ table VersionCommit {
   /// What this version changed, in a sentence a model wrote from its diff
   /// (refs/notes/tsugumi-summary). Absent until one is written.
   change_summary:string (id: 10);
+  /// What this version did to the comments on Cards, from the first parent.
+  comments:[VersionComment] (id: 11);
 }
 
 table VersionCanvasCard {

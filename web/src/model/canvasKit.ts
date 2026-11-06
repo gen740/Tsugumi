@@ -126,6 +126,8 @@ export interface CardNodeData {
   untitled?: boolean
   /** The canvas grid's spacing while the grid is on: the ports follow it. */
   portGrid?: number
+  /** Comments on the Card not resolved yet. */
+  openComments?: number
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'

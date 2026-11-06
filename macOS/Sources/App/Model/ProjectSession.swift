@@ -1450,6 +1450,72 @@ final class ProjectSession {
     setCardDefinition(k, d)
   }
 
+  // MARK: - Comments on a Card (its _meta.json)
+
+  /// What the user asks of this Card, in the order written.
+  func comments(_ k: CardKey) -> [CardComment] { CardComment.list(in: cardMeta(k)) }
+
+  /// Comments not resolved yet.
+  func openComments(_ k: CardKey) -> [CardComment] { comments(k).filter { !$0.resolved } }
+
+  /// The Cards of a scope with comments not resolved yet.
+  func cardsWithOpenComments(in scope: [String]) -> [CardKey] {
+    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !openComments($0).isEmpty }
+  }
+
+  /// Saved at once; a Card in Card has a _meta.json too. One call is one step of undo.
+  private func editComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
+    edit { x in
+      guard var d = x.cardDefinitionDraft(k) else { return }
+      var meta = d.meta ?? .object([])
+      let list = fn(meta["comments"]?.array ?? [])
+      meta["comments"] = list.isEmpty ? nil : .array(list)
+      d.meta = meta.object?.isEmpty ?? true ? nil : meta
+      x.setCardDefinition(k, d)
+    }
+  }
+
+  func addComment(_ k: CardKey, _ text: String) {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user"))])] }
+  }
+
+  func editComment(_ k: CardKey, id: String, text: String) {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    editComments(k) { list in
+      list.map { c in
+        guard c["id"]?.string == id else { return c }
+        var n = c
+        n["text"] = .string(t)
+        n["editedBy"] = .string("user")
+        return n
+      }
+    }
+  }
+
+  /// Marks a comment by hand. Opening one again takes back what was said about it.
+  func setCommentResolved(_ k: CardKey, id: String, _ resolved: Bool) {
+    editComments(k) { list in
+      list.map { c in
+        guard c["id"]?.string == id else { return c }
+        var n = c
+        n["resolved"] = resolved ? .bool(true) : nil
+        n["stateBy"] = .string("user")
+        if !resolved {
+          n["resolution"] = nil
+          n["cards"] = nil
+        }
+        return n
+      }
+    }
+  }
+
+  func removeComment(_ k: CardKey, id: String) {
+    editComments(k) { $0.filter { $0["id"]?.string != id } }
+  }
+
   /// A setting of the Card (its _card.json).
   func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 

@@ -29,6 +29,7 @@ struct CardMenu: View {
       .disabled(!session.isEditable)
     }
     Button("設定…") { openWindow(id: "card", value: ref) }
+    Button("コメント…") { openWindow(id: "card", value: CardRef(path: ref.path, card: cardKey, category: .comments)) }
     Button("実行履歴…") { openWindow(id: "executions", value: ref) }
     Button("成果物…") { openWindow(id: "artifacts", value: ref) }
     Button("ログを表示") { workspace.showLog(for: cardKey) }

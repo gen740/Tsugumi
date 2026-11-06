@@ -66,6 +66,7 @@ extension Shared {
   struct Data {
     struct Tool { let name: String, description: String, inputSchema: [String: Any] }
     struct Draft { let root: String, child: String, card: String, text: String }
+    struct Comment { let card: String, comment: String, text: String }
     struct Helper {
       let prompt: String, outside: String, invalid: String
       let each: String, eachReport: String, together: String, togetherReport: String
@@ -90,6 +91,7 @@ extension Shared {
     let helper: Helper
     let guide: Guide
     let draft: Draft
+    let comment: Comment
     let webSearch: WebSearch
     let permissionDeclined: String
   }
@@ -97,6 +99,7 @@ extension Shared {
   static let data: Data = {
     let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
     let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
+    let cm = o["commentRequest"] as! [String: String]
     let dt = o["delegateTool"] as! [String: Any], h = o["helper"] as! [String: String]
     let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
     let w = o["webSearch"] as! [String: Any]
@@ -114,6 +117,7 @@ extension Shared {
                                              inputSchema: gt["inputSchema"] as! [String: Any]),
                              texts: g.compactMapValues { $0 as? String }),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
+                comment: .init(card: cm["card"]!, comment: cm["comment"]!, text: cm["text"]!),
                 webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
                                  openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
                                  note: w["note"] as! String, sources: w["sources"] as! String, maxUses: w["maxUses"] as! Int),

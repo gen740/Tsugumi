@@ -139,6 +139,20 @@ struct PortNote {
   Opt<"description", v::String> description;
 };
 
+// What the user and the Agent write about a Card already written. author,
+// editedBy, stateBy ("agent" or "user") and cards are the record of who did what;
+// a model's save has them stamped (comments.hh).
+struct CardComment {
+  Opt<"id", v::String> id;
+  Opt<"text", v::String> text;
+  Opt<"resolved", v::Bool> resolved;
+  Opt<"resolution", v::String> resolution;  // one line on what was done about it
+  Opt<"author", v::String> author;
+  Opt<"editedBy", v::String> edited_by;
+  Opt<"stateBy", v::String> state_by;
+  Opt<"cards", v::Array<v::String>> cards;  // what the save that resolved it changed
+};
+
 // _meta.json: the intent of a definition, for every kind of Card (a Card in
 // Card too); kept when a Draft is implemented. The summary is only here.
 struct CardMeta {
@@ -148,6 +162,7 @@ struct CardMeta {
   Opt<"origin", v::String> origin;            // where an imported definition came from
   Opt<"inputs", v::Array<Obj<PortNote>>> inputs;
   Opt<"outputs", v::Array<Obj<PortNote>>> outputs;
+  Opt<"comments", v::Array<Obj<CardComment>>> comments;
 };
 
 // ---- layout.json -------------------------------------------------------------

@@ -565,6 +565,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
             onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
+            onComments={() => app.openWindow(session, { kind: 'card', card: k, category: 'comments' })}
             onPointerDown={(e) => onCardDown(k, e)}
             onDoubleClick={(e) => {
               e.stopPropagation()
@@ -789,6 +790,7 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     ] : []),
     kind === 'draft' && { label: '名前と内容を書く', disabled: !editable, action: () => canvasFor(session, tab).writeDraft(k) },
     { label: '設定…', action: () => app.openWindow(session, { kind: 'card', card: k }) },
+    { label: 'コメント…', action: () => app.openWindow(session, { kind: 'card', card: k, category: 'comments' }) },
     { label: '実行履歴…', action: () => app.openWindow(session, { kind: 'executions', card: k }) },
     { label: '成果物…', action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
     { label: 'ログを表示', action: () => showLog(workspace, k) },

@@ -8,7 +8,7 @@ import path from 'node:path'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
-import { AGENT, draftRequest } from '../src/shared/agentShared'
+import { AGENT, commentRequest, draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { Agent, AgentEvent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
@@ -17,6 +17,7 @@ type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
   flatjson: { type: string; json: { [k: string]: Json }; expect?: { [k: string]: Json }; error?: boolean }[]
   draftRequest: { scope: string[]; cards: { key: string; definition: string; description: string; content: string; context: string }[]; expect: string }[]
+  commentRequest: { scope: string[]; cards: { key: string; definition: string; comments: { id: string; text: string }[] }[]; expect: string }[]
   approvalRequired: { json: string; expect: string[] | null }[]
 }
 
@@ -51,6 +52,7 @@ for (const c of fixture.flatjson) {
   for (const [k, v] of Object.entries(c.expect ?? {})) assert.deepEqual(out[k], v, `${label}: ${k} is ${JSON.stringify(out[k])}`)
 }
 for (const c of fixture.draftRequest) assert.equal(draftRequest(c.scope, c.cards), c.expect)
+for (const c of fixture.commentRequest) assert.equal(commentRequest(c.scope, c.cards), c.expect)
 for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.json) ?? null, c.expect, c.json)
 // The Draft demos are tasks and the finished demo of each is its answer:
 // reference_read neither lists nor reads them (as the Swift Agent).

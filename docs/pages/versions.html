@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#版ができるとき">版ができるとき</a></li><li class="d2"><a href="#実行の結果">実行の結果</a></li><li class="d2"><a href="#版のツリー">版のツリー</a></li><li class="d2"><a href="#版の要約">版の要約</a></li><li class="d2"><a href="#nixpkgs">nixpkgs</a></li><li class="d2"><a href="#デモの履歴">デモの履歴</a></li><li class="d2"><a href="#実装">実装</a></li><li class="d2"><a href="#まだできないこと">まだできないこと</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#版ができるとき">版ができるとき</a></li><li class="d2"><a href="#実行の結果">実行の結果</a></li><li class="d2"><a href="#版のツリー">版のツリー</a></li><li class="d2"><a href="#版の要約">版の要約</a></li><li class="d2"><a href="#コメント">コメント</a></li><li class="d2"><a href="#nixpkgs">nixpkgs</a></li><li class="d2"><a href="#デモの履歴">デモの履歴</a></li><li class="d2"><a href="#実装">実装</a></li><li class="d2"><a href="#まだできないこと">まだできないこと</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="版の管理git">版の管理（git）</h1>
@@ -82,6 +82,15 @@ run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの
 <ul>
 <li>文は差分だけから書かせますが、モデルの文なので誤ることがあります。確かなのは差分と実行の記録です。</li>
 <li>ChatGPT プランでは作りません（プランの利用枠は Agent のためのものです）。</li>
+</ul>
+<h2 id="コメント">コメント</h2>
+<p>Card のコメント（<a href="features.html#コメントから-card-を生成">コメントから Card を生成</a>）は <code>definitions/&lt;id&gt;/_meta.json</code> にあるので、ほかの設定と同じように commit されます。版の履歴の詳細には、その前の版と比べてコメントがどう変わったかが出ます（<code>VersionCommit.comments</code>）。</p>
+<ul>
+<li>変化は追加・編集・解決・開き直し・削除の 5 つです。同じ版の中で書かれて解決されたものは解決です。</li>
+<li>それぞれ、誰がしたか（Agent か利用者か）と、解決した保存で変わった Card も出ます。誰が消したかはコメントと一緒になくなるので、削除には出ません（Agent の削除はチャットの行に残ります）。</li>
+<li>コメントは id で区別するので、Card の名前を変えても別のコメントになりません。</li>
+<li>版は実行の開始時か「版として残す」でできます。その間に書いて消したコメントは残りません。残したいものは削除せず解決にします。</li>
+<li>git からも読めます（例: <code>git show &lt;版&gt;:definitions/&lt;id&gt;/_meta.json</code>）。</li>
 </ul>
 <h2 id="nixpkgs">nixpkgs</h2>
 <p>新しいプロジェクトは、作った Tsugumi の nixpkgs（<code>flake.lock</code>）を <code>tsugumi.json</code> の <code>pkgsPath</code> に固定値で持ちます。版の一部なので、過去の版に戻れば nixpkgs も戻ります。固定されていないプロジェクト（<code>tsugumi:default</code>）は、Workflow 設定で固定できます。</p>

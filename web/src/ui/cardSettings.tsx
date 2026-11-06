@@ -10,13 +10,13 @@ import { cloneDef, merge3 } from '../model/merge'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { CardKey, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { CardComment, CardKey, commentDone, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../shared/json'
 import { D, RPCFailure, s, sOpt } from '../shared/rpc'
 import { CardNodeView } from './cardNode'
-import { Button, Confirm, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
+import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor, EditorMarker } from './editor'
 import { CardArtifactsView, CardExecutionView } from './history'
 import { Icon } from './icons'
@@ -356,11 +356,11 @@ export function retargetWindows(session: ProjectSession, from: CardKey, to: Card
 
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
-    case 'code': return ['general', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'input': return ['general', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'draft': return ['general', 'ports', 'context']
-    case 'subgraph': return ['general', 'ports', 'executions']
-    default: return ['general', 'ports', 'executions', 'artifacts', 'context']
+    case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
+    case 'input': return ['general', 'comments', 'source', 'ports', 'executions', 'artifacts', 'context']
+    case 'draft': return ['general', 'comments', 'ports', 'context']
+    case 'subgraph': return ['general', 'comments', 'ports', 'executions']
+    default: return ['general', 'comments', 'ports', 'executions', 'artifacts', 'context']
   }
 }
 
@@ -426,6 +426,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
         {category === 'general' && <CardPreview session={session} model={model} height={170} />}
         <div className="cse-content">
           {category === 'general' && <GeneralCategory model={model} onRenamed={renamed} />}
+          {category === 'comments' && <CommentsCategory session={session} card={model.cardKey} />}
           {category === 'nix' && <SourceCategory model={model} only="default.nix" />}
           {category === 'source' && <SourceCategory model={model} />}
           {category === 'ports' && (model.kind === 'subgraph' ? <BoundaryCategory model={model} /> : <PortsCategory model={model} />)}
@@ -970,6 +971,90 @@ function ContextCategory({ model }: { model: CardEditorModel }) {
           })
         }} />
       )}
+    </div>
+  )
+}
+
+/** Whose comment this is, when it is not simply one of the user's. */
+function CommentRecord({ comment: c }: { comment: CardComment }) {
+  const parts = [
+    c.author === 'agent' && 'Agent が書きました',
+    c.editedBy && c.editedBy !== (c.author ?? 'user') && commentDone(c.editedBy, '編集'),
+    !c.resolved && c.stateBy === 'agent' && 'Agent が開き直しました',
+  ].filter((x): x is string => !!x)
+  if (!parts.length) return null
+  return (
+    <div className="row gap6 center caption">
+      <span className="cse-comment-who"><Icon name="bubble.left" size={10} />Agent</span>
+      <span className="secondary">{parts.join('・')}</span>
+    </div>
+  )
+}
+
+/** What the user and the Agent write about this Card. Saved at once, not with 適用
+ *  (during a run, when the run ends, as other edits): it says nothing about how it runs. */
+function CommentsCategory({ session, card }: { session: ProjectSession; card: CardKey }) {
+  useObserve(session)
+  const [text, setText] = useState('')
+  const [editing, setEditing] = useState<{ id: string; text: string }>()
+  const comments = session.comments(card)
+  const open = comments.filter((c) => !c.resolved), resolved = comments.filter((c) => c.resolved)
+  const add = () => {
+    session.addComment(card, text)
+    setText('')
+  }
+  const saveEdit = () => {
+    if (editing) session.editComment(card, editing.id, editing.text)
+    setEditing(undefined)
+  }
+  const submitting = (run: () => void) => (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      e.stopPropagation()
+      run()
+    }
+  }
+  const row = (c: CardComment) => (
+    <div key={c.id} className="cse-comment col gap6" data-comment={c.id}>
+      {editing?.id === c.id ? (
+        <>
+          <TextField multiline rows={3} autoFocus value={editing.text} onChange={(t) => setEditing({ id: c.id, text: t })} onKeyDown={submitting(saveEdit)} />
+          <div className="row end gap6">
+            <Button small onClick={() => setEditing(undefined)}>キャンセル</Button>
+            <Button small kind="prominent" disabled={!editing.text.trim() || !session.connected} onClick={saveEdit}>保存</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <CommentRecord comment={c} />
+          <div className="cse-comment-text selectable">{c.text}</div>
+          {(c.resolution || c.cards.length > 0 || (c.resolved && commentDone(c.stateBy, '解決'))) && (
+            <div className="caption secondary selectable">
+              <Icon name="checkmark" size={10} /> {commentDone(c.stateBy, '解決') ?? '解決'}
+              {c.resolution && `: ${c.resolution}`}
+              {c.cards.length > 0 && `（変更した Card: ${c.cards.join('、')}）`}
+            </div>
+          )}
+          <div className="row end gap6">
+            <Button small disabled={!session.connected} onClick={() => setEditing({ id: c.id, text: c.text })}>編集</Button>
+            {c.resolved
+              ? <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, false)}>開き直す</Button>
+              : <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, true)}>解決</Button>}
+            <Button small kind="borderless" iconOnly icon="trash" help="削除" disabled={!session.connected} onClick={() => session.removeComment(card, c.id)} />
+          </div>
+        </>
+      )}
+    </div>
+  )
+  return (
+    <div className="col gap8 pad12 scroll fill">
+      <div className="callout secondary">この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。</div>
+      <TextField multiline rows={3} value={text} onChange={setText} placeholder="例: y 軸を対数にしてください" onKeyDown={submitting(add)} />
+      <div className="row end">
+        <Button kind="prominent" disabled={!text.trim() || !session.connected} help="⌘Return" onClick={add}>コメントを追加</Button>
+      </div>
+      {open.map(row)}
+      {resolved.length > 0 && <Disclosure label={`解決済み（${resolved.length}）`}><div className="col gap6">{resolved.map(row)}</div></Disclosure>}
     </div>
   )
 }

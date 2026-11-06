@@ -11,6 +11,7 @@ extension Tsugumi_RPC_VersionCommitT {
   var tagList: [String] { tags.compactMap { $0 } }
   var branchList: [String] { branches.compactMap { $0 } }
   var changedList: [String] { changed.compactMap { $0 } }
+  var commentList: [Tsugumi_RPC_VersionCommentT] { comments.compactMap { $0 } }
 }
 
 /// Lanes of a version graph, newest first: each commit's column and, for each
@@ -434,6 +435,23 @@ struct VersionTreeView: View {
           LabeledContent("作成", value: Date(timeIntervalSince1970: Double(c.time ?? 0) / 1000).formatted(date: .abbreviated, time: .shortened))
             .font(.caption)
           if !c.changedList.isEmpty { Text(Self.changedText(c.changedList)).font(.caption) }
+          if !c.commentList.isEmpty {
+            Text("コメント").font(.subheadline.weight(.semibold))
+            ForEach(Array(c.commentList.enumerated()), id: \.offset) { _, x in
+              VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: "\(x.card) · \(CardComment.change(x.change, by: x.by))").foregroundStyle(.secondary)
+                Text(verbatim: x.text).textSelection(.enabled)
+                if let line = x.resolution, !line.isEmpty {
+                  Text(verbatim: line).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                let changed = x.cards.compactMap { $0 }
+                if !changed.isEmpty {
+                  Text("変更した Card: \(changed.joined(separator: "、"))").foregroundStyle(.secondary).textSelection(.enabled)
+                }
+              }
+              .font(.caption)
+            }
+          }
           if !c.runList.isEmpty {
             Text("実行の結果").font(.subheadline.weight(.semibold))
             ForEach(Array(c.runList.enumerated()), id: \.offset) { _, r in

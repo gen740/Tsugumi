@@ -582,6 +582,54 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   }
 }
 
+/// A comment from request to change through the Agent: the Card changes, the
+/// comment is resolved in the same save with the record of who did it and what
+/// changed, and the Agent adds a Card and a comment of its own when it is asked to.
+/// The other comment, not asked about, stays as it is.
+@Suite(.serialized) struct CommentGenerationTests {
+  @Test func commentsAreFollowedAndRecorded() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let snap = try await client.inspect()
+    let out = try #require(snap.definitions.compactMap { $0 }.first { $0.id == "out" })
+    let asked = "Then add a Card extra and leave a comment"
+    let meta = #"{"description":"Logs","comments":[{"id":"c1","text":"\#(asked)","author":"user"},{"id":"c2","text":"Not asked about","author":"user"}]}"#
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.putDefinition(id: "out", cardJSON: out.cardJson, metaJSON: meta),
+    ])
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    let request = Agent.commentRequest(scope: [], cards: [(key: "out", definition: "out", comments: [(id: "c1", text: asked)])])
+    await agent.send(request, context: []) { log.add($0) }
+    await waitFinished(log, seconds: 120)
+    #expect(log.text.contains("Followed the comments"), "\(log.all)")
+    let after = try await client.inspect()
+    let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == "out" })
+    #expect(try JSONValue.parse(def.cardJson)["symbol"]?.string == "checkmark")
+    let comments = try JSONValue.parse(try #require(def.metaJson))["comments"]?.array ?? []
+    #expect(comments.count == 3)
+    #expect(comments[0]["text"]?.string == asked && comments[0]["resolved"]?.bool == true && comments[0]["author"]?.string == "user")
+    #expect(comments[0]["stateBy"]?.string == "agent" && comments[0]["resolution"]?.string?.isEmpty == false)
+    #expect(comments[0]["cards"]?.array?.compactMap(\.string) == ["extra", "out"])
+    #expect(comments[1]["text"]?.string == "Not asked about" && comments[1]["resolved"] == nil)
+    #expect(comments[2]["author"]?.string == "agent" && comments[2]["id"]?.string?.isEmpty == false)
+    #expect(after.definitions.compactMap { $0 }.contains { $0.id == "extra" })
+    await client.close()
+  }
+
+  @Test func theChatRowSaysWhatASaveDidToTheComments() throws {
+    let list = #"[{"by":"agent","card":"plot","cards":["plot"],"change":"resolved","text":"log"}]"#
+    let result = #"{"reply":"SaveResult","value":{"delta":{"big":"\#(String(repeating: "x", count: 2000))"},"comments":\#(list)}}"#
+    let summary = Agent.toolSummary(result)
+    #expect(summary.hasPrefix("comments: " + list + "\n"))
+    #expect(Agent.toolSummary(#"{"reply":"RunStatus"}"#) == #"{"reply":"RunStatus"}"#)
+    #expect(Agent.toolSummary(String(repeating: "x", count: 500)).count == 400)
+  }
+}
+
 /// Draft from plan to implementation through the Agent: described and wired,
 /// saved and reloaded, converted by the Agent into a code Card (types, Nix,
 /// sources) that validates; the intent stays in _meta.json. A cancelled

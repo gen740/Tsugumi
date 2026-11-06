@@ -63,7 +63,45 @@ export const stageRecords = (list: R.StageTimeT[]): StageRecord[] =>
     return st === undefined ? [] : [{ stage: st, outcome: t.outcome, start: t.start !== null ? Number(t.start) : undefined, end: t.end !== null ? Number(t.end) : undefined }]
   })
 
-/** Latest invocation of a Card in the current run, as the core reports it. */
+/** What the user and the Agent write about a Card (_meta.json), and the record
+ *  of who did what ("agent" or "user"; absent when not recorded). */
+export interface CardComment {
+  id: string
+  text: string
+  resolved: boolean
+  /** One line on what was done about it. */
+  resolution?: string
+  author?: string
+  editedBy?: string
+  stateBy?: string
+  /** The Cards the save that resolved it changed. */
+  cards: string[]
+}
+
+export function cardComments(meta: J | undefined): CardComment[] {
+  return (arr(get(meta, 'comments')) ?? []).flatMap((c) => {
+    const id = str(get(c, 'id')), text = str(get(c, 'text'))
+    return id && text !== undefined ? [{
+      id, text, resolved: bool(get(c, 'resolved')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
+      author: str(get(c, 'author')), editedBy: str(get(c, 'editedBy')), stateBy: str(get(c, 'stateBy')),
+      cards: (arr(get(c, 'cards')) ?? []).map((x) => str(x)).filter((x): x is string => !!x),
+    }] : []
+  })
+}
+
+/** Who did something to a comment, for the sentences that say so. */
+export const commentActor = (by: string | undefined) => (by === 'agent' ? 'Agent' : by === 'user' ? 'あなた' : undefined)
+/** "Agent が解決", or undefined when who did it is not recorded. */
+export const commentDone = (by: string | undefined, what: string) => (by === 'agent' ? `Agent が${what}` : by === 'user' ? `あなたが${what}` : undefined)
+
+/** What a version or a save did to a comment, and who did it when that is recorded. */
+export function commentChange(change: string, by?: string): string {
+  const what = ({ added: '追加', edited: '編集', resolved: '解決', reopened: '開き直し', removed: '削除' } as Record<string, string>)[change] ?? change
+  const who = commentActor(by)
+  return who ? `${what}（${who}）` : what
+}
+
+/** Latest invocation of a Card in the current run, as the core reports it. *//** Latest invocation of a Card in the current run, as the core reports it. */
 export interface CardRunState {
   state: D.CardState
   /** Number of the latest invocation in this run (1, 2, …); 0 = not run. */
@@ -1621,6 +1659,73 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
+  // ---- Comments on a Card (its _meta.json) ---------------------------------------------
+
+  /** What the user asks of this Card, in the order written. */
+  comments(k: CardKey): CardComment[] {
+    return cardComments(this.cardMeta(k))
+  }
+
+  /** Comments not resolved yet. */
+  openComments(k: CardKey): CardComment[] {
+    return this.comments(k).filter((c) => !c.resolved)
+  }
+
+  /** The Cards of a scope with comments not resolved yet. */
+  cardsWithOpenComments(scope: string[]): CardKey[] {
+    return this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
+      .map((id) => key([...scope, id])).filter((k) => this.openComments(k).length > 0)
+  }
+
+  /** Saved at once; a Card in Card has a _meta.json too. One call is one step of undo. */
+  private editComments(k: CardKey, fn: (list: J[]) => J[]) {
+    this.edit((x) => {
+      const d = x.cardDefinitionDraft(k)
+      if (!d) return
+      const n = cloneDef(d)
+      const meta: JObj = isObj(n.meta) ? n.meta : obj()
+      const list = fn((arr(meta.get('comments')) ?? []).map((c) => clone(c)))
+      meta.set('comments', list.length ? list : undefined)
+      n.meta = meta.size ? meta : undefined
+      x.setCardDefinition(k, n)
+    })
+  }
+
+  addComment(k: CardKey, text: string) {
+    const t = text.trim()
+    if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user']])])
+  }
+
+  editComment(k: CardKey, id: string, text: string) {
+    const t = text.trim()
+    if (t) this.editComments(k, (list) => list.map((c) => {
+      if (str(get(c, 'id')) === id && isObj(c)) {
+        c.set('text', t)
+        c.set('editedBy', 'user')
+      }
+      return c
+    }))
+  }
+
+  /** Marks a comment by hand. Opening one again takes back what was said about it. */
+  setCommentResolved(k: CardKey, id: string, resolved: boolean) {
+    this.editComments(k, (list) => list.map((c) => {
+      if (str(get(c, 'id')) === id && isObj(c)) {
+        c.set('resolved', resolved ? true : undefined)
+        c.set('stateBy', 'user')
+        if (!resolved) {
+          c.set('resolution', undefined)
+          c.set('cards', undefined)
+        }
+      }
+      return c
+    }))
+  }
+
+  removeComment(k: CardKey, id: string) {
+    this.editComments(k, (list) => list.filter((c) => str(get(c, 'id')) !== id))
+  }
+
   /** A setting of the Card (its _card.json). */
   cardSetting(k: CardKey, name: string): J | undefined {
     return get(this.cardDefinition(k), name)
@@ -1862,7 +1967,16 @@ export class ProjectSession extends Observable {
       copy = await this.copyExternal(`${prefix}externals/${extName}/`, `${toPrefix}externals/${n}/`)
       link = obj([['external', n]])
     }
-    const draft: DefinitionDraft = { card: clone(d.card), meta: clone(d.meta), link: clone(link) }
+    // The copy's comments are comments of its own.
+    const meta = clone(d.meta)
+    if (isObj(meta)) {
+      const comments = arr(meta.get('comments'))
+      if (comments) meta.set('comments', comments.map((c) => {
+        if (isObj(c)) c.set('id', uuid())
+        return c
+      }))
+    }
+    const draft: DefinitionDraft = { card: clone(d.card), meta, link: clone(link) }
     const newKey = key([...scope, newId])
     return {
       id: newId,
@@ -3013,7 +3127,7 @@ auto run(Card::Input& input) -> Card::Output {
   cardDetails(k: CardKey): string[] {
     const desc = this.cardDescription(k)
     const content = this.kind(k) === 'draft' ? str(get(this.cardMeta(k), 'content')) : undefined
-    return [desc, content].filter((x): x is string => !!x)
+    return [desc, content, ...this.openComments(k).map((c) => `${c.author === 'agent' ? 'コメント（Agent）' : 'コメント'}: ${c.text}`)].filter((x): x is string => !!x)
   }
 
   /** Whether a Card does not run because it needs a Draft's output. */
@@ -3127,7 +3241,7 @@ auto run(Card::Input& input) -> Card::Output {
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
-      draftEditing: editing, untitled: this.draftUntitled(k),
+      draftEditing: editing, untitled: this.draftUntitled(k), openComments: cardComments(m).filter((c) => !c.resolved).length,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
   }

@@ -69,6 +69,8 @@ export interface CardNodeProps {
   draftEdit?: DraftEdit
   onStageTap?: (stage: Stage) => void
   onToggleCollapse?: () => void
+  /** The badge of open comments: opens them (undefined: only shows the number). */
+  onComments?: () => void
   /** The start Card's button: runs the workflow from it (undefined: not offered). */
   onRun?: () => void
   style?: CSSProperties
@@ -107,6 +109,14 @@ export function CardNodeView(p: CardNodeProps) {
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
       <PortLabels data={data} g={g} flow={flow} z={z} />
+      {!!data.openComments && (
+        <button type="button" className="cv-comments" disabled={!p.onComments} aria-label={`未解決のコメント ${data.openComments} 件`}
+          title={`未解決のコメント ${data.openComments} 件`} {...stopping}
+          style={{ left: (o.x + o.width) * z, top: o.y * z, fontSize: font(9.5), height: s(15), minWidth: s(15), padding: `0 ${s(4)}px`, gap: s(2), borderRadius: s(8) }}
+          onClick={(e) => { e.stopPropagation(); p.onComments?.() }}>
+          <Icon name="bubble.left" size={font(9)} />{data.openComments}
+        </button>
+      )}
       {[...data.inputs.map((x) => [x, false] as const), ...data.outputs.map((x) => [x, true] as const)].map(([port, output]) => {
         const pt = g.port(port.name, output)
         const mark = Math.max(6, s(8)), hit = Math.max(16, s(18))

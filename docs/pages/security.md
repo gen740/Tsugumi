@@ -271,6 +271,7 @@ Agent が自分の判断で Web を検索できる設定です（設定の「API
   - 承認は Agent の実行部分がつける欄（`approved_permissions`）で送ります。モデルからは設定できません。
   - 許可されなければ何も保存されず、Agent には理由を利用者に説明するよう伝えます。
   - 利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。
+- **Card のコメントは Agent も書けます。** 拒否はしませんが、誰が書き、変え、解決したかは `tsugumid` が保存の `origin` から記録するので、モデルは利用者のコメントになりすませません（`core/src/comments.cc`、[test_card_comments.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py)）。コメントに従った保存も、上の承認を同じように通ります。
 - **Claude Code の plugin**（[Claude Code から使う](claude-code.md)）は、Web UI のサーバーを通してだけ操作します。
   - サーバーはチャットの Agent と同じ道具を、同じ検査で実行します。Card の権限を広げる保存は、Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。
   - plugin の MCP サーバーは、サーバーがデータフォルダに書く `server.json`（ポートと、起動ごとの Agent 用の鍵。0600、終了時に削除）でサーバーを見つけます。

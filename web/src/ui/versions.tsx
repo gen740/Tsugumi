@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as R from '../gen/tsugumi/rpc'
 import { useObserve } from '../model/observable'
-import { ProjectSession } from '../model/session'
+import { commentChange, ProjectSession } from '../model/session'
 import { Button, Confirm, Empty, Sheet, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 
@@ -272,6 +272,19 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
               <div className="caption mono">版 {str(sel.id).slice(0, 12)}</div>
               <div className="caption">{new Date(Number(sel.time ?? 0n)).toLocaleString()}</div>
               {list(sel.changed).length > 0 && <div className="caption">{changedText(list(sel.changed))}</div>}
+              {(sel.comments ?? []).length > 0 && (
+                <>
+                  <div style={{ fontWeight: 600 }}>コメント</div>
+                  {(sel.comments ?? []).filter((x): x is R.VersionCommentT => !!x).map((c, i) => (
+                    <div key={i} className="col caption">
+                      <div className="secondary">{str(c.card)} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
+                      <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(c.text)}</div>
+                      {str(c.resolution) && <div className="secondary selectable">{str(c.resolution)}</div>}
+                      {list(c.cards).length > 0 && <div className="secondary selectable">変更した Card: {list(c.cards).join('、')}</div>}
+                    </div>
+                  ))}
+                </>
+              )}
               {(sel.runs ?? []).length > 0 ? (
                 <>
                   <div style={{ fontWeight: 600 }}>実行の結果</div>

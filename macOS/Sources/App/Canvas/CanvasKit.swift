@@ -183,6 +183,50 @@ struct ParamData: Hashable {
   var value: String
 }
 
+/// What the user and the Agent write about a Card (_meta.json), and the record
+/// of who did what ("agent" or "user"; nil when not recorded).
+struct CardComment: Equatable, Identifiable {
+  var id: String
+  var text: String
+  var resolved = false
+  /// One line on what was done about it.
+  var resolution: String?
+  var author: String?
+  var editedBy: String?
+  var stateBy: String?
+  /// The Cards the save that resolved it changed.
+  var cards: [String] = []
+
+  static func list(in meta: JSONValue?) -> [CardComment] {
+    (meta?["comments"]?.array ?? []).compactMap { c in
+      guard let id = c["id"]?.string, let text = c["text"]?.string, !id.isEmpty else { return nil }
+      let line = c["resolution"]?.string ?? ""
+      return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
+                         author: c["author"]?.string, editedBy: c["editedBy"]?.string, stateBy: c["stateBy"]?.string,
+                         cards: c["cards"]?.array?.compactMap(\.string) ?? [])
+    }
+  }
+
+  /// Who did something to a comment, for the sentences that say so.
+  static func actor(_ by: String?) -> String? {
+    by == "agent" ? "Agent" : by == "user" ? String(localized: "あなた") : nil
+  }
+
+  /// What a version or a save did to a comment, and who did it when that is recorded.
+  static func change(_ change: String, by: String?) -> String {
+    let what: String
+    switch change {
+    case "added": what = String(localized: "追加")
+    case "edited": what = String(localized: "編集")
+    case "resolved": what = String(localized: "解決")
+    case "reopened": what = String(localized: "開き直し")
+    case "removed": what = String(localized: "削除")
+    default: what = change
+    }
+    return actor(by).map { "\(what)（\($0)）" } ?? what
+  }
+}
+
 /// Everything a Card view needs, with no dependency on a session.
 struct CardNodeData: Equatable {
   var title: String
@@ -216,6 +260,8 @@ struct CardNodeData: Equatable {
   var untitled = false
   /// The canvas grid's spacing while the grid is on: the ports follow it.
   var portGrid: CGFloat?
+  /// Comments on the Card not resolved yet.
+  var openComments = 0
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
@@ -746,6 +792,8 @@ struct CardNodeView: View {
   var onInputDrop: ((String, CGPoint) -> Void)?
   var onStageTap: ((Stage) -> Void)?
   var onToggleCollapse: (() -> Void)?
+  /// The badge of open comments: opens them (nil: only shows the number).
+  var onComments: (() -> Void)?
   /// The start Card's button: runs the workflow from it (nil: not offered).
   var onRun: (() -> Void)?
   var draftEdit: DraftEdit?
@@ -772,6 +820,7 @@ struct CardNodeView: View {
       path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
       portLabels(g)
       portMarks(g)
+      if data.openComments > 0 { commentsBadge(outline: outline) }
     }
     .frame(width: size.width, height: size.height, alignment: .topLeading)
     // The outline and the ports: a port sits on the edge, and the half of it
@@ -781,8 +830,33 @@ struct CardNodeView: View {
     .accessibilityLabel(accessibilityText)
   }
 
+  /// On the outline's top right corner, for every shape of Card.
+  private func commentsBadge(outline: CGRect) -> some View {
+    Button { onComments?() } label: {
+      HStack(spacing: s(2)) {
+        Image(systemName: "bubble.left").font(font(9, .semibold))
+        Text(verbatim: "\(data.openComments)").font(font(9.5, .semibold)).monospacedDigit()
+      }
+      .foregroundStyle(.white)
+      .padding(.horizontal, s(4))
+      .frame(minWidth: s(15), minHeight: s(15))
+      .background(Color.accentColor, in: Capsule())
+    }
+    .buttonStyle(.plain)
+    .disabled(onComments == nil)
+    .help("未解決のコメント \(data.openComments) 件")
+    .accessibilityLabel(String(localized: "未解決のコメント \(data.openComments) 件"))
+    .alignmentGuide(.leading) { $0.width * 0.7 - outline.maxX }
+    .alignmentGuide(.top) { $0.height / 2 - outline.minY }
+  }
+
   private func hitShape(_ g: CardGeometry, outline: Path) -> Path {
     var p = outline
+    if data.openComments > 0 {
+      // The badge sits half outside the outline and must still take the click.
+      let badge = max(16, s(18))
+      p.addRect(CGRect(x: outline.boundingRect.maxX - badge, y: outline.boundingRect.minY - badge / 2, width: badge * 1.4, height: badge))
+    }
     let hit = max(16, s(18))
     for (list, output) in [(data.inputs, false), (data.outputs, true)] {
       for port in list {

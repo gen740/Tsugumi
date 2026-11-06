@@ -27,6 +27,7 @@ add_library(tsugumi_core STATIC
   src/document.cc
   src/graph.cc
   src/nix_refs.cc
+  src/comments.cc
   src/permissions.cc
   src/versions.cc
   src/model.cc

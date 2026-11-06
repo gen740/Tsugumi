@@ -607,6 +607,19 @@ struct ToolStep {
     return v["card"]?.string
   }
 
+  /// What the save did to the comments on Cards, one line each.
+  var savedComments: [String] {
+    guard let from = args.range(of: "\n→ comments: "), let end = args[from.upperBound...].firstIndex(of: "\n"),
+          let list = (try? JSONValue.parse(String(args[from.upperBound..<end])))?.array else { return [] }
+    return list.map { c in
+      var line = String(localized: "\(c["card"]?.string ?? "") · コメントを\(CardComment.change(c["change"]?.string ?? "", by: c["by"]?.string)): \(c["text"]?.string ?? "")")
+      if let r = c["resolution"]?.string, !r.isEmpty { line += " — " + r }
+      let cards = c["cards"]?.array?.compactMap(\.string) ?? []
+      if !cards.isEmpty { line += String(localized: "（変更した Card: \(cards.joined(separator: "、"))）") }
+      return line
+    }
+  }
+
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
     if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
@@ -697,6 +710,12 @@ private struct ToolRow: View {
         Button { open.toggle() } label: { Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2) }
           .buttonStyle(.borderless).foregroundStyle(.secondary)
           .help(open ? "詳細を閉じる" : "ツールの詳細")
+      }
+      ForEach(Array(step.savedComments.enumerated()), id: \.offset) { _, line in
+        Text(verbatim: line)
+          .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+          .padding(.leading, 19)
+          .fixedSize(horizontal: false, vertical: true)
       }
       if open {
         (item.tool?.name == "web_search" ? Text(Self.linked(item.text)) : Text(item.text))

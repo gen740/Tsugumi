@@ -474,6 +474,7 @@ struct GraphCanvas: View {
                         onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: pt) },
                         onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
+                        onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .comments)) },
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil,
                         draftEdit: draftEdit(k))

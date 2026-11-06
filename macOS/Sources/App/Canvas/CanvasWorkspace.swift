@@ -35,6 +35,7 @@ struct CanvasWorkspace: View {
         CanvasRunControl(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(2)
         Spacer(minLength: 0)
         CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
+        CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
         projectActions.fixedSize().layoutPriority(2)
       }
       // In the title bar's row, beside the window buttons: right of the
@@ -259,6 +260,35 @@ struct CanvasRunControl: View {
 }
 
 /// Shown when the current scope has Draft Cards: generate them with the chat.
+/// Shown when Cards of the current scope have open comments: the selected ones
+/// (or all of them) go to the chat.
+struct CanvasCommentControls: View {
+  @Environment(AppModel.self) private var model
+  @Bindable var workspace: Workspace
+  let session: ProjectSession
+  let tab: WorkflowTab
+
+  var body: some View {
+    let cards = session.cardsWithOpenComments(in: tab.scope)
+    if !cards.isEmpty {
+      let chosen = cards.filter { tab.selection.contains($0) }
+      let asked = chosen.isEmpty ? cards : chosen
+      let count = asked.reduce(0) { $0 + session.openComments($1).count }
+      Button {
+        workspace.showChat = true
+        model.chat(for: session).generateFromComments(scope: tab.scope, cards: asked)
+      } label: { Label("コメントから生成（\(count)）", systemImage: "bubble.left") }
+        .disabled(session.dirty || !session.connected || model.chat(for: session).busy)
+        .help(session.dirty ? "先に変更を保存してください" :
+                chosen.isEmpty ? "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。"
+                : "選択した Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。")
+        .font(.callout)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
+    }
+  }
+}
+
 struct CanvasDraftControls: View {
   @Environment(AppModel.self) private var model
   @Bindable var workspace: Workspace
