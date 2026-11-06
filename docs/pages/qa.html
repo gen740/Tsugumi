@@ -125,7 +125,7 @@
 <div class="table-wrap"><table><thead><tr><th>記録先</th><th>残すもの</th><th>使い道</th></tr></thead><tbody><tr><td>Git（プロジェクトのフォルダ）</td><td>Workflow の定義、コード、params、環境の定義</td><td>変更をたどり、過去の版から別の試行を始める</td></tr><tr><td>実行履歴（SQLite）</td><td>実行の状態、ログ、表示、設定に応じた入出力値</td><td>実際に何が動き、どんな結果になったかを見る</td></tr></tbody></table></div>
 <ul>
 <li>実行を始めると、前の版から変わっていれば保存済みの内容を commit し、その commit を実行に記録します。同じ版で何度も実行できるので、commit と実行は 1 対多です。</li>
-<li>実行が終わると、その commit の note に結果を 1 行足します（<code>git log --notes=tsugumi</code> で見られます）。</li>
+<li>実行が終わると、その commit の note に、結果と何が実行されたかの短い概要を 1 行足します（<code>git log --notes=tsugumi</code> で見られます。版のツリーでは版に乗せると出ます）。</li>
 <li>「版として残す」で、今の内容に名前（tag）とメモを付けられます。</li>
 <li>版のツリーで「この版から始める」を選ぶと、今の内容を版として残してから、その版の内容に戻ります。前の流れは消えません。</li>
 </ul>
