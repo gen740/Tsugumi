@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -51,6 +52,24 @@ class MCPServer:
     def close(self):
         self.p.stdin.close()
         self.p.wait(10)
+
+
+def page_cookie(data: Path, port: int) -> str:
+    """The page's key, from the URL the host printed when it started (the
+    plugin started it: its output is the data folder's server.log)."""
+    m = re.findall(rf"http://127\.0\.0\.1:{port}/\?key=([0-9a-f]+)", (data / "server.log").read_text())
+    assert m, "the host printed no page URL"
+    return f"tsugumi_{port}={m[-1]}"
+
+
+def status(port: int, method: str, route: str, headers: dict) -> int:
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request(method, route, body=b"{}" if method == "POST" else None,
+              headers={"Host": f"127.0.0.1:{port}", "content-type": "application/json", "x-tsugumi": "1", **headers})
+    r = c.getresponse()
+    r.read()
+    c.close()
+    return r.status
 
 
 class Events(threading.Thread):
@@ -121,7 +140,11 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     info_file = data / "server.json"
     assert stat.S_IMODE(info_file.stat().st_mode) == 0o600
     info = json.loads(info_file.read_text())
-    page = Events(info["port"], f"{info['cookie']}={info['key']}")
+    # server.json holds the agent key alone, never the page's (which answers approvals).
+    assert set(info) == {"port", "pid", "agentKey"}
+    page_key = page_cookie(data, info["port"])
+    assert info["agentKey"] not in page_key
+    page = Events(info["port"], page_key)
     page.start()
     text, error = mcp.call("project_inspect", {})
     assert not error, text
@@ -152,3 +175,22 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     text, error = mcp.call("tsugumi_open", {"folder": "fresh", "create": True, "browser": False})
     assert not error, text
     assert (root / "fresh" / "tsugumi.json").exists()
+
+
+def test_the_agent_key_cannot_answer_approvals_or_reach_the_page_routes(plugin):
+    """What server.json gives a local client (Claude Code's MCP server) works
+    only on the routes the plugin calls: an approval is the user's, on the page."""
+    mcp, root, data = plugin
+    mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})
+    write_project(root / "proj")
+    text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
+    assert not error, text
+    info = json.loads((data / "server.json").read_text())
+    port, agent = info["port"], {"X-Tsugumi-Agent": info["agentKey"]}
+    assert status(port, "POST", "/api/agent/tools", agent) == 200
+    for method, route in [("POST", "/api/chat/permission"), ("GET", "/api/events"), ("POST", "/api/terminal/start"),
+                          ("GET", "/api/fs"), ("POST", "/api/settings"), ("POST", "/api/chat/send")]:
+        assert status(port, method, route, agent) == 401, route
+    # A wrong agent key reaches nothing, the page's key everything.
+    assert status(port, "POST", "/api/agent/tools", {"X-Tsugumi-Agent": "0" * 64}) == 401
+    assert status(port, "POST", "/api/chat/permission", {"Cookie": page_cookie(data, port)}) == 200

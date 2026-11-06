@@ -12,7 +12,7 @@ import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { BFBS } from '../src/shared/bfbs'
 import { externalTools, SYSTEM_PROMPT, ToolCatalog } from './agent'
-import { ServerInfo, webDataDir } from './paths'
+import { AGENT_KEY_HEADER, ServerInfo, webDataDir } from './paths'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(here, 'tsugumi.bfbs')))))
@@ -64,7 +64,7 @@ function readServer(): ServerInfo | undefined {
 async function request(s: ServerInfo, route: string, body: unknown): Promise<Response> {
   return fetch(`http://127.0.0.1:${s.port}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', cookie: `${s.cookie}=${s.key}` },
+    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', [AGENT_KEY_HEADER]: s.agentKey },
     body: JSON.stringify(body ?? {}),
   })
 }
@@ -127,17 +127,13 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
   }
   const info = await api<{ path: string; name: string }>('/api/project/open', { path: folder })
   current = info.path
-  const shown = await api<{ pages: number }>('/api/agent/open', { path: current })
+  // The host opens the page itself: its key (which answers approvals) is not the plugin's.
+  const shown = await api<{ pages: number; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })
   const s = await host()
   let where = `The open web UI page shows it now.`
   if (!shown.pages) {
-    const url = `http://127.0.0.1:${s.port}/?key=${s.key}&project=${encodeURIComponent(current)}`
-    if (args.browser !== false) {
-      spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
-      where = `A browser window opens it.`
-    } else {
-      where = `No web UI page is open; the user can open ${url}`
-    }
+    where = shown.opened ? `A browser window opens it.`
+      : `No web UI page is open; the user opens it from the URL the host printed when it started (or call tsugumi_open again without browser: false).`
   }
   let out = `Opened "${info.name}" (${current}) in the Tsugumi web UI (http://127.0.0.1:${s.port}/). ${where}`
   if (!rulesSent) {
