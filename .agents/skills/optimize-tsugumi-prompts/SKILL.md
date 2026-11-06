@@ -35,7 +35,7 @@ description: Tsugumi の Agent に指示や skill を追加・整理するとき
 ```sh
 git show HEAD:agent/Shared/system-prompt.md > /tmp/tsugumi-baseline-prompt.md
 python3 tests/prompt/inspect_probe.py concept --prompt /tmp/tsugumi-baseline-prompt.md
-python3 tests/prompt/inspect_probe.py project
+python3 tests/prompt/inspect_probe.py concept
 ```
 
 `concept` は「Draft はそのまま実行できますか」に、tool を使わず「実装するまで実行できない」と答えれば合格。`project` は `project_inspect` が一度成功し、読み取った 43 を返せば合格。実デモの既定値 27 を推測で返した場合や、不要な保存・実行を試みた場合は不合格。表示される `reply` の意味と `calls` の成否を両方読む。
