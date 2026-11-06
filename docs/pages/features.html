@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-全体構成">1. 全体構成</a></li><li class="d2"><a href="#2-card-と-workflow">2. Card と Workflow</a></li><li class="d3"><a href="#card-の種類">Card の種類</a></li><li class="d3"><a href="#型付きのポート">型付きのポート</a></li><li class="d3"><a href="#実行の意味論スケジューラー">実行の意味論（スケジューラー）</a></li><li class="d2"><a href="#3-nix-による再現可能な実行環境">3. Nix による再現可能な実行環境</a></li><li class="d3"><a href="#card-ごとの環境定義">Card ごとの環境定義</a></li><li class="d3"><a href="#上流定義の参照inputsupstream">上流定義の参照（<code>inputs.upstream</code>）</a></li><li class="d3"><a href="#評価器の組み込み">評価器の組み込み</a></li><li class="d3"><a href="#ビルド結果の保持">ビルド結果の保持</a></li><li class="d2"><a href="#4-card-sdk-と-worker">4. Card SDK と worker</a></li><li class="d3"><a href="#実行段階">実行段階</a></li><li class="d3"><a href="#言語-sdk">言語 SDK</a></li><li class="d3"><a href="#常駐-worker">常駐 worker</a></li><li class="d3"><a href="#外部へのアクセスexperimental">外部へのアクセス（Experimental）</a></li><li class="d2"><a href="#5-文書と保存">5. 文書と保存</a></li><li class="d2"><a href="#6-実行履歴と成果物">6. 実行履歴と成果物</a></li><li class="d2"><a href="#7-可視化">7. 可視化</a></li><li class="d2"><a href="#8-uiワークベンチ">8. UI（ワークベンチ）</a></li><li class="d2"><a href="#9-agent">9. Agent</a></li><li class="d3"><a href="#モデルとの接続">モデルとの接続</a></li><li class="d3"><a href="#tool-と-rpc">tool と RPC</a></li><li class="d3"><a href="#web-検索">Web 検索</a></li><li class="d3"><a href="#draft-から-card-を生成">Draft から Card を生成</a></li><li class="d3"><a href="#手分けdelegate">手分け（delegate）</a></li><li class="d3"><a href="#skill-と会話">Skill と会話</a></li><li class="d3"><a href="#ツグミチャットとガイド">ツグミ（チャットとガイド）</a></li><li class="d2"><a href="#10-デモ">10. デモ</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-全体構成">1. 全体構成</a></li><li class="d2"><a href="#2-card-と-workflow">2. Card と Workflow</a></li><li class="d3"><a href="#card-の種類">Card の種類</a></li><li class="d3"><a href="#型付きのポート">型付きのポート</a></li><li class="d3"><a href="#実行の意味論スケジューラー">実行の意味論（スケジューラー）</a></li><li class="d2"><a href="#3-nix-による再現可能な実行環境">3. Nix による再現可能な実行環境</a></li><li class="d3"><a href="#card-ごとの環境定義">Card ごとの環境定義</a></li><li class="d3"><a href="#上流定義の参照inputsupstream">上流定義の参照（<code>inputs.upstream</code>）</a></li><li class="d3"><a href="#評価器の組み込み">評価器の組み込み</a></li><li class="d3"><a href="#ビルド結果の保持">ビルド結果の保持</a></li><li class="d2"><a href="#4-card-sdk-と-worker">4. Card SDK と worker</a></li><li class="d3"><a href="#実行段階">実行段階</a></li><li class="d3"><a href="#言語-sdk">言語 SDK</a></li><li class="d3"><a href="#常駐-worker">常駐 worker</a></li><li class="d3"><a href="#外部へのアクセスexperimental">外部へのアクセス（Experimental）</a></li><li class="d2"><a href="#5-文書と保存">5. 文書と保存</a></li><li class="d2"><a href="#6-実行履歴と成果物">6. 実行履歴と成果物</a></li><li class="d2"><a href="#7-可視化">7. 可視化</a></li><li class="d2"><a href="#8-uiワークベンチ">8. UI（ワークベンチ）</a></li><li class="d2"><a href="#9-agent">9. Agent</a></li><li class="d3"><a href="#モデルとの接続">モデルとの接続</a></li><li class="d3"><a href="#tool-と-rpc">tool と RPC</a></li><li class="d3"><a href="#web-検索">Web 検索</a></li><li class="d3"><a href="#draft-から-card-を生成">Draft から Card を生成</a></li><li class="d3"><a href="#コメントから-card-を生成">コメントから Card を生成</a></li><li class="d3"><a href="#手分けdelegate">手分け（delegate）</a></li><li class="d3"><a href="#skill-と会話">Skill と会話</a></li><li class="d3"><a href="#ツグミチャットとガイド">ツグミ（チャットとガイド）</a></li><li class="d2"><a href="#10-デモ">10. デモ</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="tsugumi-の主要機能">Tsugumi の主要機能</h1>
@@ -226,6 +226,28 @@ in
 <li>途中の失敗やキャンセルでは、中途半端な変更を保存しません（計画は残ります）。</li>
 <li>Draft に書かれていた意図はそのまま残ります。空だった概要と追加コンテキストは、チャットでの指示と Draft の内容から Agent が埋めます（書かれていないことは足しません）。埋めない保存と、書かれていた内容を変える保存は <code>tsugumid</code> が拒否します。</li>
 </ul>
+<h3 id="コメントから-card-を生成">コメントから Card を生成</h3>
+<p>Card に「こう変えたい」と書き、Agent に従わせます。Draft が実装前の Card の計画なら、コメントは Card そのものへの指示です。どの種類の Card にも付けられます。</p>
+<ul>
+<li>Card の右クリックの「コメント…」か、Canvas の Card の右上のバッジから書きます（Card 設定の「コメント」）。追加・編集・解決・開き直し・削除はその場で保存されます（実行中に書いたものは、ほかの編集と同じく実行が終わると保存されます）。</li>
+<li>Canvas の「コメントから生成」で、未解決のコメントをチャットの Agent に渡します。選択した Card があればその Card のコメントだけ、なければ表示中の階層の全部です。渡したコメントはチャットに出ます。</li>
+<li>Agent は既定でコメントが付いた Card を書き換え、コメントが求めれば Card を足したり分けたりします。保存は Draft と同じ道具で、Card の権限を広げる保存には同じ承認が要ります（<a href="security.html#agent-の権限境界">Agent の権限境界</a>）。</li>
+<li>Agent も人間と同じようにコメントを書き、編集し、解決し、消せます。代わりに、誰が何をしたかが残ります。</li>
+</ul>
+<p><strong>誰が何をしたか</strong></p>
+<ul>
+<li>Agent の保存では、<code>tsugumid</code> が保存の <code>origin</code> から記録を書きます（<code>core/src/comments.cc</code>）。モデルがこの欄に何を書いても使いません。<ul>
+<li><code>author</code>: 書いた人。<code>editedBy</code>: 最後に本文を変えた人。<code>stateBy</code>: 最後に解決または開き直しをした人。</li>
+<li><code>cards</code>: そのコメントを解決した保存で変わった Card。何も変えずに解決したときは空です。</li>
+</ul>
+</li>
+<li>Card 設定のコメントには、Agent が書いたものや変えたものに「Agent」の印が出て、解決の行に何をしたかと変わった Card が出ます。解決済みは消えずに畳まれ、誰でも開き直せます。</li>
+<li>チャットの「変更を保存」の行の下に、その保存がコメントをどう変えたかが出ます（保存の結果の <code>comments</code>）。</li>
+<li>版の履歴の詳細に、その版でコメントがどう変わり（追加・編集・解決・開き直し・削除）、誰がして、どの Card が変わったかが出ます（<a href="versions.html#コメント">版の管理</a>）。</li>
+</ul>
+<p><strong>置き場所</strong></p>
+<p><code>definitions/&lt;id&gt;/_meta.json</code> の <code>comments</code> です。実行に関わらないので、結果は無効になりません。Card の名前を変えてもついていき、複製したときは複製にも付きます。</p>
+<p>付箋との違い: 付箋は Canvas の好きな場所に置く人間向けのメモで、<code>layout.json</code> にあり、Agent に渡す流れはありません。コメントは Card に属し、状態と記録を持ち、版の要約の対象でもあります。</p>
 <h3 id="手分けdelegate">手分け（delegate）</h3>
 <ul>
 <li>互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。</li>
@@ -260,6 +282,7 @@ in
 <ul>
 <li>tool の一覧と FlatJSON の変換が Mac と Web で同じこと: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py" rel="noopener">test_agent_contract.py</a>、<code>macOS/CoreTests</code></li>
 <li>Draft を実装する保存の規則: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py" rel="noopener">test_draft_intent.py</a></li>
+<li>コメントの保存の規則と版の履歴: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py" rel="noopener">test_card_comments.py</a></li>
 <li>Agent が Card の権限を広げる保存には承認が要ること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py" rel="noopener">test_permissions.py</a></li>
 <li>実際の Claude API で、Draft から Card を作って実行・検証した記録: <a href="agentrun.html">AgentRun.md</a></li>
 </ul>

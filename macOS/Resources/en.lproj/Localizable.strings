@@ -7,6 +7,7 @@
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
+"%@ · コメントを%@: %@" = "%@ · comment %@: %@";
 "%@ · 実行 #%llu" = "%@ · invocation #%llu";
 "%@ · 実行 #%llu · %@" = "%@ · invocation #%llu · %@";
 "%@ · 対象 %@" = "%@ · target %@";
@@ -54,8 +55,12 @@
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
+"Agent が書きました" = "Written by the Agent";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
+"Agent が編集" = "Edited by the Agent";
 "Agent が自分の判断で Web を検索する" = "Let the Agent search the web on its own";
+"Agent が解決" = "Resolved by the Agent";
+"Agent が開き直しました" = "Reopened by the Agent";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
 "Anthropic API キー" = "Anthropic API Key";
@@ -211,6 +216,9 @@
 "「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
 "あとで" = "Later";
+"あなた" = "You";
+"あなたが編集" = "Edited by you";
+"あなたが解決" = "Resolved by you";
 "ありません" = "None";
 "ありません。" = "None.";
 "いま何が起きている？" = "What is happening now?";
@@ -230,6 +238,7 @@
 "この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。" = "This Card does not record inputs and outputs (Settings > Ports > Record I/O).";
 "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。" = "This Card keeps no artifacts (Settings > Inputs & Outputs > Keep artifacts).";
 "この Card は文書から削除されています。" = "This Card has been removed from the document.";
+"この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。" = "Write how you want this Card to change. The Agent follows it with \"Generate from comments\" on the canvas (kept in _meta.json and in the version history).";
 "この Mac で仮想マシンを使える" = "This Mac can run virtual machines";
 "この Mac にはありません（実行すると失敗します）" = "Not on this Mac (running fails)";
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
@@ -272,6 +281,7 @@
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
 "この返事を送ります" = "Sends this reply";
+"この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
@@ -360,7 +370,14 @@
 "コピー" = "Copy";
 "コピーしました" = "Copied";
 "コピーを開く" = "Open a Copy";
+"コメント" = "Comments";
+"コメント %lld 件に従って Card を生成します" = "Generating Cards from %lld comments";
+"コメント: %@" = "Comment: %@";
+"コメント…" = "Comments…";
+"コメントから生成（%lld）" = "Generate from comments (%lld)";
 "コメントが閉じていません" = "A comment is not closed";
+"コメントを追加" = "Add Comment";
+"コメント（Agent）: %@" = "Comment (Agent): %@";
 "コンソールで詳細を見る" = "Show Details in the Console";
 "コンテナに接続しています…" = "Connecting to the container…";
 "サインアウト" = "Sign Out";
@@ -562,6 +579,7 @@
 "使う接続先" = "Connection in Use";
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
+"例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -591,6 +609,7 @@
 "停止済み" = "Stopped";
 "偶数を半分にする" = "Halves even numbers";
 "偶数？" = "Even?";
+"先に変更を保存してください" = "Save your changes first";
 "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" = "Save your changes first (generation starts from the saved wiring and Draft content)";
 "入出力" = "Ports";
 "入出力を記録" = "Record I/O";
@@ -713,6 +732,7 @@
 "変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。" = "Changing it may leave Cards and lines out of line (“Arrange” lays them out again).";
 "変更" = "Change";
 "変更: %@" = "Changed: %@";
+"変更した Card: %@" = "Changed Cards: %@";
 "変更できませんでした" = "Could not change";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
@@ -908,6 +928,7 @@
 "未接続" = "Offline";
 "未確認" = "Not checked yet";
 "未解決" = "Unresolved";
+"未解決のコメント %lld 件" = "%lld open comments";
 "未設定" = "Not set";
 "未適用" = "Not applied";
 "未適用の変更" = "Unapplied changes";
@@ -1015,7 +1036,9 @@
 "見つかりません" = "Not found";
 "見る" = "Show Me";
 "解放" = "Freed";
+"解決" = "Resolve";
 "解決中…" = "Resolving…";
+"解決済み（%lld）" = "Resolved (%lld)";
 "言語" = "Language";
 "言語の変更はアプリの再起動後に反映されます。" = "The language changes after restarting the app.";
 "記録" = "Logger";
@@ -1062,6 +1085,7 @@
 "適用しました（revision %llu）。" = "Applied (revision %llu).";
 "選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。" = "Only the chosen folders can be read by this Card's worker, as /host/<name>. Only their locations are saved in the project. Additions and changes apply when the project is opened again.";
 "選んでください" = "Choose one";
+"選択した Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the selected Cards in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "選択した Card の詳細" = "Details of the selected Card";
 "選択した Card を参照に追加" = "Add selected Cards as references";
 "選択をグループ化" = "Group Selection";
@@ -1077,6 +1101,8 @@
 "開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。" = "Stops the open projects' runs and the VM, then deletes the shared Nix store, the unpacked VM image and every project's control folder (and environments an earlier version made with Apple container). The run history in the VM (its own disk), projects' documents and artifacts, and the host's /nix/store are kept. Everything is made again on the next open. The run history in the VM can be deleted under “Run history in the VM” below.";
 "開いているプロジェクトはありません" = "No open projects";
 "開いているプロジェクトは削除できません" = "An open project cannot be deleted";
+"開き直し" = "Reopened";
+"開き直す" = "Reopen";
 "開く" = "Open";
 "開けません" = "Cannot open";
 "開けませんでした" = "Could not open";
@@ -1098,6 +1124,7 @@
 "（ドラッグして入力ポートへ接続）" = " (drag to an input port to connect)";
 "（ドラッグして出力ポートへ接続）" = "(drag to an output port to connect)";
 "（内容は記録されていません）" = "(content not recorded)";
+"（変更した Card: %@）" = " (changed Cards: %@)";
 "（実行中）" = "(running)";
 "（必須）" = "(required)";
 "（次の入力を待てます）" = "(can wait for the next input)";

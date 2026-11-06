@@ -174,6 +174,17 @@ final class UIScript {
           AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: drafts)
           say("generate \(drafts)")
         }
+      case "comment":
+        // comment <card> <text>: a comment written on a Card, as in its settings window
+        if let s = session { s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
+      case "generate-comments":
+        // The canvas's "コメントから生成": the open comments of the shown scope go to the Agent.
+        if let s = session, let t = workspace?.active {
+          let cards = s.cardsWithOpenComments(in: t.scope)
+          workspace?.showChat = true
+          AppModel.shared.chat(for: s).generateFromComments(scope: t.scope, cards: cards)
+          say("generate-comments \(cards)")
+        }
       case "presence":
         // presence [thought]: plays the Agent's scenes over the shown scope's
         // Cards along the flow (read, write out, thread the next wire), as

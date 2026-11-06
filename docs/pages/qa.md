@@ -52,6 +52,7 @@ AI の報告を読んで信じるのではなく、気になったところへ�
 
 - 画面: デモ一覧の「(Draft)」の付いたデモ（「Cas A · Chandra RGB (Draft)」など）は、実装前の Draft だけの Workflow です。コピーを開いて「Card を生成」を押すと、Agent が実装します（API キーか ChatGPT のプランが要ります）。
 - Draft を実装する保存の規則（説明が空なら拒否する、Draft にあった内容は変えさせない）: [test_draft_intent.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py)
+- Card へのコメントに従わせる流れと、誰が何をしたかの記録: [主要機能](features.md#コメントから-card-を生成)、[test_card_comments.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py)
 - 実際の Claude API で、Draft から Card を作って実行・検証した記録（うまくいかなかった試行を含む）: [AgentRun.md](agentrun.md)
 - 型と配線の検査: [主要機能 §2](features.md)、[tests/cpp](https://github.com/gen740/Tsugumi/tree/main/tests/cpp)
 

@@ -319,10 +319,10 @@ struct CardSettingsEditor: View {
   private func categories(_ m: CardEditorModel) -> [CardEditorCategory] {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
-    case .input: return [.general, .source, .ports, .executions, .artifacts, .context]
-    case .draft: return [.general, .ports, .context]
-    case .subgraph: return [.general, .ports, .executions]
-    default: return [.general, .ports, .executions, .artifacts, .context]
+    case .input: return [.general, .comments, .source, .ports, .executions, .artifacts, .context]
+    case .draft: return [.general, .comments, .ports, .context]
+    case .subgraph: return [.general, .comments, .ports, .executions]
+    default: return [.general, .comments, .ports, .executions, .artifacts, .context]
     }
   }
 
@@ -341,6 +341,7 @@ struct CardSettingsEditor: View {
         Group {
           switch m.category {
           case .general: GeneralCategory(model: m)
+          case .comments: CommentsCategory(session: session, card: m.cardKey)
           case .nix: SourceCategory(model: m, only: "default.nix")
           case .source: SourceCategory(model: m, only: nil)
           case .ports: m.kind == .subgraph ? AnyView(BoundaryCategory(model: m)) : AnyView(PortsCategory(model: m))
@@ -933,6 +934,115 @@ private struct BoundaryCategory: View {
 }
 
 /// Free text describing intent and notes, kept in `_meta.json` (`context`).
+/// What the user and the Agent write about this Card. Saved at once, not with 適用
+/// (during a run, when the run ends, as other edits): it says nothing about how it runs.
+private struct CommentsCategory: View {
+  let session: ProjectSession
+  let card: CardKey
+  @State private var text = ""
+  @State private var editing: CardComment?
+  @State private var showResolved = false
+
+  var body: some View {
+    let comments = session.comments(card)
+    let resolved = comments.filter(\.resolved)
+    ScrollView {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        TextField("例: y 軸を対数にしてください", text: $text, axis: .vertical)
+          .lineLimit(3...8).textFieldStyle(.roundedBorder)
+        HStack {
+          Spacer()
+          Button("コメントを追加", action: add)
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected)
+        }
+        ForEach(comments.filter { !$0.resolved }) { row($0) }
+        if !resolved.isEmpty {
+          DisclosureGroup("解決済み（\(resolved.count)）", isExpanded: $showResolved) {
+            VStack(alignment: .leading, spacing: 6) { ForEach(resolved) { row($0) } }
+              .padding(.top, 4)
+          }
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func add() {
+    session.addComment(card, text)
+    text = ""
+  }
+
+  /// Who resolved it, what was done and which Cards changed.
+  private func outcome(_ c: CardComment) -> String {
+    var line = c.stateBy == "agent" ? String(localized: "Agent が解決") : c.stateBy == "user" ? String(localized: "あなたが解決") : String(localized: "解決")
+    if let r = c.resolution { line += ": " + r }
+    if !c.cards.isEmpty { line += String(localized: "（変更した Card: \(c.cards.joined(separator: "、"))）") }
+    return line
+  }
+
+  /// Whose comment this is, when it is not simply one of the user's.
+  @ViewBuilder private func record(_ c: CardComment) -> some View {
+    let parts = [
+      c.author == "agent" ? String(localized: "Agent が書きました") : nil,
+      c.editedBy != nil && c.editedBy != (c.author ?? "user") ? (c.editedBy == "agent" ? String(localized: "Agent が編集") : String(localized: "あなたが編集")) : nil,
+      !c.resolved && c.stateBy == "agent" ? String(localized: "Agent が開き直しました") : nil,
+    ].compactMap { $0 }
+    if !parts.isEmpty {
+      HStack(spacing: 6) {
+        Label { Text(verbatim: "Agent") } icon: { Image(systemName: "bubble.left") }
+          .labelStyle(.titleAndIcon).font(.caption.weight(.semibold))
+          .padding(.horizontal, 5).background(Color.accentColor.opacity(0.18), in: Capsule())
+        Text(verbatim: parts.joined(separator: "・")).font(.caption).foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  @ViewBuilder private func row(_ c: CardComment) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      if editing?.id == c.id {
+        TextField("", text: Binding(get: { editing?.text ?? "" }, set: { editing?.text = $0 }), axis: .vertical)
+          .lineLimit(3...8).textFieldStyle(.roundedBorder)
+        HStack {
+          Spacer()
+          Button("キャンセル") { editing = nil }
+          Button("保存") {
+            session.editComment(card, id: c.id, text: editing?.text ?? "")
+            editing = nil
+          }
+          .disabled((editing?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected)
+        }
+      } else {
+        record(c)
+        Text(verbatim: c.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        if c.resolution != nil || !c.cards.isEmpty || (c.resolved && CardComment.actor(c.stateBy) != nil) {
+          Label { Text(verbatim: outcome(c)) } icon: { Image(systemName: "checkmark") }
+            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        }
+        HStack {
+          Spacer()
+          Button("編集") { editing = c }
+          if c.resolved {
+            Button("開き直す") { session.setCommentResolved(card, id: c.id, false) }
+          } else {
+            Button("解決") { session.setCommentResolved(card, id: c.id, true) }
+          }
+          Button { session.removeComment(card, id: c.id) } label: { Image(systemName: "trash") }
+            .buttonStyle(.borderless).help("削除")
+        }
+        .controlSize(.small)
+        .disabled(!session.connected)
+      }
+    }
+    .padding(.horizontal, 10).padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+  }
+}
+
 private struct ContextCategory: View {
   @Bindable var model: CardEditorModel
 

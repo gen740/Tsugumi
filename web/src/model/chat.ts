@@ -1,7 +1,7 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import { draftRequest } from '../shared/agentShared'
+import { commentRequest, draftRequest, toolSummary } from '../shared/agentShared'
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
@@ -211,7 +211,7 @@ export class ChatController extends Observable {
           const j = [...out].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
           if (j) {
             j.tool!.ok = !b.is_error
-            j.text += '\n→ ' + (b.content ?? '').slice(0, 400)
+            j.text += '\n→ ' + toolSummary(b.content ?? '')
           }
         }
       }
@@ -335,7 +335,7 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void api('/api/chat/send', { ...this.base, prompt, title: display, display, folders: this.folders }).catch((e) => this.fail(e))
+    void api('/api/chat/send', { ...this.base, prompt, title: display.split('\n')[0], display, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
@@ -348,6 +348,17 @@ export class ChatController extends Observable {
     })
     const names = cards.map((k) => path(k).pop() ?? k).join('、')
     this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))
+  }
+
+  /** Asks the Agent to do what the open comments on these Cards ask. */
+  generateFromComments(scope: string[], cards: CardKey[]) {
+    const s = this.session
+    const items = cards.map((k) => ({
+      key: k, definition: path(k).pop() ?? '-', comments: s.openComments(k).map(({ id, text }) => ({ id, text })),
+    }))
+    const count = items.reduce((n, c) => n + c.comments.length, 0)
+    const asked = items.flatMap((c) => c.comments.map((x) => `${c.definition}: ${x.text}`))
+    this.sendRequest([`コメント ${count} 件に従って Card を生成します`, ...asked].join('\n'), commentRequest(scope, items))
   }
 
   cancel() {

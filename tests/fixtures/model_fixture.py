@@ -25,6 +25,12 @@ A second scripted task implements Drafts ("Implement these Draft Cards ...
 - <path> (definition <id>)"): project_inspect -> one project_save with
 PutDefinition/PutSource per Draft -> project_validate -> run -> report.
 
+A task from comments ("The user left comments on these Cards ...", with
+"- <path> (definition <id>):" and "  * <comment id>: <text>" lines):
+project_inspect -> one project_save that changes each Card and marks its
+comments resolved, adding an input Card for a comment saying "add a Card
+<id>" and a comment of its own for one saying "leave a comment" -> run -> report.
+
 The guide (its system prompt begins "You are Tsugumi, the guide bird"): a
 question gets project_inspect -> an attempt at project_save (the guide only
 reads: it is refused) -> guide_show pointing at the run button with a run
@@ -383,6 +389,72 @@ def decide_drafts(messages, text, start):
     return ("text", "Done.")
 
 
+COMMENTS = re.compile(r"The user left comments on these Cards", re.I)
+COMMENT_CARD = re.compile(r"^- (\S+) \(definition (\S+)\):\n((?:  \* .*\n?)+)", re.M)
+ADD_CARD = re.compile(r"add a Card ([\w-]+)", re.I)
+
+
+def last_comment_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            for b in blocks(messages[i]):
+                if b.get("type") == "text" and COMMENTS.search(b["text"]):
+                    return b["text"], i
+    return None, -1
+
+
+def decide_comments(messages, text, start):
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "project_inspect", {})
+    name, res, is_error = results[-1]
+    value = res.get("value", {})
+    if name == "project_inspect":
+        defs = {d["id"]: d for d in value.get("definitions", [])}
+        doc = json.loads(value["project_json"])
+        changes, added = [], []
+        for _, def_id, lines in COMMENT_CARD.findall(text):
+            d = defs[def_id]
+            meta = json.loads(d["meta_json"])
+            asked = {m.group(1): m.group(2) for m in re.finditer(r"^  \* (\S+): (.*)$", lines, re.M)}
+            for c in meta["comments"]:
+                if c["id"] in asked:
+                    c["resolved"] = True
+                    c["resolution"] = f"Did what it asks: {asked[c['id']]}"
+                    added += ADD_CARD.findall(asked[c["id"]])
+            # An Agent may write back: a comment of its own, for the user to read.
+            if any("leave a comment" in t.lower() for t in asked.values()):
+                meta["comments"].append({"text": "Note from the Agent: the axis has no unit."})
+            card = json.loads(d["card_json"]) if d.get("card_json") else {}
+            card["symbol"] = "checkmark"
+            changes.append({"value_type": "PutDefinition", "value": {
+                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(meta)}})
+        for cid in added:
+            changes.append({"value_type": "PutDefinition", "value": {"id": cid, "card_json": json.dumps(
+                {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"}]})}})
+            changes.append({"value_type": "PutSource", "value": {
+                "path": f"definitions/{cid}/_outputs.fbs",
+                "bytes": "namespace added;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n"}})
+            doc["canvas"]["cards"].append({"id": cid})
+        if added:
+            changes.append({"value_type": "SetProject", "value": {"json": json.dumps(doc)}})
+        return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": changes})
+    if name == "project_save":
+        if is_error:
+            return ("text", f"Saving failed: {value.get('diagnostic')}. The comments stay open.")
+        inspect = next(r for n, r, _ in results if n == "project_inspect")
+        return ("tool", "run", {"base_rev": str(value["rev"]), "card": {"segments": [trigger_of(inspect["value"])]}})
+    if name in ("run", "run_status"):
+        if is_error:
+            return ("text", f"Followed the comments; the run could not start: {value.get('diagnostic')}")
+        status = value.get("run", value)
+        if status.get("state") not in TERMINAL:
+            time.sleep(0.2)
+            return ("tool", "run_status", {"run_id": status.get("run_id")})
+        return ("text", f"Followed the comments and ran the workflow: {status.get('state')}")
+    return ("text", "Done.")
+
+
 def last_permission_task(messages):
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
@@ -455,8 +527,11 @@ def decide(messages, system="", tools=()):
     team, team_start = last_delegate_task(messages)
     if team is not None:
         return decide_delegate(messages, team, team_start)
+    comment_text, comment_start = last_comment_task(messages)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
+    if comment_text is not None and comment_start > max(start, draft_start):
+        return decide_comments(messages, comment_text, comment_start)
     perm, perm_start = last_permission_task(messages)
     if perm is not None and perm_start > max(start, draft_start):
         return decide_permission(messages, perm, perm_start)

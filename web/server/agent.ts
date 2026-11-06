@@ -9,7 +9,7 @@ import { Builder } from 'flatbuffers'
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
 import { FlatJSON } from '../src/shared/flatjson'
 import { RPCClient } from '../src/shared/rpc'
-import { AGENT, fill } from '../src/shared/agentShared'
+import { AGENT, fill, toolSummary } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
@@ -1512,7 +1512,7 @@ export class Agent {
     this.conversation.tools = this.conversation.tools.filter((t) => t.id !== record.id)
     this.conversation.tools.push(record)
     this.save()
-    events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: result.slice(0, 400) })
+    events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: toolSummary(result) })
     return { type: 'tool_result', tool_use_id: record.id, content: clip(result), is_error: isError }
   }
 

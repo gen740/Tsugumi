@@ -552,6 +552,61 @@ import Testing
 
   /// A Draft's wires make its ports and take them away, and what is written on
   /// its Card is kept, under a new name too.
+  @Test func commentsAreSavedOnTheirCardWithWhoDidWhat() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let k = s.addCard(template: .logger, in: [], at: .zero, name: "plot")
+    #expect(s.comments(k).isEmpty && s.nodeData(k).openComments == 0)
+
+    s.addComment(k, "  y 軸を対数に  ")
+    s.addComment(k, "   ")
+    #expect(s.comments(k).map(\.text) == ["y 軸を対数に"])
+    s.addComment(k, "軸に名前を")
+    let first = s.comments(k)[0].id
+    s.editComment(k, id: first, text: "両軸を対数に")
+    s.editComment(k, id: first, text: "  ")
+    #expect(s.comments(k).map(\.text) == ["両軸を対数に", "軸に名前を"])
+    #expect(s.nodeData(k).openComments == 2 && s.cardsWithOpenComments(in: []) == [k])
+    #expect(s.cardDetails(k).contains { $0.contains("両軸を対数に") })
+
+    // What the Agent said goes away when the comment is opened again.
+    s.edit { x in
+      x.updateMeta(k) { m in
+        var list = m["comments"]?.array ?? []
+        list[0]["resolved"] = .bool(true)
+        list[0]["resolution"] = .string("両軸を対数にした")
+        m["comments"] = .array(list)
+      }
+    }
+    #expect(s.comments(k)[0].resolution == "両軸を対数にした" && s.openComments(k).map(\.text) == ["軸に名前を"])
+    s.setCommentResolved(k, id: first, false)
+    #expect(s.comments(k)[0].resolved == false && s.comments(k)[0].resolution == nil)
+
+    #expect(s.comments(k)[0].stateBy == "user" && s.comments(k)[0].editedBy == "user" && s.comments(k)[1].author == "user")
+    // A Draft takes comments as any Card.
+    let plan = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
+    s.addComment(plan, "単位を考える")
+    #expect(s.cardsWithOpenComments(in: []).contains(plan))
+    // A copy keeps what the Card says, comments too, as comments of its own.
+    let copy = await s.duplicate([k], in: [])
+    #expect(copy.count == 1 && s.comments(copy.first!).map(\.text) == s.comments(k).map(\.text))
+    #expect(s.comments(copy.first!)[0].id != s.comments(k)[0].id)
+    // What the core recorded of the Agent reads back, in the words the screen uses.
+    let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))
+    #expect(agent[0].cards == ["p", "q"] && agent[0].author == "agent")
+    #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
+
+    for c in s.comments(k) { s.removeComment(k, id: c.id) }
+    #expect(s.cardMeta(k) == nil, "no comments left, no _meta.json made for them")
+    s.undo()
+    #expect(s.comments(k).map(\.text) == ["軸に名前を"])
+  }
+
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

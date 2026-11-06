@@ -43,6 +43,8 @@
 .cv-card-header { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cv-state { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
+.cv-comments { position: absolute; transform: translate(-70%, -50%); display: inline-flex; align-items: center; justify-content: center; border: 0; background: var(--accent); color: #fff; font-weight: 600; pointer-events: auto; cursor: pointer; font-variant-numeric: tabular-nums; }
+.cv-comments:disabled { cursor: default; opacity: 1; }
 .cv-collapse { border: 0; background: none; padding: 0 1px; display: inline-flex; align-items: center; cursor: pointer; flex: none; }
 .cv-draft-text { flex: none; box-sizing: border-box; overflow: hidden; }
 .cv-draft-text span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }

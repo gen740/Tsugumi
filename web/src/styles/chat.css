@@ -42,6 +42,7 @@
 .chat-tool { display: flex; flex-direction: column; gap: 4px; color: var(--secondary); min-width: 0; }
 .chat-tool .tool-mark { width: 14px; display: inline-flex; justify-content: center; flex: none; }
 .chat-tool .link { padding: 0; }
+.chat-tool-comment { padding: 1px 0 1px 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-detail { font-size: 11px; white-space: pre-wrap; word-break: break-all; padding: 6px; border-radius: 6px; background: var(--control-bg); color: var(--label); max-height: 40em; overflow: auto; }
 .chat-more { align-self: flex-start; padding: 0; }
 .chat-code { border-radius: 8px; background: var(--control-bg); overflow: hidden; }

@@ -310,7 +310,7 @@ final class ChatController {
         case .toolResult(_, let c, let e):
           if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
             out[j].tool?.ok = !e
-            out[j].text += "\n→ " + String(c.prefix(400))
+            out[j].text += "\n→ " + Agent.toolSummary(c)
           }
         case .webSearch(let s):
           out.append(Item(role: "tool", text: s.arguments + "\n→ " + s.summary, tool: ("web_search", s.error == nil), archived: archived))
@@ -473,7 +473,7 @@ final class ChatController {
     let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: display, display: display, events: events)
+      await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, events: events)
     }
   }
 
@@ -488,6 +488,17 @@ final class ChatController {
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
     sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
                 prompt: Agent.draftRequest(scope: scope, cards: items))
+  }
+
+  /// Asks the Agent to do what the open comments on these Cards ask.
+  func generateFromComments(scope: [String], cards: [CardKey]) {
+    let items = cards.map { k in
+      (key: k, definition: path(k).last ?? "-", comments: session.openComments(k).map { (id: $0.id, text: $0.text) })
+    }
+    let count = items.reduce(0) { $0 + $1.comments.count }
+    let asked = items.flatMap { c in c.comments.map { "\(c.definition): \($0.text)" } }
+    sendRequest(display: ([String(localized: "コメント \(count) 件に従って Card を生成します")] + asked).joined(separator: "\n"),
+                prompt: Agent.commentRequest(scope: scope, cards: items))
   }
 
   // MARK: - Card permissions

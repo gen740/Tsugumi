@@ -10,7 +10,8 @@ import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
-import { CardKey, errorText, key, path, ProjectSession } from '../model/session'
+import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
+import { savedComments } from '../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
@@ -542,6 +543,13 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
         <span className="spacer" />
         <Button kind="borderless" iconOnly small icon={open ? 'chevron.up' : 'chevron.down'} help={open ? '詳細を閉じる' : 'ツールの詳細'} onClick={() => setOpen(!open)} />
       </div>
+      {savedComments(item.text).map((c, i) => (
+        <div key={i} className="chat-tool-comment caption secondary selectable">
+          {c.card} · コメントを{commentChange(c.change, c.by)}: {c.text}
+          {c.resolution && ` — ${c.resolution}`}
+          {!!c.cards?.length && `（変更した Card: ${c.cards.join('、')}）`}
+        </div>
+      ))}
       {open && <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>}
     </div>
   )

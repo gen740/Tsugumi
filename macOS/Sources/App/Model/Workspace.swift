@@ -18,12 +18,13 @@ struct WorkflowRef: Codable, Hashable {
 }
 
 enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
-  case general, nix, source, ports, executions, artifacts, context
+  case general, comments, nix, source, ports, executions, artifacts, context
   var id: String { rawValue }
 
   var title: String {
     switch self {
     case .general: return String(localized: "一般")
+    case .comments: return String(localized: "コメント")
     case .nix: return String(localized: "Nix 定義")
     case .source: return String(localized: "ソース")
     case .ports: return String(localized: "入出力")
@@ -36,6 +37,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .general: return "slider.horizontal.3"
+    case .comments: return "bubble.left"
     case .nix: return "snowflake"
     case .source: return "doc.text"
     case .ports: return "arrow.left.arrow.right"
