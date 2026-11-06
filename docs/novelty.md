@@ -33,7 +33,7 @@ Agent は説明と接続を読み、Card のコード、出力型、実行環境
 同時に、それらを人間が毎回手で整えるなら、短い試行にも準備の負担がかかります。
 
 Tsugumi の Agent は、Draft に書かれた目的と前後の接続から、その準備を含めて実装できます。
-`default.nix` に環境を定義し、`_outputs.fbs` に出力型を書き、C++ / Python / bash の処理を作って、実際に動かしながら修正します。
+`default.nix` に環境を定義し、`_outputs.fbs` に出力型を書き、C++ / Python / bash / R / Julia の処理を作って、実際に動かしながら修正します。
 人間がすべての定義を書き始めなくても、型と環境を備えた部品を組み立てていけます。
 
 **AI に実装を任せられるからこそ、人間が確かめやすい構造を、解析の初めから用意できる。**
@@ -70,29 +70,50 @@ Tsugumi は、実行時の `params.json` と Nix に渡す `params-nix.json` を
 
 画面の配置も計算定義とは分けています。実行中に計算定義を変える保存は拒否しながら、Card の配置変更は受け付けます。**条件を試すこと、コードを変えること、画面を整理することが、それぞれ必要な処理だけを起こします。**
 
-実装: [Nix のビルド入力](../core/src/nix.cc)（`NixRunner::build`）、[保存の検証](../core/src/service.cc)、[計算定義と配置の管理](../core/src/store.cc)。検証: [共通 store の再利用テスト](../tests/python/test_shared_vm.py)（開き直し・store の掃除・プロジェクトのコピー）、[保存の契約テスト](../tests/python/test_contract.py)。
+**確かめる場所**
+
+- 実装: [Nix のビルド入力](../core/src/nix.cc)（`NixRunner::build`）
+- 実装: [保存の検証](../core/src/service.cc)
+- 実装: [計算定義と配置の管理](../core/src/store.cc)
+- テスト: [共通 store の再利用テスト](../tests/python/test_shared_vm.py)（開き直し・store の掃除・プロジェクトのコピー）
+- テスト: [保存の契約テスト](../tests/python/test_contract.py)
 
 ### 小さな処理を繰り返すために、評価器と worker を再利用する
 
 数行の計算を Card に分けても、そのたびに Nix の評価器や言語処理系を起動していては、計算より準備に時間がかかります。
 
-Nix 評価器を `tsugumid` に組み込み、nixpkgs の評価状態と daemon 接続を Card・実行をまたいで再利用します。C++ / Python の Card は、常駐 worker が共有ライブラリを読み込んで呼び出します。毎回新しい worker を使う設定でも、次の worker の起動とライブラリの読み込みを先に済ませます。
+Nix 評価器を `tsugumid` に組み込み、nixpkgs の評価状態と daemon 接続を Card・実行をまたいで再利用します。C++ / Python の Card は、常駐 worker が共有ライブラリを読み込んで呼び出します（R と Julia の Card は呼び出しごとにプロセスを起こすので、この効果は及びません）。毎回新しい worker を使う設定でも、次の worker の起動とライブラリの読み込みを先に済ませます。
 
 再利用する worker の状態は実行をまたいで残り、必要な初期化は `onRunStart` / `on_run_start` に書けます。失敗・取消・期限切れやメモリ上限などでは worker を終了させます。**起動の負担を減らしながら、状態を持つ計算と初期化のタイミングを明示できます。**
 
 履歴用ディスクの分離なども含めた高速化では、C++ と Python だけだった時点の Collatz の 1,344 回の呼び出しを含む Run が、共通 VM 上の再実行で 4.5〜5.0 秒から 0.92〜1.0 秒になりました。同じ構成の初回は 7.9 秒で、初回準備と再実行を分けて計測しています（[条件と内訳](Development.md#計測2026-11-03高速化後共通-vm)）。
 
-実装: [組み込み評価器](../core/src/nix_eval.cc)、[worker プール](../core/src/worker_pool.cc)、[Card の呼び出し](../sdk/src/worker_main.cc)。検証: [常駐・初期化・毎回新規の worker と取消・期限のテスト](../tests/python/test_workers.py)。
+**確かめる場所**
+
+- 実装: [組み込み評価器](../core/src/nix_eval.cc)
+- 実装: [worker プール](../core/src/worker_pool.cc)
+- 実装: [Card の呼び出し](../sdk/src/worker_main.cc)
+- テスト: [常駐・初期化・毎回新規の worker と取消・期限のテスト](../tests/python/test_workers.py)
 
 ### 部分実行で、入力を集め直す手間を減らす
 
 途中の処理だけを直して試すには、直前に何を入力したかが必要です。パスだけを保存しても元の一時ファイルが消えれば使えず、複数の入力を別々の呼び出しから混ぜれば、前回と違う条件になってしまいます。
 
-Tsugumi は、最新の呼び出しの入力一式と、各ポートの最新入力を保存します。`all` では一回の呼び出しで使った組を保ち、`any` では各ポートの最新値を使います。File / Directory は実体を保存領域へコピーするため、実行キャッシュを消しても再利用できます。再実行時には現在の入力型との整合性とファイルの存在を確認し、不足があれば理由を返します。子 Workflow の単体実行にも、この入力を境界から渡します。分岐の 1 つから下流へ進めるときは、合流する Card のうち今回の実行で届かないポートだけをこの入力で埋めるので、変えた分岐の新しい値と他の分岐の値で比べ直せます。どの実行の値を使ったかは実行のジャーナルに残します。
+Tsugumi は、最新の呼び出しの入力一式と、各ポートの最新入力を保存します。
+
+- **組を崩さない。** `all` の Card では一回の呼び出しで使った組をそのまま保ち、`any` の Card では各ポートの最新値を使います。
+- **ファイルも残す。** File / Directory は実体を保存領域へコピーするので、実行キャッシュを消しても使えます。
+- **使う前に確かめる。** 再実行のときに、今の入力型と合うか、ファイルがあるかを確かめ、足りなければ理由を返します。
+- **子 Workflow にも使う。** 子 Workflow を単体で実行するときは、この入力を境界から渡します。
+- **合流で比べ直せる。** 分岐の 1 つから下流へ進めるときは、合流する Card のうち今回届かないポートだけをこの入力で埋めます。変えた分岐の新しい値と、ほかの分岐の値で比べ直せます。どの実行の値を使ったかは、実行のジャーナルに残します。
 
 **研究者は、入力を手作業で集め直さず、気になった箇所の変更を試せます。** この最新入力は、`recordIO` で選ぶ全呼び出しの入出力履歴とは別に保存します。保存時点と使い方は [Q&A](QA.md) にまとめています。
 
-実装: [部分実行と入力保存](../core/src/scheduler.cc)（`seed_saved`・`take_ready`・`save_last_inputs`）。検証: [キャッシュ削除・再起動後の File 入力と入力不足の回帰テスト](../tests/python/test_regressions.py)、[子 Workflow と分岐からの部分実行テスト](../tests/python/test_scheduler.py)。
+**確かめる場所**
+
+- 実装: [部分実行と入力保存](../core/src/scheduler.cc)（`seed_saved`・`take_ready`・`save_last_inputs`）
+- テスト: [キャッシュ削除・再起動後の File 入力と入力不足の回帰テスト](../tests/python/test_regressions.py)
+- テスト: [子 Workflow と分岐からの部分実行テスト](../tests/python/test_scheduler.py)
 
 ### 「完了した」という表示に、保存済みの記録が伴うようにする
 
@@ -102,7 +123,13 @@ Tsugumi は、出力を検証し、設定に応じた成果物を保持し、呼
 
 **どこまで進み、どこで失敗したかを、画面と実行履歴で同じ根拠から確認できます。** 入出力値の全履歴と成果物の保持は設定で選べるため、記録量も解析に合わせて調整できます。
 
-実装: [出力検証・保存・通知の順序](../core/src/scheduler.cc)、[履歴と型スキーマの保存](../core/src/history.cc)、[段階の表示](../macOS/Sources/App/Workbench/StageLogView.swift)。検証: [履歴保存失敗の回帰テスト](../tests/python/test_regressions.py)（`test_history_write_failure_fails_the_run`）、[記録と成果物の組み合わせのテスト](../tests/python/test_history.py)。
+**確かめる場所**
+
+- 実装: [出力検証・保存・通知の順序](../core/src/scheduler.cc)
+- 実装: [履歴と型スキーマの保存](../core/src/history.cc)
+- 実装: [段階の表示](../macOS/Sources/App/Workbench/StageLogView.swift)
+- テスト: [履歴保存失敗の回帰テスト](../tests/python/test_regressions.py)（`test_history_write_failure_fails_the_run`）
+- テスト: [記録と成果物の組み合わせのテスト](../tests/python/test_history.py)
 
 ### 分岐を含む Workflow と、Nix の依存関係を整合させる
 
@@ -116,7 +143,12 @@ Tsugumi は、入力の待ち合わせ方、分岐・合流、ループ、子 Wo
 
 **Workflow の接続関係を、実行順だけでなく、環境定義の依存関係にも反映できます。**
 
-実装: [必ず先行する Card の解析](../core/src/graph.cc)（`compute_guarantees`）、[Nix へ渡す上流定義](../core/src/nix.cc)（`entry_nix`）。検証: [分岐・合流・ループ・子 Workflow のテスト](../tests/cpp/core_tests.cc)（`upstream_branch_sides_do_not_survive_any_merge` など）、[早期診断の範囲（Q&A の補足）](QA.md)。
+**確かめる場所**
+
+- 実装: [必ず先行する Card の解析](../core/src/graph.cc)（`compute_guarantees`）
+- 実装: [Nix へ渡す上流定義](../core/src/nix.cc)（`entry_nix`）
+- テスト: [分岐・合流・ループ・子 Workflow のテスト](../tests/cpp/core_tests.cc)（`upstream_branch_sides_do_not_survive_any_merge` など）
+- テスト: [早期診断の範囲（Q&A の補足）](QA.md)
 
 ## 一つの結果から、別の仮説へ進める
 

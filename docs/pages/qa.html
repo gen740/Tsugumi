@@ -35,8 +35,8 @@
 <div class="reading">
 <article class="doc">
 <h1 id="tsugumi-qa">Tsugumi Q&amp;A</h1>
-<p>Tsugumi を見た人によく聞かれることに、短く答えます。各問いの最後の「確かめる場所」には、その答えを画面・デモ・テストで確かめる方法を並べました。操作の手順は<a href="usage.html">操作ガイド</a>、仕組みの詳細は<a href="features.html">主要機能</a>にあります。</p>
-<div class="table-wrap"><table><thead><tr><th>問い</th><th>一言で</th></tr></thead><tbody><tr><td><a href="#q1-既存の-ai-コーディングエージェントやノートブックと何が違うのですか">Q1. 既存のエージェントやノートブックと何が違う？</a></td><td>人が見る図・AI が編集するもの・実際に動くものが同じ</td></tr><tr><td><a href="#q2-なぜ自然言語だけでなくdraft-と-workflow-で-ai-に指示するのですか">Q2. なぜ Draft と Workflow で指示する？</a></td><td>処理のつながりは、文章より図のほうが正確に渡せる</td></tr><tr><td><a href="#q3-解析の再現性をどのように確保するのですか">Q3. 再現性はどう確保する？</a></td><td>環境は Nix で固定し、結果を左右する条件は Card ごとに決める</td></tr><tr><td><a href="#q4-なぜすべての実行データを保存しないのですか">Q4. なぜ全部を保存しない？</a></td><td>何を残すかを Card ごとに選ぶ。入出力値は既定で残さない</td></tr><tr><td><a href="#q5-解析の途中からやり直せることにはどんな意味がありますか">Q5. 途中からやり直せる意味は？</a></td><td>1 枚ずつ直して確かめる往復を速くする</td></tr><tr><td><a href="#q6-git-と実行履歴はそれぞれ何を記録するのですか">Q6. Git と実行履歴の違いは？</a></td><td>Git は定義、実行履歴は動かした記録</td></tr><tr><td><a href="#補足-q-nix-の上流参照はどのように検証するのですか">補足. Nix の上流参照の検証は？</a></td><td>保存時に軽く確かめ、最後は Nix の評価で決まる</td></tr></tbody></table></div>
+<p><a href="readme.html">README</a> では、日々の研究で AI に仕事を任せるのをためらう理由を 3 つ挙げました。再現性を担保できない。結論に至るプロセスが見えない。データを AI に渡すのが怖い。この Q&amp;A は、その 3 つに Tsugumi がどう答えるかを、問いごとに短くまとめたものです。各問いの最後の「確かめる場所」には、その答えを画面・デモ・テストで確かめる方法を並べました。操作の手順は<a href="usage.html">操作ガイド</a>、仕組みの詳細は<a href="features.html">主要機能</a>にあります。</p>
+<div class="table-wrap"><table><thead><tr><th>ためらい</th><th>問い</th><th>一言で</th></tr></thead><tbody><tr><td>プロセスが見えない</td><td><a href="#q1-既存の-ai-コーディングエージェントやノートブックと何が違うのですか">Q1. 既存のエージェントやノートブックと何が違う？</a></td><td>人が見る図・AI が編集するもの・実際に動くものが同じ</td></tr><tr><td></td><td><a href="#q2-なぜ自然言語だけでなくdraft-と-workflow-で-ai-に指示するのですか">Q2. なぜ Draft と Workflow で指示する？</a></td><td>処理のつながりは、文章より図のほうが正確に渡せる</td></tr><tr><td></td><td><a href="#q5-解析の途中からやり直せることにはどんな意味がありますか">Q5. 途中からやり直せる意味は？</a></td><td>気になった Card だけを直して、すぐ確かめる</td></tr><tr><td>再現性を担保できない</td><td><a href="#q3-解析の再現性をどのように確保するのですか">Q3. 再現性はどう確保する？</a></td><td>環境は Nix で固定し、結果を左右する条件は Card ごとに決める</td></tr><tr><td></td><td><a href="#q4-なぜすべての実行データを保存しないのですか">Q4. なぜ全部を保存しない？</a></td><td>何を残すかを Card ごとに選ぶ。入出力値は既定で残さない</td></tr><tr><td></td><td><a href="#q6-git-と実行履歴はそれぞれ何を記録するのですか">Q6. Git と実行履歴の違いは？</a></td><td>Git は定義、実行履歴は動かした記録</td></tr><tr><td></td><td><a href="#補足-q-nix-の上流参照はどのように検証するのですか">補足. Nix の上流参照の検証は？</a></td><td>保存時に軽く確かめ、最後は Nix の評価で決まる</td></tr><tr><td>データを渡すのが怖い</td><td><a href="#q7-未公開のデータをai-に渡さずに扱えますか">Q7. 未公開のデータを扱えますか？</a></td><td>計算は Mac の中の VM で完結する。外へ出るものは決まっている</td></tr></tbody></table></div>
 <h2 id="q1-既存の-ai-コーディングエージェントやノートブックと何が違うのですか">Q1. 既存の AI コーディングエージェントやノートブックと、何が違うのですか？</h2>
 <p><strong>人が見て理解する図と、AI が編集するものと、実際に動くものが、同じ Workflow です。</strong></p>
 <p>AI に解析を任せると、試行は速く進みます。けれど、その過程は文章の報告でしか受け取れません。詳しい報告は長くて読み切れず、短い要約では途中の判断や試した条件が消えます。報告とコードを照らし合わせるのも人の仕事です。</p>
@@ -50,13 +50,14 @@
 <p>AI の報告を読んで信じるのではなく、気になったところへ直接行って、自分で動かして確かめる。そのための形です。</p>
 <p><strong>確かめる場所</strong></p>
 <ul>
+<li>画面: デモ「Cas A · Chandra RGB」では、スペクトルの Card を見ると、緑の帯域（1.65–2.25 keV）が Si の輝線を含むことが分かります。画像の色が何を意味するのかを、同じ画面の Card で確かめられます（<a href="readme.html#画面でたどる実験と検証">README</a>）。</li>
 <li>画面: デモ「Data to report」のコピーで <code>aggregate</code> の <code>fail_on_purpose</code> を入れて実行すると、失敗した Card が下流を止め、その記録が Card に残ります。外して <code>aggregate</code> だけを実行し直せます。</li>
 <li>UI と Agent が同じ RPC を使う対等なクライアントであること: <a href="https://github.com/gen740/Tsugumi/blob/main/protocol/tsugumi.fbs" rel="noopener">protocol/tsugumi.fbs</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py" rel="noopener">test_agent_contract.py</a></li>
 <li>背景: <a href="philosophy.html">AI に使われないために、何を作るか</a>、<a href="novelty.html">設計の独自性</a></li>
 </ul>
 <h2 id="q2-なぜ自然言語だけでなくdraft-と-workflow-で-ai-に指示するのですか">Q2. なぜ自然言語だけでなく、Draft と Workflow で AI に指示するのですか？</h2>
 <p><strong>処理のつながりは、文章よりも図のほうが正確に渡せるからです。</strong></p>
-<p>「A の結果を B に渡す」くらいなら文章で足ります。10 段の処理に分岐と合流が入ると、どの出力をどの入力へ渡すかを文章で書き切るのは難しくなります。書いた本人も、抜けや食い違いに気づけません。</p>
+<p>観測データをダウンロードして、エネルギーで区切って、描画する。やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。それなのに文章で頼むと、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直すことになります。10 段の処理に分岐と合流が入れば、どの出力をどの入力へ渡すかを文章で書き切るのは、さらに難しくなります。書いた本人も、抜けや食い違いに気づけません。</p>
 <ul>
 <li><strong>Draft</strong> は、名前と「何をするか」だけを書いた、まだ実装のない Card です。<code>E</code> で置いて書き、線でつなぐと、ポートは線に合わせてできます。</li>
 <li>並べた Draft の図を仕様にして、右上の「Card を生成」で Agent に実装を頼みます。</li>
@@ -73,6 +74,7 @@
 </ul>
 <h2 id="q3-解析の再現性をどのように確保するのですか">Q3. 解析の再現性を、どのように確保するのですか？</h2>
 <p><strong>実行環境は Nix で固定し、結果を左右する条件は Card ごとに決めます。</strong></p>
+<p>天体物理の解析ソフトウェア（NASA の <a href="https://heasarc.gsfc.nasa.gov/docs/software/lheasoft/" rel="noopener">HEASOFT</a> など）は長大で、同じ環境を作るだけでも一苦労です。作者が研究の中で行き着いた答えが Nix で、HEASOFT を Nix で使えるようにしたものも<a href="https://github.com/gen740/heasoft" rel="noopener">公開しています</a>（<a href="origin.html">出発点</a>）。Tsugumi は、その答えを Card 1 枚ずつに当てはめています。</p>
 <ul>
 <li>各 Card の実行環境（言語のツールチェーンとライブラリ）は、その Card の <code>default.nix</code> から Nix が作ります。定義はプロジェクトの版と一緒に残るので、別のマシンでも同じ環境を作れます。</li>
 <li>重い計算（長いシミュレーションなど）は、seed や条件を書いた Nix のビルドにできます。定義と依存が変わらなければ出力は Nix store から再利用されるので、後段の解析や可視化だけを何度でも試せます。</li>
@@ -80,7 +82,7 @@
 </ul>
 <p><strong>確かめる場所</strong></p>
 <ul>
-<li>デモ「Cas A · Chandra RGB」: 観測データを hash で固定して取得し、同じ入力から画像を作ります。</li>
+<li>デモ「Cas A · Chandra RGB」: Chandra の観測を hash で固定して取得します。520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります（<a href="readme.html#画面でたどる実験と検証">README</a>）。</li>
 <li>デモ「Collatz」: C++・Python・Julia・R で別々に書いた同じループが、27 から同じ 112 個の数列を返すことを確かめます（<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_collatz.py" rel="noopener">test_demo_collatz.py</a>）。</li>
 <li>Card の環境の定義: <a href="https://github.com/gen740/Tsugumi/blob/main/sdk/nix/default.nix" rel="noopener">sdk/nix/default.nix</a>、<a href="features.html">主要機能 §3</a></li>
 <li>常駐 worker と、実行ごとの初期化: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a></li>
@@ -113,6 +115,7 @@
 </ul>
 <p><strong>確かめる場所</strong></p>
 <ul>
+<li>画面: デモ「Cas A · Chandra RGB」で <code>bands</code> の帯域の境界（<code>green_min_ev</code> など）を書き換え、「この Card だけ実行（最後の入力）」を選ぶと、観測を読み直さずに色分けだけを試せます。</li>
 <li>画面: デモ「Collatz」で <code>compare</code> を右クリックして「この Card だけ実行（最後の入力）」を選ぶと、4 言語の Card を動かし直さずに比べ直せます（先に一度全体を実行しておきます）。</li>
 <li>分岐の 1 つから進めた実行が合流で保存入力と出会うこと、保存入力がないときに明示的に失敗すること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py" rel="noopener">test_scheduler.py</a></li>
 <li>MNIST のデモで、1 つの分類器だけを実行し、そこから <code>compare</code> へ進めて比べ直すこと: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_mnist.py" rel="noopener">test_demo_mnist.py</a></li>
@@ -131,6 +134,23 @@
 <ul>
 <li>画面: デモ「Cas A · Chandra RGB」のコピーで「版の履歴」を開くと、帯域や格子を試して失敗した枝、採用しなかった枝、採用した版 <code>rgb-v1</code> がツリーで見られます。</li>
 <li>commit・note・tag・枝の作られ方: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_versions.py" rel="noopener">test_versions.py</a>、<a href="versions.html">版の管理</a></li>
+</ul>
+<h2 id="q7-未公開のデータをai-に渡さずに扱えますか">Q7. 未公開のデータを、AI に渡さずに扱えますか？</h2>
+<p><strong>扱えます。Card の計算は Mac の中の VM で完結し、外へ出るものは決まっています。</strong></p>
+<ul>
+<li>Card は、Mac の中の隔離された Linux VM で動きます。Card からの外部ネットワークは既定で遮断されています。</li>
+<li>Agent を使わず、<code>network: true</code> の Card もなければ、プロジェクトの内容やデータは Mac と VM の外へ出ません（Nix がパッケージを取得する通信を除きます）。</li>
+<li>Agent を使うと、会話と、Agent が読んだソース・ログ・入出力値がモデルのプロバイダへ送られます。送る内容を自動で伏せる仕組みは、まだありません。</li>
+<li>Agent が Card にネットワークや Mac のフォルダを与えようとする保存は、利用者の承認なしには通りません。</li>
+<li>完成した Workflow の実行に LLM は要りません。公開データや合成データで Agent と処理を作り、未公開のデータでは Agent を使わずに動かす、という使い分けができます。</li>
+</ul>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>何が守られていて、何が守られていないかの一覧: <a href="security.html#要点">セキュリティと隔離の要点</a></li>
+<li>Agent を使うとモデルに送られるもの: <a href="security.html#モデルに送られるもの">モデルに送られるもの</a></li>
+<li>Card のネットワークが既定で閉じていること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a>（<code>test_network_is_off_unless_the_card_allows_it</code>）、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py" rel="noopener">test_cards_container.py</a></li>
+<li>Agent が権限を広げる保存には承認が要ること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py" rel="noopener">test_permissions.py</a></li>
+<li>作るときと本番で、AI に見せる情報を分ける構想: <a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a></li>
 </ul>
 <h2 id="補足-q-nix-の上流参照はどのように検証するのですか">補足 Q. Nix の上流参照は、どのように検証するのですか？</h2>
 <p><strong>保存の時点で軽く確かめ、最後は Nix の評価で決まります。</strong></p>

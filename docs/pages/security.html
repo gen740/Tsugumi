@@ -31,11 +31,15 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-信頼境界の全体像">1. 信頼境界の全体像</a></li><li class="d2"><a href="#2-vm--macos">2. VM ⇄ macOS</a></li><li class="d3"><a href="#vm-に渡しているもの">VM に渡しているもの</a></li><li class="d3"><a href="#vm-のネットワーク">VM のネットワーク</a></li><li class="d2"><a href="#3-project--projectvm-内">3. project ⇄ project（VM 内）</a></li><li class="d3"><a href="#プロジェクト間で共有しているもの">プロジェクト間で共有しているもの</a></li><li class="d2"><a href="#4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</a></li><li class="d3"><a href="#sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</a></li><li class="d3"><a href="#sandbox-false"><code>sandbox: false</code></a></li><li class="d3"><a href="#worker-の寿命管理">worker の寿命管理</a></li><li class="d3"><a href="#card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</a></li><li class="d2"><a href="#5-nix-評価の制限">5. Nix 評価の制限</a></li><li class="d2"><a href="#6-rpc-の認証">6. RPC の認証</a></li><li class="d3"><a href="#待ち受け経路">待ち受け経路</a></li><li class="d3"><a href="#認証-token">認証 token</a></li><li class="d3"><a href="#websocket-の保護">WebSocket の保護</a></li><li class="d3"><a href="#ページング-cursor-の署名">ページング cursor の署名</a></li><li class="d2"><a href="#7-ファイルの取り込みimport-grant">7. ファイルの取り込み（import grant）</a></li><li class="d2"><a href="#8-モデルの-api-キーagent">8. モデルの API キー（Agent）</a></li><li class="d3"><a href="#chatgpt-プランsign-in-with-chatgpt">ChatGPT プラン（Sign in with ChatGPT）</a></li><li class="d3"><a href="#モデルに送られるもの">モデルに送られるもの</a></li><li class="d3"><a href="#agent-の権限境界">Agent の権限境界</a></li><li class="d2"><a href="#9-データの置き場所と削除方法">9. データの置き場所と削除方法</a></li><li class="d2"><a href="#10-既知の制限と注意事項">10. 既知の制限と注意事項</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#要点">要点</a></li><li class="d2"><a href="#1-信頼境界の全体像">1. 信頼境界の全体像</a></li><li class="d2"><a href="#2-vm--macos">2. VM ⇄ macOS</a></li><li class="d3"><a href="#vm-に渡しているもの">VM に渡しているもの</a></li><li class="d3"><a href="#vm-のネットワーク">VM のネットワーク</a></li><li class="d2"><a href="#3-project--projectvm-内">3. project ⇄ project（VM 内）</a></li><li class="d3"><a href="#プロジェクト間で共有しているもの">プロジェクト間で共有しているもの</a></li><li class="d2"><a href="#4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</a></li><li class="d3"><a href="#sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</a></li><li class="d3"><a href="#sandbox-false"><code>sandbox: false</code></a></li><li class="d3"><a href="#worker-の寿命管理">worker の寿命管理</a></li><li class="d3"><a href="#card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</a></li><li class="d2"><a href="#5-nix-評価の制限">5. Nix 評価の制限</a></li><li class="d2"><a href="#6-rpc-の認証">6. RPC の認証</a></li><li class="d3"><a href="#待ち受け経路">待ち受け経路</a></li><li class="d3"><a href="#認証-token">認証 token</a></li><li class="d3"><a href="#websocket-の保護">WebSocket の保護</a></li><li class="d3"><a href="#ページング-cursor-の署名">ページング cursor の署名</a></li><li class="d2"><a href="#7-ファイルの取り込みimport-grant">7. ファイルの取り込み（import grant）</a></li><li class="d2"><a href="#8-モデルの-api-キーagent">8. モデルの API キー（Agent）</a></li><li class="d3"><a href="#chatgpt-プランsign-in-with-chatgpt">ChatGPT プラン（Sign in with ChatGPT）</a></li><li class="d3"><a href="#モデルに送られるもの">モデルに送られるもの</a></li><li class="d3"><a href="#agent-の権限境界">Agent の権限境界</a></li><li class="d2"><a href="#9-データの置き場所と削除方法">9. データの置き場所と削除方法</a></li><li class="d2"><a href="#10-既知の制限と注意事項">10. 既知の制限と注意事項</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="セキュリティと隔離">セキュリティと隔離</h1>
 <p>この文書では、Tsugumi が設ける「4 段階の信頼境界（どこからどこまでを隔離しているか）」と、「秘密情報（外部モデルの API キーや RPC の認証トークン）の扱い」をまとめています。すべての記述は現在の実装（<code>core/src/vmd_main.cc</code>・<code>core/src/worker_proc.cc</code>・<code>core/src/server.cc</code>・<code>macOS/Sources/Launcher/</code>・<code>agent/Sources/TsugumiAgent/Provider.swift</code>）に基づいています。</p>
+<h2 id="要点">要点</h2>
+<p>先に、守っていることと守っていないことを並べます。詳しくは各節にあります。</p>
+<div class="table-wrap"><table><thead><tr><th>守っていること</th><th>確かめる場所</th></tr></thead><tbody><tr><td>Card は既定でネットワークに出られず、プロジェクトの定義・認証 token・ほかの Card の作業領域が見えない（§4）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py" rel="noopener">test_cards_container.py</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a>（<code>test_network_is_off_unless_the_card_allows_it</code>）、Mac 上は <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_host_sandbox.py" rel="noopener">test_host_sandbox.py</a></td></tr><tr><td>プロジェクトどうしは、uid・名前空間・cgroup で分かれている（§3）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_shared_vm.py" rel="noopener">test_shared_vm.py</a></td></tr><tr><td>Mac のファイルで VM から見えるのは、開いているプロジェクトと、明示的に指定したフォルダだけ（§2）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a>（<code>test_mac_folders_are_read_only_unless_written</code>）</td></tr><tr><td>RPC は <code>127.0.0.1</code> だけで待ち受け、token がなければ切断し、ブラウザのページからはつながらない（§6）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_transport.py" rel="noopener">test_transport.py</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_frame_fuzz.py" rel="noopener">test_frame_fuzz.py</a></td></tr><tr><td>Agent が Card の権限（ネットワーク・隔離なし・Mac のフォルダ）を広げる保存は、利用者の承認なしには通らない（§8）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py" rel="noopener">test_permissions.py</a></td></tr><tr><td>API キーとトークンは Keychain に置き、<code>tsugumid</code>・VM・Card には渡さない（§8）</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/agent/Sources/TsugumiAgent/Provider.swift" rel="noopener">agent/Sources/TsugumiAgent/Provider.swift</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_release.py" rel="noopener">test_release.py</a>（アプリと Web UI が同じ Keychain 項目を使う）</td></tr><tr><td>他人から来たプロジェクトの <code>.tsugumi/</code> は、使う前に検査する</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_untrusted_project.py" rel="noopener">test_untrusted_project.py</a></td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>守っていないこと</th><th>詳しく</th></tr></thead><tbody><tr><td>Agent を使うと、Agent が読んだコード・ログ・入出力値はモデルのプロバイダへ送られる</td><td><a href="#モデルに送られるもの">モデルに送られるもの</a></td></tr><tr><td>他人のプロジェクトを開くとき、<code>_card.json</code> に書かれた <code>network</code>・<code>sandbox: false</code>・<code>hostFolders</code> に確認は出ない</td><td><a href="#10-既知の制限と注意事項">§10</a></td></tr><tr><td>プロジェクト間の隔離は 1 つの Linux カーネルの上で、カーネルの脆弱性までは防げない</td><td><a href="#10-既知の制限と注意事項">§10</a></td></tr><tr><td><code>network: false</code> でも、Nix の固定出力 derivation はビルド時に通信できる</td><td><a href="#5-nix-評価の制限">§5</a></td></tr></tbody></table></div>
 <h2 id="1-信頼境界の全体像">1. 信頼境界の全体像</h2>
 <pre><code class="language-text">┌─ macOS<span class="wide">（</span><span class="wide">ユ</span><span class="wide">ー</span><span class="wide">ザ</span><span class="wide">ー</span><span class="wide">権</span><span class="wide">限</span><span class="wide">）</span> ────────────────────────────────────────────────┐
 │  Tsugumi.app                                                           │
@@ -118,7 +122,7 @@
 <li>例外は <a href="webui.html">Web UI</a> のように <code>tsugumid</code> を macOS ホストで直接動かす場合で、bubblewrap の代わりに <code>sandbox-exec</code>（Seatbelt）で隔離します（ネットワークなし、読み取りは <code>/nix/store</code>・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。<code>network: true</code> の Card にはネットワークを開きますが、このマシン自身のアドレス（loopback・LAN・VPN）と Unix ソケットは閉じたままで、例外は名前解決に必要な <code>mDNSResponder</code> のソケットだけです。Mach サービスも、証明書の検証に使う <code>com.apple.trustd.agent</code> のほかは閉じているので、クリップボードや LaunchServices には届きません。<code>sandbox-exec</code> がない場合は同じく拒否します。</li>
 </ul>
 <h3 id="sandbox-false"><code>sandbox: false</code></h3>
-<p>ファイルシステム参照の制限だけを緩和する設定ですが、以下の保護は引き続き維持されます。</p>
+<p>ファイルシステム参照の制限だけを緩和する設定です。共通 VM の中では、以下の保護が引き続き維持されます（bubblewrap のない Mac 上の <code>tsugumid</code>、つまり Web UI では、<code>sandbox: false</code> の Card は隔離なしに利用者の権限で動きます。§10）。</p>
 <ul>
 <li>user・PID・<strong>network</strong>・IPC の各名前空間は分離されます（<code>network: true</code> を併せて指定しない限り外部通信はできず、子孫プロセスも worker 終了時にすべて回収されます）。</li>
 <li>control フォルダと <code>.tsugumi</code> ディレクトリは空の <code>tmpfs</code> でマスクして隠します。virtiofs の仕様上、すべてのファイルが「参照する側のプロセス所有」として見えるため、通常のファイルパーミッション（mode）だけでは認証 token を保護できないためです。</li>
@@ -188,7 +192,12 @@
 </ul>
 </li>
 <li>API キーは <strong>モデルへのリクエスト送信時に Keychain から読み出し、HTTPS のリクエストヘッダー（<code>x-api-key</code> / <code>Authorization: Bearer</code>）にのみ載せます</strong>。Web UI のサーバーは読み出したキーをそのプロセスのメモリに保ち（項目の属性が変わると読み直します）、拒否された読み出しも覚えるので、<code>security</code> の確認が同じキーで何度も出ることはありません。</li>
-<li>チャットのモデルメニューは、開くたびに設定済みの接続のモデル一覧を取得し直します。利用者が頼んだ読み出しではないので、アプリは確認の画面を出さずに読めるときだけ読み（<code>Keychain.loadWithoutAsking</code>）、読めない接続は保存済みの一覧のまま次の機会を待ちます（チャットの実行や設定の「モデル一覧を取得」では、これまでどおり確認が出ます）。アクセストークンの更新が必要なときだけは、更新後のリフレッシュトークンを必ず保存するため、確認なしで読めたあとの保存を止めません。Web UI のサーバーでは <code>security</code> に確認なしで読む手段がないため、まだ読んでいないキーについて、サーバーの起動ごとに最大 1 回確認が出ることがあります。</li>
+<li>チャットのモデルメニューは、開くたびに設定済みの接続のモデル一覧を取得し直します。これは利用者が頼んだ読み出しではないので、確認の画面は出しません。<ul>
+<li>アプリは、確認なしで読めるときだけ読みます（<code>Keychain.loadWithoutAsking</code>）。読めない接続は、保存済みの一覧のまま次の機会を待ちます。チャットの実行や設定の「モデル一覧を取得」では、これまでどおり確認が出ます。</li>
+<li>アクセストークンの更新が要るときは、更新後のリフレッシュトークンを必ず保存します（確認なしで読めたあとの保存を止めません）。</li>
+<li>Web UI のサーバーでは、<code>security</code> に確認なしで読む手段がありません。まだ読んでいないキーについて、サーバーの起動ごとに最大 1 回、確認が出ることがあります。</li>
+</ul>
+</li>
 <li>API キーを <code>tsugumid</code>・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも一切記録しません。</li>
 <li>HTTPS 通信には <code>URLSessionConfiguration.ephemeral</code> を使用し、ディスク上にキャッシュや Cookie を残しません。</li>
 <li>設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。</li>
@@ -219,16 +228,39 @@
 <p>なお、<strong>Agent を使用せず、かつ <code>network: true</code> を有効にした Card も存在しない場合、プロジェクトの内容やデータが Mac とローカル VM の外へ出ることはありません</strong>（Nix がパッケージを取得する通信を除く）。<code>network: true</code> を許可した Card は、その Card がアクセスできるデータ（入力値や指定したホストフォルダの内容など）を外部ネットワークへ送信できます。</p>
 <h3 id="agent-の権限境界">Agent の権限境界</h3>
 <ul>
-<li>Agent が実行できる操作は公開された RPC の tool のみであり、UI や Mac のファイルシステムを直接操作することはできません。<code>tsugumid</code> から見れば UI と対等な 1 クライアントであり、同じリビジョン検査と競合検出を通ります。</li>
-<li>変更を伴う tool 呼び出しには一意な <code>op_id</code> が付与され、応答が途切れた場合も <code>OperationGet</code> で適用状態を確認するため、盲目的な再実行による二重適用は起きません。</li>
-<li><strong>Card の権限は利用者のものです</strong>。Agent の保存が Card にネットワーク（<code>network: true</code>）、隔離なしの実行（<code>sandbox: false</code>）、ホストのフォルダ（<code>hostFolders</code>、読み取りと書き込み）を新たに与えるとき、<code>tsugumid</code> は保存せず <code>approval_required</code> で返し、広がる権限を 1 つずつ挙げます（Card in Card の中の Card も含みます。<code>core/src/permissions.cc</code>）。アプリ（Mac・Web）は、設定の「API」で「Agent が確認なしに Card に与えてよい権限」に入れた種類はそのまま承認し、それ以外は利用者に確認します。確認の画面で、その種類を以後は確認しないことにもできます（既定ではすべて確認します）。承認は Agent の実行部分がつける欄（<code>approved_permissions</code>）で送り、モデルからは設定できません。許可されなければ何も保存されず、Agent には理由を利用者に説明するよう伝えます。利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。</li>
-<li><strong>Claude Code の plugin</strong>（<a href="claude-code.html">Claude Code から使う</a>）は、Web UI のサーバーを通してだけ操作します。サーバーはチャットの Agent と同じ道具を同じ検査で実行し、Card の権限を広げる保存は Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。plugin の MCP サーバーは、サーバーがデータフォルダに書く <code>server.json</code>（ポートと起動ごとの Agent 用の鍵、0600、終了時に削除）でサーバーを見つけます。この鍵で届くのは plugin が使う 5 つの口（<code>/api/project/open</code>・<code>/api/project/create</code>・<code>/api/agent/tools</code>・<code>/api/agent/open</code>・<code>/api/agent/call</code>。<code>web/server/paths.ts</code> の <code>AGENT_ROUTES</code>）だけで、承認への回答（<code>/api/chat/permission</code>）、イベントの購読、端末、ファイル一覧、設定には届きません（<code>tests/python/test_claude_code_plugin.py</code>）。ページの鍵（起動時に表示する URL の鍵）は <code>server.json</code> に書かず、ページを開くときはサーバー自身がブラウザを開きます。<ul>
-<li>この境界が守るのは、<strong>Tsugumi の道具を通した操作</strong>です。Claude Code はシェルとファイル操作も持つので、利用者と同じ権限でプロジェクトのファイル（<code>_card.json</code> など）を直接書き換えたり、利用者の読めるもの（Claude Code が起動したサーバーのログ <code>server.log</code> に出る URL など）を読んだりできます。それを止めるのは Claude Code 自身の権限設定で、Tsugumi ではありません。</li>
+<li><p>Agent が実行できる操作は公開された RPC の tool のみであり、UI や Mac のファイルシステムを直接操作することはできません。<code>tsugumid</code> から見れば UI と対等な 1 クライアントであり、同じリビジョン検査と競合検出を通ります。</p>
+</li>
+<li><p>変更を伴う tool 呼び出しには一意な <code>op_id</code> が付与され、応答が途切れた場合も <code>OperationGet</code> で適用状態を確認するため、盲目的な再実行による二重適用は起きません。</p>
+</li>
+<li><p><strong>Card の権限は利用者のものです。</strong> Agent の保存が、Card に次のどれかを新たに与えるときは、<code>tsugumid</code> は保存せずに <code>approval_required</code> で返し、広がる権限を 1 つずつ挙げます（Card in Card の中の Card も含みます。<code>core/src/permissions.cc</code>）。</p>
+<ul>
+<li>ネットワーク（<code>network: true</code>）</li>
+<li>隔離なしの実行（<code>sandbox: false</code>）</li>
+<li>Mac のフォルダ（<code>hostFolders</code>、読み取りと書き込み）</li>
+</ul>
+<p>承認の流れは次のとおりです。</p>
+<ul>
+<li>アプリ（Mac・Web）は、設定の「API」の「Agent が確認なしに Card に与えてよい権限」に入れた種類だけをそのまま承認し、それ以外は利用者に確認します。既定ではすべて確認し、確認の画面で「以後は確認しない」を選ぶこともできます。</li>
+<li>承認は Agent の実行部分がつける欄（<code>approved_permissions</code>）で送ります。モデルからは設定できません。</li>
+<li>許可されなければ何も保存されず、Agent には理由を利用者に説明するよう伝えます。</li>
+<li>利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。</li>
 </ul>
 </li>
-<li>チャットに添えたフォルダは、添えているものだけを Agent が <code>attached_folder_read</code> で読みます（アプリでは <code>agent/Sources/TsugumiAgent/Agent.swift</code>、Web UI では <code>web/server/agent.ts</code> が送る前に確かめます）。アプリで外したフォルダは、VM との共有が次に環境が起動するまで残りますが、Agent は外した時点から読みません（<code>macOS/CoreTests</code> の <code>onlyAttachedFoldersAreRead</code>）。</li>
-<li>チャットの「停止」はモデルとの通信および未送信の tool 呼び出しを止めます（すでに開始された Workflow の実行自体を止める場合は、Canvas の停止ボタンを使います）。</li>
-<li>会話履歴と tool の呼び出し証跡はホスト側（<code>~/Library/Application Support</code> 配下）に保存されます。</li>
+<li><p><strong>Claude Code の plugin</strong>（<a href="claude-code.html">Claude Code から使う</a>）は、Web UI のサーバーを通してだけ操作します。</p>
+<ul>
+<li>サーバーはチャットの Agent と同じ道具を、同じ検査で実行します。Card の権限を広げる保存は、Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。</li>
+<li>plugin の MCP サーバーは、サーバーがデータフォルダに書く <code>server.json</code>（ポートと、起動ごとの Agent 用の鍵。0600、終了時に削除）でサーバーを見つけます。</li>
+<li>この鍵で届くのは、plugin が使う 5 つの口だけです（<code>/api/project/open</code>・<code>/api/project/create</code>・<code>/api/agent/tools</code>・<code>/api/agent/open</code>・<code>/api/agent/call</code>。<code>web/server/paths.ts</code> の <code>AGENT_ROUTES</code>）。承認への回答（<code>/api/chat/permission</code>）、イベントの購読、端末、ファイル一覧、設定には届きません（<code>tests/python/test_claude_code_plugin.py</code>）。</li>
+<li>ページの鍵（起動時に表示する URL の鍵）は <code>server.json</code> に書きません。ページを開くときは、サーバー自身がブラウザを開きます。</li>
+<li>この境界が守るのは、<strong>Tsugumi の道具を通した操作</strong>です。Claude Code はシェルとファイル操作も持つので、利用者と同じ権限でプロジェクトのファイル（<code>_card.json</code> など）を直接書き換えたり、利用者が読めるもの（Claude Code が起動したサーバーのログ <code>server.log</code> に出る URL など）を読んだりできます。それを止めるのは Claude Code 自身の権限設定で、Tsugumi ではありません。</li>
+</ul>
+</li>
+<li><p>チャットに添えたフォルダは、添えているものだけを Agent が <code>attached_folder_read</code> で読みます（アプリでは <code>agent/Sources/TsugumiAgent/Agent.swift</code>、Web UI では <code>web/server/agent.ts</code> が送る前に確かめます）。アプリで外したフォルダは、VM との共有が次に環境が起動するまで残りますが、Agent は外した時点から読みません（<code>macOS/CoreTests</code> の <code>onlyAttachedFoldersAreRead</code>）。</p>
+</li>
+<li><p>チャットの「停止」はモデルとの通信および未送信の tool 呼び出しを止めます（すでに開始された Workflow の実行自体を止める場合は、Canvas の停止ボタンを使います）。</p>
+</li>
+<li><p>会話履歴と tool の呼び出し証跡はホスト側（<code>~/Library/Application Support</code> 配下）に保存されます。</p>
+</li>
 </ul>
 <h2 id="9-データの置き場所と削除方法">9. データの置き場所と削除方法</h2>
 <div class="table-wrap"><table><thead><tr><th>データ</th><th>保存場所</th><th>削除・管理方法</th></tr></thead><tbody><tr><td>プロジェクトの文書・ソース</td><td>プロジェクトフォルダ</td><td>Finder 等で管理（Tsugumi が勝手にフォルダ自体を消すことはありません）</td></tr><tr><td>実行履歴（正本）</td><td>VM の実行履歴ディスク <code>vm/history.img</code>（VM 内の <code>/history-disk/&lt;id&gt;/</code>）</td><td>プロジェクト設定の「実行履歴を削除」、または設定の「VM 内の実行履歴」</td></tr><tr><td>実行履歴（プロジェクト内コピー）</td><td><code>.tsugumi/runs.sqlite</code>・<code>.tsugumi/runs/</code></td><td>「実行履歴を削除」、または <code>saveRunHistory = false</code> で書き出しを停止</td></tr><tr><td>Nix store・ビルド root</td><td><code>~/Library/Application Support/Tsugumi/vm/store.img</code></td><td>「ビルドキャッシュを削除」および「共有 store を掃除」</td></tr><tr><td>control フォルダ（token・grant）</td><td><code>~/Library/Application Support/Tsugumi/environments/&lt;id&gt;/control/</code></td><td>「すべての実行環境を初期化」</td></tr><tr><td>API キー</td><td>macOS Keychain</td><td>設定 &gt; API から削除</td></tr><tr><td>チャットの会話履歴</td><td><code>~/Library/Application Support</code> 配下</td><td>—</td></tr></tbody></table></div>
@@ -241,7 +273,7 @@
 <li>Mac 上の <code>tsugumid</code>（Web UI）で <code>network: true</code> の Card は、同じ LAN や VPN の他の機器に届き、UDP のブロードキャストとマルチキャストはこのマシンにも届きます。Seatbelt では宛先のアドレスを指定して拒否できないためです（<a href="webui.html#隔離macos-ホスト">Web UI の隔離</a>）。</li>
 <li><code>network: true</code> と <code>hostFolders</code>（特に <code>write: true</code>）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の <code>_card.json</code> に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。</li>
 <li><code>sandbox: false</code> の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと <code>.tsugumi</code> は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。</li>
-<li>開発・テスト用に Mac ホスト上で直接 <code>tsugumid</code> を動かすモード（<code>bubblewrap</code> なし）ではサンドボックス隔離が行われません（通常のアプリ実行経路では使用されません）。</li>
+<li>Mac 上で直接 <code>tsugumid</code> を動かすとき（<a href="webui.html">Web UI</a>）、<code>sandbox: true</code> の Card は Seatbelt で隔離し、<code>sandbox-exec</code> がなければ実行を拒否します。一方、<code>sandbox: false</code> の Card は bubblewrap がないため隔離なしで、利用者の権限のまま動きます（<code>network: false</code> も効きません）。Web UI で受け取ったプロジェクトを動かすときは、<code>sandbox: false</code> の Card がないかを先に確かめてください（<code>core/src/worker_proc.cc</code>）。</li>
 <li>リリース版もソースからビルドしたアプリも、既定では ad-hoc 署名です（開発版は、環境変数 <code>TSUGUMI_CODESIGN_IDENTITY</code> で、作った人自身の証明書で署名することもできます。<a href="development.html">開発資料</a>。リリース版は常に ad-hoc です）。Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（<code>.github/workflows/release.yml</code>）、自動更新は GitHub の最新リリースの <code>Tsugumi.zip</code> を、同じリリースの <code>Tsugumi.zip.sha256</code>・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。</li>
 </ul>
 </article>
