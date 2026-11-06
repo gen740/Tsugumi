@@ -13,7 +13,7 @@ import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
-import { planError, TransientError } from './chatgpt'
+import { planError, type PlanAccessToken, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -241,7 +241,7 @@ export interface ProviderConfig {
    *  to the page, tsugumid or Card workers. */
   apiKey?: string
   /** The ChatGPT access token (refreshed near its expiry; `stale` is one the API refused). */
-  token?: (stale?: string) => Promise<string>
+  token?: (stale?: PlanAccessToken) => Promise<PlanAccessToken>
   /** Output limit of one model reply: a Card's sources fit in one save. */
   maxTokens: number
   contextLimit: number
@@ -280,25 +280,40 @@ type StreamEvent =
   | { t: 'toolInput'; index: number; json: string }
   | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
-async function headers(c: ProviderConfig, stale?: string): Promise<Record<string, string>> {
+function headers(c: ProviderConfig): Record<string, string> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
   if (c.api === 'anthropicMessages') h['anthropic-version'] = '2023-06-01'
   if (c.auth === 'apiKey') {
     if (!c.apiKey) throw new Error(`no API key for ${c.name}; add it in Settings > API`)
     if (c.api === 'anthropicMessages') h['x-api-key'] = c.apiKey
     else h.authorization = 'Bearer ' + c.apiKey
-  } else if (c.auth === 'chatgpt') {
-    h.authorization = 'Bearer ' + (await c.token!(stale))
   }
   return h
 }
 
 const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith('/') ? c.baseURL : c.baseURL + '/')
 
+/** Retry a refused plan credential once, bound to the original registration. */
+async function providerFetch(c: ProviderConfig, path: string, init: RequestInit): Promise<Response> {
+  const url = endpoint(c, path)
+  const h = headers(c)
+  if (c.auth !== 'chatgpt') return fetch(url, { ...init, headers: h })
+  const token = await c.token!()
+  const send = (t: PlanAccessToken) => fetch(url, { ...init, headers: { ...h, authorization: 'Bearer ' + t.value } })
+  const response = await send(token)
+  if (response.status !== 401) return response
+  await response.body?.cancel()
+  init.signal?.throwIfAborted()
+  return send(await c.token!(token))
+}
+
 /** Available models, with the names to show (the ChatGPT account's catalog
  *  lists display names, in the server's order). */
 export async function listModels(c: ProviderConfig): Promise<{ id: string; label: string }[]> {
-  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c), signal: AbortSignal.timeout(15_000) })
+  const r = await providerFetch(c, 'v1/models', { signal: AbortSignal.timeout(15_000) })
+  if (c.auth === 'chatgpt' && r.status === 401) {
+    throw new Error('cannot list ChatGPT models (401); check the selected account and plan permission in Settings > API')
+  }
   if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
   const obj = (await r.json()) as { data?: { id: string }[]; models?: { slug: string; display_name?: string; visibility?: string }[] }
   if (c.auth === 'chatgpt' && obj.models) {
@@ -348,7 +363,7 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
-  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(body), signal })
+  const r = await providerFetch(c, 'v1/messages', { method: 'POST', body: JSON.stringify(body), signal })
   if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
@@ -427,18 +442,8 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
     const functions = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
     body.tools = plan ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : functions
   }
-  let stale: string | undefined
-  let r: Response
-  for (;;) {
-    const h = await headers(c, stale)
-    r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: h, body: JSON.stringify(body), signal })
-    if (r.status === 200) break
-    // A refused access token is refreshed once (unless refreshed meanwhile).
-    if (plan && r.status === 401 && stale === undefined) {
-      stale = h.authorization.replace(/^Bearer /, '')
-      await r.body?.cancel()
-      continue
-    }
+  const r = await providerFetch(c, 'v1/responses', { method: 'POST', body: JSON.stringify(body), signal })
+  if (r.status !== 200) {
     if (!plan) throw await HTTPStatusError.from(r)
     const text = await r.text()
     let obj: any

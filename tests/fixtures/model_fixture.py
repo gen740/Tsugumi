@@ -432,6 +432,7 @@ def sign_jwt(claims: dict) -> str:
 class ChatGPT:
     """The issuer's state: codes, current tokens per client, what it saw."""
     lock = threading.Lock()
+    refuse_model_lists = 0
     expires = 3600
     registered = 0
     codes: dict = {}
@@ -495,6 +496,11 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path.rstrip("/") == "/v1/models":
             if (self.headers.get("authorization") or "").startswith("Bearer chatgpt-"):
+                with ChatGPT.lock:
+                    if ChatGPT.refuse_model_lists > 0:
+                        ChatGPT.refuse_model_lists -= 1
+                        token = self.headers["authorization"].removeprefix("Bearer ")
+                        ChatGPT.access.pop(token, None)
                 if self._plan_client() is None:
                     return
                 with ChatGPT.lock:
@@ -808,7 +814,9 @@ def main():
     ap.add_argument("--drop-once", action="store_true")
     ap.add_argument("--cut-once", action="store_true", help="cut the first project_save reply at the output limit")
     ap.add_argument("--chatgpt-expires", type=int, default=3600, help="lifetime of the plan access tokens")
+    ap.add_argument("--refuse-model-lists", type=int, default=0, help="invalidate the first N plan model-list tokens")
     a = ap.parse_args()
+    ChatGPT.refuse_model_lists = a.refuse_model_lists
     ChatGPT.expires = a.chatgpt_expires
     Handler.slow = a.slow
     Handler.drop_once = a.drop_once
