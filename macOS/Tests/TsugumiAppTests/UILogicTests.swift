@@ -5,6 +5,24 @@ import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
+@Test func hoveringAVersionSaysWhatItsRunsDid() {
+  func run(_ state: String, _ seconds: Double, _ summary: String?) -> Tsugumi_RPC_VersionRunT {
+    let r = Tsugumi_RPC_VersionRunT()
+    r.state = state
+    r.seconds = seconds
+    r.summary = summary
+    return r
+  }
+  #expect(VersionTreeView.runsHelp([]) == "この版での実行はありません。")
+  // Newest first; a run a demo's history lists has no summary.
+  #expect(VersionTreeView.runsHelp([run("failed", 1.25, "a だけ / 失敗: a（worker_failed）"), run("succeeded", 12.3, "全体: a、b ×2")])
+    == "成功 · 12.3 秒 · 全体: a、b ×2\n失敗 · 1.2 秒 · a だけ / 失敗: a（worker_failed）")
+  #expect(VersionTreeView.runsHelp([run("succeeded", 2, nil)]) == "成功 · 2.0 秒")
+  // Only the latest few: the rest are counted.
+  let many = (0..<7).map { run("succeeded", Double($0), nil) }
+  #expect(VersionTreeView.runsHelp(many).split(separator: "\n").last == "ほか 2 回")
+}
+
 @Test func stagesOfCodeAndBuiltinCards() {
   // Shown as build → run → validate (SDK and Nix inside build, saving inside validate).
   #expect(Stage.applicable(code: true) == [.build, .execute, .validate])

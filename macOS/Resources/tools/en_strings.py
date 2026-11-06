@@ -972,6 +972,7 @@ EN = {
 "実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@": "%lld runs (%lld succeeded, %lld failed) · last: %@",
 "変更: %@": "Changed: %@",
 " ほか %lld": " and %lld more",
+"ほか %lld 回": "%lld more",
 "版": "Version",
 "実行の結果": "Run Results",
 "この版での実行はありません。": "No runs of this version.",

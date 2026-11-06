@@ -228,6 +228,7 @@ in
 - 互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。
 - helper はそれぞれ自分の会話と同じツールを持ち、受け持った Card の定義だけを保存できます（`tsugumi.json`・配置・ほかの Card は変えられません）。
 - helper どうしの保存と実行がぶつかったとき（実行中の `busy`、`revision_conflict`）は、Agent の側で実行の終わりを待ち、最新のリビジョンから送り直します。
+- 待ち合わせの戦術は、Agent が手分けするときに選びます（`delegate` の `runs`）。`each`（既定）では helper がそれぞれ実行し、1 つの実行が終わるまでほかの helper の保存と実行は待ちます。`together` では helper は書いて検証するだけで（実行しようとしても断られます）、全員の報告がそろってから Agent が 1 回で実行します。同じグラフの枝を手分けするときは `together` が向いています。
 - helper の報告がそろうと、Agent がそれぞれの Card を確かめて報告します。helper の会話は元の会話の隣（`<会話>.helpers/`）に残ります。
 
 ### Skill と会話

@@ -42,9 +42,19 @@
 <li><strong>版として残す</strong>：今の内容を commit し、名前（annotated tag）とメモを付けます。</li>
 </ul>
 <h2 id="実行の結果">実行の結果</h2>
-<p>実行が終わるたびに、その実行の commit の note（<code>refs/notes/tsugumi</code>）に 1 行追記します。</p>
-<pre><code>run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s
+<p>実行が終わるたびに、その実行の commit の note（<code>refs/notes/tsugumi</code>）に 1 行追記します。行の末尾は、何が実行されたかの短い概要です。</p>
+<pre><code>run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s 全体: load、bands ×3、rgb
+run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb
 </code></pre>
+<p>概要は、その実行で core が記録した結果から機械的に作ります。モデルは使いません。</p>
+<ul>
+<li><strong>起点</strong>: <code>全体</code>（trigger や Workflow からの実行）、<code>&lt;Card&gt; から</code>（その Card と下流）、<code>&lt;Card&gt; だけ</code>。動いた Card のどれかが前の実行の保存済みの入力を使ったときは <code>（保存済みの入力で）</code> が付きます。</li>
+<li><strong>動いた Card</strong>: 実際に呼び出された Card。複数回呼ばれたものは <code>×回数</code>。全体の実行の trigger は入れません。</li>
+<li><strong>失敗</strong>: 失敗した Card とその種類（<code>Failure</code> の kind）。失敗の文面とログは git に入れず、実行の記録で見ます。</li>
+<li><strong>未実行</strong>: 上流の失敗や停止で、呼び出されなかった Card。</li>
+<li>長くならないよう、Card は一覧ごとに 6 個までで、残りは <code>ほか N</code> です。</li>
+</ul>
+<p>デモの履歴から作った版の実行には、概要がありません（履歴のファイルにその記録がないため）。</p>
 <p>git からも結果で版を選べます。</p>
 <pre><code class="language-bash">git log --notes=tsugumi --grep=failed
 </code></pre>
@@ -55,7 +65,8 @@
 <p>Mac アプリは Workflow メニューの「版の履歴…」（⌥⌘Y）、Web UI はサイドバー下のボタンで開きます。</p>
 <ul>
 <li>枝分かれと合流を線で描き、各版に実行の回数と結果（点の色: 緑は成功、赤は失敗）、手動で残した版の名前（tag）、枝の名前、変わった Card を表示します。</li>
-<li>版を選ぶと、そのメッセージと実行の結果を見られます。「この版から始める」で、今の内容を版として残してから、その版の内容に戻ります。</li>
+<li>版の点や行にポインタを乗せると、その版の実行の結果と概要を新しい順に出します（5 回分まで）。</li>
+<li>版を選ぶと、そのメッセージと実行の結果・概要を見られます。「この版から始める」で、今の内容を版として残してから、その版の内容に戻ります。</li>
 <li>枝の先の版に戻ると、その枝を続けます。それ以外の版から変更して実行すると、新しい枝（<code>try-&lt;版&gt;</code>）になり、前の流れは消えません。</li>
 <li>未保存の変更があるときと実行中は、別の版に移れません。</li>
 </ul>
