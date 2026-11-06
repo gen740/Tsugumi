@@ -12,11 +12,15 @@ extension Agent {
     public let name: String
     public let cards: [String]
     public let instruction: String
+    /// How the helpers meet ("runs": "together"): it writes and checks its Cards but
+    /// never runs, and the main Agent runs once after all have reported.
+    public let runsTogether: Bool
 
-    public init(name: String, cards: [String], instruction: String) {
+    public init(name: String, cards: [String], instruction: String, runsTogether: Bool = false) {
       self.name = name
       self.cards = cards
       self.instruction = instruction
+      self.runsTogether = runsTogether
     }
 
     /// What a save's changes touch beyond the helper's Cards (nil: nothing).
@@ -59,8 +63,10 @@ extension Agent {
     if role == .guide { return Self.guidePrompt }
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
     guard let helper else { return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") }
-    return Self.systemPrompt + "\n\n" + Shared.fill(Shared.data.helper.prompt, [
-      "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction])
+    let h = Shared.data.helper
+    return Self.systemPrompt + "\n\n" + Shared.fill(h.prompt, [
+      "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction,
+      "running": helper.runsTogether ? h.together : h.each, "report": helper.runsTogether ? h.togetherReport : h.eachReport])
   }
 
   /// The tasks of a delegate call, or why they cannot be done.
@@ -68,6 +74,8 @@ extension Agent {
     guard let obj = try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any],
           let raw = obj["tasks"] as? [[String: Any]] else { return .failure(.init("tasks is not a list of tasks")) }
     guard (2...8).contains(raw.count) else { return .failure(.init("\(raw.count) tasks")) }
+    let runs = obj["runs"] as? String ?? "each"
+    guard runs == "each" || runs == "together" else { return .failure(.init("runs is \(runs)")) }
     var helpers: [Helper] = []
     var owner: [String: String] = [:]
     for t in raw {
@@ -84,7 +92,7 @@ extension Agent {
         if let other = owner[c] { return .failure(.init("\(c) is in both \(other) and \(name)")) }
         owner[c] = name
       }
-      helpers.append(Helper(name: name, cards: cards, instruction: instruction))
+      helpers.append(Helper(name: name, cards: cards, instruction: instruction, runsTogether: runs == "together"))
     }
     return .success(helpers)
   }
@@ -139,7 +147,8 @@ extension Agent {
       "## \(h.name) (\(h.cards.joined(separator: ", "))): \(r.outcome)\n\(r.report.isEmpty ? "(no report)" : r.report)"
     }.joined(separator: "\n\n")
     let none = !reports.contains { $0.outcome == "finished" }
-    return ("Reports of the helpers. Check each Card with run_record before reporting to the user.\n\n" + text, none)
+    let together = helpers.contains(where: \.runsTogether)
+    return ((together ? Shared.data.helper.reportsTogether : Shared.data.helper.reportsEach) + "\n\n" + text, none)
   }
 
   struct HelperReport: Sendable {
