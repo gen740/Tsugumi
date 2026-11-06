@@ -23,7 +23,7 @@ player.destroy()
 | `web/src/ui/demoPlayer.tsx` | プレイヤー本体。Web UI の Home のサムネイルも同じものです |
 | `web/src/styles/demoPlayer.css` | プレイヤー独自の CSS |
 | `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
-| `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する |
+| `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する（`--check` は調べるだけ） |
 | `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |
 | `demo.html` | 開発用のページ（全デモのサムネイルと通常表示） |
 
@@ -34,6 +34,8 @@ Card やデモを変えたら、まず `web/src/gen` を用意して（`web/` �
 ```sh
 node docs/site/player/build.mjs
 ```
+
+作り直し忘れは `node docs/site/player/build.mjs --check`（何も書かず、`player.js`・`player.css`・`player-data/` が今の入力と違えば失敗します）で分かります。CI の Web のステップが実行します。
 
 実行の記録は別の手順です。`tsugumid` のビルドと Nix が要ります（初回は依存の取得に数分かかります）。
 

@@ -57,6 +57,10 @@ jobs:
             ctest --test-dir build --output-on-failure'
       - name: Web UI typecheck, behavior contracts and build (Python tests cover RPC and server)
         run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm test && npm run build'
+      # docs/site/js/player.js bundles web/src (canvasKit.ts, cardNode.tsx...) and the gallery and Home
+      # thumbnails run it: a change there needs `node docs/site/player/build.mjs`. (The pages are checked by test_docs.py.)
+      - name: Documentation site player is up to date (docs/site/js/player.js, player.css, player-data/)
+        run: nix develop -c node docs/site/player/build.mjs --check
       - name: Python tests
         run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 
