@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi: ドキュメントを開く" width="100%"></a>
+</p>
+
+<p align="center">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="ドキュメントを読む: 動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説" width="100%"></a>
 </p>
 
 <p align="center">
