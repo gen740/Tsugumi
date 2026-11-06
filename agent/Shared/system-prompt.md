@@ -28,7 +28,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   its definition; never point two Cards at one definition. An output port has one wire (fan_out otherwise): to
   send a value to several Cards, wire it to a fork Card ({"template": "fork", "params": [{"name": "branches",
   "type": "string[]", "data": ["<a name per output>"]}]}) and one fork output to each. Renaming is RenameDefinition {"id": old, "to": new} with the matching
-  SetProject (connections) in the same save.
+  SetProject (connections) in the same save; the Card's place, frame and group follow in layout.json, and a Card
+  taken off the canvas takes them with it.
 - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
   own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
   project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
