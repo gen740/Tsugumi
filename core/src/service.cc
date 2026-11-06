@@ -750,9 +750,12 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         ch.kind = ChangeIn::Kind::PutDefinition;
         ch.id = p->id()->str();
         ch.json = p->card_json()->str();
-        if (p->meta_json()) ch.meta_json = p->meta_json()->str();
-        if (p->link_json()) ch.link_json = p->link_json()->str();
-        ch.keep_meta = p->keep_meta();
+        // An empty optional document is one not given (a model fills in every
+        // field). Neither file is ever empty. The _meta.json stays: it may hold
+        // the user's intent, and leaving a field blank must not remove that.
+        if (p->meta_json() && p->meta_json()->size() > 0) ch.meta_json = p->meta_json()->str();
+        if (p->link_json() && p->link_json()->size() > 0) ch.link_json = p->link_json()->str();
+        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:

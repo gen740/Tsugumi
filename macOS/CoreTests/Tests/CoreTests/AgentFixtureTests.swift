@@ -178,6 +178,29 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// A read naming a revision gone by (the canvas tidied, or the model's guess)
+  /// reads the latest, without the model spending a reply on it.
+  @Test func aReadAtAnOldRevisionReadsTheLatest() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let first = EventLog()
+    await agent.send("set src.text to \"newer\" and run", context: []) { first.add($0) }
+    await waitFinished(first)
+    let rev = try #require(try await client.inspect().rev)
+    #expect(rev > 0)
+    let log = EventLog()
+    await agent.send("validate at revision 0", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.text.contains("Checked at revision \(rev)."), "\(log.all)")
+    let conv = await agent.conversation
+    #expect(conv.tools.filter { $0.name == "project_validate" }.count == 1)
+    await client.close()
+  }
+
   /// A save widening what a Card may do waits for the user: approved, it is
   /// saved; declined, nothing is, and the model is told so.
   @Test func cardPermissionsWaitForTheUser() async throws {
