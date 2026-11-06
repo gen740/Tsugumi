@@ -197,6 +197,10 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
   public var chatGPTStore = "ChatGPT"
   /// The user's setting (Settings > API): the model may search the web.
   public var webSearch = false
+  /// The chat's choices in the model menu, already checked against the model
+  /// (`choosing`). None for the requests that are not the Agent's work.
+  public var effort: String?
+  public var fast = false
 
   public init(name: String, baseURL: URL, model: String, auth: Auth, api: API = .anthropicMessages) {
     self.name = name
@@ -425,18 +429,29 @@ public struct MessagesProvider: Sendable {
     return ([["type": "text", "text": system, "cache_control": cache]], wire, wireTools)
   }
 
-  public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
-    if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
-    let cached = Self.cachedBody(system: system, messages: messages, tools: tools)
-    let body: [String: Any] = [
+  /// How long a stream may stay silent at the deep levels, instead of the
+  /// session's 120 s (as long as the web Agent's fetch allows).
+  static let longThinkingTimeout: TimeInterval = 300
+
+  /// The request body of the Messages API.
+  func messagesBody(_ cached: (system: Any, messages: Any, tools: Any)) -> [String: Any] {
+    var body: [String: Any] = [
       "model": config.model,
-      "max_tokens": config.maxTokens,
+      "max_tokens": config.outputLimit,
       "stream": true,
       "system": cached.system,
       "messages": cached.messages,
       "tools": cached.tools,
     ]
-    let payload = try JSONSerialization.data(withJSONObject: body)
+    if let effort = config.effort { body["output_config"] = ["effort": effort] }
+    if config.fast { body["speed"] = "fast" }
+    return body
+  }
+
+  public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
+    if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
+    let cached = Self.cachedBody(system: system, messages: messages, tools: tools)
+    let payload = try JSONSerialization.data(withJSONObject: messagesBody(cached))
     let session = self.session
     return AsyncThrowingStream { cont in
       let task = Task {
@@ -444,6 +459,7 @@ public struct MessagesProvider: Sendable {
           var r = try await request(path: "v1/messages")
           r.httpMethod = "POST"
           r.httpBody = payload
+          if config.thinksLong { r.timeoutInterval = Self.longThinkingTimeout }
           let (bytes, resp) = try await session.bytes(for: r)
           let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
           if status != 200 {
@@ -577,7 +593,9 @@ extension MessagesProvider {
       "stream": true,
       "store": false,
     ]
-    if !plan { body["max_output_tokens"] = config.maxTokens }
+    if !plan { body["max_output_tokens"] = config.outputLimit }
+    if let effort = config.effort { body["reasoning"] = ["effort": effort] }
+    if config.fast { body["service_tier"] = "fast" }
     if !tools.isEmpty {
       let own = tools.filter { !$0.server }
       let functions: [[String: Any]] = own.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }

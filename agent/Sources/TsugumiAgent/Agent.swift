@@ -959,7 +959,8 @@ public actor Agent {
     }
     let ask = [ChatMessage(role: "user", content: [.text("Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n\(transcript)")])]
     var summary = ""
-    for try await e in try provider.stream(system: "You summarize conversations.", messages: ask, tools: []) {
+    // A short summary: neither the chosen effort nor Fast mode's price.
+    for try await e in try MessagesProvider(config: providerConfig.withoutChoices).stream(system: "You summarize conversations.", messages: ask, tools: []) {
       if case .text(let t) = e { summary += t }
     }
     try Task.checkCancellation()

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { AGENT, modelChoices } from '../src/shared/agentShared'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
 import { Agent, externalTools, summarizeVersion, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
@@ -49,6 +50,10 @@ interface Settings {
   model: string
   openAIModel: string
   chatGPTModel: string
+  /** The chat's model menu: the effort ('': the model's default), for every
+   *  model that takes it, and the one model Fast mode was turned on for. */
+  effort: string
+  fastModel: string
   fixturePort: number
   /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
   /** Models listed with "モデル一覧を取得", per connection (no request from the chat). */
@@ -75,7 +80,7 @@ interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTou
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
-  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
+  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', effort: '', fastModel: '', fixturePort: 8765,
   models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
   guide: { setupDone: false, demoAnswered: false, tour: null },
   versionSummaries: false,
@@ -93,6 +98,8 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (typeof b.model === 'string') out.model = b.model.trim()
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
+  if (b.effort === '' || AGENT.modelOptions.efforts.includes(b.effort as string)) out.effort = b.effort as string
+  if (typeof b.fastModel === 'string') out.fastModel = b.fastModel
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
   if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
     const m = b.models as Record<string, unknown>
@@ -191,6 +198,14 @@ async function provider(): Promise<ProviderConfig> {
   return providerFor(settings().provider)
 }
 
+/** The connection of the chat's Agent and its helpers: with the effort and the
+ *  Fast mode chosen in the model menu. The guide, the summaries and the checks
+ *  use provider(), without them. */
+async function chatProvider(): Promise<ProviderConfig> {
+  const p = await provider(), s = settings()
+  return { ...p, ...modelChoices(s.provider, p.model, s.effort, s.fastModel) }
+}
+
 /** A connection with its chosen model (each keeps its own); its key or token when it has one. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
   const s = { ...settings(), provider: id }
@@ -209,8 +224,8 @@ async function providerFor(id: ProviderId): Promise<ProviderConfig> {
 
 /** What the page may know of the connection (no key, no token). */
 async function providerInfo() {
-  const p = await provider()
-  return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt',
+  const p = await chatProvider()
+  return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt', effort: p.effort, fast: !!p.fast,
            modelNames: p.auth === 'chatgpt' ? settings().modelNames : {} }
 }
 
@@ -472,7 +487,7 @@ class ChatHost {
   async agent(id: string): Promise<Agent> {
     let a = this.agents.get(id)
     if (!a) {
-      a = new Agent(catalog!, () => this.rpc(), await provider(), this.file(id), id, references())
+      a = new Agent(catalog!, () => this.rpc(), await chatProvider(), this.file(id), id, references())
       a.approver = (asked) => approve(this.project, id, asked)
       this.agents.set(id, a)
     }
@@ -580,7 +595,7 @@ async function turnAgent(b: any) {
   if (!catalog) throw ctx.httpError(503, catalogError!)
   const host = chatFor(ctx.projectDir(b.path))
   const a = await host.agent(String(b.session))
-  a.setProvider(await provider())
+  a.setProvider(await chatProvider())
   if (b.folders) host.attach(a, cleanFolders(b.folders))
   return { host, a }
 }
@@ -683,7 +698,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (b.folders) host.attach(a, cleanFolders(b.folders))
     // Resume work left unfinished by a disconnect or restart.
     if (b.resume && !a.busy) {
-      a.setProvider(await provider())
+      a.setProvider(await chatProvider())
       a.resume(host.events(a.id))
     }
     const [wait] = waitingFor(host.project, a.id)

@@ -8,7 +8,7 @@ import path from 'node:path'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
-import { AGENT, commentRequest, draftRequest } from '../src/shared/agentShared'
+import { AGENT, commentRequest, draftRequest, modelChoices, modelOptions } from '../src/shared/agentShared'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { Agent, AgentEvent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
@@ -19,6 +19,8 @@ interface Fixture {
   draftRequest: { scope: string[]; cards: { key: string; definition: string; description: string; content: string; context: string }[]; expect: string }[]
   commentRequest: { scope: string[]; cards: { key: string; definition: string; comments: { id: string; text: string }[] }[]; expect: string }[]
   approvalRequired: { json: string; expect: string[] | null }[]
+  modelOptions: { connection: string; model: string; effort: string; fastModel: string
+    expect: { efforts: string[]; default: string | null; fastPrice: number | null; present: Record<string, unknown>; absent: string[] } }[]
 }
 
 const [root, mode] = process.argv.slice(2)
@@ -54,6 +56,18 @@ for (const c of fixture.flatjson) {
 for (const c of fixture.draftRequest) assert.equal(draftRequest(c.scope, c.cards), c.expect)
 for (const c of fixture.commentRequest) assert.equal(commentRequest(c.scope, c.cards), c.expect)
 for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.json) ?? null, c.expect, c.json)
+// What the model menu offers, and what its choices put into a request.
+for (const c of fixture.modelOptions) {
+  const label = `${c.connection} ${c.model} ${JSON.stringify([c.effort, c.fastModel])}`
+  const o = modelOptions(c.connection, c.model)
+  assert.deepEqual([o.efforts, o.defaultEffort ?? null, o.fastPrice ?? null], [c.expect.efforts, c.expect.default, c.expect.fastPrice], label)
+  const wire = c.connection === 'openai' || c.connection === 'chatgpt' ? 'openAIResponses' as const : 'anthropicMessages' as const
+  const config: ProviderConfig = { name: 't', baseURL: 'http://127.0.0.1:1', model: c.model, api: wire, auth: c.connection === 'chatgpt' ? 'chatgpt' : c.connection === 'fixture' ? 'none' : 'apiKey',
+    maxTokens: 32768, contextLimit: 180_000, ...modelChoices(c.connection, c.model, c.effort, c.fastModel) }
+  const body = (wire === 'openAIResponses' ? responsesBody : messagesBody)(config, 'rules', [], [])
+  for (const [k, v] of Object.entries(c.expect.present)) assert.deepEqual(body[k], v, `${label}: ${k}`)
+  for (const k of c.expect.absent) assert.ok(!(k in body), `${label}: ${k} must not be sent`)
+}
 // The Draft demos are tasks and the finished demo of each is its answer:
 // reference_read neither lists nor reads them (as the Swift Agent).
 {
@@ -141,7 +155,7 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
       })
       fixture.once('exit', () => reject(new Error('the fixture ended')))
     })
-    const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean }[]
+    const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean; effort: string | null; speed: string | null; output_limit: number }[]
     const catalog = new ToolCatalog(schema)
     const noRpc = async () => { throw new Error('no rpc in this check') }
     const provider = (webSearch: boolean, api: ProviderConfig['api'] = 'anthropicMessages'): ProviderConfig => ({
@@ -257,6 +271,17 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
     assert.deepEqual((planBody.tools as { type: string }[]).map((t) => t.type), ['namespace', 'web_search'])
     assert.equal(planBody.include, undefined)
     assert.ok(!((responsesBody(provider(false, 'openAIResponses'), 'rules', [], agentWith(provider(false, 'openAIResponses')).tools).tools as { type: string }[]).some((t) => t.type === 'web_search')))
+
+    // The chat's choices go with every step of its Agent; a compaction's summary carries neither.
+    for (const api of ['anthropicMessages', 'openAIResponses'] as const) {
+      const chosen = agentWith({ ...provider(false, api), effort: 'max', fast: true })
+      for (const said of ['one', 'two', 'three']) finished(await turn(chosen, said))
+      const asked = (await requests()).at(-1)
+      assert.deepEqual([asked?.effort, asked?.speed, asked?.output_limit], ['max', 'fast', 64000], JSON.stringify(asked))
+      await new Promise<void>((resolve) => chosen.compact((e) => { if (e.kind === 'compacted' || e.kind === 'finished' || e.kind === 'error') resolve() }))
+      const summary = (await requests()).at(-1)
+      assert.deepEqual([summary?.effort, summary?.speed, summary?.output_limit], [null, null, 32768], JSON.stringify(summary))
+    }
 
     // Sources come from the web: only http(s) links, and a title cannot break out of its link.
     const text = sourcesText([{ url: 'javascript:alert(1)', title: 'x' }, { url: 'https://a.example/b)c', title: 'a]b\nc' }, { url: 'https://a.example/b)c' }])

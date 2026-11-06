@@ -191,7 +191,7 @@ final class ChatController {
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
-  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.current) {
+  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
     self.session = session
     self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
@@ -798,6 +798,19 @@ enum AgentSettings {
   static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
 
   static func current() -> ProviderConfig { config(for: provider) }
+
+  /// The connection of the chat's Agent and its helpers: with the effort and
+  /// the Fast mode chosen in the model menu. The guide, the summaries and the
+  /// checks use `current()`, without them.
+  static func chat() -> ProviderConfig {
+    let d = UserDefaults.standard
+    return current().choosing(effort: d.string(forKey: effortKey) ?? "", fastModel: d.string(forKey: fastModelKey) ?? "")
+  }
+
+  /// The model menu's effort ("" or none: the model's default), for every model that takes it.
+  static let effortKey = "agent.effort"
+  /// The one model Fast mode was turned on for.
+  static let fastModelKey = "agent.fastModel"
 
   /// A connection with its chosen model (each keeps its own).
   static func config(for provider: String) -> ProviderConfig {
