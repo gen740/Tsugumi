@@ -164,6 +164,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await agent.send("set src.text to \"Hello from the agent\" and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(log.all.contains { if case .toolInput = $0 { return true }; return false }, "the arguments reach the screen as they are written")
     let snap = try await client.inspect()
     // The value lives in the Card's own definition.
     #expect(snap.definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello from the agent") == true)
@@ -224,6 +225,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await agent.send("set src.text to \"Hello over Responses\" and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(log.all.contains { if case .toolInput = $0 { return true }; return false }, "the arguments reach the screen as they are written")
     #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello over Responses") == true)
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
