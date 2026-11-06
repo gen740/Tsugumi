@@ -1041,9 +1041,14 @@ final class ProjectSession {
     var merged: [String: ExternalProject] = [:]
     if !layoutOnly {
       if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
+      // A removed definition takes its folder with it: the core refuses a change to a file in it.
+      var removedFolders: [String] = []
       for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
         if d.removed {
-          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil { changes.append(Change.removeDefinition(id: id)) }
+          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil {
+            changes.append(Change.removeDefinition(id: id))
+            removedFolders.append("definitions/\(id)/")
+          }
         } else {
           changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
                                               linkJSON: d.link?.serialized()))
@@ -1068,10 +1073,12 @@ final class ProjectSession {
           }
         }
       }
-      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) && !written.contains(p) {
+      func goesWithItsDefinition(_ p: String) -> Bool { removedFolders.contains { p.hasPrefix($0) } }
+      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key })
+      where !sourceRemovals.contains(p) && !written.contains(p) && !goesWithItsDefinition(p) {
         changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
       }
-      for p in sourceRemovals.sorted() where !written.contains(p) {
+      for p in sourceRemovals.sorted() where !written.contains(p) && !goesWithItsDefinition(p) {
         if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
       }
     }

@@ -154,7 +154,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
   delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<the whole task>"}]} starts
   one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
-  implement what they all need (the Cards upstream of theirs) and run once from the trigger. Each instruction
+  implement what they all need (the Cards upstream of theirs) and run once from the trigger. Choose how they meet
+  with "runs": "each" (the default) lets every helper run its own work, and one run holds up the others until it
+  ends; "together" has them only write and check, and you run once from the trigger after their reports. Use
+  "together" when their Cards are branches of one graph: a run from the trigger runs every branch, so a helper's run
+  would hold up the rest and stop at the Cards not written yet. Each instruction
   stands alone, since a helper sees nothing of this conversation: the Card's intent (description, content and
   context of its Draft) and what the user asked of it, so that the helper can fill its _meta.json as above, how to
   check it, what to report.
@@ -309,6 +313,7 @@ your replies.
     "inputSchema": {
       "type": "object", "additionalProperties": false, "required": ["tasks"],
       "properties": {
+        "runs": {"type": "string", "enum": ["each", "together"], "description": "How the helpers meet. \"each\" (the default): each helper runs its own work when it is ready, and one run holds up the others until it ends. \"together\": the helpers only write and check their Cards, and you run the workflow once after all have reported. Use \"together\" when their Cards are branches of one graph."},
         "tasks": {
           "type": "array", "minItems": 2, "maxItems": 8,
           "items": {
@@ -324,9 +329,16 @@ your replies.
     }
   },
   "helper": {
-    "prompt": "You are the helper \"{name}\", one of several Agents the main Agent started to work on this project at the same time. Your task:\n{instruction}\nThe Cards you own: {cards}. Change only their definitions (PutDefinition, and PutSource under definitions/<id>/); never SetProject, SetLayout, RemoveDefinition or RenameDefinition, and never another Card. The other helpers save and run at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save or run meets their work (busy, revision_conflict) the app waits and sends it again for you. The first time, run the workflow from its trigger Card (the other helpers' Cards may run too; look only at yours with run_record); once your Card has run, you may run it alone: run {\"base_rev\": ..., \"card\": {\"segments\": [\"<your Card>\"]}, \"propagate\": false}. You cannot delegate. End with a short report for the main Agent, in the language of your Cards' descriptions: what each of your Cards does, what its run produced, and anything left undone.",
+    "prompt": "You are the helper \"{name}\", one of several Agents the main Agent started to work on this project at the same time. Your task:\n{instruction}\nThe Cards you own: {cards}. Change only their definitions (PutDefinition, and PutSource under definitions/<id>/); never SetProject, SetLayout, RemoveDefinition or RenameDefinition, and never another Card. {running} You cannot delegate. End with a short report for the main Agent, in the language of your Cards' descriptions: {report}, and anything left undone.",
+    "each": "The other helpers save and run at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save or run meets their work (busy, revision_conflict) the app waits and sends it again for you. The first time, run the workflow from its trigger Card (the other helpers' Cards may run too; look only at yours with run_record); once your Card has run, you may run it alone: run {\"base_rev\": ..., \"card\": {\"segments\": [\"<your Card>\"]}, \"propagate\": false}.",
+    "eachReport": "what each of your Cards does, what its run produced",
+    "together": "The other helpers save at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save meets their work (revision_conflict) the app sends it again for you. Do not run anything: the main Agent runs the whole workflow once after all the helpers have reported. Check your Cards with project_validate {\"changes\": [...]} before saving, and read their code once more, since no run will catch a mistake before you report.",
+    "togetherReport": "what each of your Cards does, what you checked, what the main Agent should look at in the run",
+    "runRefused": "The helper {name} only writes its Cards: the main Agent runs the workflow once after all the helpers have reported. Nothing was run. Check your Cards with project_validate and report.",
+    "reportsEach": "Reports of the helpers. Check each Card with run_record before reporting to the user.",
+    "reportsTogether": "Reports of the helpers. Their Cards have not run: run the workflow once from its trigger Card, then check each Card with run_record, fix what failed, and report to the user.",
     "outside": "The helper {name} may change only its own Cards ({cards}); this save also changes {what}. Nothing was saved: change only your Cards.",
-    "invalid": "delegate needs 2 to 8 tasks, each with a name, an instruction and root-level Cards of this project that no other task lists: {why}"
+    "invalid": "delegate needs 2 to 8 tasks, each with a name, an instruction and root-level Cards of this project that no other task lists, and runs is each or together: {why}"
   },
   "guide": {
     "tools": [

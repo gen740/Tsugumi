@@ -1192,9 +1192,14 @@ export class ProjectSession extends Observable {
       const merged = new Map<string, ExternalProject>()
       if (!layoutOnly) {
         if (!jeq(this.project, this.confirmedProject)) changes.push(Change.setProject(serialize(this.project)))
+        // A removed definition takes its folder with it: the core refuses a change to a file in it.
+        const removedFolders: string[] = []
         for (const [id, d] of [...this.definitionEdits].sort(([a], [b]) => a.localeCompare(b))) {
           if (d.removed) {
-            if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) changes.push(Change.removeDefinition(id))
+            if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) {
+              changes.push(Change.removeDefinition(id))
+              removedFolders.push(`definitions/${id}/`)
+            }
           } else {
             changes.push(Change.putDefinition(id, serialize(d.card), d.meta !== undefined ? serialize(d.meta) : null, d.link !== undefined ? serialize(d.link) : null))
           }
@@ -1222,12 +1227,13 @@ export class ProjectSession extends Observable {
             }
           }
         }
+        const goesWithItsDefinition = (p: string) => removedFolders.some((f) => p.startsWith(f))
         for (const [p, text] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) {
-          if (this.sourceRemovals.has(p) || written.has(p)) continue
+          if (this.sourceRemovals.has(p) || written.has(p) || goesWithItsDefinition(p)) continue
           changes.push(Change.putSource(p, new TextEncoder().encode(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
         }
         for (const p of [...this.sourceRemovals].sort()) {
-          if (written.has(p)) continue
+          if (written.has(p) || goesWithItsDefinition(p)) continue
           const h = this.sourceBases.get(p) ?? base.hashes.get(p) ?? this.sources.get(p)?.hash
           if (h) changes.push(Change.removeSource(p, h))
         }

@@ -552,6 +552,10 @@ public actor Agent {
                                          ["name": helper.name, "cards": helper.cards.joined(separator: ", "), "what": outside]),
                     isError: true, events)
     }
+    // A helper told only to write leaves the run to the main Agent.
+    if let helper, helper.runsTogether, name == "run" {
+      return try finish(&record, Shared.fill(Shared.data.helper.runRefused, ["name": helper.name]), isError: true, events)
+    }
     if spec.mutating {
       record.opId = record.opId ?? UUID().uuidString.lowercased()
       full["op_id"] = record.opId

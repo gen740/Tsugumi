@@ -64,7 +64,11 @@ extension Shared {
   struct Data {
     struct Tool { let name: String, description: String, inputSchema: [String: Any] }
     struct Draft { let root: String, child: String, card: String, text: String }
-    struct Helper { let prompt: String, outside: String, invalid: String }
+    struct Helper {
+      let prompt: String, outside: String, invalid: String
+      let each: String, eachReport: String, together: String, togetherReport: String
+      let runRefused: String, reportsEach: String, reportsTogether: String
+    }
     /// The guide (Agent.Role.guide): the tools it reads with, its own tool and the app's notes to it.
     struct Guide {
       let tools: [String]
@@ -92,7 +96,10 @@ extension Shared {
                                      inputSchema: t["inputSchema"] as! [String: Any]),
                 delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
                                     inputSchema: dt["inputSchema"] as! [String: Any]),
-                helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!),
+                helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!,
+                              each: h["each"]!, eachReport: h["eachReport"]!, together: h["together"]!,
+                              togetherReport: h["togetherReport"]!, runRefused: h["runRefused"]!,
+                              reportsEach: h["reportsEach"]!, reportsTogether: h["reportsTogether"]!),
                 guide: .init(tools: g["tools"] as! [String],
                              showTool: .init(name: gt["name"] as! String, description: gt["description"] as! String,
                                              inputSchema: gt["inputSchema"] as! [String: Any]),
