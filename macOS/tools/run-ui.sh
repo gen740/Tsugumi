@@ -3,12 +3,31 @@
 # named window at every "capture <name> [window title]" step.
 #
 #   macOS/tools/run-ui.sh <Tsugumi.app> <script> <out dir> [project folder]
+#
+# The app opens behind what you are doing (`open -g`), and the pictures are
+# taken all the same, with the window in its inactive colors. TSUGUMI_UI_FRONT=1
+# brings it to the front, for pictures in active colors (the README's).
 set -u
-app="$1"; script="$2"; out="$3"; project="${4:-}"
-mkdir -p "$out"
+absolute() { (cd "$(dirname "$1")" && echo "$(pwd -P)/$(basename "$1")"); }
+mkdir -p "$3"
+app="$(absolute "$1")"; script="$(absolute "$2")"; out="$(cd "$3" && pwd -P)"
+project=""; [ -z "${4:-}" ] || project="$(absolute "$4")"
 log="$out/ui.log"; : > "$log"
-TSUGUMI_UI_SCRIPT="$script" TSUGUMI_UI_LOG="$log" "$app/Contents/MacOS/Tsugumi" $project > "$out/app.out" 2>&1 &
-pid=$!
+# `open` starts the app from launchd: it inherits nothing from this shell, and
+# its working directory is /.
+options=(-n -o "$out/app.out" --stderr "$out/app.out")
+[ -n "${TSUGUMI_UI_FRONT:-}" ] || options+=(-g)
+options+=(--env "TSUGUMI_UI_SCRIPT=$script" --env "TSUGUMI_UI_LOG=$log")
+for name in $(compgen -e | grep '^TSUGUMI_' | grep -v -E '^TSUGUMI_UI_(SCRIPT|LOG)$'); do
+  options+=(--env "$name=${!name}")
+done
+open "${options[@]}" "$app" ${project:+--args "$project"}
+pid=""
+for _ in $(seq 1 50); do
+  pid="$(pgrep -n -f "$app/Contents/MacOS/Tsugumi")" && break
+  sleep 0.1
+done
+[ -n "$pid" ] || { echo "$app did not start" >&2; exit 1; }
 seen=0
 # TSUGUMI_UI_SECONDS: how long the script may run (default 600).
 for _ in $(seq 1 $(( ${TSUGUMI_UI_SECONDS:-600} * 5 ))); do
