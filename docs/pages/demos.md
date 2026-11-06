@@ -7,7 +7,7 @@
 | デモ | 題材 | このデモで分かること |
 | --- | --- | --- |
 | [データからレポートへ](#データからレポートへreport) | 売上表の集計とレポート | seed による再現、失敗と `blocked`、保存入力での単体再実行、成果物、子 Workflow |
-| [Collatz (C++ / Python)](#collatz-c--pythoncollatz) | コラッツ数列 | 2 言語での独立実装の照合、分岐・合流・ループ、`maxRuns`、整数あふれの検出 |
+| [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--rcollatz) | コラッツ数列 | 4 言語での独立実装の照合、分岐・合流・ループ、`maxRuns`、整数あふれの検出 |
 | [Live Stream](#live-streamlive-stream) | ランダムウォークの逐次描画 | フィードバックループによるストリーム、即時の停止、Dawn の折れ線 |
 | [Plots](#plotsplots) | ランダムウォークの拡散 | ふつうの matplotlib（`plt.show()`・`FuncAnimation`）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgbcasa) | 超新星残骸の X 線観測 | Nix で固定した観測データ、Card 単位の再実行、版の履歴 |
@@ -58,14 +58,16 @@ start → settings ─ share ─┬→ generate ─csv→ aggregate ─summary�
 - `aggregate` の `fail_on_purpose` を On にして実行する。`aggregate` のログに理由が出て、下流の `render` は `blocked` になる。Off に戻し、`aggregate` だけを実行し直すと、保存された入力で即座に成功する。
 - `archive` をダブルクリックして子 Workflow に入り、成果物のディレクトリをプレビュー・書き出す。成果物は実行キャッシュを消しても残る。
 
-### Collatz (C++ / Python)（`collatz`）
+### Collatz (C++ / Python / Julia / R)（`collatz`）
 
-同じコラッツの反復を C++ と Python で別々に実装し、両方の数列が一致するかを確かめます。
+同じコラッツの反復を C++・Python・Julia・R で別々に実装し、4 つの数列が一致するかを確かめます。
 反復そのものを Card の線で描いているので、分岐・合流・ループの動きを Canvas でたどれます。
 
 ```text
-start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ compare ─sequence→ record
-                        └→ collatz-py （子 Workflow）─┘
+                        ┌→ collatz-cpp（子 Workflow）─┐
+start → initial ─ both ─┼→ collatz-py （子 Workflow）─┼→ compare ─sequence→ record
+                        ├→ collatz-jl （子 Workflow）─┤
+                        └→ collatz-r  （子 Workflow）─┘
 ```
 
 外側の Card:
@@ -73,12 +75,12 @@ start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ comp
 | Card | 種類 | していること |
 | --- | --- | --- |
 | `initial` | input | 初期値（27）を流す |
-| `both` | fork | 同じ値を C++ 側と Python 側に配る |
-| `collatz-cpp` / `collatz-py` | subgraph | 中の Workflow で反復し、1 に着くまでの数列を返す |
-| `compare` | Python | 2 つの数列が完全に一致することを確かめ、数列を次へ渡す |
+| `both` | fork | 同じ値を 4 つの言語の側に配る |
+| `collatz-cpp` / `collatz-py` / `collatz-jl` / `collatz-r` | subgraph | 中の Workflow で反復し、1 に着くまでの数列を返す |
+| `compare` | Python | 4 つの数列が完全に一致することを確かめ、数列を次へ渡す |
 | `record` | Python | 数列を `collatz.csv`（`k, a_k, parity`）に書き、成果物として残す |
 
-子 Workflow の中（C++ と Python で同じ形）:
+子 Workflow の中（4 つとも同じ形）:
 
 ```text
 （境界の入力 n）→ loop ─ split ─┬→ check ─value / even→ route ─a（偶数）→ halve ─┐
@@ -93,12 +95,18 @@ start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ comp
 | `check` | コード | 値が 1 なら何も出さない（ループが終わる）。そうでなければ値と偶奇を出す。`maxRuns`（200）が反復の上限 |
 | `route` | branch | 偶数なら `a`（`halve`）、奇数なら `b`（`triple`）の片側だけを発火させる |
 | `halve` / `triple` | コード | `n/2` と `3n+1` を計算する。`triple` は 64 bit 整数を超えると `integer overflow` で失敗する |
-| `collect` | コード | 届いた値をためて表示し、1 が届いたら数列を出す。常駐 worker の状態は `onRunStart` で実行ごとに空にする |
+| `collect` | コード | 届いた値をためて表示し、1 が届いたら数列を出す。C++ と Python は常駐 worker の状態を `onRunStart` で実行ごとに空にする |
+
+**Julia と R の側の違い。** Julia と R の Card は呼び出しごとに別のプロセスで動き、何も覚えていません（[制限](limitations.md)）。そのため `collect` は値をためられず、`loop` に戻る値が「ここまでの数列」（`Walk`: `value` と `path`）を運び、`collect` は 1 が届いたときに `path` をそのまま数列として出します。メッセージが過程を持つので、どの Card の記録を見ても、そこまでの数列が読めます。
+
+**R の範囲。** R の数は double なので、整数は 2^53 未満しか正確に扱えません。それ以上の値はワーカーが文字列で渡すので、R の `check`・`halve` は黙って丸めずに失敗し、`triple` は `3n+1` が 2^53 に届くときに計算の前に失敗します。この範囲でも 4 つの数列は一致します。Julia は 64 bit 整数（`UInt64`）のまま計算し、`triple` は C++ や Python と同じく `3n+1` が 64 bit を超えると `integer overflow` で失敗します。
 
 **試すこと**
 - そのまま実行する。27 は 111 手（112 個の値）で 1 に着き、途中の最大値は 9232。`compare` が一致を報告する。
 - `initial` を 2 にすると、奇数側の `triple` は一度も選ばれず `skipped` になる。
 - 中の `check` の `maxRuns` を小さくすると、反復上限（`execution_limit`）で止まる。`3n+1` が 64 bit を超える初期値では `integer overflow` を検出する。
+- `initial` を 2^60 のような大きな値にすると、R の `check` が「2^53 未満ではない」ことを理由に失敗する（Julia・C++・Python は 61 個の値を返す）。
+- `collatz-jl` や `collatz-r` を開いて `collect` の記録を見る。呼び出しごとの表示が、そこまでの数列になっている。
 
 ### Live Stream（`live-stream`）
 
@@ -657,7 +665,7 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | デモ | 試せる操作 | 確認できる結果 |
 | --- | --- | --- |
 | **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使って即座に成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
-| **Collatz (C++ / Python)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++ と Python の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
+| **Collatz (C++ / Python / Julia / R)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++・Python・Julia・R の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |

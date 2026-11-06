@@ -197,6 +197,8 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 
 ## 計測（2026-11-03、高速化後・共通 VM）
 
+> **Collatz のデモについて。** この節と次の節の「Collatz」は、C++ と Python の 2 言語だった時点のデモ（約 1,340 回の呼び出し）の値です。いまの `collatz` は Julia と R が加わって 2,685 回になり、Julia と R の Card は呼び出しごとにプロセスを起こすので、常駐 worker の効果はこの 2 言語に及びません。1 回の Run は Mac 上の tsugumid・Seatbelt で 270 秒（`docs/site/player/harvest.py`）、隔離なしの `test_demos.py::test_collatz_27` は 368 秒かかります（共通 VM では測っていません）。`measure_stages.py collatz` は現在のデモを測るので、下の表と同じ条件では比べられません。
+
 条件は下の節と同じ（M3 Max、共通 VM 8 vCPU / 16 GiB、Collatz 1344 invocation、3 回目の実行）。
 変更: 履歴の書き込み削減、worker の常駐・待機 worker、VM 内の一時領域、bash 以外で入力の変換をしない、評価器の組み込み。
 

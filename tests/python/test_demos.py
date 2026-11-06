@@ -111,6 +111,9 @@ def collatz_reference(n):
     return seq
 
 
+COLLATZ_LANGUAGES = ("collatz-cpp", "collatz-py", "collatz-jl", "collatz-r")
+
+
 def test_collatz_27(collatz):
     c = connect(collatz)
     rid = start_run(c, ["start"])
@@ -119,14 +122,14 @@ def test_collatz_27(collatz):
     expected = collatz_reference(27)
     assert len(expected) == 112
     shown = c.call("RunRecordRequest", runId=rid, card=path("compare")).record.display.value
-    assert shown.markdown and text(shown.text).startswith("**C++ and Python agree**: 112 values, $a_0 = 27$")
+    assert shown.markdown and text(shown.text).startswith("**C++, Python, Julia and R agree**: 112 values, $a_0 = 27$")
     assert "after $111$ steps" in text(shown.text) and "9232" in text(shown.text)
     # The agreed sequence is kept as a CSV file (a File artifact of record).
     art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
     csv = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
     lines = csv.splitlines()
     assert lines[0] == "k,a_k,parity" and lines[1] == "0,27,odd" and lines[-1] == "111,1,odd" and len(lines) == 113
-    for lang in ("collatz-cpp", "collatz-py"):
+    for lang in COLLATZ_LANGUAGES:
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))
     # The C++ Card in Card runs alone from its boundary input (saved value).
@@ -137,17 +140,18 @@ def test_collatz_27(collatz):
 
 def test_collatz_limit_overflow_and_skipped(collatz):
     c = connect(collatz)
-    # Iteration limit: the check Card may run only 50 times.
+    # Iteration limit: the check Card may run only 10 times, in every language (a failed run still waits for the
+    # branches that go on, and Julia and R start a process for each step).
     original = {}
-    for lang in ("collatz-cpp", "collatz-py"):
+    for lang in COLLATZ_LANGUAGES:
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: (original.__setitem__(lang, b.get("maxRuns")),
-                                                                            b.__setitem__("maxRuns", 50)))
+                                                                            b.__setitem__("maxRuns", 10)))
     st = wait_run(c, start_run(c, ["start"]))
     assert st.state == RunState.failed
     assert st.failure.kind == 19  # execution_limit
     # Overflow: 3n+1 exceeds uint64 for this odd value.
     big = 12297829382473034411
-    for lang in ("collatz-cpp", "collatz-py"):
+    for lang in COLLATZ_LANGUAGES:
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: b.__setitem__("maxRuns", original[lang]))
     edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0),
               raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
@@ -162,6 +166,23 @@ def test_collatz_limit_overflow_and_skipped(collatz):
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     rec = c.call("RunRecordRequest", runId=rid, card=path("collatz-cpp", "triple"))
     assert rec.status.state == CardState.skipped
+
+
+def test_collatz_r_fails_rather_than_round(collatz):
+    """R holds an integer exactly only below 2^53: past it the R Card in Card fails and says so, and Julia, which
+    computes in UInt64, still returns the exact sequence. (4^28 - 1) / 3 is odd and not a double (2^53 < n), and
+    3n + 1 = 2^56 sends it to 1 in 56 halvings."""
+    c = connect(collatz)
+    n = (4 ** 28 - 1) // 3
+    assert n > 2 ** 53 and float(n) != n
+    edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0), raw=lambda s: s.replace('"data": 0', f'"data": {n}'))
+    rid = start_run(c, ["start"])
+    st = wait_run(c, rid)
+    assert st.state == RunState.failed
+    assert "2^53" in stderr(c, rid, "collatz-r", "check")
+    # The failed run waits for the branches that go on: Julia has the exact sequence.
+    expected = [n] + [2 ** k for k in range(56, -1, -1)]
+    assert display_text(c, rid, "collatz-jl", "collect") == f"{len(expected)} values: " + " ".join(map(str, expected))
 
 
 def test_report_failure_rerun_and_artifacts(report):

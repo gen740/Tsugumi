@@ -75,7 +75,7 @@ Tsugumi の独自性は、この関係を Draft・Card・型・実行環境・�
 <p>数行の計算を Card に分けても、そのたびに Nix の評価器や言語処理系を起動していては、計算より準備に時間がかかります。</p>
 <p>Nix 評価器を <code>tsugumid</code> に組み込み、nixpkgs の評価状態と daemon 接続を Card・実行をまたいで再利用します。C++ / Python の Card は、常駐 worker が共有ライブラリを読み込んで呼び出します。毎回新しい worker を使う設定でも、次の worker の起動とライブラリの読み込みを先に済ませます。</p>
 <p>再利用する worker の状態は実行をまたいで残り、必要な初期化は <code>onRunStart</code> / <code>on_run_start</code> に書けます。失敗・取消・期限切れやメモリ上限などでは worker を終了させます。<strong>起動の負担を減らしながら、状態を持つ計算と初期化のタイミングを明示できます。</strong></p>
-<p>履歴用ディスクの分離なども含めた高速化では、Collatz の 1,344 回の呼び出しを含む Run が、共通 VM 上の再実行で 4.5〜5.0 秒から 0.92〜1.0 秒になりました。同じ構成の初回は 7.9 秒で、初回準備と再実行を分けて計測しています（<a href="development.html#計測2026-11-03高速化後共通-vm">条件と内訳</a>）。</p>
+<p>履歴用ディスクの分離なども含めた高速化では、C++ と Python だけだった時点の Collatz の 1,344 回の呼び出しを含む Run が、共通 VM 上の再実行で 4.5〜5.0 秒から 0.92〜1.0 秒になりました。同じ構成の初回は 7.9 秒で、初回準備と再実行を分けて計測しています（<a href="development.html#計測2026-11-03高速化後共通-vm">条件と内訳</a>）。</p>
 <p>実装: <a href="https://github.com/gen740/Tsugumi/blob/main/core/src/nix_eval.cc" rel="noopener">組み込み評価器</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/core/src/worker_pool.cc" rel="noopener">worker プール</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/sdk/src/worker_main.cc" rel="noopener">Card の呼び出し</a>。検証: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">常駐・初期化・毎回新規の worker と取消・期限のテスト</a>。</p>
 <h3 id="部分実行で入力を集め直す手間を減らす">部分実行で、入力を集め直す手間を減らす</h3>
 <p>途中の処理だけを直して試すには、直前に何を入力したかが必要です。パスだけを保存しても元の一時ファイルが消えれば使えず、複数の入力を別々の呼び出しから混ぜれば、前回と違う条件になってしまいます。</p>

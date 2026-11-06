@@ -148,7 +148,7 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ### 気になる処理の中へ入る
 
-大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
+大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python / Julia / R)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
 普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。
 
 ![子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面](docs/assets/screenshots/subworkflow.png)
@@ -181,7 +181,7 @@ Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web 
 | デモ | 試せること |
 | --- | --- |
 | データからレポートへ | データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する |
-| Collatz (C++ / Python) | 二つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する |
+| Collatz (C++ / Python / Julia / R) | 四つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する |
 | Live Stream | 時系列の出力をリアルタイムにグラフで描画し、停止・再実行する |
 | Plots | ウィンドウ向けに書いた matplotlib のコード（`plt.show()`・`FuncAnimation`）が、そのまま Card の表示に描かれる。Plotly の `fig.show()` と Altair の `chart.show()` は対話できるグラフになる |
 | Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する |

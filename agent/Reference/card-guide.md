@@ -200,6 +200,8 @@ main <- function(ctx) {
 `ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
 goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
 integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+A `long`/`ulong` field takes an R integer (`27L`) or a string of digits (`sprintf("%.0f", x)`), not a double: `27` is written as
+`27.0` and the type rejects it.
 
 ### Julia (`src/main.jl`)
 
