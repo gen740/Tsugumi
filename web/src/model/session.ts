@@ -2863,7 +2863,7 @@ auto run(Card::Input& input) -> Card::Output {
   }
 
   cardDescription(k: CardKey): string | undefined {
-    return str(get(this.cardDefinition(k), 'description')) || str(get(this.cardMeta(k), 'description')) || undefined
+    return str(get(this.cardMeta(k), 'description')) || undefined
   }
 
   /** What a Card says about itself on hover: a Draft's summary and content. */
@@ -2967,8 +2967,7 @@ auto run(Card::Input& input) -> Card::Output {
     const ports = this.portData(k, opts.definition, opts.meta)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
-    let summary = str(get(def, 'description'))
-    if (!summary) summary = str(get(m, 'description'))
+    let summary = str(get(m, 'description'))
     // What a Draft shows on its Card is what it says it will do.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     const frame = this.displayFrame(k)

@@ -810,9 +810,9 @@ TEST(schema_validation_rules) {
   using schema::CardDefinition;
   CHECK(!decodes<CardDefinition>(R"({"sandbox":true,"sandbox":false})"));                // duplicate key
   CHECK(!decodes<CardDefinition>(R"({"params":[{"name":"a","data":{"k":1,"k":2}}]})"));  // nested duplicate
-  CHECK(!decodes<CardDefinition>("{\"description\":\"\xff\"}"));                          // invalid UTF-8
-  CHECK(!decodes<CardDefinition>("{\"description\":\"\xc3\"}"));                          // truncated sequence
-  CHECK(decodes<CardDefinition>("{\"description\":\"\xc3\xa9\"}"));
+  CHECK(!decodes<CardDefinition>("{\"symbol\":\"\xff\"}"));                          // invalid UTF-8
+  CHECK(!decodes<CardDefinition>("{\"symbol\":\"\xc3\"}"));                          // truncated sequence
+  CHECK(decodes<CardDefinition>("{\"symbol\":\"\xc3\xa9\"}"));
   CHECK(!decodes<CardDefinition>(R"({"timeoutSeconds":NaN})"));      // not JSON
   CHECK(!decodes<CardDefinition>(R"({"timeoutSeconds":Infinity})"));
   CHECK(!decodes<schema::Position>(R"({"x":1e999,"y":0})"));          // not finite as a number

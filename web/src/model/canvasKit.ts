@@ -191,7 +191,8 @@ export class CardGeometry {
     this.draft = d.kind === 'draft'
     this.draftEditing = this.draft && !!d.draftEditing
     this.untitled = this.draft && !!d.untitled && !this.draftEditing && !d.collapsed
-    this.summary = d.summary !== undefined && !isRouting(d) && !this.draft
+    // The small ones keep their shape: their summary is on hover.
+    this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
     this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     this.result = d.kind === 'logger' || d.hasDisplay
