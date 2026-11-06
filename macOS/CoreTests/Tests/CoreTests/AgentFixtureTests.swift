@@ -562,6 +562,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let card = try JSONValue.parse(def.cardJson)
     #expect(card["language"]?.string == "bash" && card["template"] == nil)
     #expect(def.metaJson?.contains("the word count") == true && def.metaJson?.contains("Count words") == true)
+    #expect(try JSONValue.parse(try #require(def.metaJson))["context"]?.string?.isEmpty == false)
     #expect(after.sources.compactMap { $0 }.map(\.path).contains("definitions/plan/_outputs.fbs"))
     // Wiring kept; types now come from the implementation.
     let resolved = after.resolution.compactMap { $0 }.first { $0.card.path == ["plan"] }

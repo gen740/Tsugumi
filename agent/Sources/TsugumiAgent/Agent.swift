@@ -430,10 +430,10 @@ public actor Agent {
 
   /// The request that has the model implement Draft Cards (the same text as
   /// the web Agent's, from agent/Shared/agent.json).
-  public static func draftRequest(scope: [String], cards: [(key: String, definition: String, description: String, content: String)]) -> String {
+  public static func draftRequest(scope: [String], cards: [(key: String, definition: String, description: String, content: String, context: String)]) -> String {
     let t = Shared.data.draft
     let list = cards.map {
-      Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content])
+      Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content, "context": $0.context])
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? t.root : Shared.fill(t.child, ["scope": scope.joined(separator: "/")])
     return Shared.fill(t.text, ["where": where_, "list": list])
