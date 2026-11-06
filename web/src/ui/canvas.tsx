@@ -539,7 +539,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         )
       })}
 
-      <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style }))}
+      <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted }))}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
 
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} onDown={onBoundaryDown} />}
