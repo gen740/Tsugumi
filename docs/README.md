@@ -24,7 +24,7 @@
 | [Philosophy.md](Philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
 | [Name.md](Name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
 | [Author.md](Author.md) | この道具を作った人 |
-| [Origin.md](Origin.md) | 作者が自分の言葉で書いた、この道具の出発点 |
+| [Origin.md](Origin.md) | 作者が自分の言葉で書き、長さだけ Claude でまとめた、この道具の出発点 |
 | [Limitations.md](Limitations.md) | まだできないこと、保証していないことの一覧 |
 
 ## 仕組みを知る

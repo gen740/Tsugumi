@@ -120,7 +120,7 @@ html.no-figures .ex-fig { display: none; }
 
 /* A screenshot after the figures: as wide as they are, its text below */
 .shot { margin: 4px 0 34px; }
-.shot img { position: relative; left: 50%; transform: translateX(-50%); display: block; width: min(calc(100vw - var(--sidebar) - 24px), calc((100vh - 90px) * 1.6)); max-width: none; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
+.shot img { position: relative; left: 50%; transform: translateX(-50%); display: block; width: min(calc(100vw - var(--sidebar) - 24px), 920px, calc((100vh - 90px) * 1.6)); max-width: none; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
 .shot figcaption { margin-top: 14px; color: var(--secondary); font-size: 13.5px; line-height: 1.7; text-align: center; }
 
 /* The headings of a long page, beside the text */

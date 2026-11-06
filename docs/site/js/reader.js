@@ -135,11 +135,12 @@ function makeThread(placed, column) {
   const start = pt(gutter + 2, first.rect.y + first.rect.h / 2 - 6)
   let cursor = start
   let clock = start.y  // the reading line, where the last leg ended
+  // The thread runs straight past the paragraphs and comes to a point at each heading.
   const gutterLeg = (h) => {
     if (h.y <= cursor.y + 1) { cursor = h; return }
     const a = cursor, d = h
-    const k = Math.min(14, (d.y - a.y) * 0.3)
-    const pts = curve(a, pt(gutter, a.y + k), pt(gutter, d.y - k), d, 18)
+    const leave = Math.min(26, (d.y - a.y) * 0.3), arrive = Math.min(10, (d.y - a.y) * 0.2)
+    const pts = curve(a, pt(gutter, a.y + leave), pt(gutter, d.y - arrive), d, 18)
     const y0 = Math.max(a.y, clock), y1 = Math.max(d.y, y0 + 1)
     legs.push({ points: pts, times: pts.map((q) => (q.y - a.y) / (d.y - a.y)), y0, y1, figure: null })
     holes.push([h, y1])
@@ -172,11 +173,11 @@ function makeThread(placed, column) {
       const last = pts[pts.length - 1] ?? cursor
       cursor = pt(last.x, last.y + b.runway)
     } else if (b.kind === 'list') {
-      b.itemRects.forEach((ir) => gutterLeg(pt(colMin - 12, ir.y + 13)))
+      b.itemRects.forEach((ir) => gutterLeg(pt(gutter, ir.y + 13)))
     } else if (b.kind === 'h2' || b.kind === 'h3') {
-      gutterLeg(pt(colMin - 12, r.y + 16))
+      gutterLeg(pt(colMin - 4, r.y + 16))
     } else {
-      gutterLeg(pt(colMin - 12, r.y + 13))
+      gutterLeg(pt(gutter, r.y + 13))
     }
   })
   return { legs, holes, start }
@@ -397,7 +398,13 @@ function paintFront(g, thread, scrollY, readingY, t, dt) {
   const fit = Math.min(1, Math.max(0.55, layout.column.w / 680))
   const size = (inFigure ? 0.115 : 0.085) * fit
   birdScale = birdScale === null || still ? size : birdScale + (size - birdScale) * (1 - Math.exp(-dt / RESIZE))
-  const scale = birdScale
+  // A dot while reading: it becomes the bird as a figure comes up, and goes back after it.
+  const near = inFigure || layout.figures.some((b) => read.tip.y > b.rect.y - BIRD_AHEAD && read.tip.y < b.rect.y + b.rect.h + BIRD_AFTER)
+  birdShown = birdShown === null || still ? Number(near) : birdShown + (Number(near) - birdShown) * (1 - Math.exp(-dt / RESIZE))
+  const shown = easeInOut(clamp01(birdShown))
+  if (shown < 0.98) ellipse(g, read.tip.x, read.tip.y, BIRD_DOT, BIRD_DOT, hex(Palette.cream, 0.9 * (1 - shown)))
+  if (shown < 0.02) return
+  const scale = birdScale * shown
   const gx = (Bird.gape.x - Bird.feet.x) * scale, gy = (Bird.gape.y - Bird.feet.y) * scale
   drawBird(g, pt(read.tip.x - (mirrored ? -gx : gx), read.tip.y - gy), scale, birdPose, mirrored)
 }
@@ -405,7 +412,8 @@ function paintFront(g, thread, scrollY, readingY, t, dt) {
 // ---- Reading mode's frame ----
 
 let deckOpen = false
-let drawnLine = null, lastMs = 0, birdScale = null, birdMirrored = false
+let drawnLine = null, lastMs = 0, birdScale = null, birdMirrored = false, birdShown = null
+const BIRD_DOT = 3.2, BIRD_AHEAD = 220, BIRD_AFTER = 40
 
 function frame(ms) {
   requestAnimationFrame(frame)

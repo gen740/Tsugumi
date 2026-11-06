@@ -255,6 +255,112 @@ export const Curve = {
   },
 }
 
+// ---- AI-driven science: 問いは人から、試行は AI が回し、意味は人が与える ----
+
+export const Driven = {
+  steps: ['仮説', '検証', '条件を変える'],
+  draw(g, p, t) {
+    Wall.drawGround(g, 1)
+    const f = pt(200, GROUND), c = pt(650, 400), R = 170
+    const sh = Person.draw(g, f, t, { scale: 1.2, reach: pt(80, -150) })
+    // the question goes out as a thread
+    const out = span(p, 0.25, 0.9)
+    const start = pt(f.x + 86, f.y - 150)
+    if (out > 0.01) stroke(g, wireBetween(start, pt(c.x - R, c.y)).slice(0, Math.ceil(out * 21)), hex(wire), 2.6)
+    const bubble = 1 - span(p, 1.9, 2.3)
+    faded(g, span(p, 0, 0.4) * bubble, () => {
+      fillRound(g, rect(f.x - 58, sh - 118, 116, 52), 14, hex(0xf4ecdc))
+      text(g, '問い', pt(f.x, sh - 92), 22, { weight: 700, color: '#1b1d1f' })
+    })
+    // the loop the AI keeps turning
+    const loop = span(p, 0.7, 1.2)
+    faded(g, loop, () => {
+      gem(g, c, 50, t)
+      const ring = Array.from({ length: 61 }, (_, i) => { const a = (i / 60) * Math.PI * 2; return pt(c.x + Math.cos(a) * R, c.y + Math.sin(a) * R) })
+      stroke(g, ring, hex(Palette.cream, 0.25), 2)
+      Driven.steps.forEach((name, i) => {
+        const a = -Math.PI / 2 + (i / 3) * Math.PI * 2, q = pt(c.x + Math.cos(a) * R, c.y + Math.sin(a) * R)
+        const w = name.length * 19 + 28
+        fillRound(g, rect(q.x - w / 2, q.y - 20, w, 40), 12, hex(0x2b2c30))
+        strokeRound(g, rect(q.x - w / 2, q.y - 20, w, 40), 12, hex(0x6d7177), 1.3)
+        text(g, name, q, 18, { weight: 600, color: hex(0xe8e8ea) })
+      })
+      const speed = mix(0.5, 3.2, span(p, 1, 2))
+      for (let i = 0; i < 4; i++) {
+        const a = t * speed + (i / 4) * Math.PI * 2
+        ellipse(g, c.x + Math.cos(a) * R, c.y + Math.sin(a) * R, 6, 6, hex(amber))
+      }
+    })
+    const n = Math.floor(lin(p, 0.9, 2.4) * 128)
+    if (n > 0) text(g, `試行 ${Math.min(128, n)}`, pt(c.x, c.y + R + 54), 20, { weight: 700, mono: true, opacity: loop })
+    // what comes back, and what only the person gives it
+    const back = span(p, 1.9, 2.5)
+    if (back > 0.01) {
+      for (let i = 0; i < 5; i++) {
+        const u = clamp01(back * 1.4 - i * 0.08)
+        sheet(g, mixP(pt(c.x - 40, c.y + 10), pt(f.x + 120 + (i % 2) * 8, GROUND - 12 - i * 9), easeOut(u)), (i - 2) * 0.05, u)
+      }
+    }
+    ;['意味を与える', '責任を持つ', '次の問いを立てる'].forEach((s, i) => {
+      text(g, s, pt(f.x + 92, 300 + i * 40), 20, { weight: 700, align: 'center', color: hex(0xf0b57a), opacity: span(p, 2.3 + i * 0.2, 2.55 + i * 0.2) })
+    })
+  },
+}
+
+// ---- 手が届くことと、わかっていること: 運転でも、研究でも ----
+
+export const Grasp = {
+  draw(g, p, t) {
+    Wall.drawGround(g, 1)
+    const research = span(p, 1.5, 2.1), L = pt(285, 400), Rt = pt(715, 400)
+    const title = (x, a, b) => {
+      text(g, a, pt(x, 214), 24, { weight: 700, opacity: 1 - research })
+      text(g, b, pt(x, 214), 24, { weight: 700, opacity: research })
+    }
+    title(L.x, 'ハンドルを握れる', '結論を確認できる')
+    title(Rt.x, '状況がわかっている', '過程がわかっている')
+    // the wheel, with a hand on it
+    faded(g, 1 - research, () => {
+      strokeRound(g, rect(L.x - 84, L.y - 84, 168, 168), 84, hex(0x7d8a8d), 15)
+      ellipse(g, L.x, L.y, 22, 22, hex(0x3b4648))
+      stroke(g, [pt(L.x - 78, L.y), pt(L.x + 78, L.y)], hex(0x7d8a8d), 9)
+      stroke(g, [pt(L.x, L.y), pt(L.x, L.y + 78)], hex(0x7d8a8d), 9)
+      const u = span(p, 0.1, 0.55)
+      const hand = mixP(pt(L.x - 150, L.y + 120), pt(L.x - 78, L.y - 22), easeOut(u))
+      stroke(g, [pt(L.x - 190, L.y + 180), hand], hex(Person.coat[1]), 15)
+      ellipse(g, hand.x, hand.y, 16, 16, hex(Person.skin))
+    })
+    // the report, with its stamp
+    faded(g, research, () => {
+      const page = rect(L.x - 76, L.y - 100, 152, 200)
+      fillRound(g, page, 5, hex(0xe9edf0))
+      for (let l = 0; l < 6; l++) { g.fillStyle = hex(0x7c8b92, 0.8); g.fillRect(page.x + 18, page.y + 24 + l * 18, l % 3 === 2 ? 70 : 116, 3) }
+      CasA.check(g, pt(L.x + 34, L.y + 62), 22 * pop(span(p, 1.8, 2.2)), hex(green))
+    })
+    // what the road ahead looks like when you come back to it
+    const clear = 0.3 * span(p, 0.5, 1.4)
+    faded(g, 1 - research, () => {
+      const w = rect(Rt.x - 130, Rt.y - 90, 260, 180)
+      fillRound(g, w, 16, hex(0x24363b))
+      poly(g, [pt(Rt.x - 110, maxY(w)), pt(Rt.x - 12, w.y + 60), pt(Rt.x + 12, w.y + 60), pt(Rt.x + 110, maxY(w))], hex(0x4b5a5c))
+      fillRound(g, w, 16, hex(0xdfe5e6, 0.82 * (1 - clear)))
+    })
+    // the steps behind the conclusion, unseen
+    faded(g, research, () => {
+      ;['load', 'filter', 'fit'].forEach((name, i) => card(g, rect(Rt.x - 90, Rt.y - 110 + i * 78, 180, 64), name, { dim: 0.8 }))
+      fillRound(g, rect(Rt.x - 124, Rt.y - 124, 248, 248), 16, hex(0xdfe5e6, 0.2 + 0.04 * Math.sin(t * 1.3)))
+    })
+    if (p > 0.6) text(g, '?', pt(Rt.x, Rt.y), 72, { weight: 800, color: '#1b1d1f', opacity: 0.7 * span(p, 0.6, 1) })
+    // how far each has come
+    const bars = [[L.x, span(p, 0.1, 0.55), green], [Rt.x, clear, amber]]
+    bars.forEach(([x, v, color]) => {
+      const r = rect(x - 150, 590, 300, 16)
+      fillRound(g, r, 8, 'rgba(255,255,255,0.08)')
+      if (v > 0.004) fillRound(g, rect(r.x, r.y, Math.max(12, r.w * v), r.h), 8, hex(color))
+    })
+  },
+}
+
 // ---- 同じ一つ: 人が描くもの、AI が編集するもの、実際に動くものが重なる ----
 
 export const OneGraph = {
@@ -551,7 +657,9 @@ const entries = {
   summit: { draw: Summit.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [1.0, 2.1, 3], deck: square },
   outpace: { draw: Outpace.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [1.2, 3], deck: square },
   driver: { draw: Driver.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
-  curve: { draw: Curve.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
+  curve: { draw: Curve.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [0.9, 3], deck: square },
+  driven: { draw: Driven.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, stops: [1.6, 3], deck: square },
+  grasp: { draw: Grasp.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, stops: [1.5, 3], deck: square },
   oneGraph: { draw: OneGraph.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   partial: { draw: Partial.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   branches: { draw: Branches.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
@@ -717,29 +825,40 @@ export const Asking = {
 
 /** 数えきれない試作と、足りないあと一歩。そして、つながる。 */
 export const Trials = {
-  mini: (col, row) => rect(120 + col * 210, 180 + row * 150, 180, 110),
+  box: (k) => rect(92 + k * 170, 300, 138, 78),
   draw(g, p, t) {
     Wall.drawGround(g, 0.8)
-    const grid = 1 - span(p, 1.5, 1.85)
-    const order = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1], [0, 2], [1, 2], [2, 2], [3, 2]]
+    const box = Trials.box, grid = 1 - span(p, 1.5, 1.85)
     if (grid > 0.01) {
-      order.forEach(([c, r], i) => {
-        const o = span(p, i * 0.09, 0.12 + i * 0.09) * grid
-        faded(g, o, () => {
-          const m = Trials.mini(c, r)
-          const parts = 2 + Math.min(3, Math.floor(i / 3))  // each try gets further
-          const x = (k) => m.x + 10 + (k * (m.w - 40)) / 4
-          for (let k = 0; k < 5; k++) {
-            const box = rect(x(k), m.y + 40, 22, 22)
-            const built = k < parts
-            if (k > 0 && k < parts) stroke(g, [pt(x(k - 1) + 22, m.y + 51), pt(x(k), m.y + 51)], hex(wire, 0.85), 1.6)
-            if (built) { fillRound(g, box, 4, hex(0x2b2c30)); strokeRound(g, box, 4, hex(0x6d7177), 1) } else strokeRound(g, box, 4, hex(0x9aa0a8, 0.4), 1, [3, 3])
+      faded(g, grid, () => {
+        // every earlier try, each stopped at the same place
+        const earlier = Math.floor(lin(p, 0.05, 1.4) * 7)
+        for (let i = 0; i < earlier; i++) {
+          const y = 266 - i * 21
+          faded(g, 0.42 - i * 0.045, () => {
+            for (let k = 0; k < 5; k++) {
+              const r = rect(box(k).x, y, 138, 14)
+              if (k < 4) fillRound(g, r, 4, hex(0x6d7177))
+              else strokeRound(g, r, 4, hex(0x9aa0a8), 1, [4, 3])
+              if (k < 3) stroke(g, [pt(maxX(r), y + 7), pt(box(k + 1).x, y + 7)], hex(wire), 1.6)
+            }
+          })
+        }
+        // this try: it gets as far as the others, and the last one stays empty
+        const u = (t * 0.2) % 1, built = span(u, 0, 0.55) * 4, leaving = span(u, 0.9, 1)
+        faded(g, 1 - leaving, () => {
+          for (let k = 0; k < 4; k++) {
+            if (built > k) card(g, box(k), '')
+            else card(g, box(k), '', { draft: true, dim: 0.5 })
+            if (k < 3 && built > k + 1) stroke(g, [pt(maxX(box(k)), 339), pt(box(k + 1).x, 339)], hex(wire), 2.4)
           }
+          const reach = span(u, 0.55, 0.68)
+          if (reach > 0) stroke(g, [pt(maxX(box(3)), 339), pt(maxX(box(3)) + 16 * reach, 339)], hex(wire), 2.4)
         })
+        card(g, box(4), '', { draft: true })
+        const pulse = 0.5 + 0.5 * Math.sin(t * 3), gap = span(u, 0.62, 0.72) * (1 - leaving)
+        strokeRound(g, rect(box(4).x - 6, 294, 150, 90), 14, hex(0xf0b57a, (0.35 + 0.5 * pulse) * gap), 2.4)
       })
-      const m = Trials.mini(3, 2)
-      const pulse = 0.5 + 0.5 * Math.sin(t * 3)
-      faded(g, span(p, 1.05, 1.2) * grid, () => ellipse(g, m.x + 10 + (4 * (m.w - 40)) / 4 + 11, m.y + 51, 8 + pulse * 5, 8 + pulse * 5, hex(0xf0b57a, 0.3 + 0.25 * pulse)))
     }
     // the one that holds together
     const whole = span(p, 1.75, 2.05)
@@ -764,7 +883,7 @@ export const Trials = {
     }
     const lit = span(p, 2.7, 3)
     const a = pt(110, GROUND)
-    faded(g, whole, () => Person.draw(g, a, t, { scale: 0.86, tilt: -0.06 }))
+    Person.draw(g, a, t, { scale: 0.86, tilt: -0.06, puzzled: span(p, 0.7, 1.4) * grid })
     if (lit > 0.01) text(g, '!', pt(a.x + 28, a.y - 206), 32, { weight: 800, color: hex(0xf6d79a), opacity: lit })
   },
 }
