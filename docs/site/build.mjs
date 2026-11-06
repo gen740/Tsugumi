@@ -137,7 +137,6 @@ const GALLERY = [
     ['dynamics-draft', '力学系ギャラリー', '6 つの Draft を、Agent が helper に手分けさせて同時に実装する。'],
   ]],
 ]
-const VERSION_NOW = () => read('VERSION').trim()
 const DOWNLOAD = `${REPO}/releases/latest`
 
 const ICON = {
@@ -432,7 +431,7 @@ function homePage(groups, pages, tagline, lead) {
       <a class="cta" href="${DOWNLOAD}">${ICON.download}Mac 版をダウンロード</a>
       <a class="cta quiet" href="#demos">インストールせずにデモを見る</a>
     </div>
-    <p class="home-note">v${esc(VERSION_NOW())} · Apple silicon / macOS 26 以降 · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
+    <p class="home-note">Apple silicon / macOS 26 以降 · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>
