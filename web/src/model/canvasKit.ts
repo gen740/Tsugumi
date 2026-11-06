@@ -209,7 +209,9 @@ export class CardGeometry {
       case 'fork': return { width: this.fanWidth(this.outputs.length), height: this.fanLength(this.outputs.length) }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       // The start Card: its name and a run button, nothing more.
-      case 'start': return { width: 116, height: 34 }
+      case 'start':
+        if (!this.grid) return { width: 116, height: 34 }
+        return { width: gridLengthNear(116, this.grid), height: this.flow === 'leftToRight' ? 2 * CardGeometry.rowPitch(this.grid) : 34 }
       default: return { width: 0, height: 0 }
     }
   }

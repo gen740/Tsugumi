@@ -110,6 +110,46 @@ import Testing
     #expect(!s.connected)
   }
 
+  /// 整列 changes the layout only, frames and notes too, and is one step of undo.
+  @Test func arrangingIsOneUndo() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let a = s.addCard(template: .trigger, in: [], at: CGPoint(x: 500, y: 500), name: "a")
+    let b = s.addCard(template: .python, in: [], at: .zero, name: "b")
+    let note = s.addNote(in: [], at: CGPoint(x: 3, y: 4))
+    s.updateDisplayFrame(b) { d in
+      d["width"] = .real(300)
+      d["height"] = .real(200)
+    }
+    let before = s.layout
+    let project = s.project
+    s.arrange([])
+    #expect(s.layout != before)
+    #expect(s.project == project, "the layout only")
+    #expect(s.position(a) != CGPoint(x: 500, y: 500))
+    #expect(s.displayFrame(b)?["width"]?.double == 300)
+    #expect(s.displayFrame(b)?["x"]?.double != nil)
+    #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
+    let arranged = s.layout
+    s.undo()
+    #expect(s.layout == before)
+    s.arrange([])
+    #expect(s.layout == arranged, "from the same graph, the same layout")
+    s.arrange([])
+    #expect(s.layout == arranged, "arranging again changes nothing")
+    // Moving one Card afterwards: it goes by whole grids and nothing else moves.
+    let was = s.position(b), other = s.position(a), frame = s.displayFrame(b)
+    s.moveSelection(cards: [b], notes: [], frames: [], by: CGSize(width: 47, height: 33), snap: 20)
+    #expect(s.position(b) == CGPoint(x: was.x + 40, y: was.y + 40))
+    #expect(s.position(a) == other)
+    #expect(s.displayFrame(b) == frame)
+  }
+
   /// A marquee catches Cards, sticky notes and output frames, at the top and
   /// inside a Card in Card. They move together in one edit and one save, and go
   /// together: a frame alone is closed and its Card stays.

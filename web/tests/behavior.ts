@@ -34,3 +34,5 @@ await import("./thumbnails")
 await import("./portGrid")
 
 await import("./marquee")
+
+await import("./arrange")

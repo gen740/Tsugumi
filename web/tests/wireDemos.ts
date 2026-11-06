@@ -154,7 +154,7 @@ const length = (pts: Pt[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.
 
 /** Cards the path enters and leaves again. A branch's port sits inside its box:
  *  a stay that starts or ends the path is the wire reaching its port. */
-function crossed(pts: Pt[], obstacles: Rect[]): number {
+export function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {
     const n = Math.max(1, Math.ceil(Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) / 2))
