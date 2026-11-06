@@ -7,6 +7,7 @@ configuration); without it a host tsugumid is used.
 from __future__ import annotations
 
 import json
+import shutil
 import time
 
 import pytest
@@ -100,6 +101,37 @@ def test_every_listed_demo_resolves(tmp_path, demo):
         env.cleanup()
 
 
+def without_julia_and_r(dst):
+    """The Collatz demo of C++ and Python alone, as CI runs it: Julia and R (large Nix closures, a process for every
+    step) are left out of the copy, and `compare` loses their two inputs but keeps the rest of its code. The four
+    languages together are checked by test_demo_collatz.py (TSUGUMI_TEST_DEMO_RUNS=1)."""
+    gone = ("collatz-jl", "collatz-r")
+    project = json.loads((dst / "tsugumi.json").read_text())
+    canvas = project["canvas"]
+    canvas["cards"] = [c for c in canvas["cards"] if c["id"] not in gone]
+    canvas["connections"] = [w for w in canvas["connections"] if w["from"]["card"] not in gone and w["to"]["card"] not in gone]
+    (dst / "tsugumi.json").write_text(json.dumps(project))
+    for name in gone:
+        shutil.rmtree(dst / "definitions" / name)
+        shutil.rmtree(dst / "externals" / name)
+    both = dst / "definitions" / "both" / "_card.json"
+    fork = json.loads(both.read_text())
+    set_param(fork, "branches", ["cpp", "python"])
+    both.write_text(json.dumps(fork))
+    compare = dst / "definitions" / "compare"
+    card = json.loads((compare / "_card.json").read_text())
+    card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]
+    (compare / "_card.json").write_text(json.dumps(card))
+    code = (compare / "src" / "main.py").read_text()
+    for old, new in [("from inputs.julia.collatz.Sequence import Sequence as JuliaSequence\n", ""),
+                     ("from inputs.r.collatz.Sequence import Sequence as RSequence\n", ""),
+                     ('        "Julia": values(ctx.input("julia", JuliaSequence)),\n        "R": values(ctx.input("r", RSequence)),\n', ""),
+                     ("C++, Python, Julia and R agree", "C++ and Python agree")]:
+        assert old in code, old
+        code = code.replace(old, new)
+    (compare / "src" / "main.py").write_text(code)
+
+
 def test_the_mnist_draft_is_work_for_helpers_that_meets_again():
     """Seven Drafts helpers can write at the same time (no wire between them,
     no more than delegate takes), with nothing of an answer in them, and one
@@ -131,7 +163,7 @@ def test_the_mnist_draft_is_work_for_helpers_that_meets_again():
 
 @pytest.fixture
 def collatz(tmp_path):
-    env = demo_environment(tmp_path, "collatz")
+    env = demo_environment(tmp_path, "collatz", edit=without_julia_and_r)
     yield env
     env.cleanup()
 

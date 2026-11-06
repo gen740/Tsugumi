@@ -80,7 +80,7 @@ Nix 評価器を `tsugumid` に組み込み、nixpkgs の評価状態と daemon 
 
 再利用する worker の状態は実行をまたいで残り、必要な初期化は `onRunStart` / `on_run_start` に書けます。失敗・取消・期限切れやメモリ上限などでは worker を終了させます。**起動の負担を減らしながら、状態を持つ計算と初期化のタイミングを明示できます。**
 
-履歴用ディスクの分離なども含めた高速化では、Collatz の 1,344 回の呼び出しを含む Run が、共通 VM 上の再実行で 4.5〜5.0 秒から 0.92〜1.0 秒になりました。同じ構成の初回は 7.9 秒で、初回準備と再実行を分けて計測しています（[条件と内訳](development.md#計測2026-11-03高速化後共通-vm)）。
+履歴用ディスクの分離なども含めた高速化では、C++ と Python だけだった時点の Collatz の 1,344 回の呼び出しを含む Run が、共通 VM 上の再実行で 4.5〜5.0 秒から 0.92〜1.0 秒になりました。同じ構成の初回は 7.9 秒で、初回準備と再実行を分けて計測しています（[条件と内訳](development.md#計測2026-11-03高速化後共通-vm)）。
 
 実装: [組み込み評価器](https://github.com/gen740/Tsugumi/blob/main/core/src/nix_eval.cc)、[worker プール](https://github.com/gen740/Tsugumi/blob/main/core/src/worker_pool.cc)、[Card の呼び出し](https://github.com/gen740/Tsugumi/blob/main/sdk/src/worker_main.cc)。検証: [常駐・初期化・毎回新規の worker と取消・期限のテスト](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)。
 

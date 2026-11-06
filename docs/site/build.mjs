@@ -101,7 +101,7 @@ const OFF_THE_LIST = new Set(['INSTALL.md', 'docs/Demos.md', 'docs/Limitations.m
 const GALLERY = [
   ['基本のデモ', [
     ['report', 'データからレポートへ', 'データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。'],
-    ['collatz', 'Collatz (C++ / Python)', '二つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。'],
+    ['collatz', 'Collatz (C++ / Python / Julia / R)', '四つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。'],
     ['plots', 'Plots', 'ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。'],
     ['live-stream', 'Live Stream', '時系列の出力を、実行中にそのままグラフで描く。'],
   ]],

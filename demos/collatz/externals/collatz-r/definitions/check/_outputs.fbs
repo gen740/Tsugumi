@@ -1,0 +1,5 @@
+namespace collatz;
+table Parity { value:bool; }
+table Walk { value:ulong; path:[ulong] (required); }
+table Outputs { value:Walk; even:Parity; }
+root_type Outputs;

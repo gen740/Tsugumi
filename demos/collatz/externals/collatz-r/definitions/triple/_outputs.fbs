@@ -1,0 +1,4 @@
+namespace collatz;
+table Walk { value:ulong; path:[ulong] (required); }
+table Outputs { next:Walk (required); }
+root_type Outputs;
