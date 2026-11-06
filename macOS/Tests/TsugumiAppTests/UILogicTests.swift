@@ -117,6 +117,15 @@ import Testing
   #expect(skills[1].description == "Review a Card")
 }
 
+@Test func theSmallCardsKeepTheirShapeWithASummary() {
+  func geometry(_ kind: CardKind) -> CardGeometry {
+    CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
+  }
+  for kind in [CardKind.trigger, .fork, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
+  #expect(geometry(.code).summary)
+  #expect(geometry(.subgraph).summary)
+}
+
 @Test func collapsedCardsKeepTheirPortsOnTheEdges() {
   var data = CardNodeData(title: "x", kind: .code, summary: "s",
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "x")])

@@ -104,7 +104,6 @@ struct HostFolder {
 
 struct CardDefinition {
   Opt<"symbol", v::String> symbol;
-  Opt<"description", v::String> description;
   Opt<"language", v::String> language;
   Opt<"template", v::String> template_name;
   Opt<"params", v::Array<Obj<ParamDef>>> params;
@@ -138,7 +137,8 @@ struct PortNote {
   Opt<"description", v::String> description;
 };
 
-// _meta.json: the intent of a definition, kept when a Draft is implemented.
+// _meta.json: the intent of a definition, for every kind of Card (a Card in
+// Card too); kept when a Draft is implemented. The summary is only here.
 struct CardMeta {
   Opt<"description", v::String> description;  // short summary
   Opt<"content", v::String> content;          // a Draft's plan: inputs, outputs, processing (free text)

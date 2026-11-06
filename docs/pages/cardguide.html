@@ -98,6 +98,12 @@ table Result { value:ulong; }
 table Outputs { result:Result (required); }
 root_type Outputs;
 </code></pre>
+<p>Card の概要は <code>_meta.json</code> に書きます。Canvas と Card 設定に出るので、何をする Card かを短く書いておきます。</p>
+<p><code>definitions/multiply/_meta.json</code></p>
+<pre><code class="language-json">{
+  &quot;description&quot;: &quot;number を factor 倍する&quot;
+}
+</code></pre>
 <p>実行環境は <code>default.nix</code> に書きます。<code>numpy</code> などを使うときは <code>pythonCard</code> に <code>packages = ps: [ ps.numpy ];</code> を足します。</p>
 <p><code>definitions/multiply/default.nix</code></p>
 <pre><code class="language-nix">{ pkgs, inputs, params }:

@@ -270,7 +270,7 @@ final class UIScript {
           if let t = m.loadedText(p) { m.texts[p] = t + w.dropFirst(4).joined(separator: " ") + "\n" } else { say("not loaded \(p)") }
         case "apply":
           let ok = await m.apply()
-          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.definition?["description"]?.string ?? "")")
+          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.meta?["description"]?.string ?? "")")
         default: break
         }
       case "state":

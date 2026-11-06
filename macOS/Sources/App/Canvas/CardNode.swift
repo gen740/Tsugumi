@@ -80,7 +80,6 @@ extension ProjectSession {
   }
 
   func cardDescription(_ k: CardKey) -> String? {
-    if let d = cardDefinition(k)?["description"]?.string, !d.isEmpty { return d }
     if let d = cardMeta(k)?["description"]?.string, !d.isEmpty { return d }
     return nil
   }
@@ -191,9 +190,8 @@ extension ProjectSession {
     let def = definition ?? cardDefinition(k)
     // The name is the Card's id.
     let title = path(k).last ?? k
-    var summary = def?["description"]?.string
     let m = meta ?? cardMeta(k)
-    if summary?.isEmpty ?? true { summary = m?["description"]?.string }
+    var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
     if summary?.isEmpty ?? true { summary = nil }
