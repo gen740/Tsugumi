@@ -39,11 +39,12 @@ node docs/site/player/build.mjs
 
 ```sh
 # 既定は <repo>/build。別の場所のビルドなら TSUGUMI_BUILD_DIR で指定する
+# 隔離（Seatbelt）のまま、Draft 以外の全デモを実行する
 nix develop --command python3 docs/site/player/harvest.py --ports \
-  report collatz live-stream plots casa card-guide
-# ネットワークの要る科学デモ（--no-sandbox の理由は下）
-nix develop --command python3 docs/site/player/harvest.py --no-sandbox \
-  gw150914 protein-6lu7 exoplanet-transit seismic-trench
+  report collatz live-stream plots casa card-guide \
+  gw150914 protein-6lu7 exoplanet-transit seismic-trench \
+  mnist-classifiers newton pharmacokinetics max-flow dose-response molecules cell-count \
+  survival meta-analysis rna-seq simpson battery gillespie heat-inverse ecology-models
 node docs/site/player/build.mjs
 ```
 
@@ -61,4 +62,3 @@ node docs/site/player/build.mjs
 
 記録のないデモは、線のつながりから順序を作って再生し、結果を出さず、その旨をページに表示します。Draft は実行できません。
 
-ネットワークを使う 4 つのデモは `--no-sandbox` で実行しました。Mac のホストの Seatbelt では Card が DNS を引けないためです（`core/src/worker_proc.cc` のプロファイルが Unix ソケットへの接続を拒否し、`mDNSResponder` に届かない）。
