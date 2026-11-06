@@ -334,7 +334,7 @@ export class ChatController extends Observable {
     const items = cards.map((k) => {
       // A Card's definition folder is named by its id.
       const meta = s.cardMeta(k)
-      return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '' }
+      return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '', context: str(get(meta, 'context')) ?? '' }
     })
     const names = cards.map((k) => path(k).pop() ?? k).join('、')
     this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))

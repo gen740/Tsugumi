@@ -448,7 +448,7 @@ final class ChatController {
       // A Card's definition folder is named by its id.
       let meta = session.cardMeta(k)
       return (key: k, definition: path(k).last ?? "-", description: meta?["description"]?.string ?? "",
-              content: meta?["content"]?.string ?? "")
+              content: meta?["content"]?.string ?? "", context: meta?["context"]?.string ?? "")
     }
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
     sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),

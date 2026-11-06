@@ -11,7 +11,7 @@ export function fill(text: string, values: Record<string, string>): string {
 }
 
 /** The request that has the model implement Draft Cards of a scope. */
-export function draftRequest(scope: string[], cards: { key: string; definition: string; description: string; content: string }[]): string {
+export function draftRequest(scope: string[], cards: { key: string; definition: string; description: string; content: string; context: string }[]): string {
   const t = shared.draftRequest
   const list = cards.map((c) => fill(t.card, { ...c })).join('\n')
   const where = scope.length === 0 ? t.root : fill(t.child, { scope: scope.join('/') })

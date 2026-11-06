@@ -180,7 +180,8 @@ def decide_helper(messages, helper, cards):
         meta = json.loads(d["meta_json"]) if d.get("meta_json") else {}
         card, fbs, nix = implement(json.loads(d["card_json"]), meta)
         return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
-            {"value_type": "PutDefinition", "value": {"id": own, "card_json": json.dumps(card), "keep_meta": True}},
+            {"value_type": "PutDefinition", "value": {
+                "id": own, "card_json": json.dumps(card), "meta_json": json.dumps(completed_intent(meta))}},
             {"value_type": "PutSource", "value": {"path": f"definitions/{own}/_outputs.fbs", "bytes": fbs}},
             {"value_type": "PutSource", "value": {"path": f"definitions/{own}/default.nix", "bytes": nix}}]})
     if name == "project_save":
@@ -228,6 +229,15 @@ def implement(definition, meta):
     return card, fbs, nix
 
 
+def completed_intent(meta):
+    """_meta.json as the save implementing a Draft leaves it: all it had, and
+    what was empty written from it."""
+    meta = dict(meta)
+    meta["description"] = meta.get("description") or "Implements the Draft"
+    meta["context"] = meta.get("context") or f"From the Draft: {meta['description']}. {meta.get('content', '')}".strip()
+    return meta
+
+
 def decide_drafts(messages, text, start):
     results = tool_results(messages[start + 1:])
     if not results:
@@ -243,7 +253,7 @@ def decide_drafts(messages, text, start):
             card, fbs, nix = implement(json.loads(d["card_json"]), meta)
             # The intent and the port purposes stay in _meta.json.
             changes.append({"value_type": "PutDefinition", "value": {
-                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(meta)}})
+                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(completed_intent(meta))}})
             for rel, body in (("_outputs.fbs", fbs), ("default.nix", nix)):
                 changes.append({"value_type": "PutSource", "value": {
                     "path": f"definitions/{def_id}/{rel}", "bytes": body}})
