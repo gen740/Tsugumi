@@ -22,6 +22,7 @@ await import("./table")
 
 await import("./draft")
 await import("./summary")
+await import("./versions")
 await import("./wires")
 await import("./wireDemos")
 

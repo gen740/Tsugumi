@@ -287,6 +287,7 @@
 "できました" = "Done";
 "どうすればよいか" = "What to do";
 "なし" = "None";
+"ほか %lld 回" = "%lld more";
 "まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。" = "Shall we look at a working demo together first? It opens as an editable copy, and I'll show you Cards, wires and how to read the results while it actually runs.";
 "まだ出力はありません" = "No output yet";
 "まだ実行していません" = "Not run yet";
