@@ -449,6 +449,8 @@ final class GuideController {
       } else {
         items.append(Item(role: "assistant", text: t))
       }
+    case .toolInput:
+      break
     case .toolStarted(_, let name, let args):
       if name == "guide_show" {
         speakingChat = nil

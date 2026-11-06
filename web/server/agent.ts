@@ -298,7 +298,7 @@ const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith
 /** Available models, with the names to show (the ChatGPT account's catalog
  *  lists display names, in the server's order). */
 export async function listModels(c: ProviderConfig): Promise<{ id: string; label: string }[]> {
-  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c) })
+  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c), signal: AbortSignal.timeout(15_000) })
   if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
   const obj = (await r.json()) as { data?: { id: string }[]; models?: { slug: string; display_name?: string; visibility?: string }[] }
   if (c.auth === 'chatgpt' && obj.models) {

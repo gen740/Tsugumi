@@ -20,8 +20,8 @@ player.destroy()
 
 | ファイル | 中身 |
 | --- | --- |
-| `main.tsx` | プレイヤー本体 |
-| `player.src.css` | プレイヤー独自の CSS |
+| `web/src/ui/demoPlayer.tsx` | プレイヤー本体。Web UI の Home のサムネイルも同じものです |
+| `web/src/styles/demoPlayer.css` | プレイヤー独自の CSS |
 | `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
 | `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する |
 | `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |

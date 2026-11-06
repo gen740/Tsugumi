@@ -722,7 +722,6 @@ EN = {
 "切断": "Disconnect",
 "初回の準備をしています": "Preparing for the first time",
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。": "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.",
-"別のプロジェクトを開く（必要な保存の後に切り替えます）": "Open another project (switches after the needed save)",
 "別ウインドウで開く": "Open in New Window",
 "削除": "Delete",
 "取り消す": "Undo",
@@ -759,7 +758,6 @@ EN = {
 "実行中": "Running",
 "実行中の接続線を動かす": "Animate connections while running",
 "実行中は Card を変更できません": "Cards cannot be changed while running",
-"実行中は切り替えられません": "Cannot switch while running",
 "実行中は変更できません": "Cannot change while running",
 "実行中は変更を適用できません": "Changes cannot be applied while running",
 "実行中・SDK 準備中は削除できません。": "Cannot delete while a run or SDK preparation is active.",
@@ -1126,6 +1124,7 @@ EN = {
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。": "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.",
 "使う接続先": "Connection in Use",
 "使用中": "In use",
+"設定の「API」で接続を設定してください": "Set up a connection in Settings > API",
 }
 
 

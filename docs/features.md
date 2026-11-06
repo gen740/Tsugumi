@@ -155,6 +155,7 @@ in
 
 ## 9. Agent
 
+- チャットのモデルメニューは、開くたびに設定済みの全接続のモデル一覧を取得し直します。保存済みの一覧をすぐに表示し、新しい一覧は届いた接続から開いたメニューに反映します。失敗した接続や遅い接続があっても、保存済みの一覧でそのまま選べます。一覧の保存先は設定の「API」と同じです。
 - `agent/` として分離された独立パッケージです。Anthropic Messages API および OpenAI Responses API に対応し、ストリーミングで応答します。OpenAI は API キーのほか、利用者の ChatGPT プラン（Sign in with ChatGPT、オープンソースのツール向けの手順）でも使えます（[セキュリティ](security.md#chatgpt-プランsign-in-with-chatgpt)）。
 - Agent が使う tool 定義は `tsugumi.bfbs`（FlatBuffers スキーマの doc comment 付き）から自動生成され、tool 引数と FlatBuffers メッセージの相互変換も同一のスキーマで行います。RPC 契約を更新すれば Agent の tool も自動的に追従します。
 - 変更を伴う tool 呼び出しには Agent が一意な `op_id` を付与し、UI とまったく同じリビジョン検査・競合検出・確定通知の経路を通ります。

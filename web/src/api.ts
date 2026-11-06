@@ -65,19 +65,12 @@ export interface SetupStatus {
   building: { running: boolean; code?: number; log: string } | null
 }
 
-/** A demo's top-level Workflow in miniature (Home's thumbnails). */
-export interface DemoThumbnail {
-  cards: { id: string; x: number; y: number; kind: 'link' | 'routing' | 'source' | 'other' }[]
-  wires: [string, string][]
-}
-
 export interface Demo {
   id: string
   title: string
   description: string
   path: string
   tags: string[]
-  thumbnail: DemoThumbnail
 }
 
 export interface Status {
