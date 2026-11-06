@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace airway;
+table Pca { value:string; }
+table Outputs { pca:Pca (required, tsugumi: "file"); }
+root_type Outputs;

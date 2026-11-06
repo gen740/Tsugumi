@@ -1,0 +1,23 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "trials"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "pooled",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "method",
+      "type": "string",
+      "data": "DL"
+    },
+    {
+      "name": "exclude",
+      "type": "uint64[]",
+      "data": []
+    }
+  ]
+}

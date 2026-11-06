@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace airway;
+table Agreement { value:string; }
+table Outputs { agreement:Agreement (required, tsugumi: "file"); }
+root_type Outputs;

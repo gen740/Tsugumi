@@ -1,0 +1,40 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "lung"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "specifications",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "exposure",
+      "type": "string",
+      "data": "female"
+    },
+    {
+      "name": "subsets",
+      "type": "string[]",
+      "data": [
+        "TRUE",
+        "age < 65",
+        "age >= 65",
+        "ph.ecog == 0",
+        "ph.ecog == 1",
+        "ph.ecog >= 2"
+      ]
+    },
+    {
+      "name": "adjustments",
+      "type": "string[]",
+      "data": [
+        "",
+        "age",
+        "age + ph.ecog",
+        "age + ph.ecog + ph.karno + wt.loss"
+      ]
+    }
+  ]
+}
