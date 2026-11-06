@@ -69,6 +69,8 @@ export interface CardNodeProps {
   draftEdit?: DraftEdit
   onStageTap?: (stage: Stage) => void
   onToggleCollapse?: () => void
+  /** The start Card's button: runs the workflow from it (undefined: not offered). */
+  onRun?: () => void
   style?: CSSProperties
   className?: string
   onPointerDown?: (e: React.PointerEvent) => void
@@ -100,7 +102,7 @@ export function CardNodeView(p: CardNodeProps) {
       <svg className="cv-card-fill" width={w} height={h}>
         <path d={outline} fill={fill} style={{ filter: `drop-shadow(0 1px ${selected ? 4 : 1.5}px rgba(0,0,0,${selected ? 0.2 : 0.07}))` }} />
       </svg>
-      {g.shape === 'card' ? <CardBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
+      {g.shape === 'card' ? <CardBody p={p} g={g} /> : g.shape === 'start' ? <StartBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
       <svg className="cv-card-stroke" width={w} height={h}>
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
@@ -255,6 +257,27 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** Its name and a small run button; the run's state beside the name. */
+function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
+  const { data } = p
+  const z = p.zoom ?? 1
+  const s = (v: number) => v * z
+  const font = (size: number) => Math.max(6, size * z)
+  const o = g.outlineRect
+  const running = data.state !== undefined && data.state !== D.CardState.not_started
+  return (
+    <div className="cv-card-body cv-start" style={{ width: s(o.width), height: s(o.height), padding: `0 ${s(7)}px`, gap: s(6) }}>
+      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title="ここから Workflow を実行" {...stopping}
+        onClick={(e) => { e.stopPropagation(); p.onRun?.() }}>
+        <Icon name="play.fill" size={font(9)} />
+      </button>
+      <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
+      <span style={{ flex: 1 }} />
+      {running && <Icon name={cardState(data.state!).icon} size={font(10)} style={{ color: colorVar(cardState(data.state!).color) }} />}
     </div>
   )
 }
@@ -559,16 +582,15 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
     setCamera((c) => ({ x: p.x - ((p.x - c.x) * nz) / c.zoom, y: p.y - ((p.y - c.y) * nz) / c.zoom, zoom: nz }))
   }
 
-  const router = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(dataOf(it), flow).size })))
   const point = (id: string, port: string, output: boolean): Pt => {
     const it = items.find((x) => x.id === id)
     if (!it) return { x: 0, y: 0 }
     const o = origin(it), p = new CardGeometry(dataOf(it), flow).port(port, output)
     return { x: o.x + p.x, y: o.y + p.y }
   }
-  const draws: WireDraw[] = wires.map((w) => ({
-    d: pathToScreen(router.route(point(w.from, w.fromPort, true), point(w.to, w.toPort, false)).d, camera), style: w.active ? 'active' : 'normal',
-  }))
+  const routes = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(dataOf(it), flow).size })))
+    .routeAll(wires.map((w) => ({ a: point(w.from, w.fromPort, true), b: point(w.to, w.toPort, false) })))
+  const draws: WireDraw[] = wires.map((w, i) => ({ d: pathToScreen(routes[i].d, camera), style: w.active ? 'active' : 'normal' }))
 
   return (
     <div ref={ref} className="cv-surface" style={{ ...gridStyle(camera, grid, gridSize), ...style }}

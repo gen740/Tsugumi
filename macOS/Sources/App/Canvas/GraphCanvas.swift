@@ -38,6 +38,8 @@ struct GraphCanvas: View {
   private var scopeKey: CardKey { key(tab.scope) }
   /// An output frame being dragged (screen translation).
   @State private var frameDrag: (card: CardKey, by: CGSize)?
+  /// A sticky note being dragged (screen translation); saved once, on release.
+  @State private var noteDrag: (id: String, by: CGSize)?
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -203,7 +205,7 @@ struct GraphCanvas: View {
     }
   }
 
-  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil }
+  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil }
 
   // MARK: - Data
 
@@ -275,27 +277,31 @@ struct GraphCanvas: View {
     let b = boundary
     if let b { obstacles += [b.top, b.bottom] }
     var router = WireRouter(flow: session.flow, obstacles: obstacles)
+    // Routed together: a wire's path must not depend on the order of the connections.
+    var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
       guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
             let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
-      let path = router.route(portWorld(fk, fp, output: true), portWorld(tk, tp, output: false))
-      out.append(RoutedWire(connection: i, path: path,
+      ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
+      out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(p.point, portWorld(inner.0, inner.1, output: false)), style: .normal))
+        ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(portWorld(inner.0, inner.1, output: true), p.point),
-                              style: style(from: inner.0, port: inner.1, to: nil)))
+        ends.append((portWorld(inner.0, inner.1, output: true), p.point))
+        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil)))
       }
     }
+    for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }
     // Display links: which Card a result frame belongs to (not a computation).
     for k in outputKeys {
       out.append(RoutedWire(connection: nil, path: displayLink(card: outlineRect(k), frame: frameRect(k)), style: .display))
@@ -525,17 +531,25 @@ struct GraphCanvas: View {
   private func noteView(_ id: String) -> some View {
     let n = session.note(id) ?? .object([])
     let r = noteRect(n)
+    // Follows the pointer while dragged (screen units, so any zoom); the layout changes once, on release.
+    let by = noteDrag?.id == id ? noteDrag!.by : .zero
     return StickyNoteView(note: n, onResize: { d in
       session.updateNote(id) { v in
         v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
         v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
-    .gesture(DragGesture(minimumDistance: 3).onEnded { v in
+    .place(at: CGPoint(x: screen(r.origin).x + by.width, y: screen(r.origin).y + by.height), size: r.size, zoom: camera.zoom)
+    // In the canvas space: the note moves under the pointer, so its own space would shrink the translation.
+    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
+      clearHover()
+      noteDrag = (id, v.translation)
+    }.onEnded { v in
+      noteDrag = nil
+      let to = Self.droppedNoteOrigin(from: r.origin, by: v.translation, zoom: camera.zoom)
       session.updateNote(id) { n in
-        n["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
-        n["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
+        n["x"] = .real(to.x)
+        n["y"] = .real(to.y)
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -556,6 +570,11 @@ struct GraphCanvas: View {
       Divider()
       Button("付箋を削除", role: .destructive) { session.removeNote(id) }
     }
+  }
+
+  /// Where a note dragged by `translation` screen points lands (world units, whole numbers; no grid snap).
+  static func droppedNoteOrigin(from origin: CGPoint, by translation: CGSize, zoom: Double) -> CGPoint {
+    CGPoint(x: (origin.x + translation.width / zoom).rounded(), y: (origin.y + translation.height / zoom).rounded())
   }
 
   private func setNoteFont(_ id: String, _ size: CGFloat) {
