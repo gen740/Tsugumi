@@ -16,13 +16,14 @@ type Listener = (e: any) => void
 const listeners = new Set<Listener>()
 let source: EventSource | undefined
 /** This page (browser tab) to the host server. */
-const pageId = crypto.randomUUID()
+let pageId: string | undefined
+const page = () => (pageId ??= crypto.randomUUID())
 let reported: string | undefined
 
 /** Tells the host server what this page shows now (it picks a free page for Claude Code's projects). */
 export function reportPageProject(project?: string) {
   reported = project
-  void api('/api/page', { page: pageId, project }).catch(() => {})
+  void api('/api/page', { page: page(), project }).catch(() => {})
 }
 
 /** Events from the host server: environment states, terminals and Agent progress. */
@@ -30,7 +31,7 @@ export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
   if (!source) {
     const detached = new URLSearchParams(globalThis.location?.search).has('scope')
-    source = new EventSource(`/api/events?page=${pageId}${detached ? '&detached' : ''}`)
+    source = new EventSource(`/api/events?page=${page()}${detached ? '&detached' : ''}`)
     // Events sent while the stream was down are lost: after it comes back,
     // every listener reads its state again ({ type: 'reconnected' }).
     let lost = false
