@@ -5,8 +5,7 @@
 #   macOS/tools/run-ui.sh <Tsugumi.app> <script> <out dir> [project folder]
 #
 # The app opens behind what you are doing (`open -g`), and the pictures are
-# taken all the same, with the window in its inactive colors. TSUGUMI_UI_FRONT=1
-# brings it to the front, for pictures in active colors (the README's).
+# taken all the same, with the window in its inactive colors.
 set -u
 absolute() { (cd "$(dirname "$1")" && echo "$(pwd -P)/$(basename "$1")"); }
 mkdir -p "$3"
@@ -15,8 +14,7 @@ project=""; [ -z "${4:-}" ] || project="$(absolute "$4")"
 log="$out/ui.log"; : > "$log"
 # `open` starts the app from launchd: it inherits nothing from this shell, and
 # its working directory is /.
-options=(-n -o "$out/app.out" --stderr "$out/app.out")
-[ -n "${TSUGUMI_UI_FRONT:-}" ] || options+=(-g)
+options=(-g -n -o "$out/app.out" --stderr "$out/app.out")
 options+=(--env "TSUGUMI_UI_SCRIPT=$script" --env "TSUGUMI_UI_LOG=$log")
 for name in $(compgen -e | grep '^TSUGUMI_' | grep -v -E '^TSUGUMI_UI_(SCRIPT|LOG)$'); do
   options+=(--env "$name=${!name}")

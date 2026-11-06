@@ -286,11 +286,15 @@ public actor Agent {
     }
   }
 
+  /// Work `resume` would go on with: a request not answered, a tool call not settled.
+  public var hasUnfinishedWork: Bool {
+    conversation.tools.contains { $0.state == .sent || $0.state == .pending } || conversation.messages.last?.role == "user"
+  }
+
   /// Resumes after a restart or disconnect: tool calls that were sent but never
   /// answered are reconciled with OperationGet instead of being re-sent.
   public func resume(events: @escaping @Sendable (AgentEvent) -> Void) {
-    guard conversation.tools.contains(where: { $0.state == .sent || $0.state == .pending }) ||
-          conversation.messages.last?.role == "user" else { return }
+    guard hasUnfinishedWork else { return }
     startTurn { await self.loop(events) }
   }
 
