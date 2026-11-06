@@ -27,6 +27,13 @@ struct ChatPanel: View {
   }
   /// Display names of the ChatGPT account's models (Settings > API).
   @State private var modelNames: [String: String] = [:]
+  /// The model menu: it says when it opens, and shows new lists while open.
+  @State private var modelMenu = ModelMenu()
+  @State private var modelLists = ModelListRefresher(fetch: { id in
+    // Never the keychain's dialog: nobody asked for this read. A connection
+    // that would have to ask keeps its saved list until a turn or Settings > API reads it.
+    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
+  })
   /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
   @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
   @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
@@ -330,28 +337,18 @@ struct ChatPanel: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help("参照・フォルダを添付")
           // The model, as quiet text under the input (a menu, not a pop-up box).
-          Menu {
-            // Every connection set up, with its models: choosing one switches to it.
-            ForEach(connections) { c in
-              Section(c.name) {
-                ForEach(c.models, id: \.self) { m in
-                  Button { choose(c.id, m) } label: {
-                    if c.id == providerSetting && m == model { Label(modelName(m), systemImage: "checkmark") } else { Text(modelName(m)) }
-                  }
-                }
-              }
-            }
-          } label: {
+          Button { modelMenu.show() } label: {
             HStack(spacing: 3) {
               Text(modelName(model)).lineLimit(1)
               Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
           }
-          .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-          .tint(.secondary)
-          .foregroundStyle(.secondary)
+          .buttonStyle(.plain)
+          .fixedSize()
+          .background(ModelMenuAnchor(menu: modelMenu))
           .disabled(!chat.provider.isRemote)
           .help("モデル（接続先: \(chat.provider.name)）")
           thoughtsToggle
@@ -377,7 +374,15 @@ struct ChatPanel: View {
       .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.secondary.opacity(inputFocused ? 0.5 : 0.25)))
     }
     .padding(10)
-    .task { await loadModels() }
+    .task {
+      modelMenu.onOpen = { refreshModels() }
+      modelMenu.onChoose = { provider, m in choose(provider, m) }
+      await loadModels()
+    }
+    .onDisappear {
+      modelMenu.onOpen = nil
+      modelMenu.onChoose = nil
+    }
     // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
     .onChange(of: providerSetting) { Task { await loadModels() } }
     .confirmationDialog("思考の過程を描きますか？", isPresented: $askThoughts) {
@@ -472,12 +477,19 @@ struct ChatPanel: View {
     inputFocused = true
   }
 
-  /// Models listed earlier in Settings > API (no network request from here).
+  /// The connections set up, each with the models saved for it. Opening the
+  /// panel may ask the keychain for the ChatGPT record, once.
   private func loadModels() async {
+    let accounts = await ChatGPTAuth.shared().accounts()
+    showConnections(chatGPT: accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
+  }
+
+  /// Everything saved, on the panel and in the menu. Without waiting for
+  /// anything, as the main actor does not run while the menu is open.
+  private func showConnections(chatGPT: Bool) {
     let d = UserDefaults.standard
-    model = AgentSettings.current().model
-    modelNames = d.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:]
-    // The connections set up (checked without reading any secret), each with its models.
+    let current = AgentSettings.current().model
+    let names = d.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:]
     var out: [Connection] = []
     func add(_ id: String, _ name: String) {
       let chosen = AgentSettings.config(for: id).model
@@ -486,9 +498,37 @@ struct ChatPanel: View {
     }
     if Keychain.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
     if Keychain.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
-    if await ChatGPTAuth.shared().accounts().contains(where: { $0.active && $0.signedIn && $0.planEnabled }) { add("chatgpt", "ChatGPT プラン") }
+    if chatGPT { add("chatgpt", "ChatGPT プラン") }
     if providerSetting == "fixture" { add("fixture", "Local fixture") }
+    model = current
+    modelNames = names
     connections = out
+    modelMenu.setContents(connections: out, provider: providerSetting, model: current, names: names)
+  }
+
+  /// The menu opened: the models of every connection are listed again. It
+  /// shows the saved lists at once, and each new list when it comes; a
+  /// connection that fails or is slow keeps what it has. Never the keychain's
+  /// dialog, however often it opens.
+  private func refreshModels() {
+    UIScript.shared.note("model menu opened")
+    let wasOn = connections.contains { $0.id == "chatgpt" }
+    let lists = modelLists
+    let show = showConnections
+    Task.detached {
+      let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
+      // A record that cannot be read without asking says nothing: the connection stays as it was.
+      let chatGPT = accounts.map { $0.contains { $0.active && $0.signedIn && $0.planEnabled } } ?? wasOn
+      onMainWhileMenuTracks {
+        show(chatGPT)
+        var ids = ["anthropic", "openai"].filter { Keychain.exists(account: AgentSettings.config(for: $0).name) }
+        if chatGPT { ids.append("chatgpt") }
+        lists.refresh(ids) { id, outcome in
+          UIScript.shared.note("model list \(id): \(outcome)")
+          show(chatGPT)
+        }
+      }
+    }
   }
 
   /// A model of a connection chosen in the menu: that connection is used from now on.
@@ -496,6 +536,7 @@ struct ChatPanel: View {
     UserDefaults.standard.set(m, forKey: AgentSettings.modelKey(provider))
     providerSetting = provider
     model = m
+    modelMenu.setCurrent(provider: provider, model: m)
     GuideController.shared.refreshAvailability()
   }
 

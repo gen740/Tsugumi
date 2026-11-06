@@ -207,12 +207,17 @@ export type MenuItem =
   | undefined
 
 let showMenuImpl: ((x: number, y: number, items: MenuItem[]) => void) | undefined
+let updateMenuImpl: ((serial: number, items: MenuItem[]) => void) | undefined
+let menuSerial = 0
 
-/** Opens a context menu at the pointer. */
+/** Opens a context menu at the pointer. `update` changes its items while it
+ *  is open, and does nothing once it has closed. */
 export function showMenu(e: { clientX: number; clientY: number; preventDefault?: () => void; stopPropagation?: () => void }, items: MenuItem[]) {
   e.preventDefault?.()
   e.stopPropagation?.()
+  const serial = ++menuSerial
   showMenuImpl?.(e.clientX, e.clientY, items)
+  return { update: (next: MenuItem[]) => updateMenuImpl?.(serial, next) }
 }
 
 function MenuList({ items, x, y, onDone }: { items: MenuItem[]; x: number; y: number; onDone: () => void }) {
@@ -223,7 +228,7 @@ function MenuList({ items, x, y, onDone }: { items: MenuItem[]; x: number; y: nu
     const r = ref.current?.getBoundingClientRect()
     if (!r) return
     setPos({ x: Math.max(4, Math.min(x, window.innerWidth - r.width - 6)), y: Math.max(4, Math.min(y, window.innerHeight - r.height - 6)) })
-  }, [x, y])
+  }, [x, y, items.length])
   const list = items.filter((i): i is Exclude<MenuItem, null | false | undefined> => !!i)
   return (
     <div className="menu" ref={ref} style={{ left: pos.x, top: pos.y }} role="menu" onContextMenu={(e) => e.preventDefault()}>
@@ -256,11 +261,13 @@ function MenuList({ items, x, y, onDone }: { items: MenuItem[]; x: number; y: nu
 }
 
 export function MenuHost() {
-  const [m, setM] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const [m, setM] = useState<{ serial: number; x: number; y: number; items: MenuItem[] } | null>(null)
   useEffect(() => {
-    showMenuImpl = (x, y, items) => setM({ x, y, items })
+    showMenuImpl = (x, y, items) => setM({ serial: menuSerial, x, y, items })
+    updateMenuImpl = (serial, items) => setM((cur) => (cur?.serial === serial ? { ...cur, items } : cur))
     return () => {
       showMenuImpl = undefined
+      updateMenuImpl = undefined
     }
   }, [])
   useEffect(() => {

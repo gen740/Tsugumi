@@ -57,14 +57,14 @@ struct CanvasWorkspace: View {
     }
   }
 
-  /// Open another project, chat: beside the run control, the same look.
+  /// Back to Home (as the menu does, with its refusal while a run is on), chat:
+  /// beside the run control, the same look.
   private var projectActions: some View {
     HStack(spacing: 10) {
       if let onSwitchProject {
-        Button(action: onSwitchProject) { Image(systemName: "folder") }
-          .help(session.runActive ? "実行中は切り替えられません" : "別のプロジェクトを開く（必要な保存の後に切り替えます）")
-          .disabled(session.runActive)
-          .accessibilityLabel("開く")
+        Button(action: onSwitchProject) { Image(systemName: "house") }
+          .help(tip(String(localized: "Home へ戻る"), .home))
+          .accessibilityLabel("Home へ戻る")
       }
       Button { workspace.showChat.toggle() } label: {
         // While the chat is closed, Tsugumi waits on its button.

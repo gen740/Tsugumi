@@ -191,25 +191,26 @@ export class Scene {
     const obstacles = [...this.cardKeys.map((k) => this.cardRect(k)), ...this.outputKeys.map((k) => this.frameRect(k))]
     const b = this.boundary
     if (b) obstacles.push(b.top, b.bottom)
-    const router = new WireRouter(this.flow, obstacles)
-    const out: RoutedWire[] = []
+    // Routed together: a wire's path must not depend on the order of the connections.
+    const ends: { a: Pt; b: Pt; wire: Omit<RoutedWire, 'd' | 'pts'> }[] = []
     s.connections(this.scope).forEach((c, i) => {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
       if (!fc || !fp || !tc || !tp) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      const r = router.route(this.portWorld(fk, fp, true), this.portWorld(tk, tp, false))
-      out.push({ connection: i, ...r, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) })
+      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) } })
     })
     if (b) {
       for (const p of b.inputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        out.push({ ...router.route(p.point, this.portWorld(p.inner[0], p.inner[1], false)), style: 'normal' })
+        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal' } })
       }
       for (const p of b.outputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        out.push({ ...router.route(this.portWorld(p.inner[0], p.inner[1], true), p.point), style: this.style(p.inner[0], p.inner[1], undefined) })
+        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined) } })
       }
     }
+    const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
+    const out: RoutedWire[] = ends.map((e, i) => ({ ...e.wire, d: routes[i].d, pts: routes[i].pts }))
     // Display links: which Card a result frame belongs to (not a computation).
     for (const k of this.outputKeys) {
       const d = displayLink(this.outlineRect(k), this.frameRect(k))

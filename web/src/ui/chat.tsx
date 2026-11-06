@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
+import { ModelListRefresher } from '../model/modelLists'
 import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
 import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
@@ -212,7 +213,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
   /** The highlighted Skill candidate (↑ / ↓, Return or Tab takes it). */
   const [skillIndex, setSkillIndex] = useState(0)
-  /** The connections set up, each with its chosen model and the models listed in Settings > API. */
+  /** The connections set up, each with its chosen model and its saved models. */
   const [connections, setConnections] = useState<{ id: string; name: string; models: string[] }[]>([])
   const [picking, setPicking] = useState(false)
   const [toAttach, setToAttach] = useState<string>()
@@ -220,20 +221,24 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const [attachError, setAttachError] = useState<string>()
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Models listed earlier in Settings > API (no request to the provider from here), per connection set up.
+  // The saved models per connection set up (no request to the provider from here).
+  const loadConnections = () => Promise.all([
+    api<{ provider: string; model: string; openAIModel: string; chatGPTModel: string; models: Record<string, string[] | undefined> }>('/api/settings'),
+    api<{ anthropic: boolean; openai: boolean; chatgpt: boolean }>('/api/settings/connections'),
+  ]).then(([s, on]) => {
+    const list = (id: string, name: string, chosen: string) => ({ id, name, models: [...new Set([...(s.models?.[id] ?? []), chosen])].sort() })
+    const all = [
+      ...(on.anthropic ? [list('anthropic', 'Anthropic API', s.model)] : []),
+      ...(on.openai ? [list('openai', 'OpenAI API', s.openAIModel)] : []),
+      ...(on.chatgpt ? [list('chatgpt', 'ChatGPT プラン', s.chatGPTModel)] : []),
+    ]
+    setConnections(all)
+    return all
+  })
   useEffect(() => {
-    void Promise.all([
-      api<{ provider: string; model: string; openAIModel: string; chatGPTModel: string; models: Record<string, string[] | undefined> }>('/api/settings'),
-      api<{ anthropic: boolean; openai: boolean; chatgpt: boolean }>('/api/settings/connections'),
-    ]).then(([s, on]) => {
-      const list = (id: string, name: string, chosen: string) => ({ id, name, models: [...new Set([...(s.models?.[id] ?? []), chosen])].sort() })
-      setConnections([
-        ...(on.anthropic ? [list('anthropic', 'Anthropic API', s.model)] : []),
-        ...(on.openai ? [list('openai', 'OpenAI API', s.openAIModel)] : []),
-        ...(on.chatgpt ? [list('chatgpt', 'ChatGPT プラン', s.chatGPTModel)] : []),
-      ])
-    }).catch(() => {})
+    void loadConnections().catch(() => {})
   }, [chat.provider.name, chat.provider.model])
+  const modelLists = useRef(new ModelListRefresher((id) => api('/api/settings/models', { provider: id })))
 
   // Starts one line high and grows with the text (up to a limit).
   useLayoutEffect(() => {
@@ -361,12 +366,23 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
               // Every connection set up, with its models: choosing one switches to it.
-              const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
-              showMenu({ clientX: r.left, clientY: r.bottom + 2 }, connections.flatMap((c, i) => [
-                i > 0 ? 'divider' as const : null,
-                { label: c.name, disabled: true },
-                ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === model, action: () => choose(c.id, m) })),
-              ]))
+              const items = (list: typeof connections) => {
+                const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
+                return list.flatMap((c, i) => [
+                  i > 0 ? 'divider' as const : null,
+                  { label: c.name, disabled: true },
+                  ...c.models.map((m) => ({ label: modelName(m), checked: c.id === current && m === chat.provider.model, action: () => choose(c.id, m) })),
+                ])
+              }
+              // The saved lists at once; each connection's new list when it comes.
+              const menu = showMenu({ clientX: r.left, clientY: r.bottom + 2 }, items(connections))
+              const show = () => loadConnections().then((list) => {
+                menu.update(items(list))
+                return list
+              })
+              void show().catch(() => connections).then((list) => modelLists.current.refresh(list.map((c) => c.id), (id, ok) => {
+                if (ok) void (id === 'chatgpt' ? chat.refreshProvider() : Promise.resolve()).then(show).catch(() => {})
+              }))
             }}>
             <span className="ellipsis">{modelName(model)}</span>
             <Icon name="chevron.down" size={8} />

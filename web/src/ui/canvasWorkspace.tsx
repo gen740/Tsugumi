@@ -24,7 +24,7 @@ export const tip = (text: string, action: ShortcutAction) => `${text}（${prefs.
 
 export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bottomTrailing }: {
   workspace: Workspace; session: ProjectSession; tab: WorkflowTab
-  /** Opens another project (the folder button). */
+  /** Back to Home (the house button). */
   onSwitchProject?: () => void
   /** Shown at the right of the bottom row (the status bar). */
   bottomTrailing?: ReactNode
@@ -51,15 +51,12 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
   )
 }
 
-/** Open another project, chat: beside the run control, the same look. */
-function ProjectActions({ workspace, session, onSwitchProject }: { workspace: Workspace; session: ProjectSession; onSwitchProject?: () => void }) {
+/** Back to Home (as the menu does, with its refusal while a run is on), chat: beside the run control, the same look. */
+export function ProjectActions({ workspace, session, onSwitchProject }: { workspace: Workspace; session: ProjectSession; onSwitchProject?: () => void }) {
   useObserve(guide)
   return (
     <div className="capsule material cv-actions">
-      {onSwitchProject && (
-        <Button kind="borderless" iconOnly icon="folder" disabled={session.runActive} onClick={onSwitchProject}
-          help={session.runActive ? '実行中は切り替えられません' : '別のプロジェクトを開く（必要な保存の後に切り替えます）'} />
-      )}
+      {onSwitchProject && <Button kind="borderless" iconOnly icon="house" onClick={onSwitchProject} help={tip('Home へ戻る', 'home')} />}
       {!workspace.showChat && onSwitchProject && guide.present ? (
         // While the chat is closed, Tsugumi waits on its button.
         <button type="button" className="btn btn-borderless btn-icon guide-nest-button" data-guide="chat" title={tip('チャットを開く', 'toggleChat')}
