@@ -87,6 +87,8 @@ private struct GuideTransport: ToolTransport {
 /// connection and key as the Agent; without a key there is no guide at all).
 /// It explains what is on the screen and leads demo tours; it only reads,
 /// and what it offers to do is done by the user's own press of a button.
+/// What it points at and says stays in the windows it is about: Home for the
+/// guide's own, a project's for the chat of that project (`speaks(in:)`).
 @MainActor
 @Observable
 final class GuideController {
@@ -132,8 +134,11 @@ final class GuideController {
   var openRequest: String?
   /// A workflow scope to show (pointing into a Card in Card), taken by the project's window.
   var scopeRequest: [String]?
-  /// Windows where the bird is out (its homes show no bird meanwhile: one Tsugumi).
-  var awayWindows = 0
+  /// Windows where the bird is out, by the project they show ("": Home). Its
+  /// homes for that project show no bird meanwhile: one Tsugumi per project.
+  private var awayWindows: [String: Int] = [:]
+  func birdAway(_ project: String?) -> Bool { awayWindows[project ?? "", default: 0] > 0 }
+  func birdLeft(_ project: String?, by change: Int) { awayWindows[project ?? "", default: 0] += change }
   /// The chat's answer the bubble points to was asked for: the chat shows it marked.
   private(set) var chatFlash: Date?
 
@@ -251,7 +256,12 @@ final class GuideController {
     contextScreen = screen
     contextSession = session
     contextTab = tab
+    if let session { shownTabs[session.identity.id] = ShownTab(tab: tab) }
   }
+
+  /// The workflow tab each open project last showed (the bubble's buttons act on it).
+  private struct ShownTab { weak var tab: WorkflowTab? }
+  @ObservationIgnored private var shownTabs: [String: ShownTab] = [:]
 
   /// A choice tapped in the bubble or under a reply: the user's answer, to
   /// whichever Tsugumi offered it (a project's chat, or the guide on Home).
@@ -269,7 +279,19 @@ final class GuideController {
   @ObservationIgnored private(set) weak var speakingChat: ChatController?
   /// The project and workflow the flying bird's buttons act on.
   var flyerSession: ProjectSession? { speakingChat?.session ?? contextSession }
-  var flyerTab: WorkflowTab? { contextTab }
+  var flyerTab: WorkflowTab? { flyerSession.flatMap { shownTabs[$0.identity.id]?.tab } ?? contextTab }
+
+  /// Whether what the bird says now belongs in a window showing this project
+  /// (nil: Home; another project's window goes on undisturbed).
+  func speaks(in project: String?) -> Bool { speakingChat?.session.identity.url.path == project }
+
+  /// The project of this chat closed: what it was saying goes with it.
+  func chatClosed(_ chat: ChatController) {
+    shownTabs[chat.session.identity.id] = nil
+    guard speakingChat === chat else { return }
+    speakingChat = nil
+    dismissBubble()
+  }
 
   /// The chat's Tsugumi called guide_show: the bird flies and speaks for it.
   func chatShow(_ chat: ChatController, arguments: String) {

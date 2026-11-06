@@ -3,11 +3,11 @@ import TsugumiAgent
 
 /// What a main window lets the guide's buttons do (MainWindow sets it).
 struct GuideWindowActions {
-  /// Opens a project in this window (leaving the open one first).
+  /// Opens a project: in this window on Home, in a window of its own from a project.
   var openProject: (URL) -> Void
   /// Back to Home.
   var home: () -> Void
-  /// The new project sheet on Home.
+  /// The new project sheet (on this Home, or on a new window's).
   var newProject: () -> Void
   /// Opens the project's chat column.
   var showChat: () -> Void = {}
@@ -29,6 +29,15 @@ extension EnvironmentValues {
 @MainActor
 @Observable
 final class GuideStage {
+  /// The project this window shows (its folder; nil: Home). The bird comes out
+  /// here only for what is said about that project.
+  var project: String? {
+    didSet {
+      guard away, project != oldValue else { return }
+      GuideController.shared.birdLeft(oldValue, by: -1)
+      GuideController.shared.birdLeft(project, by: 1)
+    }
+  }
   /// The pointed-at view and its frame, while it is on the screen.
   var perch: (id: String, frame: CGRect)?
   /// The bird's home in this window now (zero: none shown, e.g. between Home and a project).
@@ -37,9 +46,9 @@ final class GuideStage {
   }
   /// Where its home last was: a flight starts there when no home is shown.
   private(set) var lastCorner: CGRect = .zero
-  /// The bird has left its home (no home shows a bird meanwhile, in any window).
+  /// The bird has left its home (no home of this project shows a bird meanwhile).
   var away = false {
-    didSet { if away != oldValue { GuideController.shared.awayWindows += away ? 1 : -1 } }
+    didSet { if away != oldValue { GuideController.shared.birdLeft(project, by: away ? 1 : -1) } }
   }
   /// Where the loading card's bird stands while the card is shown (its feet and size).
   var loadingBird: (feet: CGPoint, scale: CGFloat)?
@@ -50,10 +59,13 @@ final class GuideStage {
 /// Tsugumi's flights in a window: the stage its targets and homes report to,
 /// and the bird that flies over it.
 struct GuideWindowLayer: ViewModifier {
+  /// The project the window shows (its folder; nil: Home).
+  var project: String?
   @State private var stage = GuideStage()
 
   func body(content: Content) -> some View {
     content.overlay { GuideFlyer() }.environment(stage)
+      .onChange(of: project, initial: true) { stage.project = project }
       // The window closes with the bird in it (a Card's settings): it is back at
       // its home in the project's window, and what it said there is done.
       .onDisappear {
@@ -75,7 +87,7 @@ private struct GuideTarget: ViewModifier {
 
   func body(content: Content) -> some View {
     content.overlay {
-      if GuideController.shared.points(at: id) {
+      if GuideController.shared.points(at: id), stage.map({ GuideController.shared.speaks(in: $0.project) }) ?? true {
         GuideRing(radius: radius).allowsHitTesting(false).accessibilityHidden(true)
           .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.perch = (id, $0) }
           .onDisappear { if stage?.perch?.id == id { stage?.perch = nil } }
@@ -123,9 +135,11 @@ struct GuideCorner: View {
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.controlActiveState) private var activeState
   @Environment(GuideStage.self) private var stage: GuideStage?
 
   private var guide: GuideController { .shared }
+  private var birdAway: Bool { guide.birdAway(stage?.project) }
 
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
@@ -133,7 +147,7 @@ struct GuideCorner: View {
         if guide.open {
           GuidePanel(screen: screen, session: session, tab: tab, perform: perform)
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
-        } else if guide.awayWindows == 0 {
+        } else if !birdAway {
           if guide.offersDemo {
             GuideOfferBubble(perform: perform)
           } else if let b = guide.bubble, guide.speakingChat == nil {
@@ -152,7 +166,7 @@ struct GuideCorner: View {
           GuideAvatar(mood: mood, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
         }
         .buttonStyle(.plain)
-        .opacity(guide.awayWindows > 0 ? 0 : 1)
+        .opacity(birdAway ? 0 : 1)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
         .onDisappear { stage?.corner = .zero }
         .help(String(localized: "ガイドのツグミに聞く（\(AppPreferences.shared.shortcut(.toggleGuide).label)）"))
@@ -165,6 +179,8 @@ struct GuideCorner: View {
     .animation(.easeOut(duration: 0.2), value: guide.bubble)
     .onChange(of: runKey, initial: true) { if let session { guide.observe(session, tab: tab) } }
     .onChange(of: contextKey, initial: true) { guide.setContext(screen, session: session, tab: tab) }
+    // The window the user looks at now is the one a tapped choice is asked from.
+    .onChange(of: activeState) { if activeState == .key { guide.setContext(screen, session: session, tab: tab) } }
   }
 
   private var perform: GuidePerformer {
@@ -400,7 +416,7 @@ struct GuideNest: View {
       }
     }
     .frame(width: size * 1.05, height: size * 0.75)
-    .opacity(GuideController.shared.awayWindows > 0 ? 0 : 1)
+    .opacity(GuideController.shared.birdAway(stage?.project) ? 0 : 1)
     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
     .onDisappear { stage?.corner = .zero }
     .help("ツグミ")
@@ -466,7 +482,8 @@ struct GuideFlyer: View {
 
   /// The pointed-at frame while the bubble stands there (window coordinates).
   private var perch: CGRect? {
-    guard guide.available, let b = guide.bubble, let t = b.target, let p = stage.perch, guide.points(at: p.id) || p.id == t else { return nil }
+    guard guide.available, guide.speaks(in: stage.project), let b = guide.bubble, let t = b.target, let p = stage.perch,
+          guide.points(at: p.id) || p.id == t else { return nil }
     return p.frame
   }
 
@@ -690,17 +707,13 @@ struct GuidePerformer {
     case .run: return session.map { $0.connected && !$0.runActive } ?? false
     case .stop: return session?.runActive ?? false
     case .openCard: return session != nil
-    case .openDemo, .home, .newProject: return !(session?.runActive ?? false)
+    case .home: return !(session?.runActive ?? false)
     default: return true
     }
   }
 
   private func openDemo(_ id: String) {
     guard let demo = model.demos.first(where: { $0.id == id }) ?? model.demos.first(where: { $0.id == "report" }) else { return }
-    if session?.runActive == true {
-      model.error = String(localized: "実行中はデモを開けません。停止するか終了を待ってください。")
-      return
-    }
     do {
       let url = try model.copyDemo(demo)
       // The bird stays by the demo's card until the loading card comes, then flies into it.
@@ -839,7 +852,7 @@ private struct GuidePanel: View {
       Spacer()
       if !here {
         Button("続ける") { if let url = guide.resumeTour() { window?.openProject(url) } }
-          .controlSize(.small).disabled(session?.runActive == true)
+          .controlSize(.small)
       }
       Button("終える") { guide.endTour() }.controlSize(.small)
     }

@@ -12,6 +12,7 @@ struct WorkflowTabs: View {
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
+  @Environment(\.controlActiveState) private var activeState
 
   /// What changes in the project that a demo tour follows.
   private var runKey: String {
@@ -58,16 +59,21 @@ struct WorkflowTabs: View {
     .onChange(of: workspace.active?.id, initial: true) {
       if guideWindow != nil { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
     }
+    // The window the user looks at now is the one a tapped choice is asked from.
+    .onChange(of: activeState) {
+      if guideWindow != nil, activeState == .key { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
+    }
     .onAppear { if guideWindow != nil, GuideController.shared.touring(session) { workspace.showChat = true } }
     // Tsugumi points into a Card in Card (or back at a root Card): the canvas shows that workflow.
     .onChange(of: GuideController.shared.scopeRequest) { _, s in
-      guard guideWindow != nil, let s, let tab = workspace.active else { return }
+      // Only the window of the project being talked about (the next, of another, has nothing to show).
+      guard guideWindow != nil, let s, let tab = workspace.active, GuideController.shared.speakingChat?.session === session else { return }
       GuideController.shared.scopeRequest = nil
       if session.kind(key(s)) == .subgraph || s.isEmpty { tab.enter(s) }
     }
     .onChange(of: GuideController.shared.highlight) { _, h in
       guard guideWindow != nil, let h, h.hasPrefix("card:"), !h.dropFirst(5).contains("/"), let tab = workspace.active,
-            !tab.scope.isEmpty else { return }
+            !tab.scope.isEmpty, GuideController.shared.speakingChat?.session === session else { return }
       let id = String(h.dropFirst(5))
       if session.instance(key(tab.scope + [id])) == nil, session.instance(key([id])) != nil { tab.enter([]) }
     }

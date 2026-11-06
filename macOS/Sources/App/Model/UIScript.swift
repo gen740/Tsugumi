@@ -29,6 +29,14 @@ import TsugumiRPC
 ///   chatstate | chatstop            reopen <project folder> (from Home)
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
+///   menu <item title>               (presses the menu bar's item)
+///   newproject                      (the new project sheet, as ⌘N in the window steps act on)
+///   openproject <folder>            (as the open panel of the window in front answers)
+///   window <n>                      (later steps act on the n-th main window)
+///   mainwindows                     (a line per main window: its project, connection, run, unsaved edits)
+///   closewindow                     (as the window's close button)
+///   offlineedit <card> <param> <v>  (every open project loses its environment and gets an edit; then the app quits, with them unsaved)
+///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -38,12 +46,15 @@ final class UIScript {
 
   enum Request: Equatable {
     case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
+    case project(URL), newProject
   }
 
   var request: Request?
   /// Whether a canvas has the keyboard focus (reported by `state`).
   @ObservationIgnored var canvasFocused = false
-  @ObservationIgnored weak var workspace: Workspace?
+  /// The main window steps act on (`window <n>`; the first one there is until then).
+  @ObservationIgnored private weak var chosen: Workspace?
+  var workspace: Workspace? { chosen ?? AppModel.shared.mainWindows.first }
   /// Card settings windows that are open (scripts edit their working copies).
   @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
   @ObservationIgnored private var log: FileHandle?
@@ -149,7 +160,64 @@ final class UIScript {
         // Not `move`: SwiftUI's hover does not see a mouse event sent to a window in the back.
         NotificationCenter.default.post(name: .versionHover, object: Int(w[1]) ?? 0)
       case "explainer": request = .explainer
-      case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "home": if let w = workspace { AppModel.shared.leaveProject(in: w) }
+      case "newproject": request = .newProject
+      case "openproject": request = .project(URL(fileURLWithPath: w.dropFirst().joined(separator: " ")))
+      case "window":
+        let list = AppModel.shared.mainWindows
+        if let n = Int(w[1]), list.indices.contains(n) {
+          chosen = list[n]
+        } else { say("no main window \(w[1])") }
+      case "mainwindows":
+        for (i, m) in AppModel.shared.mainWindows.enumerated() {
+          let s = m.session
+          say("main \(i) title=\(m.window?.title ?? "-") project=\(s?.identity.url.lastPathComponent ?? "home") connected=\(s?.connected ?? false) "
+              + "run=\(s?.runActive ?? false)/\(s?.runStatus?.state.label ?? "-") dirty=\(s?.dirty ?? false) key=\(m.window?.isKeyWindow ?? false) "
+              + "closable=\(m.window?.standardWindowButton(.closeButton)?.isEnabled ?? false) sheet=\(m.window?.attachedSheet != nil)")
+        }
+        say("sessions \(AppModel.shared.sessions.values.map { $0.identity.url.lastPathComponent }.sorted())")
+      case "answer":
+        // answer <n>: the n-th button (1...) of the next alert, a moment after it comes up.
+        let code = NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + (Int(w[1]) ?? 1) - 1)
+        // A timer: the quit may be asked from a main-actor task, whose alert keeps the main queue busy.
+        let timer = Timer(timeInterval: 0.02, repeats: true) { t in
+          MainActor.assumeIsolated {
+            guard let alert = NSApp.modalWindow else { return }
+            t.invalidate()
+            let texts = alert.contentView?.subviews.compactMap { ($0 as? NSTextField)?.stringValue } ?? []
+            self.say("alert: " + texts.joined(separator: " | "))
+            alert.alphaValue = 0
+            NSApp.stopModal(withCode: code)
+          }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+      case "offlineedit":
+        // offlineedit <card> <param> <value>: in every open project the environment
+        // goes away and an edit follows, so the edits stay unsaved (a quit's question).
+        let open = AppModel.shared.mainWindows.compactMap(\.session)
+        for s in open { s.stopEnvironment() }
+        try? await Task.sleep(for: .milliseconds(100))
+        for s in open {
+          s.setParam(w[1], w[2], parseParam(w[3], "uint64"))
+          say("offlineedit \(s.identity.url.lastPathComponent) dirty=\(s.dirty)")
+        }
+        NSApp.terminate(nil)
+      case "closewindow": workspace?.window?.performClose(nil)
+      case "menu":
+        let title = w.dropFirst().joined(separator: " ")
+        func press(_ menu: NSMenu) -> Bool {
+          for (i, item) in menu.items.enumerated() {
+            if item.title == title {
+              menu.update()
+              say("menu \(title) enabled=\(item.isEnabled)")
+              if item.isEnabled { menu.performActionForItem(at: i) }
+              return true
+            }
+            if let sub = item.submenu, press(sub) { return true }
+          }
+          return false
+        }
+        if let bar = NSApp.mainMenu, !press(bar) { say("no menu item \(title)") }
       case "reopen":
         // reopen <project folder>: from Home, as choosing it there does.
         if let s = try? AppModel.shared.session(for: URL(fileURLWithPath: w.dropFirst().joined(separator: " "))) {

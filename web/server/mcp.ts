@@ -128,12 +128,12 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
   const info = await api<{ path: string; name: string }>('/api/project/open', { path: folder })
   current = info.path
   // The host opens the page itself: its key (which answers approvals) is not the plugin's.
-  const shown = await api<{ pages: number; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })
+  const shown = await api<{ shown: boolean; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })
   const s = await host()
   let where = `The open web UI page shows it now.`
-  if (!shown.pages) {
+  if (!shown.shown) {
     where = shown.opened ? `A browser window opens it.`
-      : `No web UI page is open; the user opens it from the URL the host printed when it started (or call tsugumi_open again without browser: false).`
+      : `No web UI page is free to show it (a page on another project keeps that project); the user opens it from the URL the host printed when it started (or call tsugumi_open again without browser: false).`
   }
   let out = `Opened "${info.name}" (${current}) in the Tsugumi web UI (http://127.0.0.1:${s.port}/). ${where}`
   if (!rulesSent) {

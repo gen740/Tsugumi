@@ -72,9 +72,9 @@ struct GraphCanvas: View {
         // The Agent at work: threads being drawn and the tsugumi.
         // (one bird per helper while the Agent has work delegated)
         ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
-          // One Tsugumi: while the guide's bird is out (demo mode), the Agent's bird is not drawn too.
+          // One Tsugumi: while the guide's bird is out here (demo mode), the Agent's bird is not drawn too.
           PresenceLayer(presence: p, geometry: presenceGeometry(routed),
-                        avatar: GuideController.shared.awayWindows > 0 ? .none : prefs.agentAvatar,
+                        avatar: GuideController.shared.birdAway(session.identity.url.path) ? .none : prefs.agentAvatar,
                         lead: p === session.presence && !session.helperPresences.isEmpty)
         }
         if let p = pending {

@@ -30,8 +30,10 @@ final class AppModel {
   private(set) var recents: [RecentProject] = []
   private(set) var sessions: [String: ProjectSession] = [:]
   var error: String?
-  /// "New project" asked from the menu: Home opens its sheet.
-  var requestNewProject = false
+  /// The main windows there are, each with its project or Home (MainWindowRouting.swift).
+  var mainWindows: [Workspace] = []
+  /// What the next new main windows do first.
+  @ObservationIgnored var pendingWindowIntents: [MainWindowIntent] = []
   let demosRoot: URL?
   private(set) var setup: EnvironmentManager.SetupStatus?
   private(set) var checkingSetup = false
@@ -153,6 +155,9 @@ final class AppModel {
     holders[id, default: 1] -= 1
     guard holders[id] ?? 0 <= 0 else { return }
     holders[id] = nil
+    // Edits that could not be saved stay open: opening it again finds them, quitting asks.
+    guard !s.dirty else { return }
+    if let c = chats[id] { GuideController.shared.chatClosed(c) }
     chats[id]?.cancel()
     chats[id] = nil
     sessions[id] = nil

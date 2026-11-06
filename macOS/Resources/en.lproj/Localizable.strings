@@ -275,6 +275,7 @@
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
+"この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
 "この版から始めますか？" = "Start from this version?";
 "この版から始める" = "Start from This Version";
@@ -496,7 +497,6 @@
 "プロジェクトの実行環境が起動するとターミナルを使えます。" = "The terminal can be used once the project's environment is running.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
-"プロジェクトを切り替えられません" = "Cannot switch projects";
 "プロジェクトを取り込む" = "Import Project";
 "プロジェクトを複製" = "Duplicate Project";
 "プロジェクトを複製…" = "Duplicate Project…";
@@ -789,7 +789,6 @@
 "実行中は Card を削除できません。" = "Cards cannot be deleted while running.";
 "実行中は Card を変更できません" = "Cards cannot be changed while running";
 "実行中は Card を変更できません。実行が終わってから適用してください。" = "Cards cannot change while running. Apply after the run ends.";
-"実行中はデモを開けません。停止するか終了を待ってください。" = "A demo cannot be opened while a run is going. Stop it or wait for it to end.";
 "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。" = "Projects cannot be switched while running. Stop the run or wait for it to end.";
 "実行中は別の版に移れません。" = "You cannot move to another version while a run is in progress.";
 "実行中は変更できません" = "Cannot change while running";
@@ -890,6 +889,7 @@
 "文字サイズ: %lld" = "Font size: %lld";
 "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）" = "Run the document's whole workflow from its start Card (unsaved changes are saved first)";
 "新しい API キー" = "New API key";
+"新しいウインドウ" = "New Window";
 "新しいタブで開く" = "Open in New Tab";
 "新しいターミナル" = "New Terminal";
 "新しいパス" = "New path";

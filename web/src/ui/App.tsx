@@ -3,7 +3,7 @@
 // are routed here to the active project and tab (the macOS menu commands);
 // the canvas handles its own single-key shortcuts while it has the focus.
 import { useEffect, useRef, useState } from 'react'
-import { onServerEvent } from '../api'
+import { onServerEvent, reportPageProject } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { canvasFor } from '../model/canvas'
@@ -40,9 +40,11 @@ export function App() {
       const s = await app.session(dir)
       workspace.open(s, scope)
       if (scope) workspace.set('showChat', false)
+      reportPageProject(s.dir)
       const u = new URL(location.href)
       u.searchParams.set('project', s.dir)
       if (!scope) u.searchParams.delete('scope')
+      u.searchParams.delete('fresh')
       history.replaceState(null, '', u)
     } catch (e) {
       app.setError(e)
@@ -54,7 +56,15 @@ export function App() {
       void guide.refresh()
       // `?project=<folder>` (or the server's launch argument) opens that project.
       const p = params.get('project') ?? app.status?.launchProject
+      if (p && params.has('fresh')) app.markFresh(p)
       if (p && !app.setupNeeded) void open(p, detached ? detachedScope!.split('/').filter(Boolean) : undefined)
+      // `?new` is another tab's ⌘N: this tab's Home opens the sheet.
+      if (params.has('new')) {
+        app.request('requestNewProject', true)
+        const u = new URL(location.href)
+        u.searchParams.delete('new')
+        history.replaceState(null, '', u)
+      }
     })
   }, [])
 
@@ -72,6 +82,7 @@ export function App() {
       return false
     }
     workspace.close()
+    reportPageProject(undefined)
     const u = new URL(location.href)
     u.search = ''
     history.replaceState(null, '', u)
@@ -81,12 +92,9 @@ export function App() {
   workspace.switchProject = detached ? undefined : () => void leaveProject()
   // The guide's buttons act on this page.
   setGuideWindow({
-    openProject: (p) => void openReplacing(p),
+    openProject: (p) => void openProject(p),
     home: () => void leaveProject(),
-    newProject: () => void (async () => {
-      if (workspace.session && !(await leaveProject())) return
-      app.request('requestNewProject', true)
-    })(),
+    newProject: () => void newProject(),
     showChat: () => workspace.set('showChat', true),
   })
 
@@ -97,16 +105,37 @@ export function App() {
     if (!workspace.session) await open(dir)
   }
 
-  // The latest handlers, for the one keydown listener.
-  const commands = useRef({ leaveProject, openReplacing })
-  commands.current = { leaveProject, openReplacing }
+  /** A project opens on this tab's Home; from a project, in a browser tab of its own
+   *  (a browser that blocks the new tab: here, once the open one has been left). */
+  const openProject = async (dir: string) => {
+    if (!workspace.session) return open(dir)
+    if (workspace.session.dir === dir) return
+    const q = new URLSearchParams({ project: dir })
+    const fresh = app.takeFresh(dir)
+    if (fresh) q.set('fresh', '')
+    if (window.open(`${location.pathname}?${q}`, '_blank')) return
+    if (fresh) app.markFresh(dir)
+    await openReplacing(dir)
+  }
 
-  // Claude Code (the plugin) opened a project: this page shows it. When it
-  // asks to widen what Cards may do, the chat (where that is approved) opens.
+  /** The new project sheet, on this tab's Home; from a project, on a new tab's. */
+  const newProject = async () => {
+    if (workspace.session && window.open(`${location.pathname}?new`, '_blank')) return
+    if (workspace.session && !(await leaveProject())) return
+    app.request('requestNewProject', true)
+  }
+
+  // The latest handlers, for the one keydown listener.
+  const commands = useRef({ leaveProject, openProject, newProject })
+  commands.current = { leaveProject, openProject, newProject }
+
+  // Claude Code (the plugin) opened a project: the server chose this page to
+  // show it (on Home; other pages keep their projects). When it asks to widen
+  // what Cards may do, the chat (where that is approved) opens.
   useEffect(() => {
     if (detached) return
     return onServerEvent((e) => {
-      if (e.type === 'agentOpen' && workspace.session?.dir !== e.project) void commands.current.openReplacing(e.project)
+      if (e.type === 'agentOpen' && !workspace.session) void commands.current.openProject(e.project)
       if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'permission' && workspace.session?.dir === e.project) workspace.set('showChat', true)
     })
   }, [])
@@ -151,11 +180,7 @@ export function App() {
       e.stopPropagation()
       switch (action) {
         case 'newProject':
-          if (detached) return
-          void (async () => {
-            if (workspace.session && !(await commands.current.leaveProject())) return
-            app.request('requestNewProject', true)
-          })()
+          if (!detached) void commands.current.newProject()
           return
         case 'openProject':
           if (!detached) app.request('requestOpenProject', true)
@@ -222,12 +247,12 @@ export function App() {
           onClose={() => app.request('requestOpenProject', false)}
           onPick={(p) => {
             app.request('requestOpenProject', false)
-            void openReplacing(p)
+            void openProject(p)
           }} />
       )}
       {duplicating && workspace.session && (
         <DuplicateProjectSheet dir={workspace.session.dir} onClose={() => setDuplicating(false)}
-          onError={(m) => setSwitchError(m)} onCreated={(p) => void openReplacing(p)} />
+          onError={(m) => setSwitchError(m)} onCreated={(p) => void openProject(p)} />
       )}
       {switchError && (
         <Sheet onClose={() => setSwitchError(undefined)} width={420}>

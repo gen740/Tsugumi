@@ -202,10 +202,30 @@ function listDir(dir: string) {
 
 // ---- Events (Server-Sent Events) ------------------------------------------------
 
-const streams = new Set<http.ServerResponse>()
+/** The open pages: browser tabs, each with its own project. */
+interface Page {
+  id: string
+  /** A child workflow's page: it is never given another project. */
+  detached: boolean
+}
+const streams = new Map<http.ServerResponse, Page>()
+/** The project each page shows, by its id (none: Home). */
+const pageProjects = new Map<string, string>()
 function broadcast(v: unknown) {
   const line = `data: ${JSON.stringify(v)}\n\n`
-  for (const s of streams) s.write(line)
+  for (const s of streams.keys()) s.write(line)
+}
+
+/** Shows a project without taking another tab's away: a page that shows it
+ *  already, or one on Home is told to. False: no page is free for it. */
+function showOnPage(project: string): boolean {
+  const open = [...streams.entries()]
+  if (open.some(([, p]) => pageProjects.get(p.id) === project)) return true
+  const home = open.find(([, p]) => !pageProjects.has(p.id) && !p.detached)
+  if (!home) return false
+  pageProjects.set(home[1].id, project)
+  home[0].write(`data: ${JSON.stringify({ type: 'agentOpen', project })}\n\n`)
+  return true
 }
 envs.observe((key, state) => broadcast({ type: 'env', key, state: publicState(state) }))
 
@@ -358,6 +378,12 @@ const routes: Record<string, Handler> = {
     return { ok: true }
   },
   'POST /api/demo/copy': (b) => ({ path: copyDemo(String(b.id)) }),
+  // What a page shows now (Home: no project); see showOnPage.
+  'POST /api/page': (b) => {
+    if (b.project) pageProjects.set(String(b.page), projectDir(b.project))
+    else pageProjects.delete(String(b.page))
+    return {}
+  },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/stop': async (b) => {
     await envs.stop(projectDir(b.path))
@@ -387,7 +413,7 @@ const routes: Record<string, Handler> = {
     stopTerminal(terminal(b.id))
     return { ok: true }
   },
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, openPage }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, showOnPage, openPage }),
 }
 
 // The page is opened through the URL printed at start, which carries this
@@ -484,11 +510,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
     res.write(': hello\n\n')
-    streams.add(res)
+    const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
+    streams.set(res, page)
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
     req.on('close', () => {
       clearInterval(ping)
       streams.delete(res)
+      pageProjects.delete(page.id)
     })
     return
   }
@@ -533,7 +561,7 @@ async function shutdown() {
   try {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
-  for (const s of streams) s.end()
+  for (const s of streams.keys()) s.end()
   for (const t of terminals.values()) stopTerminal(t, 'SIGKILL')
   server.close()
   // Active runs are interrupted by tsugumid itself; documents stay in the folders.

@@ -15,12 +15,23 @@ export async function api<T = any>(path: string, body?: unknown): Promise<T> {
 type Listener = (e: any) => void
 const listeners = new Set<Listener>()
 let source: EventSource | undefined
+/** This page (browser tab) to the host server. */
+let pageId: string | undefined
+const page = () => (pageId ??= crypto.randomUUID())
+let reported: string | undefined
+
+/** Tells the host server what this page shows now (it picks a free page for Claude Code's projects). */
+export function reportPageProject(project?: string) {
+  reported = project
+  void api('/api/page', { page: page(), project }).catch(() => {})
+}
 
 /** Events from the host server: environment states, terminals and Agent progress. */
 export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
   if (!source) {
-    source = new EventSource('/api/events')
+    const detached = new URLSearchParams(globalThis.location?.search).has('scope')
+    source = new EventSource(`/api/events?page=${page()}${detached ? '&detached' : ''}`)
     // Events sent while the stream was down are lost: after it comes back,
     // every listener reads its state again ({ type: 'reconnected' }).
     let lost = false
@@ -30,6 +41,8 @@ export function onServerEvent(fn: Listener): () => void {
     source.onopen = () => {
       if (!lost) return
       lost = false
+      // A new stream is a new page to the server.
+      reportPageProject(reported)
       for (const l of [...listeners]) l({ type: 'reconnected' })
     }
     source.onmessage = (m) => {
