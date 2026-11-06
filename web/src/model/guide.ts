@@ -164,6 +164,9 @@ export class GuideController extends Observable {
     return this.available || this.external
   }
 
+  /** The files the chat's Agent is writing: while one plays, the bird is at its Card. */
+  writer?: { at(now: number): { card: string } | undefined }
+
   /** The chat's Agent (or Claude Code) called a tool: the bird goes to the Card it looks at. */
   chatWork(tool: string, args: string, from?: string) {
     if (!this.present) return

@@ -34,6 +34,8 @@ struct PresenceGeometry {
   var dotted: (AgentPresence.Wire) -> Bool = { _ in false }
   var screen: (CGPoint) -> CGPoint
   var zoom: Double
+  /// The Cards and frames of the scope, which a panel keeps clear of if it can.
+  var obstacles: () -> [CGRect] = { [] }
 }
 
 /// The bird's place and doing at one moment (world units).
@@ -199,8 +201,10 @@ struct PresenceLayer: View {
     let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
-      if avatar != .none, let code = presence.liveCode, let card = geometry.card(code.card) {
-        WritingPanel(code: code, card: card, geometry: geometry, color: color)
+      if avatar != .none, let code = presence.liveCode(at: t), let card = geometry.card(code.card) {
+        WritingPanel(code: code, card: card, geometry: geometry,
+                     clear: -BirdMetrics.feetToCenter.dy * CGFloat(geometry.zoom) + PresenceBubble.rise(avatar, zoom: z),
+                     canvas: size, color: color)
       }
       if avatar != .none, presence.visible(at: t), let pose = reduceMotion ? ch.still(at: t) : ch.posed(at: t) {
         let fade = presence.fade(at: t)
@@ -232,13 +236,17 @@ struct PresenceLayer: View {
         }
         if let line = presence.line(at: t) {
           let since = t.timeIntervalSince(line.since)
-          let width = line.text.reduce(CGFloat(22)) { $0 + ($1.isASCII ? 6.9 : 11.8) }
+          let room = size.width - 24
+          let width = min(room, line.text.reduce(CGFloat(22)) { $0 + ($1.isASCII ? 6.9 : 11.8) })
+          let top = p.y - PresenceBubble.rise(avatar, zoom: z)
           // A done line goes quietly before the bird does.
-          let leaving = presence.working ? 1 : AgentPresence.rise((AgentPresence.Timing.doneLine - since) / 0.8)
-          PresenceBubble(text: line.text, color: color)
+          let playing = presence.current(at: t).map { $0.beat.end > t } ?? false
+          let leaving = presence.working || playing ? 1 : AgentPresence.rise((AgentPresence.Timing.doneLine - since) / 0.8)
+          PresenceBubble(text: line.text, color: color, maxWidth: room)
             .opacity(min(1, since / 0.45) * leaving * fade.opacity)
             .offset(x: min(size.width - 12 - width, max(12, p.x - 36)),
-                    y: p.y - (avatar == .bird ? 54 * min(1.3, max(0.8, z)) : 34) + CGFloat(5 * (1 - AgentPresence.rise(since / 0.45))))
+                    // Under the window's bars it could not be read.
+                    y: (inside ? max(WritingPanel.margins.top, top) : top) + CGFloat(5 * (1 - AgentPresence.rise(since / 0.45))))
         }
         if !inside { EdgeMark(at: p, in: size, color: color) }
       }
@@ -275,50 +283,92 @@ struct PresenceLayer: View {
   }
 }
 
-/// Where the bird was over the last moment: a thread that thins and fades.
-/// The file the Agent is writing, above its Card: what has arrived and
-/// nothing else, marked as not saved. Not drawn when too small to read.
+/// The file the Agent is writing, by its Card and clear of the bird and the
+/// bubble there: what has arrived and nothing else, marked as saved or not.
+/// Not drawn when its Card is out of view.
 struct WritingPanel: View {
   let code: AgentPresence.LiveCode
   let card: CGRect
   let geometry: PresenceGeometry
+  /// How far above the Card's top edge the bird and its bubble reach (points).
+  let clear: CGFloat
+  let canvas: CGSize
   let color: Color
 
-  /// World units, as the Card itself.
+  /// Points at scale 1: scaled with the canvas only as far as stays readable
+  /// (the bubble beside it does not scale at all).
   static let size = CGSize(width: 300, height: 112)
-  static let gap: CGFloat = 16
+  static let gap: CGFloat = 8
   static let lines = 5
-  static let smallestZoom = 0.45
+  /// The window's bars float over the canvas here.
+  static let margins = NSEdgeInsets(top: 52, left: 12, bottom: 48, right: 12)
+
+  nonisolated static func scale(zoom: Double) -> CGFloat { min(1.3, max(0.8, CGFloat(zoom))) }
 
   /// The last lines of the text; the line being written is whole at its end.
+  /// A tab takes the room of four spaces, not a tab stop of its own.
   nonisolated static func tail(_ text: String, lines: Int = lines) -> [String] {
-    text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).map(String.init)
+    text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).suffix(lines)
+      .map { $0.replacingOccurrences(of: "\t", with: "    ") }
+  }
+
+  /// Where the panel goes (points on the canvas), given the Card there: above
+  /// the bird and the bubble, or under the Card when there is no room above or
+  /// it would cover something there (`others`) and would not under it. Wherever
+  /// it is, inside the view. nil: the Card is out of view (the bird's mark at
+  /// the edge says where).
+  nonisolated static func frame(card: CGRect, clear: CGFloat, scale: CGFloat, in view: CGRect, others: [CGRect] = []) -> CGRect? {
+    guard card.intersects(view) else { return nil }
+    let w = size.width * scale, h = size.height * scale
+    let x = min(max(card.midX - w / 2, view.minX), view.maxX - w)
+    let above = card.minY - clear - gap - h, below = card.maxY + gap
+    let fitsAbove = above >= view.minY, fitsBelow = below + h <= view.maxY
+    let free = { (y: CGFloat) in !others.contains { $0.intersects(CGRect(x: x, y: y, width: w, height: h)) } }
+    let y = fitsAbove && free(above) ? above
+      : fitsBelow && free(below) ? below
+      : fitsAbove || !fitsBelow && card.minY - view.minY > view.maxY - card.maxY ? above : below
+    return CGRect(x: x, y: min(max(y, view.minY), view.maxY - h), width: w, height: h)
   }
 
   var body: some View {
-    if geometry.zoom >= Self.smallestZoom {
-      let z = CGFloat(geometry.zoom)
-      let top = geometry.screen(CGPoint(x: card.midX, y: card.minY - Self.gap - Self.size.height))
-      let bottom = geometry.screen(CGPoint(x: card.midX, y: card.minY))
+    let z = Self.scale(zoom: geometry.zoom)
+    let m = Self.margins
+    let tl = geometry.screen(CGPoint(x: card.minX, y: card.minY)), br = geometry.screen(CGPoint(x: card.maxX, y: card.maxY))
+    let onScreen = CGRect(x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y)
+    let view = CGRect(x: m.left, y: m.top, width: canvas.width - m.left - m.right, height: canvas.height - m.top - m.bottom)
+    let others = geometry.obstacles().map { r -> CGRect in
+      let a = geometry.screen(r.origin), b = geometry.screen(CGPoint(x: r.maxX, y: r.maxY))
+      return CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y)
+    }
+    if let f = Self.frame(card: onScreen, clear: clear, scale: z, in: view, others: others) {
       let shown = Self.tail(code.text)
+      // To the right of the Card, where the bird and a short bubble are not.
+      let x = min(f.maxX, onScreen.maxX) - 20 * z
       Path { p in
-        p.move(to: CGPoint(x: bottom.x, y: top.y + Self.size.height * z))
-        p.addLine(to: bottom)
+        if f.maxY <= onScreen.minY {
+          p.move(to: CGPoint(x: x, y: f.maxY))
+          p.addLine(to: CGPoint(x: x, y: onScreen.minY))
+        } else if f.minY >= onScreen.maxY {
+          p.move(to: CGPoint(x: x, y: onScreen.maxY))
+          p.addLine(to: CGPoint(x: x, y: f.minY))
+        }
       }
       .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
       VStack(alignment: .leading, spacing: 3 * z) {
         HStack {
           Text(code.file).lineLimit(1).truncationMode(.head)
           Spacer(minLength: 8 * z)
-          Text("保存前")
+          Text(code.saved ? "保存済み" : "保存前").fixedSize()
         }
         .font(.system(size: 9.5 * z, design: .monospaced))
         .foregroundStyle(Color.white.opacity(0.55))
         VStack(alignment: .leading, spacing: 2 * z) {
           ForEach(Array(shown.enumerated()), id: \.offset) { n, line in
+            // Every row the same height, also with a font fallback's taller glyphs.
             Text(line.isEmpty ? " " : line)
               .lineLimit(1)
               .truncationMode(n == shown.count - 1 ? .head : .tail)
+              .frame(height: 13.5 * z, alignment: .leading)
           }
         }
         .font(.system(size: 10.5 * z, design: .monospaced))
@@ -326,15 +376,17 @@ struct WritingPanel: View {
         Spacer(minLength: 0)
       }
       .padding(10 * z)
-      .frame(width: Self.size.width * z, height: Self.size.height * z, alignment: .topLeading)
+      .frame(width: f.width, height: f.height, alignment: .topLeading)
       .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(white: 0.09)))
       .overlay(RoundedRectangle(cornerRadius: 8 * z).strokeBorder(color.opacity(0.55), lineWidth: 1))
+      .clipShape(RoundedRectangle(cornerRadius: 8 * z))
       .shadow(color: .black.opacity(0.3), radius: 6 * z, y: 3 * z)
-      .position(x: top.x, y: top.y + Self.size.height * z / 2)
+      .position(x: f.midX, y: f.midY)
     }
   }
 }
 
+/// Where the bird was over the last moment: a thread that thins and fades.
 struct Trail: View {
   let points: [CGPoint]
   let strong: Bool
@@ -361,12 +413,21 @@ struct Trail: View {
 struct PresenceBubble: View {
   let text: String
   var color = PresenceColor.thread
+  /// Wider than this it is cut at its end, not by the edge of the canvas.
+  var maxWidth: CGFloat = .infinity
+
+  /// How far above the bird's middle the bubble's top is (points).
+  static func rise(_ avatar: AgentAvatar, zoom z: CGFloat) -> CGFloat {
+    avatar == .bird ? 54 * min(1.3, max(0.8, z)) : 34
+  }
+
   var body: some View {
-    Text(text).font(.system(size: 11.5)).lineLimit(1)
+    Text(text).font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
       .padding(.horizontal, 10).padding(.vertical, 6)
       .background(RoundedRectangle(cornerRadius: 9).fill(.regularMaterial))
       .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(color.opacity(0.45), lineWidth: 1))
-      .fixedSize()
+      .frame(maxWidth: maxWidth, alignment: .leading)
+      .fixedSize(horizontal: false, vertical: true)
   }
 }
 

@@ -278,7 +278,8 @@ struct GraphCanvas: View {
     return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
                             wire: { w in routed.first { $0.thread == w }?.path },
                             dotted: { w in session.isDraftWire(from: w.from, to: w.to) },
-                            screen: { screen($0) }, zoom: camera.zoom)
+                            screen: { screen($0) }, zoom: camera.zoom,
+                            obstacles: { cardKeys.map(cardRect) + outputKeys.map(frameRect) })
   }
 
   /// Every wire of the scope, routed once per update and used for drawing,
