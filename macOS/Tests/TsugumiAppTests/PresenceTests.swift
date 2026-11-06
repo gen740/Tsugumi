@@ -220,3 +220,51 @@ import Testing
                  B(id: "card:c", rect: CGRect(x: 0, y: 250, width: 200, height: 80))]
   #expect(LayoutTidy.makeRoom(columns, across: true).map(\.id) == ["card:c"])
 }
+
+@MainActor @Test func theFileBeingWrittenShowsAboveItsCardUntilTheCallEnds() {
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  // Outside a turn, or from a tool that writes no files, nothing shows.
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
+  #expect(p.liveCode == nil)
+  p.turnStarted(now: t0)
+  p.toolInput(index: 1, tool: "run", delta: #"{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
+  #expect(p.liveCode == nil && p.beats.isEmpty)
+
+  p.toolInput(index: 2, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/src/main.py","bytes":"imp"#, now: t0)
+  #expect(p.liveCode == AgentPresence.LiveCode(card: "load", file: "src/main.py", text: "imp"))
+  // The bird goes there and says so, once, not for each piece.
+  #expect(p.beats.map(\.beat) == [.compose("load")])
+  #expect(p.line(at: t0)?.text == "load を書いています")
+  // Pieces faster than the screen are held, and none is lost.
+  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: t0.addingTimeInterval(0.001))
+  #expect(p.liveCode?.text == "imp")
+  p.toolInput(index: 2, tool: "project_save", delta: " os", now: t0.addingTimeInterval(0.05))
+  #expect(p.liveCode?.text == "import os")
+  #expect(p.beats.count == 1)
+
+  // Another Card: the panel moves at once, the bird follows.
+  p.toolInput(index: 2, tool: "project_save", delta: #""}},{"value":{"path":"definitions/rgb/src/main.py","bytes":"from"#, now: t0.addingTimeInterval(0.051))
+  #expect(p.liveCode?.card == "rgb" && p.liveCode?.text == "from")
+  #expect(p.beats.map(\.beat) == [.compose("load"), .compose("rgb")])
+
+  // The call ended: gone, whether or not the save went through.
+  p.toolInputEnded()
+  #expect(p.liveCode == nil)
+  // A file outside any Card has no place to show.
+  p.toolInput(index: 3, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.json","bytes":"{"#, now: t0.addingTimeInterval(1))
+  #expect(p.liveCode == nil)
+  // A turn that ends leaves nothing behind.
+  p.toolInput(index: 4, tool: "project_validate", delta: #"{"changes":[{"value":{"path":"definitions/a/b","bytes":"c"#, now: t0.addingTimeInterval(2))
+  #expect(p.liveCode?.card == "a")
+  p.turnEnded(.stopped, now: t0.addingTimeInterval(3))
+  #expect(p.liveCode == nil)
+}
+
+@Test func thePanelShowsTheLastLines() {
+  #expect(WritingPanel.tail("a\nb", lines: 5) == ["a", "b"])
+  #expect(WritingPanel.tail("1\n2\n3\n4\n5\n6\n7", lines: 3) == ["5", "6", "7"])
+  // A new line just begun is kept, so the text moves as it is written.
+  #expect(WritingPanel.tail("1\n2\n3\n", lines: 3) == ["2", "3", ""])
+  #expect(WritingPanel.tail("", lines: 3) == [""])
+}

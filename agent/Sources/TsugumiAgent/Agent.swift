@@ -93,6 +93,9 @@ public struct Conversation: Codable, Equatable {
 
 public enum AgentEvent: Sendable {
   case text(String)
+  /// A piece of a tool call's arguments as the model writes them; the call
+  /// has not started, and may never (`toolStarted` says when it does).
+  case toolInput(index: Int, name: String, delta: String)
   case toolStarted(id: String, name: String, arguments: String)
   case toolFinished(id: String, name: String, ok: Bool, summary: String)
   case compacted
@@ -361,6 +364,7 @@ public actor Agent {
             order.append(i)
           case .toolInput(let i, let pj):
             tools[i]?.json += pj
+            if let name = tools[i]?.name { events(.toolInput(index: i, name: name, delta: pj)) }
           case .blockStop:
             break
           case .stop(let reason, let usage):
