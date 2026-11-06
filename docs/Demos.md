@@ -23,6 +23,10 @@
 | [メタ解析: BCG ワクチン](#メタ解析-bcg-ワクチンmeta-analysis) | BCG ワクチンのメタ解析（metafor の dat.bcg） | 固定効果と変量効果、異質性、1 試験を除いたときの動き、緯度によるメタ回帰 |
 | [RNA-seq: airway とデキサメタゾン](#rna-seq-airway-とデキサメタゾンrna-seq) | RNA-seq（airway とデキサメタゾン） | DESeq2 と edgeR を別の分岐で比べ、細胞株の項を入れるかで遺伝子の数が大きく変わるのを見る |
 | [集計と層別で逆転する相関](#集計と層別で逆転する相関simpson) | シンプソンのパラドックス（ペンギンと Berkeley の入学） | 集計と層別で向きが逆転する相関と、どちらを読むかは問い次第であること |
+| [蓄電池の最適運用](#蓄電池の最適運用battery) | 蓄電池の充放電計画（合成の料金） | 動的計画法の最適計画が容量と料金でどう変わるか。定額の料金では動かさないのが最適になる |
+| [化学反応のゆらぎ](#化学反応のゆらぎgillespie) | Gillespie の確率シミュレーション | 率方程式との違い、定常分布を理論と照合し、分子数が減るとゆらぎが増えるのを見る |
+| [熱伝導の逆問題](#熱伝導の逆問題heat-inverse) | 測定から初期温度を復元する | 素朴な逆解が破綻し、Tikhonov 正則化の強さと測定時刻で復元がどう変わるか |
+| [生態系のモデル比較](#生態系のモデル比較ecology-models) | ノウサギとオオヤマネコの毛皮の記録（1900–1920） | 捕食モデルのあてはめと AICc・未知の年の予測による比較。良い値が機構の正しさを意味しないこと |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
@@ -517,6 +521,110 @@ start → branches ─┬→ penguins ─penguins→ share ─┬→ correlate �
 - `stratify` を `island` にする。Biscoe では負のまま、Dream と Torgersen では正になる。
 - `admissions` の表で、全体のオッズ比 1.84 が学科で調整すると 0.90 になるのを見る。`applications` の図で、応募先の偏りを見る。
 
+### 蓄電池の最適運用（`battery`）
+
+```text
+start → settings → market ─ share ─┬→ schedule
+                                   ├→ capacities
+                                   ├→ tariffs
+                                   └→ check
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | 容量 `capacity_kwh`（10）、電力の上限 `power_kw`（3）、往復効率 `round_trip_efficiency`（0.9）、売電の比 `export_ratio`（0.5）、蓄電量の刻み `soc_step_kwh`（0.1）、`seed`（7）、`days`（7）を流す |
+| `market` | Julia | seed から家の消費・太陽光・3 種類の料金（定額・時間帯別・市場連動）を 1 時間ごとに作る。すべて架空のデータと図に明記する |
+| `share` | fork | 条件とデータを 4 つの Card に配る |
+| `schedule` | Julia | 蓄電量を状態とする動的計画法で、電気代が最小の充放電を求める。`tariff` の料金での料金・充放電・蓄電量を図に示す |
+| `capacities` | Julia | 容量を変えて解き、節約額と追加 1 kWh あたりの節約、容量ごとの運転の違いを示す |
+| `tariffs` | Julia | 同じ電池を 4 つの契約で動かし、節約額・サイクル数・蓄電量の動きを比べる |
+| `check` | Julia | 短い時間と小さな電池で全探索と比べ、定額で売電も同額なら動かないこと、刻みを細かくしたときの差を表にする。外れれば失敗する |
+
+**試すこと**
+- `schedule` の `tariff` を `flat`・`tou`・`spot` に変えて、その Card だけを実行し直す。
+- `settings` の `round_trip_efficiency` を下げて実行する。時間帯別の料金は、効率が安値 / 高値（18 / 42）を下回ると往復で得をしなくなる。
+- `settings` の `export_ratio` を 1 にすると売電が買電と同額になり、太陽光をためる意味がなくなる。
+- `capacities` の `capacities_kwh` を変えて、どこで頭打ちになるかを見る。
+
+### 化学反応のゆらぎ（`gillespie`）
+
+```text
+start → settings ─ share ─┬→ trajectories
+                          ├→ stationary ─┐
+                          ├→ scaling ────┼→ check
+                          └→ binding ────┘
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | 合成の速さ `synthesis`（2）、分解の速さ `degradation`（0.1）、体積 `volume`（1）、本数 `runs`（2000）、`seed`（1）を流す |
+| `share` | fork | 条件を 4 つの Card に配る |
+| `trajectories` | Julia | Gillespie 法で `runs` 本を計算し、`shown_runs` 本の軌道・全本の平均・率方程式の解を重ねる |
+| `stationary` | Julia | 十分に時間がたった終点の分布を、理論のポアソン分布と比べる。平均・分散・ファノ因子を次へ渡す |
+| `scaling` | Julia | 体積を変えて変動係数を測り、理論の 1/√N と比べる。濃度に直した軌道も体積ごとに示す |
+| `binding` | Julia | A + B ⇌ C を体積を変えて計算し、結合割合を厳密解（詳細釣り合い）と率方程式と比べる |
+| `check` | Julia | 3 つの結果を閉じた式と比べ、標準誤差で何個分ずれたかを表にする。`limit_sigma` を超えると失敗する |
+
+**試すこと**
+- `settings` の `volume` を 0.1 にして実行する。平均 2 個のポアソン分布になり、軌道は 0 にも落ちる。ファノ因子は 1 のまま。
+- `trajectories` の `shown_runs` を増やして、その Card だけを実行し直す。
+- `binding` の `on_rate` や `concentration` を変えて、率方程式からのずれを見る。
+- `check` の `limit_sigma` を小さくして、統計のゆらぎでどこまで外れるかを見る。
+
+### 熱伝導の逆問題（`heat-inverse`）
+
+```text
+start → settings → forward ─ share ─┬→ spectrum
+                                    ├→ naive
+                                    ├→ tikhonov ─choice─┐
+                                    ├────────────────── reconstruct
+                                    ├→ horizon
+                                    └→ check
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | 格子 `cells`（100）、熱拡散率 `alpha`（1）、測定の時刻 `final_time`（0.002）、ノイズ `noise`（0.2 ℃）、`seed`（3）を流す |
+| `forward` | Julia | 架空の初期温度を作り、両端断熱の差分行列の固有分解で時刻 T の温度を計算して、ノイズをのせる。総熱量の保存を確かめる |
+| `share` | fork | 測定を 6 つの Card に配る |
+| `spectrum` | Julia | 特異値の減衰を時刻ごとに示し、測定の成分がノイズに埋もれるモードの番号を示す |
+| `naive` | Julia | 行列の逆をそのまま掛けると発散することを示す（ノイズなしでも丸め誤差で発散する） |
+| `tikhonov` | Julia | λ を掃引し、L 曲線と誤差を示す。食い違い原理・L 字の角・真の値に最も近い λ を比べる |
+| `reconstruct` | Julia | 選んだ λ（`lambda` が 0 なら食い違い原理の値）と、小さすぎ・大きすぎの λ の復元を真の値と並べる |
+| `horizon` | Julia | 同じノイズで測定の時刻を変えて復元し、遅いほど細部が失われることを示す |
+| `check` | Julia | 総熱量の保存、余弦モードの解析解、陰解法との一致、ノイズなし・早い時刻での復元、最大値原理を表で確かめる。外れれば失敗する |
+
+**試すこと**
+- `settings` の `final_time` を 0.02 にして実行する。同じノイズでも復元の誤差が大きくなる。
+- `reconstruct` の `lambda` を変えて、その Card だけを実行し直す。0 に戻すと食い違い原理の値を使う。
+- `settings` の `noise` を 0、`final_time` を 0.00005 にすると、復元は真の値に戻る。
+- `horizon` の `times` を変えて、ぎざぎざが消える時刻を探す。
+
+### 生態系のモデル比較（`ecology-models`）
+
+```text
+start → load ─ share ─┬→ fit ─ fits-share ─┬→ check
+                      │                    ├→ phase
+                      │                    └→ scores
+                      └→ forecast ────────────→ scores
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `load` | Julia | ハドソン湾会社の毛皮の記録（千枚、1900〜1920 年）を Card に同梱した CSV から読み、出典とともに示す |
+| `share` | fork | 記録を `fit` と `forecast` に配る |
+| `fit` | Julia | 3 つのモデルを RK4 で解きながら、対数の二乗誤差を Nelder-Mead で最小化する（対数空間、`restarts` 通りの初期値、`fit_until` 年まで）。AIC・AICc・BIC を求めて記録に重ねる |
+| `forecast` | Julia | `fit_until`（1914）年までで当てはめ、残した年を予測して誤差を比べる |
+| `fits-share` | fork | 当てはめの結果を 3 つの Card に配る |
+| `scores` | Julia | 対数 RMSE、AIC、AICc、BIC、予測誤差、同じ解に届いた初期値の数、最良の値を表にする |
+| `phase` | Julia | 各モデルの最良の解を `years` 年先まで延ばし、相図で比べる |
+| `check` | Julia | ロトカ・ヴォルテラの保存量で RK4 を確かめ、当てはめた値を Stan の事例研究の事後分布と比べる |
+
+**試すこと**
+- `forecast` の `fit_until` を 1908〜1918 に変えて、その Card だけを実行し直す。残す年が長いほど予測は難しくなる。
+- `fit` の `restarts` を減らしたり増やしたりして、`scores` の「同じ解に届いた初期値」と誤差を見る。
+- `phase` の `years` を増やして、ロジスティックの渦がどこへ向かうかを見る。
+
 ## Draft 版（Agent に実装させる）
 
 `casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
@@ -564,6 +672,10 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **メタ解析: BCG ワクチン**（`meta-analysis`） | そのまま実行する。`pool` の `method`（DL・REML など）と `exclude`（除く試験番号）、`moderator` の `moderator`（`ablat`・`year`）を変えて再実行する | 13 試験の森林図に固定効果（RR 0.65）と変量効果（RR 0.49）の菱形が載り、I² = 92.1%、τ² = 0.309 が出る。`moderator` は緯度の傾きと残差 τ²、`sensitivity` は 1 試験を除いたときと推定量を変えたときの併合値を並べる |
 | **RNA-seq: airway**（`rna-seq`） | そのまま実行する（初回は DESeq2・edgeR・airway の Nix ビルドに時間がかかる）。`deseq` の `paired`、`volcano` の `fdr`・`lfc`、`filter` の `min_total` を変えて再実行する | 細胞株の項を入れると FDR < 0.05 の遺伝子が 2713 から 4030 に増える。DUSP1・FKBP5・TSC22D3 などの既知の応答遺伝子が上昇側に現れる。`compare` は DESeq2 と edgeR で一致する 3985 遺伝子を示す |
 | **集計と層別で逆転する相関**（`simpson`） | そのまま実行する。`correlate` の `stratify`（species・sex・island）を変えて、`correlate` から先を実行し直す | くちばしの長さと厚さの r は全体で −0.24、種ごとでは 0.39・0.65・0.64。性別では逆転せず、島では一部だけ逆転する。Berkeley の出願は全体のオッズ比 1.84 が学科で調整すると 0.90 になる |
+| **蓄電池の最適運用**（`battery`） | そのまま実行する。`schedule` の `tariff` を変えてその Card だけを再実行する。`settings` の `capacity_kwh`・`round_trip_efficiency`・`export_ratio` を変えて再実行する | 架空の 1 週間で、定額で売電も同額なら節約 0 円・0 サイクルで電池は動かない。売電が半額なら定額でも約 786 円、時間帯別で約 1478 円、市場連動で約 1442 円の節約になる。容量を増やすと節約は頭打ちになる。`check` は動的計画法と全探索の一致を示す |
+| **化学反応のゆらぎ**（`gillespie`） | そのまま実行する。`settings` の `volume`・`synthesis`・`degradation`・`runs` を変えて再実行する。`scaling` の `volumes` を変えてその Card だけを再実行する | 軌道は揺れ、2000 本の平均は率方程式に乗る。定常の平均と分散は理論の 20 に近く（20.15、20.46）、ファノ因子は 1.015。変動係数は 1/√N に沿って分子が少ないほど大きくなる。A + B ⇌ C は各 2 個で結合割合 0.57、率方程式の 0.50 から外れ、体積を増やすと近づく |
+| **熱伝導の逆問題**（`heat-inverse`） | そのまま実行する。`settings` の `final_time`・`noise` を変えて再実行する。`reconstruct` の `lambda` を変えてその Card だけを再実行する | 素朴な逆解は最大 3.8e+33 ℃ に発散し、Tikhonov 正則化は誤差 5.1 ℃ で形を取り戻す。λ が小さすぎても大きすぎても悪くなる。測定が遅いほどノイズより上に残るモードが減り（37 個から 3 個）、誤差は 1.9 ℃ から 10.6 ℃ に増える。ノイズなし・早い時刻なら真の値に戻る |
+| **生態系のモデル比較**（`ecology-models`） | そのまま実行する。`forecast` の `fit_until` を変えてその Card だけを再実行する。`fit` の `restarts`、`phase` の `years` を変える | この 21 年では 3 つのモデルの当てはめはほぼ同じ（対数 RMSE 0.219）で、AICc はパラメータの少ないロトカ・ヴォルテラが最良、ホリングの処理時間 h は 0 に近づく。1914 年までで当てはめた予測の誤差もロトカ・ヴォルテラが小さい（0.353、他は 0.421）。先まで延ばすと閉じた軌道と渦に分かれる。note は、AIC が良くても仕組みが正しいとは言えないこと、毛皮は個体数ではないことを述べる |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |

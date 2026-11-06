@@ -180,6 +180,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_demo_python_lab.py` | 濃度–反応曲線・分子の物性・細胞画像の計数のデモ（`TSUGUMI_TEST_DEMO_RUNS=1`）: 合成データの真の値、分子式から求めた分子量、正解の位置との照合、1 つの Card だけの再実行 |
 | `tests/python/test_language_cards.py` | R と Julia の Card（`rCard`・`juliaCard`）: params・値・File 出力が言語をまたいで型のとおりに渡ること、各種の表示が記録に届くこと、スクリプトの失敗が Card の失敗になること。bash Card の `$TSUGUMI_DISPLAY`（不正な内容は理由つきで失敗） |
 | `tests/python/test_demo_r.py` | R の 4 デモ（`TSUGUMI_TEST_DEMO_RUNS=1`）: 手で書いた Kaplan–Meier と Cox、逆分散重みの併合、既知の応答遺伝子、Pearson の相関との照合、1 つの Card だけの再実行 |
+| `tests/python/test_demo_julia.py` | Julia の 4 デモ（`TSUGUMI_TEST_DEMO_RUNS=1`）: 総当たりとの照合、定常分布の閉じた式、熱の保存とモードの減衰、RK4 の保存量と次数、1 つの Card だけの再実行 |
 | `tests/python/test_licenses.py` | アプリが同梱する唯一の数式フォントだけを使っていること |
 | `tests/python/test_docs.py` | 文書の検査: リンク・アンカー・パスの実在、文書・テスト・デモの一覧の漏れ、`Protocol.md` と静的サイトが生成元と一致すること、[Evidence.md](Evidence.md) のテスト名の実在、[CardGuide.md](CardGuide.md) のコードをそのページから取り出して Python・bash・C++ で実行すること |
 | `tests/python/test_release.py` | 版番号が `VERSION` 1 つから core・Nix・CMake・アプリに入ること、アプリが Swift Build でビルドされ、ビルドしたマシンのパス（パッケージのリソースの場所）を含まないこと、ビルドしたマシンのパス（`#filePath`）が debug ビルドの中にしかないこと、アプリと Web UI が API キーに同じ Keychain 項目を使うこと |

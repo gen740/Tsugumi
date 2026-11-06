@@ -1,0 +1,15 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "settings"
+    }
+  ],
+  "params": [
+    {
+      "name": "shown_runs",
+      "type": "uint64",
+      "data": 8
+    }
+  ]
+}

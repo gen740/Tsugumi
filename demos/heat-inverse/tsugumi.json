@@ -1,0 +1,141 @@
+{
+  "name": "熱伝導の逆問題",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "forward"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "spectrum"
+      },
+      {
+        "id": "naive"
+      },
+      {
+        "id": "tikhonov"
+      },
+      {
+        "id": "reconstruct"
+      },
+      {
+        "id": "horizon"
+      },
+      {
+        "id": "check"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "forward",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "forward",
+          "port": "measurement"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "spectrum"
+        },
+        "to": {
+          "card": "spectrum",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "naive"
+        },
+        "to": {
+          "card": "naive",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "tikhonov"
+        },
+        "to": {
+          "card": "tikhonov",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "reconstruct"
+        },
+        "to": {
+          "card": "reconstruct",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "horizon"
+        },
+        "to": {
+          "card": "horizon",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "check"
+        },
+        "to": {
+          "card": "check",
+          "port": "measurement"
+        }
+      },
+      {
+        "from": {
+          "card": "tikhonov",
+          "port": "choice"
+        },
+        "to": {
+          "card": "reconstruct",
+          "port": "choice"
+        }
+      }
+    ]
+  }
+}

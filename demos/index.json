@@ -319,6 +319,54 @@
       ]
     },
     {
+      "id": "battery",
+      "title": "蓄電池の最適運用",
+      "description": "Optimal charge and discharge of a home battery by dynamic programming over state of charge, on a synthetic week. A flat tariff with equal selling price leaves the battery still; savings saturate with capacity. The DP is checked against a brute force on a short horizon. Julia, charts in Vega-Lite.",
+      "path": "battery",
+      "tags": [
+        "Julia",
+        "最適化",
+        "動的計画法",
+        "架空データ"
+      ]
+    },
+    {
+      "id": "gillespie",
+      "title": "化学反応のゆらぎ",
+      "description": "Gillespie's stochastic simulation of mRNA birth and death against the rate equation: seeded trajectories, a Poisson stationary distribution (Fano factor about 1), noise growing as 1/sqrt(N) when the volume shrinks, and A + B <-> C departing from mass action in small volumes. Each value is compared with its closed form. Julia, charts in Vega-Lite.",
+      "path": "gillespie",
+      "tags": [
+        "Julia",
+        "確率シミュレーション",
+        "化学反応",
+        "理論との照合"
+      ]
+    },
+    {
+      "id": "heat-inverse",
+      "title": "熱伝導の逆問題",
+      "description": "Recover a rod's initial temperature from noisy measurements at a later time (synthetic). Singular values decay steeply, naive inversion blows up, Tikhonov regularization with the discrepancy principle and the L-curve recovers what the noise leaves, and a later measurement loses detail. The forward model is checked against heat conservation and analytic mode decay. Julia, charts in Vega-Lite.",
+      "path": "heat-inverse",
+      "tags": [
+        "Julia",
+        "逆問題",
+        "正則化",
+        "架空データ"
+      ]
+    },
+    {
+      "id": "ecology-models",
+      "title": "生態系のモデル比較",
+      "description": "Lotka-Volterra, logistic prey and Holling type II fitted to the real Hudson's Bay Company hare and lynx pelt records of 1900-1920 with a hand-written RK4 and Nelder-Mead: residuals, AIC and BIC, a forecast of held-out years, and phase portraits far beyond the data. RK4 is checked with Lotka-Volterra's conserved quantity. Julia, charts in Vega-Lite.",
+      "path": "ecology-models",
+      "tags": [
+        "Julia",
+        "モデル比較",
+        "生態学",
+        "公開データ"
+      ]
+    },
+    {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
       "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",

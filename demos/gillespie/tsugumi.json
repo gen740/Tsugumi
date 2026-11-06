@@ -1,0 +1,125 @@
+{
+  "name": "化学反応のゆらぎ",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "trajectories"
+      },
+      {
+        "id": "stationary"
+      },
+      {
+        "id": "scaling"
+      },
+      {
+        "id": "binding"
+      },
+      {
+        "id": "check"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "trajectories"
+        },
+        "to": {
+          "card": "trajectories",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "stationary"
+        },
+        "to": {
+          "card": "stationary",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "scaling"
+        },
+        "to": {
+          "card": "scaling",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "binding"
+        },
+        "to": {
+          "card": "binding",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "stationary",
+          "port": "stationary"
+        },
+        "to": {
+          "card": "check",
+          "port": "stationary"
+        }
+      },
+      {
+        "from": {
+          "card": "scaling",
+          "port": "scaling"
+        },
+        "to": {
+          "card": "check",
+          "port": "scaling"
+        }
+      },
+      {
+        "from": {
+          "card": "binding",
+          "port": "binding"
+        },
+        "to": {
+          "card": "check",
+          "port": "binding"
+        }
+      }
+    ]
+  }
+}

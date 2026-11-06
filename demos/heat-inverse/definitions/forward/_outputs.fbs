@@ -1,0 +1,4 @@
+namespace heat;
+table Measurement { seed:ulong; alpha:double; final_time:double; noise:double; x:[double]; truth:[double]; measured:[double]; }
+table Outputs { measurement:Measurement (required); }
+root_type Outputs;

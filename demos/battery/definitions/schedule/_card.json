@@ -1,0 +1,15 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "scenario"
+    }
+  ],
+  "params": [
+    {
+      "name": "tariff",
+      "type": "string",
+      "data": "spot"
+    }
+  ]
+}

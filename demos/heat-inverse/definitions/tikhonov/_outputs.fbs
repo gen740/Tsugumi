@@ -1,0 +1,4 @@
+namespace heat;
+table Choice { discrepancy:double; lcurve:double; oracle:double; error_discrepancy:double; error_lcurve:double; error_oracle:double; }
+table Outputs { choice:Choice (required); }
+root_type Outputs;

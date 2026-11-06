@@ -1,0 +1,10 @@
+{
+  "description": "毛皮の記録を読む",
+  "content": "ハドソン湾会社のノウサギとオオヤマネコの毛皮の数（千枚、1900〜1920 年）を、Card に同梱した CSV から読む。実データで、出典は stan-dev/example-models（Howard 2009 の講義資料から）。個体数そのものではない。",
+  "outputs": [
+    {
+      "name": "pelts",
+      "description": "年と 2 種の毛皮の数"
+    }
+  ]
+}

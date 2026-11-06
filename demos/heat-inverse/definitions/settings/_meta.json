@@ -1,0 +1,10 @@
+{
+  "description": "棒と測定の条件",
+  "content": "格子の数 cells、熱拡散率 alpha、測定の時刻 final_time、測定ノイズの標準偏差 noise（℃）、seed を次へ渡す。棒の長さは 1 で、時間は無次元。",
+  "outputs": [
+    {
+      "name": "settings",
+      "description": "条件の値"
+    }
+  ]
+}

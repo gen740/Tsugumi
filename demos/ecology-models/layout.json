@@ -1,0 +1,91 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 260,
+      "y": 0
+    },
+    "share": {
+      "x": 780,
+      "y": 0
+    },
+    "fit": {
+      "x": 1000,
+      "y": -560
+    },
+    "forecast": {
+      "x": 1000,
+      "y": 190
+    },
+    "fits-share": {
+      "x": 1960,
+      "y": -560
+    },
+    "check": {
+      "x": 2200,
+      "y": -976
+    },
+    "phase": {
+      "x": 2200,
+      "y": -556
+    },
+    "scores": {
+      "x": 2200,
+      "y": 190
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 生態系のモデル比較\n\nハドソン湾会社の毛皮の記録（**実データ**、1900〜1920 年、出典: [stan-dev/example-models](https://github.com/stan-dev/example-models/blob/master/knitr/lotka-volterra/hudson-bay-lynx-hare.csv)、Howard 2009 の講義資料から）に、3 つの捕食・被食モデルを当てはめます。\n\n$$\\text{LV: } \\dot H=aH-bHL,\\ \\ \\dot L=cHL-dL$$\n$$\\text{被食者ロジスティック: } aH\\to aH(1-H/K)$$\n$$\\text{ホリング II 型: } bH\\to \\frac{bH}{1+bhH}$$\n\n誤差は対数の二乗和で、同じ分散の正規ノイズを仮定して $\\mathrm{AIC}=n\\log(\\mathrm{SSE}/n)+2k$ で比べます。\n\n**AIC が良くても、その仕組みが正しいとは言えません**。AIC は手元の式の中での相対的な順位を示すだけで、残差の自己相関も無視しています。また**毛皮の数は個体数ではなく**、罠の数や毛皮の値段、捕らえやすさ（飢えた個体は罠にかかりやすい）に左右される代理の値です。\n\n**forecast** の fit_until で残す年を、**fit** の restarts で初期値の数を変えて試せます。\n",
+      "x": -40,
+      "y": -640,
+      "width": 700,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 100,
+      "y": 180,
+      "width": 640,
+      "height": 360
+    },
+    "fit": {
+      "x": 1000,
+      "y": -340,
+      "width": 860,
+      "height": 490
+    },
+    "forecast": {
+      "x": 1000,
+      "y": 410,
+      "width": 860,
+      "height": 460
+    },
+    "check": {
+      "x": 2460,
+      "y": -1000,
+      "width": 780,
+      "height": 360
+    },
+    "phase": {
+      "x": 2460,
+      "y": -580,
+      "width": 820,
+      "height": 420
+    },
+    "scores": {
+      "x": 2200,
+      "y": 340,
+      "width": 1100,
+      "height": 230
+    }
+  }
+}

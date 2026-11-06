@@ -1,0 +1,101 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 260,
+      "y": 0
+    },
+    "forward": {
+      "x": 540,
+      "y": 0
+    },
+    "share": {
+      "x": 1340,
+      "y": 0
+    },
+    "spectrum": {
+      "x": 1580,
+      "y": -836
+    },
+    "naive": {
+      "x": 1580,
+      "y": -442
+    },
+    "tikhonov": {
+      "x": 1580,
+      "y": -18
+    },
+    "reconstruct": {
+      "x": 1860,
+      "y": 386
+    },
+    "horizon": {
+      "x": 1580,
+      "y": 790
+    },
+    "check": {
+      "x": 1580,
+      "y": 1434
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 熱伝導の逆問題\n\nあとの時刻の温度から、棒の初期温度を当てる問題です。データは**架空**で、乱数のノイズをのせています。\n\n$$u_t=\\alpha u_{xx},\\quad u(x,T)=\\sum_k e^{-\\alpha\\lambda_k T}\\langle u_0,\\phi_k\\rangle\\phi_k$$\n\n細かいモードほど $e^{-\\alpha\\lambda_k T}$ で速く消えるので、逆に解くとノイズが同じ倍率で増えます（**naive**）。Tikhonov 正則化は小さな特異値の成分を弱めます。\n\n$$\\min_u\\ \\|Au-d\\|^2+\\lambda^2\\|u\\|^2,\\quad \\hat u=\\sum_k\\frac{\\sigma_k}{\\sigma_k^2+\\lambda^2}(u_k^{\\mathsf T}d)\\,v_k$$\n\n$\\lambda$ は食い違い原理 $\\|A\\hat u-d\\|\\approx\\sigma_{\\rm noise}\\sqrt{n}$ か L 曲線の角で選びます（**tikhonov**）。真の値が分かっている「最も近い $\\lambda$」は比較のためだけのものです。\n\n**settings** の final_time・noise、**reconstruct** の lambda を変えて試せます。**horizon** は遅く測ると失われる細部を示します。\n\nノイズの大きさは既知としています。この格子では消えたモードは取り戻せず、復元は「測定と矛盾しない解のひとつ」です。\n",
+      "x": -40,
+      "y": -640,
+      "width": 780,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "forward": {
+      "x": 540,
+      "y": 170,
+      "width": 740,
+      "height": 400
+    },
+    "spectrum": {
+      "x": 2140,
+      "y": -860,
+      "width": 810,
+      "height": 370
+    },
+    "naive": {
+      "x": 2140,
+      "y": -466,
+      "width": 810,
+      "height": 400
+    },
+    "tikhonov": {
+      "x": 2140,
+      "y": -42,
+      "width": 880,
+      "height": 380
+    },
+    "reconstruct": {
+      "x": 2140,
+      "y": 362,
+      "width": 840,
+      "height": 380
+    },
+    "horizon": {
+      "x": 2140,
+      "y": 766,
+      "width": 850,
+      "height": 620
+    },
+    "check": {
+      "x": 2140,
+      "y": 1410,
+      "width": 800,
+      "height": 300
+    }
+  }
+}

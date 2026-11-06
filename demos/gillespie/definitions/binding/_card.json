@@ -1,0 +1,43 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "settings"
+    }
+  ],
+  "params": [
+    {
+      "name": "concentration",
+      "type": "double",
+      "data": 2.0
+    },
+    {
+      "name": "on_rate",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "off_rate",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "volumes",
+      "type": "double[]",
+      "data": [
+        1,
+        2,
+        5,
+        10,
+        20,
+        50,
+        100
+      ]
+    },
+    {
+      "name": "replicas",
+      "type": "uint64",
+      "data": 40
+    }
+  ]
+}

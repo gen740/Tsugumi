@@ -1,0 +1,11 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "fits"
+    },
+    {
+      "name": "forecast"
+    }
+  ]
+}
