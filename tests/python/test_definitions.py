@@ -87,6 +87,178 @@ def test_rename_moves_the_definition_and_its_history(tmp_path):
         d.cleanup()
 
 
+def pretty(doc: dict) -> str:
+    """layout.json as the clients write it."""
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+
+
+def spelled(layout: dict) -> str:
+    """A number's spelling, which a rewrite of the file keeps."""
+    return pretty(layout).replace('"x": 10.5,', '"x": 10.50,')
+
+
+LAID_OUT = {
+    "flow": "topToBottom",
+    "cards": {"start": {"x": 0, "y": 0}, "src": {"x": 10.5, "y": 20, "collapsed": True}, "out": {"x": 30, "y": 40},
+              "src/inner": {"x": 1, "y": 2}, "src2": {"x": 5, "y": 6}},
+    "notes": [{"id": "n", "scope": "", "text": "メモ \"src\"\n改行", "x": 1, "y": 2}],
+    "displays": {"src": {"x": 100, "y": 200, "width": 300, "height": 150, "hidden": False},
+                 "src2": {"x": 7, "y": 8, "width": 9, "height": 10}},
+    "groups": [{"id": "g", "scope": "", "name": "src", "color": "blue", "cards": ["src", "out"],
+                "outputs": [{"card": "src", "port": "msg"}, {"card": "out", "port": "x"}]}],
+}
+
+
+def laid_out_project(root: Path, layout: dict = LAID_OUT) -> None:
+    builtin_project(root, extra_cards=[card("src2", "log")])
+    (root / "layout.json").write_text(spelled(layout), encoding="utf-8")
+
+
+def renamed_project(doc: dict, old: str, new: str) -> dict:
+    for c in doc["canvas"]["cards"]:
+        if c["id"] == old:
+            c["id"] = new
+    for e in doc["canvas"]["connections"]:
+        for side in ("from", "to"):
+            if e[side]["card"] == old:
+                e[side]["card"] = new
+    return doc
+
+
+def without_card(doc: dict, id: str) -> dict:
+    doc["canvas"]["cards"] = [c for c in doc["canvas"]["cards"] if c["id"] != id]
+    doc["canvas"]["connections"] = [e for e in doc["canvas"]["connections"] if id not in (e["from"]["card"], e["to"]["card"])]
+    return doc
+
+
+def test_an_agent_rename_keeps_the_cards_place_frame_and_group(tmp_path):
+    """The Agent saves RenameDefinition with SetProject and no SetLayout: the
+    layout follows, nothing stays under the old id, a Card whose id merely
+    starts with the old one is left alone, and the rest of the file keeps its
+    form (the spelling 10.50, the note's text)."""
+    root = tmp_path / "p"
+    laid_out_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        rev, doc = project_json(c)
+        res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetProject", json=json.dumps(renamed_project(doc, "src", "source"))),
+            change("RenameDefinition", id="src", to="source")])
+        moved = json.loads(json.dumps(LAID_OUT))
+        moved["cards"] = {{"src": "source", "src/inner": "source/inner"}.get(k, k): v for k, v in moved["cards"].items()}
+        moved["displays"] = {{"src": "source"}.get(k, k): v for k, v in moved["displays"].items()}
+        moved["groups"][0]["cards"] = ["source", "out"]
+        moved["groups"][0]["outputs"][0]["card"] = "source"
+        expected = spelled(moved)
+        assert (root / "layout.json").read_text(encoding="utf-8") == expected
+        assert text(c.call("ProjectInspectRequest").layoutJson) == expected
+        assert text(res.delta.layoutJson) == expected  # the clients learn it from the save
+    finally:
+        d.cleanup()
+    # It is what the next start reads too.
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        assert text(c.call("ProjectInspectRequest").layoutJson) == expected
+    finally:
+        d.cleanup()
+
+
+def test_a_rename_with_the_clients_own_layout_is_not_moved_twice(tmp_path):
+    """The UI sends the moved layout in the same save: it is stored as sent,
+    byte for byte. What a SetLayout still has under the old id moves, and the
+    Card's own entry replaces anything already under the new name."""
+    root = tmp_path / "p"
+    laid_out_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        rev, doc = project_json(c)
+        sent = json.dumps({"cards": {"source": {"x": 1, "y": 2}}, "displays": {"source": {"x": 1, "y": 2, "width": 3, "height": 4}}},
+                          separators=(",", ":"))
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
+            change("SetProject", json=json.dumps(renamed_project(doc, "src", "source"))),
+            change("RenameDefinition", id="src", to="source"),
+            change("SetLayout", json=sent)])
+        assert (root / "layout.json").read_text() == sent
+
+        rev, doc = project_json(c)
+        stale = {"cards": {"named": {"x": 9, "y": 9}, "source": {"x": 1, "y": 2}, "out": {"x": 3, "y": 4}}}
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetProject", json=json.dumps(renamed_project(doc, "source", "named"))),
+            change("RenameDefinition", id="source", to="named"),
+            change("SetLayout", json=json.dumps(stale))])
+        assert json.loads((root / "layout.json").read_text())["cards"] == {"named": {"x": 1, "y": 2}, "out": {"x": 3, "y": 4}}
+    finally:
+        d.cleanup()
+
+
+def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path):
+    """A Card the Agent deletes leaves no place, frame or group membership, so
+    a later Card of that name starts clear. A layout with nothing of the Card
+    is not rewritten, and a Card put back with its layout in the same save
+    keeps it."""
+    root = tmp_path / "p"
+    laid_out_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        rev, doc = project_json(c)
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src")])
+        kept = json.loads(json.dumps(LAID_OUT))
+        kept["cards"] = {k: v for k, v in kept["cards"].items() if k not in ("src", "src/inner")}
+        del kept["displays"]["src"]
+        kept["groups"][0]["cards"] = ["out"]
+        kept["groups"][0]["outputs"] = [{"card": "out", "port": "x"}]
+        assert (root / "layout.json").read_text(encoding="utf-8") == spelled(kept)
+
+        # Off the canvas with its definition left behind is deleted too.
+        rev, doc = project_json(c)
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetProject", json=json.dumps(without_card(doc, "src2")))])
+        del kept["cards"]["src2"]
+        del kept["displays"]["src2"]
+        assert (root / "layout.json").read_text(encoding="utf-8") == spelled(kept)
+
+        # A Card of the same name starts with no frame.
+        rev, doc = project_json(c)
+        doc["canvas"]["cards"].append({"id": "src"})
+        res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("PutDefinition", id="src", cardJson=json.dumps({"template": "logger"})),
+            change("SetProject", json=json.dumps(doc))])
+        assert res.delta.layoutJson is None
+        assert (root / "layout.json").read_text(encoding="utf-8") == spelled(kept)
+
+        # Nothing of the Card in the layout: not rewritten, even in another form.
+        rev, doc = project_json(c)
+        compact = json.dumps({"cards": {"out": {"x": 1, "y": 2}}}, separators=(",", ":"))
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetLayout", json=compact)])
+        rev, doc = project_json(c)
+        res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+            change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src")])
+        assert res.delta.layoutJson is None
+        assert (root / "layout.json").read_text() == compact
+
+        # An undo: the Card comes back, with its layout, in one save.
+        rev, doc = project_json(c)
+        doc["canvas"]["cards"].append({"id": "src"})
+        back = pretty({"cards": {"src": {"x": 5, "y": 6}, "out": {"x": 1, "y": 2}}})
+        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
+            change("PutDefinition", id="src", cardJson=json.dumps({"template": "logger"})),
+            change("SetProject", json=json.dumps(doc)),
+            change("SetLayout", json=back)])
+        assert (root / "layout.json").read_text() == back
+    finally:
+        d.cleanup()
+
+
 def test_every_card_needs_its_own_definition(tmp_path):
     root = tmp_path / "p"
     builtin_project(root)

@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#版ができるとき">版ができるとき</a></li><li class="d2"><a href="#実行の結果">実行の結果</a></li><li class="d2"><a href="#版のツリー">版のツリー</a></li><li class="d2"><a href="#nixpkgs">nixpkgs</a></li><li class="d2"><a href="#デモの履歴">デモの履歴</a></li><li class="d2"><a href="#実装">実装</a></li><li class="d2"><a href="#まだできないこと">まだできないこと</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#版ができるとき">版ができるとき</a></li><li class="d2"><a href="#実行の結果">実行の結果</a></li><li class="d2"><a href="#版のツリー">版のツリー</a></li><li class="d2"><a href="#版の要約">版の要約</a></li><li class="d2"><a href="#nixpkgs">nixpkgs</a></li><li class="d2"><a href="#デモの履歴">デモの履歴</a></li><li class="d2"><a href="#実装">実装</a></li><li class="d2"><a href="#まだできないこと">まだできないこと</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="版の管理git">版の管理（git）</h1>
@@ -65,17 +65,30 @@ run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの
 <p>Mac アプリは Workflow メニューの「版の履歴…」（⌥⌘Y）、Web UI はサイドバー下のボタンで開きます。</p>
 <ul>
 <li>枝分かれと合流を線で描き、各版に実行の回数と結果（点の色: 緑は成功、赤は失敗）、手動で残した版の名前（tag）、枝の名前、変わった Card を表示します。</li>
-<li>版の点や行にポインタを乗せると、その版の実行の結果と概要を新しい順に出します（5 回分まで）。</li>
-<li>版を選ぶと、そのメッセージと実行の結果・概要を見られます。「この版から始める」で、今の内容を版として残してから、その版の内容に戻ります。</li>
+<li>版の点や行にポインタを乗せると、その版で何が変わったかの短い文（版の要約）と、その版の Card のつながりのミニマップが出ます。ミニマップではその版で変わった Card が強調されます。</li>
+<li>版を選ぶと、そのメッセージ、版の要約、実行の結果と概要を見られます。「この版から始める」で、今の内容を版として残してから、その版の内容に戻ります。</li>
 <li>枝の先の版に戻ると、その枝を続けます。それ以外の版から変更して実行すると、新しい枝（<code>try-&lt;版&gt;</code>）になり、前の流れは消えません。</li>
 <li>未保存の変更があるときと実行中は、別の版に移れません。</li>
+</ul>
+<h2 id="版の要約">版の要約</h2>
+<p>版の履歴の上の「版の要約」をオンにすると（最初に確認します。既定はオフ）、小さなモデル（Anthropic なら <code>claude-haiku-5-5</code>。OpenAI は Agent のモデル）が、その版で何が変わったかを短い文にします。実行の概要とは別物で、こちらはモデルが書く文です。</p>
+<ul>
+<li><strong>いつ作るか</strong>: その版の実行が終わったときと、要約のない版にポインタを乗せたときに、1 回だけ作ります。作る処理はアプリと Web UI のサーバーにあり（API キーがあるのはここだけです）、<code>tsugumid</code> はモデルを呼びません。ページやアプリが開いていない間の実行は、次にポインタを乗せたときに作ります。</li>
+<li><strong>何を送るか</strong>: その版の <code>VersionDiff</code> です。<code>tsugumi.json</code>、Card の <code>_card.json</code>・<code>_meta.json</code>・<code>_link.json</code>・<code>_outputs.fbs</code>・<code>default.nix</code>、<code>src/</code> のコード（<code>.py</code> <code>.cc</code> <code>.cpp</code> <code>.cxx</code> <code>.c</code> <code>.h</code> <code>.hh</code> <code>.hpp</code> <code>.nix</code> <code>.fbs</code> <code>.sh</code>）の差分に限ります。<code>data/</code> などのデータファイル、<code>src/</code> の中のコード以外のファイル、<code>layout.json</code> は送りません。長いときは切ります（1 ファイル 4,000 バイト、全体 12,000 バイト）。ただし <code>_card.json</code> のパラメータの値とコードに書かれた値は送られます。</li>
+<li><strong>どこに残すか</strong>: commit の note（<code>refs/notes/tsugumi-summary</code>）です。実行の記録（<code>refs/notes/tsugumi</code>）とは分けているので、<code>git log --notes=tsugumi --grep=failed</code> はモデルの文に左右されません。git からは次のコマンドで読めます。</li>
+</ul>
+<pre><code class="language-bash">git log --notes=tsugumi-summary
+</code></pre>
+<ul>
+<li>文は差分だけから書かせますが、モデルの文なので誤ることがあります。確かなのは差分と実行の記録です。</li>
+<li>ChatGPT プランでは作りません（プランの利用枠は Agent のためのものです）。</li>
 </ul>
 <h2 id="nixpkgs">nixpkgs</h2>
 <p>新しいプロジェクトは、作った Tsugumi の nixpkgs（<code>flake.lock</code>）を <code>tsugumi.json</code> の <code>pkgsPath</code> に固定値で持ちます。版の一部なので、過去の版に戻れば nixpkgs も戻ります。固定されていないプロジェクト（<code>tsugumi:default</code>）は、Workflow 設定で固定できます。</p>
 <h2 id="デモの履歴">デモの履歴</h2>
 <p>デモのフォルダにある <code>.tsugumi-history.json</code> は、コピーがリポジトリになるときに commit・枝・tag・note になります（ファイル自体は消えます）。Cas A デモには、帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 <code>rgb-v1</code>、その上にスペクトルを足した版）が入っています。</p>
 <h2 id="実装">実装</h2>
-<p><code>core/src/versions.cc</code>（libgit2）。RPC は <code>VersionInit</code>・<code>VersionMark</code>・<code>VersionCheckout</code>・<code>VersionGraph</code>。git の操作が失敗しても実行は止めません（その実行は版を記録しません）。</p>
+<p><code>core/src/versions.cc</code>（libgit2）。RPC は <code>VersionInit</code>・<code>VersionMark</code>・<code>VersionCheckout</code>・<code>VersionGraph</code>・<code>VersionCanvas</code>・<code>VersionDiff</code>・<code>VersionSummary</code>。git の操作が失敗しても実行は止めません（その実行は版を記録しません）。</p>
 <h2 id="まだできないこと">まだできないこと</h2>
 <ul>
 <li>版を選んだときに、戻らずにその版の Canvas と結果を見ること。今は「この版から始める」で戻って見ます。</li>

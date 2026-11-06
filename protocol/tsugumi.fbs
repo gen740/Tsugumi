@@ -117,8 +117,8 @@ table PutDefinition {
 }
 table RemoveDefinition { id:string (id: 0, required); }
 /// A Card's new name: its definition folder (with its sources) moves, and
-/// its run history follows. The client sends the matching SetProject and
-/// SetLayout in the same save.
+/// its run history and its entries in layout.json follow. The client sends
+/// the matching SetProject in the same save.
 table RenameDefinition {
   id:string (id: 0, required);
   to:string (id: 1, required);
@@ -350,6 +350,22 @@ table VersionCheckoutRequest {
 /// -> VersionGraph, newest first.
 table VersionGraphRequest { limit:uint32 = null (id: 0); }
 
+/// -> VersionCanvas: the Cards of a version and how they connect (a minimap).
+table VersionCanvasRequest { commit:string (id: 0, required); }
+
+/// -> VersionDiff: what a version changed from its first parent, in the text a
+/// summary is written from. Only code and settings: never data files.
+table VersionDiffRequest { commit:string (id: 0, required); }
+
+/// -> VersionResult. Keeps a client's summary of a version in the commit's own
+/// note (refs/notes/tsugumi-summary), replacing the one there.
+table VersionSummaryRequest {
+  op_id:string (id: 0, required);
+  origin:string (id: 1, required);
+  commit:string (id: 2, required);
+  summary:string (id: 3, required);
+}
+
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); }
 
@@ -561,6 +577,9 @@ union RequestPayload {
   VersionMarkRequest = 34,
   VersionCheckoutRequest = 35,
   VersionGraphRequest = 36,
+  VersionCanvasRequest = 37,
+  VersionDiffRequest = 38,
+  VersionSummaryRequest = 39,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -594,6 +613,33 @@ table VersionCommit {
   /// Card keys whose files changed from the first parent ("" for the
   /// project's own documents).
   changed:[string] (id: 9);
+  /// What this version changed, in a sentence a model wrote from its diff
+  /// (refs/notes/tsugumi-summary). Absent until one is written.
+  change_summary:string (id: 10);
+}
+
+table VersionCanvasCard {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+}
+
+table VersionCanvasWire {
+  from:string (id: 0, required);
+  to:string (id: 1, required);
+}
+
+/// A version's own Cards: Card in Card is one Card here. Saved positions, or
+/// columns by depth when a Card has none.
+table VersionCanvas {
+  cards:[VersionCanvasCard] (id: 0, required);
+  wires:[VersionCanvasWire] (id: 1, required);
+}
+
+table VersionDiff {
+  text:string (id: 0, required);
+  /// The text stops short of what changed.
+  truncated:bool (id: 1);
 }
 
 table VersionGraph {
@@ -831,6 +877,8 @@ union ReplyPayload {
   OutputTypesResult = 26,
   VersionResult = 27,
   VersionGraph = 28,
+  VersionCanvas = 29,
+  VersionDiff = 30,
 }
 
 // ---- Notifications -----------------------------------------------------------

@@ -60,10 +60,68 @@ struct VersionLayout {
   }
 }
 
+/// Where a version's Cards go in a minimap at most width x height: the whole
+/// graph fitted and centered across, as web/src/ui/versions.tsx does.
+struct VersionMiniMapLayout {
+  static let cardWidth = 220.0, cardHeight = 80.0, padding = 8.0
+  var cards: [String: CGRect] = [:]
+  var height = 0.0
+  var named = false
+
+  init(_ cards: [(id: String, x: Double, y: Double)], width: Double, height maxHeight: Double) {
+    guard let left = cards.map(\.x).min(), let top = cards.map(\.y).min(),
+          let right = cards.map(\.x).max(), let bottom = cards.map(\.y).max() else { return }
+    let spanX = right - left + Self.cardWidth, spanY = bottom - top + Self.cardHeight
+    let k = min((width - Self.padding * 2) / spanX, (maxHeight - Self.padding * 2) / spanY, 0.3)
+    let ox = (width - spanX * k) / 2
+    for c in cards {
+      self.cards[c.id] = CGRect(x: ox + (c.x - left) * k, y: Self.padding + (c.y - top) * k, width: Self.cardWidth * k, height: Self.cardHeight * k)
+    }
+    height = spanY * k + Self.padding * 2
+    named = Self.cardWidth * k >= 34
+  }
+}
+
+/// A version's Cards and how they connect; those it changed stand out.
+struct VersionMiniMap: View {
+  let canvas: Tsugumi_RPC_VersionCanvasT
+  let changed: [String]
+  static let width = 284.0
+  static let maxHeight = 132.0
+
+  var body: some View {
+    let cards = canvas.cards.compactMap { $0 }
+    let map = VersionMiniMapLayout(cards.map { (id: $0.id, x: $0.x, y: $0.y) }, width: Self.width, height: Self.maxHeight)
+    let touched = Set(changed.map { String($0.split(separator: "/").first ?? "") })
+    Canvas { g, _ in
+      for w in canvas.wires.compactMap({ $0 }) {
+        guard let a = map.cards[w.from], let b = map.cards[w.to] else { continue }
+        var p = Path()
+        p.move(to: CGPoint(x: a.midX, y: a.midY))
+        p.addLine(to: CGPoint(x: b.midX, y: b.midY))
+        g.stroke(p, with: .color(.secondary), lineWidth: 1)
+      }
+      for card in cards {
+        let id = card.id
+        guard let r = map.cards[id] else { continue }
+        let shape = Path(roundedRect: r, cornerRadius: 2.5)
+        g.fill(shape, with: .color(Color(nsColor: .windowBackgroundColor)))
+        g.fill(shape, with: .color(touched.contains(id) ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22)))
+        g.stroke(shape, with: .color(touched.contains(id) ? Color.accentColor : .secondary), lineWidth: touched.contains(id) ? 1.25 : 0.75)
+        if map.named {
+          let fit = max(1, Int(r.width / 5) - 1)
+          g.draw(Text(id.count * 5 > Int(r.width) ? id.prefix(fit) + "…" : id).font(.system(size: 8.5)), at: CGPoint(x: r.midX, y: r.midY))
+        }
+      }
+    }
+    .frame(width: Self.width, height: map.height)
+  }
+}
+
 /// The project's versions as a tree: each commit with its branches, tags,
-/// runs (from its note; hovering shows what ran) and changed Cards. A version
-/// can be named, and the project can start again from any of them (a change
-/// there opens a branch).
+/// runs (from its note) and changed Cards; hovering one shows what it changed
+/// and a minimap of its Cards. A version can be named, and the project can
+/// start again from any of them (a change there opens a branch).
 struct VersionTreeView: View {
   let session: ProjectSession
   @State private var selected: String?
@@ -72,6 +130,16 @@ struct VersionTreeView: View {
   @State private var name = ""
   @State private var message = ""
   @State private var confirmStart: String?
+  @AppStorage(VersionSummarizer.defaultsKey) private var summaries = false
+  @State private var confirmSummaries = false
+  // The version under the pointer, where the pointer came in, and the one
+  // whose panel shows (a moment later).
+  @State private var pointed: String?
+  @State private var pointerY: CGFloat = 0
+  @State private var hovered: String?
+
+  private static let treeSpace = "versionTree"
+  private static let hoverHeight: CGFloat = 190
 
   static let rowHeight: CGFloat = 58
   static let laneWidth: CGFloat = 18
@@ -83,7 +151,10 @@ struct VersionTreeView: View {
       Divider()
       if let g, g.enabled {
         HSplitView {
-          tree(g).frame(minWidth: 420)
+          tree(g)
+            .coordinateSpace(name: Self.treeSpace)
+            .overlay { GeometryReader { hoverPanel(g, in: $0.size) }.allowsHitTesting(false) }
+            .frame(minWidth: 420)
           detail(g).frame(minWidth: 260, idealWidth: 320)
         }
       } else if g != nil {
@@ -119,6 +190,25 @@ struct VersionTreeView: View {
     } message: {
       Text("今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。")
     }
+    .alert("版の要約をオンにしますか？", isPresented: $confirmSummaries) {
+      Button("オンにする") {
+        summaries = true
+        session.versionSummaryTried.removeAll()
+        session.versionSummaryErrors.removeAll()
+      }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。")
+    }
+    .task(id: pointed) {
+      hovered = nil
+      guard let commit = pointed else { return }
+      try? await Task.sleep(for: .milliseconds(250))
+      guard !Task.isCancelled, pointed == commit else { return }
+      hovered = commit
+      await session.loadVersionCanvas(commit)
+      await session.summarizeVersion(commit)
+    }
     .sheet(isPresented: $naming) { nameSheet }
   }
 
@@ -140,6 +230,9 @@ struct VersionTreeView: View {
         }
       }
       Spacer()
+      Toggle("版の要約", isOn: Binding(get: { summaries }, set: { if $0 { confirmSummaries = true } else { summaries = false } }))
+        .toggleStyle(.switch).controlSize(.mini)
+        .help("オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）")
       Button("版として残す…") {
         name = ""
         message = ""
@@ -167,13 +260,59 @@ struct VersionTreeView: View {
               .contentShape(Rectangle())
               .background(selected == c.id ? Color.accentColor.opacity(0.14) : .clear)
               .onTapGesture { selected = c.id }
-              .help(Self.runsHelp(c.runList))
+              .onContinuousHover(coordinateSpace: .named(Self.treeSpace)) { phase in
+                switch phase {
+                case .active(let p):
+                  if pointed != c.id {
+                    pointed = c.id
+                    pointerY = p.y
+                  }
+                case .ended:
+                  if pointed == c.id { pointed = nil }
+                }
+              }
           }
         }
         graph(layout, commits, head: g.head)
           .frame(width: graphWidth, height: CGFloat(commits.count) * Self.rowHeight)
           .allowsHitTesting(false)
       }
+    }
+  }
+
+  /// What shows while the pointer is on a version: what it changed, in a
+  /// model's words, and its Cards. Below the pointer, or above it near the
+  /// bottom of the tree.
+  @ViewBuilder
+  private func hoverPanel(_ g: Tsugumi_RPC_VersionGraphT, in size: CGSize) -> some View {
+    if let c = g.commitList.first(where: { $0.id == hovered }) {
+      let below = pointerY + 20
+      let top = below + Self.hoverHeight > size.height ? max(4, pointerY - 20 - Self.hoverHeight) : below
+      VStack(alignment: .leading, spacing: 8) {
+        if let summary = c.changeSummary, !summary.isEmpty {
+          Text(summary)
+        } else if session.versionSummaryBusy.contains(c.id) {
+          Text("要約しています…").foregroundStyle(.secondary)
+        } else {
+          Text(c.summary ?? "")
+        }
+        if let error = session.versionSummaryErrors[c.id] {
+          Text("要約を作れませんでした: \(error)").font(.caption).foregroundStyle(.red)
+        }
+        if let canvas = session.versionCanvases[c.id], !canvas.cards.isEmpty {
+          VersionMiniMap(canvas: canvas, changed: c.changedList)
+        }
+      }
+      .font(.callout)
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.horizontal, 12).padding(.vertical, 10)
+      .frame(width: VersionMiniMap.width + 24, alignment: .leading)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.3), lineWidth: 0.5))
+      .shadow(radius: 8, y: 3)
+      .frame(maxWidth: .infinity, alignment: .trailing)
+      .padding(.trailing, 12)
+      .offset(y: top)
     }
   }
 
@@ -240,18 +379,6 @@ struct VersionTreeView: View {
     }
   }
 
-  /// What a version's runs did, for the hover: newest first, each with its
-  /// result and the summary its note gives.
-  static func runsHelp(_ runs: [Tsugumi_RPC_VersionRunT]) -> String {
-    if runs.isEmpty { return String(localized: "この版での実行はありません。") }
-    let shown = 5
-    var lines = runs.suffix(shown).reversed().map { r in
-      [stateLabel(r.state), secondsText(r.seconds), r.summary ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-    if runs.count > shown { lines.append(String(localized: "ほか \(runs.count - shown) 回")) }
-    return lines.joined(separator: "\n")
-  }
-
   static func secondsText(_ seconds: Double) -> String { String(format: "%.1f 秒", seconds) }
 
   private func row(_ c: Tsugumi_RPC_VersionCommitT, head: Bool) -> some View {
@@ -298,6 +425,7 @@ struct VersionTreeView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 10) {
           Text(c.summary ?? "").font(.headline)
+          if let summary = c.changeSummary, !summary.isEmpty { Text(summary).font(.callout).textSelection(.enabled) }
           // The message's body: what follows its first line (the summary).
           let body = (c.message ?? "").split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst()
             .joined().trimmingCharacters(in: .whitespacesAndNewlines)

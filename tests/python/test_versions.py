@@ -13,7 +13,7 @@ import time
 
 from conftest import ROOT, Daemon
 from projects import MSG_FBS, builtin_project, card, conn, run_and_wait, write
-from tsugumi_client import _request_class, change, new_id, text
+from tsugumi_client import RpcFailure, _request_class, change, new_id, text
 from Tsugumi.Data.RunState import RunState
 
 
@@ -267,5 +267,64 @@ def test_a_long_run_summary_stays_short(tmp_path):
         _, st = run_and_wait(c, "start")
         assert st.state == RunState.succeeded
         assert summary_of(c, root, st).endswith(" ほか 4")
+    finally:
+        d.cleanup()
+
+
+def test_a_version_has_its_canvas_diff_and_summary(tmp_path):
+    """A version's Cards and wires are read from that version; its diff has the
+    code and settings a summary may read and never data; a summary goes to a
+    note of its own, so the runs' note and git log --grep=failed are untouched."""
+    root = tmp_path / "p"
+    builtin_project(root, text="first",
+                    extra_cards=[card("later", "source")])
+    (root / "definitions" / "src" / "data").mkdir()
+    (root / "definitions" / "src" / "data" / "secret.csv").write_text("patient,1\n")
+    (root / "definitions" / "src" / "src").mkdir()
+    (root / "definitions" / "src" / "src" / "values.csv").write_text("patient,2\n")
+    (root / "definitions" / "src" / "src" / "main.py").write_text("print('code one')\n")
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+        # Everything in the first version, but only what a summary may read.
+        whole = text(c.call("VersionDiffRequest", commit=first).text)
+        assert "print('code one')" in whole and '"text"' in whole
+        assert "patient" not in whole and "secret" not in whole and "values.csv" not in whole
+        # No saved positions: columns by depth, and only real wires.
+        canvas = c.call("VersionCanvasRequest", commit=first)
+        at = {text(k.id): (k.x, k.y) for k in canvas.cards}
+        assert set(at) == {"start", "src", "out", "later"}
+        assert [(text(w.from_), text(w.to)) for w in canvas.wires] == [("src", "out")]
+        assert at["src"][0] < at["out"][0]
+        # A later version: its diff is what it changed, and the older version
+        # keeps its own Cards.
+        set_text(c, "second")
+        (root / "definitions" / "src" / "data" / "secret.csv").write_text("patient,3\n")
+        (root / "layout.json").write_text(json.dumps({"cards": {k: {"x": i * 100, "y": 7} for i, k in enumerate(at)}}))
+        c.call("ProjectReloadRequest", opId=new_id(), origin="test", baseRev=c.call("ProjectInspectRequest").rev)
+        _, st = run_and_wait(c, "start")
+        second = text(st.commit)
+        change = c.call("VersionDiffRequest", commit=second)
+        assert '"second"' in text(change.text) and "first" in text(change.text) and "patient" not in text(change.text)
+        assert "layout.json" not in text(change.text) and not change.truncated
+        placed = {text(k.id): (k.x, k.y) for k in c.call("VersionCanvasRequest", commit=second).cards}
+        assert placed["src"][1] == 7 and placed["out"][0] == 200
+        # The summary: on the commit, in its own note, and replaced when written again.
+        assert not next(x for x in graph(c).commits if text(x.id) == second).changeSummary
+        for words in ("一度目", "failed が出ないように直した"):
+            c.call("VersionSummaryRequest", opId=new_id(), origin="test", commit=second, summary=words)
+        got = next(x for x in graph(c).commits if text(x.id) == second)
+        assert text(got.changeSummary) == "failed が出ないように直した"
+        assert git(root, "notes", "--ref=tsugumi-summary", "show", second).strip() == "failed が出ないように直した"
+        notes(c, second, 1)
+        assert second not in git(root, "log", "--notes=tsugumi", "--grep=failed", "--format=%H")
+        # A commit that is not there is refused, and nothing is kept.
+        try:
+            c.call("VersionCanvasRequest", commit="0" * 40)
+            raise AssertionError("no such version")
+        except RpcFailure as e:
+            assert e.kind == "not_found"
     finally:
         d.cleanup()

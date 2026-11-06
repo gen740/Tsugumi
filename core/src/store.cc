@@ -603,6 +603,30 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   }
   wrap([&] { check_structure(*doc); });
 
+  // layout.json is keyed by Card id: it follows a Card renamed or taken off the
+  // canvas. A client that already moved it in this save has left nothing to do,
+  // and its bytes stay as sent.
+  {
+    std::set<std::string> on_canvas;
+    for (const auto& card : doc->project.canvas->value().cards->value()) on_canvas.insert(card.id->value());
+    std::map<std::string, std::string> moved;
+    for (const auto& [from, to] : st.delta.renamed)
+      if (on_canvas.count(to)) moved[from] = to;
+    std::set<std::string> gone;
+    for (const auto& card : base->project.canvas->value().cards->value()) {
+      const auto& id = card.id->value();
+      if (!on_canvas.count(id) && !moved.count(id)) gone.insert(id);
+    }
+    if (!moved.empty() || !gone.empty())
+      wrap([&] {
+        auto followed = layout_following_cards(doc->layout_json, moved, gone);
+        if (followed != doc->layout_json) {
+          doc->layout = parse_layout_json(followed);
+          doc->layout_json = std::move(followed);
+        }
+      });
+  }
+
   size_t json_bytes = doc->project_json.size() + doc->layout_json.size();
   for (const auto& [_, d] : doc->definitions)
     json_bytes += d.card_json.size() + (d.meta_json ? d.meta_json->size() : 0);

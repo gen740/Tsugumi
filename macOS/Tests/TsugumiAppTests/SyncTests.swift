@@ -93,6 +93,53 @@ import Testing
     #expect(s.connected, "\(s.connectionMessage ?? "")")
   }
 
+  /// The Agent's rename and delete send no layout: the Card stays where it was
+  /// under its new name, and the frame of a deleted Card does not come back on
+  /// a new Card of that name.
+  @Test func anAgentRenameKeepsThePlaceFrameAndGroup() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let a = key(["a"]), b = key(["b"]), renamed = key(["renamed"])
+    s.setPosition(b, CGPoint(x: 700, y: 500))
+    s.updateDisplayFrame(b) {
+      $0["x"] = .real(700)
+      $0["y"] = .real(700)
+      $0["width"] = .real(300)
+      $0["height"] = .real(200)
+    }
+    let group = s.addGroup([a, b], in: [])
+    await s.save()
+    #expect(!s.dirty, "\(s.saveError ?? "")")
+
+    let snap = try await s.rpc!.inspect()
+    var proj = try JSONValue.parse(snap.projectJson)
+    let cards = proj["canvas"]?["cards"]?.array ?? []
+    proj["canvas"]?["cards"] = .array(cards.map { $0["id"]?.string == "b" ? .object([("id", .string("renamed"))]) : $0 })
+    _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
+                              changes: [Change.setProject(proj.serialized()), Change.renameDefinition(id: "b", to: "renamed")])
+    for _ in 0..<200 where s.resolution[renamed] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.position(renamed) == CGPoint(x: 700, y: 500))
+    #expect(s.layout["displays"]?["renamed"]?["width"]?.double == 300)
+    #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
+    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a", "renamed"])
+    #expect(!s.dirty)
+
+    let again = try await s.rpc!.inspect()
+    var left = try JSONValue.parse(again.projectJson)
+    let kept = (left["canvas"]?["cards"]?.array ?? []).filter { $0["id"]?.string != "renamed" }
+    left["canvas"]?["cards"] = .array(kept)
+    _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
+                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "renamed")])
+    for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.layout["cards"]?["renamed"] == nil && s.layout["displays"]?["renamed"] == nil)
+    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
+  }
+
   /// A project no window shows any more is closed: its connection ends and it
   /// does not come back on its own (its environment is given back).
   @Test func aClosedSessionLetsGo() async throws {
