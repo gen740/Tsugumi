@@ -23,8 +23,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   If a save returns revision_conflict, inspect again and re-apply.
 - These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
   reference with reference_read only for what the rules do not cover (R or Julia Cards, merge outputs, a Card in Card
-  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the whole
-  Python SDK), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
+  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the SDK's
+  source), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
   and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
   folder lists every file under it, and "" lists what there is.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
@@ -158,8 +158,28 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         out_dir = ctx.output_directory                           # with "filesystem": true
         b = ctx.builder(); p = b.CreateString(out_dir)
         images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
-        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar/line_chart
-        raw = ctx.input_bytes("events")                          # an input's bytes as they came; ctx.has_input(port) for an optional one
+        ctx.display_table(["band", "photons"], [["red", 703367]])
+    The whole SDK (ctx is a Context; generated from its source):
+      ctx.run_id, ctx.card, ctx.invocation, ctx.working_directory, ctx.temporary_directory, ctx.output_directory
+      ctx.has_input(port: str)
+      ctx.input_bytes(port: str)
+      ctx.input(port: str, cls: Any)  # Returns the input message as the generated class ``cls``.
+      ctx.params()
+      ctx.builder(size: int=1024)
+      ctx.output(port: str, builder: flatbuffers.Builder, root: Optional[int]=None)
+      ctx.output_bytes(port: str, data: bytes)
+      ctx.display_text(text: str)
+      ctx.display_markdown(text: str)  # Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted.
+      ctx.display_scalar(value: float, label: str)
+      ctx.display_line_chart(series: Iterable[dict])
+      ctx.display_table(columns: list, rows: Iterable[Iterable])
+      ctx.display_image(data: bytes, media_type: str='image/png', alt: str='')
+      ctx.display_points(x, y, z, colors=None)
+      ctx.display_figure(*figures)  # matplotlib figures as the Card's image (several are stacked), whatever the
+      ctx.display_module(name: str, data)
+      ctx.log(message: str)
+      ctx.cancelled()
+      ctx.remaining_ms()
     raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
     matplotlib (packages = ps: [ ps.matplotlib ]) draws into the Card's display: write it as for a window
     (plt.show(), or leave the figures open; plt.pause() loops and FuncAnimation update it live; never
