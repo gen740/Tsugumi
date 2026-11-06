@@ -141,14 +141,20 @@ final class ChatController {
     attaching = true
     defer { attaching = false }
     folders.append(path)
+    await agent?.setFolders(folders)
     await session.environments.setExtraFolders(session.identity, folders)
     await session.restartEnvironment()
   }
 
-  /// No longer offered to the Agent (the share goes when the environment next starts).
+  /// No longer offered to the Agent, which refuses it from now on (the share
+  /// itself goes when the environment next starts).
   func detach(folder path: String) {
     folders.removeAll { $0 == path }
-    Task { await session.environments.setExtraFolders(session.identity, folders) }
+    let (agent, folders) = (self.agent, self.folders)
+    Task {
+      await agent?.setFolders(folders)
+      await session.environments.setExtraFolders(session.identity, folders)
+    }
   }
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
@@ -254,6 +260,7 @@ final class ChatController {
     Task {
       await previous?.cancelAndWait()
       await agent.setApprover(approver)
+      await agent.setFolders(self.folders)
       let conv = await agent.conversation
       usage = conv.usage
       load(conv)
