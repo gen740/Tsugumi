@@ -66,6 +66,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 TASK = re.compile(r"set (\S+?)\.(\S+) to (.+?) and run(?:, then report (\S+))?", re.I)
 TERMINAL = {"succeeded", "failed", "cancelled"}
 PERMISSION = re.compile(r"give (\S+) network access", re.I)
+STALE_READ = "validate at revision 0"
 
 
 def blocks(msg):
@@ -305,6 +306,22 @@ def decide_permission(messages, card, start):
     return ("text", "Done.")
 
 
+def last_stale_read(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user" and any(STALE_READ in b.get("text", "") for b in blocks(messages[i])):
+            return i
+    return -1
+
+
+def decide_stale_read(messages, start):
+    results = tool_results(messages[start + 1:])
+    if not results:
+        return ("tool", "project_validate", {"at_rev": "0"})
+    _, res, is_error = results[-1]
+    value = res.get("value", {}) if isinstance(res, dict) else {}
+    return ("text", f"Refused: {value.get('kind')}." if is_error else f"Checked at revision {value.get('rev')}.")
+
+
 GUIDE = "You are Tsugumi, the guide bird"
 EVENT = re.compile(r"\[Event\] The run (\S+) ended: (\w+)")
 
@@ -341,6 +358,8 @@ def decide(messages, system="", tools=()):
     perm, perm_start = last_permission_task(messages)
     if perm is not None and perm_start > max(start, draft_start):
         return decide_permission(messages, perm, perm_start)
+    if (stale := last_stale_read(messages)) > max(start, draft_start, perm_start):
+        return decide_stale_read(messages, stale)
     if draft_text is not None and draft_start > start:
         return decide_drafts(messages, draft_text, draft_start)
     if not task:
