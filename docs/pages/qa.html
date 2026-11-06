@@ -35,49 +35,135 @@
 <div class="reading">
 <article class="doc">
 <h1 id="tsugumi-qa">Tsugumi Q&amp;A</h1>
-<p>Tsugumi が解決したい課題と、そのために選んだ設計を Q&amp;A で紹介します。操作の手順は<a href="usage.html">操作ガイド</a>、実装の詳細は<a href="features.html">主要機能</a>を参照してください。</p>
+<p><a href="readme.html">README</a> では、日々の研究で AI に仕事を任せるのをためらう理由を 3 つ挙げました。再現性を担保できない。結論に至るプロセスが見えない。データを AI に渡すのが怖い。この Q&amp;A は、その 3 つに Tsugumi がどう答えるかを、問いごとに短くまとめたものです。各問いの最後の「確かめる場所」には、その答えを画面・デモ・テストで確かめる方法を並べました。操作の手順は<a href="usage.html">操作ガイド</a>、仕組みの詳細は<a href="features.html">主要機能</a>にあります。</p>
+<div class="table-wrap"><table><thead><tr><th>ためらい</th><th>問い</th><th>一言で</th></tr></thead><tbody><tr><td>プロセスが見えない</td><td><a href="#q1-既存の-ai-コーディングエージェントやノートブックと何が違うのですか">Q1. 既存のエージェントやノートブックと何が違う？</a></td><td>人が見る図・AI が編集するもの・実際に動くものが同じ</td></tr><tr><td></td><td><a href="#q2-なぜ自然言語だけでなくdraft-と-workflow-で-ai-に指示するのですか">Q2. なぜ Draft と Workflow で指示する？</a></td><td>処理のつながりは、文章より図のほうが正確に渡せる</td></tr><tr><td></td><td><a href="#q5-解析の途中からやり直せることにはどんな意味がありますか">Q5. 途中からやり直せる意味は？</a></td><td>気になった Card だけを直して、すぐ確かめる</td></tr><tr><td>再現性を担保できない</td><td><a href="#q3-解析の再現性をどのように確保するのですか">Q3. 再現性はどう確保する？</a></td><td>環境は Nix で固定し、結果を左右する条件は Card ごとに決める</td></tr><tr><td></td><td><a href="#q4-なぜすべての実行データを保存しないのですか">Q4. なぜ全部を保存しない？</a></td><td>何を残すかを Card ごとに選ぶ。入出力値は既定で残さない</td></tr><tr><td></td><td><a href="#q6-git-と実行履歴はそれぞれ何を記録するのですか">Q6. Git と実行履歴の違いは？</a></td><td>Git は定義、実行履歴は動かした記録</td></tr><tr><td></td><td><a href="#補足-q-nix-の上流参照はどのように検証するのですか">補足. Nix の上流参照の検証は？</a></td><td>保存時に軽く確かめ、最後は Nix の評価で決まる</td></tr><tr><td>データを渡すのが怖い</td><td><a href="#q7-未公開のデータをai-に渡さずに扱えますか">Q7. 未公開のデータを扱えますか？</a></td><td>計算は Mac の中の VM で完結する。外へ出るものは決まっている</td></tr></tbody></table></div>
 <h2 id="q1-既存の-ai-コーディングエージェントやノートブックと何が違うのですか">Q1. 既存の AI コーディングエージェントやノートブックと、何が違うのですか？</h2>
-<p><strong>人間が見て理解する処理の構造と、AI が編集し、実際に実行する対象が一致していることです。</strong></p>
-<p>AI に解析を任せると、短時間で多くの試行が進みます。その過程を文章で受け取るだけでは、詳しい報告は長くなり、短い要約では途中の判断や試した条件が見えにくくなります。「この条件を変えたらどうなるか」と思うたびに AI に聞き返し、報告とコードを照らし合わせる負担も生まれます。</p>
+<p><strong>人が見て理解する図と、AI が編集するものと、実際に動くものが、同じ Workflow です。</strong></p>
+<p>AI に解析を任せると、試行は速く進みます。けれど、その過程は文章の報告でしか受け取れません。詳しい報告は長くて読み切れず、短い要約では途中の判断や試した条件が消えます。報告とコードを照らし合わせるのも人の仕事です。</p>
 <figure class="ex-fig" data-fig="oneGraph"><div class="ex-fig-pin"><div class="ex-fig-space"></div><figcaption>人が描くもの、AI が編集するもの、実際に動くものが、一つに重なる。</figcaption></div></figure>
-<p>Tsugumi では、解析を Card とその接続からなる Workflow として扱います。AI はその構造を編集し、同じ構造が実行されます。人間も画面から Card を開き、入力・コード・結果を確認して、パラメータや処理の一部を変更できます。版のツリーと実行履歴を使えば、採用した手順だけでなく、失敗した試行や別の条件を試した枝もたどれます。</p>
-<p>ここで残る試行過程は、採用した処理構造、コードの変更、実行の記録です。これらを直接確かめながら、次に何を試すかを人間が決められることを重視しています。</p>
-<p>背景にある問題意識は<a href="philosophy.html">制作の背景</a>、この仕組みを選んだ理由は<a href="novelty.html">設計の独自性</a>にまとめています。</p>
+<p>Tsugumi では、こうなります。</p>
+<ul>
+<li>解析は、Card を線でつないだ Workflow です。AI が編集するのも、実行されるのも、この Workflow です。</li>
+<li>気になった Card を開けば、入力・コード・結果がそこにあります。値やコードを変えて、その Card だけを動かし直せます。</li>
+<li>採用した手順だけでなく、失敗した試行や別の条件を試した枝も、版のツリーに残ります。</li>
+</ul>
+<p>AI の報告を読んで信じるのではなく、気になったところへ直接行って、自分で動かして確かめる。そのための形です。</p>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>画面: デモ「Cas A · Chandra RGB」では、スペクトルの Card を見ると、緑の帯域（1.65–2.25 keV）が Si の輝線を含むことが分かります。画像の色が何を意味するのかを、同じ画面の Card で確かめられます（<a href="readme.html#画面でたどる実験と検証">README</a>）。</li>
+<li>画面: デモ「Data to report」のコピーで <code>aggregate</code> の <code>fail_on_purpose</code> を入れて実行すると、失敗した Card が下流を止め、その記録が Card に残ります。外して <code>aggregate</code> だけを実行し直せます。</li>
+<li>UI と Agent が同じ RPC を使う対等なクライアントであること: <a href="https://github.com/gen740/Tsugumi/blob/main/protocol/tsugumi.fbs" rel="noopener">protocol/tsugumi.fbs</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py" rel="noopener">test_agent_contract.py</a></li>
+<li>背景: <a href="philosophy.html">AI に使われないために、何を作るか</a>、<a href="novelty.html">設計の独自性</a></li>
+</ul>
 <h2 id="q2-なぜ自然言語だけでなくdraft-と-workflow-で-ai-に指示するのですか">Q2. なぜ自然言語だけでなく、Draft と Workflow で AI に指示するのですか？</h2>
-<p><strong>解析の流れそのものを、指示として共有するためです。</strong></p>
-<p>「解析 A の結果を解析 B に渡す」という二段階の処理なら、文章でも容易に伝えられます。しかし、十段階の処理に分岐や合流が加わると、どの出力をどの入力へ渡すかを文章だけで書き続けるのは大変です。書いている人自身も、接続の抜けや食い違いを見落としやすくなります。</p>
-<p>Draft は、名前と処理の内容だけを持つ、未実装の Card です。コードや型が決まる前に並べて線でつなげ（ポートは線に合わせて作られます）、そのフローチャートを仕様として AI に実装を依頼できます。実装後は出力型から下流の入力型が導出され、接続の整合性を確認して実行します。</p>
-<p>処理の意図は言葉で、処理同士の関係は接続で表す。人間と AI が同じ箇所を指しながら、設計・実装・検証を進めるための仕組みです。</p>
+<p><strong>処理のつながりは、文章よりも図のほうが正確に渡せるからです。</strong></p>
+<p>観測データをダウンロードして、エネルギーで区切って、描画する。やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。それなのに文章で頼むと、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直すことになります。10 段の処理に分岐と合流が入れば、どの出力をどの入力へ渡すかを文章で書き切るのは、さらに難しくなります。書いた本人も、抜けや食い違いに気づけません。</p>
+<ul>
+<li><strong>Draft</strong> は、名前と「何をするか」だけを書いた、まだ実装のない Card です。<code>E</code> で置いて書き、線でつなぐと、ポートは線に合わせてできます。</li>
+<li>並べた Draft の図を仕様にして、右上の「Card を生成」で Agent に実装を頼みます。</li>
+<li>実装後は、出力の型から下流の入力の型が決まり、配線の食い違いは実行前に診断として出ます。</li>
+<li>1 つの出力から出せる線は 1 本です。1 つの値を複数の Card に送るときは fork Card を通すので、分配も図の上に Card として見えます。</li>
+</ul>
+<p>処理の意図は言葉で、処理どうしの関係は線で書きます。人と AI が同じ箇所を指しながら、設計・実装・検証を進められます。</p>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>画面: デモ一覧の「(Draft)」の付いたデモ（「Cas A · Chandra RGB (Draft)」など）は、実装前の Draft だけの Workflow です。コピーを開いて「Card を生成」を押すと、Agent が実装します（API キーか ChatGPT のプランが要ります）。</li>
+<li>Draft を実装する保存の規則（説明が空なら拒否する、Draft にあった内容は変えさせない）: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py" rel="noopener">test_draft_intent.py</a></li>
+<li>実際の Claude API で、Draft から Card を作って実行・検証した記録（うまくいかなかった試行を含む）: <a href="agentrun.html">AgentRun.md</a></li>
+<li>型と配線の検査: <a href="features.html">主要機能 §2</a>、<a href="https://github.com/gen740/Tsugumi/tree/main/tests/cpp" rel="noopener">tests/cpp</a></li>
+</ul>
 <h2 id="q3-解析の再現性をどのように確保するのですか">Q3. 解析の再現性を、どのように確保するのですか？</h2>
-<p><strong>Nix で固定できる計算と環境をできるだけ固定し、実行時の処理には必要な自由度を持たせます。</strong></p>
-<p>Tsugumi には、Nix が扱うビルドや依存関係の領域と、Card が動作する runtime の領域があります。Nix はコードと依存ライブラリから実行環境を構築します。プロジェクトの版とともに環境の定義を保持することで、別のマシンでも同じプログラムを同じ環境で動かすための基盤になります。</p>
-<p>たとえば、長時間かかるシミュレーションを seed や条件を明示した Nix のビルドとして定義すれば、その出力を後続の解析に利用できます。後続の可視化や解析だけを変えた場合、シミュレーションの定義と依存関係が変わらず、その出力が Nix store に残っていれば再計算を省けます。</p>
-<p>runtime は、ストリームの処理や状態を使った計算にも対応します。入力の到着順に処理する <code>any</code> モードや、起動の負担を減らす常駐 worker も、そのための仕組みです。worker の状態は実行をまたいで保持でき、実行ごとに初期化したい状態は <code>onRunStart</code> / <code>on_run_start</code> で扱えます。</p>
-<p>同じ環境を構築できることと、あらゆる処理が必ず同じ結果を返すことは別です。乱数、外部データ、到着順、保持した状態に結果が依存する場合は、それぞれの計算で条件を定める必要があります。Tsugumi は、Nix による再現可能な基盤と runtime の自由度を組み合わせ、解析の流れをもう一度動かして検証できるように設計しています。</p>
+<p><strong>実行環境は Nix で固定し、結果を左右する条件は Card ごとに決めます。</strong></p>
+<p>天体物理の解析ソフトウェア（NASA の <a href="https://heasarc.gsfc.nasa.gov/docs/software/lheasoft/" rel="noopener">HEASOFT</a> など）は長大で、同じ環境を作るだけでも一苦労です。作者が研究の中で行き着いた答えが Nix で、HEASOFT を Nix で使えるようにしたものも<a href="https://github.com/gen740/heasoft" rel="noopener">公開しています</a>（<a href="origin.html">出発点</a>）。Tsugumi は、その答えを Card 1 枚ずつに当てはめています。</p>
+<ul>
+<li>各 Card の実行環境（言語のツールチェーンとライブラリ）は、その Card の <code>default.nix</code> から Nix が作ります。定義はプロジェクトの版と一緒に残るので、別のマシンでも同じ環境を作れます。</li>
+<li>重い計算（長いシミュレーションなど）は、seed や条件を書いた Nix のビルドにできます。定義と依存が変わらなければ出力は Nix store から再利用されるので、後段の解析や可視化だけを何度でも試せます。</li>
+<li>ただし、同じ環境なら必ず同じ結果になる、というわけではありません。乱数・外部データ・到着順（<code>any</code> の Card）・常駐 worker が保持する状態に結果が依存するなら、その条件を Card で決めます。seed を params にする、実行ごとの初期化を <code>onRunStart</code> / <code>on_run_start</code> に書く、などです。</li>
+</ul>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>デモ「Cas A · Chandra RGB」: Chandra の観測を hash で固定して取得します。520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります（<a href="readme.html#画面でたどる実験と検証">README</a>）。</li>
+<li>デモ「Collatz」: C++・Python・Julia・R で別々に書いた同じループが、27 から同じ 112 個の数列を返すことを確かめます（<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_collatz.py" rel="noopener">test_demo_collatz.py</a>）。</li>
+<li>Card の環境の定義: <a href="https://github.com/gen740/Tsugumi/blob/main/sdk/nix/default.nix" rel="noopener">sdk/nix/default.nix</a>、<a href="features.html">主要機能 §3</a></li>
+<li>常駐 worker と、実行ごとの初期化: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a></li>
+</ul>
 <h2 id="q4-なぜすべての実行データを保存しないのですか">Q4. なぜ、すべての実行データを保存しないのですか？</h2>
-<p><strong>大量のデータや連続した入力を扱う解析でも、必要な記録を選べるようにするためです。</strong></p>
-<p>各 Card の全呼び出しについて入出力を無条件に残すと、短時間で再計算できる処理にも大量の保存領域を使うことになります。ストリームの可視化などでは、その負担が処理を繰り返し試す妨げにもなります。</p>
-<p>そのため、入出力値を履歴に残す <code>recordIO</code> はデフォルトで <code>false</code> です。必要な Card で有効にし、ファイルなどの成果物を保持するかは <code>retainArtifact</code> で選びます。実行状態やログなどの記録と、全入出力値の保存は分けて扱っています。</p>
-<p>また、<strong>部分再実行に使う最新入力は、全呼び出しの入出力履歴とは別に保存します。</strong> <code>recordIO</code> を無効にしていても、保存された最新入力を使って Card を試し直せます。</p>
-<p>長期に固定して使いたい計算結果は Nix の出力として扱い、試行中に必要なデータは履歴や成果物として残す。解析の規模と目的に応じて記録を選びつつ、コード・環境・処理の流れを保つことを重視しています。</p>
+<p><strong>何を残すかを、Card ごとに選べるようにするためです。</strong></p>
+<p>全呼び出しの入出力を無条件に残すと、ストリームやループの Card ではすぐに保存が膨らみ、試行そのものが重くなります。そこで、残すものを次のように分けています。</p>
+<div class="table-wrap"><table><thead><tr><th>残すもの</th><th>既定</th><th>選び方</th></tr></thead><tbody><tr><td>実行の状態・ログ・表示（図や表）</td><td>いつも残す</td><td>—</td></tr><tr><td>部分実行に使う、各ポートの最後の入力</td><td>いつも残す</td><td>—</td></tr><tr><td>各呼び出しの入出力値</td><td>残さない</td><td>Card の <code>recordIO</code></td></tr><tr><td>成果物（Card が書いたファイルやフォルダ）</td><td>残さない</td><td>Card の <code>retainArtifact</code></td></tr><tr><td>実行履歴をプロジェクトへ書き出す（<code>.tsugumi/runs.sqlite</code>）</td><td>書き出す</td><td>プロジェクトの <code>saveRunHistory</code></td></tr></tbody></table></div>
+<p><code>recordIO</code> が off のままでも、部分実行に使う最後の入力は残ります（<a href="#q5-解析の途中からやり直せることにはどんな意味がありますか">Q5</a>）。長く使い続ける計算結果は Nix の出力に、試行中に見たいデータは履歴や成果物に、と目的に合わせて置き場所を選びます。</p>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li><code>recordIO</code> と <code>retainArtifact</code> のすべての組み合わせと、キャッシュの削除・再起動のあとに何が残るか: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_history.py" rel="noopener">test_history.py</a></li>
+<li>キャッシュの削除や再起動のあとも、単体の実行に保存済みの入力（File の実体を含む）が使えること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py" rel="noopener">test_regressions.py</a></li>
+<li><code>.tsugumi/runs.sqlite</code> への書き出しと、コピーしたプロジェクトでの読み込み: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_run_history.py" rel="noopener">test_run_history.py</a></li>
+</ul>
 <h2 id="q5-解析の途中からやり直せることにはどんな意味がありますか">Q5. 解析の途中からやり直せることには、どんな意味がありますか？</h2>
-<p><strong>AI と人間が、一段ずつ処理を作って確かめるためのものです。</strong></p>
-<p>解析を組み立てている途中では、「この Card の処理だけを修正したい」「グラフの表示条件だけを変えたい」という場面が繰り返しあります。そのたびに上流からすべてを実行する必要があると、試行の往復が遅くなります。</p>
-<p>Tsugumi では、保存された最新入力を使って選択した Card を実行したり、そこから下流へ処理を進めたりできます。子 Workflow を対象にして、その範囲を試すこともできます。分岐の 1 つから下流へ進めると、合流する Card は今回届かないポートに保存された入力を使い、他の分岐を実行し直さずに比べ直せます。必要な入力がまだ保存されていない場合は、まず上流を含む Workflow を実行します。</p>
+<p><strong>1 枚ずつ直して確かめる往復を、速くするためです。</strong></p>
+<p>解析を組み立てている間は、「この Card の処理だけ直したい」「グラフの条件だけ変えたい」という場面が何度もあります。そのたびに上流から全部を動かすと、往復が遅くなります。</p>
+<p>Tsugumi では、保存された最新入力を使って、選んだ Card だけ、またはそこから下流までを実行できます。</p>
 <figure class="ex-fig" data-fig="partial"><div class="ex-fig-pin"><div class="ex-fig-space"></div><figcaption>直した Card から、保存された入力で試す。最後は全体を通す。</figcaption></div></figure>
-<p>この操作は、現在作っている解析の一部を検証するためのものです。過去の呼び出しの入力だけを取り出しても、その時点のコードや上流の条件まで戻るわけではありません。また、上流を変更した後の部分実行では、保存済み入力が新しい上流の結果に更新されているとは限りません。合流する Card でも同じで、条件を変えただけでまだ実行していない分岐の値は、前の条件のままです（どの実行の値かは実行のジャーナルに残ります）。</p>
-<p>部分実行で調整を進め、<strong>最終的な結果を確かめるときには Workflow 全体を通して実行する</strong>、という使い方を想定しています。その際も、Nix で固定した重い計算の出力は、再利用できる条件が揃っていれば使い回せます。</p>
+<ul>
+<li>右クリックの「この Card だけ実行（最後の入力）」「ここから下流を実行」で使います。子 Workflow も同じように試せます。</li>
+<li>分岐の 1 つから下流へ進めると、合流する Card は、今回届かないポートを保存された入力で埋めて動きます。ほかの分岐を動かし直さずに比べ直せます。</li>
+<li>必要な入力がまだ保存されていないときは、はっきり失敗します。まず上流を含めて実行します。</li>
+</ul>
+<p>使うときの注意が 2 つあります。</p>
+<ul>
+<li><strong>上流を変えてまだ実行していなければ、保存された入力は古いままです。</strong> 合流で使われる値も同じです。どの実行の値を使ったかは、実行のジャーナルに残ります。</li>
+<li><strong>最後は Workflow 全体を通して確かめます。</strong> 部分実行は、作っている途中の一部を試すためのものです。過去の入力を取り出しても、その時点のコードや上流の条件まで戻るわけではありません。</li>
+</ul>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>画面: デモ「Cas A · Chandra RGB」で <code>bands</code> の帯域の境界（<code>green_min_ev</code> など）を書き換え、「この Card だけ実行（最後の入力）」を選ぶと、観測を読み直さずに色分けだけを試せます。</li>
+<li>画面: デモ「Collatz」で <code>compare</code> を右クリックして「この Card だけ実行（最後の入力）」を選ぶと、4 言語の Card を動かし直さずに比べ直せます（先に一度全体を実行しておきます）。</li>
+<li>分岐の 1 つから進めた実行が合流で保存入力と出会うこと、保存入力がないときに明示的に失敗すること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py" rel="noopener">test_scheduler.py</a></li>
+<li>MNIST のデモで、1 つの分類器だけを実行し、そこから <code>compare</code> へ進めて比べ直すこと: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_mnist.py" rel="noopener">test_demo_mnist.py</a></li>
+</ul>
 <h2 id="q6-git-と実行履歴はそれぞれ何を記録するのですか">Q6. Git と実行履歴は、それぞれ何を記録するのですか？</h2>
-<p><strong>Git は解析の定義を、実行履歴は動かしたときの記録を保持します。</strong></p>
-<div class="table-wrap"><table><thead><tr><th>記録先</th><th>主に残すもの</th><th>使い道</th></tr></thead><tbody><tr><td>Git</td><td>Workflow の定義、コード、パラメータ、環境の定義など</td><td>変更をたどり、過去の版から別の試行を始める</td></tr><tr><td>SQLite の実行履歴</td><td>実行状態、ログ、表示結果、設定に応じた入出力値など</td><td>実際に何が動き、どんな結果になったかを確認する</td></tr></tbody></table></div>
-<p>版管理が有効なプロジェクトでは、実行開始時に保存済みの内容を必要に応じて commit し、その実行に commit を関連づけます。同じ版で何度も実行できるので、一つの commit に複数の実行が対応します。終了時には Git notes に実行結果の要約を追記し、詳しい出力やログは実行履歴で扱います。</p>
-<p>版のツリーから「この版から始める」を選ぶと、その版の内容に戻って試行を続けられます。過去の分岐点から別の方法を試しても、以前の流れを残せます。過去のコードへ戻る操作と、当時の runtime の状態や全データを復元する操作は区別しています。</p>
-<p>解析を再び組み立てて動かす土台は、コードと定義です。実行履歴は、その解析で何が起きたかを読み解くために使います。詳しい操作と保存の仕組みは<a href="versions.html">版の管理</a>を参照してください。</p>
+<p><strong>Git は解析の定義を、実行履歴は動かしたときの記録を持ちます。</strong></p>
+<div class="table-wrap"><table><thead><tr><th>記録先</th><th>残すもの</th><th>使い道</th></tr></thead><tbody><tr><td>Git（プロジェクトのフォルダ）</td><td>Workflow の定義、コード、params、環境の定義</td><td>変更をたどり、過去の版から別の試行を始める</td></tr><tr><td>実行履歴（SQLite）</td><td>実行の状態、ログ、表示、設定に応じた入出力値</td><td>実際に何が動き、どんな結果になったかを見る</td></tr></tbody></table></div>
+<ul>
+<li>実行を始めると、前の版から変わっていれば保存済みの内容を commit し、その commit を実行に記録します。同じ版で何度も実行できるので、commit と実行は 1 対多です。</li>
+<li>実行が終わると、その commit の note に結果を 1 行足します（<code>git log --notes=tsugumi</code> で見られます）。</li>
+<li>「版として残す」で、今の内容に名前（tag）とメモを付けられます。</li>
+<li>版のツリーで「この版から始める」を選ぶと、今の内容を版として残してから、その版の内容に戻ります。前の流れは消えません。</li>
+</ul>
+<p>戻るのはコードと定義です。当時の worker の状態や、全データまでは戻りません。</p>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>画面: デモ「Cas A · Chandra RGB」のコピーで「版の履歴」を開くと、帯域や格子を試して失敗した枝、採用しなかった枝、採用した版 <code>rgb-v1</code> がツリーで見られます。</li>
+<li>commit・note・tag・枝の作られ方: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_versions.py" rel="noopener">test_versions.py</a>、<a href="versions.html">版の管理</a></li>
+</ul>
+<h2 id="q7-未公開のデータをai-に渡さずに扱えますか">Q7. 未公開のデータを、AI に渡さずに扱えますか？</h2>
+<p><strong>扱えます。Card の計算は Mac の中の VM で完結し、外へ出るものは決まっています。</strong></p>
+<ul>
+<li>Card は、Mac の中の隔離された Linux VM で動きます。Card からの外部ネットワークは既定で遮断されています。</li>
+<li>Agent を使わず、<code>network: true</code> の Card もなければ、プロジェクトの内容やデータは Mac と VM の外へ出ません（Nix がパッケージを取得する通信を除きます）。</li>
+<li>Agent を使うと、会話と、Agent が読んだソース・ログ・入出力値がモデルのプロバイダへ送られます。送る内容を自動で伏せる仕組みは、まだありません。</li>
+<li>Agent が Card にネットワークや Mac のフォルダを与えようとする保存は、利用者の承認なしには通りません。</li>
+<li>完成した Workflow の実行に LLM は要りません。公開データや合成データで Agent と処理を作り、未公開のデータでは Agent を使わずに動かす、という使い分けができます。</li>
+</ul>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>何が守られていて、何が守られていないかの一覧: <a href="security.html#要点">セキュリティと隔離の要点</a></li>
+<li>Agent を使うとモデルに送られるもの: <a href="security.html#モデルに送られるもの">モデルに送られるもの</a></li>
+<li>Card のネットワークが既定で閉じていること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a>（<code>test_network_is_off_unless_the_card_allows_it</code>）、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py" rel="noopener">test_cards_container.py</a></li>
+<li>Agent が権限を広げる保存には承認が要ること: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py" rel="noopener">test_permissions.py</a></li>
+<li>作るときと本番で、AI に見せる情報を分ける構想: <a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a></li>
+</ul>
 <h2 id="補足-q-nix-の上流参照はどのように検証するのですか">補足 Q. Nix の上流参照は、どのように検証するのですか？</h2>
-<p><code>default.nix</code> では、必ず先に実行される上流 Card の定義を参照できます。参照できる範囲は、評価器に渡す <code>inputs.upstream</code> / <code>inputs.local</code> の内容で制限しています。同じプロジェクト内の、どの経路で発火しても必ず先に実行されるコード Card が対象で、<code>inputs.local</code> はさらに同じ階層の Card に限ります。</p>
-<p>保存や検査の段階では、ソースに直接書かれた参照を軽量なスキャナで確認し、自分自身、存在しない Card、先行が保証されない Card への参照を早めに知らせます。コメントや文字列の本文は対象から外し、文字列中の式の埋め込みは確認します。</p>
-<p>この事前チェックは、Nix 全体を評価するものではありません。別名や動的に組み立てた属性名など、静的に確認しない参照は Nix の評価時に扱います。そこで提供されていない上流属性を参照すれば、評価エラーになります。早期に分かりやすい診断を出す仕組みと、実際に参照可能な定義を渡す仕組みが、それぞれの役割を担っています。</p>
-<p>詳細は<a href="features.html#上流定義の参照inputsupstream">主要機能の上流定義の参照</a>を参照してください。</p>
+<p><strong>保存の時点で軽く確かめ、最後は Nix の評価で決まります。</strong></p>
+<ul>
+<li>Card の <code>default.nix</code> からは、必ず先に実行される上流の Card の定義を <code>inputs.upstream.&lt;id&gt;</code> で参照できます。<code>inputs.local.&lt;id&gt;</code> は、そのうち同じ階層の Card だけです。</li>
+<li>保存や検査のときに、ソースに直接書かれた参照をスキャナで確かめます。自分自身、存在しない Card、先に実行されるとは限らない Card（分岐の片側にしかない Card など）への参照は、<code>nix_reference_*</code> の診断としてすぐに出ます。コメントと文字列の本文は対象外で、文字列に埋め込んだ式は対象です。</li>
+<li>別名や、動的に組み立てた属性名は事前には確かめません。評価器には参照してよい Card の定義しか渡さないので、それ以外を参照すると Nix の評価エラーになります。</li>
+</ul>
+<p><strong>確かめる場所</strong></p>
+<ul>
+<li>必ず先行する Card の解析（直線・分岐と <code>any</code>・<code>all</code> と optional・同じポートへの複数経路・ループ・入れ子・到達できない循環）: <a href="https://github.com/gen740/Tsugumi/tree/main/tests/cpp" rel="noopener">tests/cpp</a>、<a href="https://github.com/gen740/Tsugumi/blob/main/core/src/graph.cc" rel="noopener">core/src/graph.cc</a>（<code>compute_guarantees</code>）</li>
+<li>仕組みの説明: <a href="features.html#上流定義の参照inputsupstream">主要機能の上流定義の参照</a></li>
+</ul>
 </article>
 </div>
 <p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/QA.md" rel="noopener"><code>docs/QA.md</code></a> と同じ文書です（<a href="qa.md">Markdown</a>）</p>

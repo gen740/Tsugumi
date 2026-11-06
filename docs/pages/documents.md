@@ -18,7 +18,7 @@
 
 | 文書 | 内容 |
 | --- | --- |
-| [QA.md](qa.md) | 課題意識、Draft、再現性、記録と再実行についての Q&A と、Nix 上流参照の検証の補足 |
+| [QA.md](qa.md) | AI に任せるのをためらう 3 つの理由（過程が見えない・再現性・データ）に答える Q&A。各問いに、確かめる場所（デモ・テスト）つき |
 | [novelty.md](novelty.md) | 同じ Workflow で設計・実装・検証をつなぐ独自性、なぜ今この設計なのか、試行錯誤を支える実装上の工夫 |
 | [Vision.md](vision.md) | 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想 |
 | [Philosophy.md](philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
@@ -33,7 +33,7 @@
 | --- | --- |
 | [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
 | [Versions.md](versions.md) | 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」 |
-| [security.md](security.md) | 4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
+| [security.md](security.md) | 守っていること・守っていないことの要点と、4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
 | [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
 | [Protocol.md](protocol.md) | RPC 契約: 36 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成） |
 | [Glossary.md](glossary.md) | Card・Draft・Run・invocation・版などの用語集 |

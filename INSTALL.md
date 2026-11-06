@@ -20,7 +20,7 @@ curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/d
 xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 ```
 
-ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定するか、ChatGPT プランを選んで「Continue with ChatGPT」でサインインします。基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)を参照してください。
+ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定するか、ChatGPT プランを選んで「Continue with ChatGPT」でサインインします。基本的な操作は [README](README.md#画面でたどる実験と検証) と[操作ガイド](docs/Usage.md)、外部モデルへ送信されるデータの範囲は[セキュリティと隔離](docs/security.md#モデルに送られるもの)にあります。
 
 ### 自動更新
 
@@ -76,7 +76,7 @@ cmake -S . -B build -G Ninja && ninja -C build
 macOS/Container/build-image.sh --vm
 ```
 
-ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（デフォルト `8`）、`TSUGUMI_BUILDER_MEMORY`（デフォルト `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、デフォルト `tsugumi-builder-nix`）で調整できます。
+ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（既定 `8`）、`TSUGUMI_BUILDER_MEMORY`（既定 `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、既定 `tsugumi-builder-nix`）で調整できます。
 
 Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）：
 
@@ -104,4 +104,4 @@ VM の起動には virtualization entitlement 付きのコード署名が必要�
 (cd tests/python && python -m pytest -q test_contract.py)
 ```
 
-テストスイートと確認範囲は[開発資料のテスト](docs/Development.md#テスト)、パフォーマンスの計測結果は[計測](docs/Development.md#計測2026-11-03高速化後共通-vm)、以前の構成で直した不具合は[解決済みの記録](docs/Development.md#解決済みの記録)を参照してください。
+テストスイートと確認範囲は[開発資料のテスト](docs/Development.md#テスト)、パフォーマンスの計測結果は[計測](docs/Development.md#計測2026-11-03高速化後共通-vm)、以前の構成で直した不具合は[解決済みの記録](docs/Development.md#解決済みの記録)にあります。

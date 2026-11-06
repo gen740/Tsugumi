@@ -45,7 +45,7 @@
 <p>リリース版は Apple の Developer ID による署名と公証をしていない ad-hoc 署名（VM を動かすための virtualization entitlement つき）です。ブラウザでダウンロードした zip から取り出したアプリは Gatekeeper に止められるので、上のように <code>curl</code> で取得するか、取り出したあとに隔離属性を外してください。</p>
 <pre><code class="language-bash">xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 </code></pre>
-<p>ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定するか、ChatGPT プランを選んで「Continue with ChatGPT」でサインインします。基本的な操作は <a href="readme.html#画面でたどる実験と検証">README</a> と<a href="usage.html">操作ガイド</a>、外部モデルへ送信されるデータの範囲は<a href="security.html#モデルに送られるもの">セキュリティと隔離</a>を参照してください。</p>
+<p>ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選び、初回の準備が終わったら画面上部の「実行」を押します。Agent を使う場合は、設定の「API」で利用するモデルのプロバイダと API キーを設定するか、ChatGPT プランを選んで「Continue with ChatGPT」でサインインします。基本的な操作は <a href="readme.html#画面でたどる実験と検証">README</a> と<a href="usage.html">操作ガイド</a>、外部モデルへ送信されるデータの範囲は<a href="security.html#モデルに送られるもの">セキュリティと隔離</a>にあります。</p>
 <h3 id="自動更新">自動更新</h3>
 <p>リリース版は起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、チェックサム・署名・bundle id・版番号を確かめてから、<strong>次に終了したとき</strong>に入れ替えます（終了時には VM が止まっているので、実行中の計算が更新で中断されることはありません）。すぐに更新したいときは、ホーム画面の「再起動して更新」か、アプリケーションメニューの「再起動して … に更新」を選びます。設定の「一般」→「アップデート」で、今の版の確認、手動での確認、自動確認のオン・オフができます。</p>
 <ul>
@@ -79,7 +79,7 @@
 <p>共通 VM の起動ディスク（カーネルと Nix の入った小さな rootfs、<code>dist/tsugumi-vm/</code> に出力）。<a href="https://github.com/gen740/tsugumi-vm" rel="noopener">gen740/tsugumi-vm</a> に公開版があればダウンロードし、なければコンテナ内の Nix でビルドします（別途の Linux ホストやリモートビルダーは不要）。変わるのは nixpkgs の固定か <code>macOS/Container/vm-boot.nix</code> を変えたときだけで、変えたら <code>macOS/tools/publish-vm.sh</code> で公開します。Tsugumi 自身（tsugumid など）は VM が初回起動時に、共有されたソースから VM の中の Nix でビルドします（<code>macOS/Container/vm-system.nix</code>。ソースが変わったときだけ作り直す）：</p>
 <pre><code class="language-bash">macOS/Container/build-image.sh --vm
 </code></pre>
-<p>ビルダーのリソースは環境変数 <code>TSUGUMI_BUILDER_CPUS</code>（デフォルト <code>8</code>）、<code>TSUGUMI_BUILDER_MEMORY</code>（デフォルト <code>16G</code>）、<code>TSUGUMI_BUILDER_VOLUME</code>（Nix キャッシュ用 volume、デフォルト <code>tsugumi-builder-nix</code>）で調整できます。</p>
+<p>ビルダーのリソースは環境変数 <code>TSUGUMI_BUILDER_CPUS</code>（既定 <code>8</code>）、<code>TSUGUMI_BUILDER_MEMORY</code>（既定 <code>16G</code>）、<code>TSUGUMI_BUILDER_VOLUME</code>（Nix キャッシュ用 volume、既定 <code>tsugumi-builder-nix</code>）で調整できます。</p>
 <p>Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）：</p>
 <pre><code class="language-bash">ui/renderer/build.sh
 </code></pre>
@@ -93,7 +93,7 @@
 <h2 id="ビルド後の確認">ビルド後の確認</h2>
 <pre><code class="language-bash">(cd tests/python &amp;&amp; python -m pytest -q test_contract.py)
 </code></pre>
-<p>テストスイートと確認範囲は<a href="development.html#テスト">開発資料のテスト</a>、パフォーマンスの計測結果は<a href="development.html#計測2026-11-03高速化後共通-vm">計測</a>、以前の構成で直した不具合は<a href="development.html#解決済みの記録">解決済みの記録</a>を参照してください。</p>
+<p>テストスイートと確認範囲は<a href="development.html#テスト">開発資料のテスト</a>、パフォーマンスの計測結果は<a href="development.html#計測2026-11-03高速化後共通-vm">計測</a>、以前の構成で直した不具合は<a href="development.html#解決済みの記録">解決済みの記録</a>にあります。</p>
 </article>
 </div>
 <p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/INSTALL.md" rel="noopener"><code>INSTALL.md</code></a> と同じ文書です（<a href="install.md">Markdown</a>）</p>

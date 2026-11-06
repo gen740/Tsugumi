@@ -10,8 +10,8 @@ Tsugumi の実行基盤・設計上の意思決定・テストスイート・パ
 ポートの型スキーマで配線の整合性を検査し、Nix によって Card ごとの実行環境をハッシュ単位で固定します。
 実行履歴と成果物を永続化し、各 Card の入出力値も設定に応じて記録します。
 
-macOS アプリの計算は Mac 上の隔離された Linux VM 内で実行され、Card からの外部ネットワークアクセスはデフォルトで遮断されます。Web UI は Mac 上の `tsugumid` を直接使い、Card を Seatbelt で隔離します（[Web UI の実行環境と範囲](WebUI.md)）。
-一方、外部 LLM を利用する Agent には会話内容やツールが読み取った情報（ソースコード・ログ・入出力値など）が送信されるため、計算環境の隔離と外部モデルへのデータ送信範囲は区別して管理する必要があります。詳細は[セキュリティと隔離](security.md#モデルに送られるもの)を参照してください。
+macOS アプリの計算は Mac 上の隔離された Linux VM 内で実行され、Card からの外部ネットワークアクセスは既定で遮断されます。Web UI は Mac 上の `tsugumid` を直接使い、Card を Seatbelt で隔離します（[Web UI の実行環境と範囲](WebUI.md)）。
+一方、外部 LLM を利用する Agent には会話内容やツールが読み取った情報（ソースコード・ログ・入出力値など）が送信されるため、計算環境の隔離と外部モデルへのデータ送信範囲は区別して管理する必要があります。詳細は[セキュリティと隔離](security.md#モデルに送られるもの)にあります。
 
 グラフの実行エンジンは、条件分岐（branch）・合流（merge）・有限のフィードバックループ・入れ子の子 Workflow（Card in Card）をサポートします。
 macOS アプリでは、アプリ全体で 1 台の共通 Linux VM（`Virtualization.framework` を直接使用）の中で、開いているプロジェクトごとに独立した `tsugumid` プロセスが実行を担います。
@@ -68,7 +68,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
   - **bubblewrap がないとき**: Linux で使えない環境では `sandbox: true` の Card を拒否します。Mac 上の tsugumid は Seatbelt を使います（[Web UI](WebUI.md)）。
 - **永続化と実行環境の置き場所**
   - **データの場所**: `~/Library/Application Support/Tsugumi/`（リリース版。ソースからビルドした開発版は `Tsugumi-dev/`、`AppChannel.swift`。`TSUGUMI_SUPPORT_DIR` で VM と store の置き場所だけを別にもできる）。
-  - **`vm/` の中身**: VM の起動ディスクの展開先（`image/`、アプリ同梱から APFS clone）、VM に読み取り専用で渡す Tsugumi のソース（`source/`、`macOS/Container/vm-source.txt` に挙げたもの。起動ごとにコピー）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（デフォルトで最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）。`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。
+  - **`vm/` の中身**: VM の起動ディスクの展開先（`image/`、アプリ同梱から APFS clone）、VM に読み取り専用で渡す Tsugumi のソース（`source/`、`macOS/Container/vm-source.txt` に挙げたもの。起動ごとにコピー）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（既定で最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）。`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。
   - **store**: VM は store ディスクを `/persist` にし、`/nix` は rootfs の store（下層）＋ `/persist`（上層）の overlay で、nix-daemon 1 つを全プロジェクトが使います。
   - **Tsugumi 自身のビルド**: tsugumid・tsugumi-vmd・ターミナルの道具・整形ツールは、VM の `/init` が共有されたソースの flake（`packages.<system>.vm-system`）を VM の中の Nix でビルドして起動します。依存は cache.nixos.org から取り、tsugumid はソースからコンパイルします。ソースの内容の hash ごとに結果を `/persist/system/<hash>` に記録して GC root にするので、作り直すのは初回とソースが変わったとき（アプリの更新、開発中の core の変更）だけです。Mac 側には何もダウンロードしません。
   - **起動ディスクの更新**: 変わったとき（アプリの更新）は 1 度だけ store を確かめ（`nix-store --verify --repair`）、前の起動ディスクにあって消えたパスのうち、Card のビルドなどから参照されているものは cache.nixos.org から取り直し、参照のないものはデータベースから外します。
@@ -77,7 +77,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 - **実行履歴の置き場所**
   - **正本**: 履歴の SQLite（実行・呼び出し・状態・値・ログ・表示・受領記録）は VM の実行履歴用ディスク（`vm/history.img`、最大 32 GiB の sparse、`/history-disk` に mount）の `<id>/history.sqlite` にあり、そのプロジェクトの tsugumid にだけ `/history` として見えます（`--history-dir`。指定がなければ `.tsugumi/history.sqlite`）。Card をまたぐたびの確定待ちが共有フォルダを通らなくなります。
   - **ディスクの設定**: store ディスク（`synchronizationMode: .full`、確定ごとに Mac 側で F_FULLFSYNC）と分け、`.fsync` で付けます（アプリや VM が落ちても確定済みの記録は残る。Mac の電源断では直前の書き込みを失うことがある。共有フォルダの同期書き込みの速さから見て、共有フォルダ上に置いていたときと同程度と推定）。store とは別に初期化でき、「すべての実行環境を初期化」でも残ります。
-  - **プロジェクト内のコピー**: Workflow 設定の「実行履歴をプロジェクトに保存する」（`tsugumi.json` の `saveRunHistory`、デフォルト true）がオンなら、終わった実行を `.tsugumi/runs.sqlite` にも追記します（書き込みが 2 秒止んだとき、遅くとも 30 秒後と、終了時。実行の時間には入らない）。
+  - **プロジェクト内のコピー**: Workflow 設定の「実行履歴をプロジェクトに保存する」（`tsugumi.json` の `saveRunHistory`、既定 true）がオンなら、終わった実行を `.tsugumi/runs.sqlite` にも追記します（書き込みが 2 秒止んだとき、遅くとも 30 秒後と、終了時。実行の時間には入らない）。
   - **コピーの形式**: 決まった形（`meta` の `format = tsugumi-runs`・`version = 2`）で、値は FlatBuffers のバイト列のまま SHA-256 を添えて `schemas`（hash → bfbs・root type）を指し、実行ごとに型が変わっても読む側がその場で解釈できます。ログは書いた断片と位置のまま（Run 全体のログの順序を保つ）、成果物はプロジェクト内のファイル `.tsugumi/runs/<run>/` を指します。実行中の状態・受領記録・最後の入力は含めません。
   - **持ち運び**: 開くと `run_id` で照らし合わせて VM にない実行を読み込むので、コピーや別の Mac へ移したプロジェクトでも履歴がついて来ます。
   - **削除**: 「実行履歴を削除」（`RunHistoryDelete`、全部か指定日時より前に終わったもの、実行中は不可）は VM・`.tsugumi/runs.sqlite`・実行ごとのファイルの 3 か所から消します。VM 内の履歴は自動では消さず、アプリ設定の「VM 内の実行履歴」で容量を見て、フォルダがもうないプロジェクトの分も消せます（vmd の `histories`・`forget`）。
@@ -132,7 +132,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 - **版番号**は `VERSION` だけにあり（core・Nix・CMake・アプリが読む）、v1.0.0 までは 0.x で、版の間の互換性は保ちません（[AGENTS.md](../AGENTS.md)）。
 - **リリースの作り方**: origin/main を取り出したチェックアウトで `macOS/tools/release.sh 0.2.0` を実行すると、`VERSION` を書き換えて commit し、タグ `v0.2.0` とともに main へ push します。チェックアウトなしなら `gh workflow run release.yml -f version=0.2.0`（Actions が同じことをする）。どちらもリリースの workflow（`.github/workflows/release.yml`）がアプリをビルドして GitHub Release を作り、インストール済みのリリース版はそれを見つけて自動で更新します（`macOS/Sources/App/Model/Updater.swift`）。
 - **VM の起動ディスク**（`vm-boot.nix`・nixpkgs の固定）を変えたときは、リリースの前に `macOS/Container/build-image.sh --vm` と `macOS/tools/publish-vm.sh`（ディスクと一緒にライセンスの一覧と対応ソースも公開します）で [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) に公開します。ランナーは Apple container を使えないので、公開版がないとリリースのビルドは失敗します。
-- **開発版とリリース版**（`AppChannel.swift`）: `build-app.sh` は既定で開発版（`Tsugumi Dev`、bundle id `app.tsugumi.Tsugumi.dev`、`Info.plist` の `TsugumiChannel` が `dev`）を作り、`--release` でリリース版（`Tsugumi`、`app.tsugumi.Tsugumi`、`release`）を作ります。サポートフォルダ（VM・store・control フォルダ・会話履歴）は開発版が `~/Library/Application Support/Tsugumi-dev/`、リリース版が `Tsugumi/` で、ユーザー設定（UserDefaults）も bundle id ごとに別です。開発中の確認やテスト（UI スクリプト・smoke・`swift test`）は開発版で行うので、使っているリリース版の VM には触れません。Python のテストの共通 VM は `build/test-vm` です。
+- **開発版とリリース版**（`AppChannel.swift`）: `build-app.sh` は既定で開発版（`Tsugumi Dev`、bundle id `app.tsugumi.Tsugumi.dev`、`Info.plist` の `TsugumiChannel` が `dev`）を作り、`--release` でリリース版（`Tsugumi`、`app.tsugumi.Tsugumi`、`release`）を作ります。サポートフォルダ（VM・store・control フォルダ・会話履歴）は開発版が `~/Library/Application Support/Tsugumi-dev/`、リリース版が `Tsugumi/` で、利用者の設定（UserDefaults）も bundle id ごとに別です。開発中の確認やテスト（UI スクリプト・smoke・`swift test`）は開発版で行うので、使っているリリース版の VM には触れません。Python のテストの共通 VM は `build/test-vm` です。
 - **開発版の署名**: 既定ではどちらも ad-hoc 署名です。ad-hoc だと署名の条件（designated requirement）がそのビルドのバイナリのハッシュになり、ログインキーチェーンは再ビルドのたびに別のアプリとみなして（API キーの読み取りなどで）許可のダイアログを出します。開発版は、この Mac のキーチェーンにある証明書（Apple Development など）を環境変数 `TSUGUMI_CODESIGN_IDENTITY` に指定して署名できます: `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh`（`codesign --sign` が取る証明書の名前の一部か SHA-1。使える証明書は `security find-identity -v -p codesigning`）。署名の条件が証明書と bundle id になり、再ビルドしても変わりません。`--release` では環境変数を無視して ad-hoc のままです（リリースの成果物は環境で変わりません）。ad-hoc から切り替えた後の最初の 1 回は、キーチェーンのダイアログが出ます（「常に許可」を選ぶか、キーを保存し直してください）。以後は出なくなります。VM に要る `com.apple.security.virtualization` の entitlement は、どちらの署名にも付きます。
 - **自動更新**はリリース版だけが行います。起動の 20 秒後と 6 時間ごとに `api.github.com/repos/gen740/Tsugumi/releases/latest` を読み、今より新しい版（draft・pre-release は除く）に `Tsugumi.zip` と `Tsugumi.zip.sha256` があればアプリと同じボリュームの一時フォルダにダウンロードし、チェックサム・`codesign --verify --deep --strict`・bundle id・`TsugumiChannel`・版番号を確かめます。入れ替えは `applicationWillTerminate`（VM を止めたあと）で `FileManager.replaceItemAt` により行い、「再起動して更新」のときはこのプロセスが終わるのを待って新しいアプリを開きます。UI スクリプトと smoke の実行中は確認しません。
 
@@ -228,7 +228,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 
 ## 計測（2026-11-03、共通 VM、高速化前）
 
-高速化前の比較用記録です。ここで調べていた履歴保存の待ち時間には、常駐 worker・VM 内の一時領域・履歴用ディスクの分離などで対処しています。変更後の値と条件は[高速化後の計測](#計測2026-11-03高速化後共通-vm)を参照してください。
+高速化前の比較用記録です。ここで調べていた履歴保存の待ち時間には、常駐 worker・VM 内の一時領域・履歴用ディスクの分離などで対処しています。変更後の値と条件は[高速化後の計測](#計測2026-11-03高速化後共通-vm)にあります。
 
 条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。
 `tests/python/measure_stages.py collatz`（VM、`--host` で Mac 上の tsugumid）と、アプリの smoke モード
