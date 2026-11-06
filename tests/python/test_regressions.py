@@ -6,6 +6,7 @@
 4. A run stalled by a full downstream queue ends instead of hanging
    (needs a code Card feedback loop: test_cards_container.py).
 5. A Logger Card shows numbers exactly (it used to keep 12 decimals, so 1e-20 was 0.0).
+6. A Card under a name another Card had does not get that Card's display.
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ import time
 from pathlib import Path
 
 from conftest import Daemon
-from projects import FILE_FBS, card, conn, put, run_and_wait, write
-from tsugumi_client import RpcFailure, new_id, path, text
+from projects import FILE_FBS, builtin_project, card, conn, put, run_and_wait, write
+from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
 def file_fork_project(root: Path) -> None:
     write(root,
@@ -197,3 +199,96 @@ root_type Outputs;
         assert shown("md").markdown and text(shown("md").text) == "```json\n" + line + "\n```"
     finally:
         d.cleanup()
+
+
+class FreedNames:
+    """A logger that has shown something, and the saves around it."""
+
+    def __init__(self, root: Path):
+        builtin_project(root, text="the old result")
+        self.d = Daemon(root).start()
+        self.c = self.d.client()
+        self.c.hello()
+        self.sub = text(self.c.open().subscriptionId)
+        _, st = run_and_wait(self.c, "src")
+        assert st.state == RunState.succeeded
+
+    def shown(self, card: str):
+        """What the core sends for a Card that becomes visible: its text and its Card."""
+        self.c.notifications.clear()
+        self.c.call("ViewSetVisibleRequest", subscriptionId=self.sub, cards=[path(card)])
+        try:
+            n = self.c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1.0)
+        except TimeoutError:
+            return None
+        return text(n.value.display.value.text), "/".join(text(s) for s in n.value.display.card.segments)
+
+    def save(self, cards: list, *changes):
+        snap = self.c.call("ProjectInspectRequest")
+        project = json.loads(text(snap.projectJson))
+        project["canvas"]["cards"] = [{"id": i} for i in cards]
+        project["canvas"]["connections"] = []
+        self.c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+                    changes=[change("SetProject", json=json.dumps(project)), *changes])
+
+
+def test_a_renamed_card_keeps_its_display_and_leaves_none_behind(tmp_path):
+    t = FreedNames(tmp_path / "p")
+    try:
+        assert "the old result" in t.shown("out")[0]
+        t.save(["start", "src", "kept"], change("RenameDefinition", id="out", to="kept"))
+        moved = t.shown("kept")
+        assert moved and "the old result" in moved[0] and moved[1] == "kept"
+        assert t.shown("out") is None
+        # The old name taken by another Card: it starts without a display.
+        t.save(["start", "src", "kept", "out"], change("PutDefinition", id="out", cardJson='{"template": "logger"}'))
+        assert t.shown("out") is None
+    finally:
+        t.d.stop()
+
+
+def test_a_card_under_a_deleted_cards_name_does_not_get_its_display(tmp_path):
+    t = FreedNames(tmp_path / "p")
+    try:
+        assert "the old result" in t.shown("out")[0]
+        t.save(["start", "src"], change("RemoveDefinition", id="out"))
+        # A Card made otherwise: nothing, from the last run's history either, and
+        # asking again does not bring it back.
+        t.save(["start", "src", "out"], change("PutDefinition", id="out", cardJson='{"template": "logger", "markdown": true}'))
+        assert t.shown("out") is None
+        assert t.shown("out") is None
+    finally:
+        t.d.stop()
+
+
+def test_a_card_that_comes_to_a_deleted_cards_name_or_leaves_it_gets_nothing(tmp_path):
+    t = FreedNames(tmp_path / "p")
+    try:
+        assert "the old result" in t.shown("out")[0]
+        t.save(["start", "src"], change("RemoveDefinition", id="out"))
+        # A new Draft takes the name, and is named by the user: the old display stays behind.
+        draft = '{"template": "draft"}'
+        t.save(["start", "src", "out"], change("PutDefinition", id="out", cardJson=draft))
+        t.save(["start", "src", "named"], change("RenameDefinition", id="out", to="named"))
+        t.save(["start", "src", "named"], change("PutDefinition", id="named", cardJson='{"template": "logger", "markdown": true}'))
+        assert t.shown("named") is None
+        # Another Card renamed onto the old name: nothing either.
+        t.save(["start", "src", "named", "other"], change("PutDefinition", id="other", cardJson=draft))
+        t.save(["start", "src", "named", "out"], change("RenameDefinition", id="other", to="out"))
+        t.save(["start", "src", "named", "out"], change("PutDefinition", id="out", cardJson='{"template": "logger", "markdown": true}'))
+        assert t.shown("out") is None
+    finally:
+        t.d.stop()
+
+
+def test_a_card_put_back_as_it_was_has_its_display_again(tmp_path):
+    t = FreedNames(tmp_path / "p")
+    try:
+        assert "the old result" in t.shown("out")[0]
+        t.save(["start", "src"], change("RemoveDefinition", id="out"))
+        # Written with other spacing than the file it came from: the same Card all the same.
+        t.save(["start", "src", "out"], change("PutDefinition", id="out", cardJson='{ "template":"logger" }'))
+        got = t.shown("out")
+        assert got and "the old result" in got[0]
+    finally:
+        t.d.stop()

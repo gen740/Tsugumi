@@ -628,6 +628,9 @@ final class ProjectSession {
     }
     resolution = r
     diagnostics = all
+    // A result belongs to a Card of the document. A Card that comes back asks for
+    // its own again: displayedCards changed (refreshVisibleDisplays).
+    for k in displays.keys where r[k] == nil { displays[k] = nil }
   }
 
   private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
@@ -1225,6 +1228,12 @@ final class ProjectSession {
   /// Cards whose displays the canvas shows: what a Card shows is up to its
   /// code (the display SDK), so every Card that can run may send displays.
   var displayedCards: Set<CardKey> { Set(resolution.keys.filter { [.code, .logger].contains(kind($0)) }) }
+
+  /// A Card that took a name another Card had starts without that Card's result and run state.
+  func forgetResult(_ k: CardKey) {
+    displays[k] = nil
+    cardStates[k] = nil
+  }
 
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
