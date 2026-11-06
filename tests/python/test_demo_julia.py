@@ -251,7 +251,7 @@ def test_heat_inverse(demo):
     assert min(errors.values()) < 0.01 * errors[sweep["lambdas"][0]]  # regularization beats the near-naive end
 
     r = meta(c, rid, "reconstruct")
-    assert r["lambda"] == pytest.approx(sweep["discrepancy"], rel=1e-9)  # a message keeps about 12 digits
+    assert r["lambda"] == sweep["discrepancy"]
     assert r["errors"][1] < r["errors"][0] and r["errors"][1] < r["errors"][2]  # too little and too much are both worse
     rms_truth = math.sqrt(sum((a - b) ** 2 for a, b in zip(r["solution"], truth)) / n)
     assert rms_truth == pytest.approx(r["errors"][1])
