@@ -50,12 +50,12 @@
 </ul>
 <h2 id="2-card-と-workflow">2. Card と Workflow</h2>
 <h3 id="card-の種類">Card の種類</h3>
-<div class="table-wrap"><table><thead><tr><th>種類</th><th>役割</th></tr></thead><tbody><tr><td>コード Card</td><td><code>default.nix</code> で実行環境を、<code>src/</code> で処理を定義する（C++ / Python / bash）</td></tr><tr><td>trigger</td><td>Workflow の実行起点（出力ポート <code>out</code>）</td></tr><tr><td>input</td><td><code>_outputs.fbs</code> の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー）</td></tr><tr><td>fork / branch / merge</td><td>分配・条件分岐（<code>condition</code> に応じて <code>a</code> / <code>b</code> の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の <code>maxRuns</code> で反復の上限を決めます</td></tr><tr><td>logger</td><td>受け取った値を外部 DB に記録する（現在は <code>.tsugumi/logger/</code> 配下の <code>sqlite:&lt;name&gt;</code> に対応）</td></tr><tr><td>subgraph（Card in Card）</td><td>子 Workflow を 1 つの Card として扱う。<code>boundary</code> で外側のポートを内部の Card に対応づける</td></tr><tr><td>Draft</td><td>名前と内容をカードに直接書き、線を落とすだけでつなげる「未実装の Card」（ポートは線に合わせて作られ、型はない）。後から Agent に実装を生成させられる</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>種類</th><th>役割</th></tr></thead><tbody><tr><td>コード Card</td><td><code>default.nix</code> で実行環境を、<code>src/</code> で処理を定義する（C++ / Python / bash / R / Julia）</td></tr><tr><td>trigger</td><td>Workflow の実行起点（出力ポート <code>out</code>）</td></tr><tr><td>input</td><td><code>_outputs.fbs</code> の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー）</td></tr><tr><td>fork / branch / merge</td><td>分配・条件分岐（<code>condition</code> に応じて <code>a</code> / <code>b</code> の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の <code>maxRuns</code> で反復の上限を決めます</td></tr><tr><td>logger</td><td>受け取った値を外部 DB に記録する（現在は <code>.tsugumi/logger/</code> 配下の <code>sqlite:&lt;name&gt;</code> に対応）</td></tr><tr><td>subgraph（Card in Card）</td><td>子 Workflow を 1 つの Card として扱う。<code>boundary</code> で外側のポートを内部の Card に対応づける</td></tr><tr><td>Draft</td><td>名前と内容をカードに直接書き、線を落とすだけでつなげる「未実装の Card」（ポートは線に合わせて作られ、型はない）。後から Agent に実装を生成させられる</td></tr></tbody></table></div>
 <h3 id="型付きのポート">型付きのポート</h3>
 <ul>
 <li>出力ポートからの線は 1 本です。1 つの値を複数の Card に送るときは fork Card を通します（同じことを書く方法を 1 つにし、Canvas で分配が Card として見えるようにするため）。2 本以上の線が出ている出力は <code>fan_out</code> として報告され、実行できません。Canvas で使用中の出力からもう 1 本引くと、fork が自動で挟まります（出力が fork や fork につながっているときは、その fork に枝が増えます）。</li>
 <li>出力ポートの型は FlatBuffers スキーマ（<code>_outputs.fbs</code>）で宣言し、下流の入力ポートの型は上流から自動的に導出されます。配線時に構造的互換性を検査し、merge では自動的に union 型が構成されます。</li>
-<li>値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。</li>
+<li>値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash（R と Julia は JSON に変換して）の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。</li>
 </ul>
 <h3 id="実行の意味論スケジューラー">実行の意味論（スケジューラー）</h3>
 <ul>

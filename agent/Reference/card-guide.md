@@ -177,6 +177,49 @@ What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);
 outputs are written as `{"<port>": {...}}` JSON to `$TSUGUMI_OUTPUT`; `jq` is available.
 
+A double arrives in `$JSON_<PORT>` with 12 significant digits (a float with 6): pass exact values in a file. This holds for R and Julia too.
+Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, write one JSON member to
+`$TSUGUMI_DISPLAY`: `{"markdown": "..."}`, `{"text": "..."}`, `{"table": {"columns": [...], "rows": [[...]]}}`
+(cells are strings), `{"image": {"path": "plot.png", "alt": "..."}}` or `{"module": {"name": "vega-lite", "data":
+{...}}}`. It is shown when the script ends successfully.
+
+### R (`src/main.R`)
+
+`_card.json`: `{"language": "r", ...}`; `default.nix`: `run = inputs.tsugumi.rCard { src = ./src; packages = ps: [
+ps.survival ps.ggplot2 ]; };` (from nixpkgs' `rPackages`). No `sdk`, no generated classes: messages and params are
+lists, exchanged as JSON and checked against the port's type by the worker.
+
+```r
+main <- function(ctx) {
+  n <- ctx$input("events")$value          # a message; ctx$path("events") for a File / Directory
+  ctx$output("counts", list(red = 703367, bins = I(c(1, 2))))  # I(): a field that is an array, whatever its length
+  ctx$plot(plot(density(x)), alt = "...") # base graphics or a ggplot, as the Card's image
+  ctx$display_table(df)                   # or display_text, display_markdown, display_image(path), display_module(name, spec)
+}
+```
+
+`ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
+goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
+integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+
+### Julia (`src/main.jl`)
+
+`_card.json`: `{"language": "julia", ...}`; `default.nix`: `run = inputs.tsugumi.juliaCard { src = ./src; };`, with
+`packages = [ "JuMP" ];` for General registry packages (fixed at build time). Prefer the standard library when it
+does the job: packages take long to build.
+
+```julia
+function main(ctx)
+    n = input(ctx, "events")["value"]     # a Dict; path(ctx, "events") for a File / Directory
+    output(ctx, "counts", Dict("red" => 703367))
+    display_vegalite(ctx, spec)           # a Vega-Lite spec as a Dict, data inline: an interactive chart
+    display_markdown(ctx, "**done**")     # or display_text, display_table(ctx, columns, rows), display_image(ctx, path; alt=""), display_module
+end
+```
+
+`ctx.params["low"]`, `ctx.output_directory`, `ctx.temporary_directory`. A thrown error fails the Card and goes to its
+log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or add one by `packages`.
+
 ## Checking and running
 
 1. Check planned changes with `project_validate {"changes": [...]}` (nothing is saved).
