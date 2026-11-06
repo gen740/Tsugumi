@@ -1,0 +1,142 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": -160,
+      "y": 0
+    },
+    "load": {
+      "x": 200,
+      "y": 0
+    },
+    "prepare": {
+      "x": 720,
+      "y": 0
+    },
+    "share": {
+      "x": 1240,
+      "y": 0
+    },
+    "knn": {
+      "x": 1500,
+      "y": -1290
+    },
+    "logistic": {
+      "x": 1500,
+      "y": -860
+    },
+    "svm": {
+      "x": 1500,
+      "y": -430
+    },
+    "forest": {
+      "x": 1500,
+      "y": 0
+    },
+    "boosting": {
+      "x": 1500,
+      "y": 430
+    },
+    "mlp": {
+      "x": 1500,
+      "y": 860
+    },
+    "cnn": {
+      "x": 1500,
+      "y": 1290
+    },
+    "compare": {
+      "x": 2300,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "plan",
+      "scope": "",
+      "text": "MNIST の分類器くらべ\nload と prepare は実装済み。7 つの分類器は互いに依存しないので、Agent は手分けして同時に書ける（delegate）。そろったら compare を書く",
+      "x": 1240,
+      "y": -330
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 160,
+      "y": 140,
+      "width": 480,
+      "height": 340
+    },
+    "prepare": {
+      "x": 680,
+      "y": 140,
+      "width": 400,
+      "height": 380
+    },
+    "knn": {
+      "x": 1460,
+      "y": -1170,
+      "width": 560,
+      "height": 270
+    },
+    "logistic": {
+      "x": 1460,
+      "y": -740,
+      "width": 560,
+      "height": 270
+    },
+    "svm": {
+      "x": 1460,
+      "y": -310,
+      "width": 560,
+      "height": 270
+    },
+    "forest": {
+      "x": 1460,
+      "y": 120,
+      "width": 560,
+      "height": 270
+    },
+    "boosting": {
+      "x": 1460,
+      "y": 550,
+      "width": 560,
+      "height": 270
+    },
+    "mlp": {
+      "x": 1460,
+      "y": 980,
+      "width": 560,
+      "height": 270
+    },
+    "cnn": {
+      "x": 1460,
+      "y": 1410,
+      "width": 560,
+      "height": 270
+    },
+    "compare": {
+      "x": 2260,
+      "y": 140,
+      "width": 560,
+      "height": 480
+    },
+    "tradeoff": {
+      "x": 3160,
+      "y": -840,
+      "width": 720,
+      "height": 420
+    },
+    "recall": {
+      "x": 3160,
+      "y": -220,
+      "width": 720,
+      "height": 420
+    },
+    "hard": {
+      "x": 3160,
+      "y": 400,
+      "width": 720,
+      "height": 560
+    }
+  }
+}

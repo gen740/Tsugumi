@@ -23,7 +23,10 @@ export interface ArrangeWire { from: string; fromPort: string; to: string; toPor
 export interface ArrangeBox { id: string; width: number; height: number }
 export interface ArrangeInput {
   flow: FlowDirection
+  /** Where frames, notes and layers go. */
   grid: number
+  /** The grid is on: Cards are drawn on it (`placedPosition`), so they are placed on it. */
+  snap: boolean
   cards: ArrangeCard[]
   wires: ArrangeWire[]
   frames: ArrangeBox[]
@@ -176,7 +179,7 @@ export function arrangeCards(input: ArrangeInput): ArrangeResult {
   // Each graph with its output frames, nearest the start of the flow first.
   const blocks = members.map((list) => {
     const graphEdges = edges.filter((e) => list.includes(e.from))
-    const lines = new Layered(nodes, graphEdges, list, grid).run()
+    const lines = new Layered(nodes, graphEdges, list, grid, input.snap).run()
     const cards = list.filter((i) => nodes[i].card >= 0)
     const rects = cards.map(cardRect)
     const room = [...rects, ...barRects(rects)]
@@ -322,7 +325,7 @@ class Layered {
   /** For each wire, the nodes it passes (its two ends and the points between). */
   private chains: { edge: Edge; path: number[] }[] = []
 
-  constructor(nodes: Node[], private edges: Edge[], private list: number[], private grid: number) {
+  constructor(nodes: Node[], private edges: Edge[], private list: number[], private grid: number, private snap: boolean) {
     this.all = nodes
   }
 
@@ -574,7 +577,10 @@ class Layered {
         this.pieces.push({ from: a, fromAt, to: b, toAt, weight })
       }
     }
-    // The network: one variable per node, one more per piece of wire.
+    // The network: one variable per node, one more per piece of wire, in whole
+    // grids when Cards are on it (a wire whose ports are not a whole number of
+    // grids apart stays as near as it can).
+    const unit = this.snap ? this.grid : 1
     const vars = this.list.slice()
     const index = new Map<number, number>()
     vars.forEach((v, i) => index.set(v, i))
@@ -584,25 +590,25 @@ class Layered {
         const a = n[l[k]], b = n[l[k + 1]]
         const lane = a.across === 0 || b.across === 0
         // A Card keeps the room for its frame beside it.
-        const frame = a.frameAcross > 0 ? roundNear(a.frameAcross) + BOX_GAP + this.grid : 0
-        arcs.push({ from: index.get(l[k])!, to: index.get(l[k + 1])!, min: roundNear(a.across) + frame + (lane ? LANE_GAP : SIDE_GAP), weight: 0 })
+        const frame = a.frameAcross > 0 ? a.frameAcross + BOX_GAP + this.grid : 0
+        arcs.push({ from: index.get(l[k])!, to: index.get(l[k + 1])!, min: Math.ceil((a.across + frame + (lane ? LANE_GAP : SIDE_GAP)) / unit - 1e-9), weight: 0 })
       }
     }
     let count = vars.length
     for (const p of this.pieces) {
-      const fromAt = roundNear(p.fromAt), toAt = roundNear(p.toAt)
+      const apart = roundNear((p.fromAt - p.toAt) / unit)
       const aux = count++
-      arcs.push({ from: aux, to: index.get(p.from)!, min: fromAt >= toAt ? 0 : toAt - fromAt, weight: p.weight })
-      arcs.push({ from: aux, to: index.get(p.to)!, min: fromAt >= toAt ? fromAt - toAt : 0, weight: p.weight })
+      arcs.push({ from: aux, to: index.get(p.from)!, min: apart >= 0 ? 0 : -apart, weight: p.weight })
+      arcs.push({ from: aux, to: index.get(p.to)!, min: apart >= 0 ? apart : 0, weight: p.weight })
     }
     const solved = solveNetwork(count, arcs)
-    for (let i = 0; i < vars.length; i++) n[vars[i]].at = solved[i]
-    this.settleStraight(index)
+    for (let i = 0; i < vars.length; i++) n[vars[i]].at = solved[i] * unit
+    if (!this.snap) this.settleStraight(index)
   }
 
-  /** Wires that came out straight stay exactly straight (ports are not whole
-   *  numbers), and each straight run moves onto the grid as one: most of its
-   *  Cards on it. */
+  /** Without the grid: wires that came out straight stay exactly straight (ports
+   *  are not whole numbers), and each straight run moves as one, most of its
+   *  Cards on the lines of the grid. */
   private settleStraight(index: Map<number, number>) {
     const n = this.all
     const parent = this.list.map((_, i) => i)
@@ -613,7 +619,7 @@ class Layered {
       }
       return i
     }
-    const straight = (p: Piece) => p.weight !== WEIGHT_FEEDBACK && n[p.from].at + roundNear(p.fromAt) === n[p.to].at + roundNear(p.toAt)
+    const straight = (p: Piece) => p.weight !== WEIGHT_FEEDBACK && n[p.to].at - n[p.from].at === roundNear(p.fromAt - p.toAt)
     const links: Piece[] = this.pieces.filter(straight)
     for (const p of links) {
       const a = find(index.get(p.from)!), b = find(index.get(p.to)!)

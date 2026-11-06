@@ -10,7 +10,7 @@ Read with `reference_read`. Every example named here is a working file under
 | File | What it is |
 | --- | --- |
 | `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
-| `_meta.json` | The intent: `description`, `content`, port descriptions (kept when a Draft is implemented: `PutDefinition` with `"keep_meta": true`) |
+| `_meta.json` | The intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. The save implementing a Draft keeps what it has and fills an empty `description` and `context` (only from what the user and the Draft say); `"keep_meta": true` only when nothing is empty |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` |
 | `src/` | Code Cards only: the sources |
@@ -200,6 +200,8 @@ main <- function(ctx) {
 `ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
 goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
 integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+A `long`/`ulong` field takes an R integer (`27L`) or a string of digits (`sprintf("%.0f", x)`), not a double: `27` is written as
+`27.0` and the type rejects it.
 
 ### Julia (`src/main.jl`)
 

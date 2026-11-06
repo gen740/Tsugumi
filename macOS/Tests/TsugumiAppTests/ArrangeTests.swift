@@ -55,18 +55,18 @@ struct ArrangeTests {
       ArrangeCard(id: $0["id"] as? String ?? "", width: number($0["width"]), height: number($0["height"]), inputs: ports($0["inputs"]), outputs: ports($0["outputs"]))
     }
     let boundary = j["boundary"] as? [String: Any]
-    return ArrangeInput(flow: flow(j["flow"] as? String), grid: number(j["grid"]), cards: cards, wires: wires(j["wires"]), frames: boxes(j["frames"]), notes: boxes(j["notes"]),
+    return ArrangeInput(flow: flow(j["flow"] as? String), grid: number(j["grid"]), snap: j["snap"] as? Bool ?? false, cards: cards, wires: wires(j["wires"]), frames: boxes(j["frames"]), notes: boxes(j["notes"]),
                         boundaryInputs: ends(boundary?["inputs"]), boundaryOutputs: ends(boundary?["outputs"]))
   }
 
   /// What `CardGeometry` gives for a Card of arrange-demos.json / arrange-cases.json.
-  static func card(_ j: [String: Any], flow: FlowDirection) -> ArrangeCard {
+  static func card(_ j: [String: Any], flow: FlowDirection, grid: CGFloat?) -> ArrangeCard {
     let id = j["id"] as? String ?? ""
     func names(_ key: String) -> [String] { j[key] as? [String] ?? [] }
     let params = (0..<Int(number(j["params"]))).map { ParamData(name: "p\($0)", type: "int64", value: "0") }
     let data = CardNodeData(title: id, kind: kind(j["kind"] as? String ?? ""), summary: j["summary"] as? Bool == true ? "s" : nil,
                             inputs: names("inputs").map { PortData(name: $0) }, outputs: names("outputs").map { PortData(name: $0) }, params: params,
-                            collapsed: j["collapsed"] as? Bool ?? false, hasDisplay: j["display"] as? Bool ?? false)
+                            collapsed: j["collapsed"] as? Bool ?? false, hasDisplay: j["display"] as? Bool ?? false, portGrid: grid)
     let g = CardGeometry(data, flow: flow)
     func ports(_ list: [String], output: Bool) -> [ArrangePort] {
       list.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: Double(p.x), y: Double(p.y)) }
@@ -99,8 +99,9 @@ struct ArrangeTests {
       let parts = (e["name"] as? String ?? "").split(separator: " ")
       let c = try #require(cases.first { $0["name"] as? String == String(parts[0]) })
       let flow = Self.flow(String(parts[1]))
+      let grid: CGFloat? = parts[2] == "off" ? nil : 20
       let want = Self.input(try #require(e["input"] as? [String: Any]))
-      let cards = (c["cards"] as? [[String: Any]] ?? []).map { Self.card($0, flow: flow) }
+      let cards = (c["cards"] as? [[String: Any]] ?? []).map { Self.card($0, flow: flow, grid: grid) }
       #expect(cards.count == want.cards.count)
       for (a, b) in zip(cards, want.cards) {
         let same = a.id == b.id && a.width == b.width && a.height == b.height &&
@@ -118,6 +119,9 @@ struct ArrangeTests {
       let r = arrangeCards(input)
       var rects: [(String, CGRect)] = []
       for a in r.cards {
+        if input.snap {
+          #expect(snapToGrid(a.x, input.grid) == a.x && snapToGrid(a.y, input.grid) == a.y, "\(name): the grid leaves \(a.id) where it is")
+        }
         let c = try #require(input.cards.first { $0.id == a.id })
         rects.append(("card \(a.id)", CGRect(x: a.x, y: a.y, width: c.width, height: c.height)))
       }

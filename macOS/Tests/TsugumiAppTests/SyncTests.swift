@@ -142,6 +142,112 @@ import Testing
     #expect(s.layout == arranged, "from the same graph, the same layout")
     s.arrange([])
     #expect(s.layout == arranged, "arranging again changes nothing")
+    // Moving one Card afterwards: it goes by whole grids and nothing else moves.
+    let was = s.position(b), other = s.position(a), frame = s.displayFrame(b)
+    s.moveSelection(cards: [b], notes: [], frames: [], by: CGSize(width: 47, height: 33), snap: 20)
+    #expect(s.position(b) == CGPoint(x: was.x + 40, y: was.y + 40))
+    #expect(s.position(a) == other)
+    #expect(s.displayFrame(b) == frame)
+  }
+
+  /// A marquee catches Cards, sticky notes and output frames, at the top and
+  /// inside a Card in Card. They move together in one edit and one save, and go
+  /// together: a frame alone is closed and its Card stays.
+  @Test func aMarqueeCatchesNotesAndFramesWhichMoveAndGoWithTheCards() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+
+    func check(in scope: [String]) async {
+      let near = s.addCard(template: .draft, in: scope, at: .zero, name: "near")
+      let framed = s.addCard(template: .draft, in: scope, at: CGPoint(x: 3000, y: 0), name: "framed")
+      let outside = s.addCard(template: .draft, in: scope, at: CGPoint(x: 6000, y: 0), name: "outside")
+      let beside = s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0), name: "beside")
+      let note = s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
+      let outsideNote = s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
+      s.updateDisplayFrame(framed) {
+        $0["x"] = .real(400)
+        $0["y"] = .real(400)
+        $0["width"] = .real(300)
+        $0["height"] = .real(200)
+      }
+      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }  // beside its Card
+      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // beside its Card, to be closed
+      s.closeDisplayFrame(outside)
+
+      let items = s.marqueeItems(CGRect(x: -500, y: -500, width: 1500, height: 1500), in: scope)
+      #expect(items.cards.contains(near) && !items.cards.contains(framed) && !items.cards.contains(outside), "\(scope)")
+      #expect(items.notes == [note])
+      #expect(items.frames == [near, framed], "the frame caught, though its Card is outside")
+      #expect(!items.notes.contains(outsideNote))
+      #expect(s.marqueeItems(CGRect(x: 5900, y: -500, width: 1000, height: 1000), in: scope).frames.isEmpty, "a closed frame is not caught")
+
+      let before = (card: s.position(near), note: s.noteRect(s.note(note)!), beside: s.displayRect(near), undos: s.undoStack.count)
+      s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil)
+      #expect(s.position(near) == CGPoint(x: before.card.x + 30, y: before.card.y + 40))
+      #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: before.note.minX + 30, y: before.note.minY + 40))
+      #expect(s.displayRect(framed) == CGRect(x: 430, y: 440, width: 300, height: 200), "its Card stays, its size too")
+      #expect(s.position(framed) == CGPoint(x: 3000, y: 0))
+      #expect(s.displayFrame(near)?["x"]?.double == nil, "beside its Card: it goes with the Card and keeps no place")
+      #expect(s.displayRect(near).origin == CGPoint(x: before.beside.minX + 30, y: before.beside.minY + 40), "not moved twice")
+      #expect(s.undoStack.count == before.undos + 1, "one edit")
+      s.undo()
+      #expect(s.position(near) == before.card && s.noteRect(s.note(note)!).origin == before.note.origin)
+      #expect(s.displayRect(framed).origin == CGPoint(x: 400, y: 400), "one undo brings all back")
+
+      // With the grid, all go by the same whole grids, so the arrangement stays:
+      // the Card goes from where it is drawn, what moves with it by the same step.
+      let grid = 20.0
+      let offGrid = s.addCard(template: .draft, in: scope, at: CGPoint(x: 3010, y: 950), name: "offgrid")
+      let noteBefore = s.noteRect(s.note(note)!).origin
+      s.moveSelection(cards: [offGrid], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      #expect(s.position(offGrid) == CGPoint(x: snapToGrid(3010, grid) + 40, y: snapToGrid(950, grid) + 40))
+      #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 40, y: noteBefore.y + 40))
+      #expect(s.displayRect(framed).origin == CGPoint(x: 440, y: 440))
+      s.undo()
+      // Without a Card there is nothing to keep to the grid: they land where dropped.
+      s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 33, y: noteBefore.y + 47))
+      #expect(s.displayRect(framed).origin == CGPoint(x: 433, y: 447))
+      s.undo()
+
+      // A frame alone is closed and its Card stays; notes go; one undo.
+      let undos = s.undoStack.count
+      s.deleteSelection(cards: [], notes: [note], frames: [framed], in: scope)
+      #expect(s.displayFrame(framed)?["hidden"]?.bool == true && s.instance(framed) != nil)
+      #expect(s.note(note) == nil && s.undoStack.count == undos + 1)
+      s.undo()
+      #expect(s.note(note) != nil && s.displayFrame(framed)?["hidden"]?.bool != true)
+
+      // A Card takes its frame with it. A frame beside its Card is closed with
+      // its place and size, which the core wants: the document still saves.
+      s.deleteSelection(cards: [near], notes: [], frames: [near, beside], in: scope)
+      #expect(s.instance(near) == nil && s.displayFrame(near) == nil)
+      #expect(s.instance(beside) != nil && s.displayFrame(beside)?["hidden"]?.bool == true)
+      await s.save()
+      #expect(!s.dirty, "\(s.saveError ?? "")")
+    }
+    await check(in: [])
+    let inner = await s.makeSubgraph([key(["a"])], in: [])
+    let child = try #require(inner)
+    await s.save()
+    await check(in: path(child))
+
+    // Choosing Cards anew lets go of the notes and frames; so does another scope.
+    let tab = WorkflowTab(scope: [])
+    tab.selection = [key(["b"])]
+    tab.selectedNotes = ["n"]
+    tab.selectedFrames = [key(["b"])]
+    #expect(tab.hasSelection)
+    tab.selection = [key(["c"])]
+    #expect(tab.selectedNotes.isEmpty && tab.selectedFrames.isEmpty)
+    tab.selectedNotes = ["n"]
+    tab.enter(["x"])
+    #expect(tab.selectedNotes.isEmpty && !tab.hasSelection)
   }
 
   /// A Draft's wires make its ports and take them away, and what is written on
@@ -321,6 +427,41 @@ import Testing
     await s.close()
   }
 
+  @Test func aCardsSummaryIsInItsMetaWhateverItsKind() async throws {
+    let dir = try Self.project(), other = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func written(_ id: String) throws -> String? {
+      let url = dir.appendingPathComponent("definitions/\(id)/_meta.json")
+      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+      return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
+    }
+
+    let code = CardEditorModel(session: s, cardKey: "a")
+    code.meta = .object([("description", .string("logs the value"))])
+    #expect(await code.apply())
+    #expect(try written("a") == "logs the value")
+    #expect(s.nodeData("a").summary == "logs the value")
+    #expect(s.cardDescription("a") == "logs the value")
+    #expect(s.cardDefinition("a")?["description"] == nil)
+
+    // A Card in Card has no _card.json, and its summary is saved all the same.
+    let k = try s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
+    await s.save()
+    #expect(s.saveError == nil)
+    let name = path(k).last!
+    let link = CardEditorModel(session: s, cardKey: k)
+    link.meta = .object([("description", .string("the imported graph"))])
+    #expect(await link.apply())
+    #expect(try written(name) == "the imported graph")
+    #expect(s.nodeData(k).summary == "the imported graph")
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -330,21 +471,21 @@ import Testing
     s.start()
     try await Self.connected(s)
     let m = CardEditorModel(session: s, cardKey: "a")
-    m.definition?["description"] = .string("mine")
+    m.definition?["symbol"] = .string("mine")
     // Another client changes another setting and the same one.
     let other = RPCClient(endpoint: d.endpoint.url)
     _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
     let snap = try await other.inspect()
     _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-      Change.putDefinition(id: "a", cardJSON: "{\"template\": \"logger\", \"maxRuns\": 3, \"description\": \"theirs\"}", metaJSON: nil),
+      Change.putDefinition(id: "a", cardJSON: "{\"template\": \"logger\", \"maxRuns\": 3, \"symbol\": \"theirs\"}", metaJSON: nil),
     ])
     for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
     m.follow()
     #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
-    #expect(m.definition?["description"]?.string == "mine") // touched here: kept
-    #expect(m.conflicts == ["_card.json: description"])
+    #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
+    #expect(m.conflicts == ["_card.json: symbol"])
     #expect(await m.apply())
-    #expect(s.confirmedDefinitions["a"]?["description"]?.string == "mine")
+    #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "mine")
     #expect(s.confirmedDefinitions["a"]?["maxRuns"]?.uint64 == 3)
   }
 

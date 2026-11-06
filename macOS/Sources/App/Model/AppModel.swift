@@ -94,7 +94,7 @@ final class AppModel {
   private static func sourceTreeDemos() -> URL? {
     #if DEBUG
     var dir = URL(fileURLWithPath: #filePath)
-    for _ in 0..<4 { dir.deleteLastPathComponent() }
+    for _ in 0..<5 { dir.deleteLastPathComponent() }
     let candidate = dir.appendingPathComponent("demos")
     return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("index.json").path) ? candidate : nil
     #else

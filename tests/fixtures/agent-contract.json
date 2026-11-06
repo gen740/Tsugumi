@@ -216,16 +216,18 @@
      "key": "load",
      "definition": "load",
      "description": "Loads the events",
-     "content": "reads x.fits"
+     "content": "reads x.fits",
+     "context": "Asked for in the chat"
     },
     {
      "key": "outer/plot",
      "definition": "plot",
      "description": "Plots {content} as is",
-     "content": "a $ sign and {where}"
+     "content": "a $ sign and {where}",
+     "context": "keeps {list} and $ too"
     }
    ],
-   "expect": "Implement these Draft Cards in the root workflow, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n- outer/plot (definition plot): Plots {content} as is\n  content: a $ sign and {where}"
+   "expect": "Implement these Draft Cards in the root workflow, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n  context: Asked for in the chat\n- outer/plot (definition plot): Plots {content} as is\n  content: a $ sign and {where}\n  context: keeps {list} and $ too"
   },
   {
    "scope": [
@@ -237,10 +239,11 @@
      "key": "load",
      "definition": "load",
      "description": "Loads the events",
-     "content": "reads x.fits"
+     "content": "reads x.fits",
+     "context": ""
     }
    ],
-   "expect": "Implement these Draft Cards in the child workflow outer/inner, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits"
+   "expect": "Implement these Draft Cards in the child workflow outer/inner, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n  context: "
   }
  ],
  "approvalRequired": [

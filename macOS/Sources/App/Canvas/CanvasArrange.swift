@@ -46,7 +46,10 @@ struct ArrangeBarEnd {
 
 struct ArrangeInput {
   var flow: FlowDirection
+  /// Where frames, notes and layers go.
   var grid: Double
+  /// The grid is on: Cards are drawn on it (`placedPosition`), so they are placed on it.
+  var snap: Bool
   var cards: [ArrangeCard]
   var wires: [ArrangeWire]
   var frames: [ArrangeBox]
@@ -258,16 +261,18 @@ private enum Arrange {
     private let edges: [Edge]
     private(set) var list: [Int]
     private let grid: Double
+    private let snap: Bool
     private var layers: [[Int]] = []
     private var pieces: [Piece] = []
     /// For each wire, the nodes it passes (its two ends and the points between).
     private var chains: [(edge: Edge, path: [Int])] = []
 
-    init(nodes: NodeList, edges: [Edge], list: [Int], grid: Double) {
+    init(nodes: NodeList, edges: [Edge], list: [Int], grid: Double, snap: Bool) {
       n = nodes
       self.edges = edges
       self.list = list
       self.grid = grid
+      self.snap = snap
     }
 
     /// Lays the graph out, and says where its wires run.
@@ -529,7 +534,10 @@ private enum Arrange {
           k += 1
         }
       }
-      // The network: one variable per node, one more per piece of wire.
+      // The network: one variable per node, one more per piece of wire, in whole
+      // grids when Cards are on it (a wire whose ports are not a whole number of
+      // grids apart stays as near as it can).
+      let unit = snap ? grid : 1
       let vars = list
       var index = [Int](repeating: -1, count: nodes.count)
       for (i, v) in vars.enumerated() { index[v] = i }
@@ -540,27 +548,28 @@ private enum Arrange {
           let a = nodes[l[k]], b = nodes[l[k + 1]]
           let lane = a.across == 0 || b.across == 0
           // A Card keeps the room for its frame beside it.
-          let frame = a.frameAcross > 0 ? Int(roundNear(a.frameAcross)) + Int(boxGap) + Int(grid) : 0
-          arcs.append(Arc(from: index[l[k]], to: index[l[k + 1]], min: Int(roundNear(a.across)) + frame + Int(lane ? laneGap : sideGap), weight: 0))
+          let frame = a.frameAcross > 0 ? a.frameAcross + boxGap + grid : 0
+          let room = ((a.across + frame + (lane ? laneGap : sideGap)) / unit - 1e-9).rounded(.up)
+          arcs.append(Arc(from: index[l[k]], to: index[l[k + 1]], min: Int(room), weight: 0))
           k += 1
         }
       }
       var count = vars.count
       for p in pieces {
-        let fromAt = Int(roundNear(p.fromAt)), toAt = Int(roundNear(p.toAt))
+        let apart = Int(roundNear((p.fromAt - p.toAt) / unit))
         let aux = count
         count += 1
-        arcs.append(Arc(from: aux, to: index[p.from], min: fromAt >= toAt ? 0 : toAt - fromAt, weight: p.weight))
-        arcs.append(Arc(from: aux, to: index[p.to], min: fromAt >= toAt ? fromAt - toAt : 0, weight: p.weight))
+        arcs.append(Arc(from: aux, to: index[p.from], min: apart >= 0 ? 0 : -apart, weight: p.weight))
+        arcs.append(Arc(from: aux, to: index[p.to], min: apart >= 0 ? apart : 0, weight: p.weight))
       }
       let solved = solveNetwork(count: count, arcs: arcs)
-      for (i, v) in vars.enumerated() { nodes[v].at = Double(solved[i]) }
-      settleStraight(index)
+      for (i, v) in vars.enumerated() { nodes[v].at = Double(solved[i]) * unit }
+      if !snap { settleStraight(index) }
     }
 
-    /// Wires that came out straight stay exactly straight (ports are not whole
-    /// numbers), and each straight run moves onto the grid as one: most of its
-    /// Cards on it.
+    /// Without the grid: wires that came out straight stay exactly straight (ports
+    /// are not whole numbers), and each straight run moves as one, most of its
+    /// Cards on the lines of the grid.
     private func settleStraight(_ index: [Int]) {
       let nodes = n.items
       var parent = Array(list.indices)
@@ -573,7 +582,7 @@ private enum Arrange {
         return i
       }
       let links = pieces.filter { p in
-        p.weight != weightFeedback && nodes[p.from].at + roundNear(p.fromAt) == nodes[p.to].at + roundNear(p.toAt)
+        p.weight != weightFeedback && nodes[p.to].at - nodes[p.from].at == roundNear(p.fromAt - p.toAt)
       }
       for p in links {
         let a = find(index[p.from]), b = find(index[p.to])
@@ -897,7 +906,7 @@ func arrangeCards(_ input: ArrangeInput) -> ArrangeResult {
   // Each graph with its output frames, nearest the start of the flow first.
   let blocks: [Block] = members.map { list in
     let graphEdges = edges.filter { list.contains($0.from) }
-    let graph = Arrange.Layered(nodes: shared, edges: graphEdges, list: list, grid: grid)
+    let graph = Arrange.Layered(nodes: shared, edges: graphEdges, list: list, grid: grid, snap: input.snap)
     let lines = graph.run()
     let nodes = shared.items
     let cards = graph.list.filter { nodes[$0].card >= 0 }

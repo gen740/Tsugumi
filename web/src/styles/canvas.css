@@ -56,9 +56,9 @@
 .cv-result { display: flex; align-items: center; flex: none; white-space: nowrap; overflow: hidden; min-width: 0; }
 .cv-result span { overflow: hidden; text-overflow: ellipsis; }
 .cv-stage-row { display: flex; align-items: center; flex: none; min-width: 0; }
-.cv-start { position: absolute; inset: 0; display: flex; align-items: center; }
-.cv-start-run { border: 0; border-radius: 50%; padding: 0; flex: none; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; cursor: pointer; }
-.cv-start-run:disabled { background: var(--secondary); cursor: default; }
+.cv-start { flex-direction: row; align-items: center; box-sizing: border-box; }
+.cv-start-run { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
+.cv-start-run:disabled { background: var(--secondary); cursor: inherit; pointer-events: none; }
 .cv-routing-icon { position: absolute; display: inline-flex; pointer-events: auto; }
 .cv-port-label { position: absolute; transform: translateY(-50%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; line-height: 1.2; }
 .cv-port { position: absolute; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
@@ -106,6 +106,7 @@
 .cv-note-text { width: 100%; height: 100%; overflow: hidden; line-height: 1.35; }
 .cv-note-preview { flex: 1; min-width: 200px; overflow: auto; padding: 8px; border-radius: 6px; }
 .cv-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; cursor: nwse-resize; z-index: 2; }
+.cv-note.selected, .cv-frame.selected { box-shadow: 0 0 0 2px var(--accent); }
 .cv-frame { display: flex; flex-direction: column; background: var(--window-bg); border: 1px solid color-mix(in srgb, var(--purple) 45%, transparent); box-sizing: border-box; overflow: hidden; }
 .cv-frame-header { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-frame-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }

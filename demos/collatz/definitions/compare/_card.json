@@ -6,6 +6,12 @@
     },
     {
       "name": "python"
+    },
+    {
+      "name": "julia"
+    },
+    {
+      "name": "r"
     }
   ],
   "maxRuns": 1

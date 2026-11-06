@@ -242,10 +242,14 @@ final class CardEditorModel {
     let bases = baseHashes
     let clashing = Set(conflicts)
     session.edit { s in
-      if let def, var d = s.cardDefinitionDraft(k), d.link == nil, def != d.card || m != d.meta {
-        d.card = def
-        d.meta = m
-        s.setCardDefinition(k, d)
+      // A Card in Card has no settings of its own, but a _meta.json like any other.
+      if var d = s.cardDefinitionDraft(k) {
+        let card = d.link == nil ? def ?? d.card : d.card
+        if card != d.card || m != d.meta {
+          d.card = card
+          d.meta = m
+          s.setCardDefinition(k, d)
+        }
       }
       for (p, t) in changedTexts {
         s.putSource(p, t)
@@ -364,8 +368,10 @@ struct CardSettingsEditor: View {
     // Resizable: wider windows give the editor and lists the room; smaller
     // ones scroll (each category scrolls on its own).
     .frame(minWidth: 620, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
-    // What changes elsewhere while the window is open is taken in at once.
-    .onChange(of: m.followToken) { m.follow() }
+    // What changes elsewhere while the window is open is taken in at once;
+    // and when this first shows: a window restored at launch took its copy
+    // before the project was read.
+    .onChange(of: m.followToken, initial: true) { m.follow() }
     .confirmationDialog("未適用の変更を破棄して読み込み直しますか？", isPresented: $confirmReload) {
       Button("破棄して再読込", role: .destructive) { m.reload() }
       Button("キャンセル", role: .cancel) {}
@@ -496,7 +502,7 @@ private struct GeneralCategory: View {
                                        set: { model.definition?["symbol"] = $0.map { .string($0) } }),
                        inherited: model.kind.symbol)
         }
-        TextField("概要", text: model.kind == .draft ? metaString("description") : string("description"), axis: .vertical)
+        TextField("概要", text: metaString("description"), axis: .vertical)
           .lineLimit(2...5)
         if model.kind == .draft {
           TextField("内容", text: metaString("content"), prompt: Text("何を受け取り、何を出し、どう処理するかを書きます"), axis: .vertical)
@@ -582,7 +588,7 @@ private struct GeneralCategory: View {
             set: { v in model.definition?[name] = v.isEmpty || v == fallback ? nil : .string(v) })
   }
 
-  /// A Draft's intent is in _meta.json.
+  /// A Card's intent is in _meta.json.
   private func metaString(_ name: String) -> Binding<String> {
     Binding(get: { model.meta?[name]?.string ?? "" },
             set: { v in

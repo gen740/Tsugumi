@@ -7,7 +7,8 @@ import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
 import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, uuid, webSocketTransport } from '../shared/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  snapToGrid,
 } from './canvasKit'
 import { arrangeCards } from './arrange'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
@@ -2141,46 +2142,50 @@ export class ProjectSession extends Observable {
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
+    this.edit((x) => x.removeCards(keys, scope))
+  }
+
+  /** A step of an edit: see deleteCards. */
+  removeCards(keys: Set<CardKey>, scope: string[]) {
     const ids = new Set([...keys].map((k) => path(k).pop()!).filter(Boolean))
     if (!ids.size) return
     const prefix = this.projectPrefix(scope) ?? ''
-    this.edit((x) => {
-      // Each Card's definition folder goes with it, and a Card in Card's own external copy.
-      for (const k of keys) {
-        const ext = x.cardExternal(k)
-        if (ext) x.removeExternal(ext)
-        x.removeCardDefinition(k)
-      }
-      const cut = x.connections(scope).filter((c) => ids.has(str(get(c, 'from', 'card')) ?? '') || ids.has(str(get(c, 'to', 'card')) ?? ''))
-      x.updateGraph(scope, (g) => {
-        g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
-        g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
-      })
-      x.dropDraftPorts(cut, scope)
-      if (prefix) {
-        // Boundary ports of removed Cards go too.
-        x.updateExternal(prefix, (e) => {
-          const b = get(e.project, 'boundary')
-          if (!isObj(b)) return
-          for (const side of ['inputs', 'outputs']) {
-            const o = b.get(side)
-            if (isObj(o)) b.set(side, new JObj(o.entries().filter(([, v]) => !ids.has(str(get(v, 'card')) ?? ''))))
-          }
-        })
-      }
-      x.updateLayout(scope, (l) => {
-        for (const k of keys) {
-          // Layout entries of the Card and of anything inside it.
-          const lk = x.layoutKey(k)
-          const cards = l.get('cards')
-          if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
-          const displays = l.get('displays')
-          if (isObj(displays)) displays.set(lk, undefined)
+    const x = this
+    // Each Card's definition folder goes with it, and a Card in Card's own external copy.
+    for (const k of keys) {
+      const ext = x.cardExternal(k)
+      if (ext) x.removeExternal(ext)
+      x.removeCardDefinition(k)
+    }
+    const cut = x.connections(scope).filter((c) => ids.has(str(get(c, 'from', 'card')) ?? '') || ids.has(str(get(c, 'to', 'card')) ?? ''))
+    x.updateGraph(scope, (g) => {
+      g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
+      g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
+    })
+    x.dropDraftPorts(cut, scope)
+    if (prefix) {
+      // Boundary ports of removed Cards go too.
+      x.updateExternal(prefix, (e) => {
+        const b = get(e.project, 'boundary')
+        if (!isObj(b)) return
+        for (const side of ['inputs', 'outputs']) {
+          const o = b.get(side)
+          if (isObj(o)) b.set(side, new JObj(o.entries().filter(([, v]) => !ids.has(str(get(v, 'card')) ?? ''))))
         }
       })
-      x.updateGroups(scope, (groups) => {
-        for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
-      })
+    }
+    x.updateLayout(scope, (l) => {
+      for (const k of keys) {
+        // Layout entries of the Card and of anything inside it.
+        const lk = x.layoutKey(k)
+        const cards = l.get('cards')
+        if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
+        const displays = l.get('displays')
+        if (isObj(displays)) displays.set(lk, undefined)
+      }
+    })
+    x.updateGroups(scope, (groups) => {
+      for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
     })
   }
 
@@ -2529,21 +2534,31 @@ export class ProjectSession extends Observable {
   }
 
   updateNote(id: string, fn: (n: JObj) => void) {
+    this.edit((x) => x.changeNote(id, fn))
+  }
+
+  /** A step of an edit: see updateNote. */
+  changeNote(id: string, fn: (n: JObj) => void) {
     const sc = this.scopeHolding('notes', id)
     if (!sc) return
-    this.edit((x) => x.updateLayout(sc, (l) => {
+    this.updateLayout(sc, (l) => {
       const notes = (arr(l.get('notes')) ?? []).map((n) => clone(n))
       const n = notes.find((n) => str(get(n, 'id')) === id)
       if (!isObj(n)) return
       fn(n)
       l.set('notes', notes)
-    }))
+    })
   }
 
   removeNote(id: string) {
+    this.edit((x) => x.dropNote(id))
+  }
+
+  /** A step of an edit: see removeNote. */
+  dropNote(id: string) {
     const sc = this.scopeHolding('notes', id)
     if (!sc) return
-    this.edit((x) => x.updateLayout(sc, (l) => l.set('notes', (arr(l.get('notes')) ?? []).filter((n) => str(get(n, 'id')) !== id))))
+    this.updateLayout(sc, (l) => l.set('notes', (arr(l.get('notes')) ?? []).filter((n) => str(get(n, 'id')) !== id)))
   }
 
   groups(scope: string[]): JObj[] {
@@ -2589,9 +2604,19 @@ export class ProjectSession extends Observable {
     return get(this.layoutOf(path(k).slice(0, -1)), 'displays', this.layoutKey(k))
   }
 
+  /** A frame without a place of its own is drawn beside its Card, so it goes where the Card goes. */
+  frameFollowsCard(k: CardKey, moving: Set<CardKey>): boolean {
+    return moving.has(k) && dbl(get(this.displayFrame(k), 'x')) === undefined
+  }
+
   updateDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
+    this.edit((x) => x.changeDisplayFrame(k, fn))
+  }
+
+  /** A step of an edit: see updateDisplayFrame. */
+  changeDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
     const lk = this.layoutKey(k)
-    this.edit((x) => x.updateLayout(path(k).slice(0, -1), (l) => {
+    this.updateLayout(path(k).slice(0, -1), (l) => {
       let displays = l.get('displays')
       if (!isObj(displays)) {
         displays = obj()
@@ -2603,7 +2628,7 @@ export class ProjectSession extends Observable {
         ;(displays as JObj).set(lk, d)
       }
       fn(d as JObj)
-    }))
+    })
   }
 
   /** Where a scope's boundary ports are drawn (inside a Card in Card). */
@@ -2674,7 +2699,7 @@ export class ProjectSession extends Observable {
       const list = scope.length ? get(this.boundary(key(scope)), side) : undefined
       return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
-    const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
+    const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
     this.edit((x) => {
       for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
       x.updateLayout(scope, (l) => {
@@ -2891,7 +2916,7 @@ auto run(Card::Input& input) -> Card::Output {
   }
 
   cardDescription(k: CardKey): string | undefined {
-    return str(get(this.cardDefinition(k), 'description')) || str(get(this.cardMeta(k), 'description')) || undefined
+    return str(get(this.cardMeta(k), 'description')) || undefined
   }
 
   /** What a Card says about itself on hover: a Draft's summary and content. */
@@ -2995,8 +3020,7 @@ auto run(Card::Input& input) -> Card::Output {
     const ports = this.portData(k, opts.definition, opts.meta)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
-    let summary = str(get(def, 'description'))
-    if (!summary) summary = str(get(m, 'description'))
+    let summary = str(get(m, 'description'))
     // What a Draft shows on its Card is what it says it will do.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     const frame = this.displayFrame(k)
@@ -3014,7 +3038,16 @@ auto run(Card::Input& input) -> Card::Output {
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
       draftEditing: editing, untitled: this.draftUntitled(k),
+      portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
+  }
+
+  /** Where a Card is drawn: with the grid on, one saved off the grid (placed
+   *  before the grid was on, or under another spacing) is shown on the nearest
+   *  line, so its ports are on the grid too. Nothing is saved until it is moved. */
+  placedPosition(k: CardKey): Pt {
+    const p = this.position(k)
+    return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
   }
 
   geometry(k: CardKey): CardGeometry {

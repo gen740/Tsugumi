@@ -1,0 +1,4 @@
+namespace collatz;
+table Sequence { values:[ulong] (required); }
+table Outputs { sequence:Sequence; }
+root_type Outputs;

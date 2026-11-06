@@ -26,6 +26,7 @@ import TsugumiRPC
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
+///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -53,6 +54,9 @@ final class UIScript {
     shared.log = FileHandle(forWritingAtPath: logPath)
     Task { await shared.run(text.split(separator: "\n").map(String.init)) }
   }
+
+  /// A line for the script's log from elsewhere in the app (what a step caused).
+  func note(_ s: String) { say(s) }
 
   private func say(_ s: String) {
     log?.write(Data((s + "\n").utf8))
@@ -128,6 +132,16 @@ final class UIScript {
           card[w[2]] = .string(w.dropFirst(3).joined(separator: " "))
           _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other",
                                   changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
+        }
+      case "marquee":
+        // The items a Shift + drag over these world coordinates selects (the script cannot hold Shift).
+        if let s = session, let t = workspace?.active, w.count > 4,
+           let x1 = Double(w[1]), let y1 = Double(w[2]), let x2 = Double(w[3]), let y2 = Double(w[4]) {
+          let items = s.marqueeItems(CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1)), in: t.scope)
+          t.selection = items.cards
+          t.selectedNotes = items.notes
+          t.selectedFrames = items.frames
+          say("marquee cards=\(items.cards.count) notes=\(items.notes.count) frames=\(items.frames.count)")
         }
       case "explainer": request = .explainer
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
@@ -267,7 +281,7 @@ final class UIScript {
           if let t = m.loadedText(p) { m.texts[p] = t + w.dropFirst(4).joined(separator: " ") + "\n" } else { say("not loaded \(p)") }
         case "apply":
           let ok = await m.apply()
-          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.definition?["description"]?.string ?? "")")
+          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.meta?["description"]?.string ?? "")")
         default: break
         }
       case "state":

@@ -38,6 +38,10 @@ struct GraphCanvas: View {
   private var scopeKey: CardKey { key(tab.scope) }
   /// An output frame being dragged (screen translation).
   @State private var frameDrag: (card: CardKey, by: CGSize)?
+  /// A sticky note being dragged (screen translation); saved once, on release.
+  @State private var noteDrag: (id: String, by: CGSize)?
+  /// The selection being moved from one of its notes or frames (screen translation); saved once, on release.
+  @State private var selectionDrag: CGSize?
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -203,15 +207,14 @@ struct GraphCanvas: View {
     }
   }
 
-  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil }
+  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil || selectionDrag != nil }
 
   // MARK: - Data
 
   private var cardKeys: [CardKey] { session.cards(in: tab.scope).compactMap { $0["id"]?.string }.map { key(tab.scope + [$0]) } }
 
   private var outputKeys: [CardKey] {
-    // A Card's output frame: once its code has shown something (display SDK).
-    cardKeys.filter { (session.displays[$0] != nil || session.displayFrame($0) != nil) && session.displayFrame($0)?["hidden"]?.bool != true }
+    session.framedCards(in: tab.scope)
   }
 
   private var noteIds: [String] {
@@ -219,10 +222,14 @@ struct GraphCanvas: View {
   }
 
   func origin(_ k: CardKey) -> CGPoint {
-    var p = session.position(k)
+    var p = session.placedPosition(k)
     if let d = drag, d.key == k || (tab.selection.contains(k) && tab.selection.contains(d.key)) {
       p.x += d.offset.width / camera.zoom
       p.y += d.offset.height / camera.zoom
+    }
+    if let by = selectionDrag, tab.selection.contains(k) {
+      p.x += by.width / camera.zoom
+      p.y += by.height / camera.zoom
     }
     return p
   }
@@ -244,11 +251,16 @@ struct GraphCanvas: View {
   }
 
   /// Output frame of a Card (world units): saved place, or beside the Card.
-  private func frameRect(_ k: CardKey) -> CGRect { session.displayRect(k, origin: origin(k)) }
-
-  private func noteRect(_ n: JSONValue) -> CGRect {
-    CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
+  private func frameRect(_ k: CardKey) -> CGRect {
+    let r = session.displayRect(k, origin: origin(k))
+    guard let by = selectionMove, tab.selectedFrames.contains(k), !session.frameFollowsCard(k, moving: tab.selection) else { return r }
+    return r.offsetBy(dx: by.width / camera.zoom, dy: by.height / camera.zoom)
   }
+
+  private func noteRect(_ n: JSONValue) -> CGRect { session.noteRect(n) }
+
+  /// The selection's move in progress (screen translation), from whichever of its items is dragged.
+  private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
 
   // MARK: - Wires
 
@@ -275,27 +287,31 @@ struct GraphCanvas: View {
     let b = boundary
     if let b { obstacles += [b.top, b.bottom] }
     var router = WireRouter(flow: session.flow, obstacles: obstacles)
+    // Routed together: a wire's path must not depend on the order of the connections.
+    var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
       guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
             let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
-      let path = router.route(portWorld(fk, fp, output: true), portWorld(tk, tp, output: false))
-      out.append(RoutedWire(connection: i, path: path,
+      ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
+      out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(p.point, portWorld(inner.0, inner.1, output: false)), style: .normal))
+        ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(portWorld(inner.0, inner.1, output: true), p.point),
-                              style: style(from: inner.0, port: inner.1, to: nil)))
+        ends.append((portWorld(inner.0, inner.1, output: true), p.point))
+        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil)))
       }
     }
+    for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }
     // Display links: which Card a result frame belongs to (not a computation).
     for k in outputKeys {
       out.append(RoutedWire(connection: nil, path: displayLink(card: outlineRect(k), frame: frameRect(k)), style: .display))
@@ -343,7 +359,7 @@ struct GraphCanvas: View {
     guard !tab.scope.isEmpty, let b = session.boundary(scopeKey) else { return nil }
     let ins = b["inputs"]?.object ?? [], outs = b["outputs"]?.object ?? []
     guard !ins.isEmpty || !outs.isEmpty else { return nil }
-    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.position($1), size: session.geometry($1).size)) }
+    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.placedPosition($1), size: session.geometry($1).size)) }
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
     let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
     let x = box.midX - width / 2
@@ -402,8 +418,8 @@ struct GraphCanvas: View {
         boundaryDrag = nil
         var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
         if prefs.showGrid {
-          x = (x / prefs.gridSize).rounded() * prefs.gridSize
-          y = (y / prefs.gridSize).rounded() * prefs.gridSize
+          x = snapToGrid(x, prefs.gridSize)
+          y = snapToGrid(y, prefs.gridSize)
         }
         // Layout only (the external's layout.json).
         session.setBoundaryPosition(tab.scope, input ? "inputs" : "outputs", CGPoint(x: x.rounded(), y: y.rounded()))
@@ -525,17 +541,31 @@ struct GraphCanvas: View {
   private func noteView(_ id: String) -> some View {
     let n = session.note(id) ?? .object([])
     let r = noteRect(n)
-    return StickyNoteView(note: n, onResize: { d in
+    // Follows the pointer while dragged (screen units, so any zoom); the layout changes once, on release.
+    let by = noteDrag?.id == id ? noteDrag!.by : tab.selectedNotes.contains(id) ? selectionMove ?? .zero : .zero
+    return StickyNoteView(note: n, selected: tab.selectedNotes.contains(id), onResize: { d in
       session.updateNote(id) { v in
         v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
         v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
-    .gesture(DragGesture(minimumDistance: 3).onEnded { v in
+    .place(at: CGPoint(x: screen(r.origin).x + by.width, y: screen(r.origin).y + by.height), size: r.size, zoom: camera.zoom)
+    // In the canvas space: the note moves under the pointer, so its own space would shrink the translation.
+    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
+      clearHover()
+      if tab.selectedNotes.contains(id) {
+        selectionDrag = v.translation
+        return
+      }
+      if noteDrag == nil { tab.selection = [] }
+      noteDrag = (id, v.translation)
+    }.onEnded { v in
+      if selectionDrag != nil { return moveSelection(by: v.translation) }
+      noteDrag = nil
+      let to = Self.droppedNoteOrigin(from: r.origin, by: v.translation, zoom: camera.zoom)
       session.updateNote(id) { n in
-        n["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
-        n["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
+        n["x"] = .real(to.x)
+        n["y"] = .real(to.y)
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -558,6 +588,11 @@ struct GraphCanvas: View {
     }
   }
 
+  /// Where a note dragged by `translation` screen points lands (world units, whole numbers; no grid snap).
+  static func droppedNoteOrigin(from origin: CGPoint, by translation: CGSize, zoom: Double) -> CGPoint {
+    CGPoint(x: (origin.x + translation.width / zoom).rounded(), y: (origin.y + translation.height / zoom).rounded())
+  }
+
   private func setNoteFont(_ id: String, _ size: CGFloat) {
     let v = max(8, min(48, size))
     session.updateNote(id) { $0["fontSize"] = v == 13 ? nil : .real(Double(v)) }
@@ -565,9 +600,9 @@ struct GraphCanvas: View {
 
   private func outputFrame(_ k: CardKey) -> some View {
     let r = frameRect(k)
-    return OutputFrameView(session: session, cardKey: k,
+    return OutputFrameView(session: session, cardKey: k, selected: tab.selectedFrames.contains(k),
                            onExpand: { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) },
-                           onClose: { session.updateDisplayFrame(k) { $0["hidden"] = .bool(true) } },
+                           onClose: { session.closeDisplayFrame(k) },
                            onResize: { d in
                              session.updateDisplayFrame(k) { v in
                                v["x"] = .real(r.minX.rounded())
@@ -579,9 +614,15 @@ struct GraphCanvas: View {
       .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
       // Follows the pointer while dragged; the layout changes once, on release.
       .offset(frameDrag?.card == k ? frameDrag!.by : .zero)
-      .gesture(DragGesture(minimumDistance: 3).onChanged { v in
+      .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
+        if tab.selectedFrames.contains(k) {
+          selectionDrag = v.translation
+          return
+        }
+        if frameDrag == nil { tab.selection = [] }
         frameDrag = (k, v.translation)
       }.onEnded { v in
+        if selectionDrag != nil { return moveSelection(by: v.translation) }
         frameDrag = nil
         session.updateDisplayFrame(k) { d in
           d["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
@@ -594,7 +635,7 @@ struct GraphCanvas: View {
         Button("拡大して表示") { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) }
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(k)) }
         Divider()
-        Button("枠を削除（Card は残ります）") { session.updateDisplayFrame(k) { $0["hidden"] = .bool(true) } }
+        Button("枠を削除（Card は残ります）") { session.closeDisplayFrame(k) }
       }
   }
 
@@ -821,7 +862,11 @@ struct GraphCanvas: View {
         if let m = marquee {
           let a = world(m.start), b = world(v.location)
           let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-          tab.selection = Set(cardKeys.filter { r.intersects(CGRect(origin: session.position($0), size: session.geometry($0).size)) })
+          let items = session.marqueeItems(r, in: tab.scope)
+          tab.selection = items.cards
+          tab.selectedNotes = items.notes
+          tab.selectedFrames = items.frames
+          tab.selectedConnection = nil
           marquee = nil
         }
         panStart = nil
@@ -837,22 +882,18 @@ struct GraphCanvas: View {
         drag = (k, v.translation)
       }
       .onEnded { v in
-        let moved = tab.selection.contains(k) ? tab.selection : [k]
-        let dx = v.translation.width / camera.zoom, dy = v.translation.height / camera.zoom
-        drag = nil
-        // Layout only: no computation is re-resolved for a move.
-        session.edit { s in
-          for m in moved {
-            let p = s.position(m)
-            var x = p.x + dx, y = p.y + dy
-            if prefs.showGrid {
-              x = (x / prefs.gridSize).rounded() * prefs.gridSize
-              y = (y / prefs.gridSize).rounded() * prefs.gridSize
-            }
-            s.setPosition(m, CGPoint(x: x, y: y))
-          }
-        }
+        if !tab.selection.contains(k) { tab.selection = [k] }
+        moveSelection(by: v.translation)
       }
+  }
+
+  /// The end of a drag of the selection (screen translation), from any of its items.
+  private func moveSelection(by t: CGSize) {
+    drag = nil
+    selectionDrag = nil
+    session.moveSelection(cards: tab.selection, notes: tab.selectedNotes, frames: tab.selectedFrames,
+                          by: CGSize(width: t.width / camera.zoom, height: t.height / camera.zoom),
+                          snap: prefs.showGrid ? prefs.gridSize : nil)
   }
 
   private func backgroundTap(_ loc: CGPoint) {
@@ -872,7 +913,11 @@ struct GraphCanvas: View {
 
   private func select(_ k: CardKey) {
     if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
+      // Adding to the selection keeps what a marquee caught.
+      let notes = tab.selectedNotes, frames = tab.selectedFrames
       if tab.selection.contains(k) { tab.selection.remove(k) } else { tab.selection.insert(k) }
+      tab.selectedNotes = notes
+      tab.selectedFrames = frames
     } else {
       tab.selection = [k]
     }
@@ -941,7 +986,8 @@ struct GraphCanvas: View {
   }
 
   private func deleteSelection() {
-    guard session.isEditable else {
+    // Notes and frames are layout: they can go during a run, as from their own menus.
+    guard session.isEditable || (tab.selection.isEmpty && tab.selectedConnection == nil) else {
       session.notice = String(localized: "実行中は Card を削除できません。")
       return
     }
@@ -950,7 +996,7 @@ struct GraphCanvas: View {
       tab.selectedConnection = nil
       return
     }
-    session.deleteCards(tab.selection, in: tab.scope)
+    session.deleteSelection(cards: tab.selection, notes: tab.selectedNotes, frames: tab.selectedFrames, in: tab.scope)
     tab.selection.removeAll()
   }
 

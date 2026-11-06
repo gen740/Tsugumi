@@ -7,7 +7,7 @@
 | デモ | 題材 | このデモで分かること |
 | --- | --- | --- |
 | [データからレポートへ](#データからレポートへreport) | 売上表の集計とレポート | seed による再現、失敗と `blocked`、保存入力での単体再実行、成果物、子 Workflow |
-| [Collatz (C++ / Python)](#collatz-c--pythoncollatz) | コラッツ数列 | 2 言語での独立実装の照合、分岐・合流・ループ、`maxRuns`、整数あふれの検出 |
+| [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--rcollatz) | コラッツ数列 | 4 言語での独立実装の照合、分岐・合流・ループ、`maxRuns`、整数あふれの検出 |
 | [Live Stream](#live-streamlive-stream) | ランダムウォークの逐次描画 | フィードバックループによるストリーム、即時の停止、Dawn の折れ線 |
 | [Plots](#plotsplots) | ランダムウォークの拡散 | ふつうの matplotlib（`plt.show()`・`FuncAnimation`）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgbcasa) | 超新星残骸の X 線観測 | Nix で固定した観測データ、Card 単位の再実行、版の履歴 |
@@ -29,8 +29,10 @@
 | [生態系のモデル比較](#生態系のモデル比較ecology-models) | ノウサギとオオヤマネコの毛皮の記録（1900–1920） | 捕食モデルのあてはめと AICc・未知の年の予測による比較。良い値が機構の正しさを意味しないこと |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
+| [MNIST · 分類器くらべ（Draft）](#mnist--分類器くらべdraftmnist-classifiers-draft) | 手書き数字の分類（7 種） | データまで実装済みの計画から、7 つの分類器を helper が同時に実装し、Agent が比較をまとめる |
 
 図の矢印は Card の線（`出力ポート → 入力ポート`）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。
+どの Card にも `_meta.json` に概要があり、Canvas（trigger・fork・merge・branch はホバー）と Card 設定で読めます。
 
 ## 基本のデモ
 
@@ -58,14 +60,16 @@ start → settings ─ share ─┬→ generate ─csv→ aggregate ─summary�
 - `aggregate` の `fail_on_purpose` を On にして実行する。`aggregate` のログに理由が出て、下流の `render` は `blocked` になる。Off に戻し、`aggregate` だけを実行し直すと、保存された入力で即座に成功する。
 - `archive` をダブルクリックして子 Workflow に入り、成果物のディレクトリをプレビュー・書き出す。成果物は実行キャッシュを消しても残る。
 
-### Collatz (C++ / Python)（`collatz`）
+### Collatz (C++ / Python / Julia / R)（`collatz`）
 
-同じコラッツの反復を C++ と Python で別々に実装し、両方の数列が一致するかを確かめます。
+同じコラッツの反復を C++・Python・Julia・R で別々に実装し、4 つの数列が一致するかを確かめます。
 反復そのものを Card の線で描いているので、分岐・合流・ループの動きを Canvas でたどれます。
 
 ```text
-start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ compare ─sequence→ record
-                        └→ collatz-py （子 Workflow）─┘
+                        ┌→ collatz-cpp（子 Workflow）─┐
+start → initial ─ both ─┼→ collatz-py （子 Workflow）─┼→ compare ─sequence→ record
+                        ├→ collatz-jl （子 Workflow）─┤
+                        └→ collatz-r  （子 Workflow）─┘
 ```
 
 外側の Card:
@@ -73,12 +77,12 @@ start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ comp
 | Card | 種類 | していること |
 | --- | --- | --- |
 | `initial` | input | 初期値（27）を流す |
-| `both` | fork | 同じ値を C++ 側と Python 側に配る |
-| `collatz-cpp` / `collatz-py` | subgraph | 中の Workflow で反復し、1 に着くまでの数列を返す |
-| `compare` | Python | 2 つの数列が完全に一致することを確かめ、数列を次へ渡す |
+| `both` | fork | 同じ値を 4 つの言語の側に配る |
+| `collatz-cpp` / `collatz-py` / `collatz-jl` / `collatz-r` | subgraph | 中の Workflow で反復し、1 に着くまでの数列を返す |
+| `compare` | Python | 4 つの数列が完全に一致することを確かめ、数列を次へ渡す |
 | `record` | Python | 数列を `collatz.csv`（`k, a_k, parity`）に書き、成果物として残す |
 
-子 Workflow の中（C++ と Python で同じ形）:
+子 Workflow の中（4 つとも同じ形）:
 
 ```text
 （境界の入力 n）→ loop ─ split ─┬→ check ─value / even→ route ─a（偶数）→ halve ─┐
@@ -93,12 +97,18 @@ start → initial ─ both ─┬→ collatz-cpp（子 Workflow）─┬→ comp
 | `check` | コード | 値が 1 なら何も出さない（ループが終わる）。そうでなければ値と偶奇を出す。`maxRuns`（200）が反復の上限 |
 | `route` | branch | 偶数なら `a`（`halve`）、奇数なら `b`（`triple`）の片側だけを発火させる |
 | `halve` / `triple` | コード | `n/2` と `3n+1` を計算する。`triple` は 64 bit 整数を超えると `integer overflow` で失敗する |
-| `collect` | コード | 届いた値をためて表示し、1 が届いたら数列を出す。常駐 worker の状態は `onRunStart` で実行ごとに空にする |
+| `collect` | コード | 届いた値をためて表示し、1 が届いたら数列を出す。C++ と Python は常駐 worker の状態を `onRunStart` で実行ごとに空にする |
+
+**Julia と R の側の違い。** Julia と R の Card は呼び出しごとに別のプロセスで動き、何も覚えていません（[制限](limitations.md)）。そのため `collect` は値をためられず、`loop` に戻る値が「ここまでの数列」（`Walk`: `value` と `path`）を運び、`collect` は 1 が届いたときに `path` をそのまま数列として出します。メッセージが過程を持つので、どの Card の記録を見ても、そこまでの数列が読めます。
+
+**R の範囲。** R の数は double なので、整数は 2^53 未満しか正確に扱えません。それ以上の値はワーカーが文字列で渡すので、R の `check`・`halve` は黙って丸めずに失敗し、`triple` は `3n+1` が 2^53 に届くときに計算の前に失敗します。この範囲でも 4 つの数列は一致します。Julia は 64 bit 整数（`UInt64`）のまま計算し、`triple` は C++ や Python と同じく `3n+1` が 64 bit を超えると `integer overflow` で失敗します。
 
 **試すこと**
 - そのまま実行する。27 は 111 手（112 個の値）で 1 に着き、途中の最大値は 9232。`compare` が一致を報告する。
 - `initial` を 2 にすると、奇数側の `triple` は一度も選ばれず `skipped` になる。
 - 中の `check` の `maxRuns` を小さくすると、反復上限（`execution_limit`）で止まる。`3n+1` が 64 bit を超える初期値では `integer overflow` を検出する。
+- `initial` を 2^60 のような大きな値にすると、R の `check` が「2^53 未満ではない」ことを理由に失敗する（Julia・C++・Python は 61 個の値を返す）。
+- `collatz-jl` や `collatz-r` を開いて `collect` の記録を見る。呼び出しごとの表示が、そこまでの数列になっている。
 
 ### Live Stream（`live-stream`）
 
@@ -652,12 +662,38 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 
 「Card を生成」を押すと、Agent は 6 つの Draft を helper に分けます。helper ごとに色の違うツグミが自分の Card を同時に書き、実行して確かめます。helper の報告がそろうと、Agent がそれぞれの Card を確かめてまとめて報告します（[手分け](features.md#9-agent)）。
 
+## MNIST · 分類器くらべ（Draft）（`mnist-classifiers-draft`）
+
+[MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers)と同じ問題を、Agent に実装させるデモです。力学系ギャラリーと違い、helper たちの仕事は最後に 1 つの比較へ合流します。
+
+```text
+start → load → prepare → share ─┬→ knn ──────┐
+          （実装済み）           ├→ logistic ─┤
+                                ├→ svm ──────┤
+                                ├→ forest ───┤
+                                ├→ boosting ─┼→ compare
+                                ├→ mlp ──────┤
+                                ├→ cnn ──────┤
+                                └────────────┘
+```
+
+| Card | 状態 | 誰が書くか |
+| --- | --- | --- |
+| `load`, `prepare` | 実装済み。本物の MNIST を Nix のハッシュで固定し、訓練 5000 枚・テスト 1000 枚に層化して渡す | 最初から入っている |
+| `knn`, `logistic`, `svm`, `forest`, `boosting`, `mlp`, `cnn` | Draft。互いに線がなく、環境（scikit-learn, xgboost, torch）も分かれる | helper が 1 つずつ同時に |
+| `compare` | Draft。7 つの結果を待って順位表と散布図を作る | helper の報告のあとで Agent が |
+
+- **合流できる理由:** 各 Draft の説明に、出力 `result` の型（`mnist.Result`）をそのまま書いてあります。helper は互いの書くものを見られないので、この約束がないと `compare` が 1 つの型で読めません。
+- **確かめること:** 各 Draft の説明には、計算の手順と `assert` があります。枚数と 0〜9 の範囲、正解率の下限に加えて、手法ごとに結果が決まる性質を確かめます（kNN と numpy の総当たりの一致、ロジスティック回帰の予測と重み付き和の一致、フォレストの予測と木の平均の一致、ネットのパラメータ数の式など）。`compare` は digest の一致と、正解率を予測から計算し直した値との一致を確かめます。
+- **枚数が小さい理由:** 1 つのプロジェクトで実行できるのは一度に 1 つなので、helper の実行は順番を待ちます（1 回の待ちの上限は 900 秒）。完成版と同じ訓練 10000 枚・テスト 2000 枚では 1 回の実行に 52〜122 秒かかり、訓練 5000 枚・テスト 1000 枚では 20〜37 秒でした（M3 Max の Seatbelt、他の処理が動いている状態。共通 VM では 17〜24 秒）。常駐する worker のメモリは 1 つ 0.6 GiB 以下です。
+- **答え:** このデモと完成版の `mnist-classifiers` は、Agent の `reference_read` の一覧にも読み取りにも出ません。
+
 ## 試せる操作と、確認できる結果
 
 | デモ | 試せる操作 | 確認できる結果 |
 | --- | --- | --- |
 | **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使って即座に成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
-| **Collatz (C++ / Python)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++ と Python の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
+| **Collatz (C++ / Python / Julia / R)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++・Python・Julia・R の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
@@ -678,4 +714,5 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **生態系のモデル比較**（`ecology-models`） | そのまま実行する。`forecast` の `fit_until` を変えてその Card だけを再実行する。`fit` の `restarts`、`phase` の `years` を変える | この 21 年では 3 つのモデルの当てはめはほぼ同じ（対数 RMSE 0.219）で、AICc はパラメータの少ないロトカ・ヴォルテラが最良、ホリングの処理時間 h は 0 に近づく。1914 年までで当てはめた予測の誤差もロトカ・ヴォルテラが小さい（0.353、他は 0.421）。先まで延ばすと閉じた軌道と渦に分かれる。note は、AIC が良くても仕組みが正しいとは言えないこと、毛皮は個体数ではないことを述べる |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
+| **MNIST · 分類器くらべ（Draft）**（`mnist-classifiers-draft`） | 開いて「Card を生成」を押す | `load` と `prepare` を実行したあと、7 つの分類器を helper が同時に書いて確かめ、Agent が `compare` を書いて順位表と散布図を出す |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
