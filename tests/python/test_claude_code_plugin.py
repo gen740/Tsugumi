@@ -75,10 +75,11 @@ def status(port: int, method: str, route: str, headers: dict) -> int:
 class Events(threading.Thread):
     """A page: the server's event stream."""
 
-    def __init__(self, port: int, cookie: str):
+    def __init__(self, port: int, cookie: str, page: str = ""):
         super().__init__(daemon=True)
+        self.page, self.port, self.cookie = page, port, cookie
         self.c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
-        self.c.request("GET", "/api/events", headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie})
+        self.c.request("GET", f"/api/events?page={page}" if page else "/api/events", headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie})
         self.r = self.c.getresponse()
         assert self.r.status == 200
         self.events: list[dict] = []
@@ -91,6 +92,19 @@ class Events(threading.Thread):
                     self.events.append(json.loads(line[5:]))
         except Exception:
             pass
+
+    def shows(self, project: Path | None):
+        """Tells the server what this page shows (none: Home), as the page does."""
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("POST", "/api/page", body=json.dumps({"page": self.page, "project": str(project) if project else None}),
+                  headers={"Host": f"127.0.0.1:{self.port}", "content-type": "application/json", "x-tsugumi": "1", "Cookie": self.cookie})
+        r = c.getresponse()
+        r.read()
+        c.close()
+        assert r.status == 200
+
+    def told(self) -> list[str]:
+        return [e["project"] for e in self.events if e.get("type") == "agentOpen"]
 
 
 @pytest.fixture
@@ -177,6 +191,50 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert (root / "fresh" / "tsugumi.json").exists()
 
 
+def test_open_shows_the_project_without_taking_another_tab_away(plugin):
+    """Each browser tab has its own project: Claude Code's goes to a tab that
+    has it or one on Home, never over the project of another tab."""
+    mcp, root, data = plugin
+    mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})
+    for name in ("a", "b", "c"):
+        write_project(root / name)
+    a, b, c = ((root / n).resolve() for n in ("a", "b", "c"))
+    text, error = mcp.call("tsugumi_open", {"folder": "a", "browser": False})
+    assert not error, text
+    port = json.loads((data / "server.json").read_text())["port"]
+    cookie = page_cookie(data, port)
+    on_a, home = Events(port, cookie, "page-a"), Events(port, cookie, "page-home")
+    on_a.start()
+    home.start()
+    time.sleep(0.3)
+    on_a.shows(a)
+    # The project of a tab: it stays where it is, nobody is told to switch.
+    text, error = mcp.call("tsugumi_open", {"folder": "a"})
+    assert not error and "The open web UI page shows it now" in text
+    # Another project: the tab on Home takes it, the other keeps its own.
+    text, error = mcp.call("tsugumi_open", {"folder": "b"})
+    assert not error and "The open web UI page shows it now" in text
+    for _ in range(50):
+        if home.told():
+            break
+        time.sleep(0.1)
+    assert home.told() == [str(b)] and on_a.told() == []
+    # No tab free: nobody loses a project (the plugin opens a window unless told not to).
+    text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
+    assert not error and "No web UI page is free" in text
+    time.sleep(0.3)
+    assert home.told() == [str(b)] and on_a.told() == []
+    # A tab back on Home is free again.
+    on_a.shows(None)
+    text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
+    assert not error and "The open web UI page shows it now" in text
+    for _ in range(50):
+        if on_a.told():
+            break
+        time.sleep(0.1)
+    assert on_a.told() == [str(c)]
+
+
 def test_the_agent_key_cannot_answer_approvals_or_reach_the_page_routes(plugin):
     """What server.json gives a local client (Claude Code's MCP server) works
     only on the routes the plugin calls: an approval is the user's, on the page."""
@@ -188,7 +246,7 @@ def test_the_agent_key_cannot_answer_approvals_or_reach_the_page_routes(plugin):
     info = json.loads((data / "server.json").read_text())
     port, agent = info["port"], {"X-Tsugumi-Agent": info["agentKey"]}
     assert status(port, "POST", "/api/agent/tools", agent) == 200
-    for method, route in [("POST", "/api/chat/permission"), ("GET", "/api/events"), ("POST", "/api/terminal/start"),
+    for method, route in [("POST", "/api/chat/permission"), ("POST", "/api/page"), ("GET", "/api/events"), ("POST", "/api/terminal/start"),
                           ("GET", "/api/fs"), ("POST", "/api/settings"), ("POST", "/api/chat/send")]:
         assert status(port, method, route, agent) == 401, route
     # A wrong agent key reaches nothing, the page's key everything.

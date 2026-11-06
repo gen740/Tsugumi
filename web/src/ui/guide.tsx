@@ -172,7 +172,7 @@ function actionEnabled(a: GuideAction): boolean {
     case 'run': return !!session && session.connected && !session.runActive
     case 'stop': return !!session?.runActive
     case 'open_card': return !!session
-    case 'open_demo': case 'home': case 'new_project': return !session?.runActive
+    case 'home': return !session?.runActive
     default: return true
   }
 }
@@ -346,7 +346,7 @@ export function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
   return (a: GuideAction) => {
     switch (a.kind) {
       case 'open_demo':
-        void openDemo(a.demo ?? 'report', session)
+        void openDemo(a.demo ?? 'report')
         return
       case 'show_demos':
         guide.set('demosRequested', true)
@@ -377,13 +377,9 @@ export function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
   }
 }
 
-async function openDemo(id: string, session?: ProjectSession) {
+async function openDemo(id: string) {
   const demo = app.status?.demos.find((d) => d.id === id) ?? app.status?.demos.find((d) => d.id === 'report')
   if (!demo) return
-  if (session?.runActive) {
-    app.setError('実行中はデモを開けません。停止するか終了を待ってください。')
-    return
-  }
   try {
     const p = await app.copyDemo(demo.id)
     // The bird stays by the demo's card until the loading card comes, then flies into it.
@@ -431,7 +427,7 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
       case 'run': return !!session && session.connected && !session.runActive
       case 'stop': return !!session?.runActive
       case 'open_card': return !!session
-      case 'open_demo': case 'home': case 'new_project': return !session?.runActive
+      case 'home': return !session?.runActive
       default: return true
     }
   }
@@ -502,7 +498,7 @@ function TourBar({ tour, session }: { tour: GuideTour; session?: ProjectSession 
       <span className="caption ellipsis">{here ? `デモ「${tour.title}」を案内中` : `デモ「${tour.title}」の案内は中断中`}</span>
       <span className="spacer" />
       {!here && (
-        <Button small disabled={!!session?.runActive} onClick={() => {
+        <Button small onClick={() => {
           const p = guide.resumeTour()
           if (p) windowActions?.openProject(p)
         }}>続ける</Button>

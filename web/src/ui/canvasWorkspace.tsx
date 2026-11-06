@@ -57,6 +57,8 @@ export function ProjectActions({ workspace, session, onSwitchProject }: { worksp
   return (
     <div className="capsule material cv-actions">
       {onSwitchProject && <Button kind="borderless" iconOnly icon="house" onClick={onSwitchProject} help={tip('Home へ戻る', 'home')} />}
+      {/* Another project beside this one: each browser tab has its own. */}
+      {onSwitchProject && <Button kind="borderless" iconOnly icon="plus.square" onClick={() => window.open(location.pathname, '_blank')} help="新しいタブで Home を開く" />}
       {!workspace.showChat && onSwitchProject && guide.present ? (
         // While the chat is closed, Tsugumi waits on its button.
         <button type="button" className="btn btn-borderless btn-icon guide-nest-button" data-guide="chat" title={tip('チャットを開く', 'toggleChat')}

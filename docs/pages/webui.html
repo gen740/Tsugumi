@@ -31,6 +31,8 @@
 <main class="main">
 
 <div class="reading">
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#構成">構成</a></li><li class="d2"><a href="#ビルドと起動">ビルドと起動</a></li><li class="d2"><a href="#隔離macos-ホスト">隔離（macOS ホスト）</a></li><li class="d2"><a href="#複数のプロジェクト">複数のプロジェクト</a></li><li class="d2"><a href="#ショートカット">ショートカット</a></li></ul></details>
+<script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="web-ui">Web UI</h1>
 <p><code>web/</code> は、macOS アプリと同じ画面構成・操作・ショートカットをブラウザで提供するクライアントです。本文中のファイルパスとコマンドは、リポジトリのルートを基準としています。</p>
@@ -75,6 +77,8 @@
 <li>チャットに添付したフォルダは、サーバーが control フォルダの <code>attached.json</code> に書いたものだけを tsugumid が読みます（RPC からは変えられません）。</li>
 <li><code>sandbox: false</code> の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（<code>tsugumid</code> 自身は判断しません）。Linux で他人の Card を動かすときは、<code>tsugumid</code> を隔離されたコンテナの中で動かしてください。</li>
 </ul>
+<h2 id="複数のプロジェクト">複数のプロジェクト</h2>
+<p>ブラウザのタブごとに別のプロジェクトを開けます。動作は <a href="ui-view.html#複数のプロジェクト">UI の仕様</a> にあります。サーバーはプロジェクトごとに <code>tsugumid</code> を 1 つ動かし、どのタブがどのプロジェクトを表示しているかを知っているので（<code>POST /api/page</code>）、Claude Code が開いたプロジェクトは、それを表示中のタブか Home のタブに表示し、別のプロジェクトを表示中のタブは切り替えません。</p>
 <h2 id="ショートカット">ショートカット</h2>
 <p>既定値は macOS 版と同じで、アプリ設定 &gt; ショートカットで変更できます（ブラウザの localStorage に保存）。Canvas にフォーカスがあるときだけ働く 1 キーの操作（<code>s</code> 設定、<code>a</code> 成果物、<code>l</code> ログ、<code>f</code> 折りたたみ、<code>c</code> 複製、<code>0</code> 全体表示、<code>1</code> 100%、<code>g</code> グループ、<code>e</code> Draft 追加など）と、どこからでも使える操作（⌘R 実行、⌘. 停止、⌥⌘J チャット、⌥⌘L ログ、⌥⌘T タイムライン、⌃` ターミナルなど）があります。macOS 以外では ⌘ の代わりに Ctrl を使います。ブラウザが予約しているキー（⌘W・⌘T・⌘N・⌘Q など）は割り当ててもページに届きません。</p>
 </article>
@@ -82,6 +86,7 @@
 <p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/WebUI.md" rel="noopener"><code>docs/WebUI.md</code></a> と同じ文書です（<a href="webui.md">Markdown</a>）</p>
 </main>
 </div>
+<script src="../site/js/toc.js" defer></script>
 
 </body>
 </html>

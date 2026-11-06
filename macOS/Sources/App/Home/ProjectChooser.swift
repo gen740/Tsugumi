@@ -7,6 +7,8 @@ import TsugumiRPC
 /// scroll, nothing is cut at the top.
 struct ProjectChooser: View {
   @Environment(AppModel.self) private var model
+  /// The main window this Home is in.
+  @Bindable var workspace: Workspace
   let onOpen: (URL) -> Void
   @State private var showDemos = false
   @State private var newName = ""
@@ -107,10 +109,10 @@ struct ProjectChooser: View {
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .ignoresSafeArea(.container, edges: .top)
     .sheet(isPresented: $showNew) { newProjectSheet }
-    .onChange(of: model.requestNewProject, initial: true) { _, asked in
+    .onChange(of: workspace.requestNewProject, initial: true) { _, asked in
       if asked {
         showNew = true
-        model.requestNewProject = false
+        workspace.requestNewProject = false
       }
     }
   }

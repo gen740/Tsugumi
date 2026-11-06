@@ -101,6 +101,15 @@ export class AppModel extends Observable {
    *  first connect (a demo's history file becomes its versions). */
   private fresh = new Set<string>()
 
+  /** Whether a project was just made here, handed over to the tab that opens it (`?fresh`). */
+  takeFresh(dir: string): boolean {
+    return this.fresh.delete(dir)
+  }
+
+  markFresh(dir: string) {
+    this.fresh.add(dir)
+  }
+
   /** Copies a bundled demo into a new, editable project (the original stays untouched). */
   async copyDemo(id: string): Promise<string> {
     const p = (await api<{ path: string }>('/api/demo/copy', { id })).path

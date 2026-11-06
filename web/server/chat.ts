@@ -26,6 +26,7 @@ export interface ChatContext {
   /** How many pages are connected (their event streams). */
   listeners: () => number
   /** Opens the page in the default browser (the page's key is the server's alone). */
+  showOnPage: (project: string) => boolean
   openPage: (project?: string) => void
 }
 
@@ -736,14 +737,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!catalog) throw ctx.httpError(503, catalogError!)
     return externalTools(catalog).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
   },
-  /** Claude Code opened a project: the open page shows it (none open: a browser opens one, unless `browser: false`). */
+  /** Claude Code opened a project: a page that has it or is on Home shows it (others keep
+   *  their projects; none free: a browser opens one, unless `browser: false`). */
   'POST /api/agent/open': (b) => {
     const project = chatFor(projectDir(b.path)).project
-    ctx.broadcast({ type: 'agentOpen', project })
-    const pages = ctx.listeners()
-    const opened = !pages && b.browser !== false
+    const shown = ctx.showOnPage(project)
+    const opened = !shown && b.browser !== false
     if (opened) ctx.openPage(project)
-    return { project, pages, opened }
+    return { project, shown, opened }
   },
   'POST /api/agent/call': async (b) => {
     if (!catalog) throw ctx.httpError(503, catalogError!)

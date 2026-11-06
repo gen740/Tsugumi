@@ -191,7 +191,7 @@ struct ChatPanel: View {
           if sent != nil { followEnd() }
         }
         .onChange(of: GuideController.shared.chatFlash) { _, d in
-          guard d != nil, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
+          guard d != nil, GuideController.shared.speakingChat === chat, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
           withAnimation { proxy.scrollTo(last.id, anchor: .top) }
           withAnimation(.easeOut(duration: 0.2)) { flashing = true }
           Task { @MainActor in

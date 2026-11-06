@@ -72,6 +72,9 @@
 <li><strong>marimo と R Markdown / Quarto の専用 Card はありません</strong>（<a href="https://github.com/gen740/Tsugumi/issues/15" rel="noopener">#15</a>、<a href="https://github.com/gen740/Tsugumi/issues/16" rel="noopener">#16</a>）。</li>
 <li><strong>図の雛形を選んで作る専用の Visualization Card はありません。</strong> matplotlib・Plotly・Altair はふつうの Python の Card で描けます（<a href="https://github.com/gen740/Tsugumi/issues/19" rel="noopener">#19</a>）。</li>
 <li><strong>外部 Logger の DB は <code>sqlite:&lt;name&gt;</code> だけです</strong>（<a href="development.html#実装状況">実装状況</a>）。</li>
+<li><strong>アプリで同時に開けるプロジェクトは 16 個までです。</strong> 共通 VM の共有デバイスの数で決まります（<code>SharedVM.slotCount</code>）。</li>
+<li><strong>開いていたプロジェクトは、次の起動で開き直しません。</strong> 起動すると Home のウインドウが 1 つ開きます。</li>
+<li><strong>Web UI では、同じプロジェクトを開いた別のタブを前面に出せません。</strong> ブラウザにその手段がないので、もう 1 つのタブで開きます。</li>
 <li><strong>FBS の自動整形はありません</strong>（同上）。</li>
 <li><strong>大規模デモ（200 Card）と WASM の表示はありません</strong>（<a href="development.html#今後の拡張">今後の拡張</a>）。</li>
 <li><strong>科学デモの <code>load</code> は実行のたびに取得します。</strong> 公開元の内容が変われば結果も変わります。hash で固定しているのは Cas A だけです（<a href="demos.html#科学デモ公開データの取得と解析">同梱デモのしくみ</a>）。</li>

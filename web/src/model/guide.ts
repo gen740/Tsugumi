@@ -220,7 +220,8 @@ export class GuideController extends Observable {
   constructor() {
     super()
     onServerEvent((e) => {
-      if (e.type === 'guide') this.handle(e.event)
+      // The guide's conversation is Home's: a tab on a project goes on undisturbed (and reads it on returning).
+      if (e.type === 'guide' && !this.contextSession) this.handle(e.event)
       if (e.type === 'agentWork' && e.project === this.contextSession?.dir) this.externalWork(String(e.from ?? 'Claude Code'), e.event)
       if (e.type === 'reconnected') void this.refresh()
     })
@@ -453,6 +454,7 @@ export class GuideController extends Observable {
 
   /** The screen the page shows, for choices tapped in a bubble. */
   setContext(screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab) {
+    if (this.contextSession && !session) void this.refresh()
     this.contextScreen = screen
     this.contextSession = session
     this.contextTab = tab

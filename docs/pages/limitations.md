@@ -38,6 +38,9 @@
 - **marimo と R Markdown / Quarto の専用 Card はありません**（[#15](https://github.com/gen740/Tsugumi/issues/15)、[#16](https://github.com/gen740/Tsugumi/issues/16)）。
 - **図の雛形を選んで作る専用の Visualization Card はありません。** matplotlib・Plotly・Altair はふつうの Python の Card で描けます（[#19](https://github.com/gen740/Tsugumi/issues/19)）。
 - **外部 Logger の DB は `sqlite:<name>` だけです**（[実装状況](development.md#実装状況)）。
+- **アプリで同時に開けるプロジェクトは 16 個までです。** 共通 VM の共有デバイスの数で決まります（`SharedVM.slotCount`）。
+- **開いていたプロジェクトは、次の起動で開き直しません。** 起動すると Home のウインドウが 1 つ開きます。
+- **Web UI では、同じプロジェクトを開いた別のタブを前面に出せません。** ブラウザにその手段がないので、もう 1 つのタブで開きます。
 - **FBS の自動整形はありません**（同上）。
 - **大規模デモ（200 Card）と WASM の表示はありません**（[今後の拡張](development.md#今後の拡張)）。
 - **科学デモの `load` は実行のたびに取得します。** 公開元の内容が変われば結果も変わります。hash で固定しているのは Cas A だけです（[同梱デモのしくみ](demos.md#科学デモ公開データの取得と解析)）。

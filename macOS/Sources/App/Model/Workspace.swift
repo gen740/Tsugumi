@@ -1,10 +1,11 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Observation
 import TsugumiRPC
 
 /// Window values for the scenes that show one project (and optionally a
-/// Card or scope in it). Codable so windows restore across launches.
+/// Card or scope in it). SwiftUI wants them Codable; no window is restored (TsugumiApp).
 struct ProjectRef: Codable, Hashable {
   var path: String
   /// Definition to show first (Card definitions window).
@@ -119,7 +120,14 @@ enum BottomPanel: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class Workspace {
+  let id = UUID()
+  /// The window showing it (a main window: to bring it forward, to tell when it closes).
+  @ObservationIgnored weak var window: NSWindow?
   var session: ProjectSession?
+  /// "New project" asked for this window: its Home opens the sheet.
+  var requestNewProject = false
+  /// What this window could not do, shown as an alert.
+  var alert: String?
   var tabs: [WorkflowTab] = []
   var activeTab: UUID?
   var showChat = true

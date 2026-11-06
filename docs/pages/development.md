@@ -15,6 +15,7 @@ macOS アプリの計算は Mac 上の隔離された Linux VM 内で実行さ�
 
 グラフの実行エンジンは、条件分岐（branch）・合流（merge）・有限のフィードバックループ・入れ子の子 Workflow（Card in Card）をサポートします。
 macOS アプリでは、アプリ全体で 1 台の共通 Linux VM（`Virtualization.framework` を直接使用）の中で、開いているプロジェクトごとに独立した `tsugumid` プロセスが実行を担います。
+メインウインドウは 1 つのプロジェクトを表示し、複数のウインドウで同時に開けます（[UI の仕様](ui-view.md#複数のプロジェクト)）。Web UI はブラウザのタブごとです。
 macOS 側の SwiftUI アプリと Agent は、どちらも同じ FlatBuffers RPC 契約を介して `tsugumid` と通信する対等なクライアントです。
 
 ```text
@@ -193,7 +194,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
 | `macOS/CoreTests`（`cd macOS/CoreTests && swift test`） | アプリ本体なしでビルドする独立パッケージ: モデル一覧の取得が Keychain の確認を出さないこと（ほかのプログラムが保存した項目は確認なしに失敗する）、JSON モデル、Swift 側の Agent 契約（Web と同じ fixture の tool 一覧・FlatJSON・Draft 依頼文）、Mac のフォルダの設定、Agent × テスト用モデル（`tests/fixtures/model_fixture.py`）× 実 tsugumid（読取→変更→実行→説明、取消、取消後の再試行、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録、Draft の計画→保存→再読込→実装→検証、生成取消で計画が残る、ChatGPT プランでのサインイン→実行→トークン更新→利用上限→入り直し→サインアウト、Web 検索のオンとオフ・検索ブロックの再送・`pause_turn`）、参考資料の読込 |
-| `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: モデルメニュー（開くたびの再取得、失敗・空の答え・遅い接続で保存済みの一覧が残ること）、段階とフロー方向の幾何、整列（Web と同じ fixture）、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出、自動更新（版の比較、リリースの選び方、チェックサム、入れてよいアプリかの確認、開発版とリリース版のサポートフォルダ） |
+| `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: モデルメニュー（開くたびの再取得、失敗・空の答え・遅い接続で保存済みの一覧が残ること）、段階とフロー方向の幾何、整列（Web と同じ fixture）、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出、複数のメインウインドウ（プロジェクトの開き先、ツグミがそのプロジェクトのウインドウにだけ出ること）、自動更新（版の比較、リリースの選び方、チェックサム、入れてよいアプリかの確認、開発版とリリース版のサポートフォルダ） |
 | `macOS/Tests/TsugumiBenchmarks`（`TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks`） | 描画のベンチマーク（3D 点群の 1 フレーム）。通常のテストでは動かない |
 | 実際の API（任意、`cd macOS/CoreTests && TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
 | CI（`.github/workflows/ci.yml`、GitHub Actions） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid と tsugumi-worker をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`）。文書だけの変更では macOS のジョブを省く（アプリが読む `README.md`・`docs/Philosophy.md`・`docs/Name.md`・`docs/Author.md` を除く） |
