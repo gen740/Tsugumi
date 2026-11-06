@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import TsugumiAgent
 
 /// What the Agent is doing, for the canvas: a queue of short scenes (beats)
 /// that the tsugumi plays one after another. It looks into a Card the Agent
@@ -19,13 +20,14 @@ final class AgentPresence {
 
   enum Beat: Equatable {
     case visit(CardKey)  // reads it
+    case compose(CardKey)  // writes a file of it, not saved yet
     case write(CardKey, reveal: Bool)  // saved it; `reveal`: a Draft (or a new Card) became code
     case thread(Wire)  // threads a wire of what it wrote
     case run(CardKey)  // runs the workflow from this trigger Card
 
     var card: CardKey {
       switch self {
-      case .visit(let k), .write(let k, _), .run(let k): k
+      case .visit(let k), .compose(let k), .write(let k, _), .run(let k): k
       case .thread(let w): w.to
       }
     }
@@ -85,6 +87,19 @@ final class AgentPresence {
       }
     }
   }
+  /// A file as the model writes it, before any save: only what has arrived.
+  struct LiveCode: Equatable {
+    let card: CardKey
+    let file: String
+    var text: String
+  }
+
+  /// What is being written now (shown above its Card); nil when nothing is.
+  private(set) var liveCode: LiveCode?
+  private var liveScanner = SourceWritingScanner()
+  private var liveIndex: Int?
+  private var livePublished = Date.distantPast
+
   /// Bumped when an effect ends, so views that animate it can stop.
   private(set) var revision = 0
   private var sweeper: Task<Void, Never>?
@@ -109,6 +124,7 @@ final class AgentPresence {
   func turnEnded(_ outcome: Outcome = .done, now: Date = Date()) {
     self.outcome = outcome
     working = false
+    toolInputEnded()
     endedAt = max(now, beats.last?.end ?? now)
     sweep()
   }
@@ -127,13 +143,45 @@ final class AgentPresence {
     activity = (text, now)
   }
 
+  /// A piece of a tool call's arguments as the model writes them. Pieces
+  /// come far faster than a screen shows them, so the view changes at most
+  /// 30 times a second (a new file and its end at once).
+  func toolInput(index: Int, tool: String, delta: String, now: Date = Date()) {
+    guard working, PresenceEvents.writesSources(tool: tool) else { return }
+    if liveIndex != index {
+      liveIndex = index
+      liveScanner = SourceWritingScanner()
+    }
+    liveScanner.feed(delta)
+    guard let w = liveScanner.current, let path = w.path, let (id, file) = PresenceEvents.fileOfCard(path) else {
+      if liveScanner.current != nil { liveCode = nil }
+      return
+    }
+    let card = key([id])
+    let isNew = liveCode?.card != card || liveCode?.file != file
+    guard isNew || w.done || now.timeIntervalSince(livePublished) >= 1.0 / 30 else { return }
+    livePublished = now
+    liveCode = LiveCode(card: card, file: file, text: w.text)
+    if isNew, beats.last?.beat != .compose(card) { enqueue(.compose(card), now: now) }
+  }
+
+  /// The call ended, was asked again or was given up: what it was writing is
+  /// not on the screen any more (a save that went through is written out by
+  /// its own scenes).
+  func toolInputEnded() {
+    liveCode = nil
+    liveIndex = nil
+  }
+
   func enqueue(_ beat: Beat, now: Date = Date()) {
     let start = max(now, beats.last?.end ?? now)
     if !visible(at: start) || appearedAt == nil { appearedAt = start }
-    if case .visit(let k) = beat {
+    switch beat {
+    case .visit(let k), .compose(let k):
       // Already there, or too far behind to be worth showing.
-      if let last = beats.last, last.beat.card == k, last.end > now.addingTimeInterval(-0.5) { return }
+      if case .visit = beat, let last = beats.last, last.beat.card == k, last.end > now.addingTimeInterval(-0.5) { return }
       if start.timeIntervalSince(now) > Timing.maxBacklog { return }
+    default: break
     }
     beats.append(Scheduled(beat: beat, start: start, length: length(of: beat), line: line(for: beat)))
     // Played and gone beats are kept only as long as their effects last.
@@ -254,6 +302,7 @@ final class AgentPresence {
   private func length(of beat: Beat) -> Double {
     switch beat {
     case .visit: Timing.visit
+    case .compose: Timing.visit
     case .write(_, let reveal): reveal ? Timing.reveal : Timing.update
     case .thread: Timing.thread
     case .run: Timing.run
@@ -263,6 +312,7 @@ final class AgentPresence {
   private func line(for beat: Beat) -> String {
     switch beat {
     case .visit(let k): String(localized: "\(name(k)) を読んでいます")
+    case .compose(let k): String(localized: "\(name(k)) を書いています")
     case .write(let k, let reveal): reveal ? String(localized: "\(name(k)) を書いています") : String(localized: "\(name(k)) を直しています")
     case .thread(let w): String(localized: "\(name(w.from)) から \(name(w.to)) へつないでいます")
     case .run(let k): String(localized: "\(name(k)) から実行しています")
