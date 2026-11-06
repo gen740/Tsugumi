@@ -424,7 +424,10 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
   }
   if (!plan) body.max_output_tokens = c.maxTokens
   if (tools.length) {
-    const functions = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+    // Preserve optional RPC fields such as PutDefinition.link_json through Responses.
+    const functions = tools.map((t) => ({
+      type: 'function', name: t.name, description: t.description, parameters: t.inputSchema, strict: false,
+    }))
     body.tools = plan ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : functions
   }
   let stale: string | undefined

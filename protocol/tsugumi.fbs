@@ -258,7 +258,6 @@ table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 /// -> ProjectSnapshot. No subscription, build or reload.
 table ProjectInspectRequest {}
 
-/// -> SaveResult. One project transaction.
 /// A Card renamed by this save's changes (inside a Card in Card, where the
 /// rename is an edit of the external's files): its run history follows.
 table CardRename {
@@ -266,6 +265,7 @@ table CardRename {
   to:Tsugumi.Data.CardPath (id: 1, required);
 }
 
+/// -> SaveResult. Apply all changes in one transaction at base_rev.
 table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
