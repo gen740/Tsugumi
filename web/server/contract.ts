@@ -264,6 +264,40 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
     assert.equal(text.match(/https:/g)?.length, 1, text)
     assert.ok(text.includes('[a b c](https://a.example/b%29c)'), text)
     assert.equal(sourcesText([{ url: 'file:///etc/passwd' }]), '')
+
+    // A reply with nothing in it (declined before any output, or only thinking,
+    // which is not kept): the turn says so, and the conversation can go on. The
+    // fixture refuses empty content as the Messages API does. The same cases as
+    // macOS/CoreTests (EmptyReplyTests).
+    const saysEmpty = (events: AgentEvent[], stop: string) => {
+      const last = events[events.length - 1]
+      assert.ok(last.kind === 'error' && last.message.includes('empty reply') && last.message.includes(stop), JSON.stringify(last))
+    }
+    for (const [asked, stop] of [['refuse this', 'refusal'], ['think only', 'end_turn']]) {
+      const a = agentWith(provider(false))
+      saysEmpty(await turn(a, asked), stop)
+      assert.ok(a.conversation.messages.every((m) => m.content.length > 0), JSON.stringify(a.conversation.messages))
+      // Nothing is left to resume: opening the conversation asks nothing again.
+      assert.equal(a.conversation.messages.at(-1)?.role, 'assistant')
+      // The next request is not refused for the empty reply.
+      events = await turn(a, 'thanks')
+      finished(events)
+      assert.match(says(events), /set <card>/)
+    }
+    // Retry asks the same again; it may be answered the same, and says so again.
+    const refused = agentWith(provider(false))
+    saysEmpty(await turn(refused, 'refuse this'), 'refusal')
+    saysEmpty(await new Promise<AgentEvent[]>((resolve) => {
+      const seen: AgentEvent[] = []
+      refused.retry((e) => {
+        seen.push(e)
+        if (e.kind === 'finished' || e.kind === 'error') resolve(seen)
+      })
+    }), 'refusal')
+    // A reply over the Responses API whose only output is a refusal has no text either.
+    const declined = agentWith(provider(false, 'openAIResponses'))
+    saysEmpty(await turn(declined, 'refuse this'), 'end_turn')
+    finished(await turn(declined, 'thanks'))
   } finally {
     fixture.kill()
     fs.rmSync(tmp, { recursive: true, force: true })

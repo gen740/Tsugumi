@@ -61,6 +61,11 @@ without its result. Without the tool it says it cannot search.
 GET /fixture/requests lists every model request it saw (path, tools, include,
 and whether its text names web_search).
 
+An empty reply: the latest user text "refuse this" gets no content and the stop
+reason refusal, and "think only" a reply with nothing but a thinking block (on
+the Responses API, a refusal with no output text). Like the Messages API it
+refuses a request with empty content on any message but a final assistant one.
+
 Options:
   --slow SECONDS   delay between streamed chunks (cancellation tests)
   --drop-once      drop the first response mid-stream (retry tests)
@@ -149,6 +154,21 @@ def unanswered_tool_uses(messages):
         if missing:
             return missing
     return []
+
+
+def empty_message(messages):
+    """The index of a message the Messages API refuses for its empty content:
+    only a final assistant message may have none."""
+    for i, m in enumerate(messages):
+        if not m.get("content") and not (i == len(messages) - 1 and m["role"] == "assistant"):
+            return i
+    return None
+
+
+def asks_empty_reply(messages):
+    """"refuse" or "think" when the latest message's text asks for an empty reply."""
+    text = "".join(b.get("text", "") for b in blocks(messages[-1]) if b.get("type") == "text") if messages else ""
+    return "refuse" if "refuse this" in text else "think" if "think only" in text else None
 
 
 def search_task(messages):
@@ -846,6 +866,13 @@ class Handler(BaseHTTPRequestHandler):
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
             return
+        empty = empty_message(body["messages"])
+        if empty is not None:
+            self._error(400, f"messages.{empty}: all messages must have non-empty content except for the optional final assistant message")
+            return
+        if kind := asks_empty_reply(body["messages"]):
+            self._empty_reply(body, kind)
+            return
         declared = "web_search" in names
         if bad := search_replay_errors(body["messages"], declared):
             self._error(400, bad)
@@ -909,6 +936,19 @@ class Handler(BaseHTTPRequestHandler):
             self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
             stop = "tool_use"
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
+        self._event("message_stop", {"type": "message_stop"})
+
+    def _empty_reply(self, body, kind):
+        """A reply with nothing to send back: declined before any output, or only thinking."""
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        self._event("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": len(json.dumps(body["messages"])) // 4}}})
+        if kind == "think":
+            self._event("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}})
+            self._event("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Hm."}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "refusal" if kind == "refuse" else "end_turn"}, "usage": {"output_tokens": 0}})
         self._event("message_stop", {"type": "message_stop"})
 
     def _note_request(self, tools, raw, include=None):
@@ -1001,6 +1041,16 @@ class Handler(BaseHTTPRequestHandler):
                 messages[-1]["content"].append(block)
             else:
                 messages.append({"role": role, "content": [block]})
+        if asks_empty_reply(messages):
+            # A refusal is an output item of its own: no output text comes.
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            self._event("response.refusal.delta", {"type": "response.refusal.delta", "output_index": 0, "delta": "I can't help with that."})
+            self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": {
+                "type": "message", "role": "assistant", "content": [{"type": "refusal", "refusal": "I can't help with that."}]}})
+            self._event("response.completed", {"type": "response.completed", "response": {"usage": {"input_tokens": 100, "output_tokens": 0}}})
+            return
         search, _ = search_task(messages)
         if search and declared:
             self._responses_search(search.group(1))
