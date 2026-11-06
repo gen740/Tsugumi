@@ -263,7 +263,7 @@ std::vector<std::string> Service::capabilities() {
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
-      "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph"};
+      "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
@@ -349,6 +349,9 @@ void Service::dispatch(RequestIn req) {
     case P::VersionMarkRequest: return on_lane(m, std::move(req), &Service::version_mark);
     case P::VersionCheckoutRequest: return on_lane(m, std::move(req), &Service::version_checkout);
     case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
+    case P::VersionCanvasRequest: return on_lane(r, std::move(req), &Service::version_canvas);
+    case P::VersionDiffRequest: return on_lane(r, std::move(req), &Service::version_diff);
+    case P::VersionSummaryRequest: return on_lane(m, std::move(req), &Service::version_summary);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
@@ -1065,10 +1068,56 @@ void Service::version_graph(RequestIn& req) {
                                          n.summary.empty() ? 0 : b.CreateString(n.summary)));
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
-                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
+                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed),
+                                             c.change_summary.empty() ? 0 : b.CreateString(c.change_summary)));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
+}
+
+void Service::version_canvas(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionCanvasRequest();
+  auto canvas = versions_->canvas(r->commit()->str());
+  FBB b;
+  std::vector<flatbuffers::Offset<R::VersionCanvasCard>> cards;
+  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), c.x, c.y));
+  std::vector<flatbuffers::Offset<R::VersionCanvasWire>> wires;
+  for (const auto& [from, to] : canvas.wires) wires.push_back(R::CreateVersionCanvasWire(b, b.CreateString(from), b.CreateString(to)));
+  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas, vc.Union()));
+}
+
+void Service::version_diff(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionDiffRequest();
+  auto d = versions_->diff(r->commit()->str());
+  FBB b;
+  auto vd = R::CreateVersionDiff(b, b.CreateString(d.text), d.truncated);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff, vd.Union()));
+}
+
+void Service::version_summary(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionSummaryRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "version", digest)) return;
+  try {
+    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    std::string commit = r->commit()->str();
+    std::string summary = r->summary()->str();
+    if (summary.empty() || summary.size() > 2000) throw Failed(FailureKind::invalid_request, "a summary is 1 to 2000 bytes");
+    versions_->set_summary(commit, summary);
+    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "version", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "version", digest, f);
+    throw Failed(f);
+  }
 }
 
 void Service::import_definitions(RequestIn& req) {

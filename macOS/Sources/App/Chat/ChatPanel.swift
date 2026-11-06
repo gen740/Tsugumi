@@ -12,6 +12,8 @@ struct ChatPanel: View {
   @Bindable var chat: ChatController
   let detached: Bool
   var tab: WorkflowTab?
+  /// Whether the panel is open: opening it again shows the newest message.
+  var shown = true
   @State private var showList = false
   @State private var query = ""
   @State private var input = ""
@@ -44,6 +46,8 @@ struct ChatPanel: View {
   @State private var folderToAttach: URL?
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
+  @State private var follow = ChatFollow()
+  @State private var scrollPosition = ScrollPosition(edge: .bottom)
   @FocusState private var inputFocused: Bool
   @State private var flashing = false
 
@@ -157,14 +161,35 @@ struct ChatPanel: View {
                   }
                 }
             }
-            if chat.busy { activity.id("activity") }
+            if chat.busy { activity }
           }
           .padding(.horizontal, 14).padding(.vertical, 12)
           .frame(maxWidth: 720, alignment: .leading)
         }
         .scrollIndicators(overflows ? .automatic : .never)
         .onScrollGeometryChange(for: Bool.self) { g in g.contentSize.height > g.containerSize.height + 1 } action: { _, v in overflows = v }
-        .onChange(of: chat.items.count) { scrollToEnd(proxy) }
+        // Opens at the newest message and keeps it, whatever changes the height
+        // (messages, Markdown and math measured, the composer, the panel's width),
+        // until the reader scrolls up.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: ChatFollow.View.self) { g in
+          ChatFollow.View(top: g.visibleRect.minY, bottom: g.visibleRect.maxY, content: g.contentSize.height)
+        } action: { _, now in
+          if follow.update(now) { scrollPosition.scrollTo(edge: .bottom) }
+        }
+        .onScrollPhaseChange { _, phase in
+          follow.readerScrolling = phase == .interacting || phase == .decelerating
+          // (rows measured while the reader's hand was on it left the end further away)
+          if phase == .idle, follow.following { scrollPosition.scrollTo(edge: .bottom) }
+        }
+        .onAppear { followEnd() }
+        .onChange(of: chat.currentId) { followEnd() }
+        // (the inspector keeps its views while closed: nothing appears again)
+        .onChange(of: shown) { if shown { followEnd() } }
+        .onChange(of: chat.items.last.flatMap { $0.role == "user" ? $0.id : nil }) { _, sent in
+          if sent != nil { followEnd() }
+        }
         .onChange(of: GuideController.shared.chatFlash) { _, d in
           guard d != nil, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
           withAnimation { proxy.scrollTo(last.id, anchor: .top) }
@@ -174,7 +199,6 @@ struct ChatPanel: View {
             withAnimation(.easeOut(duration: 0.6)) { flashing = false }
           }
         }
-        .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
       if let s = chat.status {
         HStack(spacing: 6) {
@@ -194,8 +218,9 @@ struct ChatPanel: View {
     }
   }
 
-  private func scrollToEnd(_ proxy: ScrollViewProxy) {
-    if chat.busy { proxy.scrollTo("activity", anchor: .bottom) } else if let last = chat.items.last { proxy.scrollTo(last.id, anchor: .bottom) }
+  private func followEnd() {
+    follow.restart()
+    scrollPosition.scrollTo(edge: .bottom)
   }
 
   /// What the agent is doing right now (no internal reasoning, only the step).

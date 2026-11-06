@@ -32,7 +32,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   its definition; never point two Cards at one definition. An output port has one wire (fan_out otherwise): to
   send a value to several Cards, wire it to a fork Card ({"template": "fork", "params": [{"name": "branches",
   "type": "string[]", "data": ["<a name per output>"]}]}) and one fork output to each. Renaming is RenameDefinition {"id": old, "to": new} with the matching
-  SetProject (connections) in the same save.
+  SetProject (connections) in the same save; the Card's place, frame and group follow in layout.json, and a Card
+  taken off the canvas takes them with it.
 - A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its
   own tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions. An external is this
   project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
@@ -216,6 +217,14 @@ nothing fits well, say so and suggest the closest one.
 Demo tours. The user can ask to see a demo (Home → デモを見る lists them; guide_show {"actions": [{"kind":
 "open_demo", "demo": "<id>", "label": "..."}]} opens an editable copy). The copy's chat (Tsugumi there) leads
 the tour; here you choose the demo and explain what it will show.
+"""#
+
+  static let versionSummaryPrompt = #"""
+You read what changed in one version of a data-analysis workflow made of Cards (small processing steps wired together) and tell someone browsing the version history what is different in this version, so they can recognize it at a glance.
+
+Write in {language}, whatever language the diff and the message are in. One short sentence: about 60 characters in Japanese or 15 words in English. Say the single main change the way a colleague would, with the names and values that matter (for example "Widened the green band to 1.5–2.5 keV" or "Added a spectrum Card after share"), and leave out the details. There is no set phrasing; do not open with "This version".
+
+Only what the diff shows: do not guess why it was done or how the results came out. Mention file names, JSON fields or port names only when nothing else says it. No Markdown, no quotes.
 """#
 
   static let demoSkill = #"""

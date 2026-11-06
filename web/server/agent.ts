@@ -12,6 +12,7 @@ import { RPCClient } from '../src/shared/rpc'
 import { AGENT, fill } from '../src/shared/agentShared'
 import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
+import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
 import { planError, TransientError } from './chatgpt'
 
@@ -684,6 +685,15 @@ function wire(b: ContentBlock): unknown {
 export const SYSTEM_PROMPT = systemPrompt
 /** The guide's rules (agent/Shared/guide-prompt.md). */
 export const GUIDE_PROMPT = guidePrompt
+
+/** A version's summary, in the page's language, from what it changed
+ *  (agent/Shared/version-summary-prompt.md). One line, however the model answers. */
+export async function summarizeVersion(c: ProviderConfig, input: string, signal: AbortSignal): Promise<string> {
+  const system = versionSummaryPrompt.replace('{language}', 'Japanese (plain form, 常体)')
+  let text = ''
+  for await (const e of stream(c, system, [{ role: 'user', content: [{ type: 'text', text: input }] }], [], signal)) if (e.t === 'text') text += e.text
+  return text.replace(/\s+/g, ' ').trim().slice(0, 300)
+}
 /** The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around. */
 export const DEMO_SKILL = demoSkill
 

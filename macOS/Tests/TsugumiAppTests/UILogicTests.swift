@@ -5,22 +5,21 @@ import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
-@Test func hoveringAVersionSaysWhatItsRunsDid() {
-  func run(_ state: String, _ seconds: Double, _ summary: String?) -> Tsugumi_RPC_VersionRunT {
-    let r = Tsugumi_RPC_VersionRunT()
-    r.state = state
-    r.seconds = seconds
-    r.summary = summary
-    return r
+@Test func aVersionHoverIsWrittenFromItsChangeAndFitsItsCards() {
+  #expect(VersionSummarizer.input(message: "実行: bands\n", changed: ["bands", ""], diff: "+x\n", truncated: true)
+    == "Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n")
+  #expect(VersionSummarizer.clean(" 緑を\n  広げた。 ") == "緑を 広げた。")
+  // Every Card stays inside the box, in the order it has on the canvas.
+  let wide = VersionMiniMapLayout([(id: "a", x: 100, y: 0), (id: "b", x: 5000, y: 300), (id: "c", x: 2500, y: -400)], width: 284, height: 132)
+  for (_, r) in wide.cards {
+    #expect(r.minX >= 0 && r.maxX <= 284 && r.minY >= 0 && r.maxY <= wide.height && wide.height <= 132)
   }
-  #expect(VersionTreeView.runsHelp([]) == "この版での実行はありません。")
-  // Newest first; a run a demo's history lists has no summary.
-  #expect(VersionTreeView.runsHelp([run("failed", 1.25, "a だけ / 失敗: a（worker_failed）"), run("succeeded", 12.3, "全体: a、b ×2")])
-    == "成功 · 12.3 秒 · 全体: a、b ×2\n失敗 · 1.2 秒 · a だけ / 失敗: a（worker_failed）")
-  #expect(VersionTreeView.runsHelp([run("succeeded", 2, nil)]) == "成功 · 2.0 秒")
-  // Only the latest few: the rest are counted.
-  let many = (0..<7).map { run("succeeded", Double($0), nil) }
-  #expect(VersionTreeView.runsHelp(many).split(separator: "\n").last == "ほか 2 回")
+  #expect(wide.cards["a"]!.minX < wide.cards["c"]!.minX && wide.cards["c"]!.minX < wide.cards["b"]!.minX)
+  #expect(!wide.named)
+  // A small graph is not blown up, and is only as tall as it is.
+  let small = VersionMiniMapLayout([(id: "a", x: 0, y: 0)], width: 284, height: 132)
+  #expect(small.cards["a"]!.width == 220 * 0.3 && small.height == 80 * 0.3 + 16 && small.named)
+  #expect(VersionMiniMapLayout([], width: 284, height: 132).cards.isEmpty)
 }
 
 @Test func stagesOfCodeAndBuiltinCards() {

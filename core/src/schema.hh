@@ -5,8 +5,10 @@
 // root is decoded into the typed schema. Unknown members are rejected.
 // Writing: schemas whose fields are all required are encoded with the compact
 // JSON writer. Document files (tsugumi.json, layout.json, _card.json,
-// _meta.json) are never re-encoded: their confirmed bytes are the validated
-// client text, which also keeps the original integer spellings.
+// _meta.json) are not re-encoded: their confirmed bytes are the validated client
+// text, which also keeps the original integer spellings. One exception: a save
+// that renames or deletes a Card rewrites layout.json when it still names that
+// Card (document::layout_following_cards), keeping every value's spelling.
 #pragma once
 
 #include <hosq/hosq.hh>
@@ -469,6 +471,9 @@ hosq::json::GenericDom<> capture(std::string_view json_text);
 hosq::json::GenericDom<> string_value(const std::string& s);
 // JSON object text from (key, captured value) pairs, in the given order.
 std::string object_text(const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>& members);
+// The form the clients write document files in: two spaces, a final newline.
+// `compact` is validated JSON without whitespace between its tokens.
+std::string pretty_text(std::string_view compact);
 bool is_null(const hosq::json::GenericDom<>& value);
 
 // Value of an optional field.

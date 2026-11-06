@@ -1,15 +1,16 @@
 // The project's versions as a tree (core/src/versions.cc): each commit with its
-// branches, tags, runs (from its note; hovering shows what ran) and changed
-// Cards. A version can be named, and the project can start again from any of
-// them (a change there opens a branch).
-import { useEffect, useState } from 'react'
+// branches, tags, runs (from its note) and changed Cards; hovering one shows
+// what it changed and a minimap of its Cards. A version can be named, and the
+// project can start again from any of them (a change there opens a branch).
+import { useEffect, useRef, useState } from 'react'
 import * as R from '../gen/tsugumi/rpc'
 import { useObserve } from '../model/observable'
 import { ProjectSession } from '../model/session'
-import { Button, Confirm, Empty, Sheet, TextField } from './controls'
+import { Button, Confirm, Empty, Sheet, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 
 const ROW = 58
+const HOVER_H = 200
 const LANE = 18
 
 interface Edge { lane: number; toRow: number; toLane: number }
@@ -65,15 +66,62 @@ function changedText(changed: string[]) {
   return `変更: ${names.slice(0, 4).join('、')}${names.length > 4 ? ` ほか ${names.length - 4}` : ''}`
 }
 
-/** What a version's runs did, for the hover: newest first, each with its
- *  result and the summary its note gives. */
-export function runsHelp(runs: Pick<R.VersionRunT, 'state' | 'seconds' | 'summary'>[]) {
-  if (runs.length === 0) return 'この版での実行はありません。'
-  const shown = 5
-  const lines = runs.slice(-shown).reverse().map((r) =>
-    [stateLabel(str(r.state)), `${r.seconds.toFixed(1)} 秒`, str(r.summary)].filter(Boolean).join(' · '))
-  if (runs.length > shown) lines.push(`ほか ${runs.length - shown} 回`)
-  return lines.join('\n')
+/** Where a version's Cards go in a minimap at most width x height: the whole
+ *  graph fitted and centered across, the box's height, and whether a Card is
+ *  wide enough for its name. */
+export function miniMapLayout(cards: { id: string; x: number; y: number }[], width: number, height: number) {
+  const CARD_W = 220, CARD_H = 80, PAD = 8
+  if (cards.length === 0) return { cards: [], w: 0, h: 0, height: 0, named: false }
+  const left = Math.min(...cards.map((c) => c.x)), top = Math.min(...cards.map((c) => c.y))
+  const spanX = Math.max(...cards.map((c) => c.x)) - left + CARD_W, spanY = Math.max(...cards.map((c) => c.y)) - top + CARD_H
+  const k = Math.min((width - PAD * 2) / spanX, (height - PAD * 2) / spanY, 0.3)
+  const ox = (width - spanX * k) / 2
+  return {
+    cards: cards.map((c) => ({ id: c.id, x: ox + (c.x - left) * k, y: PAD + (c.y - top) * k })),
+    w: CARD_W * k, h: CARD_H * k, height: spanY * k + PAD * 2, named: CARD_W * k >= 34,
+  }
+}
+
+const MAP_W = 284
+const MAP_H = 132
+
+/** A version's Cards and how they connect; those it changed stand out. */
+function MiniMap({ canvas, changed }: { canvas: R.VersionCanvasT; changed: string[] }) {
+  const cards = canvas.cards.filter((c): c is R.VersionCanvasCardT => !!c).map((c) => ({ id: str(c.id), x: c.x, y: c.y }))
+  const map = miniMapLayout(cards, MAP_W, MAP_H)
+  const at = new Map(map.cards.map((c) => [c.id, c]))
+  const touched = new Set(changed.map((k) => k.split('/')[0]))
+  return (
+    <svg className="version-map" width={MAP_W} height={map.height}>
+      {canvas.wires.map((w, i) => {
+        const a = at.get(str(w?.from)), b = at.get(str(w?.to))
+        return a && b ? <line key={i} x1={a.x + map.w / 2} y1={a.y + map.h / 2} x2={b.x + map.w / 2} y2={b.y + map.h / 2} stroke="var(--secondary)" strokeWidth={1} /> : null
+      })}
+      {map.cards.map((c) => (
+        <g key={c.id}>
+          <rect x={c.x} y={c.y} width={map.w} height={map.h} rx={2.5} className={touched.has(c.id) ? 'changed' : ''} />
+          {map.named && <text x={c.x + map.w / 2} y={c.y + map.h / 2 + 3} textAnchor="middle">{c.id.length * 5 > map.w ? `${c.id.slice(0, Math.max(1, Math.floor(map.w / 5) - 1))}…` : c.id}</text>}
+        </g>
+      ))}
+    </svg>
+  )
+}
+
+/** What shows while the pointer is on a version: what it changed, in a model's
+ *  words, and its Cards. */
+function VersionHover({ session, commit, top }: { session: ProjectSession; commit: R.VersionCommitT; top: number }) {
+  const id = str(commit.id)
+  const canvas = session.versionCanvases.get(id)
+  const error = session.versionSummaryErrors.get(id)
+  return (
+    <div className="version-hover" style={{ top }}>
+      {commit.changeSummary ? <div>{str(commit.changeSummary)}</div>
+        : session.versionSummaryBusy.has(id) ? <div className="secondary">要約しています…</div>
+          : <div>{str(commit.summary)}</div>}
+      {error && <div className="caption" style={{ color: 'var(--red)' }}>要約を作れませんでした: {error}</div>}
+      {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} />}
+    </div>
+  )
 }
 
 function ago(ms: number) {
@@ -90,7 +138,23 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   const [error, setError] = useState<string>()
   const [naming, setNaming] = useState(false)
   const [confirmStart, setConfirmStart] = useState<string>()
+  const [confirmSummaries, setConfirmSummaries] = useState(false)
+  // The version under the pointer, and the one whose panel shows (a moment later).
+  const [pointed, setPointed] = useState<string>()
+  const [hovered, setHovered] = useState<string>()
+  const treeRef = useRef<HTMLDivElement>(null)
   useEffect(() => { void session.refreshVersions() }, [session, session.rev])
+  useEffect(() => { void session.loadVersionSummaries() }, [session])
+  useEffect(() => {
+    setHovered(undefined)
+    if (!pointed) return
+    const t = setTimeout(() => {
+      setHovered(pointed)
+      void session.loadVersionCanvas(pointed)
+      void session.summarizeVersion(pointed)
+    }, 250)
+    return () => clearTimeout(t)
+  }, [session, pointed])
   // The run's note is written as the run ends: read it a moment later.
   useEffect(() => {
     const t = setTimeout(() => void session.refreshVersions(), 600)
@@ -114,6 +178,18 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   const x = (lane: number) => 10 + lane * LANE + LANE / 2
   const y = (row: number) => row * ROW + 20
   const sel = commits.find((c) => str(c.id) === selected)
+  const rowAt = (clientY: number) => {
+    const box = treeRef.current?.getBoundingClientRect()
+    const row = box ? Math.floor((clientY - box.top + (treeRef.current?.scrollTop ?? 0)) / ROW) : -1
+    return row >= 0 && row < commits.length ? str(commits[row].id) : undefined
+  }
+  // Under its row, or above it near the bottom of the tree.
+  const hoverTop = (commit: string) => {
+    const tree = treeRef.current
+    const row = commits.findIndex((c) => str(c.id) === commit) * ROW - (tree?.scrollTop ?? 0)
+    return row + ROW + HOVER_H > (tree?.clientHeight ?? 0) ? Math.max(4, row - HOVER_H) : row + ROW
+  }
+  const shown = commits.find((c) => str(c.id) === hovered)
   return (
     <div className="col fill versions">
       <div className="row gap8 versions-header">
@@ -121,11 +197,17 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
         <span>{branch ? `枝: ${branch}` : '枝の外（次の変更で新しい枝）'}</span>
         {(g.dirty || session.dirty) && <span className="caption" style={{ color: 'var(--orange)' }}>最後の版から変更あり（次の実行で版になります）</span>}
         <span className="flex1" />
+        <Toggle small checked={session.versionSummaries} label="版の要約"
+          help="オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）"
+          onChange={(on) => { if (on) setConfirmSummaries(true); else act(() => session.setVersionSummaries(false)) }} />
         <Button disabled={!session.connected} onClick={() => setNaming(true)}>版として残す…</Button>
         <Button kind="borderless" iconOnly icon="arrow.clockwise" help="読み直す" onClick={() => void session.refreshVersions()} />
       </div>
       <div className="row fill" style={{ minHeight: 0 }}>
-        <div className="scroll flex1" style={{ minWidth: 420 }}>
+        <div className="flex1 version-tree" style={{ minWidth: 420 }}>
+        <div className="scroll" ref={treeRef} style={{ height: '100%' }} onMouseLeave={() => setPointed(undefined)}
+          onMouseMove={(e) => setPointed(rowAt(e.clientY))} onScroll={() => setPointed(undefined)}
+          onClick={(e) => { const id = rowAt(e.clientY); if (id) setSelected(id) }}>
           <div className="row" style={{ alignItems: 'flex-start' }}>
             <svg width={layout.lanes * LANE + 12} height={commits.length * ROW} style={{ flex: 'none' }}>
               {layout.rows.map((r, i) => r.edges.map((e, k) => {
@@ -149,12 +231,6 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                   </g>
                 )
               })}
-              {/* Over the lines and nodes: the hover and the click work on a row's whole height. */}
-              {commits.map((c, i) => (
-                <rect key={str(c.id)} x={0} y={i * ROW} width="100%" height={ROW} fill="transparent" onClick={() => setSelected(str(c.id))}>
-                  <title>{runsHelp((c.runs ?? []).filter((x): x is R.VersionRunT => !!x))}</title>
-                </rect>
-              ))}
             </svg>
             <div className="col flex1">
               {commits.map((c) => {
@@ -164,7 +240,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                 const ok = runs.filter((x) => str(x.state) === 'succeeded').length
                 const ng = runs.filter((x) => str(x.state) === 'failed').length
                 return (
-                  <div key={id} className={`version-row${selected === id ? ' selected' : ''}`} style={{ height: ROW }} title={runsHelp(runs)} onClick={() => setSelected(id)}>
+                  <div key={id} className={`version-row${selected === id ? ' selected' : ''}`} style={{ height: ROW }}>
                     <div className="row gap6">
                       <span className="ellipsis" style={{ fontWeight: id === head ? 600 : 400 }}>{str(c.summary)}</span>
                       {list(c.tags).map((t) => <span key={t} className="version-tag"><Icon name="tag" />{t}</span>)}
@@ -182,10 +258,13 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
             </div>
           </div>
         </div>
+        {shown && <VersionHover session={session} commit={shown} top={hoverTop(str(shown.id))} />}
+        </div>
         <div className="scroll versions-detail">
           {sel ? (
             <div className="col gap8">
               <div className="title3">{str(sel.summary)}</div>
+              {str(sel.changeSummary) && <div className="selectable">{str(sel.changeSummary)}</div>}
               {/* The message's body: what follows its first line (the summary). */}
               {str(sel.message).split('\n').slice(1).join('\n').trim() && (
                 <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(sel.message).split('\n').slice(1).join('\n').trim()}</div>
@@ -217,6 +296,12 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
           ) : <div className="secondary">版を選ぶと、その実行の結果と変わった Card を表示します。</div>}
         </div>
       </div>
+      {confirmSummaries && (
+        <Confirm title="版の要約をオンにしますか？" confirm="オンにする"
+          message="新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。"
+          onConfirm={() => { setConfirmSummaries(false); act(() => session.setVersionSummaries(true)) }}
+          onCancel={() => setConfirmSummaries(false)} />
+      )}
       {confirmStart && (
         <Confirm title="この版から始めますか？" confirm="この版から始める"
           message="今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。"

@@ -9,7 +9,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 - **変更を伴う要求**: `op_id` を持ち、同じ `op_id` の再送は 1 回だけ適用されます。応答を失ったら `OperationGet` で確かめます。
 - **Agent の tool**: 同じスキーマ（`tsugumi.bfbs`）から作ります（[主要機能](features.md#9-agent)）。
 
-要求は 36 種あります。
+要求は 39 種あります。
 
 ## 接続
 
@@ -356,6 +356,9 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | [`VersionMark`](#versionmark) | VersionResult | Names the current version: what is saved is committed (when it changed) and gets an annotated tag `name` with `message`. |
 | [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
+| [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
+| [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from its first parent, in the text a summary is written from | Only code and settings: never data files. |
+| [`VersionSummary`](#versionsummary) | VersionResult | Keeps a client's summary of a version in the commit's own note (refs/notes/tsugumi-summary), replacing the one there. |
 
 ### VersionInit
 
@@ -387,6 +390,27 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | フィールド | 型 | 必須 | 説明 |
 | --- | --- | --- | --- |
 | `limit` | `uint32` |  |  |
+
+### VersionCanvas
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `commit` | `string` | はい |  |
+
+### VersionDiff
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `commit` | `string` | はい |  |
+
+### VersionSummary
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `op_id` | `string` | はい |  |
+| `origin` | `string` | はい |  |
+| `commit` | `string` | はい |  |
+| `summary` | `string` | はい |  |
 
 ## 通知
 

@@ -170,7 +170,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_claude_code_plugin.py` | Claude Code の plugin の MCP サーバー（`web/dist/mcp.js`）: Web UI のサーバーがなければ起動して `server.json` で見つけ直すこと、プロジェクトを開いてチャットの Agent と同じ道具を実行し、ページが各呼び出しを受け取ること（鳥が Card へ飛ぶ）、開く前は何も動かないこと、`server.json` の鍵は plugin の使う口にしか届かず承認に答えられないこと（node・`web/dist`・tsugumid が必要） |
 | `tests/python/test_agent_tools.py` | Agent が頼る RPC の振る舞い: `at_rev` なしの読み取りは最新、`""` はプロジェクトのフォルダ、`project_validate` は保存せずに検証、入力 Card がプロジェクトのファイルを File として渡すこと |
 | `tests/python/test_definitions.py` | 定義は Card ごとに 1 つ（名前 = ID = 定義フォルダ）、改名でフォルダと実行履歴が移ること、Card in Card は `externals/` の単独でも開けるプロジェクトで外側から編集すること、trigger |
-| `tests/python/test_versions.py` | 版の管理: プロジェクトは git のリポジトリで、実行は保存内容を（変わっていれば）commit してその commit を記録し、結果と実行した Card の概要は commit の note に、名前を付けた版は annotated tag に、古い版から始めると branch になること、デモの履歴ファイルが版になること |
+| `tests/python/test_versions.py` | 版の管理: プロジェクトは git のリポジトリで、実行は保存内容を（変わっていれば）commit してその commit を記録し、結果と実行した Card の概要は commit の note に、名前を付けた版は annotated tag に、版の要約は別の note に、版の差分は要約に読ませてよいファイルだけに、古い版から始めると branch になること、デモの履歴ファイルが版になること |
 | `tests/python/test_permissions.py` | モデル（origin `agent`）の保存が Card の権限（ネットワーク・sandbox off・ホストのフォルダ、Card in Card の中も）を広げるときは `approval_required` で拒否され、その広がりを承認として付けたときだけ通ること。利用者自身の保存には承認が要らないこと |
 | `tests/python/test_untrusted_project.py` | 他人から来たプロジェクトの `.tsugumi/`（保存 journal・実行履歴のコピー）を使う前に検査し、プロジェクトの外を書き・読み・消しできないこと |
 | `tests/python/test_host_isolation.py` | ホストの tsugumid（Linux は bubblewrap、Mac は Seatbelt）で sandbox の Card が、このホストのループバックのポートにつながらず、自分の領域の外のファイルを読めず、ホストのファイルを書き換えられないこと（CI の Linux・macOS ジョブ。文書だけの変更では macOS を省く） |

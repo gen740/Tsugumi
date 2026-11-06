@@ -6,6 +6,7 @@ import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { ModelListRefresher } from '../model/modelLists'
 import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
+import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
@@ -136,16 +137,56 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
     const t = setTimeout(() => setFlash(undefined), 2200)
     return () => clearTimeout(t)
   }, [guide.chatFlash])
-  // Follows the end while the conversation grows.
-  useLayoutEffect(() => {
+  const column = useRef<HTMLDivElement>(null)
+  // Opening a conversation or sending a message goes to the end, and the end is
+  // kept from then on, until the reader scrolls up.
+  const following = useRef(true)
+  const lastTop = useRef(0)
+  const toEnd = () => {
     const el = scroll.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [chat.items.length, last?.text, chat.busy])
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    lastTop.current = el.scrollTop
+  }
+  const restart = () => {
+    following.current = true
+    toEnd()
+  }
+  useLayoutEffect(restart, [chat.currentId])
+  const sent = last?.role === 'user' ? last.id : undefined
+  useLayoutEffect(() => {
+    if (sent) restart()
+  }, [sent])
+  // As the conversation changes (also where nothing is being drawn, as in a
+  // window behind the others, where the observer below waits).
+  useLayoutEffect(() => {
+    if (following.current) toEnd()
+  }, [chat.items, chat.busy])
+  // Any other change of height: Markdown and math laid out or their fonts
+  // arriving, an expanded row, the composer, the panel's width.
+  useLayoutEffect(() => {
+    const el = scroll.current, inner = column.current
+    if (!el || !inner) return
+    const resized = new ResizeObserver(() => {
+      if (following.current) toEnd()
+    })
+    resized.observe(el)
+    resized.observe(inner)
+    const scrolled = () => {
+      following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
+      lastTop.current = el.scrollTop
+    }
+    el.addEventListener('scroll', scrolled, { passive: true })
+    return () => {
+      resized.disconnect()
+      el.removeEventListener('scroll', scrolled)
+    }
+  }, [])
 
   return (
     <>
       <div className="chat-scroll" ref={scroll}>
-        <div className="chat-column">
+        <div className="chat-column" ref={column}>
           {chat.items.length === 0 && (
             <div className="chat-intro">
               <div className="callout">{guide.available ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
