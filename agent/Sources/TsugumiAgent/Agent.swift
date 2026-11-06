@@ -594,6 +594,15 @@ public actor Agent {
         }
         json = renderReply(replyType, table)
       }
+      // A read that named a revision gone by (the canvas tidied, or the
+      // model's guess) reads the latest; its reply says which that is.
+      if !spec.mutating, replyType == "Failure", Self.failureKind(json) == "revision_conflict",
+         full.removeValue(forKey: "at_rev") != nil {
+        (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+          try codec.build(spec.object, full, into: &b)
+        }
+        json = renderReply(replyType, table)
+      }
       // A save or run that met only changes it does not touch (the canvas
       // tidied, a Card dragged) goes on from the current revision.
       if helper == nil, replyType == "Failure", Self.failureKind(json) == "revision_conflict",

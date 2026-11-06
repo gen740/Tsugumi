@@ -662,6 +662,34 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert "draft" in [text(d.code) for d in v.diagnostics]
 
 
+def test_an_empty_optional_document_is_not_given(client):
+    """A model fills in every field of a change. An empty link_json is no link,
+    and an empty meta_json keeps the file, which may hold the user's intent."""
+    snap = client.call("ProjectInspectRequest")
+    doc = project_json(snap)
+    doc["canvas"]["cards"].append({"id": "plan"})
+    meta = json.dumps({"description": "d", "content": "the user's intent"})
+    card = {"template": "draft", "inputs": [{"name": "in"}]}
+    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=json.dumps(card), metaJson=meta),
+        change("SetProject", json=json.dumps(doc)),
+    ])
+    card["inputs"].append({"name": "more"})
+    blank = change("PutDefinition", id="plan", cardJson=json.dumps(card), metaJson="", linkJson="")
+    # The same in a check and in a save.
+    v = client.call("ProjectValidateRequest", changes=[blank])
+    assert "invalid_document" not in [text(d.code) for d in v.diagnostics]
+    res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[blank])
+    saved = next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan")
+    assert json.loads(text(saved.cardJson))["inputs"][1]["name"] == "more"
+    assert saved.linkJson is None
+    assert json.loads(text(saved.metaJson))["content"] == "the user's intent"
+    # Leaving it out still removes it, as the contract says.
+    res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
+        change("PutDefinition", id="plan", cardJson=json.dumps(card))])
+    assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").metaJson is None
+
+
 def test_draft_outputs_are_its_schema_and_its_wires(client):
     """A wire drawn from a Draft adds an output in _meta.json, also when the
     Draft already has typed outputs in an _outputs.fbs."""

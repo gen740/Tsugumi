@@ -10,7 +10,7 @@ import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { AGENT, draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
-import { Agent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, referenceDemos, ToolCatalog } from './agent'
+import { Agent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, readsLatestInstead, referenceDemos, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -106,4 +106,14 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
   assert.ok(DEMO_SKILL.startsWith('---\nname: demo\n') && DEMO_SKILL.includes('"endTour": true'))
   fs.rmSync(tmp, { recursive: true, force: true })
 }
+// A read refused for naming a revision gone by goes again at the latest; only a read, and only once.
+{
+  const args: Record<string, unknown> = { at_rev: '0' }
+  assert.equal(readsLatestInstead(true, 'revision_conflict', { ...args }), false, 'a save keeps its revision')
+  assert.equal(readsLatestInstead(false, 'busy', { ...args }), false)
+  assert.equal(readsLatestInstead(false, 'revision_conflict', args), true)
+  assert.deepEqual(args, {})
+  assert.equal(readsLatestInstead(false, 'revision_conflict', args), false, 'nothing more to take away')
+}
+
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

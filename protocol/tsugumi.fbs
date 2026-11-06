@@ -107,9 +107,10 @@ table SetLayout { json:string (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);  // empty with link_json
-  /// The new _meta.json; omitted removes it unless keep_meta.
+  /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
   meta_json:string (id: 2);
-  link_json:string (id: 3);  // a Card in Card: _link.json instead of _card.json
+  /// A Card in Card: _link.json instead of _card.json. Empty: none.
+  link_json:string (id: 3);
   /// Keep _meta.json as it is (meta_json omitted): change settings without
   /// writing the intent text again.
   keep_meta:bool = false (id: 4);

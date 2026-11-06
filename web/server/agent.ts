@@ -581,6 +581,13 @@ export function helperOutside(h: Helper, changes: unknown): string | undefined {
   return out.length ? out.join(', ') : undefined
 }
 
+/** Whether a read refused for naming a revision gone by goes again at the latest: takes `at_rev` away. */
+export function readsLatestInstead(mutating: boolean, failure: string | undefined, args: Record<string, unknown>): boolean {
+  if (mutating || failure !== 'revision_conflict' || !('at_rev' in args)) return false
+  delete args.at_rev
+  return true
+}
+
 function failureOf(json: string): { kind?: string; currentRev?: string } {
   try {
     const o = JSON.parse(json)
@@ -1141,6 +1148,9 @@ export class Agent {
         if (signal?.aborted) throw new Cancelled()
         ;({ type: replyType, json } = await call())
       }
+      // A read that named a revision gone by (the canvas tidied, or the
+      // model's guess) reads the latest; its reply says which that is.
+      if (readsLatestInstead(spec.mutating, failureOf(json).kind, full)) ({ type: replyType, json } = await call())
       // A save or run that met only changes it does not touch (the canvas
       // tidied, a Card dragged) goes on from the current revision.
       if (!this.helper && failureOf(json).kind === 'revision_conflict') {
