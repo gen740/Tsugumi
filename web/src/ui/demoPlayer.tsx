@@ -1,21 +1,23 @@
-// The demo player of the documentation site: a demo's real project drawn with
-// the Web UI's own Card, wire and geometry code (web/src/ui/cardNode.tsx,
-// web/src/model/canvasKit.ts), with a recorded run replayed over it. Nothing is
-// computed here and there is no server: the data comes from player-data/<id>.json
-// (build.mjs), the run's order and results from a real run (harvest.py).
+// The demo player: a demo's real project drawn with the Web UI's own Card, wire
+// and geometry code (cardNode.tsx, model/canvasKit.ts), with a recorded run
+// replayed over it. The documentation site bundles it (docs/site/player/build.mjs,
+// mountPlayer); Home's demo list shows its compact form (DemoThumbnailPlayer).
+// Nothing is computed here and it needs no server: the data comes from
+// player-data/<id>.json (build.mjs), the run's order and results from a real run
+// (docs/site/player/harvest.py).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { pathToScreen, WireStyle } from '../../../web/src/model/canvas'
+import { pathToScreen, WireStyle } from '../model/canvas'
 import {
   applicableStages, Camera, CardGeometry, CardNodeData, displayLink, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
   StageProgress, StageStatus, union, WireRouter,
-} from '../../../web/src/model/canvasKit'
-import { cardState, displaySummary, formatDuration, KIND_ICON, KIND_LABEL } from '../../../web/src/model/session'
-import { permissionInfo, PermissionKind } from '../../../web/src/model/permissions'
-import { D } from '../../../web/src/shared/rpc'
-import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from '../../../web/src/ui/cardNode'
-import { Button } from '../../../web/src/ui/controls'
-import { Icon } from '../../../web/src/ui/icons'
+} from '../model/canvasKit'
+import { cardState, displaySummary, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
+import { permissionInfo, PermissionKind } from '../model/permissions'
+import { D } from '../shared/rpc'
+import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
+import { Button } from './controls'
+import { Icon } from './icons'
 
 // ---- The data build.mjs writes --------------------------------------------------------
 
@@ -665,6 +667,12 @@ export interface PlayerOptions {
   autoplay?: boolean
   /** The gallery thumbnail: the canvas fitted to the box, no controls and no panel; plays on hover. */
   compact?: boolean
+}
+
+/** The compact player inside a page of the Web UI, which has the player's rules itself. */
+export function DemoThumbnailPlayer({ data, className }: { data: string; className?: string }) {
+  const [host, setHost] = useState<HTMLDivElement | null>(null)
+  return <div ref={setHost} className={className}>{host && <Player host={host} url={data} compact autoplay />}</div>
 }
 
 function ensureStyles() {

@@ -305,7 +305,7 @@ function scopedStyles() {
   const rules = helpers.map((h) => `.tp-root ${h} {${block(h)}}`).join('\n')
   // canvas.css is all class selectors of its own (.cv-*, .display-*).
   const canvas = fs.readFileSync(path.join(WEB, 'src', 'styles', 'canvas.css'), 'utf8')
-  const own = fs.readFileSync(path.join(HERE, 'player.src.css'), 'utf8')
+  const own = fs.readFileSync(path.join(WEB, 'src', 'styles', 'demoPlayer.css'), 'utf8')
   return `.tp-root {${block(':root')}${block(':root[data-theme="dark"]')}}\n${rules}\n${canvas}\n${own}`
 }
 
@@ -317,7 +317,7 @@ if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
 }
 
 await esbuild.build({
-  entryPoints: [path.join(HERE, 'main.tsx')],
+  entryPoints: [path.join(WEB, 'src', 'ui', 'demoPlayer.tsx')],
   outfile: path.join(SITE, 'js', 'player.js'),
   bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic',
   nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
