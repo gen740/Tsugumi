@@ -1027,7 +1027,7 @@ extension ProjectSession {
   }
 
   private func hideDisplayFrame(_ k: CardKey) {
-    let r = displayRect(k)
+    let r = displayRect(k, origin: placedPosition(k))
     changeDisplayFrame(k) { f in
       f["x"] = .real(r.minX.rounded())
       f["y"] = .real(r.minY.rounded())
@@ -1054,19 +1054,22 @@ extension ProjectSession {
   /// What a marquee (world units) touches in a scope.
   func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>) {
     let keys = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }
-    return (Set(keys.filter { r.intersects(CGRect(origin: position($0), size: geometry($0).size)) }),
+    return (Set(keys.filter { r.intersects(CGRect(origin: placedPosition($0), size: geometry($0).size)) }),
             Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }),
-            Set(framedCards(in: scope).filter { r.intersects(displayRect($0)) }))
+            Set(framedCards(in: scope).filter { r.intersects(displayRect($0, origin: placedPosition($0))) }))
   }
 
   /// Moves a selection (world units) as one edit: one save, one undo. Layout
-  /// only: no computation is re-resolved for a move. Cards keep to the grid
-  /// (`snap`); notes and frames land on whole numbers, as when dragged alone.
-  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by d: CGSize, snap: Double?) {
+  /// only: no computation is re-resolved for a move. With a grid (`snap`) the
+  /// Cards go by whole grids from where they are drawn, and what moves with them
+  /// goes by the same step, so the arrangement stays. Notes and frames alone
+  /// land on whole numbers, as when dragged alone.
+  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) {
+    let d = snap.flatMap { g in cards.isEmpty ? nil : CGSize(width: snapToGrid(moved.width, g), height: snapToGrid(moved.height, g)) } ?? moved
     edit { s in
       // Frames first: where one stands is worked out from its Card.
       for k in frames where s.instance(k) != nil && !s.frameFollowsCard(k, moving: cards) {
-        let r = s.displayRect(k)
+        let r = s.displayRect(k, origin: s.placedPosition(k))
         s.changeDisplayFrame(k) { f in
           f["x"] = .real((r.minX + d.width).rounded())
           f["y"] = .real((r.minY + d.height).rounded())
@@ -1076,12 +1079,8 @@ extension ProjectSession {
       }
       for k in cards {
         let p = s.position(k)
-        var x = p.x + d.width, y = p.y + d.height
-        if let snap {
-          x = (x / snap).rounded() * snap
-          y = (y / snap).rounded() * snap
-        }
-        s.setPosition(k, CGPoint(x: x, y: y))
+        let from = snap.map { CGPoint(x: snapToGrid(p.x, $0), y: snapToGrid(p.y, $0)) } ?? p
+        s.setPosition(k, CGPoint(x: from.x + d.width, y: from.y + d.height))
       }
       for id in notes {
         s.changeNote(id) { n in

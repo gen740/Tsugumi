@@ -55,6 +55,9 @@ final class UIScript {
     Task { await shared.run(text.split(separator: "\n").map(String.init)) }
   }
 
+  /// A line for the script's log from elsewhere in the app (what a step caused).
+  func note(_ s: String) { say(s) }
+
   private func say(_ s: String) {
     log?.write(Data((s + "\n").utf8))
     try? log?.synchronize()
@@ -278,7 +281,7 @@ final class UIScript {
           if let t = m.loadedText(p) { m.texts[p] = t + w.dropFirst(4).joined(separator: " ") + "\n" } else { say("not loaded \(p)") }
         case "apply":
           let ok = await m.apply()
-          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.definition?["description"]?.string ?? "")")
+          say("apply \(ok) conflicts=\(m.conflicts) unapplied=\(m.unapplied) description=\(m.meta?["description"]?.string ?? "")")
         default: break
         }
       case "state":

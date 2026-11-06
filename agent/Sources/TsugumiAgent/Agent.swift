@@ -93,6 +93,9 @@ public struct Conversation: Codable, Equatable {
 
 public enum AgentEvent: Sendable {
   case text(String)
+  /// A piece of a tool call's arguments as the model writes them; the call
+  /// has not started, and may never (`toolStarted` says when it does).
+  case toolInput(index: Int, name: String, delta: String)
   case toolStarted(id: String, name: String, arguments: String)
   case toolFinished(id: String, name: String, ok: Bool, summary: String)
   case compacted
@@ -361,6 +364,7 @@ public actor Agent {
             order.append(i)
           case .toolInput(let i, let pj):
             tools[i]?.json += pj
+            if let name = tools[i]?.name { events(.toolInput(index: i, name: name, delta: pj)) }
           case .blockStop:
             break
           case .stop(let reason, let usage):
@@ -430,10 +434,10 @@ public actor Agent {
 
   /// The request that has the model implement Draft Cards (the same text as
   /// the web Agent's, from agent/Shared/agent.json).
-  public static func draftRequest(scope: [String], cards: [(key: String, definition: String, description: String, content: String)]) -> String {
+  public static func draftRequest(scope: [String], cards: [(key: String, definition: String, description: String, content: String, context: String)]) -> String {
     let t = Shared.data.draft
     let list = cards.map {
-      Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content])
+      Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content, "context": $0.context])
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? t.root : Shared.fill(t.child, ["scope": scope.joined(separator: "/")])
     return Shared.fill(t.text, ["where": where_, "list": list])

@@ -164,6 +164,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await agent.send("set src.text to \"Hello from the agent\" and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(log.all.contains { if case .toolInput = $0 { return true }; return false }, "the arguments reach the screen as they are written")
     let snap = try await client.inspect()
     // The value lives in the Card's own definition.
     #expect(snap.definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello from the agent") == true)
@@ -224,6 +225,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await agent.send("set src.text to \"Hello over Responses\" and run, then report out", context: []) { log.add($0) }
     await waitFinished(log)
     #expect(log.text.contains("succeeded"), "\(log.all)")
+    #expect(log.all.contains { if case .toolInput = $0 { return true }; return false }, "the arguments reach the screen as they are written")
     #expect(try await client.inspect().definitions.compactMap { $0 }.first { $0.id == "src" }?.cardJson.contains("Hello over Responses") == true)
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
@@ -259,6 +261,9 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     config.chatGPTStore = store
     let models = try await MessagesProvider(config: config).modelChoices()
     #expect(models.map(\.id) == ["fixture"] && models.first?.label == "Fixture model")
+    // The model menu's read: the same list, with the record read without asking.
+    #expect(try await MessagesProvider(config: config).modelChoices(asking: false).map(\.id) == ["fixture"])
+    #expect(await auth.accountsWithoutAsking()?.map(\.signedIn) == [true])
     let agent = try makeAgent(h, client, provider: config)
     let log = EventLog()
     await agent.send("set src.text to \"Hello on the plan\" and run, then report out", context: []) { log.add($0) }
@@ -292,6 +297,45 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let record = try #require(Keychain.load(account: store))
     #expect(!record.contains("chatgpt-access-") && !record.contains("chatgpt-refresh-"))
     await client.close()
+  }
+
+  /// The model menu lists models with a key it read without asking: from an
+  /// item this program saved; an item another program saved would need the
+  /// keychain's dialog, so the listing fails at once instead of showing it.
+  @Test func modelListsNeverAskForTheKeychain() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let port = URL(string: "http://127.0.0.1:\(h.fixturePort)")!
+    let own = "Tsugumi test own \(UUID().uuidString)", other = "Tsugumi test other \(UUID().uuidString)"
+    defer {
+      Keychain.delete(account: own)
+      Keychain.delete(account: other)
+    }
+    try Keychain.save("fixture-key", account: own)
+    #expect(Keychain.loadWithoutAsking(account: own) == "fixture-key")
+    let listed = try await MessagesProvider(config: ProviderConfig(name: own, baseURL: port, model: "fixture", auth: .apiKey, api: .openAIResponses))
+      .modelChoices(asking: false)
+    #expect(listed.map(\.id) == ["fixture"])
+
+    // Saved by `security`: only that program may read it without a dialog.
+    let add = Process()
+    add.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    add.arguments = ["add-generic-password", "-s", "app.tsugumi.agent", "-a", other, "-w", "not-for-this-program"]
+    try add.run()
+    while add.isRunning { usleep(20_000) }
+    #expect(add.terminationStatus == 0)
+    #expect(Keychain.exists(account: other))
+    let started = Date()
+    #expect(Keychain.loadWithoutAsking(account: other) == nil)
+    await #expect(throws: (any Error).self) {
+      _ = try await MessagesProvider(config: ProviderConfig(name: other, baseURL: port, model: "fixture", auth: .apiKey, api: .openAIResponses))
+        .modelChoices(asking: false)
+    }
+    // A dialog would wait for someone to answer it.
+    #expect(Date().timeIntervalSince(started) < 5)
+    // The switch is back: this program's own items read as ever.
+    #expect(Keychain.load(account: own) == "fixture-key")
   }
 
   /// The step limit is said, with the run the Agent started and did not
@@ -562,6 +606,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let card = try JSONValue.parse(def.cardJson)
     #expect(card["language"]?.string == "bash" && card["template"] == nil)
     #expect(def.metaJson?.contains("the word count") == true && def.metaJson?.contains("Count words") == true)
+    #expect(try JSONValue.parse(try #require(def.metaJson))["context"]?.string?.isEmpty == false)
     #expect(after.sources.compactMap { $0 }.map(\.path).contains("definitions/plan/_outputs.fbs"))
     // Wiring kept; types now come from the implementation.
     let resolved = after.resolution.compactMap { $0 }.first { $0.card.path == ["plan"] }

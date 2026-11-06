@@ -59,7 +59,7 @@ struct CardDatabaseView: View {
   private var ids: [String] {
     session.definitions.keys.sorted().filter { id in
       search.isEmpty || id.localizedCaseInsensitiveContains(search) ||
-        (session.definitions[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
+        (session.definitionMeta[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
     }
   }
 

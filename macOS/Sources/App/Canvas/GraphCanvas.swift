@@ -222,7 +222,7 @@ struct GraphCanvas: View {
   }
 
   func origin(_ k: CardKey) -> CGPoint {
-    var p = session.position(k)
+    var p = session.placedPosition(k)
     if let d = drag, d.key == k || (tab.selection.contains(k) && tab.selection.contains(d.key)) {
       p.x += d.offset.width / camera.zoom
       p.y += d.offset.height / camera.zoom
@@ -287,27 +287,31 @@ struct GraphCanvas: View {
     let b = boundary
     if let b { obstacles += [b.top, b.bottom] }
     var router = WireRouter(flow: session.flow, obstacles: obstacles)
+    // Routed together: a wire's path must not depend on the order of the connections.
+    var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
       guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
             let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
-      let path = router.route(portWorld(fk, fp, output: true), portWorld(tk, tp, output: false))
-      out.append(RoutedWire(connection: i, path: path,
+      ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
+      out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(p.point, portWorld(inner.0, inner.1, output: false)), style: .normal))
+        ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
-        out.append(RoutedWire(connection: nil, path: router.route(portWorld(inner.0, inner.1, output: true), p.point),
-                              style: style(from: inner.0, port: inner.1, to: nil)))
+        ends.append((portWorld(inner.0, inner.1, output: true), p.point))
+        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil)))
       }
     }
+    for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }
     // Display links: which Card a result frame belongs to (not a computation).
     for k in outputKeys {
       out.append(RoutedWire(connection: nil, path: displayLink(card: outlineRect(k), frame: frameRect(k)), style: .display))
@@ -355,7 +359,7 @@ struct GraphCanvas: View {
     guard !tab.scope.isEmpty, let b = session.boundary(scopeKey) else { return nil }
     let ins = b["inputs"]?.object ?? [], outs = b["outputs"]?.object ?? []
     guard !ins.isEmpty || !outs.isEmpty else { return nil }
-    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.position($1), size: session.geometry($1).size)) }
+    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.placedPosition($1), size: session.geometry($1).size)) }
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
     let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
     let x = box.midX - width / 2
@@ -414,8 +418,8 @@ struct GraphCanvas: View {
         boundaryDrag = nil
         var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
         if prefs.showGrid {
-          x = (x / prefs.gridSize).rounded() * prefs.gridSize
-          y = (y / prefs.gridSize).rounded() * prefs.gridSize
+          x = snapToGrid(x, prefs.gridSize)
+          y = snapToGrid(y, prefs.gridSize)
         }
         // Layout only (the external's layout.json).
         session.setBoundaryPosition(tab.scope, input ? "inputs" : "outputs", CGPoint(x: x.rounded(), y: y.rounded()))

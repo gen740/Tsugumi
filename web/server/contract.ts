@@ -15,7 +15,7 @@ import { Agent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, refe
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
   flatjson: { type: string; json: { [k: string]: Json }; expect?: { [k: string]: Json }; error?: boolean }[]
-  draftRequest: { scope: string[]; cards: { key: string; definition: string; description: string; content: string }[]; expect: string }[]
+  draftRequest: { scope: string[]; cards: { key: string; definition: string; description: string; content: string; context: string }[]; expect: string }[]
   approvalRequired: { json: string; expect: string[] | null }[]
 }
 

@@ -10,6 +10,7 @@ page.window ??= globalThis
 page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { CanvasController, noteRect, Scene } = await import('../src/model/canvas')
+const { snapToGrid } = await import('../src/model/canvasKit')
 const { ProjectSession } = await import('../src/model/session')
 const { WorkflowTab } = await import('../src/model/workspace')
 
@@ -127,5 +128,25 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   cv.deleteSelection()
   assert.equal(s.instance(near), undefined)
   assert.equal(s.displayFrame(near), undefined)
+}
+{
+  // With the grid, all go by the same whole grids, so the arrangement stays:
+  // the Card goes from where it is drawn, what moves with it by the same step.
+  const { s, note, cv } = setup()
+  const offGrid = s.addCard('draft', [], { x: 3010, y: 950 })
+  const framed = s.addCard('draft', [], { x: 2000, y: 0 })
+  s.updateDisplayFrame(framed, (f) => {
+    for (const [name, v] of [['x', '400'], ['y', '400'], ['width', '300'], ['height', '200']]) f.set(name, parse(v))
+  })
+  const was = notePlace(s, note)
+  cv.moveSelection(new Set([offGrid]), new Set([note]), new Set([framed]), 33, 47, 20)
+  assert.deepEqual(s.position(offGrid), { x: snapToGrid(3010, 20) + 40, y: snapToGrid(950, 20) + 40 })
+  assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 40, was.y + 40])
+  assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [440, 440])
+  s.undo()
+  // Without a Card there is nothing to keep to the grid: they land where dropped.
+  cv.moveSelection(new Set(), new Set([note]), new Set([framed]), 33, 47, 20)
+  assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 33, was.y + 47])
+  assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [433, 447])
 }
 console.log('marquee behavior: passed')

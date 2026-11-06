@@ -3,7 +3,7 @@
 // controls, the menus and the shortcuts.
 import { arr, bool, dbl, get, isObj, J, real, str } from '../shared/json'
 import { D } from '../shared/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, intersects, Pt, Rect, union, WireRouter } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
 import { Observable } from './observable'
 import type { ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
@@ -47,6 +47,8 @@ export interface SceneDrag {
 
 const LIVE = [D.CardState.waiting, D.CardState.ready, D.CardState.preparing, D.CardState.running]
 
+const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
 export const noteRect = (n: J | undefined): Rect => ({
   x: dbl(get(n, 'x')) ?? 0, y: dbl(get(n, 'y')) ?? 0, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120,
 })
@@ -88,7 +90,7 @@ export class Scene {
   }
 
   origin(k: CardKey): Pt {
-    const p = this.session.position(k)
+    const p = this.session.placedPosition(k)
     const d = this.drag.cards
     return d && d.keys.has(k) ? { x: p.x + d.dx, y: p.y + d.dy } : p
   }
@@ -134,7 +136,7 @@ export class Scene {
   /** What a marquee (world units) touches. */
   itemsIn(r: Rect): { cards: CardKey[]; notes: string[]; frames: CardKey[] } {
     return {
-      cards: this.cardKeys.filter((k) => intersects(r, { ...this.session.position(k), ...this.geometry(k).size })),
+      cards: this.cardKeys.filter((k) => intersects(r, { ...this.session.placedPosition(k), ...this.geometry(k).size })),
       notes: this.session.notes(this.scope).filter((n) => intersects(r, noteRect(n))).map((n) => str(get(n, 'id'))).filter((x): x is string => !!x),
       frames: this.outputKeys.filter((k) => intersects(r, this.frameRect(k))),
     }
@@ -168,7 +170,7 @@ export class Scene {
     if (!ins.length && !outs.length) return undefined
     let box: Rect | null = null
     for (const k of this.cardKeys) {
-      const r = { ...this.session.position(k), ...this.geometry(k).size }
+      const r = { ...this.session.placedPosition(k), ...this.geometry(k).size }
       box = box ? union(box, r) : r
     }
     const bx = box ?? { x: 0, y: 0, width: 240, height: 120 }
@@ -203,25 +205,26 @@ export class Scene {
     const obstacles = [...this.cardKeys.map((k) => this.cardRect(k)), ...this.outputKeys.map((k) => this.frameRect(k))]
     const b = this.boundary
     if (b) obstacles.push(b.top, b.bottom)
-    const router = new WireRouter(this.flow, obstacles)
-    const out: RoutedWire[] = []
+    // Routed together: a wire's path must not depend on the order of the connections.
+    const ends: { a: Pt; b: Pt; wire: Omit<RoutedWire, 'd' | 'pts'> }[] = []
     s.connections(this.scope).forEach((c, i) => {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
       if (!fc || !fp || !tc || !tp) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      const r = router.route(this.portWorld(fk, fp, true), this.portWorld(tk, tp, false))
-      out.push({ connection: i, ...r, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) })
+      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) } })
     })
     if (b) {
       for (const p of b.inputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        out.push({ ...router.route(p.point, this.portWorld(p.inner[0], p.inner[1], false)), style: 'normal' })
+        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal' } })
       }
       for (const p of b.outputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        out.push({ ...router.route(this.portWorld(p.inner[0], p.inner[1], true), p.point), style: this.style(p.inner[0], p.inner[1], undefined) })
+        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined) } })
       }
     }
+    const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
+    const out: RoutedWire[] = ends.map((e, i) => ({ ...e.wire, d: routes[i].d, pts: routes[i].pts }))
     // Display links: which Card a result frame belongs to (not a computation).
     for (const k of this.outputKeys) {
       const d = displayLink(this.outlineRect(k), this.frameRect(k))
@@ -536,9 +539,13 @@ export class CanvasController extends Observable implements CanvasOverlay {
   }
 
   /** Moves a selection (world units) as one edit: one save, one undo. Layout
-   *  only: no computation is re-resolved for a move. Cards keep to the grid
-   *  (`snap`); notes and frames land on whole numbers, as when dragged alone. */
-  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, dx: number, dy: number, snap?: number) {
+   *  only: no computation is re-resolved for a move. With a grid (`snap`) the
+   *  Cards go by whole grids from where they are drawn, and what moves with them
+   *  goes by the same step, so the arrangement stays. Notes and frames alone land
+   *  on whole numbers, as when dragged alone. */
+  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, movedX: number, movedY: number, snap?: number) {
+    const onGrid = snap && cards.size ? snap : undefined
+    const dx = onGrid ? snapToGrid(movedX, onGrid) : movedX, dy = onGrid ? snapToGrid(movedY, onGrid) : movedY
     const scene = this.scene()
     const shown = new Set(scene.outputKeys)
     this.session.edit((x) => {
@@ -555,12 +562,8 @@ export class CanvasController extends Observable implements CanvasOverlay {
       }
       for (const k of cards) {
         const p = x.position(k)
-        let px = p.x + dx, py = p.y + dy
-        if (snap) {
-          px = Math.round(px / snap) * snap
-          py = Math.round(py / snap) * snap
-        }
-        x.setPosition(k, { x: px, y: py })
+        const from = snap ? { x: snapToGrid(p.x, snap), y: snapToGrid(p.y, snap) } : p
+        x.setPosition(k, { x: from.x + dx, y: from.y + dy })
       }
       for (const id of notes) {
         x.changeNote(id, (n) => {

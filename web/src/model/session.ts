@@ -7,7 +7,8 @@ import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
 import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, uuid, webSocketTransport } from '../shared/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  snapToGrid,
 } from './canvasKit'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
@@ -2886,7 +2887,7 @@ auto run(Card::Input& input) -> Card::Output {
   }
 
   cardDescription(k: CardKey): string | undefined {
-    return str(get(this.cardDefinition(k), 'description')) || str(get(this.cardMeta(k), 'description')) || undefined
+    return str(get(this.cardMeta(k), 'description')) || undefined
   }
 
   /** What a Card says about itself on hover: a Draft's summary and content. */
@@ -2990,8 +2991,7 @@ auto run(Card::Input& input) -> Card::Output {
     const ports = this.portData(k, opts.definition, opts.meta)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
-    let summary = str(get(def, 'description'))
-    if (!summary) summary = str(get(m, 'description'))
+    let summary = str(get(m, 'description'))
     // What a Draft shows on its Card is what it says it will do.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     const frame = this.displayFrame(k)
@@ -3009,7 +3009,16 @@ auto run(Card::Input& input) -> Card::Output {
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
       draftEditing: editing, untitled: this.draftUntitled(k),
+      portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
+  }
+
+  /** Where a Card is drawn: with the grid on, one saved off the grid (placed
+   *  before the grid was on, or under another spacing) is shown on the nearest
+   *  line, so its ports are on the grid too. Nothing is saved until it is moved. */
+  placedPosition(k: CardKey): Pt {
+    const p = this.position(k)
+    return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
   }
 
   geometry(k: CardKey): CardGeometry {

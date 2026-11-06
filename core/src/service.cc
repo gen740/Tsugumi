@@ -826,6 +826,18 @@ void Service::save(RequestIn& req) {
     // each widening (the client asks, then lists them).
     if (r->origin()->str() == "agent" && staged.effective) {
       store_->resolve_staged(staged);
+      // Checked first, so that the user is not asked to approve a save that is refused anyway.
+      auto incomplete = permissions::incomplete_draft_intents(*base, store_->reader(*base), *staged.doc,
+                                                              store_->reader(*staged.doc, &staged.ops));
+      if (!incomplete.empty()) {
+        std::string why = "implementing a Draft keeps its intent in _meta.json; nothing was saved";
+        std::vector<std::pair<std::string, std::string>> args;
+        for (auto& line : incomplete) {
+          why += "\n" + line;
+          args.emplace_back("problem", std::move(line));
+        }
+        throw Failed(FailureKind::validation_failed, why, std::move(args));
+      }
       std::set<std::string> approved;
       if (r->approved_permissions())
         for (const auto* p : *r->approved_permissions()) approved.insert(p->str());

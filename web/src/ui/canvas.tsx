@@ -5,7 +5,7 @@
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
 import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import { NEW_PORT, Pt, Rect } from '../model/canvasKit'
+import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
@@ -425,8 +425,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (!moved) return
       let x = origin.x + (ev.clientX - start.x) / z, y = origin.y + (ev.clientY - start.y) / z
       if (prefs.showGrid) {
-        x = Math.round(x / prefs.gridSize) * prefs.gridSize
-        y = Math.round(y / prefs.gridSize) * prefs.gridSize
+        x = snapToGrid(x, prefs.gridSize)
+        y = snapToGrid(y, prefs.gridSize)
       }
       // Layout only (the external's layout.json).
       session.setBoundaryPosition(scope, input ? 'inputs' : 'outputs', { x: Math.round(x), y: Math.round(y) })
@@ -564,6 +564,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             } : undefined}
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
+            onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
             onPointerDown={(e) => onCardDown(k, e)}
             onDoubleClick={(e) => {
               e.stopPropagation()
