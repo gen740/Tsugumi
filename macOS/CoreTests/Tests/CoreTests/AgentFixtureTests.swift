@@ -533,6 +533,40 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// Opt in with TSUGUMI_LIVE_CHATGPT=1. Uses the selected Tsugumi plan registration.
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["TSUGUMI_LIVE_CHATGPT"] == "1"))
+  func liveChatGPTPlanEditAndRun() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client, provider: .chatGPT)
+    await agent.setMaxSteps(12)
+    let log = EventLog()
+    let expected = "tsg-check-58"
+    await agent.send("src Card の text を \(expected) に変え、ワークフローを実行してください。out Card が実際に受け取った値と run 番号を教えてください。",
+                     context: []) { log.add($0) }
+    await waitFinished(log, seconds: 150)
+    await agent.cancelAndWait()
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false })
+    let snapshot = try await client.inspect()
+    let src = try #require(snapshot.definitions.compactMap { $0 }.first { $0.id == "src" })
+    let settings = try #require(JSONSerialization.jsonObject(with: Data(src.cardJson.utf8)) as? [String: Any])
+    let params = try #require(settings["params"] as? [[String: Any]])
+    #expect(params.first { $0["name"] as? String == "text" }?["data"] as? String == expected)
+    let runs = try await client.history().runs.compactMap { $0 }
+    #expect(runs.count == 1)
+    let run = try #require(runs.first)
+    #expect(run.status.state == .succeeded)
+    let id = try #require(run.status.runId)
+    let record = try await client.record(runId: id, card: ["out"])
+    let display = try #require(record.record?.display?.value?.value as? Tsugumi_Data_DisplayTextT)
+    #expect(display.text.contains(expected))
+    #expect(log.text.contains(expected) && log.text.contains(id))
+    await client.close()
+  }
+
   @Test func longToolResultsSayTheyWereCut() {
     let long = String(repeating: "x", count: Agent.resultLimit + 10)
     #expect(Agent.clip("short") == "short")

@@ -458,7 +458,11 @@ extension MessagesProvider {
     ]
     if !plan { body["max_output_tokens"] = config.maxTokens }
     if !tools.isEmpty {
-      let functions: [[String: Any]] = tools.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }
+      // Keep absent RPC fields absent (e.g. PutDefinition.link_json for a normal Card).
+      // Responses can otherwise normalize optional properties into required ones.
+      let functions: [[String: Any]] = tools.map {
+        ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema, "strict": false]
+      }
       body["tools"] = plan
         ? [["type": "namespace", "name": Self.toolNamespace, "description": "Tools of the open Tsugumi project.", "tools": functions]]
         : functions
