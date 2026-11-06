@@ -225,6 +225,30 @@ in
 - 途中の失敗やキャンセルでは、中途半端な変更を保存しません（計画は残ります）。
 - Draft に書かれていた意図はそのまま残ります。空だった概要と追加コンテキストは、チャットでの指示と Draft の内容から Agent が埋めます（書かれていないことは足しません）。埋めない保存と、書かれていた内容を変える保存は `tsugumid` が拒否します。
 
+### コメントから Card を生成
+
+Card に「こう変えたい」と書き、Agent に従わせます。Draft が実装前の Card の計画なら、コメントは Card そのものへの指示です。どの種類の Card にも付けられます。
+
+- Card の右クリックの「コメント…」か、Canvas の Card の右上のバッジから書きます（Card 設定の「コメント」）。追加・編集・解決・開き直し・削除はその場で保存されます（実行中に書いたものは、ほかの編集と同じく実行が終わると保存されます）。
+- Canvas の「コメントから生成」で、未解決のコメントをチャットの Agent に渡します。選択した Card があればその Card のコメントだけ、なければ表示中の階層の全部です。渡したコメントはチャットに出ます。
+- Agent は既定でコメントが付いた Card を書き換え、コメントが求めれば Card を足したり分けたりします。保存は Draft と同じ道具で、Card の権限を広げる保存には同じ承認が要ります（[Agent の権限境界](security.md#agent-の権限境界)）。
+- Agent も人間と同じようにコメントを書き、編集し、解決し、消せます。代わりに、誰が何をしたかが残ります。
+
+**誰が何をしたか**
+
+- Agent の保存では、`tsugumid` が保存の `origin` から記録を書きます（`core/src/comments.cc`）。モデルがこの欄に何を書いても使いません。
+  - `author`: 書いた人。`editedBy`: 最後に本文を変えた人。`stateBy`: 最後に解決または開き直しをした人。
+  - `cards`: そのコメントを解決した保存で変わった Card。何も変えずに解決したときは空です。
+- Card 設定のコメントには、Agent が書いたものや変えたものに「Agent」の印が出て、解決の行に何をしたかと変わった Card が出ます。解決済みは消えずに畳まれ、誰でも開き直せます。
+- チャットの「変更を保存」の行の下に、その保存がコメントをどう変えたかが出ます（保存の結果の `comments`）。
+- 版の履歴の詳細に、その版でコメントがどう変わり（追加・編集・解決・開き直し・削除）、誰がして、どの Card が変わったかが出ます（[版の管理](versions.md#コメント)）。
+
+**置き場所**
+
+`definitions/<id>/_meta.json` の `comments` です。実行に関わらないので、結果は無効になりません。Card の名前を変えてもついていき、複製したときは複製にも付きます。
+
+付箋との違い: 付箋は Canvas の好きな場所に置く人間向けのメモで、`layout.json` にあり、Agent に渡す流れはありません。コメントは Card に属し、状態と記録を持ち、版の要約の対象でもあります。
+
 ### 手分け（delegate）
 
 - 互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。
@@ -260,6 +284,7 @@ Home では、アプリ全体で 1 つのガイドの会話（`Agent.Role.guide`
 
 - tool の一覧と FlatJSON の変換が Mac と Web で同じこと: [test_agent_contract.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py)、`macOS/CoreTests`
 - Draft を実装する保存の規則: [test_draft_intent.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py)
+- コメントの保存の規則と版の履歴: [test_card_comments.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py)
 - Agent が Card の権限を広げる保存には承認が要ること: [test_permissions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py)
 - 実際の Claude API で、Draft から Card を作って実行・検証した記録: [AgentRun.md](agentrun.md)
 

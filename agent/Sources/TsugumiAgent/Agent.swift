@@ -286,11 +286,15 @@ public actor Agent {
     }
   }
 
+  /// Work `resume` would go on with: a request not answered, a tool call not settled.
+  public var hasUnfinishedWork: Bool {
+    conversation.tools.contains { $0.state == .sent || $0.state == .pending } || conversation.messages.last?.role == "user"
+  }
+
   /// Resumes after a restart or disconnect: tool calls that were sent but never
   /// answered are reconciled with OperationGet instead of being re-sent.
   public func resume(events: @escaping @Sendable (AgentEvent) -> Void) {
-    guard conversation.tools.contains(where: { $0.state == .sent || $0.state == .pending }) ||
-          conversation.messages.last?.role == "user" else { return }
+    guard hasUnfinishedWork else { return }
     startTurn { await self.loop(events) }
   }
 
@@ -517,6 +521,19 @@ public actor Agent {
       Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content, "context": $0.context])
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? t.root : Shared.fill(t.child, ["scope": scope.joined(separator: "/")])
+    return Shared.fill(t.text, ["where": where_, "list": list])
+  }
+
+  /// The request that has the model follow the user's comments on Cards (the
+  /// same text as the web Agent's, from agent/Shared/agent.json).
+  public static func commentRequest(scope: [String], cards: [(key: String, definition: String, comments: [(id: String, text: String)])]) -> String {
+    let t = Shared.data.comment
+    let list = cards.map { c in
+      let comments = c.comments.map { Shared.fill(t.comment, ["id": $0.id, "text": $0.text]) }.joined(separator: "\n")
+      return Shared.fill(t.card, ["key": c.key, "definition": c.definition, "comments": comments])
+    }.joined(separator: "\n")
+    let d = Shared.data.draft
+    let where_ = scope.isEmpty ? d.root : Shared.fill(d.child, ["scope": scope.joined(separator: "/")])
     return Shared.fill(t.text, ["where": where_, "list": list])
   }
 
@@ -823,6 +840,19 @@ public actor Agent {
     if changed { try conversation.save(storage) }
   }
 
+  /// What a tool's row in the chat shows of its result: its start, after what a
+  /// save did to the comments on Cards (the result's end, which the start cuts off).
+  public static func toolSummary(_ result: String) -> String {
+    var head = ""
+    if result.hasPrefix(#"{"reply":"SaveResult""#), result.contains(#""comments""#),
+       let o = try? JSONSerialization.jsonObject(with: Foundation.Data(result.utf8)) as? [String: Any],
+       let list = (o["value"] as? [String: Any])?["comments"] as? [Any], !list.isEmpty,
+       let line = try? JSONSerialization.data(withJSONObject: list, options: [.sortedKeys, .withoutEscapingSlashes]) {
+      head = "comments: " + String(decoding: line, as: UTF8.self) + "\n"
+    }
+    return head + String(result.prefix(400))
+  }
+
   /// How much of a tool's result the model gets; a longer one says it was cut.
   public static let resultLimit = 60_000
   public static func clip(_ s: String) -> String {
@@ -839,7 +869,7 @@ public actor Agent {
     conversation.tools.removeAll { $0.id == record.id }
     conversation.tools.append(record)
     try conversation.save(storage)
-    events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: String(result.prefix(400))))
+    events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: Self.toolSummary(result)))
     return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
   }
 

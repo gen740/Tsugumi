@@ -40,6 +40,7 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
         <CanvasRunControl workspace={workspace} session={session} tab={tab} />
         <span className="cv-spacer" />
         <CanvasDraftControls workspace={workspace} session={session} tab={tab} />
+        <CanvasCommentControls workspace={workspace} session={session} tab={tab} />
         <ProjectActions workspace={workspace} session={session} onSwitchProject={onSwitchProject} />
       </div>
       <div className="cv-bottom">
@@ -201,6 +202,31 @@ export function CanvasDraftControls({ workspace, session, tab }: { workspace: Wo
           chat.generateDrafts(tab.scope, drafts)
         }}>
         Card を生成
+      </Button>
+    </div>
+  )
+}
+
+/** Shown when Cards of the current scope have open comments: the selected ones
+ *  (or all of them) go to the chat. */
+export function CanvasCommentControls({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
+  const chat = app.chat(session)
+  useObserve(session, chat, tab)
+  const cards = session.cardsWithOpenComments(tab.scope)
+  if (!cards.length) return null
+  const chosen = cards.filter((k) => tab.selection.has(k))
+  const asked = chosen.length ? chosen : cards
+  const count = asked.reduce((n, k) => n + session.openComments(k).length, 0)
+  return (
+    <div className="capsule material cv-drafts">
+      <Button icon="bubble.left" small disabled={session.dirty || !session.connected || chat.busy}
+        help={session.dirty ? '先に変更を保存してください'
+          : `${chosen.length ? '選択した Card' : 'この階層の Card'}の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。`}
+        onClick={() => {
+          workspace.set('showChat', true)
+          chat.generateFromComments(tab.scope, asked)
+        }}>
+        コメントから生成（{count}）
       </Button>
     </div>
   )

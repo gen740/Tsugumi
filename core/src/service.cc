@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "comments.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
@@ -667,11 +668,27 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
+flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::VersionComment>>> comment_changes(
+    FBB& b, const std::vector<comments::Change>& changes) {
+  std::vector<flatbuffers::Offset<R::VersionComment>> out;
+  for (const auto& c : changes) {
+    std::vector<flatbuffers::Offset<flatbuffers::String>> cards;
+    for (const auto& k : c.cards) cards.push_back(b.CreateString(k));
+    out.push_back(R::CreateVersionComment(b, b.CreateString(c.card), b.CreateString(c.text), b.CreateString(c.change),
+                                          c.resolution.empty() ? 0 : b.CreateString(c.resolution),
+                                          c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVector(cards)));
+  }
+  return b.CreateVector(out);
+}
+
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base,
+                                               const std::vector<comments::Change>& comments = {}) {
   flatbuffers::Offset<R::DocumentDelta> delta;
   if (d) delta = delta_offset(b, *d);
+  auto told = comments.empty() ? 0 : comment_changes(b, comments);
   R::SaveResultBuilder sb(b);
   if (d) sb.add_delta(delta);
+  if (!comments.empty()) sb.add_comments(told);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
@@ -832,6 +849,11 @@ void Service::save(RequestIn& req) {
     // each widening (the client asks, then lists them).
     if (r->origin()->str() == "agent" && staged.effective) {
       store_->resolve_staged(staged);
+      // Who did what to the comments is recorded, whatever the model wrote.
+      if (comments::stamp_model_save(*base, store_->reader(*base), staged, store_->reader(*staged.doc, &staged.ops), changes)) {
+        staged = store_->stage(changes, op_id, r->origin()->str());
+        store_->resolve_staged(staged);
+      }
       // Checked first, so that the user is not asked to approve a save that is refused anyway.
       auto incomplete = permissions::incomplete_draft_intents(*base, store_->reader(*base), *staged.doc,
                                                               store_->reader(*staged.doc, &staged.ops));
@@ -859,10 +881,15 @@ void Service::save(RequestIn& req) {
         throw Failed(FailureKind::busy, "a run is in progress; computational changes are rejected until it ends",
                      {{"run_id", *active->run_id}});
     }
+    // What the Agent's save did to the comments, told back in its result.
+    std::vector<comments::Change> comment_record;
+    if (r->origin()->str() == "agent" && staged.effective)
+      comment_record = comments::changes(comments::of(*base, store_->reader(*base)),
+                                         comments::of(*staged.doc, store_->reader(*staged.doc, &staged.ops)));
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
+      auto sr = save_result(b, d, *base, comment_record);
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
@@ -1072,7 +1099,7 @@ void Service::version_graph(RequestIn& req) {
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
                                              strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed),
-                                             c.change_summary.empty() ? 0 : b.CreateString(c.change_summary)));
+                                             c.change_summary.empty() ? 0 : b.CreateString(c.change_summary), comment_changes(b, c.comments)));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));

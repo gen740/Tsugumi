@@ -75,6 +75,9 @@
 .cse-preview-label { position: absolute; top: 6px; right: 6px; }
 
 .host-folder { padding: 2px 0; }
+.cse-comment { padding: 8px 10px; border-radius: 6px; background: var(--control-bg); }
+.cse-comment-who { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 8px; background: var(--accent-soft); font-weight: 600; }
+.cse-comment-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---- sources ---- */
 .src-view { flex: 1; display: flex; min-height: 0; height: 100%; }

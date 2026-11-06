@@ -1,7 +1,7 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import { draftRequest } from '../shared/agentShared'
+import { commentRequest, draftRequest, toolSummary } from '../shared/agentShared'
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
@@ -92,6 +92,8 @@ interface Conversation {
 export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
+  /** Stop was pressed and that answer has not reported its end yet. */
+  private stopping = false
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
@@ -209,7 +211,7 @@ export class ChatController extends Observable {
           const j = [...out].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
           if (j) {
             j.tool!.ok = !b.is_error
-            j.text += '\n→ ' + (b.content ?? '').slice(0, 400)
+            j.text += '\n→ ' + toolSummary(b.content ?? '')
           }
         }
       }
@@ -333,7 +335,7 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void api('/api/chat/send', { ...this.base, prompt, title: display, display, folders: this.folders }).catch((e) => this.fail(e))
+    void api('/api/chat/send', { ...this.base, prompt, title: display.split('\n')[0], display, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
@@ -348,8 +350,20 @@ export class ChatController extends Observable {
     this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))
   }
 
+  /** Asks the Agent to do what the open comments on these Cards ask. */
+  generateFromComments(scope: string[], cards: CardKey[]) {
+    const s = this.session
+    const items = cards.map((k) => ({
+      key: k, definition: path(k).pop() ?? '-', comments: s.openComments(k).map(({ id, text }) => ({ id, text })),
+    }))
+    const count = items.reduce((n, c) => n + c.comments.length, 0)
+    const asked = items.flatMap((c) => c.comments.map((x) => `${c.definition}: ${x.text}`))
+    this.sendRequest([`コメント ${count} 件に従って Card を生成します`, ...asked].join('\n'), commentRequest(scope, items))
+  }
+
   cancel() {
     void api('/api/chat/cancel', this.base).catch(() => {})
+    this.stopping = true
     this.busy = false
     this.status = '回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。'
     this.changed()
@@ -499,6 +513,12 @@ export class ChatController extends Observable {
         this.status = `再試行中: ${e.message}`
         break
       case 'error':
+        // The stopped answer ended after the next one began, which goes on.
+        if (e.message === 'cancelled' && this.stopping && this.busy) {
+          this.stopping = false
+          break
+        }
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         if (e.message === 'cancelled') this.notes = []
@@ -510,6 +530,7 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         break
       case 'finished':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         this.busy = false
@@ -519,6 +540,7 @@ export class ChatController extends Observable {
         queueMicrotask(() => this.flushNotes())
         break
       case 'stepLimit':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         this.busy = false

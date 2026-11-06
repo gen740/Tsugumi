@@ -265,6 +265,8 @@
 <li>利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。</li>
 </ul>
 </li>
+<li><p><strong>Card のコメントは Agent も書けます。</strong> 拒否はしませんが、誰が書き、変え、解決したかは <code>tsugumid</code> が保存の <code>origin</code> から記録するので、モデルは利用者のコメントになりすませません（<code>core/src/comments.cc</code>、<a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py" rel="noopener">test_card_comments.py</a>）。コメントに従った保存も、上の承認を同じように通ります。</p>
+</li>
 <li><p><strong>Claude Code の plugin</strong>（<a href="claude-code.html">Claude Code から使う</a>）は、Web UI のサーバーを通してだけ操作します。</p>
 <ul>
 <li>サーバーはチャットの Agent と同じ道具を、同じ検査で実行します。Card の権限を広げる保存は、Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。</li>

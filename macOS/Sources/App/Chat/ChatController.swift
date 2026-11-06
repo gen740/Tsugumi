@@ -158,11 +158,14 @@ final class ChatController {
   }
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
+  /// Opening a conversation, until its unfinished work (if any) has resumed.
+  @ObservationIgnored private var resuming: Task<Void, Never>?
   @ObservationIgnored private var catalog: ToolCatalog?
   @ObservationIgnored private var replyNames: [UInt8: String] = [:]
   @ObservationIgnored private let dir: URL
 
-  var provider: ProviderConfig { AgentSettings.current() }
+  @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
+  var provider: ProviderConfig { connection() }
 
   /// The references the Agent may read (reference_read): the bundled demos
   /// that are not Draft tasks or their answers (Agent.referenceDemos), the
@@ -186,10 +189,13 @@ final class ChatController {
     #endif
   }()
 
-  init(session: ProjectSession) {
+  /// `directory` and `connection`: where its conversations are and what it
+  /// answers with, instead of the app's (tests).
+  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.current) {
     self.session = session
+    self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
-    dir = AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
+    dir = directory ?? AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
       status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
       available = false
@@ -236,6 +242,9 @@ final class ChatController {
     // new one starts (the new one waits for it).
     let previous = agent
     if let previous { Task { await previous.cancel() } }
+    resuming?.cancel()
+    resuming = nil
+    answer += 1
     busy = false
     failed = false
     usageLimited = false
@@ -257,16 +266,33 @@ final class ChatController {
     items = []
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
-    Task {
+    resuming = Task {
       await previous?.cancelAndWait()
       await agent.setApprover(approver)
       await agent.setFolders(self.folders)
       let conv = await agent.conversation
+      guard !Task.isCancelled else { return }
       usage = conv.usage
       load(conv)
-      // Resume work left unfinished by a disconnect or restart.
-      await agent.resume { e in Task { @MainActor in self.handle(e) } }
+      await resumeWhenConnected(agent)
     }
+  }
+
+  /// Resumes work left unfinished by a disconnect, a restart or leaving the
+  /// project, as any answer goes: the chat shows it working and it can be
+  /// stopped. Its tools need the project, so it starts once that is connected
+  /// (until then nothing can be sent either).
+  private func resumeWhenConnected(_ agent: Agent) async {
+    guard await agent.hasUnfinishedWork else { return }
+    while !session.connected {
+      if session.closed { return }
+      try? await Task.sleep(for: .milliseconds(100))
+      if Task.isCancelled { return }
+    }
+    guard !Task.isCancelled, !busy, await agent.hasUnfinishedWork else { return }
+    let events = begin()
+    await agent.setProvider(provider)
+    await agent.resume(events: events)
   }
 
   private func load(_ conv: Conversation) {
@@ -284,7 +310,7 @@ final class ChatController {
         case .toolResult(_, let c, let e):
           if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
             out[j].tool?.ok = !e
-            out[j].text += "\n→ " + String(c.prefix(400))
+            out[j].text += "\n→ " + Agent.toolSummary(c)
           }
         case .webSearch(let s):
           out.append(Item(role: "tool", text: s.arguments + "\n→ " + s.summary, tool: ("web_search", s.error == nil), archived: archived))
@@ -397,11 +423,11 @@ final class ChatController {
     let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
     items.append(Item(role: "user", text: shown))
     references = []
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
       // The chat shows what was typed, not the skills and references attached to it.
-      await agent.send(prompt: prompt, title: text, display: shown) { e in Task { @MainActor in self.handle(e) } }
+      await agent.send(prompt: prompt, title: text, display: shown, events: events)
     }
   }
 
@@ -444,10 +470,10 @@ final class ChatController {
   private func sendRequest(display: String, prompt: String) {
     guard let agent else { return }
     items.append(Item(role: "user", text: display))
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: display, display: display) { e in Task { @MainActor in self.handle(e) } }
+      await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, events: events)
     }
   }
 
@@ -462,6 +488,17 @@ final class ChatController {
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
     sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
                 prompt: Agent.draftRequest(scope: scope, cards: items))
+  }
+
+  /// Asks the Agent to do what the open comments on these Cards ask.
+  func generateFromComments(scope: [String], cards: [CardKey]) {
+    let items = cards.map { k in
+      (key: k, definition: path(k).last ?? "-", comments: session.openComments(k).map { (id: $0.id, text: $0.text) })
+    }
+    let count = items.reduce(0) { $0 + $1.comments.count }
+    let asked = items.flatMap { c in c.comments.map { "\(c.definition): \($0.text)" } }
+    sendRequest(display: ([String(localized: "コメント \(count) 件に従って Card を生成します")] + asked).joined(separator: "\n"),
+                prompt: Agent.commentRequest(scope: scope, cards: items))
   }
 
   // MARK: - Card permissions
@@ -502,6 +539,8 @@ final class ChatController {
       permissionPrompt = nil
       p.answer([])
     }
+    resuming?.cancel()
+    resuming = nil
     Task { await agent?.cancel() }
     busy = false
     session.presence.turnEnded(.stopped)
@@ -512,33 +551,35 @@ final class ChatController {
   func continueWork() {
     guard let agent else { return }
     items.append(Item(role: "user", text: String(localized: "（止まったところから続けます）")))
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.continueAfterLimit { e in Task { @MainActor in self.handle(e) } }
+      await agent.continueAfterLimit(events: events)
     }
   }
 
   func retry() {
     guard let agent else { return }
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.retry { e in Task { @MainActor in self.handle(e) } }
+      await agent.retry(events: events)
     }
   }
 
   func compact() {
     guard let agent else { return }
-    begin()
+    let events = begin()
     status = String(localized: "会話を圧縮しています…")
     Task {
       await agent.setProvider(provider)
-      await agent.compact { e in Task { @MainActor in self.handle(e) } }
+      await agent.compact(events: events)
     }
   }
 
-  private func begin() {
+  /// An answer begins; what it reports goes to the returned closure.
+  private func begin() -> @Sendable (AgentEvent) -> Void {
+    answer += 1
     choices = []
     offered = []
     GuideController.shared.chatTurnBegan(self)
@@ -550,6 +591,8 @@ final class ChatController {
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
     session.presence.turnStarted()
     thoughts.turnStarted()
+    let number = answer
+    return { e in Task { @MainActor in self.handle(e, of: number) } }
   }
 
   /// The tsugumi on the canvas follows what the Agent looks at and runs.
@@ -624,7 +667,18 @@ final class ChatController {
     }
   }
 
-  private func handle(_ e: AgentEvent) {
+  /// The answer the chat shows. One stopped or left behind may still be ending:
+  /// its text and its end are no longer this chat's (it goes on with the newer
+  /// one, which would be shown as stopped). What its tools did still counts.
+  @ObservationIgnored private var answer = 0
+
+  private func handle(_ e: AgentEvent, of number: Int) {
+    if number != answer {
+      switch e {
+      case .text, .discardText, .retrying, .compacted, .error, .finished, .stepLimit: return
+      default: break
+      }
+    }
     switch e {
     case .text(let t):
       thoughts.note(text: t)

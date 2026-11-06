@@ -26,6 +26,7 @@ import TsugumiRPC
 ///   hoverversion <row>              (what the pointer on that row of the version tree opens)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
+///   chatstate | chatstop            reopen <project folder> (from Home)
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
 ///   menu <item title>               (presses the menu bar's item)
@@ -217,6 +218,21 @@ final class UIScript {
           return false
         }
         if let bar = NSApp.mainMenu, !press(bar) { say("no menu item \(title)") }
+      case "reopen":
+        // reopen <project folder>: from Home, as choosing it there does.
+        if let s = try? AppModel.shared.session(for: URL(fileURLWithPath: w.dropFirst().joined(separator: " "))) {
+          AppModel.shared.hold(s)
+          workspace?.open(s)
+        }
+      case "chatstop":
+        // The chat's stop button.
+        if let s = session { AppModel.shared.chat(for: s).cancel() }
+      case "chatstate":
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          let last = chat.items.last.map { "\($0.role): \($0.text.prefix(60))" } ?? "-"
+          say("chatstate bound=\(chat.session === s) busy=\(chat.busy) items=\(chat.items.count) status=\(chat.status ?? "-") last=\(last.replacingOccurrences(of: "\n", with: " "))")
+        }
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
         // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
@@ -225,6 +241,17 @@ final class UIScript {
           workspace?.showChat = true
           AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: drafts)
           say("generate \(drafts)")
+        }
+      case "comment":
+        // comment <card> <text>: a comment written on a Card, as in its settings window
+        if let s = session { s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
+      case "generate-comments":
+        // The canvas's "コメントから生成": the open comments of the shown scope go to the Agent.
+        if let s = session, let t = workspace?.active {
+          let cards = s.cardsWithOpenComments(in: t.scope)
+          workspace?.showChat = true
+          AppModel.shared.chat(for: s).generateFromComments(scope: t.scope, cards: cards)
+          say("generate-comments \(cards)")
         }
       case "presence":
         // presence [thought]: plays the Agent's scenes over the shown scope's

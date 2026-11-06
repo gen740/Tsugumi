@@ -14,6 +14,8 @@ await import("./recovery")
 
 await import("./approval")
 
+await import("./chatStopped")
+
 await import("./compaction")
 
 await import("./storage")
@@ -21,6 +23,7 @@ await import("./storage")
 await import("./table")
 
 await import("./draft")
+await import("./comments")
 await import("./draftWires")
 await import("./freedName")
 await import("./summary")

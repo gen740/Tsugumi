@@ -270,7 +270,16 @@ extension ProjectSession {
       ext = await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
       link = .object([("external", .string(extName))])
     }
-    let draft = DefinitionDraft(card: d.card, meta: d.meta, link: link)
+    // The copy's comments are comments of its own.
+    var meta = d.meta
+    if let comments = meta?["comments"]?.array {
+      meta?["comments"] = .array(comments.map { c in
+        var n = c
+        n["id"] = .string(UUID().uuidString.lowercased())
+        return n
+      })
+    }
+    let draft = DefinitionDraft(card: d.card, meta: meta, link: link)
     let newKey = key(scope + [newId])
     return (newId, { s in
       s.setCardDefinition(newKey, draft)

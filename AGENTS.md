@@ -55,6 +55,7 @@
 | 途中から部分実行できる（保存済みの入力で） | [docs/novelty.md](docs/novelty.md)「部分実行」、[tests/python/test_regressions.py](tests/python/test_regressions.py) |
 | Card は隔離され、ネットワークは既定で遮断される（Nix の固定出力 derivation はビルド時に通信できる: [docs/security.md](docs/security.md) §5） | [docs/security.md](docs/security.md)、[tests/python/test_host_isolation.py](tests/python/test_host_isolation.py)（CI の Linux と macOS。文書だけの変更では macOS を省く）、[tests/python/test_host_sandbox.py](tests/python/test_host_sandbox.py)、VM では [tests/python/test_cards_container.py](tests/python/test_cards_container.py)（`TSUGUMI_TEST_CONTAINER=1`、手元の Mac）、[tests/python/test_untrusted_project.py](tests/python/test_untrusted_project.py) |
 | Agent（アプリ・Web のチャット、Claude Code の plugin）が Tsugumi の道具で Card の権限を広げる保存は、人間の承認なしでは通らない（Claude Code 自身のシェル・ファイル操作はこの外） | [tests/python/test_permissions.py](tests/python/test_permissions.py)、[tests/python/test_claude_code_plugin.py](tests/python/test_claude_code_plugin.py)（plugin の鍵は承認に答えられない）、[docs/security.md](docs/security.md) §8「Agent の権限境界」 |
+| Card のコメントは人間と Agent のどちらも書け、誰が何をしたかが記録される（Agent の分はモデルの申告によらない）。版の履歴でたどれる | [docs/features.md](docs/features.md)「コメントから Card を生成」、[tests/python/test_card_comments.py](tests/python/test_card_comments.py) |
 | UI と Agent は同じ契約の対等なクライアント | [protocol/tsugumi.fbs](protocol/tsugumi.fbs)、[tests/python/test_agent_contract.py](tests/python/test_agent_contract.py) |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | [docs/AgentRun.md](docs/AgentRun.md)（うまくいかなかった試行と、それを受けて直したことも含む） |
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
@@ -70,7 +71,7 @@ Claude Code、Codex などへの作業の指示です（`CLAUDE.md` はこのフ
 
 人が同じ Mac で別の作業をしています。最前面を奪わず、ダイアログも出さないでください。
 
-- **起動:** [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) を使います（`open -g` で背面に開き、撮影もそのままできます）。直接起動するなら `open -g -n --env TSUGUMI_UI_SCRIPT=<絶対パス> <Tsugumi.app>` にし、実行ファイルを直接動かしません。アクティブな色の画像が要るときだけ `TSUGUMI_UI_FRONT=1` を付けます。
+- **起動:** [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) を使います（`open -g` で背面に開き、撮影もそのままできます）。直接起動するなら `open -g -n --env TSUGUMI_UI_SCRIPT=<絶対パス> <Tsugumi.app>` にし、実行ファイルを直接動かしません。
 - **ビルド:** `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh` で署名します。ad-hoc 署名のビルドは再ビルドのたびに別のアプリとして扱われ、API キーを読むときにパスワードのダイアログが出ます（[docs/Development.md](docs/Development.md) の「開発版の署名」）。証明書がない環境（`security find-identity -v -p codesigning`）ではそのままビルドします。
 
 ### 互換性

@@ -3,9 +3,10 @@ import type { Stage } from './canvasKit'
 import { D, uuid } from '../shared/rpc'
 import { CardKey, ProjectSession } from './session'
 
-export type CardEditorCategory = 'general' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
+export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
 export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
   general: { title: '一般', icon: 'slider.horizontal.3' },
+  comments: { title: 'コメント', icon: 'bubble.left' },
   nix: { title: 'Nix 定義', icon: 'snowflake' },
   source: { title: 'ソース', icon: 'doc.text' },
   ports: { title: '入出力', icon: 'arrow.left.arrow.right' },
