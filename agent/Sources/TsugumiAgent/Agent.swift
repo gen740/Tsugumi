@@ -324,8 +324,17 @@ public actor Agent {
           try conversation.save(storage)
           continue
         }
+        // Nothing to say or do (declined before any output, or only thinking,
+        // which is not kept). The API refuses empty content anywhere but at the
+        // end, so the history holds a note, and the turn says what happened.
+        let empty = blocks.isEmpty ? "the model sent an empty reply (stop reason: \(stop))" : nil
+        if let empty { blocks = [.text("[\(empty)]")] }
         conversation.messages.append(ChatMessage(role: "assistant", content: blocks, providerContent: providerContent))
         try conversation.save(storage)
+        if let empty {
+          events(.error("\(empty); ask again, or in other words"))
+          return
+        }
         // The provider paused a long search turn: the reply goes back as it is,
         // with nothing added, and the same request goes on (one more step).
         if stop == "pause_turn" { continue }
