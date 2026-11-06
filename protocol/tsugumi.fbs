@@ -641,6 +641,13 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
+  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
+  /// logger, draft, subgraph or code.
+  kind:string (id: 3, required);
+  /// The ports a fork or merge fans over, which decide its width; 0 for others.
+  fan:uint32 (id: 4);
+  /// Folded on the canvas: only its header shows.
+  collapsed:bool (id: 5);
 }
 
 table VersionCanvasWire {
@@ -653,6 +660,9 @@ table VersionCanvasWire {
 table VersionCanvas {
   cards:[VersionCanvasCard] (id: 0, required);
   wires:[VersionCanvasWire] (id: 1, required);
+  /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
+  /// are always leftToRight.
+  flow:string (id: 2, required);
 }
 
 table VersionDiff {

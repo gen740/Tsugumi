@@ -271,6 +271,57 @@ def test_a_long_run_summary_stays_short(tmp_path):
         d.cleanup()
 
 
+def test_a_versions_canvas_says_what_each_card_is(tmp_path):
+    """A minimap draws what is not a Card with its own shape: the canvas of a
+    version says what each Card is, how wide a fork or merge is, which way the
+    Cards run and which are folded, all as that version has them."""
+    def commit_all(project):  # these Cards are not wired to run: a version of them is committed by hand
+        git(project, "add", "-A")
+        git(project, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--allow-empty", "-qm", "next")
+        return git(project, "rev-parse", "HEAD").strip()
+
+    root = tmp_path / "p"
+    builtin_project(root, extra_cards=[card("f", "fork"), card("wide", "fork"), card("b", "branch"), card("m", "merge")],
+                    extra_conns=[conn("src", "msg", "m", "a")])
+    wide = root / "definitions" / "wide" / "_card.json"
+    wide.write_text(json.dumps({"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": ["a", "b", "c"]}]}))
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+        canvas = c.call("VersionCanvasRequest", commit=first)
+        cards = {text(k.id): k for k in canvas.cards}
+        assert {k: text(v.kind) for k, v in cards.items()} == {
+            "start": "trigger", "src": "input", "out": "logger", "f": "fork", "wide": "fork", "b": "branch", "m": "merge"}
+        assert (cards["f"].fan, cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (2, 3, 2, 0, 0)
+        # Columns by depth run left to right, whatever the layout says.
+        assert text(canvas.flow) == "leftToRight" and not any(k.collapsed for k in canvas.cards)
+
+        at = {k: {"x": 0, "y": i * 100} for i, k in enumerate(cards)}
+        at["out"]["collapsed"] = True
+        layouts = [
+            # The saved direction, and without one, from where the wired Cards sit.
+            ({"flow": "topToBottom", "cards": {k: {**v, "x": i * 100, "y": 0} for i, (k, v) in enumerate(at.items())}}, "topToBottom"),
+            ({"flow": "leftToRight", "cards": at}, "leftToRight"),
+            ({"cards": at}, "topToBottom"),
+            ({"cards": {k: {**v, "x": i * 100, "y": 0} for i, (k, v) in enumerate(at.items())}}, "leftToRight"),
+        ]
+        for layout, flow in layouts:
+            (root / "layout.json").write_text(json.dumps(layout))
+            placed = c.call("VersionCanvasRequest", commit=commit_all(root))
+            assert text(placed.flow) == flow, layout
+            assert {text(k.id) for k in placed.cards if k.collapsed} == {"out"}
+        # An older version keeps what its Cards were.
+        wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}]}))
+        now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
+        assert (text(now["wide"].kind), now["wide"].fan) == ("merge", 1)
+        then = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=first).cards}
+        assert (text(then["wide"].kind), then["wide"].fan) == ("fork", 3)
+    finally:
+        d.cleanup()
+
+
 def test_a_version_has_its_canvas_diff_and_summary(tmp_path):
     """A version's Cards and wires are read from that version; its diff has the
     code and settings a summary may read and never data; a summary goes to a

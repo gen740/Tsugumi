@@ -527,15 +527,17 @@ struct CardGeometry {
   }
 
   /// The outline itself (Card box, diamond, fan or funnel) inside `r`.
-  func outline(in r: CGRect) -> Path {
+  /// `cornerScale` shrinks the corners that stay the same at every zoom, for a
+  /// drawing much smaller than the canvas.
+  func outline(in r: CGRect, cornerScale: CGFloat = 1) -> Path {
     switch shape {
     case .card:
-      return Path(roundedRect: r, cornerRadius: 9)
+      return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
     case .start:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6)
+                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
     case .fork, .merge:
       // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.

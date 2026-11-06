@@ -52,9 +52,13 @@ struct VersionCanvasData {
     std::string id;
     double x = 0;
     double y = 0;
+    std::string kind = "code";
+    uint32_t fan = 0;  // a fork's outputs or a merge's inputs
+    bool collapsed = false;
   };
   std::vector<Card> cards;
   std::vector<std::pair<std::string, std::string>> wires;  // from, to
+  std::string flow = "leftToRight";
 };
 
 struct VersionDiffData {

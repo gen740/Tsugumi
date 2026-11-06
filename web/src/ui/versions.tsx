@@ -4,8 +4,10 @@
 // project can start again from any of them (a change there opens a branch).
 import { useEffect, useRef, useState } from 'react'
 import * as R from '../gen/tsugumi/rpc'
+import { CardGeometry, CardNodeData } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { commentChange, ProjectSession } from '../model/session'
+import { FlowDirection } from '../model/prefs'
+import { cardKindNamed, CardKind, commentChange, ProjectSession } from '../model/session'
 import { Button, Confirm, Empty, Sheet, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 
@@ -66,19 +68,39 @@ function changedText(changed: string[]) {
   return `変更: ${names.slice(0, 4).join('、')}${names.length > 4 ? ` ほか ${names.length - 4}` : ''}`
 }
 
-/** Where a version's Cards go in a minimap at most width x height: the whole
- *  graph fitted and centered across, the box's height, and whether a Card is
- *  wide enough for its name. */
-export function miniMapLayout(cards: { id: string; x: number; y: number }[], width: number, height: number) {
-  const CARD_W = 220, CARD_H = 80, PAD = 8
-  if (cards.length === 0) return { cards: [], w: 0, h: 0, height: 0, named: false }
+export interface MiniMapCard { id: string; x: number; y: number; kind: CardKind; fan: number; collapsed: boolean }
+
+/** A Card as far as a version says: its shape and the size the canvas gives it
+ *  with one port on each side and no parameters, never more than it really
+ *  takes, so what does not overlap on the canvas does not overlap here. */
+function miniMapCardData(c: MiniMapCard): CardNodeData {
+  const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
+  return {
+    title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(c.kind === 'fork' ? c.fan : 1), params: [],
+    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: c.collapsed, hasDisplay: false,
+  }
+}
+
+/** Where a version's Cards go in a minimap at most width x height, each with
+ *  the outline it has on the canvas: the whole graph fitted and centered
+ *  across, the box's height, and whether a Card is wide enough for its name. */
+export function miniMapLayout(cards: MiniMapCard[], flow: FlowDirection, width: number, height: number) {
+  const PAD = 8
+  if (cards.length === 0) return { cards: [], height: 0, named: false }
+  const placed = cards.map((c) => ({ c, g: new CardGeometry(miniMapCardData(c), flow) }))
   const left = Math.min(...cards.map((c) => c.x)), top = Math.min(...cards.map((c) => c.y))
-  const spanX = Math.max(...cards.map((c) => c.x)) - left + CARD_W, spanY = Math.max(...cards.map((c) => c.y)) - top + CARD_H
+  const spanX = Math.max(...placed.map(({ c, g }) => c.x + g.size.width)) - left, spanY = Math.max(...placed.map(({ c, g }) => c.y + g.size.height)) - top
   const k = Math.min((width - PAD * 2) / spanX, (height - PAD * 2) / spanY, 0.3)
   const ox = (width - spanX * k) / 2
   return {
-    cards: cards.map((c) => ({ id: c.id, x: ox + (c.x - left) * k, y: PAD + (c.y - top) * k })),
-    w: CARD_W * k, h: CARD_H * k, height: spanY * k + PAD * 2, named: CARD_W * k >= 34,
+    cards: placed.map(({ c, g }) => {
+      const x = ox + (c.x - left) * k, y = PAD + (c.y - top) * k, o = g.outlineRect
+      return {
+        id: c.id, x, y, w: g.size.width * k, h: g.size.height * k, shape: g.shape, draft: g.draft,
+        outline: g.outline({ x: x + o.x * k, y: y + o.y * k, width: o.width * k, height: o.height * k }, k),
+      }
+    }),
+    height: spanY * k + PAD * 2, named: CardGeometry.width * k >= 34,
   }
 }
 
@@ -87,20 +109,22 @@ const MAP_H = 132
 
 /** A version's Cards and how they connect; those it changed stand out. */
 function MiniMap({ canvas, changed }: { canvas: R.VersionCanvasT; changed: string[] }) {
-  const cards = canvas.cards.filter((c): c is R.VersionCanvasCardT => !!c).map((c) => ({ id: str(c.id), x: c.x, y: c.y }))
-  const map = miniMapLayout(cards, MAP_W, MAP_H)
+  const cards = canvas.cards.filter((c): c is R.VersionCanvasCardT => !!c)
+    .map((c) => ({ id: str(c.id), x: c.x, y: c.y, kind: cardKindNamed(str(c.kind)), fan: c.fan, collapsed: c.collapsed }))
+  const map = miniMapLayout(cards, str(canvas.flow) === 'topToBottom' ? 'topToBottom' : 'leftToRight', MAP_W, MAP_H)
   const at = new Map(map.cards.map((c) => [c.id, c]))
   const touched = new Set(changed.map((k) => k.split('/')[0]))
   return (
     <svg className="version-map" width={MAP_W} height={map.height}>
       {canvas.wires.map((w, i) => {
         const a = at.get(str(w?.from)), b = at.get(str(w?.to))
-        return a && b ? <line key={i} x1={a.x + map.w / 2} y1={a.y + map.h / 2} x2={b.x + map.w / 2} y2={b.y + map.h / 2} stroke="var(--secondary)" strokeWidth={1} /> : null
+        return a && b ? <line key={i} x1={a.x + a.w / 2} y1={a.y + a.h / 2} x2={b.x + b.w / 2} y2={b.y + b.h / 2} stroke="var(--secondary)" strokeWidth={1} /> : null
       })}
       {map.cards.map((c) => (
         <g key={c.id}>
-          <rect x={c.x} y={c.y} width={map.w} height={map.h} rx={2.5} className={touched.has(c.id) ? 'changed' : ''} />
-          {map.named && <text x={c.x + map.w / 2} y={c.y + map.h / 2 + 3} textAnchor="middle">{c.id.length * 5 > map.w ? `${c.id.slice(0, Math.max(1, Math.floor(map.w / 5) - 1))}…` : c.id}</text>}
+          <path d={c.outline} className="ground" />
+          <path d={c.outline} className={touched.has(c.id) ? 'changed' : ''} strokeDasharray={c.draft ? '3 2' : undefined} />
+          {map.named && (c.shape === 'card' || c.shape === 'start') && <text x={c.x + c.w / 2} y={c.y + c.h / 2 + 3} textAnchor="middle">{c.id.length * 5 > c.w ? `${c.id.slice(0, Math.max(1, Math.floor(c.w / 5) - 1))}…` : c.id}</text>}
         </g>
       ))}
     </svg>
