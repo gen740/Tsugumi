@@ -14,7 +14,7 @@ import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
-import { planError, TransientError } from './chatgpt'
+import { ChatGPTError, planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -32,6 +32,8 @@ export interface ToolSpec {
 export const DEFAULT_REQUESTS = AGENT.requests
 /** Filled by the Agent, never by the model. */
 const AGENT_FIELDS = new Set(AGENT.agentFields)
+/** Fields of a request that the apps use and the model is not offered. */
+const NOT_FOR_MODELS: Record<string, string[]> = AGENT.notForModels
 
 /** The permissions an approval_required Failure names. */
 export function approvalRequired(json: string): string[] | undefined {
@@ -72,7 +74,7 @@ export class ToolCatalog {
       return {
         name: toolName(r), payloadType: v.value, object: index,
         description: `${r.replace('Request', '')}: ${doc}`,
-        inputSchema: this.objectSchema(index, 0, AGENT_FIELDS),
+        inputSchema: this.objectSchema(index, 0, new Set([...AGENT_FIELDS, ...(NOT_FOR_MODELS[r] ?? [])])),
         mutating: obj.fields.some((f) => f.name === 'op_id'),
       }
     })
@@ -139,11 +141,15 @@ export class ToolCatalog {
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: string }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean; images?: ToolImage[] }
   /** A search the provider ran: what was asked and what came back. */
   | { type: 'web_search'; id: string; query: string; sources: WebSource[]; error?: string }
 
 export interface WebSource { url: string; title?: string }
+
+/** An image in a tool's result (a Card's display in run_record, a PNG read from
+ *  the project or an artifact), which the model sees as an image, never as text. */
+export interface ToolImage { media_type: string; data: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -198,7 +204,8 @@ export function loadConversation(file: string, id: string): Conversation {
       b && (b.type === 'text' ? typeof b.text === 'string'
         : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
         : b.type === 'web_search' ? [b.id, b.query].every((v) => typeof v === 'string') && Array.isArray(b.sources)
-        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
+        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean' &&
+          (b.images === undefined || (Array.isArray(b.images) && b.images.every((i: any) => [i?.media_type, i?.data].every((v) => typeof v === 'string')))))))
   if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
       !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
         ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
@@ -537,7 +544,7 @@ const TOOL_NAMESPACE = 'tsugumi'
 
 /** The conversation as Responses API input items: messages, function calls
  *  (the model's tool uses) and their outputs. */
-function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
+export function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
   const out: unknown[] = []
   for (const m of messages) {
     let texts: unknown[] = []
@@ -554,7 +561,10 @@ function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] 
         out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
       } else {
         flush()
-        out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
+        const images = b.images ?? []
+        out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: images.length
+          ? [{ type: 'input_text', text: b.content }, ...images.map((i) => ({ type: 'input_image', image_url: `data:${i.media_type};base64,${i.data}` }))]
+          : b.content })
       }
     }
     flush()
@@ -673,6 +683,11 @@ function wire(b: ContentBlock): unknown {
     let input: unknown = {}
     try { input = JSON.parse(b.input) } catch {}
     return { type: 'tool_use', id: b.id, name: b.name, input }
+  }
+  if (b.type === 'tool_result' && b.images?.length) {
+    const { images, ...rest } = b
+    return { ...rest, content: [{ type: 'text', text: b.content },
+      ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))] }
   }
   return b
 }
@@ -830,6 +845,51 @@ export function runReply(json: string): { runId?: string; state?: string } {
   }
 }
 
+/** What one image may be, in base64 characters (the Claude API's limit). */
+const IMAGE_LIMIT = 10_000_000
+/** Told in the text of a result whose images the provider did not accept. */
+const IMAGE_REFUSED = '\n[the model service did not accept the image of this result, so it is not shown]'
+
+/** A tool's result without the data of its images, and those images. Byte
+ *  fields come as {"base64": ...}: PNG and JPEG data among them leaves the
+ *  text, whole or not (a cut image is no use to read). */
+export function splitImages(result: string): { text: string; images: ToolImage[] } {
+  if (!result.includes('"base64":')) return { text: result, images: [] }
+  let parsed: unknown
+  try { parsed = JSON.parse(result) } catch { return { text: result, images: [] } }
+  const images: ToolImage[] = []
+  let found = false
+  const replacing = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(replacing)
+    if (!v || typeof v !== 'object') return v
+    const o = v as Record<string, unknown>, keys = Object.keys(o)
+    if (keys.length === 1 && typeof o.base64 === 'string') {
+      const png = o.base64.startsWith('iVBORw0KGgo'), jpeg = o.base64.startsWith('/9j/')
+      if (png || jpeg) {
+        found = true
+        const bytes = Buffer.from(o.base64, 'base64')
+        const about = `${png ? 'PNG' : 'JPEG'} image, ${bytes.length} bytes`
+        // Whether the data runs to its end marker (a read can stop in the middle).
+        const whole = png ? bytes.length >= 12 && bytes.subarray(-8, -4).toString('latin1') === 'IEND'
+          : bytes.length >= 2 && bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9
+        if (!whole) return `${about}: only part of it, not shown`
+        if (o.base64.length > IMAGE_LIMIT) return `${about}: too large to show`
+        images.push({ media_type: png ? 'image/png' : 'image/jpeg', data: o.base64 })
+        return `${about}: shown with this result`
+      }
+    }
+    return Object.fromEntries(keys.sort().map((k) => [k, replacing(o[k])]))
+  }
+  const out = replacing(parsed)
+  return found ? { text: JSON.stringify(out), images } : { text: result, images: [] }
+}
+
+/** A tool's result as the model gets it: its images as images, its text clipped. */
+export function resultBlock(id: string, result: string, isError: boolean): ContentBlock {
+  const { text, images } = splitImages(result)
+  return { type: 'tool_result', tool_use_id: id, content: clip(text), is_error: isError, ...(images.length ? { images } : {}) }
+}
+
 /** How much of a tool's result the model gets; a longer one says it was cut. */
 export const RESULT_LIMIT = 60_000
 export function clip(s: string): string {
@@ -913,10 +973,10 @@ export class Agent {
 
   /** One tool call from an agent outside the web UI (Claude Code through the
    *  plugin): the same checks, approvals and RPC as a model's call here. */
-  async call(name: string, input: string, events: (e: AgentEvent) => void): Promise<{ text: string; isError: boolean }> {
+  async call(name: string, input: string, events: (e: AgentEvent) => void): Promise<{ text: string; isError: boolean; images?: ToolImage[] }> {
     if (!EXTERNAL_TOOL_NAMES(this.catalog).has(name)) return { text: `unknown tool ${name}`, isError: true }
     const r = await this.runTool(randomUUID(), name, input, events)
-    return r.type === 'tool_result' ? { text: r.content, isError: r.is_error } : { text: '', isError: true }
+    return r.type === 'tool_result' ? { text: r.content, isError: r.is_error, images: r.images } : { text: '', isError: true }
   }
 
   /** Runs the helpers of a delegate call at the same time and returns their
@@ -1196,6 +1256,15 @@ export class Agent {
       } catch (e) {
         if (signal.aborted) throw new Cancelled()
         const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost || e instanceof TransientError
+        // The provider refused a request with images (a model without vision, a
+        // corrupt or oversized picture): asking again as it is would fail for good.
+        if (((e instanceof HTTPStatusError && e.status === 400 && e.body.toLowerCase().includes('image')) ||
+             (e instanceof ChatGPTError && e.kind === 'unsupported')) && this.dropToolImages()) {
+          if (text || parts.length) events({ kind: 'discardText' })
+          this.save()
+          events({ kind: 'retrying', message: 'the model did not accept an image from a tool; going on without it' })
+          continue
+        }
         if (!retryable || attempt >= 3) throw e
         // The reply is asked again: what it had streamed goes.
         if (text || parts.length) events({ kind: 'discardText' })
@@ -1207,6 +1276,19 @@ export class Agent {
         continue
       }
     }
+  }
+
+  /** A request with an image was refused: without them the conversation goes
+   *  on, and the model is told which results had one. */
+  private dropToolImages(): boolean {
+    let dropped = false
+    for (const m of this.conversation.messages) m.content = m.content.map((b) => {
+      if (b.type !== 'tool_result' || !b.images?.length) return b
+      dropped = true
+      const { images: _, ...rest } = b
+      return { ...rest, content: b.content + IMAGE_REFUSED }
+    })
+    return dropped
   }
 
   /** A search's result: in this reply's blocks, or in an earlier reply's when
@@ -1295,7 +1377,7 @@ export class Agent {
       if (!missing.length) continue
       const results: ContentBlock[] = missing.map((id) => {
         const r = this.conversation.tools.find((t) => t.id === id)
-        if (r?.state === 'completed') return { type: 'tool_result', tool_use_id: id, content: clip(r.result ?? ''), is_error: r.isError }
+        if (r?.state === 'completed') return resultBlock(id, r.result ?? '', !!r.isError)
         if (r?.state === 'pending') r.state = 'skipped'
         return {
           type: 'tool_result', tool_use_id: id, is_error: true,
@@ -1513,7 +1595,7 @@ export class Agent {
     this.conversation.tools.push(record)
     this.save()
     events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: toolSummary(result) })
-    return { type: 'tool_result', tool_use_id: record.id, content: clip(result), is_error: isError }
+    return resultBlock(record.id, result, isError)
   }
 
   private renderReply(type: string, bb: import('flatbuffers').ByteBuffer, table: number): string {
@@ -1539,7 +1621,7 @@ export class Agent {
         }
         for (const m of this.conversation.messages) m.content = m.content.map((b) =>
           b.type === 'tool_result' && b.tool_use_id === t.id
-            ? { ...b, content: clip(t.result!), is_error: error ?? true } : b)
+            ? resultBlock(t.id, t.result!, error ?? true) : b)
       } catch {}
     }
     this.save()

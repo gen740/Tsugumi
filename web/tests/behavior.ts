@@ -12,6 +12,8 @@ console.log('merge behavior: passed')
 
 await import("./recovery")
 
+await import("./toolImages")
+
 await import("./approval")
 
 await import("./chatStopped")

@@ -290,15 +290,14 @@ table ProjectReloadRequest {
 }
 
 /// -> ProjectValidateResult. targets = [] means everything; mode = executable.
-/// With `changes` (the same as project_save's), the document as it would be
-/// after them is checked and nothing is saved: try definitions, _outputs.fbs
-/// and default.nix text here instead of saving trial versions.
 table ProjectValidateRequest {
   /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 0);
   targets:[Tsugumi.Data.CardPath] (id: 1);
   mode:Tsugumi.Data.ValidateMode (id: 2);
-  /// Proposed changes (as in project_save): checked, never saved.
+  /// Proposed changes (as in project_save): the document as it would be after
+  /// them is checked and nothing is saved. For the apps' editors; the model is
+  /// not offered this field (it saves, then checks).
   changes:[DocumentChange] (id: 3);
 }
 

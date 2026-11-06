@@ -68,10 +68,10 @@ public struct WebSearch: Codable, Equatable, Sendable {
 public enum ContentBlock: Codable, Equatable {
   case text(String)
   case toolUse(id: String, name: String, input: String)  // input: JSON text
-  case toolResult(toolUseId: String, content: String, isError: Bool)
+  case toolResult(toolUseId: String, content: String, isError: Bool, images: [ToolImage] = [])
   case webSearch(WebSearch)
 
-  enum CodingKeys: String, CodingKey { case type, text, id, name, input, tool_use_id, content, is_error, search }
+  enum CodingKeys: String, CodingKey { case type, text, id, name, input, tool_use_id, content, is_error, images, search }
 
   public init(from d: Decoder) throws {
     let c = try d.container(keyedBy: CodingKeys.self)
@@ -82,7 +82,8 @@ public enum ContentBlock: Codable, Equatable {
     case "web_search": self = .webSearch(try c.decode(WebSearch.self, forKey: .search))
     default: self = .toolResult(toolUseId: try c.decode(String.self, forKey: .tool_use_id),
                                 content: try c.decode(String.self, forKey: .content),
-                                isError: try c.decode(Bool.self, forKey: .is_error))
+                                isError: try c.decode(Bool.self, forKey: .is_error),
+                                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [])
     }
   }
 
@@ -97,11 +98,12 @@ public enum ContentBlock: Codable, Equatable {
       try c.encode(id, forKey: .id)
       try c.encode(name, forKey: .name)
       try c.encode(input, forKey: .input)
-    case .toolResult(let id, let content, let isError):
+    case .toolResult(let id, let content, let isError, let images):
       try c.encode("tool_result", forKey: .type)
       try c.encode(id, forKey: .tool_use_id)
       try c.encode(content, forKey: .content)
       try c.encode(isError, forKey: .is_error)
+      if !images.isEmpty { try c.encode(images, forKey: .images) }
     case .webSearch(let s):
       try c.encode("web_search", forKey: .type)
       try c.encode(s, forKey: .search)
@@ -115,8 +117,12 @@ public enum ContentBlock: Codable, Equatable {
     case .toolUse(let id, let name, let input):
       let obj = (try? JSONSerialization.jsonObject(with: Data(input.utf8))) ?? [String: Any]()
       return ["type": "tool_use", "id": id, "name": name, "input": obj]
-    case .toolResult(let id, let content, let isError):
-      return ["type": "tool_result", "tool_use_id": id, "content": content, "is_error": isError]
+    case .toolResult(let id, let content, let isError, let images):
+      let shown: [[String: Any]] = images.map {
+        ["type": "image", "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.data]]
+      }
+      let sent: Any = images.isEmpty ? content : [["type": "text", "text": content]] + shown
+      return ["type": "tool_result", "tool_use_id": id, "content": sent, "is_error": isError]
     case .webSearch(let s): return ["type": "text", "text": s.note]
     }
   }
@@ -556,9 +562,11 @@ extension MessagesProvider {
           var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": input]
           if let namespace { call["namespace"] = namespace }
           out.append(call)
-        case .toolResult(let id, let content, _):
+        case .toolResult(let id, let content, _, let images):
           flush()
-          out.append(["type": "function_call_output", "call_id": id, "output": content])
+          let shown: [[String: Any]] = images.map { ["type": "input_image", "image_url": "data:\($0.mediaType);base64,\($0.data)"] }
+          let sent: Any = images.isEmpty ? content : [["type": "input_text", "text": content]] + shown
+          out.append(["type": "function_call_output", "call_id": id, "output": sent])
         }
       }
       flush()

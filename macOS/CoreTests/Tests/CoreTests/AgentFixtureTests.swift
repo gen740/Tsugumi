@@ -450,7 +450,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     for m in conv.messages[(i + 1)...] {
       for b in m.content {
         if case .toolUse(let id, _, _) = b { asked.insert(id) }
-        if case .toolResult(let id, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
+        if case .toolResult(let id, _, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
       }
     }
     await client.close()
@@ -481,7 +481,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
     let conv = await agent.conversation
     let answered = conv.messages[2].content.compactMap { b -> (String, Bool)? in
-      if case .toolResult(let id, _, let e) = b { return (id, e) }
+      if case .toolResult(let id, _, let e, _) = b { return (id, e) }
       return nil
     }
     #expect(answered.map(\.0) == ["toolu_done", "toolu_never"] && answered.map(\.1) == [false, true], "\(conv.messages[2])")

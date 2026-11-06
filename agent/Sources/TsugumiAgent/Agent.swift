@@ -427,6 +427,12 @@ public actor Agent {
           blocks.append(.toolUse(id: t.id, name: t.name, input: t.json.isEmpty ? "{}" : t.json))
         }
         return (blocks, stopReason, providerContent)
+      } catch let e as MessagesProvider.HTTPStatusError where e.status == 400 && e.body.lowercased().contains("image") && conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
+      } catch ChatGPTError.unsupported where conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
       } catch let e as MessagesProvider.HTTPStatusError where e.retryable && attempt < 3 {
         attempt += 1
         // The provider's retry-after when it gave one (rate limits), else backoff.
@@ -442,6 +448,15 @@ public actor Agent {
       }
       try await Task.sleep(for: .milliseconds(500 * (1 << attempt)))
     }
+  }
+
+  /// The provider refused a request with images (a model without vision, a
+  /// corrupt or oversized picture): asking again as it is would fail for good.
+  private func goOnWithoutImages(hadText: Bool, _ events: @escaping @Sendable (AgentEvent) -> Void) throws {
+    if hadText { events(.discardText) }
+    conversation.dropToolImages()
+    try conversation.save(storage)
+    events(.retrying("the model did not accept an image from a tool; going on without it"))
   }
 
   /// A search's result: in this reply's blocks, or in an earlier reply's when
@@ -805,7 +820,7 @@ public actor Agent {
       } : []
       let next = i + 1 < conversation.messages.count ? conversation.messages[i + 1] : nil
       let answered = Set(next?.role == "user" ? next!.content.compactMap { b -> String? in
-        if case .toolResult(let id, _, _) = b { return id }
+        if case .toolResult(let id, _, _, _) = b { return id }
         return nil
       } : [])
       let missing = ids.filter { !answered.contains($0) }
@@ -814,7 +829,7 @@ public actor Agent {
           let r = conversation.tools.first { $0.id == id }
           switch r?.state {
           case .completed?:
-            return .toolResult(toolUseId: id, content: Self.clip(r?.result ?? ""), isError: r?.isError ?? false)
+            return Self.resultBlock(id: id, result: r?.result ?? "", isError: r?.isError ?? false)
           case .sent?:
             return .toolResult(toolUseId: id, content: "sent, but the turn was stopped before the answer; check the outcome "
                                  + "with operation_get (op_id \(r?.opId ?? ""))", isError: true)
@@ -853,6 +868,12 @@ public actor Agent {
     return head + String(result.prefix(400))
   }
 
+  /// A tool's result as the model gets it: its images as images, its text clipped.
+  static func resultBlock(id: String, result: String, isError: Bool) -> ContentBlock {
+    let (text, images) = ToolImage.split(result)
+    return .toolResult(toolUseId: id, content: clip(text), isError: isError, images: images)
+  }
+
   /// How much of a tool's result the model gets; a longer one says it was cut.
   public static let resultLimit = 60_000
   public static func clip(_ s: String) -> String {
@@ -870,7 +891,7 @@ public actor Agent {
     conversation.tools.append(record)
     try conversation.save(storage)
     events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: Self.toolSummary(result)))
-    return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
+    return Self.resultBlock(id: record.id, result: result, isError: isError)
   }
 
   func renderReply(_ type: String, _ table: Table) -> String {
@@ -905,8 +926,8 @@ public actor Agent {
         // Replace that result too, so the next model request sees the receipt.
         for m in conversation.messages.indices {
           conversation.messages[m].content = conversation.messages[m].content.map { block in
-            if case .toolResult(let toolId, _, _) = block, toolId == id {
-              return .toolResult(toolUseId: id, content: Self.clip(json), isError: error ?? true)
+            if case .toolResult(let toolId, _, _, _) = block, toolId == id {
+              return Self.resultBlock(id: id, result: json, isError: error ?? true)
             }
             return block
           }
@@ -952,7 +973,7 @@ public actor Agent {
         switch b {
         case .text(let t): transcript += "\(m.role): \(t)\n"
         case .toolUse(_, let n, let a): transcript += "tool call \(n) \(a.prefix(500))\n"
-        case .toolResult(_, let c, let e): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
+        case .toolResult(_, let c, let e, _): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
         case .webSearch(let s): transcript += s.note + "\n"
         }
       }

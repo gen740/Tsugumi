@@ -255,7 +255,7 @@ import Testing
   p.toolInput(index: 3, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.json","bytes":"{"#, now: t0.addingTimeInterval(1))
   #expect(p.liveCode == nil)
   // A turn that ends leaves nothing behind.
-  p.toolInput(index: 4, tool: "project_validate", delta: #"{"changes":[{"value":{"path":"definitions/a/b","bytes":"c"#, now: t0.addingTimeInterval(2))
+  p.toolInput(index: 4, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/b","bytes":"c"#, now: t0.addingTimeInterval(2))
   #expect(p.liveCode?.card == "a")
   p.turnEnded(.stopped, now: t0.addingTimeInterval(3))
   #expect(p.liveCode == nil)

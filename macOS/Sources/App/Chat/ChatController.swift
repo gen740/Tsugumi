@@ -307,7 +307,7 @@ final class ChatController {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
         case .toolUse(_, let n, let a): out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(_, let c, let e):
+        case .toolResult(_, let c, let e, _):
           if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
             out[j].tool?.ok = !e
             out[j].text += "\n→ " + Agent.toolSummary(c)

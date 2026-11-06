@@ -88,6 +88,11 @@ STALE_READ = "validate at revision 0"
 SEARCH = re.compile(r"search the web for (.+?)(?: (with a pause|alongside inspect))?\s*$", re.I)
 
 
+# "look at the picture <path>": reads it and says how the image came; with
+# ", which is refused" a request holding an image gets a 400.
+PICTURE = re.compile(r"look at the picture (\S+?)(, which is refused)?$")
+
+
 def blocks(msg):
     c = msg.get("content")
     return [{"type": "text", "text": c}] if isinstance(c, str) else (c or [])
@@ -116,10 +121,13 @@ def tool_results(messages):
             if b.get("type") == "tool_use":
                 names[b["id"]] = b["name"]
             elif b.get("type") == "tool_result":
+                text = b["content"]
+                if isinstance(text, list):  # with images: its text comes first
+                    text = next(p["text"] for p in text if p.get("type") == "text")
                 try:
-                    content = json.loads(b["content"])
+                    content = json.loads(text)
                 except (ValueError, TypeError):
-                    content = {"error": b["content"]}
+                    content = {"error": text}
                 out.append((names.get(b["tool_use_id"], "?"), content, b.get("is_error", False)))
     return out
 
@@ -518,6 +526,29 @@ def decide_guide(messages, tools):
                     f"tools: {' '.join(sorted(tools))}. Press Run to see it.")
 
 
+def last_picture_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        for b in blocks(messages[i]) if messages[i]["role"] == "user" else []:
+            if b.get("type") == "text" and (p := PICTURE.search(b["text"])):
+                return p, i
+    return None, -1
+
+
+def result_images(messages):
+    """The media types of the images in tool results."""
+    return [p["source"]["media_type"] for m in messages for b in blocks(m) if b.get("type") == "tool_result"
+            and isinstance(b["content"], list) for p in b["content"] if p.get("type") == "image"]
+
+
+def decide_picture(messages, path, start):
+    rest = messages[start + 1:]
+    if not tool_results(rest):
+        return ("tool", "project_file_read", {"path": path})
+    words = json.dumps(tool_results(rest)[-1][1])
+    return ("text", f"Saw images: {result_images(rest)}. Data in the text: {'iVBOR' in words}. "
+                    f"Told it was refused: {'did not accept' in str(rest)}.")
+
+
 def decide(messages, system="", tools=()):
     """Returns ("tool", name, input) or ("text", message)."""
     if system.startswith(GUIDE):
@@ -530,6 +561,9 @@ def decide(messages, system="", tools=()):
     comment_text, comment_start = last_comment_task(messages)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
+    picture, picture_start = last_picture_task(messages)
+    if picture and picture_start > max(start, draft_start):
+        return decide_picture(messages, picture.group(1), picture_start)
     if comment_text is not None and comment_start > max(start, draft_start):
         return decide_comments(messages, comment_text, comment_start)
     perm, perm_start = last_permission_task(messages)
@@ -845,6 +879,10 @@ class Handler(BaseHTTPRequestHandler):
         missing = unanswered_tool_uses(body["messages"])
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
+            return
+        picture, _ = last_picture_task(body["messages"])
+        if picture and picture.group(2) and result_images(body["messages"]):
+            self._error(400, "Could not process image")
             return
         declared = "web_search" in names
         if bad := search_replay_errors(body["messages"], declared):

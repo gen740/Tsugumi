@@ -36,7 +36,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
 | [`ProjectSave`](#projectsave) |  |  |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
-| [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. With `changes` (the same as project_save's), the document as it would be after them is checked and nothing is saved: try definitions, _outputs.fbs and default.nix text here instead of saving trial versions. |
+| [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectImport`](#projectimport) | ProjectImportResult | definitions = [] imports every definition of the grant. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`OperationGet`](#operationget) | OperationResult |  |
@@ -83,7 +83,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | `at_rev` | `uint64` |  | Omitted: the latest revision. |
 | `targets` | `[CardPath]` |  |  |
 | `mode` | `ValidateMode` |  |  |
-| `changes` | `[DocumentChange]` |  | Proposed changes (as in project_save): checked, never saved. |
+| `changes` | `[DocumentChange]` |  | Proposed changes (as in project_save): the document as it would be after them is checked and nothing is saved. For the apps' editors; the model is not offered this field (it saves, then checks). |
 
 ### ProjectImport
 
