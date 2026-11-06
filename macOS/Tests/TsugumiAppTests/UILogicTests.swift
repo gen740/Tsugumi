@@ -217,6 +217,22 @@ import Testing
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
 }
 
+@Test func droppedNoteLandsUnderThePointerAtAnyZoom() {
+  // The note's grabbed point moves by the pointer's translation: screen points / zoom = world units.
+  for zoom in [0.2, 0.5, 1, 2.5, 3] {
+    let from = CGPoint(x: 100, y: 40), by = CGSize(width: 60, height: -30)
+    let to = GraphCanvas.droppedNoteOrigin(from: from, by: by, zoom: zoom)
+    let cam = CanvasCamera(x: 40, y: 40, zoom: zoom)
+    let before = cam.screen(from), after = cam.screen(to)
+    // Within the rounding to whole world units.
+    #expect(abs((after.x - before.x) - by.width) <= zoom / 2 + 1e-9)
+    #expect(abs((after.y - before.y) - by.height) <= zoom / 2 + 1e-9)
+  }
+  #expect(GraphCanvas.droppedNoteOrigin(from: CGPoint(x: 10, y: 10), by: CGSize(width: 15, height: 7), zoom: 2) == CGPoint(x: 18, y: 14))
+  // Not snapped to the grid.
+  #expect(GraphCanvas.droppedNoteOrigin(from: .zero, by: CGSize(width: 13, height: 0), zoom: 1).x == 13)
+}
+
 @MainActor
 @Test func editorSelectionAlwaysFitsTheNewText() {
   let tv = NSTextView()
