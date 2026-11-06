@@ -50,7 +50,7 @@
 
 | 境界 | 守る対象 | 仕組み |
 | --- | --- | --- |
-| Card（worker）⇄ tsugumid | プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（デフォルト） | bubblewrap による全名前空間分離と capability 破棄 |
+| Card（worker）⇄ tsugumid | プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（既定） | bubblewrap による全名前空間分離と capability 破棄 |
 | project ⇄ project | 他プロジェクトのファイル・プロセス・実行履歴・ビルド root | 専用 uid・名前空間・cgroup（`tsugumi-vmd` が管理） |
 | VM ⇄ macOS | Mac 側のファイル全体・ホームフォルダ | `Virtualization.framework`。共有するのは開いているプロジェクトのフォルダと、Card 定義やチャットで指定されたフォルダ（§2）のみ |
 | macOS 上の RPC ⇄ 他のプロセス・ネットワーク | core の操作権限 | `127.0.0.1` 限定の待ち受け、token 認証、WebSocket の `Origin` 検査 |
@@ -69,7 +69,7 @@
 | vsock | 制御チャネル（1024）と RPC 中継（1025） | — |
 | ネットワーク | NAT（`VZNATNetworkDeviceAttachment`） | — |
 
-- **Mac 側のファイルで VM から見えるのは、現在開いているプロジェクトのフォルダとその control フォルダ、およびそのプロジェクトの Card 定義やチャットで明示的に指定されたフォルダだけ**です。ホームフォルダ全体や他のプロジェクトは共有されません。プロジェクトを閉じると、そのスロットの共有は即座に解除されます。
+- **Mac 側のファイルで VM から見えるのは、現在開いているプロジェクトのフォルダとその control フォルダ、およびそのプロジェクトの Card 定義やチャットで明示的に指定されたフォルダだけ**です。ホームフォルダ全体や他のプロジェクトは共有されません。プロジェクトを閉じると、そのスロットの共有はすぐに解除されます。
 - Mac のフォルダを VM に共有する経路は次の 2 つです（`macOS/Sources/Launcher/EnvironmentManager.swift`・`HostFolders.swift`）。
   - **Card の「ホストのフォルダへのアクセスを許可する」**（`_card.json` の `hostFolders`、Experimental）：プロジェクト（およびその `externals`）の Card 定義に記述されたフォルダを、環境の起動時にそのプロジェクトのスロットへ共有します。書き込みを許可したもの（`write: true`）以外は読み取り専用です。**この共有は定義ファイルの記述だけで決まり、プロジェクトを開く際に確認ダイアログは出ません**。外部から受け取ったプロジェクトや Agent が変更した Card 定義に含まれている場合も同様に共有されるため、注意が必要です（§10）。
   - **チャットへのフォルダ添付**：Agent が参照するためのフォルダを、そのプロジェクトに対して読み取り専用で共有します。
@@ -80,13 +80,13 @@
 ### VM のネットワーク
 
 VM の NAT は、**`nix-daemon` が `cache.nixos.org` からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため**に存在します。
-Card 自身はデフォルトでネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（`_card.json` の `network: true`、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。
+Card 自身は既定でネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（`_card.json` の `network: true`、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。
 
 ## 3. project ⇄ project（VM 内）
 
 VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次の隔離条件で `tsugumid` を起動します（`core/src/vmd_main.cc`）。
 
-- **専用 uid**：プロジェクトごとに固有の uid（20001 以降、`/persist/tsugumi/uids` に記録）を割り当て、`setgroups(0)` → `setgid` → `setuid` で root 権限を完全に放棄してから起動します。
+- **専用 uid**：プロジェクトごとに固有の uid（20001 以降、`/persist/tsugumi/uids` に記録）を割り当て、`setgroups(0)` → `setgid` → `setuid` で root 権限を放棄してから起動します。
 - **名前空間**：`CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS` を分離します。
 - **見えるファイル**：mount 名前空間内で以下のパスだけを bind mount し、全スロットの親ディレクトリ（`/mnt`）、store ディスク全体（`/persist`）、全プロジェクトの実行履歴ディスク全体（`/history-disk`）はすべて `umount` します。
   - `/project` … 自身のプロジェクトフォルダ
@@ -96,7 +96,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
   - `/run/tsugumi/rpc` … `tsugumid` の待ち受けソケット（WebSocket、Unix ソケット）。実体は `/run/tsugumi-rpc/<id>`（そのプロジェクトの uid だけが入れる 0700 のフォルダ）で、`tsugumi-vmd` がここへ中継します。VM の loopback にはどのプロジェクトのポートもありません（ネットワークを許可した Card は VM のネットワークを共有するため、ポートがあれば他のプロジェクトの `tsugumid` に届いてしまいます）。
   - `/run/tsugumi/host/<tag>`・`/run/tsugumi/chat/<tag>` … そのプロジェクトに共有された Mac のフォルダ（§2、指定時のみ）
   - `/nix` … オーバーレイマウント（共通 store は全プロジェクトから読み取り可能、書き込みは `nix-daemon` 経由のみ）
-- **cgroup**：`/sys/fs/cgroup/tsugumi/<id>` に配置します。プロジェクトを停止する際は `cgroup.kill` によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには一切影響を与えません。
+- **cgroup**：`/sys/fs/cgroup/tsugumi/<id>` に配置します。プロジェクトを停止する際は `cgroup.kill` によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには影響しません。
 - **GC root**：`/nix/var/nix/gcroots/tsugumi/projects/<id>/` は `tsugumi-vmd` が root 権限で作成し、親ディレクトリにはプロジェクト側からの書き込み権限を与えません。そのため、他のプロジェクトが先にディレクトリを作って横取りすることはできません（`test_shared_vm.py` で検証済み）。
 - **カーネル**：Linux 6.12 LTS（`macOS/Container/kernel.nix`）から io_uring を外し、非特権 BPF を既定で無効にしています。`/init` が sysctl でカーネルアドレスとログの読み取り、ptrace（子孫のみ）、共有の sticky フォルダでのリンク・ファイルの差し込みを制限します（Yama を有効にしています。BPF JIT と userfaultfd は組み込んでいません）。
 - **ターミナル**：VM 内ターミナルを開く際は、対象プロジェクトの名前空間に `setns` で入り、同じ cgroup に所属させ、プロジェクトの uid に権限を落としてから `bash` を起動します。プロジェクトを閉じればターミナルも終了します。
@@ -109,7 +109,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
 
 各 Card のコードは、さらに `bubblewrap` のサンドボックス内で実行されます（`core/src/worker_proc.cc`）。
 
-### `sandbox: true`（デフォルト）
+### `sandbox: true`（既定）
 
 ```text
 bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
@@ -122,11 +122,11 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 - **すべての名前空間を分離**（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（`lo`）のみです。`network: true` を指定した Card に限り、network 名前空間を分離せず（`--share-net`）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。
 - **Linux capability をすべて破棄**（`--cap-drop ALL`）します。
-- **見えるファイル**：`/nix/store`（読み取り専用）、worker の実行ファイル（開発ビルドで `/nix/store` の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。
+- **見えるファイル**：`/nix/store`（読み取り専用）、worker の実行ファイル（開発ビルドで `/nix/store` の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは見えません。
 - **環境変数は空から再構成**（`PATH=/var/empty`、`LANG=C.UTF-8`、および Tsugumi が渡す変数のみ）し、`tsugumid` やホストの環境変数は引き継ぎません。
 - **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
 - **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。
-- **`bubblewrap` が利用できない環境では、`sandbox: true` の Card を実行せず即座に拒否します**（`permission_denied`）。暗黙のうちに隔離なしで実行することはありません。
+- **`bubblewrap` が利用できない環境では、`sandbox: true` の Card を実行せずすぐに拒否します**（`permission_denied`）。暗黙のうちに隔離なしで実行することはありません。
 - 例外は [Web UI](webui.md) のように `tsugumid` を macOS ホストで直接動かす場合で、bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離します（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。`network: true` の Card にはネットワークを開きますが、このマシン自身のアドレス（loopback・LAN・VPN）と Unix ソケットは閉じたままで、例外は名前解決に必要な `mDNSResponder` のソケットだけです。Mach サービスも、証明書の検証に使う `com.apple.trustd.agent` のほかは閉じているので、クリップボードや LaunchServices には届きません。`sandbox-exec` がない場合は同じく拒否します。
 
 ### `sandbox: false`
@@ -140,7 +140,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 ### worker の寿命管理
 
 - キャンセルやタイムアウト期限切れの際は、worker が起動した子孫プロセスまで残さず終了させます（sandbox の on / off 両方で自動テスト済み）。
-- 常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時には即座に破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。
+- 常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時にはすぐに破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。
 
 ### Card のグラフ（Plotly・Vega-Lite）の表示
 
@@ -166,7 +166,7 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 ### 待ち受け経路
 
 - `tsugumid` は VM の中では TCP ポートを開かず、Unix ソケット `/run/tsugumi/rpc/s` で WebSocket を待ち受けます（`--listen-unix-ws`、`core/src/vmd_main.cc`）。実体はそのプロジェクトの uid だけが入れる 0700 のフォルダ `/run/tsugumi-rpc/<id>` にあります（§3）。
-- Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`、vsock 1025 で `tsugumi-vmd` がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには一切公開されません。
+- Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`、vsock 1025 で `tsugumi-vmd` がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには公開されません。
 - VM の loopback にポートがないので、別のプロジェクトや、ネットワークを許可した Card から `tsugumid` へ接続する経路はありません。
 - Web UI では `tsugumid` がホストで直接動き、`127.0.0.1` の WebSocket で待ち受けます（[Web UI](webui.md)）。
 - Unix ドメインソケットを使う場合は `umask 0177`（パーミッション `0600`）で作成します。アプリの標準経路は WebSocket であり、常に token 認証が必須です。
@@ -175,14 +175,14 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 
 - `tsugumid` は起動ごとに 32 byte の暗号論的乱数 token を生成し（`crypto::random_token(32)`）、**control フォルダ内の `server.ready`（パーミッション `0600`、原子的書き込み）にのみ**出力します。control フォルダ自体も `0700` で保護されています。
 - クライアントは最初の `SessionHello` メッセージで token を提示します。照合には定数時間比較（`crypto::equal_secret`）を用い、一致しなければ `unauthenticated` で切断します。
-- token は URL やログには一切出力されず（WebSocket URL は `ws://127.0.0.1:<port>/rpc` のみ）、アプリ内でもメモリ上にしか保持しません。
+- token は URL やログには出力されず（WebSocket URL は `ws://127.0.0.1:<port>/rpc` のみ）、アプリ内でもメモリ上にしか保持しません。
 - 設定の「外部接続」では接続先 URL と `server.ready` のファイルパスをコピーできますが、token の文字列そのものは画面に表示しません。
 
 ### WebSocket の保護
 
 - エンドポイントは `GET /rpc` のみを受け付け（それ以外は 404）、`Sec-WebSocket-Protocol: tsugumi.rpc.v1` の提示を必須としています。
 - `Origin` ヘッダーが付与された接続は許可リスト（`--allow-origin`、アプリ起動時は空）と照合し、一致しなければ 403 で拒否します。一般的な Web ブラウザからの接続には必ず `Origin` ヘッダーが付くため、**悪意ある Web ページを開いたブラウザから `127.0.0.1` の Tsugumi へ接続することはできません**（DNS rebinding や Cross-Site WebSocket Hijacking の防止）。`Origin` ヘッダーを持たないネイティブクライアント（アプリ本体・Agent・テストスクリプト）は token によって認証します。
-- マスクされていないクライアントフレーム、予約ビットが立ったフレーム、サイズ上限を超えるフレーム、未知の union 型や不正な長さを持つ FlatBuffers メッセージを受信した場合は即座に接続を切断します（`test_transport.py`・`test_contract.py` で検証済み）。
+- マスクされていないクライアントフレーム、予約ビットが立ったフレーム、サイズ上限を超えるフレーム、未知の union 型や不正な長さを持つ FlatBuffers メッセージを受信した場合はすぐに接続を切断します（`test_transport.py`・`test_contract.py` で検証済み）。
 
 ### ページング cursor の署名
 
@@ -193,7 +193,7 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 他のプロジェクトから Card 定義を取り込む際、RPC クライアント（Agent を含む）がホスト上の任意のファイルパスを `tsugumid` に読ませることを防ぐ仕組みです。
 
 1. 利用者がアプリのファイル選択ダイアログで取り込み元を選ぶと、アプリがその時点の内容を control フォルダ内の `grants/<uuid>/` にコピーし、`grants.json` に登録します。
-2. RPC の `Import` リクエストではこの grant ID だけを指定でき、`tsugumid` は `grants.json` に登録されたパス以外を一切読み取りません。
+2. RPC の `Import` リクエストではこの grant ID だけを指定でき、`tsugumid` は `grants.json` に登録されたパス以外を読み取りません。
 3. `grants.json` は RPC からは変更できず、アプリ本体だけが書き込めます。また Card の worker からは control フォルダ自体が見えません。
 
 ## 8. モデルの API キー（Agent）
@@ -209,7 +209,7 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
   - アプリは、確認なしで読めるときだけ読みます（`Keychain.loadWithoutAsking`）。読めない接続は、保存済みの一覧のまま次の機会を待ちます。チャットの実行や設定の「モデル一覧を取得」では、これまでどおり確認が出ます。
   - アクセストークンの更新が要るときは、更新後のリフレッシュトークンを必ず保存します（確認なしで読めたあとの保存を止めません）。
   - Web UI のサーバーでは、`security` に確認なしで読む手段がありません。まだ読んでいないキーについて、サーバーの起動ごとに最大 1 回、確認が出ることがあります。
-- API キーを `tsugumid`・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも一切記録しません。
+- API キーを `tsugumid`・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも記録しません。
 - HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
 - 設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。
 
@@ -236,7 +236,7 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから `AttachedFolderRead` で読み取ったファイル内容など）
 - ガイドのツグミに質問したとき、またデモの案内中：質問文と、そのとき画面に出ているものの要約（プロジェクトの名前とフォルダ、表示中の Workflow の Card、選択した Card の状態と結果の要約、実行と接続の状態、同梱デモの一覧）、およびガイドが読み取りの tool で読んだ内容。ガイドは保存・実行・停止の tool を持たず、プロジェクトを変えません。
 
-**Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される**点に十分ご注意ください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。
+**Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される**点に注意してください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。
 
 なお、**Agent を使用せず、かつ `network: true` を有効にした Card も存在しない場合、プロジェクトの内容やデータが Mac とローカル VM の外へ出ることはありません**（Nix がパッケージを取得する通信を除く）。`network: true` を許可した Card は、その Card がアクセスできるデータ（入力値や指定したホストフォルダの内容など）を外部ネットワークへ送信できます。
 
@@ -280,7 +280,7 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 
 ## 10. 既知の制限と注意事項
 
-- **共通 VM は 1 つの Linux カーネルを共有しています**。プロジェクト間の隔離は Linux の uid・名前空間・cgroup によるものであり、万一カーネル自体の脆弱性を突かれた場合は他プロジェクトへ影響が及ぶ可能性があります。極めて強い隔離が求められるプロジェクト同士は、同時に開かないでください。
+- **共通 VM は 1 つの Linux カーネルを共有しています**。プロジェクト間の隔離は Linux の uid・名前空間・cgroup によるものであり、万一カーネル自体の脆弱性を突かれた場合は他プロジェクトへ影響が及ぶ可能性があります。強い隔離が求められるプロジェクト同士は、同時に開かないでください。
 - 共通の `/nix/store` はすべてのプロジェクトから読み取り可能です（§3）。
 - VM 自体には NAT による外部ネットワーク接続があります。`tsugumid` や `nix-daemon` は外部と通信可能であり、Card も `network: true` を設定したものは外部と通信できます。
 - Mac 上の `tsugumid`（Web UI）で `network: true` の Card は、同じ LAN や VPN の他の機器に届き、UDP のブロードキャストとマルチキャストはこのマシンにも届きます。Seatbelt では宛先のアドレスを指定して拒否できないためです（[Web UI の隔離](webui.md#隔離macos-ホスト)）。

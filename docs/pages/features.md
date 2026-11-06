@@ -21,7 +21,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
                                                    nix-daemon ─ 共通 /nix/store
 ```
 
-- **tsugumid（core）**：プロジェクトごとに 1 プロセスが立ち上がります。文書の管理・保存、RPC、スケジューラー、Nix 評価、worker 管理、実行履歴の記録を一手に担い、UI がなくても RPC だけで保存・実行・履歴取得が完結します。
+- **tsugumid（core）**：プロジェクトごとに 1 プロセスが立ち上がります。文書の管理・保存、RPC、スケジューラー、Nix 評価、worker 管理、実行履歴の記録を担い、UI がなくても RPC だけで保存・実行・履歴取得が完結します。
 - **UI と Agent は対等なクライアント**：どちらも `protocol/tsugumi.fbs` で定義された同一の RPC 契約で core と通信します。Agent は画面の操作を模倣するのではなく、core に直接 RPC リクエストを送ります。Agent を無効にしても通常の操作はすべて機能します。
 - **共通 VM**：macOS の `Virtualization.framework` で 1 台の Linux VM を起動し、その内部でプロジェクトごとに名前空間・uid・cgroup を分離した `tsugumid` を動かします（詳細は [security.md](security.md)）。
 - **Web UI**：ブラウザから同じ画面を使うときは、`tsugumid` を Mac 上で直接動かし、Card は Seatbelt で隔離します（VM は使いません。[Web UI](webui.md)）。
@@ -49,7 +49,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 
 - 出力ポートからの線は 1 本です。1 つの値を複数の Card に送るときは fork Card を通します（同じことを書く方法を 1 つにし、Canvas で分配が Card として見えるようにするため）。2 本以上の線が出ている出力は `fan_out` として報告され、実行できません。Canvas で使用中の出力からもう 1 本引くと、fork が自動で挟まります（出力が fork や fork につながっているときは、その fork に枝が増えます）。
 - 出力ポートの型は FlatBuffers スキーマ（`_outputs.fbs`）で宣言し、下流の入力ポートの型は上流から自動的に導出されます。配線時に構造的互換性を検査し、merge では自動的に union 型が構成されます。
-- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash（R と Julia は JSON に変換して）の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
+- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash（R と Julia は JSON に変換して）の間で 64 bit 整数・enum・struct・union・File / Directory を欠落なく受け渡せることを自動テストで検証しています。
 
 ### 実行の意味論（スケジューラー）
 
@@ -80,7 +80,7 @@ in
 }
 ```
 
-- `pkgs` はデフォルトで同梱の固定 nixpkgs（`tsugumi:default`）を指します。任意の nixpkgs を `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…` の形式でリビジョンとハッシュ付きで固定することもできます。
+- `pkgs` は既定で同梱の固定 nixpkgs（`tsugumi:default`）を指します。任意の nixpkgs を `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…` の形式でリビジョンとハッシュ付きで固定することもできます。
 - Nix の評価には restricted eval・IFD（Import From Derivation）禁止を適用し、取得先 URL を nixpkgs アーカイブのみに制限しています。
 - Tsugumi 独自のビルドキャッシュ管理は持たず、「評価した derivation の出力パスが `/nix/store` に存在すればビルドしない」という Nix 本来の仕組みだけで一貫して判定します。
 
@@ -136,14 +136,14 @@ in
 
 ### 常駐 worker
 
-- `reuseWorker`（デフォルト `true`）の worker は実行をまたいで常駐し、static 変数などの状態も保持します（各実行の最初の呼び出し前に `onRunStart` / `on_run_start` が呼ばれます）。
+- `reuseWorker`（既定 `true`）の worker は実行をまたいで常駐し、static 変数などの状態も保持します（各実行の最初の呼び出し前に `onRunStart` / `on_run_start` が呼ばれます）。
 - ビルド条件の変更、失敗・キャンセル、10 分間の未使用、メモリ 2 GiB 超過、または常駐数 32 超過で自動的に終了します。
 - `reuseWorker = false` の Card に対しては、次回使う新しい worker を裏で先行起動（サンドボックス起動・`.so` 読み込み・Python の import まで完了）させて待機させます。
 
 ### 外部へのアクセス（Experimental）
 
-- Card はデフォルトでネットワークを持たず、Mac 側のファイルシステムも見えません（[security.md](security.md)）。
-- Card 設定の Experimental セクションで、Card ごとに「ネットワークへのアクセスを許可する」（`network`）および「ホストのフォルダへのアクセスを許可する」（`hostFolders`。worker からは `/host/<name>` として見え、デフォルトは読み取り専用）を個別に指定できます。
+- Card は既定でネットワークを持たず、Mac 側のファイルシステムも見えません（[security.md](security.md)）。
+- Card 設定の Experimental セクションで、Card ごとに「ネットワークへのアクセスを許可する」（`network`）および「ホストのフォルダへのアクセスを許可する」（`hostFolders`。worker からは `/host/<name>` として見え、既定は読み取り専用）を個別に指定できます。
 
 **確かめる場所**
 
@@ -153,7 +153,7 @@ in
 
 ## 5. 文書と保存
 
-- プロジェクトは通常のフォルダです。`tsugumi.json`、`definitions/<Card>/`（`_card.json`・`_meta.json`（概要などの意図）・`default.nix`・`src/`・`_outputs.fbs`）、および配置情報の `layout.json` から構成され、そのまま Git でバージョン管理できます。
+- プロジェクトは通常のフォルダです。`tsugumi.json`、`definitions/<Card>/`（`_card.json`・`_meta.json`（概要などの意図）・`default.nix`・`src/`・`_outputs.fbs`）、および配置情報の `layout.json` から構成され、そのまま Git で管理できます。
 - JSON はすべて型付きスキーマで厳密に検証（UTF-8・重複キー・非有限数・未知キーの拒否）してから扱います。core は受け取った文書テキストを再エンコードしないため、64 bit 整数の表記などもそのまま保たれます。
 - **保存トランザクション**：メモリ上で仮適用して検証 → ジャーナル（全ファイル内容と receipt）を `fsync` → 対象ファイルを原子的に置換 → コミット。万一途中でクラッシュしても、次回起動時にジャーナルから再適用されるため、「全件成功」か「全件未適用」のどちらかにしかなりません（障害注入テスト済み）。
 - **競合検出**：保存は編集開始時のリビジョンを基準に行われ、他のウインドウや Agent が先に保存していた場合は競合として検出し、無断で上書きしません。また、同一 `op_id` の再送は 1 回だけ適用されます（通信断で応答を失っても `OperationGet` で結果を照合できます）。
@@ -167,7 +167,7 @@ in
 
 - 実行・呼び出し・段階・入出力値・ログ・可視化データ・受領記録をすべて SQLite に記録します。正本は VM の実行履歴専用ディスク（`vm/history.img`）に置かれるため、ホストとの共有フォルダを経由せず高速に書き込め、「すべての実行環境を初期化」しても失われません。
 - `recordIO` と `retainArtifact` によって、何を記録・保持するかを Card ごとに選択できます。保持された成果物は改ざんやパス逸脱を検出します。
-- `saveRunHistory`（デフォルト `true`）が有効なら、完了した実行履歴をプロジェクト内の `.tsugumi/runs.sqlite` にも自動で書き出します。入出力値は FlatBuffers のバイナリ列のまま、スキーマ（bfbs）をハッシュで引ける形で保存するため、後から Card の型定義を変更しても過去の実行値を正確に解釈できます。
+- `saveRunHistory`（既定 `true`）が有効なら、完了した実行履歴をプロジェクト内の `.tsugumi/runs.sqlite` にも自動で書き出します。入出力値は FlatBuffers のバイナリ列のまま、スキーマ（bfbs）をハッシュで引ける形で保存するため、後から Card の型定義を変更しても過去の実行値を正確に解釈できます。
 - プロジェクトをコピーしたり別の Mac へ移したりしても、開いたときに `run_id` で照合して履歴を自動的に取り込みます。
 - 「実行履歴を削除」を実行すると、VM 内・`.tsugumi/runs.sqlite`・実行ごとのファイル領域の 3 か所すべてから削除されます。
 
@@ -233,7 +233,7 @@ in
 プロジェクトのチャットはツグミです。
 
 - 鳥はチャットの左上（チャットを閉じているときはチャットのボタンの上）で待ちます。画面のものを説明するときは `guide_show` でそこへ飛んでいき（▶ 実行、Card、デモのカードなど）、吹き出しで一言話します。
-- 吹き出しには、タップできる返事（「次へ」「もっと詳しく」など）、押すと動くボタン（デモを開く・実行・停止・Card 設定を開く・API の設定・新規プロジェクトなど）、自由に返事できる入力欄が出ます。タップした返事は、チャットにユーザーの発言として届きます。
+- 吹き出しには、タップできる返事（「次へ」「もっと詳しく」など）、押すと動くボタン（デモを開く・実行・停止・Card 設定を開く・API の設定・新規プロジェクトなど）、自由に返事できる入力欄が出ます。タップした返事は、チャットに利用者の発言として届きます。
 - 吹き出しを閉じると元の場所へ戻ります。動きを減らす設定では、その場に現れます。⌥⌘G でチャット（Home では会話パネル）を開閉します。
 - チャットのツグミが飛び回るのはデモの案内のときだけです。組み込みの Skill `$demo`（`agent/Shared/demo-skill.md`）をデモの案内が始めるか、チャットで `$demo` と書くと始まり、最後のあいさつ（「$demo でいつでもお呼びください…」）で終わります。それ以外はふつうのチャットです。
 - 案内の中では、Card in Card の中（`card:<外側>/<内側>`。Canvas がその中を開きます）や、ツグミが開く Card 設定のウインドウ（`open`、`param:<名前>`）にも飛んでいきます。プロジェクトを読み込む間は、読み込み中のカードの鳥に重なるように飛び込んで大きさを合わせ、読み込みが終わるとそこから出てきます。
@@ -255,31 +255,10 @@ Home では、アプリ全体で 1 つのガイドの会話（`Agent.Role.guide`
 
 ## 10. デモ
 
-| デモ | 見どころ |
-| --- | --- |
-| `report`（データからレポートへ） | `seed` による再現性、意図的な失敗と下流の `blocked`、保存済み入力による単体再実行、入れ子の Workflow、ディレクトリ成果物 |
-| `collatz`（C++ / Python / Julia / R） | 4 言語の独立実装による結果の一致検証、フィードバックループと `maxRuns`、条件分岐による `skipped`、整数オーバーフローの検出 |
-| `live-stream` | 100 ms 間隔のランダムウォークを Dawn（WebGPU / Metal）の折れ線で逐次描画、即時のキャンセル応答 |
-| `plots` | ウィンドウ向けの matplotlib のコード（`plt.show()`・`FuncAnimation`）がそのまま Card の表示に描かれる。静止図とライブのアニメーション、Plotly と Altair の対話できるグラフ |
-| `casa` | Nix で固定した Chandra の観測（取得は最初の 1 回だけ）、エネルギー帯の分割と RGB 画像、matplotlib のエネルギースペクトル（帯域と輝線）、Card 単位の再実行 |
-| `gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench` | 公開データの取得（出典・大きさ・SHA-256 の表示）と解析・図示 |
-| `mnist-classifiers`（MNIST · 手書き数字の分類器くらべ） | 1 つの入力から 7 つの分岐が別々の Nix 環境（scikit-learn, xgboost, torch）で同時に動き、1 つの比較に合流する。データは Nix で固定、シードと 1 スレッドで数値が再現し、差に意味があるかを比較 Card が文章で示す。1 つの分岐だけを条件を変えて実行し直せる |
-| `newton` | $z^3 - 1$ の収束先のフラクタルと、数値で見積もる収束の次数。臨界点の近く、重根、閉路で 2 次収束を失う様子を並べ、閉じた式の根と照合する |
-| `pharmacokinetics` | 架空の薬物の 1 コンパートメントモデル（教育用で、投与の指針ではない）。投与計画を Plotly で並べ、数値解を閉じた式の重ね合わせと定常状態の蓄積比で照合する |
-| `max-flow` | 最大流 = 最小カットを networkx、scipy、全カットの総当たりで照合する。カット外の辺を太くしても最大流は変わらず、カット上の辺でも別の最小カットがあれば増えない |
-| `dose-response` | 真の値を知っている合成データで、当てはめと信頼区間が回復できるかを確かめる。濃度範囲が EC50 を挟まないと区間が開き、Card がそう言う |
-| `molecules` | Canvas に SMILES を貼って再実行できる RDKit の物性計算。読めない入力は理由を示して飛ばし、分子量と logP の地図は対話できるグラフになる |
-| `cell-count` | 正解が分かっている合成画像で数え方を採点し、閾値のみと watershed を比べる。密度とノイズを変えて破綻する場所を表に示し、Nix で固定した実画像にも同じ手順をかける |
-| `survival` | R の survival と ggplot2。Kaplan–Meier・log-rank・Cox に加え、対象者と調整の組み合わせでハザード比がどう動くかを 1 枚の図で比べ、`cox.zph` で仮定を確かめる。テストは手書きの KM・log-rank・Cox と照合する |
-| `meta-analysis` | R の metafor。固定効果と変量効果、森林図とファンネル、緯度によるメタ回帰、1 試験を除く比較と推定量の比較。テストは手書きの逆分散重みと DerSimonian–Laird、公表の REML の値と照合する |
-| `rna-seq` | R の DESeq2 と edgeR（Bioconductor を Nix でビルド）。正規化、PCA、MA・火山プロット、上位遺伝子、閾値の格子、2 手法の比較、細胞株の項の有無の比較。テストは手書きのサイズ因子と既知の応答遺伝子の倍率変化と照合する |
-| `simpson` | R と ggplot2。集計と層別で符号が変わる相関と比率を、層別の変数を param で変えながら比べる。どちらを読むかは因果の問いで決まることをノートで述べる。テストは手書きの Pearson の r と Mantel–Haenszel と照合する |
-| `battery`（蓄電池の最適運用） | Julia の Card と Vega-Lite の図、読める長さの動的計画法、全探索との照合、料金の形で運転が変わること（定額なら動かない）、容量の限界価値の逓減 |
-| `gillespie`（化学反応のゆらぎ） | 確率シミュレーションと率方程式の比較、ポアソン分布とファノ因子、CV ∝ 1/√N、非線形な反応で小さな体積の平均が率方程式から外れること、閉じた式との自動照合 |
-| `heat-inverse`（熱伝導の逆問題） | 悪条件な逆問題の仕組みを順に見る（特異値、発散、正則化、L 曲線と食い違い原理）、測定時刻で失われる情報、順問題の保存則と解析解での確認 |
-| `ecology-models`（生態系のモデル比較） | 実データ（ハドソン湾会社の毛皮の記録）への当てはめ、手書きの RK4 と Nelder-Mead、AIC・BIC と残した年の予測の比較、当てはめが似ていても先の動きが違うこと、保存量と文献値での確認 |
-| `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
-| `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
-| `mnist-classifiers-draft` | 7 つの分類器の Draft を helper が同時に実装し、Agent が 1 つの比較に合流させる（データの Card は実装済み） |
+同梱のデモは 31 個あります（Draft 版を含む）。何を試せるかの一覧は [README](../index.md#使ってみる)、各デモの Card のつながりと動きは[同梱デモのしくみ](demos.md)にあります。
+デモはホームの「デモを見る」から「コピーを開く」を選ぶと、`~/Documents/Tsugumi/<demo>` に編集できるコピーができます。
 
-各デモの Card の構成と動きは[同梱デモのしくみ](demos.md)を参照してください。デモはホームの「デモを見る」から「コピーを開く」を選ぶことで、`~/Documents/Tsugumi/<demo>` に編集可能なコピーを作ってすぐ試せます。
+**確かめる場所**
+
+- すべてのデモが開けて解決できること: [test_demos.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demos.py)
+- デモを実際に動かして、独立に計算した値と照合すること（`TSUGUMI_TEST_DEMO_RUNS=1`）: `tests/python/test_demo_*.py`

@@ -2,7 +2,7 @@
 
 アプリに同梱しているデモが、どんな Card をどうつなぎ、実行すると何が起きるのかをまとめます。
 ホーム画面の「デモを見る」から「コピーを開く」を選ぶと、`~/Documents/Tsugumi/<demo>` に編集できるコピーができます（同梱の原本は変わりません）。
-画面の操作は[操作ガイド](usage.md)、Card の種類と実行の規則は[主要機能](features.md#2-card-と-workflow)を参照してください。
+画面の操作は[操作ガイド](usage.md)、Card の種類と実行の規則は[主要機能](features.md#2-card-と-workflow)にあります。
 
 | デモ | 題材 | このデモで分かること |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ start → settings ─ share ─┬→ generate ─csv→ aggregate ─summary�
 
 **試すこと**
 - `seed` や `heading` を変えて実行する。同じ `seed` なら集計は同じで、見出しだけが変わる。
-- `aggregate` の `fail_on_purpose` を On にして実行する。`aggregate` のログに理由が出て、下流の `render` は `blocked` になる。Off に戻し、`aggregate` だけを実行し直すと、保存された入力で即座に成功する。
+- `aggregate` の `fail_on_purpose` を On にして実行する。`aggregate` のログに理由が出て、下流の `render` は `blocked` になる。Off に戻し、`aggregate` だけを実行し直すと、保存された入力ですぐに成功する。
 - `archive` をダブルクリックして子 Workflow に入り、成果物のディレクトリをプレビュー・書き出す。成果物は実行キャッシュを消しても残る。
 
 ### Collatz (C++ / Python / Julia / R)（`collatz`）
@@ -129,7 +129,7 @@ start → settings ─state→ loop → generate ─sample→ plot
 | `plot` | Python | 直近 `window`（60）個の値とその平均を、Dawn（WebGPU / Metal）の折れ線で描く |
 
 **試すこと**
-- 実行して、途中で停止（Cancel）する。即座に止まり、その時点までのグラフが残る。
+- 実行して、途中で停止（Cancel）する。すぐに止まり、その時点までのグラフが残る。
 - `interval_ms`・`seed`・`samples` や `plot` の `window` を変えて実行し直す。系列はリセットされ、並列度 1 でも 2 でも、値が欠けたり順序が入れ替わったりしない。
 
 ### Plots（`plots`）
@@ -692,7 +692,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 
 | デモ | 試せる操作 | 確認できる結果 |
 | --- | --- | --- |
-| **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使って即座に成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
+| **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使ってすぐに成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
 | **Collatz (C++ / Python / Julia / R)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++・Python・Julia・R の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
@@ -715,4 +715,4 @@ start → load → prepare → share ─┬→ knn ──────┐
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **MNIST · 分類器くらべ（Draft）**（`mnist-classifiers-draft`） | 開いて「Card を生成」を押す | `load` と `prepare` を実行したあと、7 つの分類器を helper が同時に書いて確かめ、Agent が `compare` を書いて順位表と散布図を出す |
-| **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
+| **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すとすぐに中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |

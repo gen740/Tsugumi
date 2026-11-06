@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#要点">要点</a></li><li class="d2"><a href="#1-信頼境界の全体像">1. 信頼境界の全体像</a></li><li class="d2"><a href="#2-vm--macos">2. VM ⇄ macOS</a></li><li class="d3"><a href="#vm-に渡しているもの">VM に渡しているもの</a></li><li class="d3"><a href="#vm-のネットワーク">VM のネットワーク</a></li><li class="d2"><a href="#3-project--projectvm-内">3. project ⇄ project（VM 内）</a></li><li class="d3"><a href="#プロジェクト間で共有しているもの">プロジェクト間で共有しているもの</a></li><li class="d2"><a href="#4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</a></li><li class="d3"><a href="#sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</a></li><li class="d3"><a href="#sandbox-false"><code>sandbox: false</code></a></li><li class="d3"><a href="#worker-の寿命管理">worker の寿命管理</a></li><li class="d3"><a href="#card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</a></li><li class="d2"><a href="#5-nix-評価の制限">5. Nix 評価の制限</a></li><li class="d2"><a href="#6-rpc-の認証">6. RPC の認証</a></li><li class="d3"><a href="#待ち受け経路">待ち受け経路</a></li><li class="d3"><a href="#認証-token">認証 token</a></li><li class="d3"><a href="#websocket-の保護">WebSocket の保護</a></li><li class="d3"><a href="#ページング-cursor-の署名">ページング cursor の署名</a></li><li class="d2"><a href="#7-ファイルの取り込みimport-grant">7. ファイルの取り込み（import grant）</a></li><li class="d2"><a href="#8-モデルの-api-キーagent">8. モデルの API キー（Agent）</a></li><li class="d3"><a href="#chatgpt-プランsign-in-with-chatgpt">ChatGPT プラン（Sign in with ChatGPT）</a></li><li class="d3"><a href="#モデルに送られるもの">モデルに送られるもの</a></li><li class="d3"><a href="#agent-の権限境界">Agent の権限境界</a></li><li class="d2"><a href="#9-データの置き場所と削除方法">9. データの置き場所と削除方法</a></li><li class="d2"><a href="#10-既知の制限と注意事項">10. 既知の制限と注意事項</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#要点">要点</a></li><li class="d2"><a href="#1-信頼境界の全体像">1. 信頼境界の全体像</a></li><li class="d2"><a href="#2-vm--macos">2. VM ⇄ macOS</a></li><li class="d3"><a href="#vm-に渡しているもの">VM に渡しているもの</a></li><li class="d3"><a href="#vm-のネットワーク">VM のネットワーク</a></li><li class="d2"><a href="#3-project--projectvm-内">3. project ⇄ project（VM 内）</a></li><li class="d3"><a href="#プロジェクト間で共有しているもの">プロジェクト間で共有しているもの</a></li><li class="d2"><a href="#4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</a></li><li class="d3"><a href="#sandbox-true既定"><code>sandbox: true</code>（既定）</a></li><li class="d3"><a href="#sandbox-false"><code>sandbox: false</code></a></li><li class="d3"><a href="#worker-の寿命管理">worker の寿命管理</a></li><li class="d3"><a href="#card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</a></li><li class="d2"><a href="#5-nix-評価の制限">5. Nix 評価の制限</a></li><li class="d2"><a href="#6-rpc-の認証">6. RPC の認証</a></li><li class="d3"><a href="#待ち受け経路">待ち受け経路</a></li><li class="d3"><a href="#認証-token">認証 token</a></li><li class="d3"><a href="#websocket-の保護">WebSocket の保護</a></li><li class="d3"><a href="#ページング-cursor-の署名">ページング cursor の署名</a></li><li class="d2"><a href="#7-ファイルの取り込みimport-grant">7. ファイルの取り込み（import grant）</a></li><li class="d2"><a href="#8-モデルの-api-キーagent">8. モデルの API キー（Agent）</a></li><li class="d3"><a href="#chatgpt-プランsign-in-with-chatgpt">ChatGPT プラン（Sign in with ChatGPT）</a></li><li class="d3"><a href="#モデルに送られるもの">モデルに送られるもの</a></li><li class="d3"><a href="#agent-の権限境界">Agent の権限境界</a></li><li class="d2"><a href="#9-データの置き場所と削除方法">9. データの置き場所と削除方法</a></li><li class="d2"><a href="#10-既知の制限と注意事項">10. 既知の制限と注意事項</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="セキュリティと隔離">セキュリティと隔離</h1>
@@ -60,12 +60,12 @@
 └────────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p>隔離の境界は、最も内側から外側へ向かって 4 段あります。</p>
-<div class="table-wrap"><table><thead><tr><th>境界</th><th>守る対象</th><th>仕組み</th></tr></thead><tbody><tr><td>Card（worker）⇄ tsugumid</td><td>プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（デフォルト）</td><td>bubblewrap による全名前空間分離と capability 破棄</td></tr><tr><td>project ⇄ project</td><td>他プロジェクトのファイル・プロセス・実行履歴・ビルド root</td><td>専用 uid・名前空間・cgroup（<code>tsugumi-vmd</code> が管理）</td></tr><tr><td>VM ⇄ macOS</td><td>Mac 側のファイル全体・ホームフォルダ</td><td><code>Virtualization.framework</code>。共有するのは開いているプロジェクトのフォルダと、Card 定義やチャットで指定されたフォルダ（§2）のみ</td></tr><tr><td>macOS 上の RPC ⇄ 他のプロセス・ネットワーク</td><td>core の操作権限</td><td><code>127.0.0.1</code> 限定の待ち受け、token 認証、WebSocket の <code>Origin</code> 検査</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>境界</th><th>守る対象</th><th>仕組み</th></tr></thead><tbody><tr><td>Card（worker）⇄ tsugumid</td><td>プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（既定）</td><td>bubblewrap による全名前空間分離と capability 破棄</td></tr><tr><td>project ⇄ project</td><td>他プロジェクトのファイル・プロセス・実行履歴・ビルド root</td><td>専用 uid・名前空間・cgroup（<code>tsugumi-vmd</code> が管理）</td></tr><tr><td>VM ⇄ macOS</td><td>Mac 側のファイル全体・ホームフォルダ</td><td><code>Virtualization.framework</code>。共有するのは開いているプロジェクトのフォルダと、Card 定義やチャットで指定されたフォルダ（§2）のみ</td></tr><tr><td>macOS 上の RPC ⇄ 他のプロセス・ネットワーク</td><td>core の操作権限</td><td><code>127.0.0.1</code> 限定の待ち受け、token 認証、WebSocket の <code>Origin</code> 検査</td></tr></tbody></table></div>
 <h2 id="2-vm--macos">2. VM ⇄ macOS</h2>
 <h3 id="vm-に渡しているもの">VM に渡しているもの</h3>
 <div class="table-wrap"><table><thead><tr><th>デバイス</th><th>内容</th><th>書込</th></tr></thead><tbody><tr><td>rootfs</td><td>アプリ同梱の erofs イメージ（Linux カーネル 6.12.115 と Nix、<code>macOS/Container/vm-boot.nix</code>）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（<code>macOS/Container/vm-system.nix</code>、依存は署名を検証して cache.nixos.org から取得）</td><td>読み取り専用（ソースの共有も読み取り専用）</td></tr><tr><td>store ディスク</td><td><code>~/Library/Application Support/Tsugumi/vm/store.img</code>（全プロジェクト共通の Nix store。ソースからビルドした開発版は <code>Tsugumi-dev/</code> の下。以下同じ）</td><td>可</td></tr><tr><td>実行履歴ディスク</td><td><code>~/Library/Application Support/Tsugumi/vm/history.img</code>（全プロジェクトの実行履歴、プロジェクトごとにディレクトリ分離）</td><td>可</td></tr><tr><td>virtiofs（スロットごと）</td><td>開いているプロジェクトのフォルダ（<code>project</code>）と、その control フォルダ（<code>control</code>）</td><td>可</td></tr><tr><td>virtiofs（同じスロット、指定時のみ）</td><td>Card 設定で指定した Mac のフォルダ（<code>host-&lt;tag&gt;</code>）、チャットに添付した Mac のフォルダ（<code>chat-&lt;tag&gt;</code>）</td><td><code>host-</code> は <code>write: true</code> のもののみ可、<code>chat-</code> は読み取り専用</td></tr><tr><td>vsock</td><td>制御チャネル（1024）と RPC 中継（1025）</td><td>—</td></tr><tr><td>ネットワーク</td><td>NAT（<code>VZNATNetworkDeviceAttachment</code>）</td><td>—</td></tr></tbody></table></div>
 <ul>
-<li><strong>Mac 側のファイルで VM から見えるのは、現在開いているプロジェクトのフォルダとその control フォルダ、およびそのプロジェクトの Card 定義やチャットで明示的に指定されたフォルダだけ</strong>です。ホームフォルダ全体や他のプロジェクトは共有されません。プロジェクトを閉じると、そのスロットの共有は即座に解除されます。</li>
+<li><strong>Mac 側のファイルで VM から見えるのは、現在開いているプロジェクトのフォルダとその control フォルダ、およびそのプロジェクトの Card 定義やチャットで明示的に指定されたフォルダだけ</strong>です。ホームフォルダ全体や他のプロジェクトは共有されません。プロジェクトを閉じると、そのスロットの共有はすぐに解除されます。</li>
 <li>Mac のフォルダを VM に共有する経路は次の 2 つです（<code>macOS/Sources/Launcher/EnvironmentManager.swift</code>・<code>HostFolders.swift</code>）。<ul>
 <li><strong>Card の「ホストのフォルダへのアクセスを許可する」</strong>（<code>_card.json</code> の <code>hostFolders</code>、Experimental）：プロジェクト（およびその <code>externals</code>）の Card 定義に記述されたフォルダを、環境の起動時にそのプロジェクトのスロットへ共有します。書き込みを許可したもの（<code>write: true</code>）以外は読み取り専用です。<strong>この共有は定義ファイルの記述だけで決まり、プロジェクトを開く際に確認ダイアログは出ません</strong>。外部から受け取ったプロジェクトや Agent が変更した Card 定義に含まれている場合も同様に共有されるため、注意が必要です（§10）。</li>
 <li><strong>チャットへのフォルダ添付</strong>：Agent が参照するためのフォルダを、そのプロジェクトに対して読み取り専用で共有します。</li>
@@ -76,11 +76,11 @@
 <li>VM は <code>vm/vm.lock</code> のファイルロック（<code>flock</code>）を取得した 1 つのアプリプロセスだけが起動します。</li>
 </ul>
 <h3 id="vm-のネットワーク">VM のネットワーク</h3>
-<p>VM の NAT は、<strong><code>nix-daemon</code> が <code>cache.nixos.org</code> からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため</strong>に存在します。Card 自身はデフォルトでネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（<code>_card.json</code> の <code>network: true</code>、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。</p>
+<p>VM の NAT は、<strong><code>nix-daemon</code> が <code>cache.nixos.org</code> からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため</strong>に存在します。Card 自身は既定でネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（<code>_card.json</code> の <code>network: true</code>、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。</p>
 <h2 id="3-project--projectvm-内">3. project ⇄ project（VM 内）</h2>
 <p>VM 内の管理プロセス <code>tsugumi-vmd</code> が、プロジェクトごとに次の隔離条件で <code>tsugumid</code> を起動します（<code>core/src/vmd_main.cc</code>）。</p>
 <ul>
-<li><strong>専用 uid</strong>：プロジェクトごとに固有の uid（20001 以降、<code>/persist/tsugumi/uids</code> に記録）を割り当て、<code>setgroups(0)</code> → <code>setgid</code> → <code>setuid</code> で root 権限を完全に放棄してから起動します。</li>
+<li><strong>専用 uid</strong>：プロジェクトごとに固有の uid（20001 以降、<code>/persist/tsugumi/uids</code> に記録）を割り当て、<code>setgroups(0)</code> → <code>setgid</code> → <code>setuid</code> で root 権限を放棄してから起動します。</li>
 <li><strong>名前空間</strong>：<code>CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS</code> を分離します。</li>
 <li><strong>見えるファイル</strong>：mount 名前空間内で以下のパスだけを bind mount し、全スロットの親ディレクトリ（<code>/mnt</code>）、store ディスク全体（<code>/persist</code>）、全プロジェクトの実行履歴ディスク全体（<code>/history-disk</code>）はすべて <code>umount</code> します。<ul>
 <li><code>/project</code> … 自身のプロジェクトフォルダ</li>
@@ -92,7 +92,7 @@
 <li><code>/nix</code> … オーバーレイマウント（共通 store は全プロジェクトから読み取り可能、書き込みは <code>nix-daemon</code> 経由のみ）</li>
 </ul>
 </li>
-<li><strong>cgroup</strong>：<code>/sys/fs/cgroup/tsugumi/&lt;id&gt;</code> に配置します。プロジェクトを停止する際は <code>cgroup.kill</code> によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには一切影響を与えません。</li>
+<li><strong>cgroup</strong>：<code>/sys/fs/cgroup/tsugumi/&lt;id&gt;</code> に配置します。プロジェクトを停止する際は <code>cgroup.kill</code> によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには影響しません。</li>
 <li><strong>GC root</strong>：<code>/nix/var/nix/gcroots/tsugumi/projects/&lt;id&gt;/</code> は <code>tsugumi-vmd</code> が root 権限で作成し、親ディレクトリにはプロジェクト側からの書き込み権限を与えません。そのため、他のプロジェクトが先にディレクトリを作って横取りすることはできません（<code>test_shared_vm.py</code> で検証済み）。</li>
 <li><strong>カーネル</strong>：Linux 6.12 LTS（<code>macOS/Container/kernel.nix</code>）から io_uring を外し、非特権 BPF を既定で無効にしています。<code>/init</code> が sysctl でカーネルアドレスとログの読み取り、ptrace（子孫のみ）、共有の sticky フォルダでのリンク・ファイルの差し込みを制限します（Yama を有効にしています。BPF JIT と userfaultfd は組み込んでいません）。</li>
 <li><strong>ターミナル</strong>：VM 内ターミナルを開く際は、対象プロジェクトの名前空間に <code>setns</code> で入り、同じ cgroup に所属させ、プロジェクトの uid に権限を落としてから <code>bash</code> を起動します。プロジェクトを閉じればターミナルも終了します。</li>
@@ -103,7 +103,7 @@
 </ul>
 <h2 id="4-cardworker-tsugumid">4. Card（worker）⇄ tsugumid</h2>
 <p>各 Card のコードは、さらに <code>bubblewrap</code> のサンドボックス内で実行されます（<code>core/src/worker_proc.cc</code>）。</p>
-<h3 id="sandbox-trueデフォルト"><code>sandbox: true</code>（デフォルト）</h3>
+<h3 id="sandbox-true既定"><code>sandbox: true</code>（既定）</h3>
 <pre><code class="language-text">bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
       --symlink &lt;store の bash&gt; /bin/sh
@@ -114,11 +114,11 @@
 <ul>
 <li><strong>すべての名前空間を分離</strong>（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（<code>lo</code>）のみです。<code>network: true</code> を指定した Card に限り、network 名前空間を分離せず（<code>--share-net</code>）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。</li>
 <li><strong>Linux capability をすべて破棄</strong>（<code>--cap-drop ALL</code>）します。</li>
-<li><strong>見えるファイル</strong>：<code>/nix/store</code>（読み取り専用）、worker の実行ファイル（開発ビルドで <code>/nix/store</code> の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの <code>runs</code> と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が <code>hostFolders</code> で指定した Mac のフォルダ（<code>/host/&lt;name&gt;</code>、<code>write: true</code> のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。</li>
+<li><strong>見えるファイル</strong>：<code>/nix/store</code>（読み取り専用）、worker の実行ファイル（開発ビルドで <code>/nix/store</code> の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの <code>runs</code> と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が <code>hostFolders</code> で指定した Mac のフォルダ（<code>/host/&lt;name&gt;</code>、<code>write: true</code> のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは見えません。</li>
 <li><strong>環境変数は空から再構成</strong>（<code>PATH=/var/empty</code>、<code>LANG=C.UTF-8</code>、および Tsugumi が渡す変数のみ）し、<code>tsugumid</code> やホストの環境変数は引き継ぎません。</li>
 <li><strong>出力の受け渡し</strong>：各呼び出しの出力先ディレクトリは <code>SCM_RIGHTS</code> でファイル記述子（FD）として渡し、worker 内からは <code>/proc/self/fd/900</code> としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。</li>
 <li><strong>入力を FD で渡さない理由</strong>：読み取り専用で開いた FD であっても、Linux では <code>/proc/self/fd/N</code> を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。</li>
-<li><strong><code>bubblewrap</code> が利用できない環境では、<code>sandbox: true</code> の Card を実行せず即座に拒否します</strong>（<code>permission_denied</code>）。暗黙のうちに隔離なしで実行することはありません。</li>
+<li><strong><code>bubblewrap</code> が利用できない環境では、<code>sandbox: true</code> の Card を実行せずすぐに拒否します</strong>（<code>permission_denied</code>）。暗黙のうちに隔離なしで実行することはありません。</li>
 <li>例外は <a href="webui.html">Web UI</a> のように <code>tsugumid</code> を macOS ホストで直接動かす場合で、bubblewrap の代わりに <code>sandbox-exec</code>（Seatbelt）で隔離します（ネットワークなし、読み取りは <code>/nix/store</code>・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。<code>network: true</code> の Card にはネットワークを開きますが、このマシン自身のアドレス（loopback・LAN・VPN）と Unix ソケットは閉じたままで、例外は名前解決に必要な <code>mDNSResponder</code> のソケットだけです。Mach サービスも、証明書の検証に使う <code>com.apple.trustd.agent</code> のほかは閉じているので、クリップボードや LaunchServices には届きません。<code>sandbox-exec</code> がない場合は同じく拒否します。</li>
 </ul>
 <h3 id="sandbox-false"><code>sandbox: false</code></h3>
@@ -131,7 +131,7 @@
 <h3 id="worker-の寿命管理">worker の寿命管理</h3>
 <ul>
 <li>キャンセルやタイムアウト期限切れの際は、worker が起動した子孫プロセスまで残さず終了させます（sandbox の on / off 両方で自動テスト済み）。</li>
-<li>常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時には即座に破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。</li>
+<li>常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時にはすぐに破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。</li>
 </ul>
 <h3 id="card-のグラフplotlyvega-liteの表示">Card のグラフ（Plotly・Vega-Lite）の表示</h3>
 <p>Card が送る Plotly の図と Vega-Lite の仕様は信頼しないデータとして扱い、同梱の plotly.js / Vega で描く表示部品（<code>ui/modules</code>）の中だけで動かします。</p>
@@ -154,7 +154,7 @@
 <h3 id="待ち受け経路">待ち受け経路</h3>
 <ul>
 <li><code>tsugumid</code> は VM の中では TCP ポートを開かず、Unix ソケット <code>/run/tsugumi/rpc/s</code> で WebSocket を待ち受けます（<code>--listen-unix-ws</code>、<code>core/src/vmd_main.cc</code>）。実体はそのプロジェクトの uid だけが入れる 0700 のフォルダ <code>/run/tsugumi-rpc/&lt;id&gt;</code> にあります（§3）。</li>
-<li>Mac 側へは <strong>vsock を介してホストの <code>127.0.0.1:&lt;空きポート&gt;</code> にのみ中継</strong>されます（<code>LoopbackBridge</code>、vsock 1025 で <code>tsugumi-vmd</code> がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには一切公開されません。</li>
+<li>Mac 側へは <strong>vsock を介してホストの <code>127.0.0.1:&lt;空きポート&gt;</code> にのみ中継</strong>されます（<code>LoopbackBridge</code>、vsock 1025 で <code>tsugumi-vmd</code> がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには公開されません。</li>
 <li>VM の loopback にポートがないので、別のプロジェクトや、ネットワークを許可した Card から <code>tsugumid</code> へ接続する経路はありません。</li>
 <li>Web UI では <code>tsugumid</code> がホストで直接動き、<code>127.0.0.1</code> の WebSocket で待ち受けます（<a href="webui.html">Web UI</a>）。</li>
 <li>Unix ドメインソケットを使う場合は <code>umask 0177</code>（パーミッション <code>0600</code>）で作成します。アプリの標準経路は WebSocket であり、常に token 認証が必須です。</li>
@@ -163,14 +163,14 @@
 <ul>
 <li><code>tsugumid</code> は起動ごとに 32 byte の暗号論的乱数 token を生成し（<code>crypto::random_token(32)</code>）、<strong>control フォルダ内の <code>server.ready</code>（パーミッション <code>0600</code>、原子的書き込み）にのみ</strong>出力します。control フォルダ自体も <code>0700</code> で保護されています。</li>
 <li>クライアントは最初の <code>SessionHello</code> メッセージで token を提示します。照合には定数時間比較（<code>crypto::equal_secret</code>）を用い、一致しなければ <code>unauthenticated</code> で切断します。</li>
-<li>token は URL やログには一切出力されず（WebSocket URL は <code>ws://127.0.0.1:&lt;port&gt;/rpc</code> のみ）、アプリ内でもメモリ上にしか保持しません。</li>
+<li>token は URL やログには出力されず（WebSocket URL は <code>ws://127.0.0.1:&lt;port&gt;/rpc</code> のみ）、アプリ内でもメモリ上にしか保持しません。</li>
 <li>設定の「外部接続」では接続先 URL と <code>server.ready</code> のファイルパスをコピーできますが、token の文字列そのものは画面に表示しません。</li>
 </ul>
 <h3 id="websocket-の保護">WebSocket の保護</h3>
 <ul>
 <li>エンドポイントは <code>GET /rpc</code> のみを受け付け（それ以外は 404）、<code>Sec-WebSocket-Protocol: tsugumi.rpc.v1</code> の提示を必須としています。</li>
 <li><code>Origin</code> ヘッダーが付与された接続は許可リスト（<code>--allow-origin</code>、アプリ起動時は空）と照合し、一致しなければ 403 で拒否します。一般的な Web ブラウザからの接続には必ず <code>Origin</code> ヘッダーが付くため、<strong>悪意ある Web ページを開いたブラウザから <code>127.0.0.1</code> の Tsugumi へ接続することはできません</strong>（DNS rebinding や Cross-Site WebSocket Hijacking の防止）。<code>Origin</code> ヘッダーを持たないネイティブクライアント（アプリ本体・Agent・テストスクリプト）は token によって認証します。</li>
-<li>マスクされていないクライアントフレーム、予約ビットが立ったフレーム、サイズ上限を超えるフレーム、未知の union 型や不正な長さを持つ FlatBuffers メッセージを受信した場合は即座に接続を切断します（<code>test_transport.py</code>・<code>test_contract.py</code> で検証済み）。</li>
+<li>マスクされていないクライアントフレーム、予約ビットが立ったフレーム、サイズ上限を超えるフレーム、未知の union 型や不正な長さを持つ FlatBuffers メッセージを受信した場合はすぐに接続を切断します（<code>test_transport.py</code>・<code>test_contract.py</code> で検証済み）。</li>
 </ul>
 <h3 id="ページング-cursor-の署名">ページング cursor の署名</h3>
 <p>履歴取得などのページング cursor には、起動ごとに生成される秘密鍵を用いた HMAC 相当の署名（<code>sha256(secret + payload)</code> の先頭 32 桁）を付与しており、クライアント側で cursor を改ざんして範囲外のデータを読み取ることはできません。</p>
@@ -178,7 +178,7 @@
 <p>他のプロジェクトから Card 定義を取り込む際、RPC クライアント（Agent を含む）がホスト上の任意のファイルパスを <code>tsugumid</code> に読ませることを防ぐ仕組みです。</p>
 <ol>
 <li>利用者がアプリのファイル選択ダイアログで取り込み元を選ぶと、アプリがその時点の内容を control フォルダ内の <code>grants/&lt;uuid&gt;/</code> にコピーし、<code>grants.json</code> に登録します。</li>
-<li>RPC の <code>Import</code> リクエストではこの grant ID だけを指定でき、<code>tsugumid</code> は <code>grants.json</code> に登録されたパス以外を一切読み取りません。</li>
+<li>RPC の <code>Import</code> リクエストではこの grant ID だけを指定でき、<code>tsugumid</code> は <code>grants.json</code> に登録されたパス以外を読み取りません。</li>
 <li><code>grants.json</code> は RPC からは変更できず、アプリ本体だけが書き込めます。また Card の worker からは control フォルダ自体が見えません。</li>
 </ol>
 <h2 id="8-モデルの-api-キーagent">8. モデルの API キー（Agent）</h2>
@@ -198,7 +198,7 @@
 <li>Web UI のサーバーでは、<code>security</code> に確認なしで読む手段がありません。まだ読んでいないキーについて、サーバーの起動ごとに最大 1 回、確認が出ることがあります。</li>
 </ul>
 </li>
-<li>API キーを <code>tsugumid</code>・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも一切記録しません。</li>
+<li>API キーを <code>tsugumid</code>・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも記録しません。</li>
 <li>HTTPS 通信には <code>URLSessionConfiguration.ephemeral</code> を使用し、ディスク上にキャッシュや Cookie を残しません。</li>
 <li>設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。</li>
 </ul>
@@ -224,7 +224,7 @@
 <li>Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから <code>AttachedFolderRead</code> で読み取ったファイル内容など）</li>
 <li>ガイドのツグミに質問したとき、またデモの案内中：質問文と、そのとき画面に出ているものの要約（プロジェクトの名前とフォルダ、表示中の Workflow の Card、選択した Card の状態と結果の要約、実行と接続の状態、同梱デモの一覧）、およびガイドが読み取りの tool で読んだ内容。ガイドは保存・実行・停止の tool を持たず、プロジェクトを変えません。</li>
 </ul>
-<p><strong>Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される</strong>点に十分ご注意ください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。</p>
+<p><strong>Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される</strong>点に注意してください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。</p>
 <p>なお、<strong>Agent を使用せず、かつ <code>network: true</code> を有効にした Card も存在しない場合、プロジェクトの内容やデータが Mac とローカル VM の外へ出ることはありません</strong>（Nix がパッケージを取得する通信を除く）。<code>network: true</code> を許可した Card は、その Card がアクセスできるデータ（入力値や指定したホストフォルダの内容など）を外部ネットワークへ送信できます。</p>
 <h3 id="agent-の権限境界">Agent の権限境界</h3>
 <ul>
@@ -267,7 +267,7 @@
 <p>設定の「すべての実行環境を初期化」を実行すると、VM を停止したうえで <code>vm/</code>（実行履歴ディスク <code>vm/history.img</code> を除く）と <code>environments/</code> を削除します。プロジェクトフォルダ内の文書・成果物・<code>.tsugumi/runs.sqlite</code>、および VM 内の実行履歴ディスクは保持されます。</p>
 <h2 id="10-既知の制限と注意事項">10. 既知の制限と注意事項</h2>
 <ul>
-<li><strong>共通 VM は 1 つの Linux カーネルを共有しています</strong>。プロジェクト間の隔離は Linux の uid・名前空間・cgroup によるものであり、万一カーネル自体の脆弱性を突かれた場合は他プロジェクトへ影響が及ぶ可能性があります。極めて強い隔離が求められるプロジェクト同士は、同時に開かないでください。</li>
+<li><strong>共通 VM は 1 つの Linux カーネルを共有しています</strong>。プロジェクト間の隔離は Linux の uid・名前空間・cgroup によるものであり、万一カーネル自体の脆弱性を突かれた場合は他プロジェクトへ影響が及ぶ可能性があります。強い隔離が求められるプロジェクト同士は、同時に開かないでください。</li>
 <li>共通の <code>/nix/store</code> はすべてのプロジェクトから読み取り可能です（§3）。</li>
 <li>VM 自体には NAT による外部ネットワーク接続があります。<code>tsugumid</code> や <code>nix-daemon</code> は外部と通信可能であり、Card も <code>network: true</code> を設定したものは外部と通信できます。</li>
 <li>Mac 上の <code>tsugumid</code>（Web UI）で <code>network: true</code> の Card は、同じ LAN や VPN の他の機器に届き、UDP のブロードキャストとマルチキャストはこのマシンにも届きます。Seatbelt では宛先のアドレスを指定して拒否できないためです（<a href="webui.html#隔離macos-ホスト">Web UI の隔離</a>）。</li>

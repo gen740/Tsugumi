@@ -174,7 +174,7 @@ Developer ID による署名・公証はしていない（ad-hoc 署名）ため
 
 Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
 Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](docs/claude-code.md)）。
-なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)を参照してください。
+なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)にあります。
 
 各デモの Card のつながりと動きは[同梱デモのしくみ](docs/Demos.md)にまとめています。
 
