@@ -1,9 +1,9 @@
 // Camera, scene geometry and canvas-wide actions of one tab (fit all, zoom,
 // add note, find, group, Draft), shared by the canvas, its floating
 // controls, the menus and the shortcuts.
-import { arr, bool, dbl, get, isObj, J, str } from '../shared/json'
+import { arr, bool, dbl, get, isObj, J, real, str } from '../shared/json'
 import { D } from '../shared/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, Pt, Rect, union, WireRouter } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, intersects, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import type { ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
@@ -40,7 +40,8 @@ export interface Boundary {
 
 /** Moves in progress (world units): the scene draws them before they are saved. */
 export interface SceneDrag {
-  cards?: { keys: Set<CardKey>; dx: number; dy: number }
+  /** The selection on the move: its Cards and the frames that go with them. */
+  cards?: { keys: Set<CardKey>; frames?: Set<CardKey>; dx: number; dy: number }
   boundary?: { input: boolean; dx: number; dy: number }
 }
 
@@ -123,9 +124,20 @@ export class Scene {
     const g = this.geometry(k)
     const width = dbl(get(f, 'width')) ?? 320, height = dbl(get(f, 'height')) ?? 170
     const fx = dbl(get(f, 'x')), fy = dbl(get(f, 'y'))
-    return this.flow === 'topToBottom'
+    const r = this.flow === 'topToBottom'
       ? { x: fx ?? o.x + g.size.width + 40, y: fy ?? o.y, width, height }
       : { x: fx ?? o.x, y: fy ?? o.y + g.height + 30, width, height }
+    const m = this.drag.cards
+    return m?.frames?.has(k) && !this.session.frameFollowsCard(k, m.keys) ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r
+  }
+
+  /** What a marquee (world units) touches. */
+  itemsIn(r: Rect): { cards: CardKey[]; notes: string[]; frames: CardKey[] } {
+    return {
+      cards: this.cardKeys.filter((k) => intersects(r, { ...this.session.position(k), ...this.geometry(k).size })),
+      notes: this.session.notes(this.scope).filter((n) => intersects(r, noteRect(n))).map((n) => str(get(n, 'id'))).filter((x): x is string => !!x),
+      frames: this.outputKeys.filter((k) => intersects(r, this.frameRect(k))),
+    }
   }
 
   /** A group's frame around its Cards (with room for its title). */
@@ -523,9 +535,65 @@ export class CanvasController extends Observable implements CanvasOverlay {
     this.set('editingGroup', this.session.addGroup(this.tab.selection, this.tab.scope))
   }
 
+  /** Moves a selection (world units) as one edit: one save, one undo. Layout
+   *  only: no computation is re-resolved for a move. Cards keep to the grid
+   *  (`snap`); notes and frames land on whole numbers, as when dragged alone. */
+  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, dx: number, dy: number, snap?: number) {
+    const scene = this.scene()
+    const shown = new Set(scene.outputKeys)
+    this.session.edit((x) => {
+      for (const k of frames) {
+        if (!shown.has(k) || x.frameFollowsCard(k, cards)) continue
+        // Worked out from its Card, so before the Cards move.
+        const r = scene.frameRect(k)
+        x.changeDisplayFrame(k, (f) => {
+          f.set('x', real(Math.round(r.x + dx)))
+          f.set('y', real(Math.round(r.y + dy)))
+          f.set('width', real(r.width))
+          f.set('height', real(r.height))
+        })
+      }
+      for (const k of cards) {
+        const p = x.position(k)
+        let px = p.x + dx, py = p.y + dy
+        if (snap) {
+          px = Math.round(px / snap) * snap
+          py = Math.round(py / snap) * snap
+        }
+        x.setPosition(k, { x: px, y: py })
+      }
+      for (const id of notes) {
+        x.changeNote(id, (n) => {
+          const r = noteRect(n)
+          n.set('x', real(Math.round(r.x + dx)))
+          n.set('y', real(Math.round(r.y + dy)))
+        })
+      }
+    })
+  }
+
+  /** Closes a frame, a step of an edit; its Card stays. The layout keeps a frame
+   *  only with its place and size, so one still drawn beside its Card gets them now. */
+  private hideFrame(x: ProjectSession, r: Rect, k: CardKey) {
+    x.changeDisplayFrame(k, (f) => {
+      f.set('x', real(Math.round(r.x)))
+      f.set('y', real(Math.round(r.y)))
+      f.set('width', real(r.width))
+      f.set('height', real(r.height))
+      f.set('hidden', true)
+    })
+  }
+
+  closeFrame(k: CardKey) {
+    const r = this.scene().frameRect(k)
+    this.session.edit((x) => this.hideFrame(x, r, k))
+  }
+
   deleteSelection() {
     const s = this.session
-    if (!s.isEditable) {
+    const t = this.tab
+    // Notes and frames are layout: they can go during a run, as from their own menus.
+    if (!s.isEditable && (t.selection.size || t.selectedConnection !== undefined)) {
       s.notice = '実行中は Card を削除できません。'
       s.changed()
       return
@@ -537,8 +605,16 @@ export class CanvasController extends Observable implements CanvasOverlay {
       this.tab.changed()
       return
     }
-    s.deleteCards(this.tab.selection, this.tab.scope)
-    this.tab.setSelection([])
+    // A frame alone is closed and its Card stays (the frame's own 枠を削除);
+    // a deleted Card takes its frame with it.
+    const scene = this.scene()
+    const closing = scene.outputKeys.filter((k) => t.selectedFrames.has(k) && !t.selection.has(k)).map((k) => [k, scene.frameRect(k)] as const)
+    s.edit((x) => {
+      x.removeCards(t.selection, t.scope)
+      for (const [k, r] of closing) this.hideFrame(x, r, k)
+      for (const id of t.selectedNotes) x.dropNote(id)
+    })
+    t.setSelection([])
   }
 
   toggleCollapse() {

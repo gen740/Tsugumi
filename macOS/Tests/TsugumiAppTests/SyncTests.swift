@@ -110,6 +110,90 @@ import Testing
     #expect(!s.connected)
   }
 
+  /// A marquee catches Cards, sticky notes and output frames, at the top and
+  /// inside a Card in Card. They move together in one edit and one save, and go
+  /// together: a frame alone is closed and its Card stays.
+  @Test func aMarqueeCatchesNotesAndFramesWhichMoveAndGoWithTheCards() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+
+    func check(in scope: [String]) async {
+      let near = s.addCard(template: .draft, in: scope, at: .zero, name: "near")
+      let framed = s.addCard(template: .draft, in: scope, at: CGPoint(x: 3000, y: 0), name: "framed")
+      let outside = s.addCard(template: .draft, in: scope, at: CGPoint(x: 6000, y: 0), name: "outside")
+      let beside = s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0), name: "beside")
+      let note = s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
+      let outsideNote = s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
+      s.updateDisplayFrame(framed) {
+        $0["x"] = .real(400)
+        $0["y"] = .real(400)
+        $0["width"] = .real(300)
+        $0["height"] = .real(200)
+      }
+      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }  // beside its Card
+      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // beside its Card, to be closed
+      s.closeDisplayFrame(outside)
+
+      let items = s.marqueeItems(CGRect(x: -500, y: -500, width: 1500, height: 1500), in: scope)
+      #expect(items.cards.contains(near) && !items.cards.contains(framed) && !items.cards.contains(outside), "\(scope)")
+      #expect(items.notes == [note])
+      #expect(items.frames == [near, framed], "the frame caught, though its Card is outside")
+      #expect(!items.notes.contains(outsideNote))
+      #expect(s.marqueeItems(CGRect(x: 5900, y: -500, width: 1000, height: 1000), in: scope).frames.isEmpty, "a closed frame is not caught")
+
+      let before = (card: s.position(near), note: s.noteRect(s.note(note)!), beside: s.displayRect(near), undos: s.undoStack.count)
+      s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil)
+      #expect(s.position(near) == CGPoint(x: before.card.x + 30, y: before.card.y + 40))
+      #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: before.note.minX + 30, y: before.note.minY + 40))
+      #expect(s.displayRect(framed) == CGRect(x: 430, y: 440, width: 300, height: 200), "its Card stays, its size too")
+      #expect(s.position(framed) == CGPoint(x: 3000, y: 0))
+      #expect(s.displayFrame(near)?["x"]?.double == nil, "beside its Card: it goes with the Card and keeps no place")
+      #expect(s.displayRect(near).origin == CGPoint(x: before.beside.minX + 30, y: before.beside.minY + 40), "not moved twice")
+      #expect(s.undoStack.count == before.undos + 1, "one edit")
+      s.undo()
+      #expect(s.position(near) == before.card && s.noteRect(s.note(note)!).origin == before.note.origin)
+      #expect(s.displayRect(framed).origin == CGPoint(x: 400, y: 400), "one undo brings all back")
+
+      // A frame alone is closed and its Card stays; notes go; one undo.
+      let undos = s.undoStack.count
+      s.deleteSelection(cards: [], notes: [note], frames: [framed], in: scope)
+      #expect(s.displayFrame(framed)?["hidden"]?.bool == true && s.instance(framed) != nil)
+      #expect(s.note(note) == nil && s.undoStack.count == undos + 1)
+      s.undo()
+      #expect(s.note(note) != nil && s.displayFrame(framed)?["hidden"]?.bool != true)
+
+      // A Card takes its frame with it. A frame beside its Card is closed with
+      // its place and size, which the core wants: the document still saves.
+      s.deleteSelection(cards: [near], notes: [], frames: [near, beside], in: scope)
+      #expect(s.instance(near) == nil && s.displayFrame(near) == nil)
+      #expect(s.instance(beside) != nil && s.displayFrame(beside)?["hidden"]?.bool == true)
+      await s.save()
+      #expect(!s.dirty, "\(s.saveError ?? "")")
+    }
+    await check(in: [])
+    let inner = await s.makeSubgraph([key(["a"])], in: [])
+    let child = try #require(inner)
+    await s.save()
+    await check(in: path(child))
+
+    // Choosing Cards anew lets go of the notes and frames; so does another scope.
+    let tab = WorkflowTab(scope: [])
+    tab.selection = [key(["b"])]
+    tab.selectedNotes = ["n"]
+    tab.selectedFrames = [key(["b"])]
+    #expect(tab.hasSelection)
+    tab.selection = [key(["c"])]
+    #expect(tab.selectedNotes.isEmpty && tab.selectedFrames.isEmpty)
+    tab.selectedNotes = ["n"]
+    tab.enter(["x"])
+    #expect(tab.selectedNotes.isEmpty && !tab.hasSelection)
+  }
+
   /// A Draft's wires make its ports and take them away, and what is written on
   /// its Card is kept, under a new name too.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {

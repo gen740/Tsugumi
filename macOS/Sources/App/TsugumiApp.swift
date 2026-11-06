@@ -309,7 +309,7 @@ struct WorkbenchCommands: Commands {
         .shortcut(.duplicate).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
         Button("選択対象を削除") { post(.canvasDelete) }
           .keyboardShortcut(.delete, modifiers: [])
-          .disabled(!onCanvas || ((tab?.selection.isEmpty ?? true) && tab?.selectedConnection == nil))
+          .disabled(!onCanvas || !(tab?.hasSelection ?? false))
         Divider()
         Button("全体表示") { post(.canvasFitAll) }.shortcut(.fitAll).disabled(!onCanvas)
         Button("100% で表示") { post(.canvasZoom, ["zoom": 0.0]) }.shortcut(.actualSize).disabled(!onCanvas)

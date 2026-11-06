@@ -535,48 +535,51 @@ extension ProjectSession {
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
+    edit { $0.removeCards(keys, in: scope) }
+  }
+
+  private func removeCards(_ keys: Set<CardKey>, in scope: [String]) {
     let ids = Set(keys.compactMap { path($0).last })
     guard !ids.isEmpty else { return }
     let prefix = projectPrefix(scope) ?? ""
-    edit { s in
-      // Each Card's definition folder goes with it, and a Card in Card's own external copy.
+    let s = self
+    // Each Card's definition folder goes with it, and a Card in Card's own external copy.
+    for k in keys {
+      if let ext = s.cardExternal(k) { s.removeExternal(ext) }
+      s.removeCardDefinition(k)
+    }
+    let cut = s.connections(in: scope).filter {
+      ids.contains($0["from"]?["card"]?.string ?? "") || ids.contains($0["to"]?["card"]?.string ?? "")
+    }
+    s.updateGraph(scope) { g in
+      g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
+      g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
+    }
+    s.dropDraftPorts(cut, in: scope)
+    if !prefix.isEmpty {
+      // Boundary ports of removed Cards go too.
+      s.updateExternal(prefix) { e in
+        for side in ["inputs", "outputs"] {
+          if let o = e.project["boundary"]?[side]?.object {
+            e.project["boundary"]?[side] = .object(o.filter { !ids.contains($0.1["card"]?.string ?? "") })
+          }
+        }
+      }
+    }
+    s.updateLayout(of: scope) { l in
       for k in keys {
-        if let ext = s.cardExternal(k) { s.removeExternal(ext) }
-        s.removeCardDefinition(k)
-      }
-      let cut = s.connections(in: scope).filter {
-        ids.contains($0["from"]?["card"]?.string ?? "") || ids.contains($0["to"]?["card"]?.string ?? "")
-      }
-      s.updateGraph(scope) { g in
-        g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
-        g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
-      }
-      s.dropDraftPorts(cut, in: scope)
-      if !prefix.isEmpty {
-        // Boundary ports of removed Cards go too.
-        s.updateExternal(prefix) { e in
-          for side in ["inputs", "outputs"] {
-            if let o = e.project["boundary"]?[side]?.object {
-              e.project["boundary"]?[side] = .object(o.filter { !ids.contains($0.1["card"]?.string ?? "") })
-            }
-          }
+        // Layout entries of the Card and of anything inside it.
+        let lk = s.layoutKey(k)
+        if var cards = l["cards"]?.object {
+          cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
+          l["cards"] = .object(cards)
         }
+        l["displays"]?[lk] = nil
       }
-      s.updateLayout(of: scope) { l in
-        for k in keys {
-          // Layout entries of the Card and of anything inside it.
-          let lk = s.layoutKey(k)
-          if var cards = l["cards"]?.object {
-            cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
-            l["cards"] = .object(cards)
-          }
-          l["displays"]?[lk] = nil
-        }
-      }
-      s.updateGroups(in: scope) { groups in
-        for i in groups.indices {
-          groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
-        }
+    }
+    s.updateGroups(in: scope) { groups in
+      for i in groups.indices {
+        groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
       }
     }
   }
@@ -934,19 +937,29 @@ extension ProjectSession {
   }
 
   func updateNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
+    edit { $0.changeNote(id, fn) }
+  }
+
+  private func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
     guard let sc = scopeHolding("notes", id) else { return }
-    edit { s in
-      s.updateLayout(of: sc) { l in
-        guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
-        fn(&notes[i])
-        l["notes"] = .array(notes)
-      }
+    updateLayout(of: sc) { l in
+      guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
+      fn(&notes[i])
+      l["notes"] = .array(notes)
     }
   }
 
   func removeNote(_ id: String) {
+    edit { $0.dropNote(id) }
+  }
+
+  private func dropNote(_ id: String) {
     guard let sc = scopeHolding("notes", id) else { return }
-    edit { s in s.updateLayout(of: sc) { $0["notes"] = .array(($0["notes"]?.array ?? []).filter { $0["id"]?.string != id }) } }
+    updateLayout(of: sc) { $0["notes"] = .array(($0["notes"]?.array ?? []).filter { $0["id"]?.string != id }) }
+  }
+
+  func noteRect(_ n: JSONValue) -> CGRect {
+    CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
   }
 
   func groups(in scope: [String]) -> [JSONValue] {
@@ -993,15 +1006,99 @@ extension ProjectSession {
   func displayFrame(_ k: CardKey) -> JSONValue? { layout(of: Array(path(k).dropLast()))["displays"]?[layoutKey(k)] }
 
   func updateDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
+    edit { $0.changeDisplayFrame(k, fn) }
+  }
+
+  private func changeDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
     let lk = layoutKey(k)
+    updateLayout(of: Array(path(k).dropLast())) { l in
+      var displays = l["displays"] ?? .object([])
+      var d = displays[lk] ?? .object([])
+      fn(&d)
+      displays[lk] = d
+      l["displays"] = displays
+    }
+  }
+
+  /// Closes a frame; its Card stays. The layout keeps a frame only with its
+  /// place and size, so one still drawn beside its Card gets them now.
+  func closeDisplayFrame(_ k: CardKey) {
+    edit { $0.hideDisplayFrame(k) }
+  }
+
+  private func hideDisplayFrame(_ k: CardKey) {
+    let r = displayRect(k)
+    changeDisplayFrame(k) { f in
+      f["x"] = .real(r.minX.rounded())
+      f["y"] = .real(r.minY.rounded())
+      f["width"] = .real(r.width)
+      f["height"] = .real(r.height)
+      f["hidden"] = .bool(true)
+    }
+  }
+
+  /// The Cards of a scope whose output frame shows: once their code has shown
+  /// something (display SDK), until the frame is closed.
+  func framedCards(in scope: [String]) -> [CardKey] {
+    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter {
+      (displays[$0] != nil || displayFrame($0) != nil) && displayFrame($0)?["hidden"]?.bool != true
+    }
+  }
+
+  /// A frame without a place of its own is drawn beside its Card, so it goes
+  /// where the Card goes and is not moved itself.
+  func frameFollowsCard(_ k: CardKey, moving cards: Set<CardKey>) -> Bool {
+    cards.contains(k) && displayFrame(k)?["x"]?.double == nil
+  }
+
+  /// What a marquee (world units) touches in a scope.
+  func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>) {
+    let keys = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }
+    return (Set(keys.filter { r.intersects(CGRect(origin: position($0), size: geometry($0).size)) }),
+            Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }),
+            Set(framedCards(in: scope).filter { r.intersects(displayRect($0)) }))
+  }
+
+  /// Moves a selection (world units) as one edit: one save, one undo. Layout
+  /// only: no computation is re-resolved for a move. Cards keep to the grid
+  /// (`snap`); notes and frames land on whole numbers, as when dragged alone.
+  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by d: CGSize, snap: Double?) {
     edit { s in
-      s.updateLayout(of: Array(path(k).dropLast())) { l in
-        var displays = l["displays"] ?? .object([])
-        var d = displays[lk] ?? .object([])
-        fn(&d)
-        displays[lk] = d
-        l["displays"] = displays
+      // Frames first: where one stands is worked out from its Card.
+      for k in frames where s.instance(k) != nil && !s.frameFollowsCard(k, moving: cards) {
+        let r = s.displayRect(k)
+        s.changeDisplayFrame(k) { f in
+          f["x"] = .real((r.minX + d.width).rounded())
+          f["y"] = .real((r.minY + d.height).rounded())
+          f["width"] = .real(r.width)
+          f["height"] = .real(r.height)
+        }
       }
+      for k in cards {
+        let p = s.position(k)
+        var x = p.x + d.width, y = p.y + d.height
+        if let snap {
+          x = (x / snap).rounded() * snap
+          y = (y / snap).rounded() * snap
+        }
+        s.setPosition(k, CGPoint(x: x, y: y))
+      }
+      for id in notes {
+        s.changeNote(id) { n in
+          n["x"] = .real(((n["x"]?.double ?? 0) + d.width).rounded())
+          n["y"] = .real(((n["y"]?.double ?? 0) + d.height).rounded())
+        }
+      }
+    }
+  }
+
+  /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
+  /// Card stays (the frame's own 枠を削除); a deleted Card takes its frame with it.
+  func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
+    edit { s in
+      s.removeCards(cards, in: scope)
+      for k in frames where !cards.contains(k) && s.instance(k) != nil { s.hideDisplayFrame(k) }
+      for id in notes { s.dropNote(id) }
     }
   }
 
