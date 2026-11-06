@@ -28,6 +28,8 @@ await import("./wireDemos")
 
 await import("./modelMenu")
 
+await import("./chatFollow")
+
 await import("./projectActions")
 
 await import("./thumbnails")
