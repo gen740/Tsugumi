@@ -7,6 +7,9 @@
 #
 #   macOS/build-app.sh            # dev build (optimized; "Tsugumi Dev")
 #   macOS/build-app.sh --release  # the build the release workflow publishes
+#   TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh
+#                                 # dev build signed with a certificate of yours
+#                                 # (see "Signing" below)
 #
 # The two are different apps to macOS (AppChannel.swift): the dev build has
 # the bundle id app.tsugumi.Tsugumi.dev, keeps its VM and store in
@@ -145,16 +148,26 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Ad-hoc signature (no Developer ID, no notarization), with the
-# virtualization entitlement the shared VM needs. Nested code first, each by
-# itself (not --deep, which signs whatever it finds the same way).
+# Signing, with the virtualization entitlement the shared VM needs. Ad-hoc by
+# default (no Developer ID, no notarization). A dev build can take a certificate
+# of the machine's keychain in TSUGUMI_CODESIGN_IDENTITY (a name or a SHA-1,
+# as codesign takes it): the keychain then remembers the app by that certificate
+# and its bundle id, not by the hash of one build, so it stops asking again
+# after every build. The release build ignores it: the workflow's artifact is
+# ad-hoc whatever the environment holds.
+# Nested code first, each by itself (not --deep, which signs whatever it finds
+# the same way).
+identity=-
+if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then
+  identity="$TSUGUMI_CODESIGN_IDENTITY"
+fi
 # Rpaths of the machine it was built on (where the renderer was built) are not
 # the app's: it finds its libraries in its own Frameworks.
 otool -l "$app/Contents/MacOS/Tsugumi" | awk '/LC_RPATH/ {getline; getline; print $2}' | grep '^/' | while read -r p; do
   install_name_tool -delete_rpath "$p" "$app/Contents/MacOS/Tsugumi"
 done
-for lib in "$app/Contents/Frameworks/"*.dylib; do codesign --force --sign - "$lib" >/dev/null; done
-codesign --force --sign - --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
+for lib in "$app/Contents/Frameworks/"*.dylib; do codesign --force --sign "$identity" "$lib" >/dev/null; done
+codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
 touch "$app"

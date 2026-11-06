@@ -1124,6 +1124,7 @@ EN = {
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。": "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.",
 "使う接続先": "Connection in Use",
 "使用中": "In use",
+"設定の「API」で接続を設定してください": "Set up a connection in Settings > API",
 }
 
 

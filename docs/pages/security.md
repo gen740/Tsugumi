@@ -183,7 +183,8 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
   - 項目のアクセスリストは、保存したプログラムだけを信頼します。アプリで保存したキーをほかのプログラム（`security` コマンドを含む）が読もうとすると、macOS が利用者に確認します。ソースからビルドしたアプリは ad-hoc 署名のため、ビルドし直すと最初の読み出しで一度確認が出ます。
   - Web UI のサーバーは `/usr/bin/security` を通して読み書きします。Web UI で保存したキーは `security` を信頼するため、この利用者として動くプログラムなら確認なしに `security find-generic-password` で読めます。両方を使う場合は、アプリの設定からキーを登録することを勧めます。macOS 以外（または Keychain に保存できなかったとき）は、Web UI のデータフォルダのファイル（0600）に保存します。
   - データ保護キーチェーン（`kSecUseDataProtectionKeychain`）は使いません。これには provisioning profile でしか与えられない entitlement が必要で、ad-hoc 署名のビルドでは使えないためです（`errSecMissingEntitlement`）。
-- API キーは **モデルへのリクエスト送信時にその都度 Keychain から読み出し、HTTPS のリクエストヘッダー（`x-api-key` / `Authorization: Bearer`）にのみ載せます**。
+- API キーは **モデルへのリクエスト送信時に Keychain から読み出し、HTTPS のリクエストヘッダー（`x-api-key` / `Authorization: Bearer`）にのみ載せます**。Web UI のサーバーは読み出したキーをそのプロセスのメモリに保ち（項目の属性が変わると読み直します）、拒否された読み出しも覚えるので、`security` の確認が同じキーで何度も出ることはありません。
+- チャットのモデルメニューは、開くたびに設定済みの接続のモデル一覧を取得し直します。利用者が頼んだ読み出しではないので、アプリは確認の画面を出さずに読めるときだけ読み（`Keychain.loadWithoutAsking`）、読めない接続は保存済みの一覧のまま次の機会を待ちます（チャットの実行や設定の「モデル一覧を取得」では、これまでどおり確認が出ます）。アクセストークンの更新が必要なときだけは、更新後のリフレッシュトークンを必ず保存するため、確認なしで読めたあとの保存を止めません。Web UI のサーバーでは `security` に確認なしで読む手段がないため、まだ読んでいないキーについて、サーバーの起動ごとに最大 1 回確認が出ることがあります。
 - API キーを `tsugumid`・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも一切記録しません。
 - HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
 - 設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。
@@ -247,4 +248,4 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - `network: true` と `hostFolders`（特に `write: true`）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の `_card.json` に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。
 - `sandbox: false` の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと `.tsugumi` は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。
 - 開発・テスト用に Mac ホスト上で直接 `tsugumid` を動かすモード（`bubblewrap` なし）ではサンドボックス隔離が行われません（通常のアプリ実行経路では使用されません）。
-- リリース版もソースからビルドしたアプリも ad-hoc 署名であり、Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（`.github/workflows/release.yml`）、自動更新は GitHub の最新リリースの `Tsugumi.zip` を、同じリリースの `Tsugumi.zip.sha256`・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。
+- リリース版もソースからビルドしたアプリも、既定では ad-hoc 署名です（開発版は、環境変数 `TSUGUMI_CODESIGN_IDENTITY` で、作った人自身の証明書で署名することもできます。[開発資料](development.md)。リリース版は常に ad-hoc です）。Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（`.github/workflows/release.yml`）、自動更新は GitHub の最新リリースの `Tsugumi.zip` を、同じリリースの `Tsugumi.zip.sha256`・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。
