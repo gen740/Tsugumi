@@ -949,7 +949,7 @@ std::string version_receipt(const std::string& op_id, const std::string& commit,
 }
 }  // namespace
 
-void Service::note_run_end(const RunStatusData& s) {
+void Service::note_run_end(const RunStatusData& s, const std::string& summary) {
   if (!s.commit || !s.run_id || !s.terminal()) return;
   VersionRunNote n;
   n.run_id = *s.run_id;
@@ -958,6 +958,7 @@ void Service::note_run_end(const RunStatusData& s) {
   int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
+  n.summary = summary;
   try {
     versions_->note_run(*s.commit, n);
   } catch (const std::exception& e) {
@@ -1063,7 +1064,8 @@ void Service::version_graph(RequestIn& req) {
   for (const auto& c : g.commits) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
     for (const auto& n : c.runs)
-      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds));
+      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds,
+                                         n.summary.empty() ? 0 : b.CreateString(n.summary)));
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
                                              strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));

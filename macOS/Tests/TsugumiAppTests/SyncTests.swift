@@ -396,6 +396,39 @@ import Testing
     #expect(s.displayFrame(key(["renamed-2"])) == nil)
   }
 
+  /// A deleted Card takes its files with it: saving the removal works, for a
+  /// Card with files on disk and for one whose files were just written.
+  @Test func deletingACardWithFilesSaves() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let code = s.addCard(template: .python, in: [], at: .zero, name: "code")
+    await s.save()
+    #expect(!s.dirty, "\(s.saveError ?? "")")
+    let folder = dir.appendingPathComponent("definitions/code")
+    #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("_outputs.fbs").path))
+
+    s.deleteCards([code], in: [])
+    await s.save()
+    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(!FileManager.default.fileExists(atPath: folder.path))
+
+    // Undone, it is back with its files; deleted with an unsaved edit, it goes too.
+    s.undo()
+    await s.save()
+    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(s.instance(code) != nil)
+    s.putSource("definitions/code/extra.txt", "unsaved")
+    s.deleteCards([code], in: [])
+    await s.save()
+    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(!FileManager.default.fileExists(atPath: folder.path))
+  }
+
   /// A Draft's wires make its ports and take them away, and what is written on
   /// its Card is kept, under a new name too.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {

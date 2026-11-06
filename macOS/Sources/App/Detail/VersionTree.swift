@@ -61,8 +61,9 @@ struct VersionLayout {
 }
 
 /// The project's versions as a tree: each commit with its branches, tags,
-/// runs (from its note) and changed Cards. A version can be named, and the
-/// project can start again from any of them (a change there opens a branch).
+/// runs (from its note; hovering shows what ran) and changed Cards. A version
+/// can be named, and the project can start again from any of them (a change
+/// there opens a branch).
 struct VersionTreeView: View {
   let session: ProjectSession
   @State private var selected: String?
@@ -156,17 +157,22 @@ struct VersionTreeView: View {
     let layout = VersionLayout(commits.map { (id: $0.id, parents: $0.parentIds) })
     let graphWidth = CGFloat(layout.lanes) * Self.laneWidth + 12
     return ScrollView {
-      HStack(alignment: .top, spacing: 0) {
-        graph(layout, commits, head: g.head).frame(width: graphWidth, height: CGFloat(commits.count) * Self.rowHeight)
+      // A row runs under its node, so the hover and the click work on either.
+      ZStack(alignment: .topLeading) {
         LazyVStack(spacing: 0) {
           ForEach(Array(commits.enumerated()), id: \.element.id) { _, c in
             row(c, head: c.id == g.head)
+              .padding(.leading, graphWidth)
               .frame(height: Self.rowHeight)
               .contentShape(Rectangle())
               .background(selected == c.id ? Color.accentColor.opacity(0.14) : .clear)
               .onTapGesture { selected = c.id }
+              .help(Self.runsHelp(c.runList))
           }
         }
+        graph(layout, commits, head: g.head)
+          .frame(width: graphWidth, height: CGFloat(commits.count) * Self.rowHeight)
+          .allowsHitTesting(false)
       }
     }
   }
@@ -234,6 +240,20 @@ struct VersionTreeView: View {
     }
   }
 
+  /// What a version's runs did, for the hover: newest first, each with its
+  /// result and the summary its note gives.
+  static func runsHelp(_ runs: [Tsugumi_RPC_VersionRunT]) -> String {
+    if runs.isEmpty { return String(localized: "この版での実行はありません。") }
+    let shown = 5
+    var lines = runs.suffix(shown).reversed().map { r in
+      [stateLabel(r.state), secondsText(r.seconds), r.summary ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+    if runs.count > shown { lines.append(String(localized: "ほか \(runs.count - shown) 回")) }
+    return lines.joined(separator: "\n")
+  }
+
+  static func secondsText(_ seconds: Double) -> String { String(format: "%.1f 秒", seconds) }
+
   private func row(_ c: Tsugumi_RPC_VersionCommitT, head: Bool) -> some View {
     VStack(alignment: .leading, spacing: 3) {
       HStack(spacing: 6) {
@@ -292,11 +312,14 @@ struct VersionTreeView: View {
               HStack {
                 Circle().fill(Self.stateColor(r.state)).frame(width: 8, height: 8)
                 Text(Self.stateLabel(r.state))
-                Text(String(format: "%.1f 秒", r.seconds)).foregroundStyle(.secondary)
+                Text(Self.secondsText(r.seconds)).foregroundStyle(.secondary)
                 Spacer()
                 Text(r.ended ?? "").font(.caption2.monospaced()).foregroundStyle(.secondary)
               }
               .font(.caption)
+              if let summary = r.summary, !summary.isEmpty {
+                Text(summary).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+              }
             }
           } else {
             Text("この版での実行はありません。").font(.caption).foregroundStyle(.secondary)
