@@ -26,3 +26,5 @@ await import("./wires")
 await import("./modelMenu")
 
 await import("./projectActions")
+
+await import("./thumbnails")
