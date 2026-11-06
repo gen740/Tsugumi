@@ -219,6 +219,32 @@ import Testing
   }
 }
 
+/// The paths the web finds for the same wires (web/tests/wireDemos.ts writes the file):
+/// real layouts of the demos, so the two routers cannot drift apart.
+@Test func wiresRouteAsOnTheWeb() throws {
+  struct Point: Decodable { let x, y: CGFloat }
+  struct Rect: Decodable { let x, y, width, height: CGFloat }
+  struct Ends: Decodable { let a, b: Point }
+  struct Case: Decodable {
+    let name, flow: String
+    let obstacles: [Rect]
+    let wires: [Ends]
+    let paths: [[Point]?]
+  }
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/wire-routes.json")))
+  #expect(!cases.isEmpty)
+  for c in cases {
+    var router = WireRouter(flow: c.flow == "leftToRight" ? .leftToRight : .topToBottom,
+                            obstacles: c.obstacles.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
+    let plans = router.plan(c.wires.map { (a: CGPoint(x: $0.a.x, y: $0.a.y), b: CGPoint(x: $0.b.x, y: $0.b.y)) })
+    for (i, plan) in plans.enumerated() {
+      let expected = c.paths[i]?.map { CGPoint(x: $0.x, y: $0.y) }
+      #expect(plan == expected, "\(c.name), wire \(i)")
+    }
+  }
+}
+
 @Test func editedOutputsAreReadFromTheText() {
   let ok = OutputCatalog.parse("""
     namespace t; // ports
