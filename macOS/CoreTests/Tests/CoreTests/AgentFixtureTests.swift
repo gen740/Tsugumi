@@ -256,6 +256,32 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// Results too large for the context over the Responses API, where the
+  /// refusal comes in the stream (ContextLimitTests has the rest; here for the
+  /// Keychain, which the tests of this suite use one at a time).
+  @Test func resultsTooLargeOverTheResponsesAPI() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--context-limit", "6000"])
+    defer { h.stop() }
+    let account = "Tsugumi test OpenAI \(UUID().uuidString)"
+    try Keychain.save("fixture-key", account: account)
+    defer { Keychain.delete(account: account) }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    var config = ProviderConfig(name: account, baseURL: URL(string: "http://127.0.0.1:\(h.fixturePort)")!, model: "fixture",
+                                auth: .apiKey, api: .openAIResponses)
+    config.contextLimit = 6000
+    let big = h.dir.appendingPathComponent("big.txt")
+    try Data(String(repeating: "x", count: 20_000).utf8).write(to: big)
+    let agent = try makeAgent(h, client, provider: config, references: ["big.txt": big])
+    let log = EventLog()
+    await agent.send("read big.txt 10 times", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
+    #expect(log.text.contains("Read 10 results, 10 cut."), "\(log.all)")
+    await client.close()
+  }
+
   /// Sign in with ChatGPT against the fixture's issuer, then the same
   /// conversation on the ChatGPT plan: the browser is played by following the
   /// authorize redirect to the loopback callback; the ID token is verified

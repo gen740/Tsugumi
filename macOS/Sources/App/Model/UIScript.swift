@@ -37,6 +37,8 @@ import TsugumiRPC
 ///   closewindow                     (as the window's close button)
 ///   offlineedit <card> <param> <v>  (every open project loses its environment and gets an edit; then the app quits, with them unsaved)
 ///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
+///   modelmenu [capture name]        (lists the chat's model menu; with a name, a picture of the window)
+///   modelpick <item title>          (presses that item of the chat's model menu)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -55,6 +57,8 @@ final class UIScript {
   /// The main window steps act on (`window <n>`; the first one there is until then).
   @ObservationIgnored private weak var chosen: Workspace?
   var workspace: Workspace? { chosen ?? AppModel.shared.mainWindows.first }
+  /// The model menu of the open chat (`modelmenu`, `modelpick`).
+  @ObservationIgnored weak var modelMenu: ModelMenu?
   /// Card settings windows that are open (scripts edit their working copies).
   @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
   @ObservationIgnored private var log: FileHandle?
@@ -399,6 +403,23 @@ final class UIScript {
         }
       case "windows":
         for win in NSApp.windows where win.isVisible { say("window \(win.windowNumber) \(win.identifier?.rawValue ?? "-") \(win.title)") }
+      case "modelmenu":
+        guard let m = modelMenu else { say("modelmenu: no chat open"); break }
+        for item in m.menu.items where !item.isSeparatorItem {
+          say("modelmenu \(item.state == .on ? "[x]" : "[ ]") \(item.isEnabled ? "" : "(off) ")\(item.title)")
+        }
+        if w.count > 1 {
+          // The window with its label, without activating the app as `capture` does.
+          say("capture \(w[1]) \(mainWindow?.windowNumber ?? -1)")
+          try? await Task.sleep(for: .milliseconds(1500))
+        }
+      case "modelpick":
+        let title = w.dropFirst().joined(separator: " ")
+        if let at = modelMenu?.menu.items.firstIndex(where: { $0.title == title }) {
+          modelMenu?.menu.performActionForItem(at: at)
+        } else {
+          say("modelpick: no item \(title)")
+        }
       case "capture":
         let windows = NSApp.windows.filter { $0.isVisible && $0.frame.height > 120 }
         let wanted = w.dropFirst(2).joined(separator: " ")

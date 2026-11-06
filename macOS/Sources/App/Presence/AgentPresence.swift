@@ -36,9 +36,11 @@ final class AgentPresence {
   struct Scheduled: Equatable {
     let beat: Beat
     let start: Date
-    let length: Double
+    var length: Double
     /// The plain line for the bubble (without the thought summary).
     let line: String
+    /// The file a compose scene shows (`codes`); nil: none, or it has been cut.
+    var code: Int?
     var end: Date { start.addingTimeInterval(length) }
   }
 
@@ -51,6 +53,15 @@ final class AgentPresence {
     static let thread = 1.5
     static let threadStart = 0.35, threadLength = 1.1
     static let run = 1.4
+    /// A file as it is written is played no faster than this (characters a
+    /// second), however fast it arrives, and each stays long enough to see;
+    /// a long one speeds up so that the bird does not stay far behind.
+    static let codeRate = 150.0
+    static let codeShortest = 2.0, codeLongest = 5.0
+    /// Its last lines stay this long before the next scene.
+    static let codeHold = 0.8
+    /// Files that would start further ahead than this are not shown.
+    static let codeBacklog = 20.0
     /// How long the colour of a written Card takes to settle and fade.
     static let settle = 4.0
     /// Beats that would start further ahead than this are dropped if they
@@ -87,15 +98,22 @@ final class AgentPresence {
       }
     }
   }
-  /// A file as the model writes it, before any save: only what has arrived.
+  /// A file as the model writes it: only what has arrived.
   struct LiveCode: Equatable {
     let card: CardKey
     let file: String
     var text: String
+    /// The save has gone through while it still plays.
+    var saved = false
   }
 
-  /// What is being written now (shown above its Card); nil when nothing is.
-  private(set) var liveCode: LiveCode?
+  /// The files of the compose scenes (apart from `beats`: they change many
+  /// times a second, and only the panel looks at them).
+  private var codes: [Int: LiveCode] = [:]
+  private var nextCode = 0
+  /// The file arriving now, by its path; its scene's code (nil: not shown).
+  private var livePath: String?
+  private var liveID: Int?
   private var liveScanner = SourceWritingScanner()
   private var liveIndex: Int?
   private var livePublished = Date.distantPast
@@ -124,7 +142,7 @@ final class AgentPresence {
   func turnEnded(_ outcome: Outcome = .done, now: Date = Date()) {
     self.outcome = outcome
     working = false
-    toolInputEnded()
+    toolInputEnded(ok: outcome == .done, now: now)
     endedAt = max(now, beats.last?.end ?? now)
     sweep()
   }
@@ -143,34 +161,84 @@ final class AgentPresence {
     activity = (text, now)
   }
 
-  /// A piece of a tool call's arguments as the model writes them. Pieces
-  /// come far faster than a screen shows them, so the view changes at most
-  /// 30 times a second (a new file and its end at once).
+  /// A piece of a tool call's arguments as the model writes them. Each file
+  /// is a scene of its own, played at `Timing.codeRate`: arriving fast does not
+  /// make it go by in a moment. Pieces come far faster than a screen shows them,
+  /// so the view changes at most 30 times a second (a new file and its end at once).
   func toolInput(index: Int, tool: String, delta: String, now: Date = Date()) {
     guard working, PresenceEvents.writesSources(tool: tool) else { return }
     if liveIndex != index {
+      arrived(now: now)
+      livePath = nil
       liveIndex = index
       liveScanner = SourceWritingScanner()
     }
     liveScanner.feed(delta)
     guard let w = liveScanner.current, let path = w.path, let (id, file) = PresenceEvents.fileOfCard(path) else {
-      if liveScanner.current != nil { liveCode = nil }
+      if liveScanner.current != nil { arrived(now: now) }
       return
     }
-    let card = key([id])
-    let isNew = liveCode?.card != card || liveCode?.file != file
+    let isNew = livePath != path
     guard isNew || w.done || now.timeIntervalSince(livePublished) >= 1.0 / 30 else { return }
     livePublished = now
-    liveCode = LiveCode(card: card, file: file, text: w.text)
-    if isNew, beats.last?.beat != .compose(card) { enqueue(.compose(card), now: now) }
+    if isNew {
+      arrived(now: now)
+      livePath = path
+      startCode(LiveCode(card: key([id]), file: file, text: w.text), now: now)
+    } else if let liveID {
+      codes[liveID]?.text = w.text
+      // It goes on arriving: its scene goes on.
+      if let i = beats.indices.last, beats[i].code == liveID, beats[i].end < now.addingTimeInterval(0.5) {
+        beats[i].length = now.timeIntervalSince(beats[i].start) + 1
+      }
+    }
+    if w.done { arrived(now: now) }
   }
 
-  /// The call ended, was asked again or was given up: what it was writing is
-  /// not on the screen any more (a save that went through is written out by
-  /// its own scenes).
-  func toolInputEnded() {
-    liveCode = nil
+  private func startCode(_ code: LiveCode, now: Date) {
+    let before = beats.count
+    enqueue(.compose(code.card), now: now)
+    guard beats.count > before, let i = beats.indices.last else { return }  // too far behind: not shown
+    let id = nextCode
+    nextCode += 1
+    codes[id] = code
+    beats[i].code = id
+    liveID = id
+    codes = codes.filter { c in beats.contains { $0.code == c.key } }
+  }
+
+  /// The file has all arrived: its scene plays it out and holds its end.
+  private func arrived(now: Date) {
+    defer { liveID = nil }
+    guard let liveID, let text = codes[liveID]?.text, let i = beats.indices.last, beats[i].code == liveID else { return }
+    let played = min(Timing.codeLongest, max(Timing.codeShortest, Double(text.unicodeScalars.count) / Timing.codeRate))
+    beats[i].length = max(now.timeIntervalSince(beats[i].start), played) + Timing.codeHold
+  }
+
+  /// The call ended, was asked again or was given up. What a call that went
+  /// through wrote plays on; `ok` false: it is not on the screen any more (a
+  /// save that went through is written out by its own scenes).
+  func toolInputEnded(ok: Bool = true, now: Date = Date()) {
+    arrived(now: now)
+    livePath = nil
     liveIndex = nil
+    guard !ok else { return }
+    beats.removeAll { $0.code != nil && $0.start > now }
+    if let i = beats.lastIndex(where: { $0.code != nil && $0.start <= now && $0.end > now }) {
+      beats[i].length = now.timeIntervalSince(beats[i].start)
+    }
+    codes.removeAll()
+  }
+
+  /// The file to show at `now`: as far as it has been played, never past what
+  /// has arrived. nil when no file's scene is playing.
+  func liveCode(at now: Date) -> LiveCode? {
+    guard let cur = current(at: now)?.beat, cur.end > now, let id = cur.code, var code = codes[id] else { return nil }
+    let all = code.text.unicodeScalars
+    // A long file speeds up to end within codeLongest.
+    let rate = max(Timing.codeRate, Double(all.count) / Timing.codeLongest)
+    code.text = String(String.UnicodeScalarView(all.prefix(Int(now.timeIntervalSince(cur.start) * rate))))
+    return code
   }
 
   func enqueue(_ beat: Beat, now: Date = Date()) {
@@ -180,7 +248,9 @@ final class AgentPresence {
     case .visit(let k), .compose(let k):
       // Already there, or too far behind to be worth showing.
       if case .visit = beat, let last = beats.last, last.beat.card == k, last.end > now.addingTimeInterval(-0.5) { return }
-      if start.timeIntervalSince(now) > Timing.maxBacklog { return }
+      if case .compose = beat {
+        if start.timeIntervalSince(now) > Timing.codeBacklog { return }
+      } else if start.timeIntervalSince(now) > Timing.maxBacklog { return }
     default: break
     }
     beats.append(Scheduled(beat: beat, start: start, length: length(of: beat), line: line(for: beat)))
@@ -192,6 +262,7 @@ final class AgentPresence {
   /// A save by the Agent: the Cards it wrote (in flow order) and the wires
   /// to thread after them.
   func saved(written: [(CardKey, reveal: Bool)], wires: [Wire], now: Date = Date()) {
+    for (id, code) in codes where written.contains(where: { $0.0 == code.card }) { codes[id]?.saved = true }
     for (k, reveal) in written { enqueue(.write(k, reveal: reveal), now: now) }
     for w in wires { enqueue(.thread(w), now: now) }
   }

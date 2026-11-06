@@ -490,7 +490,7 @@ final class GuideController {
       if let last = items.last, last.role == "assistant" { items.removeLast() }
     case .retrying(let s):
       status = String(localized: "再試行中: \(s)")
-    case .compacted, .helper:
+    case .compacting, .compacted, .helper:
       break
     case .finished:
       ended()

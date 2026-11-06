@@ -205,6 +205,7 @@ in
 <h3 id="モデルとの接続">モデルとの接続</h3>
 <ul>
 <li>Anthropic Messages API と OpenAI Responses API に対応し、ストリーミングで応答します。OpenAI は API キーのほか、利用者の ChatGPT プラン（Sign in with ChatGPT、オープンソースのツール向けの手順）でも使えます（<a href="security.html#chatgpt-プランsign-in-with-chatgpt">セキュリティ</a>）。</li>
+<li>チャットのモデルメニューで effort と Fast mode を選べます。モデルごとに使える値は <code>agent/Shared/agent.json</code> の表にあり、各社の文書で確かめたモデルだけが選択肢に出ます。使えないものは灰色の行で理由を示し、リクエストにも載せません。Fast mode は料金の倍率を項目に書き、Anthropic は Claude Opus 5.5、OpenAI は API キーの接続で料金表にあるモデルだけで選べます。ChatGPT プランでは選べません。何も選ばなければ、これらの項目を送らず、モデルの既定で動きます。選んだ effort は対応するモデルすべてに、Fast mode は選んだモデルだけに効きます。変えたときは次のリクエストから効き、途中で変えるとプロンプトキャッシュは効かなくなります。Agent とその helper のリクエストに使い、ガイド、思考の過程、版の要約、文脈の圧縮には使いません。</li>
 <li>チャットのモデルメニューは、開くたびに設定済みの全接続のモデル一覧を取得し直します。保存済みの一覧をすぐに表示し、新しい一覧は届いた接続から反映します。失敗した接続や遅い接続があっても、保存済みの一覧でそのまま選べます。一覧の保存先は設定の「API」と同じです。</li>
 </ul>
 <h3 id="tool-と-rpc">tool と RPC</h3>

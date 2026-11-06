@@ -20,6 +20,9 @@ struct ChatPanel: View {
   @State private var model = AgentSettings.current().model
   /// The connection chosen in Settings > API: the model menu follows it when it changes.
   @AppStorage("agent.provider") private var providerSetting = "anthropic"
+  /// The model menu's effort and Fast mode (AgentSettings.chat() reads them).
+  @AppStorage(AgentSettings.effortKey) private var effortSetting = ""
+  @AppStorage(AgentSettings.fastModelKey) private var fastModelSetting = ""
   /// The connections set up (keys stored, ChatGPT signed in) with their models.
   @State private var connections: [Connection] = []
   struct Connection: Identifiable {
@@ -208,6 +211,8 @@ struct ChatPanel: View {
           Spacer()
           if chat.usageLimited {
             Button("Manage usage") { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }.controlSize(.small).buttonStyle(.borderedProminent)
+          } else if chat.contextFull {
+            Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
           if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
@@ -364,7 +369,7 @@ struct ChatPanel: View {
           // The model, as quiet text under the input (a menu, not a pop-up box).
           Button { modelMenu.show() } label: {
             HStack(spacing: 3) {
-              Text(modelName(model)).lineLimit(1)
+              Text(modelLabel).lineLimit(1)
               Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.caption)
@@ -402,11 +407,22 @@ struct ChatPanel: View {
     .task {
       modelMenu.onOpen = { refreshModels() }
       modelMenu.onChoose = { provider, m in choose(provider, m) }
+      UIScript.shared.modelMenu = modelMenu
+      modelMenu.onEffort = { level in
+        UserDefaults.standard.set(level, forKey: AgentSettings.effortKey)
+        showChoices()
+      }
+      modelMenu.onFast = { on in
+        UserDefaults.standard.set(on ? AgentSettings.current().model : "", forKey: AgentSettings.fastModelKey)
+        showChoices()
+      }
       await loadModels()
     }
     .onDisappear {
       modelMenu.onOpen = nil
       modelMenu.onChoose = nil
+      modelMenu.onEffort = nil
+      modelMenu.onFast = nil
     }
     // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
     .onChange(of: providerSetting) { Task { await loadModels() } }
@@ -529,6 +545,21 @@ struct ChatPanel: View {
     modelNames = names
     connections = out
     modelMenu.setContents(connections: out, provider: providerSetting, model: current, names: names)
+    showChoices()
+  }
+
+  /// What the requests carry, in the menu.
+  private func showChoices() {
+    let c = AgentSettings.chat()
+    modelMenu.setChoices(effort: c.effort, fast: c.fast)
+  }
+
+  /// The model with what its requests carry beyond the defaults.
+  private var modelLabel: String {
+    var c = AgentSettings.config(for: providerSetting)
+    c.model = model
+    c = c.choosing(effort: effortSetting, fastModel: fastModelSetting)
+    return ([modelName(model), c.effort, c.fast ? "Fast" : nil] as [String?]).compactMap { $0 }.joined(separator: " · ")
   }
 
   /// The menu opened: the models of every connection are listed again. It
@@ -562,6 +593,7 @@ struct ChatPanel: View {
     providerSetting = provider
     model = m
     modelMenu.setCurrent(provider: provider, model: m)
+    showChoices()
     GuideController.shared.refreshAvailability()
   }
 

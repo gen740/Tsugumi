@@ -233,6 +233,10 @@ export type AgentEvent =
   | { kind: 'text'; text: string }
   | { kind: 'toolStarted'; id: string; name: string; arguments: string }
   | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
+  /** A piece of a tool call's arguments as the model writes them, for the calls that carry whole files. */
+  | { kind: 'toolInput'; index: number; name: string; delta: string }
+  /** Earlier turns are being summarized: the next reply waits for it. */
+  | { kind: 'compacting' }
   | { kind: 'compacted' }
   | { kind: 'retrying'; message: string }
   /** The text streamed so far in this reply is dropped: it is asked again. */
@@ -266,6 +270,15 @@ export interface ProviderConfig {
   contextLimit: number
   /** The user's setting (Settings > API): the model may search the web. */
   webSearch?: boolean
+  /** The chat's choices in the model menu, already checked against the model
+   *  (modelChoices). None for the requests that are not the Agent's work. */
+  effort?: string
+  fast?: boolean
+}
+
+/** Room for a reply: the deep levels spend much of it on thinking. */
+function outputLimit(c: ProviderConfig): number {
+  return c.effort === 'xhigh' || c.effort === 'max' ? Math.max(c.maxTokens, AGENT.modelOptions.largeOutputTokens) : c.maxTokens
 }
 
 /** The provider runs the searches itself: the local fixture has none. */
@@ -373,9 +386,11 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
     if (at >= 0) last.content = last.content.map((b: unknown, i: number) => (i === at ? { ...(b as object), cache_control: cache } : b))
   }
   const body: Record<string, unknown> = {
-    model: c.model, max_tokens: c.maxTokens, stream: true,
+    model: c.model, max_tokens: outputLimit(c), stream: true,
     system: [{ type: 'text', text: system, cache_control: cache }], messages: wired,
   }
+  if (c.effort) body.output_config = { effort: c.effort }
+  if (c.fast) body.speed = 'fast'
   if (tools.length) {
     body.tools = tools.map((t, i) => (t.server ? WEB_SEARCH_WIRE : {
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
@@ -580,7 +595,9 @@ export function responsesBody(c: ProviderConfig, system: string, messages: ChatM
   const body: Record<string, unknown> = {
     model: c.model, instructions: system, input: responsesInput(messages, plan ? TOOL_NAMESPACE : undefined), stream: true, store: false,
   }
-  if (!plan) body.max_output_tokens = c.maxTokens
+  if (!plan) body.max_output_tokens = outputLimit(c)
+  if (c.effort) body.reasoning = { effort: c.effort }
+  if (c.fast) body.service_tier = 'fast'
   const own = tools.filter((t) => !t.server)
   const hosted: unknown[] = own.length === tools.length ? [] : [{ type: AGENT.webSearch.openAIType }]
   if (tools.length) {
@@ -906,6 +923,38 @@ export function compactionBoundary(messages: ChatMessage[], keep = 4): number {
   return cut
 }
 
+/** What ends a turn when the conversation cannot be made to fit the model's
+ *  context (the app says what to do: a new conversation). */
+export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's context"
+
+/** A provider's refusal of a request over the model's context: nothing of it
+ *  was answered, and asking the same again gets the same answer. */
+export function isContextOverflow(text: string): boolean {
+  const t = text.toLowerCase()
+  return ['prompt is too long', 'input is too long', 'exceed context limit', 'request_too_large', 'context_length_exceeded',
+    'exceeds the context window', 'maximum context length'].some((m) => t.includes(m))
+}
+
+const overflowed = (e: unknown) => isContextOverflow(String((e as Error)?.message ?? e))
+
+/** A tool's result cut to make room in the context (the whole result stays in
+ *  its record, and in what the chat shows of it). */
+const CONTEXT_CUT_NOTE = "\n[cut to fit the model's context: read it again with a narrower request]"
+
+/** The tool results among these messages, cut to the same length so that
+ *  together they take at most `room` characters. */
+export function fitToolResults(messages: ChatMessage[], room: number): ChatMessage[] {
+  const note = CONTEXT_CUT_NOTE.length
+  const sizes = messages.flatMap((m) => m.content.flatMap((b) => (b.type === 'tool_result' ? [b.content.length] : [])))
+  let cap = RESULT_LIMIT
+  while (cap > 200 && sizes.reduce((sum, n) => sum + Math.min(n, cap + note), 0) > room) cap = Math.floor(cap / 2)
+  return messages.map((m) => ({
+    ...m,
+    content: m.content.map((b) => (b.type === 'tool_result' && b.content.length > cap + note
+      ? { ...b, content: b.content.slice(0, cap) + CONTEXT_CUT_NOTE } : b)),
+  }))
+}
+
 export class Agent {
   conversation: Conversation
   /** Model replies with tool calls in one turn before it stops and asks to
@@ -1137,13 +1186,34 @@ export class Agent {
       this.closeDanglingToolUses()
       let cutReplies = 0
       let done = false
+      let refusals = 0
       for (let i = 0; i < this.maxSteps; i++) {
         if (signal.aborted) throw new Cancelled()
         await this.compactIfNeeded(events, signal)
-        let { blocks, stop, providerContent } = await this.modelTurn(events, signal)
-        if (stop === 'max_tokens') {
-          // The reply was cut at the output limit, maybe inside a tool call:
-          // nothing of it is executed; the model is asked for smaller steps.
+        let reply: Awaited<ReturnType<Agent['modelTurn']>>
+        try {
+          reply = await this.modelTurn(events, signal)
+          refusals = 0
+        } catch (e) {
+          if (signal.aborted || !overflowed(e)) throw e
+          // Refused over the context, so it reported no usage to compact by, and
+          // the same request would be refused for ever: it is made smaller first.
+          if (++refusals > 3) {
+            events({ kind: 'error', message: CONTEXT_FULL_TEXT })
+            return
+          }
+          try {
+            await this.compactIfNeeded(events, signal, true, this.provider.contextLimit >> refusals)
+          } catch (e2) {
+            if (signal.aborted || !overflowed(e2)) throw e2 // the summary too: with less room next
+          }
+          continue
+        }
+        let { blocks, stop, providerContent } = reply
+        if (stop === 'max_tokens' || stop === 'model_context_window_exceeded') {
+          // The reply was cut at the output limit or the context window, maybe
+          // inside a tool call: nothing of it is executed; the model is asked
+          // for smaller steps (and over the threshold, the context is compacted).
           if (++cutReplies > 3) throw new Error("the model's replies were cut at the output limit three times")
           blocks = blocks.filter((b) => b.type !== 'tool_use')
           if (!blocks.length) blocks = [{ type: 'text', text: '[cut at the output limit]' }]
@@ -1158,8 +1228,17 @@ export class Agent {
           this.save()
           continue
         }
+        // Nothing to say or do (declined before any output, or only thinking,
+        // which is not kept). The API refuses empty content anywhere but at the
+        // end, so the history holds a note, and the turn says what happened.
+        const empty = blocks.length ? undefined : `the model sent an empty reply (stop reason: ${stop})`
+        if (empty) blocks = [{ type: 'text', text: `[${empty}]` }]
         this.conversation.messages.push({ role: 'assistant', content: blocks, ...(providerContent ? { providerContent } : {}) })
         this.save()
+        if (empty) {
+          events({ kind: 'error', message: `${empty}; ask again, or in other words` })
+          return
+        }
         // The provider paused a long search turn: the reply goes back as it is,
         // with nothing added, and the same request goes on (one more step).
         if (stop === 'pause_turn') continue
@@ -1221,6 +1300,7 @@ export class Agent {
           } else if (e.t === 'toolInput') {
             const t = tools.get(e.index)
             if (t) t.json += e.json
+            if (t && (t.name === 'project_save' || t.name === 'project_validate')) events({ kind: 'toolInput', index: e.index, name: t.name, delta: e.json })
           } else if (e.t === 'search') {
             flush()
             parts.push({ type: 'web_search', id: e.id, query: e.query, sources: [] })
@@ -1627,15 +1707,10 @@ export class Agent {
     this.save()
   }
 
-  /** Older turns are replaced by a model-written summary when the last request
-   *  approached the provider's context limit (the full history stays archived). */
-  private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false) {
-    const c = this.conversation
-    if (!(force || c.usage.inputTokens > (this.provider.contextLimit * 3) / 4) || c.messages.length <= (force ? 4 : 6)) return
-    const messages = c.messages.slice(), cut = compactionBoundary(messages)
-    if (!cut) return
-    let transcript = c.summary ? `Earlier summary: ${c.summary}\n` : ''
-    for (const m of messages.slice(0, cut)) {
+  /** The model's summary of these messages, in a request of about `room` characters at most. */
+  private async summary(old: ChatMessage[], room: number, signal: AbortSignal): Promise<string> {
+    let transcript = ''
+    for (const m of old) {
       for (const b of m.content) {
         if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
         else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
@@ -1643,15 +1718,46 @@ export class Agent {
         else transcript += `tool result${b.is_error ? ' (error)' : ''}: ${b.content.slice(0, 800)}\n`
       }
     }
-    const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${transcript}` }] }]
+    const earlier = this.conversation.summary ? `Earlier summary: ${this.conversation.summary}\n` : ''
+    const text = earlier + transcript.slice(-room)
+    const ask: ChatMessage[] = [{ role: 'user', content: [{ type: 'text', text: `Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n${text}` }] }]
     let summary = ''
-    for await (const e of stream(this.provider, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
+    // A short summary: neither the chosen effort nor Fast mode's price.
+    for await (const e of stream({ ...this.provider, effort: undefined, fast: false }, 'You summarize conversations.', ask, [], signal)) if (e.t === 'text') summary += e.text
     if (signal.aborted) throw new Cancelled()
     if (!summary.trim()) throw new Error('the context summary was empty; the conversation was kept')
+    return summary
+  }
+
+  /** Context compaction, when the last request approached the provider's context
+   *  limit: older turns are replaced by a model-written summary (the full history
+   *  stays archived), and the tool results of the turns kept are cut to `room`
+   *  characters (half the limit by default), or what is kept could fill the context
+   *  by itself. A summary that fails then ends nothing: the request may still fit,
+   *  and if not its refusal comes back here with `force`, where the failure is the turn's. */
+  private async compactIfNeeded(events: (e: AgentEvent) => void, signal: AbortSignal, force = false, room = this.provider.contextLimit / 2) {
+    const c = this.conversation
+    if (!force && c.usage.inputTokens <= (this.provider.contextLimit * 3) / 4) return
+    const messages = c.messages.slice()
+    const cut = messages.length > (force ? 4 : 6) ? compactionBoundary(messages) : 0
+    const kept = fitToolResults(messages.slice(cut), room)
+    const shrunk = kept.some((m, i) => m.content.some((b, j) => b !== messages[cut + i].content[j]))
+    if (!cut && !shrunk) return
+    events({ kind: 'compacting' })
+    let summary = c.summary
+    if (cut) {
+      try {
+        summary = await this.summary(messages.slice(0, cut), room, signal)
+      } catch (e) {
+        if (force || signal.aborted) throw e
+        events({ kind: 'retrying', message: `the earlier turns could not be summarized (${String((e as Error).message ?? e)}); going on without it` })
+        return
+      }
+    }
     if (c.messages.length !== messages.length) return
     c.summary = summary
     c.archive = [...c.archive, ...messages.slice(0, cut)]
-    c.messages = messages.slice(cut)
+    c.messages = kept
     c.usage.inputTokens = 0
     this.save()
     events({ kind: 'compacted' })

@@ -108,6 +108,10 @@
 "Draft の実装は、チャットから Agent に頼めるよ" = "Ask the Agent in the chat to implement a Draft.";
 "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ" = "Place Drafts and wire them up to sketch the flow before writing any code.";
 "Draft（未実装の計画）" = "Draft (plan, not implemented)";
+"Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）" = "Fast mode: not available on the ChatGPT plan (the setting can be refused)";
+"Fast mode: Claude Opus 5.5 でだけ選べます" = "Fast mode: only on Claude Opus 5.5";
+"Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）" = "Fast mode: not available for this model (only models checked against the official price list)";
+"Fast mode（料金は通常の %@ 倍）" = "Fast mode (costs %@ times the normal price)";
 "File / Directory の出力がないため、保持できる出力はありません" = "No File / Directory output, so no output can be kept";
 "File / Directory は、型に文字列の value（パス）がある場合に選べます" = "File / Directory can be chosen when the type has a string value (a path)";
 "Finder で表示" = "Show in Finder";
@@ -270,6 +274,8 @@
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
+"このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
+"この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -905,6 +911,8 @@
 "新規プロジェクト…" = "New Project…";
 "新規作成するか、既存のフォルダを開いてください。" = "Create a new project or open an existing folder.";
 "既存のプロジェクトを開く…" = "Open Existing Project…";
+"既定" = "Default";
+"既定（%@）" = "Default (%@)";
 "日時" = "Date";
 "日本語" = "日本語";
 "書き出す…" = "Export…";

@@ -124,6 +124,8 @@ final class ChatController {
   private(set) var failed = false
   /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
   private(set) var usageLimited = false
+  /// The last turn could not make the conversation fit the model's context.
+  private(set) var contextFull = false
   private(set) var sessions: [SessionInfo] = []
   private(set) var currentId: String = ""
   private(set) var usage = Usage()
@@ -191,7 +193,7 @@ final class ChatController {
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
-  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.current) {
+  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
     self.session = session
     self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
@@ -586,6 +588,7 @@ final class ChatController {
     busy = true
     failed = false
     usageLimited = false
+    contextFull = false
     stoppedAtLimit = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
@@ -650,7 +653,7 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, let summary):
       thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
       tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
@@ -675,7 +678,7 @@ final class ChatController {
   private func handle(_ e: AgentEvent, of number: Int) {
     if number != answer {
       switch e {
-      case .text, .discardText, .retrying, .compacted, .error, .finished, .stepLimit: return
+      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .stepLimit: return
       default: break
       }
     }
@@ -710,20 +713,27 @@ final class ChatController {
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       thoughts.note(tool: name, ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
       tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
       }
+    case .compacting:
+      // The next reply waits for it (over a minute with a long conversation).
+      status = String(localized: "会話を圧縮しています…")
     case .compacted:
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
+      status = nil
       reloadCurrent()
-    case .retrying(let s): status = String(localized: "再試行中: \(s)")
+    case .retrying(let s):
+      // The reply is asked again from its beginning.
+      session.presence.toolInputEnded(ok: false)
+      status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
-      session.presence.toolInputEnded()
+      session.presence.toolInputEnded(ok: false)
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
@@ -732,13 +742,17 @@ final class ChatController {
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
       usageLimited = s == ChatGPTError.usageLimitText
+      contextFull = s == Agent.contextFullText
       status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
         : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+        : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
+      // A note of this turn (a retry, the compaction) is no longer current.
+      status = nil
       session.presence.turnEnded()
       refreshAfterTurn()
       tidySoon()
@@ -756,7 +770,10 @@ final class ChatController {
 
   private func reloadCurrent() {
     guard let agent else { return }
-    Task { load(await agent.conversation) }
+    Task {
+      load(await agent.conversation)
+      usage = await agent.conversation.usage
+    }
   }
 
   private func refreshAfterTurn() {
@@ -798,6 +815,19 @@ enum AgentSettings {
   static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
 
   static func current() -> ProviderConfig { config(for: provider) }
+
+  /// The connection of the chat's Agent and its helpers: with the effort and
+  /// the Fast mode chosen in the model menu. The guide, the summaries and the
+  /// checks use `current()`, without them.
+  static func chat() -> ProviderConfig {
+    let d = UserDefaults.standard
+    return current().choosing(effort: d.string(forKey: effortKey) ?? "", fastModel: d.string(forKey: fastModelKey) ?? "")
+  }
+
+  /// The model menu's effort ("" or none: the model's default), for every model that takes it.
+  static let effortKey = "agent.effort"
+  /// The one model Fast mode was turned on for.
+  static let fastModelKey = "agent.fastModel"
 
   /// A connection with its chosen model (each keeps its own).
   static func config(for provider: String) -> ProviderConfig {

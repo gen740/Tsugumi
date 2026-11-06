@@ -59,12 +59,31 @@ Like the API it refuses a request that sends the blocks back wrongly: without
 the tool, without encrypted_content or encrypted_index, or with a search left
 without its result. Without the tool it says it cannot search.
 GET /fixture/requests lists every model request it saw (path, tools, include,
-and whether its text names web_search).
+whether its text names web_search, whether it asks for a summary, and the
+effort, speed and output limit it asked for). Like the APIs it refuses an effort
+or a speed they do not know.
+
+An empty reply: the latest user text "refuse this" gets no content and the stop
+reason refusal, and "think only" a reply with nothing but a thinking block (on
+the Responses API, a refusal with no output text). Like the Messages API it
+refuses a request with empty content on any message but a final assistant one.
+
+Reading many times ("read <path> <n> times", optionally "in <r> rounds"): n
+reference_read calls in one reply, r replies in a row, then a line saying how
+many results came and how many of them were cut.
+
+The context limit (--context-limit): like the APIs, a request over it is refused
+and nothing of it is answered: a 400 on the Messages API, response.failed on
+the Responses API. A request's size is the input tokens the fixture reports.
 
 Options:
   --slow SECONDS   delay between streamed chunks (cancellation tests)
   --drop-once      drop the first response mid-stream (retry tests)
   --chatgpt-expires SECONDS   lifetime of the plan access tokens (refresh tests)
+  --context-limit TOKENS      refuse requests over this size, as the APIs do
+  --window-cut-once           end the first project_save or read reply at the
+                              context window (stop_reason model_context_window_exceeded)
+  --fail-summaries N          refuse the first N requests for a summary
 """
 
 from __future__ import annotations
@@ -86,6 +105,7 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 PERMISSION = re.compile(r"give (\S+) network access", re.I)
 STALE_READ = "validate at revision 0"
 SEARCH = re.compile(r"search the web for (.+?)(?: (with a pause|alongside inspect))?\s*$", re.I)
+READ_MANY = re.compile(r"read (\S+) (\d+) times(?: in (\d+) rounds)?", re.I)
 
 
 # "look at the picture <path>": reads it and says how the image came; with
@@ -157,6 +177,21 @@ def unanswered_tool_uses(messages):
         if missing:
             return missing
     return []
+
+
+def empty_message(messages):
+    """The index of a message the Messages API refuses for its empty content:
+    only a final assistant message may have none."""
+    for i, m in enumerate(messages):
+        if not m.get("content") and not (i == len(messages) - 1 and m["role"] == "assistant"):
+            return i
+    return None
+
+
+def asks_empty_reply(messages):
+    """"refuse" or "think" when the latest message's text asks for an empty reply."""
+    text = "".join(b.get("text", "") for b in blocks(messages[-1]) if b.get("type") == "text") if messages else ""
+    return "refuse" if "refuse this" in text else "think" if "think only" in text else None
 
 
 def search_task(messages):
@@ -488,6 +523,24 @@ def decide_permission(messages, card, start):
     return ("text", "Done.")
 
 
+def last_read_many(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            for b in blocks(messages[i]):
+                if b.get("type") == "text" and (t := READ_MANY.search(b["text"])):
+                    return t, i
+    return None, -1
+
+
+def decide_read_many(messages, task, start):
+    after = messages[start + 1:]
+    rounds = sum(1 for m in after if m["role"] == "assistant" and any(b.get("type") == "tool_use" for b in blocks(m)))
+    if rounds < int(task.group(3) or 1):
+        return ("tools", [("reference_read", {"path": task.group(1)})] * int(task.group(2)))
+    results = [b["content"] for m in after for b in blocks(m) if b.get("type") == "tool_result"]
+    return ("text", f"Read {len(results)} results, {sum('[cut' in r for r in results)} cut.")
+
+
 def last_stale_read(messages):
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user" and any(STALE_READ in b.get("text", "") for b in blocks(messages[i])):
@@ -558,6 +611,12 @@ def decide(messages, system="", tools=()):
     team, team_start = last_delegate_task(messages)
     if team is not None:
         return decide_delegate(messages, team, team_start)
+    many, many_start = last_read_many(messages)
+    # Only while it is the latest request (a note about a cut reply is none).
+    asked = [i for i, m in enumerate(messages) if m["role"] == "user" and any(
+        b.get("type") == "text" and not b["text"].startswith("Your last reply was cut") for b in blocks(m))]
+    if many is not None and many_start == asked[-1]:
+        return decide_read_many(messages, many, many_start)
     comment_text, comment_start = last_comment_task(messages)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
@@ -690,7 +749,8 @@ def plan_violations(body: dict) -> list[tuple[str, str]]:
         out.append(("store", "store must be false"))
     if body.get("stream") is not True:
         out.append(("stream", "stream must be true"))
-    for f in ("max_output_tokens", "temperature", "top_p", "metadata", "previous_response_id", "user", "truncation"):
+    # "service-tier override" is among what errors and recovery says to remove.
+    for f in ("max_output_tokens", "temperature", "top_p", "metadata", "previous_response_id", "user", "truncation", "service_tier"):
         if f in body:
             out.append((f, f"{f} is not supported"))
     for t in body.get("tools", []):
@@ -714,7 +774,10 @@ class Handler(BaseHTTPRequestHandler):
     dropped = False
     cut_once = False
     cut = False
+    cut_reason = "max_tokens"
     cached = False
+    context_limit = 0
+    fail_summaries = 0
     lock = threading.Lock()
     requests: list = []
 
@@ -876,6 +939,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(raw)
         names = [t["name"] for t in body.get("tools", [])]
         self._note_request(names, raw)
+        if bad := self._refused_option(body):
+            self._error(400, bad)
+            return
         missing = unanswered_tool_uses(body["messages"])
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
@@ -883,6 +949,13 @@ class Handler(BaseHTTPRequestHandler):
         picture, _ = last_picture_task(body["messages"])
         if picture and picture.group(2) and result_images(body["messages"]):
             self._error(400, "Could not process image")
+            return
+        empty = empty_message(body["messages"])
+        if empty is not None:
+            self._error(400, f"messages.{empty}: all messages must have non-empty content except for the optional final assistant message")
+            return
+        if kind := asks_empty_reply(body["messages"]):
+            self._empty_reply(body, kind)
             return
         declared = "web_search" in names
         if bad := search_replay_errors(body["messages"], declared):
@@ -893,11 +966,20 @@ class Handler(BaseHTTPRequestHandler):
             self._search_reply(body, search.group(1), search.group(2), rest)
             return
         if system_text(body).startswith("You summarize"):
+            with Handler.lock:
+                refuse, Handler.fail_summaries = Handler.fail_summaries > 0, max(0, Handler.fail_summaries - 1)
+            if refuse:
+                self._error(400, "this summary is refused")
+                return
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
         elif search:
             decision = ("text", "I have no way to search the web here.")
         else:
             decision = decide(body["messages"], system_text(body), names)
+        size = len(json.dumps(body["messages"])) // 4
+        if Handler.context_limit and size > Handler.context_limit:
+            self._error(400, f"prompt is too long: {size} tokens > {Handler.context_limit} maximum")
+            return
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
@@ -926,6 +1008,22 @@ class Handler(BaseHTTPRequestHandler):
                                                     "delta": {"type": "text_delta", "text": w + (" " if i + 1 < len(words) else "")}})
             self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
             stop = "end_turn"
+        elif decision[0] == "tools":
+            with Handler.lock:
+                cut = Handler.cut_once and not Handler.cut
+                Handler.cut = Handler.cut or cut
+            if cut:
+                # The reply ends at the limit before anything of it was written.
+                self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": Handler.cut_reason}, "usage": {"output_tokens": 20}})
+                self._event("message_stop", {"type": "message_stop"})
+                return
+            for i, (name, args) in enumerate(decision[1]):
+                self._event("content_block_start", {"type": "content_block_start", "index": i,
+                                                     "content_block": {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": name, "input": {}}})
+                self._event("content_block_delta", {"type": "content_block_delta", "index": i,
+                                                    "delta": {"type": "input_json_delta", "partial_json": json.dumps(args)}})
+                self._event("content_block_stop", {"type": "content_block_stop", "index": i})
+            stop = "tool_use"
         else:
             _, name, args = decision
             with Handler.lock:
@@ -938,7 +1036,7 @@ class Handler(BaseHTTPRequestHandler):
                 # The reply ends at the output limit inside the tool call.
                 self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                     "delta": {"type": "input_json_delta", "partial_json": text[:15]}})
-                self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 20}})
+                self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": Handler.cut_reason}, "usage": {"output_tokens": 20}})
                 self._event("message_stop", {"type": "message_stop"})
                 return
             for i in range(0, len(text), 24):
@@ -949,10 +1047,36 @@ class Handler(BaseHTTPRequestHandler):
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
         self._event("message_stop", {"type": "message_stop"})
 
+    def _empty_reply(self, body, kind):
+        """A reply with nothing to send back: declined before any output, or only thinking."""
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        self._event("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": len(json.dumps(body["messages"])) // 4}}})
+        if kind == "think":
+            self._event("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}})
+            self._event("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Hm."}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "refusal" if kind == "refuse" else "end_turn"}, "usage": {"output_tokens": 0}})
+        self._event("message_stop", {"type": "message_stop"})
+
     def _note_request(self, tools, raw, include=None):
+        body = json.loads(raw)
         with Handler.lock:
             Handler.requests.append({"path": self.path, "tools": tools, "include": include,
-                                     "names_web_search": b"web_search" in raw})
+                                     "names_web_search": b"web_search" in raw, "summary": b"You summarize" in raw,
+                                     "effort": body.get("output_config", body.get("reasoning", {})).get("effort"),
+                                     "speed": body.get("speed", body.get("service_tier")),
+                                     "output_limit": body.get("max_tokens", body.get("max_output_tokens"))})
+
+    def _refused_option(self, body):
+        """An effort or a speed the APIs do not know (a 400 there)."""
+        effort = body.get("output_config", body.get("reasoning", {})).get("effort")
+        if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
+            return f"unknown effort {effort}"
+        if body.get("speed", "fast") != "fast" or body.get("service_tier", "fast") != "fast":
+            return "unknown speed"
+        return None
 
     def _search_reply(self, body, query, kind, rest):
         """A reply with the provider's search, block by block as the API streams it."""
@@ -1023,6 +1147,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.headers.get("authorization") != "Bearer fixture-key":
             self.send_error(401)
             return
+        if bad := self._refused_option(body):
+            self._error(400, bad)
+            return
         messages = []
         for item in body.get("input", []):
             if item.get("type") == "function_call":
@@ -1039,6 +1166,16 @@ class Handler(BaseHTTPRequestHandler):
                 messages[-1]["content"].append(block)
             else:
                 messages.append({"role": role, "content": [block]})
+        if asks_empty_reply(messages):
+            # A refusal is an output item of its own: no output text comes.
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            self._event("response.refusal.delta", {"type": "response.refusal.delta", "output_index": 0, "delta": "I can't help with that."})
+            self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": {
+                "type": "message", "role": "assistant", "content": [{"type": "refusal", "refusal": "I can't help with that."}]}})
+            self._event("response.completed", {"type": "response.completed", "response": {"usage": {"input_tokens": 100, "output_tokens": 0}}})
+            return
         search, _ = search_task(messages)
         if search and declared:
             self._responses_search(search.group(1))
@@ -1053,6 +1190,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-type", "text/event-stream")
         self.send_header("x-request-id", "req_fixture")
         self.end_headers()
+        size = len(json.dumps(messages)) // 4
+        if Handler.context_limit and size > Handler.context_limit:
+            # In the stream, as the API reports it.
+            self._event("response.failed", {"type": "response.failed", "response": {"error": {
+                "code": "context_length_exceeded", "message": "Your input exceeds the context window of this model."}}})
+            return
         texts = [b.get("text", "") for m in messages if m["role"] == "user" for b in blocks(m) if b.get("type") == "text"]
         if plan and texts and "exceed the usage limit" in texts[-1]:
             # The plan's limit, after the stream began (as the API may send it).
@@ -1062,6 +1205,17 @@ class Handler(BaseHTTPRequestHandler):
         if decision[0] == "text":
             for w in decision[1].split(" "):
                 self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 0, "delta": w + " "})
+        elif decision[0] == "tools":
+            for i, (name, args) in enumerate(decision[1]):
+                call = "call_" + uuid.uuid4().hex[:12]
+                item = {"type": "function_call", "call_id": call, "name": name, "arguments": ""}
+                if plan:
+                    item["namespace"] = body["tools"][0]["name"]
+                self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": i, "item": item})
+                self._event("response.function_call_arguments.delta",
+                            {"type": "response.function_call_arguments.delta", "output_index": i, "delta": json.dumps(args)})
+                self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": i,
+                                                          "item": {"type": "function_call", "call_id": call, "name": name}})
         else:
             _, name, args = decision
             call = "call_" + uuid.uuid4().hex[:12]
@@ -1117,12 +1271,19 @@ def main():
     ap.add_argument("--slow", type=float, default=0.0)
     ap.add_argument("--drop-once", action="store_true")
     ap.add_argument("--cut-once", action="store_true", help="cut the first project_save reply at the output limit")
+    ap.add_argument("--window-cut-once", action="store_true", help="end the first project_save reply at the context window")
     ap.add_argument("--chatgpt-expires", type=int, default=3600, help="lifetime of the plan access tokens")
+    ap.add_argument("--context-limit", type=int, default=0, help="refuse requests over this many tokens")
+    ap.add_argument("--fail-summaries", type=int, default=0, help="refuse the first N requests for a summary")
     a = ap.parse_args()
     ChatGPT.expires = a.chatgpt_expires
     Handler.slow = a.slow
     Handler.drop_once = a.drop_once
-    Handler.cut_once = a.cut_once
+    Handler.cut_once = a.cut_once or a.window_cut_once
+    if a.window_cut_once:
+        Handler.cut_reason = "model_context_window_exceeded"
+    Handler.context_limit = a.context_limit
+    Handler.fail_summaries = a.fail_summaries
     srv = LocalServer(("127.0.0.1", a.port), Handler)
     print(f"model fixture on http://127.0.0.1:{srv.server_address[1]}", flush=True)
     srv.serve_forever()

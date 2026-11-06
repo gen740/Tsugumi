@@ -14,10 +14,10 @@ import TsugumiAgent
     let process = Process()
     let port: Int
 
-    init(slow: Double) throws {
+    init(slow: Double, options: [String] = []) throws {
       process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       process.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
-                           "--port", "0", "--slow", "\(slow)"]
+                           "--port", "0", "--slow", "\(slow)"] + options
       let out = Pipe()
       process.standardOutput = out
       process.standardError = FileHandle.nullDevice
@@ -41,13 +41,14 @@ import TsugumiAgent
 
   /// A chat opened on a conversation whose last request was never answered,
   /// as it is after leaving the project during the answer.
-  func chatWithAnUnansweredRequest(slow: Double) throws -> Setup {
+  func chatWithAnUnansweredRequest(slow: Double, options: [String] = [], earlier: [ChatMessage] = [], usage: Int = 0) throws -> Setup {
     let project = try SyncTests.project()
     let daemon = try SyncTests.Daemon(project: project)
-    let model = try Model(slow: slow)
+    let model = try Model(slow: slow, options: options)
     let storage = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("chat-\(UUID().uuidString.prefix(8))")
     var conversation = Conversation()
-    conversation.messages = [ChatMessage(role: "user", content: [.text("hello")])]
+    conversation.messages = earlier + [ChatMessage(role: "user", content: [.text("hello")])]
+    conversation.usage.inputTokens = usage
     try conversation.save(storage.appendingPathComponent("sessions/unanswered.json"))
     let session = ProjectSession(identity: try ProjectIdentity(url: project), environments: EnvironmentManager(image: nil))
     session.endpointOverride = daemon.endpoint
@@ -114,6 +115,46 @@ import TsugumiAgent
     #expect(chat.busy && chat.status == nil, "busy \(chat.busy): \(chat.status ?? "-")")
     try await until("the reply ended") { !chat.busy }
     #expect(chat.status == nil, "\(chat.status ?? "-")")
+  }
+
+  /// While the context is compacted the chat says so, not "thinking" with
+  /// nothing to tell why the reply waits; the note goes when it is done.
+  @Test func compactingIsShownWhileTheReplyWaits() async throws {
+    let earlier = (0..<4).flatMap { i in
+      [ChatMessage(role: "user", content: [.text("question \(i)")]), ChatMessage(role: "assistant", content: [.text("answer \(i)")])]
+    }
+    let t = try chatWithAnUnansweredRequest(slow: 0.2, earlier: earlier, usage: 5000)
+    defer { t.stop() }
+    let chat = t.chat
+    t.session.start()
+    try await SyncTests.connected(t.session)
+    try await until("the compaction is shown") { chat.status == String(localized: "会話を圧縮しています…") }
+    #expect(chat.busy)
+    try await until("the answer ended") { !chat.busy }
+    #expect(chat.status == nil, "\(chat.status ?? "-")")
+    #expect(!chat.failed && !chat.contextFull)
+  }
+
+  /// A message that can never fit the model's context: the chat stops working,
+  /// says what to do instead of a retry that cannot work, and a new
+  /// conversation goes on.
+  @Test func aConversationThatCannotFitSaysToStartANewOne() async throws {
+    let t = try chatWithAnUnansweredRequest(slow: 0, options: ["--context-limit", "6000"])
+    defer { t.stop() }
+    let chat = t.chat
+    t.session.start()
+    try await SyncTests.connected(t.session)
+    try await until("the first answer ended") { !chat.items.isEmpty && !chat.busy && reply(chat, after: 1) }
+    chat.send(String(repeating: "y", count: 100_000))
+    try await until("the answer ended") { !chat.busy }
+    #expect(chat.contextFull && chat.failed)
+    #expect(chat.status == String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。"), "\(chat.status ?? "-")")
+
+    chat.newSession()
+    try await until("the new conversation is open") { chat.items.isEmpty }
+    chat.send("hello")
+    try await until("the new conversation got its reply") { !chat.busy && reply(chat, after: 0) }
+    #expect(!chat.contextFull && !chat.failed, "\(chat.status ?? "-")")
   }
 
   /// Back in the project: its chat is on the session open now, not on the

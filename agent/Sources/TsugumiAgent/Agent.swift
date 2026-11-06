@@ -98,6 +98,8 @@ public enum AgentEvent: Sendable {
   case toolInput(index: Int, name: String, delta: String)
   case toolStarted(id: String, name: String, arguments: String)
   case toolFinished(id: String, name: String, ok: Bool, summary: String)
+  /// Earlier turns are being summarized: the next reply waits for it.
+  case compacting
   case compacted
   case retrying(String)
   /// The text streamed so far in this reply is dropped: the reply is asked
@@ -304,13 +306,31 @@ public actor Agent {
       try closeDanglingToolUses()
       cutReplies = 0
       var done = false
+      var refusals = 0
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
-        var (blocks, stop, providerContent) = try await modelTurn(events)
-        if stop == "max_tokens" {
-          // The reply was cut at the output limit, maybe inside a tool call:
-          // nothing of it is executed; the model is asked for smaller steps.
+        let reply: ([ContentBlock], String, String?)
+        do {
+          reply = try await modelTurn(events)
+          refusals = 0
+        } catch where !Task.isCancelled && Self.isContextOverflow(text: "\(error)") {
+          // Refused over the context, so it reported no usage to compact by, and
+          // the same request would be refused for ever: it is made smaller first.
+          refusals += 1
+          guard refusals <= 3 else {
+            events(.error(Self.contextFullText))
+            return
+          }
+          do { try await compactIfNeeded(events, force: true, room: provider.config.contextLimit >> refusals) }
+          catch where !Task.isCancelled && Self.isContextOverflow(text: "\(error)") {}  // the summary too: with less room next
+          continue
+        }
+        var (blocks, stop, providerContent) = reply
+        if stop == "max_tokens" || stop == "model_context_window_exceeded" {
+          // The reply was cut at the output limit or the context window, maybe
+          // inside a tool call: nothing of it is executed; the model is asked
+          // for smaller steps (and over the threshold, the context is compacted).
           cutReplies += 1
           guard cutReplies <= 3 else { throw AgentError.provider("the model's replies were cut at the output limit three times") }
           blocks = blocks.filter { if case .toolUse = $0 { return false }; return true }
@@ -324,8 +344,17 @@ public actor Agent {
           try conversation.save(storage)
           continue
         }
+        // Nothing to say or do (declined before any output, or only thinking,
+        // which is not kept). The API refuses empty content anywhere but at the
+        // end, so the history holds a note, and the turn says what happened.
+        let empty = blocks.isEmpty ? "the model sent an empty reply (stop reason: \(stop))" : nil
+        if let empty { blocks = [.text("[\(empty)]")] }
         conversation.messages.append(ChatMessage(role: "assistant", content: blocks, providerContent: providerContent))
         try conversation.save(storage)
+        if let empty {
+          events(.error("\(empty); ask again, or in other words"))
+          return
+        }
         // The provider paused a long search turn: the reply goes back as it is,
         // with nothing added, and the same request goes on (one more step).
         if stop == "pause_turn" { continue }
@@ -948,6 +977,18 @@ public actor Agent {
     return kind == "Failure"
   }
 
+  /// What ends a turn when the conversation cannot be made to fit the model's
+  /// context (the app says what to do: a new conversation).
+  public static let contextFullText = "the conversation no longer fits the model's context"
+
+  /// A provider's refusal of a request over the model's context: nothing of it
+  /// was answered, and asking the same again gets the same answer.
+  public static func isContextOverflow(text: String) -> Bool {
+    let t = text.lowercased()
+    return ["prompt is too long", "input is too long", "exceed context limit", "request_too_large", "context_length_exceeded",
+            "exceeds the context window", "maximum context length"].contains { t.contains($0) }
+  }
+
   /// Keep recent tool calls together with their results. The summary is the
   /// leading user message, so the tail may safely start with an assistant.
   static func compactionBoundary(_ messages: [ChatMessage], keep: Int = 4) -> Int {
@@ -958,16 +999,35 @@ public actor Agent {
     return cut
   }
 
-  /// Context compaction: older turns are replaced by a model-written summary
-  /// when the last request approached the provider's context limit.
-  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false) async throws {
-    let limit = provider.config.contextLimit
-    guard force || conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > (force ? 4 : 6) else { return }
-    let messages = conversation.messages
-    let cut = Self.compactionBoundary(messages)
-    guard cut > 0 else { return }
-    let old = Array(messages.prefix(cut))
-    var transcript = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
+  /// A tool's result cut to make room in the context (the whole result stays in
+  /// its record, and in what the chat shows of it).
+  static let contextCutNote = "\n[cut to fit the model's context: read it again with a narrower request]"
+
+  /// The tool results among these messages, cut to the same length so that
+  /// together they take at most `room` characters.
+  static func fitToolResults(_ messages: [ChatMessage], room: Int) -> [ChatMessage] {
+    let note = contextCutNote.count
+    let sizes = messages.flatMap { $0.content.compactMap { b -> Int? in
+      if case .toolResult(_, let c, _, _) = b { return c.count }
+      return nil
+    } }
+    var cap = resultLimit
+    while cap > 200, sizes.reduce(0, { $0 + min($1, cap + note) }) > room { cap /= 2 }
+    return messages.map { m in
+      var m = m
+      m.content = m.content.map { b in
+        if case .toolResult(let id, let c, let e, let images) = b, c.count > cap + note {
+          return .toolResult(toolUseId: id, content: String(c.prefix(cap)) + contextCutNote, isError: e, images: images)
+        }
+        return b
+      }
+      return m
+    }
+  }
+
+  /// The model's summary of these messages, in a request of about `room` characters at most.
+  private func summary(of old: [ChatMessage], room: Int) async throws -> String {
+    var transcript = ""
     for m in old {
       for b in m.content {
         switch b {
@@ -978,19 +1038,48 @@ public actor Agent {
         }
       }
     }
-    let ask = [ChatMessage(role: "user", content: [.text("Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n\(transcript)")])]
+    let earlier = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
+    let text = earlier + String(transcript.suffix(room))
+    let ask = [ChatMessage(role: "user", content: [.text("Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n\(text)")])]
     var summary = ""
-    for try await e in try provider.stream(system: "You summarize conversations.", messages: ask, tools: []) {
+    // A short summary: neither the chosen effort nor Fast mode's price.
+    for try await e in try MessagesProvider(config: providerConfig.withoutChoices).stream(system: "You summarize conversations.", messages: ask, tools: []) {
       if case .text(let t) = e { summary += t }
     }
     try Task.checkCancellation()
     guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw AgentError.provider("the context summary was empty; the conversation was kept")
     }
+    return summary
+  }
+
+  /// Context compaction, when the last request approached the provider's context
+  /// limit: older turns are replaced by a model-written summary, and the tool
+  /// results of the turns kept are cut to `room` characters (half the limit by
+  /// default), or what is kept could fill the context by itself. A summary that
+  /// fails then ends nothing: the request may still fit, and if not its refusal
+  /// comes back here with `force`, where the failure is the turn's.
+  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false, room: Int? = nil) async throws {
+    let limit = provider.config.contextLimit
+    guard force || conversation.usage.inputTokens > limit * 3 / 4 else { return }
+    let messages = conversation.messages
+    let room = room ?? limit / 2
+    let cut = messages.count > (force ? 4 : 6) ? Self.compactionBoundary(messages) : 0
+    let kept = Self.fitToolResults(Array(messages.dropFirst(cut)), room: room)
+    guard cut > 0 || kept != messages else { return }
+    events(.compacting)
+    var summary = conversation.summary
+    if cut > 0 {
+      do { summary = try await self.summary(of: Array(messages.prefix(cut)), room: room) }
+      catch where !force && !Task.isCancelled && (error as? URLError)?.code != .cancelled {
+        events(.retrying("the earlier turns could not be summarized (\(error)); going on without it"))
+        return
+      }
+    }
     guard conversation.messages == messages else { return }
     conversation.summary = summary
-    conversation.archive += old
-    conversation.messages = Array(messages.dropFirst(cut))
+    conversation.archive += messages.prefix(cut)
+    conversation.messages = kept
     conversation.usage.inputTokens = 0
     try conversation.save(storage)
     events(.compacted)

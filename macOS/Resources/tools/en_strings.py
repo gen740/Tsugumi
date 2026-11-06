@@ -32,6 +32,13 @@ def specifiers(s: str) -> list[str]:
 
 EN = {
 "Tsugumi を知る": "Learn about Tsugumi",
+"このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）": "Not available for this model (only models checked against the official documents)",
+"既定（%@）": "Default (%@)",
+"既定": "Default",
+"Fast mode（料金は通常の %@ 倍）": "Fast mode (costs %@ times the normal price)",
+"Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）": "Fast mode: not available on the ChatGPT plan (the setting can be refused)",
+"Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）": "Fast mode: not available for this model (only models checked against the official price list)",
+"Fast mode: Claude Opus 5.5 でだけ選べます": "Fast mode: only on Claude Opus 5.5",
 "Tsugumi を知る のページが見つかりません": "The \"Learn about Tsugumi\" page was not found",
 "%@ と同じ文書です": "Same document as %@",
 "%lld–%lld / %lld 行": "%lld–%lld of %lld rows",
@@ -64,6 +71,7 @@ EN = {
 "手分けして進めました": "Split the work among helpers",
 "終わりました": "Finished",
 "手数の上限で止まりました": "Stopped at the step limit",
+"この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。": "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).",
 "%@ は空ではありません。空のフォルダか新しい名前を選んでください。": "%@ is not empty. Choose an empty folder or a new name.",
 "システムに従う（視差効果を減らす）": "Follow the system (Reduce motion)",
 "動かす": "Animate",
