@@ -3,7 +3,7 @@
 // controls, the menus and the shortcuts.
 import { arr, bool, dbl, get, isObj, J, real, str } from '../shared/json'
 import { D } from '../shared/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
 import { Observable } from './observable'
 import { prefs, ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
@@ -21,6 +21,8 @@ export interface RoutedWire {
   d: string
   pts: Pt[]
   style: WireStyle
+  /** An end of it is a Draft: drawn dotted, whatever its style. */
+  dotted?: boolean
 }
 
 export interface BoundaryPort {
@@ -234,6 +236,7 @@ export class Scene {
   get wires(): RoutedWire[] {
     if (this._wires) return this._wires
     const s = this.session
+    const kind = (k: CardKey) => s.kind(k)
     const obstacles = [...this.cardKeys.map((k) => this.cardRect(k)), ...this.outputKeys.map((k) => this.frameRect(k))]
     const b = this.boundary
     if (b) obstacles.push(b.top, b.bottom)
@@ -243,16 +246,16 @@ export class Scene {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
       if (!fc || !fp || !tc || !tp) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) } })
+      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk), dotted: isDraftWire(kind, fk, tk) } })
     })
     if (b) {
       for (const p of b.inputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal' } })
+        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal', dotted: isDraftWire(kind, p.inner[0]) } })
       }
       for (const p of b.outputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined) } })
+        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined), dotted: isDraftWire(kind, p.inner[0]) } })
       }
     }
     const routes = new WireRouter(this.flow, obstacles).routeAll(ends)

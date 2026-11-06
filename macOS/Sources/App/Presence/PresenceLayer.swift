@@ -31,6 +31,7 @@ enum PresenceColor {
 struct PresenceGeometry {
   var card: (CardKey) -> CGRect?  // nil: not in the scope shown
   var wire: (AgentPresence.Wire) -> Path?
+  var dotted: (AgentPresence.Wire) -> Bool = { _ in false }
   var screen: (CGPoint) -> CGPoint
   var zoom: Double
 }
@@ -266,7 +267,9 @@ struct PresenceLayer: View {
           tx: geometry.screen(.zero).x, ty: geometry.screen(.zero).y))
         // The thread's colour while it is drawn, the wire's once it is taut.
         let color = p < 1 ? PresenceColor.of(presence.tint) : Color.secondary.opacity(0.75)
-        ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+        let dotted = p >= 1 && geometry.dotted(wire)
+        ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: dotted ? max(w, WireLayer.dotMin) : w, lineCap: .round, lineJoin: .round,
+                                                                 dash: dotted ? WireLayer.dot : []))
       }
     }
   }
