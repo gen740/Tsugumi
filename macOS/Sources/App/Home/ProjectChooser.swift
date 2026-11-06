@@ -400,7 +400,9 @@ private struct DemoCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
       Text(demo.title).font(.headline)
       Text(demo.description).font(.callout).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 4) {
+      // Tags wrap onto further lines: in one row, a demo with many tags had
+      // each squeezed into a column a few letters wide.
+      GuideFlow(spacing: 4) {
         ForEach(demo.tags, id: \.self) { t in
           Text(t).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill(TsugumiPalette.olive.opacity(0.25)))
