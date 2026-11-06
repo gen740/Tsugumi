@@ -1436,9 +1436,10 @@ struct WireRouter {
 
   /// How far along the flow a port's wire has to run to get out of a Card's box (0: not in it).
   private func depth(_ o: CGRect, _ p: CGPoint, _ dir: CGFloat) -> CGFloat {
-    if p.x <= o.minX || p.x >= o.maxX { return 0 }
-    if dir > 0 { return o.minY <= p.y && p.y < o.maxY ? o.maxY - p.y : 0 }
-    return o.minY < p.y && p.y <= o.maxY ? p.y - o.minY : 0
+    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // beside the wire, and the wire would otherwise go on through all of it.
+    if p.x <= o.minX || p.x >= o.maxX || p.y <= o.minY || p.y >= o.maxY { return 0 }
+    return dir > 0 ? o.maxY - p.y : p.y - o.minY
   }
 
   /// Where a port's wire is out of the boxes it starts in (a Card's port is on the edge already).
