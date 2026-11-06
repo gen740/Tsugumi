@@ -65,7 +65,7 @@ function readCard(root, id, ports, wires) {
   const meta = readJson(path.join(dir, '_meta.json'), {})
   const kind = kindOf(dir, def)
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
-  const description = def.description || meta.description
+  const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
   // Resolved ports are the core's; a Draft's are its declared ones and its wires (as portData in session.ts).
   const resolved = kind === 'draft' ? undefined : ports?.[id]
@@ -305,7 +305,7 @@ function scopedStyles() {
   const rules = helpers.map((h) => `.tp-root ${h} {${block(h)}}`).join('\n')
   // canvas.css is all class selectors of its own (.cv-*, .display-*).
   const canvas = fs.readFileSync(path.join(WEB, 'src', 'styles', 'canvas.css'), 'utf8')
-  const own = fs.readFileSync(path.join(HERE, 'player.src.css'), 'utf8')
+  const own = fs.readFileSync(path.join(WEB, 'src', 'styles', 'demoPlayer.css'), 'utf8')
   return `.tp-root {${block(':root')}${block(':root[data-theme="dark"]')}}\n${rules}\n${canvas}\n${own}`
 }
 
@@ -317,7 +317,7 @@ if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
 }
 
 await esbuild.build({
-  entryPoints: [path.join(HERE, 'main.tsx')],
+  entryPoints: [path.join(WEB, 'src', 'ui', 'demoPlayer.tsx')],
   outfile: path.join(SITE, 'js', 'player.js'),
   bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic',
   nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),

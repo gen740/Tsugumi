@@ -34,9 +34,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   project's own copy (each Card in Card has its own): change its documents and files with PutSource on the paths
   under externals/<name>/ (base_hash of the file you read).
 - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
-  "card_json": "<_card.json>", "keep_meta": true}} keeps _meta.json as it is (never write the user's intent text
-  again; send "meta_json" only to change it, e.g. port descriptions), {"value_type": "PutSource", "value": {"path":
-  "definitions/<id>/<file>", "bytes": "<file text>", "base_hash": "<hash when replacing>"}}, RemoveDefinition.
+  "card_json": "<_card.json>", "keep_meta": true}} keeps _meta.json as it is (never rewrite the user's intent text;
+  send "meta_json" only to change it, e.g. port descriptions, or to fill it when implementing a Draft),
+  {"value_type": "PutSource", "value": {"path": "definitions/<id>/<file>", "bytes": "<file text>", "base_hash":
+  "<hash when replacing>"}}, RemoveDefinition.
   One save is one transaction: either everything is stored or nothing is.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) only works on the inputs saved by an earlier whole run. Then call run_status with
@@ -50,9 +51,16 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   "description"}]}, its {"id"} and connections in SetProject, and its place beside the Cards it connects to in
   SetLayout, in one save. A Draft does not run, so it needs no references and no run.
 - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
-  content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions). Keep the
-  Card ids, the wiring and the intent in _meta.json (PutDefinition with "keep_meta": true). Decide for each Draft
-  what it becomes:
+  content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions; context:
+  extra notes). Keep the Card ids and the wiring. The save that implements a Draft (its _card.json no longer says
+  template "draft") leaves its intent complete: PutDefinition with "meta_json" holding every field it had, word
+  for word, plus what is empty, in the user's language:
+  * description: one line saying what the Card does.
+  * context: what the user asked of this Card in this conversation (requests, constraints, reasons) and what its
+    description and content say a later reader should know. State only what they said, never invent anything; with
+    no description, content or instruction to go on, leave it empty.
+  Use "keep_meta": true only when nothing is empty. Otherwise the save is refused with validation_failed, naming
+  the Card and the field. Decide for each Draft what it becomes:
   * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
     _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
     relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the
@@ -135,14 +143,17 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
   Work one Draft at a time, upstream first: write it, check it with project_validate {"changes": [...]}, save,
   run from the trigger, check its run_record (and log_range when it failed), then go on to the next. You may split
-  one Draft into several Cards (each with its own definition; rewire them in SetProject). project_validate reports
-  the Drafts not written yet with the code "draft" (they cannot run); that is expected, and a run from the trigger
-  runs the Cards before them. If something fails, report it; never leave a half-written save.
+  one Draft into several Cards (each with its own definition and a _meta.json carrying its part of the intent;
+  rewire them in SetProject). project_validate reports the Drafts not written yet with the code "draft" (they
+  cannot run); that is expected, and a run from the trigger runs the Cards before them. If something fails, report
+  it; never leave a half-written save.
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
   delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<the whole task>"}]} starts
   one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
   implement what they all need (the Cards upstream of theirs) and run once from the trigger. Each instruction
-  stands alone: the Card's intent (description and content of its Draft), how to check it, what to report.
+  stands alone, since a helper sees nothing of this conversation: the Card's intent (description, content and
+  context of its Draft) and what the user asked of it, so that the helper can fill its _meta.json as above, how to
+  check it, what to report.
   Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",

@@ -46,7 +46,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
   const q = search.toLowerCase()
   const ids = [...session.definitions.keys()].sort().filter((id) =>
-    !q || id.toLowerCase().includes(q) || (str(get(session.definitions.get(id), 'description')) ?? '').toLowerCase().includes(q))
+    !q || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
   const unplaced = new Set(session.unplacedDefinitions)
 
   const apply = async (id: string) => {

@@ -181,7 +181,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .demo-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); padding-bottom: 20px; }
 .demo-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--text-bg) 85%, transparent);
   border: 1px solid color-mix(in srgb, var(--secondary) 20%, transparent); }
-.demo-thumb { width: 100%; height: 130px; border-radius: 8px; display: block; }
+.demo-thumb { width: 100%; height: 190px; border-radius: 8px; overflow: hidden; flex: none; }
 .demo-tag { padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, var(--tsugumi-olive) 25%, transparent); }
 
 /* ---- where the shell meets the canvas ---- */

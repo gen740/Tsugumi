@@ -8,6 +8,8 @@ import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
 import { Agent, externalTools, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { keychainReader } from './keychain'
+import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { EnvironmentManager, projectKey } from './env'
 
@@ -113,10 +115,11 @@ function run(cmd: string, args: string[], input?: string): Promise<{ code: numbe
   })
 }
 
+const keychain = keychainReader(run, KEYCHAIN_SERVICE)
+
 async function keychainKey(p: KeyedProvider): Promise<string | undefined> {
   if (process.platform !== 'darwin') return undefined
-  const r = await run('security', ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', PROVIDERS[p].name, '-w'])
-  return r.code === 0 && r.out ? r.out : undefined
+  return keychain.read(PROVIDERS[p].name)
 }
 
 async function apiKey(p: KeyedProvider): Promise<string | undefined> {
@@ -134,7 +137,7 @@ async function apiKey(p: KeyedProvider): Promise<string | undefined> {
 /** Where a provider's key is (for the settings page; never the key itself). */
 async function keySource(p: KeyedProvider): Promise<'env' | 'keychain' | 'file' | null> {
   if (process.env[PROVIDERS[p].env]) return 'env'
-  if (await keychainKey(p)) return 'keychain'
+  if (process.platform === 'darwin' && (await keychain.exists(PROVIDERS[p].name))) return 'keychain'
   return fs.existsSync(keyFile(p)) ? 'file' : null
 }
 
@@ -145,6 +148,7 @@ async function saveKey(p: KeyedProvider, raw: string) {
   if (process.platform === 'darwin') {
     // The secret goes to `security` on its standard input, never as an argument.
     const r = await run('security', ['-i'], `add-generic-password -U -s "${KEYCHAIN_SERVICE}" -a "${PROVIDERS[p].name}" -w "${key}"\n`)
+    keychain.forget(PROVIDERS[p].name)
     if (r.code === 0 && (await keychainKey(p)) === key) {
       fs.rmSync(keyFile(p), { force: true })
       return 'Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。'
@@ -157,7 +161,10 @@ async function saveKey(p: KeyedProvider, raw: string) {
 }
 
 async function deleteKey(p: KeyedProvider) {
-  if (process.platform === 'darwin') await run('security', ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', PROVIDERS[p].name])
+  if (process.platform === 'darwin') {
+    await run('security', ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', PROVIDERS[p].name])
+    keychain.forget(PROVIDERS[p].name)
+  }
   fs.rmSync(keyFile(p), { force: true })
   return `${PROVIDERS[p].name} のキーを削除しました。` + (process.env[PROVIDERS[p].env] ? `（環境変数 ${PROVIDERS[p].env} は残っています）` : '')
 }
@@ -596,11 +603,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
     if (id === 'fixture') throw ctx.httpError(400, 'fixture にはモデル一覧がありません。')
     const list = await listModels(await providerFor(id))
-    const models = list.map((m) => m.id)
-    const s = settings()
-    const modelNames = id === 'chatgpt' ? Object.fromEntries(list.map((m) => [m.id, m.label])) : s.modelNames
-    ctx.writeJSON(settingsFile(), { ...s, models: { ...s.models, [id]: models }, modelNames })
-    return { models, modelNames }
+    // Read after the wait: the other connections' lists come at the same time.
+    const next = withModelList(settings(), id, list)
+    if (!next) throw ctx.httpError(502, 'モデル一覧が空でした。保存済みの一覧はそのままです。')
+    ctx.writeJSON(settingsFile(), next)
+    return { models: next.models[id], modelNames: next.modelNames }
   },
   /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
   'GET /api/settings/connections': async () => ({

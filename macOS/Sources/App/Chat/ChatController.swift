@@ -455,7 +455,7 @@ final class ChatController {
       // A Card's definition folder is named by its id.
       let meta = session.cardMeta(k)
       return (key: k, definition: path(k).last ?? "-", description: meta?["description"]?.string ?? "",
-              content: meta?["content"]?.string ?? "")
+              content: meta?["content"]?.string ?? "", context: meta?["context"]?.string ?? "")
     }
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
     sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
@@ -593,6 +593,8 @@ final class ChatController {
     let bird = session.helperPresence(name)
     let row = items.lastIndex { $0.role == "helper" && $0.helper == name }
     switch e {
+    case .toolInput(let index, let tool, let delta):
+      bird.toolInput(index: index, tool: tool, delta: delta)
     case .text:
       bird.doing(String(localized: "考えています"))
     case .toolStarted(_, let tool, let args):
@@ -603,6 +605,7 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, let summary):
       thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
+      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded() }
       tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
@@ -631,6 +634,8 @@ final class ChatController {
       }
     case .helper(let name, let event):
       handleHelper(name, event)
+    case .toolInput(let index, let tool, let delta):
+      session.presence.toolInput(index: index, tool: tool, delta: delta)
     case .toolStarted(_, "guide_show", let args):
       // The bird flies and speaks; the chat keeps the choices under the answer.
       let shown = GuideAction.parse(args)
@@ -649,6 +654,7 @@ final class ChatController {
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       thoughts.note(tool: name, ok: ok, summary: summary)
+      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded() }
       tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
@@ -661,6 +667,7 @@ final class ChatController {
     case .retrying(let s): status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
+      session.presence.toolInputEnded()
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)

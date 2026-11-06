@@ -2,12 +2,13 @@
 // projects) and Demos (opened as editable copies), and the Tsugumi art the
 // home and the loading card share: the bird on its branch on low-poly teal.
 import { useEffect, useState } from 'react'
-import { api, Demo, DemoThumbnail } from '../api'
+import { api, Demo } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText } from '../model/session'
 import { Button, Empty, showMenu, Sheet, Spinner, TextField, Toggle } from './controls'
+import { DemoThumbnailPlayer } from './demoPlayer'
 import { Icon } from './icons'
 import { guide } from '../model/guide'
 import { GuideCorner } from './guide'
@@ -432,63 +433,16 @@ function TagChip({ label, selected, onClick }: { label: string; selected: boolea
   return <button type="button" className={`tag-chip${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={onClick}>{label}</button>
 }
 
-/** A demo with a thumbnail drawn from its own Workflow (Cards and wires). */
+/** A demo with a thumbnail of its own Workflow: the demo player in its compact form. */
 function DemoCard({ demo, onOpen }: { demo: Demo; onOpen: () => void }) {
   return (
     <div className="demo-card" data-guide={`demo:${demo.id}`}>
-      <DemoThumbnailView mini={demo.thumbnail} />
+      <DemoThumbnailPlayer className="demo-thumb" data={`/player-data/${demo.id}.json`} />
       <div className="headline">{demo.title}</div>
       <div className="callout secondary clamp3">{demo.description}</div>
       <div className="row gap4 wrap">{demo.tags.map((t) => <span key={t} className="demo-tag caption2">{t}</span>)}</div>
       <div className="row end"><Button kind="prominent" onClick={onOpen}>コピーを開く</Button></div>
     </div>
-  )
-}
-
-const THUMB_COLORS: Record<DemoThumbnail['cards'][number]['kind'], string> = {
-  link: PALETTE.olive, routing: PALETTE.mist, source: PALETTE.rufous, other: PALETTE.cream,
-}
-
-/** The top-level Workflow of a demo in miniature: Cards as tiles coloured by
- *  kind, routing Cards as small marks, wires as curves. */
-function DemoThumbnailView({ mini }: { mini: DemoThumbnail }) {
-  const W = 320, H = 130
-  const rects = new Map(mini.cards.map((c) => [c.id, { x: c.x, y: c.y, w: c.kind === 'routing' ? 70 : 220, h: c.kind === 'routing' ? 44 : 64, color: THUMB_COLORS[c.kind] }]))
-  const all = [...rects.values()]
-  let body: JSX.Element | null = null
-  if (all.length) {
-    const minX = Math.min(...all.map((r) => r.x)) - 30, minY = Math.min(...all.map((r) => r.y)) - 30
-    const maxX = Math.max(...all.map((r) => r.x + r.w)) + 30, maxY = Math.max(...all.map((r) => r.y + r.h)) + 30
-    const z = Math.min(W / (maxX - minX), H / (maxY - minY))
-    const mx = (minX + maxX) / 2, my = (minY + maxY) / 2
-    const t = (x: number, y: number) => [(x - mx) * z + W / 2, (y - my) * z + H / 2]
-    body = (
-      <>
-        {mini.wires.map(([a, b], i) => {
-          const ra = rects.get(a), rb = rects.get(b)
-          if (!ra || !rb) return null
-          const [sx, sy] = t(ra.x + ra.w / 2, ra.y + ra.h), [ex, ey] = t(rb.x + rb.w / 2, rb.y)
-          const dy = Math.max(8, Math.abs(ey - sy) / 2)
-          return <path key={i} d={`M${sx},${sy} C${sx},${sy + dy} ${ex},${ey - dy} ${ex},${ey}`} fill="none" stroke={PALETTE.cream} strokeOpacity={0.55} strokeWidth={1.2} />
-        })}
-        {all.map((r, i) => {
-          const [x, y] = t(r.x, r.y)
-          return <rect key={i} x={x} y={y} width={r.w * z} height={r.h * z} rx={Math.max(2, 8 * z)} fill={r.color} fillOpacity={0.9} />
-        })}
-      </>
-    )
-  }
-  return (
-    <svg className="demo-thumb" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice" aria-hidden>
-      <defs>
-        <linearGradient id="demo-teal" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor={PALETTE.tealTop} />
-          <stop offset="1" stopColor={PALETTE.tealBottom} />
-        </linearGradient>
-      </defs>
-      <rect width={W} height={H} fill="url(#demo-teal)" />
-      {body}
-    </svg>
   )
 }
 

@@ -106,6 +106,16 @@ table Outputs { result:Result (required); }
 root_type Outputs;
 ```
 
+Card の概要は `_meta.json` に書きます。Canvas と Card 設定に出るので、何をする Card かを短く書いておきます。
+
+`definitions/multiply/_meta.json`
+
+```json
+{
+  "description": "number を factor 倍する"
+}
+```
+
 実行環境は `default.nix` に書きます。`numpy` などを使うときは `pythonCard` に `packages = ps: [ ps.numpy ];` を足します。
 
 `definitions/multiply/default.nix`

@@ -31,6 +31,7 @@
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
 図の矢印は Card の線（`出力ポート → 入力ポート`）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。
+どの Card にも `_meta.json` に概要があり、Canvas（trigger・fork・merge・branch はホバー）と Card 設定で読めます。
 
 ## 基本のデモ
 

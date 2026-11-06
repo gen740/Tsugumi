@@ -83,39 +83,12 @@ function forgetRecents(paths: unknown) {
 
 // ---- Projects --------------------------------------------------------------------
 
-interface Demo { id: string; title: string; description: string; path: string; tags: string[]; thumbnail: Thumbnail }
-interface Thumbnail { cards: { id: string; x: number; y: number; kind: 'link' | 'routing' | 'source' | 'other' }[]; wires: [string, string][] }
-
-/** The top-level Workflow of a demo in miniature: where its Cards are, what
- *  kind they are (from their own definition folders) and how they connect. */
-function thumbnail(dir: string): Thumbnail {
-  const p = readJSON<any>(path.join(dir, 'tsugumi.json'), {})
-  const l = readJSON<any>(path.join(dir, 'layout.json'), {})
-  const cards: Thumbnail['cards'] = []
-  for (const c of Array.isArray(p?.canvas?.cards) ? p.canvas.cards : []) {
-    const id = typeof c?.id === 'string' ? c.id : undefined
-    if (!id || id.includes('/') || id.startsWith('.')) continue
-    const pos = l?.cards?.[id] ?? {}
-    const def = path.join(dir, 'definitions', id)
-    const template = readJSON<any>(path.join(def, '_card.json'), {})?.template
-    const kind = fs.existsSync(path.join(def, '_link.json')) ? 'link'
-      : ['fork', 'branch', 'merge'].includes(template) ? 'routing'
-      : template === 'trigger' || template === 'input' ? 'source' : 'other'
-    cards.push({ id, x: Number(pos.x) || 0, y: Number(pos.y) || 0, kind })
-  }
-  const wires: [string, string][] = []
-  for (const w of Array.isArray(p?.canvas?.connections) ? p.canvas.connections : []) {
-    const a = w?.from?.card, b = w?.to?.card
-    if (typeof a === 'string' && typeof b === 'string') wires.push([a, b])
-  }
-  return { cards, wires }
-}
-
+interface Demo { id: string; title: string; description: string; path: string; tags: string[] }
 function demos(): Demo[] {
   const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[] }[] }>(path.join(demosRoot, 'index.json'), {})
   return (idx.demos ?? []).map((d) => {
     const dir = path.join(demosRoot, d.path)
-    return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [], thumbnail: thumbnail(dir) }
+    return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [] }
   })
 }
 
@@ -333,7 +306,7 @@ function startBuild() {
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.map': 'application/json', '.icns': 'image/icns',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.map': 'application/json', '.icns': 'image/icns',
 }
 
 class HttpError extends Error {

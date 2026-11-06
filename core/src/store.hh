@@ -97,6 +97,10 @@ class Store {
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
   // Resolves a staged document now (commit then reuses it).
   void resolve_staged(Staged& staged) const;
+  // Reads the files of `doc`, with the writes of a staged save still `pending`;
+  // nullopt for a file it does not have or whose bytes on disk are not its own.
+  // Keep `doc` and `pending` alive while using it.
+  SourceReader reader(const Document& doc, const std::vector<FileOp>* pending = nullptr) const;
 
   // Persists a staged transaction atomically with its receipt. The
   // `make_receipt` callback receives the delta (with final revision numbers)

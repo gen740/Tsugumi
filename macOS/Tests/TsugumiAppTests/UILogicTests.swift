@@ -117,6 +117,15 @@ import Testing
   #expect(skills[1].description == "Review a Card")
 }
 
+@Test func theSmallCardsKeepTheirShapeWithASummary() {
+  func geometry(_ kind: CardKind) -> CardGeometry {
+    CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
+  }
+  for kind in [CardKind.trigger, .fork, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
+  #expect(geometry(.code).summary)
+  #expect(geometry(.subgraph).summary)
+}
+
 @Test func collapsedCardsKeepTheirPortsOnTheEdges() {
   var data = CardNodeData(title: "x", kind: .code, summary: "s",
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "x")])
@@ -189,6 +198,62 @@ import Testing
   #expect(router.isForward(CGPoint(x: 0, y: 80), CGPoint(x: 0, y: 160)))
 }
 
+@Test func wiresBetweenClosePortsTakeTheShortWay() {
+  func length(_ path: Path) -> CGFloat {
+    let points = stride(from: 0.0, through: 1.0, by: 1.0 / 64).map { path.trimmedPath(from: 0, to: max($0, 0.0001)).currentPoint ?? .zero }
+    return zip(points, points.dropFirst()).reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+  }
+  let merge = CGRect(x: 0, y: 0, width: 80, height: 50)
+  for gap in [0, 1, 20, 23, 24, 25, 40] as [CGFloat] {
+    let card = CGRect(x: -70, y: 50 + gap, width: 220, height: 90)
+    var down = WireRouter(flow: .topToBottom, obstacles: [merge, card])
+    #expect(length(down.route(CGPoint(x: 40, y: 50), CGPoint(x: 40, y: 50 + gap))) <= gap + 0.5, "top to bottom, \(gap)")
+  }
+  var across = WireRouter(flow: .leftToRight, obstacles: [CGRect(x: 0, y: 0, width: 50, height: 80), CGRect(x: 70, y: -70, width: 90, height: 220)])
+  #expect(length(across.route(CGPoint(x: 50, y: 40), CGPoint(x: 70, y: 46))) < 25)
+  // No bulge past either port.
+  var offset = WireRouter(flow: .topToBottom, obstacles: [merge])
+  let bent = offset.route(CGPoint(x: 40, y: 50), CGPoint(x: 52, y: 70)).boundingRect
+  #expect(bent.minY >= 49.5 && bent.maxY <= 70.5)
+  // Upstream by a point is still upstream: it goes around.
+  var back = WireRouter(flow: .topToBottom, obstacles: [merge, CGRect(x: -70, y: 70, width: 220, height: 90)])
+  #expect(length(back.route(CGPoint(x: 40, y: 51), CGPoint(x: 40, y: 50))) > 50)
+  // The short way through a Card is not taken.
+  let wall = CGRect(x: 100, y: 45, width: 60, height: 30)
+  var blocked = WireRouter(flow: .topToBottom, obstacles: [merge, wall])
+  #expect(!blocked.isForward(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60)))
+  let around = blocked.route(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60))
+  for t in stride(from: 0.02, through: 0.98, by: 0.02) {
+    #expect(!wall.insetBy(dx: 2, dy: 2).contains(around.trimmedPath(from: 0, to: t).currentPoint ?? .zero))
+  }
+}
+
+/// The paths the web finds for the same wires (web/tests/wireDemos.ts writes the file):
+/// real layouts of the demos, so the two routers cannot drift apart.
+@Test func wiresRouteAsOnTheWeb() throws {
+  struct Point: Decodable { let x, y: CGFloat }
+  struct Rect: Decodable { let x, y, width, height: CGFloat }
+  struct Ends: Decodable { let a, b: Point }
+  struct Case: Decodable {
+    let name, flow: String
+    let obstacles: [Rect]
+    let wires: [Ends]
+    let paths: [[Point]?]
+  }
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/wire-routes.json")))
+  #expect(!cases.isEmpty)
+  for c in cases {
+    var router = WireRouter(flow: c.flow == "leftToRight" ? .leftToRight : .topToBottom,
+                            obstacles: c.obstacles.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
+    let plans = router.plan(c.wires.map { (a: CGPoint(x: $0.a.x, y: $0.a.y), b: CGPoint(x: $0.b.x, y: $0.b.y)) })
+    for (i, plan) in plans.enumerated() {
+      let expected = c.paths[i]?.map { CGPoint(x: $0.x, y: $0.y) }
+      #expect(plan == expected, "\(c.name), wire \(i)")
+    }
+  }
+}
+
 @Test func editedOutputsAreReadFromTheText() {
   let ok = OutputCatalog.parse("""
     namespace t; // ports
@@ -215,6 +280,22 @@ import Testing
         insets: SwiftUI.EdgeInsets(top: 50, leading: 0, bottom: 50, trailing: 0), maxZoom: 1, margin: 0)
   let tl = c.screen(CGPoint(x: 0, y: 0)), br = c.screen(CGPoint(x: 400, y: 300))
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
+}
+
+@Test func droppedNoteLandsUnderThePointerAtAnyZoom() {
+  // The note's grabbed point moves by the pointer's translation: screen points / zoom = world units.
+  for zoom in [0.2, 0.5, 1, 2.5, 3] {
+    let from = CGPoint(x: 100, y: 40), by = CGSize(width: 60, height: -30)
+    let to = GraphCanvas.droppedNoteOrigin(from: from, by: by, zoom: zoom)
+    let cam = CanvasCamera(x: 40, y: 40, zoom: zoom)
+    let before = cam.screen(from), after = cam.screen(to)
+    // Within the rounding to whole world units.
+    #expect(abs((after.x - before.x) - by.width) <= zoom / 2 + 1e-9)
+    #expect(abs((after.y - before.y) - by.height) <= zoom / 2 + 1e-9)
+  }
+  #expect(GraphCanvas.droppedNoteOrigin(from: CGPoint(x: 10, y: 10), by: CGSize(width: 15, height: 7), zoom: 2) == CGPoint(x: 18, y: 14))
+  // Not snapped to the grid.
+  #expect(GraphCanvas.droppedNoteOrigin(from: .zero, by: CGSize(width: 13, height: 0), zoom: 1).x == 13)
 }
 
 @MainActor
@@ -300,4 +381,45 @@ import Testing
   #expect(throws: FolderNotEmpty.self) { try AppModel.writeNewProject(at: dir, name: "second", flow: "leftToRight") }
   let doc = try String(contentsOf: dir.appendingPathComponent("tsugumi.json"), encoding: .utf8)
   #expect(doc.contains("first") && !doc.contains("second"))
+}
+
+/// The same numbers as the web (tests/fixtures/port-grid-contract.json, web/tests/portGrid.ts).
+@Test func portsFollowTheGridAsOnTheWeb() throws {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let data = try Data(contentsOf: root.appendingPathComponent("tests/fixtures/port-grid-contract.json"))
+  let contract = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for c in try #require(contract["snap"] as? [[String: Double]]) {
+    #expect(abs(snapToGrid(CGFloat(c["v"]!), CGFloat(c["grid"]!)) - CGFloat(c["to"]!)) < 1e-9)
+  }
+  for c in try #require(contract["ports"] as? [[String: Any]]) {
+    let name = "\(c["flow"]!) \(c["kind"]!) grid \(c["grid"]!) \(c["inputs"]!)/\(c["outputs"]!)"
+    func ports(_ count: Int) -> [PortData] { (0..<count).map { PortData(name: "p\($0)") } }
+    var d = CardNodeData(title: "x", kind: try #require(CardKind(rawValue: c["kind"] as! String)), summary: c["summary"] != nil ? "s" : nil,
+                         inputs: ports(c["inputs"] as! Int), outputs: ports(c["outputs"] as! Int))
+    d.collapsed = c["collapsed"] != nil
+    let grid = c["grid"] as? Double
+    d.portGrid = grid.map { CGFloat($0) }
+    let flow: FlowDirection = c["flow"] as! String == "topToBottom" ? .topToBottom : .leftToRight
+    let g = CardGeometry(d, flow: flow)
+    let width = c["width"] as! Double, height = c["height"] as! Double
+    #expect(abs(g.size.width - width) < 1e-5, "\(name) width \(g.size.width)")
+    #expect(abs(g.size.height - height) < 1e-5, "\(name) height \(g.size.height)")
+    let edge = flow == .topToBottom ? width : height
+    for (key, output) in [("in", false), ("out", true)] {
+      let list = c[key] as! [Double]
+      let apex = (d.kind == .fork && !output) || (d.kind == .merge && output)
+      for (i, v) in list.enumerated() {
+        let p = g.port("p\(i)", output: output)
+        #expect(abs((flow == .topToBottom ? p.x : p.y) - v) < 1e-5, "\(name) \(key) \(i): \(p) != \(v)")
+        guard let grid, let n = c["n"] as? Double else { continue }
+        // A Card's corner is on a grid line, so this is its place on the canvas too.
+        let lines = v * n / grid
+        #expect(abs(lines - lines.rounded()) < 1e-5, "\(name) \(key) \(i) on grid/\(n)")
+        #expect(v >= 0 && v <= edge, "\(name) on its edge")
+        // A triangle's apex takes everything on that side; elsewhere marks never touch.
+        if apex { #expect(abs(v - edge / 2) < 1e-5, "\(name) at the apex") }
+        else if i > 0, c["collapsed"] == nil || flow == .topToBottom { #expect(v - list[i - 1] >= CardGeometry.minPortPitch, "\(name) apart") }
+      }
+    }
+  }
 }

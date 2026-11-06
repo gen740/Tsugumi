@@ -210,7 +210,6 @@ class Builder {
       if (const auto* v = schema::get(f)) out = *v;
     };
     str(d.symbol, s.symbol);
-    str(d.description, s.description);
     if (const auto* lang = schema::get(d.language)) s.language = *lang == "none" ? "" : *lang;
     if (const auto* t = schema::get(d.trigger)) {
       if (*t == "allInputs" || *t == "eachInput") s.any_mode = *t == "eachInput";

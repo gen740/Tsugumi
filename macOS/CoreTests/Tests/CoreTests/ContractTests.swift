@@ -66,7 +66,7 @@ struct ContractTests {
   @Test func draftRequests() throws {
     for c in try #require(fixture["draftRequest"] as? [[String: Any]]) {
       let cards = try #require(c["cards"] as? [[String: String]]).map {
-        (key: $0["key"]!, definition: $0["definition"]!, description: $0["description"]!, content: $0["content"]!)
+        (key: $0["key"]!, definition: $0["definition"]!, description: $0["description"]!, content: $0["content"]!, context: $0["context"]!)
       }
       #expect(Agent.draftRequest(scope: try #require(c["scope"] as? [String]), cards: cards) == c["expect"] as? String)
     }
