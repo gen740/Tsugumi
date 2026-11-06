@@ -560,6 +560,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             } : undefined}
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
+            onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
             onPointerDown={(e) => onCardDown(k, e)}
             onDoubleClick={(e) => {
               e.stopPropagation()
