@@ -8,14 +8,9 @@ TOOLS = [
     {key: tool[key] for key in ("name", "description", "inputSchema")}
     for tool in json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())
 ]
-# Deliberately different from the bundled demo's 27. Only inspection reveals it.
-SNAPSHOT = {
-    "rev": "12",
-    "project_json": json.dumps({"canvas": {"cards": [{"id": "initial"}], "connections": []}}),
-    "definitions": [{"id": "initial", "card_json": json.dumps({
-        "template": "input", "params": [{"name": "value", "type": "uint64", "data": 43}]
-    })}],
-}
+# Captured through the real MCP server and tsugumid for a one-Card project
+# with the Collatz initial definition, set to 43 instead of the demo's 27.
+SNAPSHOT = json.loads(Path(__file__).with_name("inspect_snapshot.json").read_text())
 
 
 def reply(request):
@@ -26,9 +21,12 @@ def reply(request):
     if method == "tools/list":
         return {"tools": TOOLS}
     if method == "tools/call":
-        inspect = request["params"]["name"] == "project_inspect"
-        return {"isError": not inspect, "content": [{"type": "text",
-                "text": json.dumps(SNAPSHOT) if inspect else "This replay only supports project_inspect."}]}
+        params = request["params"]
+        if params["name"] != "project_inspect":
+            return {"isError": True, "content": [{"type": "text", "text": "This replay only supports project_inspect."}]}
+        if params.get("arguments", {}) != {}:
+            return {"isError": True, "content": [{"type": "text", "text": "project_inspect takes no arguments."}]}
+        return {"isError": False, "content": [{"type": "text", "text": json.dumps(SNAPSHOT, separators=(",", ":"))}]}
     if method == "ping":
         return {}
     raise KeyError(method)
