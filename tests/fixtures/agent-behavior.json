@@ -344,5 +344,99 @@
       ],
       "cut": 4
     }
+  ],
+  "contextOverflow": [
+    {
+      "text": "provider returned 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 208310 tokens > 200000 maximum\"}}",
+      "overflow": true
+    },
+    {
+      "text": "Input is too long for requested model.",
+      "overflow": true
+    },
+    {
+      "text": "provider returned 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"input length and `max_tokens` exceed context limit: 170636 + 32768 > 200000, decrease input length or `max_tokens` and try again\"}}",
+      "overflow": true
+    },
+    {
+      "text": "provider returned 413: {\"type\":\"error\",\"error\":{\"type\":\"request_too_large\",\"message\":\"Request exceeds the maximum size\"}}",
+      "overflow": true
+    },
+    {
+      "text": "context_length_exceeded: Your input exceeds the context window of this model.",
+      "overflow": true
+    },
+    {
+      "text": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+      "overflow": true
+    },
+    {
+      "text": "This model's maximum context length is 128000 tokens.",
+      "overflow": true
+    },
+    {
+      "text": "provider returned 429: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your organization's rate limit of 30,000 input tokens per minute.\"}}",
+      "overflow": false
+    },
+    {
+      "text": "provider returned 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"tool_use ids were found without tool_result blocks\"}}",
+      "overflow": false
+    },
+    {
+      "text": "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings",
+      "overflow": false
+    }
+  ],
+  "fitToolResults": [
+    {
+      "name": "fits",
+      "room": 1000,
+      "sizes": [
+        300,
+        300
+      ],
+      "expect": [
+        300,
+        300
+      ]
+    },
+    {
+      "name": "the_longest_gives_way",
+      "room": 1000,
+      "sizes": [
+        100,
+        4000
+      ],
+      "expect": [
+        100,
+        540
+      ]
+    },
+    {
+      "name": "all_alike",
+      "room": 1000,
+      "sizes": [
+        4000,
+        4000,
+        4000
+      ],
+      "expect": [
+        306,
+        306,
+        306
+      ]
+    },
+    {
+      "name": "never_under_the_floor",
+      "room": 10,
+      "sizes": [
+        4000,
+        4000
+      ],
+      "expect": [
+        189,
+        189
+      ]
+    }
   ]
 }

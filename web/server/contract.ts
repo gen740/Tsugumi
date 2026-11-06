@@ -10,8 +10,8 @@ import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { AGENT, commentRequest, draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
-import { spawn } from 'node:child_process'
-import { Agent, AgentEvent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
+import { ChildProcess, spawn } from 'node:child_process'
+import { Agent, AgentEvent, approvalRequired, CONTEXT_FULL_TEXT, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -266,6 +266,115 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
     assert.equal(sourcesText([{ url: 'file:///etc/passwd' }]), '')
   } finally {
     fixture.kill()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+// The context limit, as in macOS/CoreTests (ContextLimitTests): the fixture refuses
+// a request over it as the APIs do. Whichever way the context runs out, the
+// conversation goes on, or the Agent says what to do.
+{
+  const start = async (...args: string[]) => {
+    const p = spawn('python3', [path.join(root, 'tests/fixtures/model_fixture.py'), '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const base = await new Promise<string>((resolve, reject) => {
+      p.stdout!.on('data', (d: Buffer) => {
+        const m = /http:\/\/127\.0\.0\.1:\d+/.exec(String(d))
+        if (m) resolve(m[0])
+      })
+      p.once('exit', () => reject(new Error('the fixture ended')))
+    })
+    return { p, base }
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-limit-'))
+  const big = path.join(tmp, 'big.txt')
+  const running: ChildProcess[] = []
+  let serial = 0
+  const catalog = new ToolCatalog(schema)
+  const agentAt = (base: string, api: ProviderConfig['api'] = 'anthropicMessages', file?: string) => new Agent(catalog, async () => { throw new Error('no rpc in this check') },
+    { name: 'Test', baseURL: base, model: 'fixture', api, auth: 'apiKey', apiKey: 'fixture-key', maxTokens: 32768, contextLimit: 6000 },
+    file ?? path.join(tmp, `${++serial}.json`), `limit${serial}`, { 'big.txt': big })
+  const turn = (a: Agent, text: string) => new Promise<AgentEvent[]>((resolve) => {
+    const events: AgentEvent[] = []
+    a.send(text, text, (e) => {
+      events.push(e)
+      if (e.kind === 'finished' || e.kind === 'error' || e.kind === 'stepLimit') resolve(events)
+    })
+  })
+  const says = (events: AgentEvent[]) => events.flatMap((e) => (e.kind === 'text' ? [e.text] : [])).join('')
+  const ended = (events: AgentEvent[]) => assert.equal(events[events.length - 1].kind, 'finished', JSON.stringify(events[events.length - 1]))
+  const fixtureAt = async (...args: string[]) => {
+    const { p, base } = await start(...args)
+    running.push(p)
+    return base
+  }
+  const earlier = (usage: number, first = 'question') => {
+    const file = path.join(tmp, `${++serial}.json`)
+    const messages = []
+    for (let i = 0; i < 4; i++) messages.push({ role: 'user', content: [{ type: 'text', text: i ? `question ${i}` : first }] }, { role: 'assistant', content: [{ type: 'text', text: `answer ${i}` }] })
+    fs.writeFileSync(file, JSON.stringify({ id: `limit${serial}`, updatedAt: 0, messages, archive: [], tools: [], usage: { inputTokens: usage, outputTokens: 0 } }))
+    return file
+  }
+  try {
+    fs.writeFileSync(big, 'x'.repeat(20_000))
+    const limited = await fixtureAt('--context-limit', '6000')
+
+    // Ten reads in one reply are more than the next request can take, and nothing
+    // can be summarized yet: the results are cut, the whole stays in the records.
+    let a = agentAt(limited)
+    let events = await turn(a, 'read big.txt 10 times')
+    ended(events)
+    assert.match(says(events), /Read 10 results, 10 cut\./)
+    assert.ok(a.conversation.tools.every((t) => t.result?.length === 20_000))
+    ended(await turn(a, 'and now?'))
+
+    // Earlier turns to summarize are not enough: the reads stay in what is kept.
+    a = agentAt(limited)
+    for (const t of ['one', 'two', 'three']) await turn(a, t)
+    events = await turn(a, 'read big.txt 10 times')
+    ended(events)
+    assert.ok(events.some((e) => e.kind === 'compacted'))
+    assert.ok(a.conversation.summary && a.conversation.archive.length)
+    ended(await turn(a, 'and now?'))
+
+    // The same over the Responses API, where the refusal comes in the stream.
+    a = agentAt(limited, 'openAIResponses')
+    events = await turn(a, 'read big.txt 10 times')
+    ended(events)
+    assert.match(says(events), /Read 10 results, 10 cut\./)
+
+    // A message that cannot fit says what to do, and a new conversation works.
+    a = agentAt(limited)
+    events = await turn(a, 'y'.repeat(100_000))
+    assert.deepEqual(events.at(-1), { kind: 'error', message: CONTEXT_FULL_TEXT })
+    ended(await turn(agentAt(limited), 'hello'))
+
+    // The request for the summary fits the context too.
+    a = agentAt(limited, 'anthropicMessages', earlier(5000, 'z'.repeat(60_000)))
+    ended(await turn(a, 'hello'))
+    assert.ok(a.conversation.summary)
+
+    // What compaction keeps is under the threshold, so it does not start again at each step.
+    const free = await fixtureAt()
+    fs.writeFileSync(big, 'x'.repeat(15_000))
+    a = agentAt(free)
+    events = await turn(a, 'read big.txt 2 times in 3 rounds')
+    ended(events)
+    assert.ok(events.some((e) => e.kind === 'compacted'))
+    ended(await turn(a, 'and now?'))
+    assert.ok(a.conversation.usage.inputTokens <= 4500, String(a.conversation.usage.inputTokens))
+
+    // A reply ended at the context window (HTTP 200, its own stop reason) is not an answer: the work goes on.
+    events = await turn(agentAt(await fixtureAt('--window-cut-once')), 'read big.txt 1 times')
+    ended(events)
+    assert.match(says(events), /Read 1 results/, JSON.stringify(events))
+
+    // A summary that fails over the threshold does not end the turn: the model still takes the request.
+    a = agentAt(await fixtureAt('--fail-summaries', '99'), 'anthropicMessages', earlier(5000))
+    events = await turn(a, 'hello')
+    ended(events)
+    assert.ok(events.some((e) => e.kind === 'retrying' && e.message.includes('summar')), JSON.stringify(events))
+  } finally {
+    for (const p of running) p.kill()
     fs.rmSync(tmp, { recursive: true, force: true })
   }
 }

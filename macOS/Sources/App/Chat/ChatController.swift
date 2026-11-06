@@ -124,6 +124,8 @@ final class ChatController {
   private(set) var failed = false
   /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
   private(set) var usageLimited = false
+  /// The last turn could not make the conversation fit the model's context.
+  private(set) var contextFull = false
   private(set) var sessions: [SessionInfo] = []
   private(set) var currentId: String = ""
   private(set) var usage = Usage()
@@ -586,6 +588,7 @@ final class ChatController {
     busy = true
     failed = false
     usageLimited = false
+    contextFull = false
     stoppedAtLimit = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
@@ -675,7 +678,7 @@ final class ChatController {
   private func handle(_ e: AgentEvent, of number: Int) {
     if number != answer {
       switch e {
-      case .text, .discardText, .retrying, .compacted, .error, .finished, .stepLimit: return
+      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .stepLimit: return
       default: break
       }
     }
@@ -716,9 +719,13 @@ final class ChatController {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
       }
+    case .compacting:
+      // The next reply waits for it (over a minute with a long conversation).
+      status = String(localized: "会話を圧縮しています…")
     case .compacted:
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
+      status = nil
       reloadCurrent()
     case .retrying(let s): status = String(localized: "再試行中: \(s)")
     case .discardText:
@@ -732,13 +739,17 @@ final class ChatController {
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
       usageLimited = s == ChatGPTError.usageLimitText
+      contextFull = s == Agent.contextFullText
       status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
         : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+        : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
+      // A note of this turn (a retry, the compaction) is no longer current.
+      status = nil
       session.presence.turnEnded()
       refreshAfterTurn()
       tidySoon()
@@ -756,7 +767,10 @@ final class ChatController {
 
   private func reloadCurrent() {
     guard let agent else { return }
-    Task { load(await agent.conversation) }
+    Task {
+      load(await agent.conversation)
+      usage = await agent.conversation.usage
+    }
   }
 
   private func refreshAfterTurn() {
