@@ -32,10 +32,9 @@
       "color": "yellow",
       "text": "## Cas A（Chandra）\n\n超新星残骸カシオペヤ座 A の X 線イベントデータから 3 色画像を作ります。赤は 600–1650 eV、緑は 1650–2250 eV、青は 2250–7500 eV です。\n\n観測は **load** の `default.nix` で Nix に固定しています。最初の実行で HEASARC から一度だけ取得し、以後はストアのファイルを使います（実行中にネットワークは使いません）。\n\n**load** の ObsID・file・hash を 114（50 ks、520 MB）に変えると深い観測になります。**bands** の帯域や **rgb** の伸長を変えて、その Card だけを実行し直せます。\n\n**spectrum** は同じ光子のエネルギースペクトルを matplotlib で描き、どの元素の輝線がどの色に入るかを示します。",
       "x": 160.0,
-      "y": -486.0,
-      "width": 700.0,
-      "height": 420.0,
-      "fontSize": 22.0
+      "y": -300.0,
+      "width": 560.0,
+      "height": 260.0
     }
   ],
   "flow": "leftToRight",

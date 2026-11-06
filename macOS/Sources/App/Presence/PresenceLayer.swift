@@ -93,7 +93,7 @@ struct Choreography {
   /// Where a scene leaves the bird.
   func end(of s: AgentPresence.Scheduled) -> CGPoint? {
     switch s.beat {
-    case .visit(let k), .run(let k), .write(let k, false): perch(k)
+    case .visit(let k), .compose(let k), .run(let k), .write(let k, false): perch(k)
     case .write(let k, true): writing(k, 1)
     case .thread(let w): head(w, 1, sag: 0)
     }
@@ -135,11 +135,14 @@ struct Choreography {
     }
     typealias T = AgentPresence.Timing
     switch cur.beat {
-    case .visit(let k), .run(let k), .write(let k, false):
+    case .visit(let k), .compose(let k), .run(let k), .write(let k, false):
       guard let to = perch(k) else { return nil }
       let from = prev.flatMap(end) ?? to
       if local < 1.0 && from != to { return AvatarPose(center: fly(from, to, local / 1.0), mood: .flying) }
-      if case .write = cur.beat { return AvatarPose(center: to, mood: .writing) }
+      switch cur.beat {
+      case .write, .compose: return AvatarPose(center: to, mood: .writing)
+      default: break
+      }
       return AvatarPose(center: to, mood: .reading)
     case .write(let k, true):
       guard let start = writing(k, 0) else { return nil }
@@ -195,6 +198,9 @@ struct PresenceLayer: View {
     let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
+      if avatar != .none, let code = presence.liveCode, let card = geometry.card(code.card) {
+        WritingPanel(code: code, card: card, geometry: geometry, color: color)
+      }
       if avatar != .none, presence.visible(at: t), let pose = reduceMotion ? ch.still(at: t) : ch.posed(at: t) {
         let fade = presence.fade(at: t)
         // Fades in as it comes; at the end it rises a little as it fades away.
@@ -267,6 +273,65 @@ struct PresenceLayer: View {
 }
 
 /// Where the bird was over the last moment: a thread that thins and fades.
+/// The file the Agent is writing, above its Card: what has arrived and
+/// nothing else, marked as not saved. Not drawn when too small to read.
+struct WritingPanel: View {
+  let code: AgentPresence.LiveCode
+  let card: CGRect
+  let geometry: PresenceGeometry
+  let color: Color
+
+  /// World units, as the Card itself.
+  static let size = CGSize(width: 300, height: 112)
+  static let gap: CGFloat = 16
+  static let lines = 5
+  static let smallestZoom = 0.45
+
+  /// The last lines of the text; the line being written is whole at its end.
+  nonisolated static func tail(_ text: String, lines: Int = lines) -> [String] {
+    text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).map(String.init)
+  }
+
+  var body: some View {
+    if geometry.zoom >= Self.smallestZoom {
+      let z = CGFloat(geometry.zoom)
+      let top = geometry.screen(CGPoint(x: card.midX, y: card.minY - Self.gap - Self.size.height))
+      let bottom = geometry.screen(CGPoint(x: card.midX, y: card.minY))
+      let shown = Self.tail(code.text)
+      Path { p in
+        p.move(to: CGPoint(x: bottom.x, y: top.y + Self.size.height * z))
+        p.addLine(to: bottom)
+      }
+      .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+      VStack(alignment: .leading, spacing: 3 * z) {
+        HStack {
+          Text(code.file).lineLimit(1).truncationMode(.head)
+          Spacer(minLength: 8 * z)
+          Text("保存前")
+        }
+        .font(.system(size: 9.5 * z, design: .monospaced))
+        .foregroundStyle(Color.white.opacity(0.55))
+        VStack(alignment: .leading, spacing: 2 * z) {
+          ForEach(Array(shown.enumerated()), id: \.offset) { n, line in
+            Text(line.isEmpty ? " " : line)
+              .lineLimit(1)
+              .truncationMode(n == shown.count - 1 ? .head : .tail)
+          }
+        }
+        .font(.system(size: 10.5 * z, design: .monospaced))
+        .foregroundStyle(Color.white.opacity(0.88))
+        Spacer(minLength: 0)
+      }
+      .padding(10 * z)
+      .frame(width: Self.size.width * z, height: Self.size.height * z, alignment: .topLeading)
+      .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(white: 0.09)))
+      .overlay(RoundedRectangle(cornerRadius: 8 * z).strokeBorder(color.opacity(0.55), lineWidth: 1))
+      .shadow(color: .black.opacity(0.3), radius: 6 * z, y: 3 * z)
+      .position(x: top.x, y: top.y + Self.size.height * z / 2)
+    }
+  }
+}
+
 struct Trail: View {
   let points: [CGPoint]
   let strong: Bool

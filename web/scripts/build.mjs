@@ -28,6 +28,9 @@ const MODULE_FILES = {
   'LICENSE.vega-lite.txt': path.join(root, 'node_modules', 'vega-lite', 'LICENSE'),
   'LICENSE.vega-embed.txt': path.join(root, 'node_modules', 'vega-embed', 'LICENSE'),
 }
+// The demo player's data (ui/demoPlayer.tsx, Home's thumbnails): each demo and the
+// images it names, without what only builds that data.
+const playerData = path.join(root, '..', 'docs', 'site', 'player-data')
 const copy = () => {
   fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(out, 'public', 'index.html'))
   fs.mkdirSync(path.join(out, 'public', 'modules'), { recursive: true })
@@ -38,6 +41,10 @@ const copy = () => {
   if (!page.includes(script)) throw new Error('viewer.html has no <script src="viewer.js"></script> to inline')
   fs.writeFileSync(path.join(out, 'public', 'modules', 'viewer.html'), page)
   fs.copyFileSync(path.join(root, '..', 'docs', 'assets', 'tsugumi-icon.svg'), path.join(out, 'public', 'icon.svg'))
+  fs.cpSync(playerData, path.join(out, 'public', 'player-data'), {
+    recursive: true,
+    filter: (from) => !['index.json', 'ports.json'].includes(path.basename(from)) && !from.endsWith('.run.json'),
+  })
   fs.copyFileSync(gen, path.join(out, 'tsugumi.bfbs'))
 }
 copy()

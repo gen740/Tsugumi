@@ -29,8 +29,8 @@ def test_positions_are_read_in_order():
 
 
 def test_the_bundled_strings_are_the_generated_ones():
+    # Exactly the generated text: build-app.sh regenerates the file from EN, so a string
+    # added only to Localizable.strings (not EN) would be lost, untranslated, in the built app.
     en = load()
     text = (ROOT / "macOS/Resources/en.lproj/Localizable.strings").read_text(encoding="utf-8")
-    assert text.count(" = ") >= len(en.EN)
-    for k, v in en.EN.items():
-        assert f"{en.quote(k)} = {en.quote(v)};" in text, k
+    assert text == en.render()

@@ -38,6 +38,8 @@ struct GraphCanvas: View {
   private var scopeKey: CardKey { key(tab.scope) }
   /// An output frame being dragged (screen translation).
   @State private var frameDrag: (card: CardKey, by: CGSize)?
+  /// A sticky note being dragged (screen translation); saved once, on release.
+  @State private var noteDrag: (id: String, by: CGSize)?
   var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -203,7 +205,7 @@ struct GraphCanvas: View {
     }
   }
 
-  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil }
+  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil }
 
   // MARK: - Data
 
@@ -529,17 +531,25 @@ struct GraphCanvas: View {
   private func noteView(_ id: String) -> some View {
     let n = session.note(id) ?? .object([])
     let r = noteRect(n)
+    // Follows the pointer while dragged (screen units, so any zoom); the layout changes once, on release.
+    let by = noteDrag?.id == id ? noteDrag!.by : .zero
     return StickyNoteView(note: n, onResize: { d in
       session.updateNote(id) { v in
         v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
         v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
-    .gesture(DragGesture(minimumDistance: 3).onEnded { v in
+    .place(at: CGPoint(x: screen(r.origin).x + by.width, y: screen(r.origin).y + by.height), size: r.size, zoom: camera.zoom)
+    // In the canvas space: the note moves under the pointer, so its own space would shrink the translation.
+    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
+      clearHover()
+      noteDrag = (id, v.translation)
+    }.onEnded { v in
+      noteDrag = nil
+      let to = Self.droppedNoteOrigin(from: r.origin, by: v.translation, zoom: camera.zoom)
       session.updateNote(id) { n in
-        n["x"] = .real((r.minX + v.translation.width / camera.zoom).rounded())
-        n["y"] = .real((r.minY + v.translation.height / camera.zoom).rounded())
+        n["x"] = .real(to.x)
+        n["y"] = .real(to.y)
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -560,6 +570,11 @@ struct GraphCanvas: View {
       Divider()
       Button("付箋を削除", role: .destructive) { session.removeNote(id) }
     }
+  }
+
+  /// Where a note dragged by `translation` screen points lands (world units, whole numbers; no grid snap).
+  static func droppedNoteOrigin(from origin: CGPoint, by translation: CGSize, zoom: Double) -> CGPoint {
+    CGPoint(x: (origin.x + translation.width / zoom).rounded(), y: (origin.y + translation.height / zoom).rounded())
   }
 
   private func setNoteFont(_ id: String, _ size: CGFloat) {

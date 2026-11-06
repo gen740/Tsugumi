@@ -388,15 +388,15 @@ private struct TagChip: View {
   }
 }
 
-/// A demo with a thumbnail drawn from its own Workflow (Cards and wires).
+/// A demo with a thumbnail of its own Workflow (DemoThumbnail.swift).
 private struct DemoCard: View {
   let demo: DemoEntry
   let open: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      DemoThumbnail(url: demo.url)
-        .frame(height: 130)
+      DemoThumbnail(id: demo.id)
+        .frame(height: 190)
         .clipShape(RoundedRectangle(cornerRadius: 8))
       Text(demo.title).font(.headline)
       Text(demo.description).font(.callout).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
@@ -414,66 +414,5 @@ private struct DemoCard: View {
     .padding(12)
     .background(.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.secondary.opacity(0.2)))
-  }
-}
-
-/// The top-level Workflow of a demo in miniature: Cards as tiles coloured by
-/// kind, routing Cards as small marks, wires as curves.
-struct DemoThumbnail: View {
-  let url: URL
-
-  private struct Mini { var cards: [(id: String, rect: CGRect, color: Color)]; var wires: [(CGPoint, CGPoint)] }
-
-  private var mini: Mini {
-    guard let p = try? JSONValue.parse(String(contentsOf: url.appendingPathComponent("tsugumi.json"), encoding: .utf8)),
-          let l = try? JSONValue.parse(String(contentsOf: url.appendingPathComponent("layout.json"), encoding: .utf8)) else {
-      return Mini(cards: [], wires: [])
-    }
-    var cards: [(String, CGRect, Color)] = []
-    for c in p["canvas"]?["cards"]?.array ?? [] {
-      guard let id = c["id"]?.string else { continue }
-      let pos = CGPoint(x: l["cards"]?[id]?["x"]?.double ?? 0, y: l["cards"]?[id]?["y"]?.double ?? 0)
-      // The Card's own definition (definitions/<id>/): a template, a link (Card in Card) or code.
-      let dir = url.appendingPathComponent("definitions/\(id)")
-      let link = FileManager.default.fileExists(atPath: dir.appendingPathComponent("_link.json").path)
-      let def = (try? JSONValue.parse(String(contentsOf: dir.appendingPathComponent("_card.json"), encoding: .utf8)))?["template"]?.string ?? ""
-      let routing = ["fork", "branch", "merge"].contains(def)
-      let color: Color = link ? TsugumiPalette.olive : routing ? TsugumiPalette.mist : def == "trigger" || def == "input" ? TsugumiPalette.rufous : TsugumiPalette.cream
-      cards.append((id, CGRect(x: pos.x, y: pos.y, width: routing ? 70 : 220, height: routing ? 44 : 64), color))
-    }
-    var wires: [(CGPoint, CGPoint)] = []
-    for w in p["canvas"]?["connections"]?.array ?? [] {
-      guard let a = cards.first(where: { $0.0 == w["from"]?["card"]?.string })?.1,
-            let b = cards.first(where: { $0.0 == w["to"]?["card"]?.string })?.1 else { continue }
-      wires.append((CGPoint(x: a.midX, y: a.maxY), CGPoint(x: b.midX, y: b.minY)))
-    }
-    return Mini(cards: cards, wires: wires)
-  }
-
-  var body: some View {
-    let m = mini
-    Canvas { g, size in
-      g.fill(Path(CGRect(origin: .zero, size: size)),
-             with: .linearGradient(Gradient(colors: [TsugumiPalette.tealTop, TsugumiPalette.tealBottom]), startPoint: .zero,
-                                   endPoint: CGPoint(x: size.width, y: size.height)))
-      let box = m.cards.reduce(CGRect.null) { $0.union($1.rect) }
-      guard !box.isNull else { return }
-      let r = box.insetBy(dx: -30, dy: -30)
-      let z = min(size.width / r.width, size.height / r.height)
-      func t(_ p: CGPoint) -> CGPoint { CGPoint(x: (p.x - r.midX) * z + size.width / 2, y: (p.y - r.midY) * z + size.height / 2) }
-      for (a, b) in m.wires {
-        var path = Path()
-        let s = t(a), e = t(b), dy = max(8, abs(e.y - s.y) / 2)
-        path.move(to: s)
-        path.addCurve(to: e, control1: CGPoint(x: s.x, y: s.y + dy), control2: CGPoint(x: e.x, y: e.y - dy))
-        g.stroke(path, with: .color(TsugumiPalette.cream.opacity(0.55)), lineWidth: 1.2)
-      }
-      for c in m.cards {
-        let o = t(c.rect.origin)
-        let rect = CGRect(x: o.x, y: o.y, width: c.rect.width * z, height: c.rect.height * z)
-        g.fill(Path(roundedRect: rect, cornerRadius: max(2, 8 * z)), with: .color(c.color.opacity(0.9)))
-      }
-    }
-    .accessibilityHidden(true)
   }
 }
