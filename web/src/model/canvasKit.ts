@@ -124,6 +124,8 @@ export interface CardNodeData {
   draftEditing?: boolean
   /** A Draft without a name of its own: its content is all it shows. */
   untitled?: boolean
+  /** The canvas grid's spacing while the grid is on: the ports follow it. */
+  portGrid?: number
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'
@@ -131,8 +133,22 @@ export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'b
 export type CardShape = 'card' | 'branch' | 'fork' | 'merge'
 export const shapeOf = (k: CardKind): CardShape => (k === 'branch' || k === 'fork' || k === 'merge' ? k : 'card')
 
+/** The nearest grid line. Not `Math.round`: that goes up on a tie and Swift's
+ *  `.rounded()` goes away from zero, and a Card on a negative half would land
+ *  one grid apart on the two. */
+export const snapToGrid = (v: number, grid: number) => Math.floor(v / grid + 0.5) * grid
+
+/** An even number of grids, so half of it is on a grid line. */
+const gridLengthNear = (length: number, grid: number) => 2 * grid * Math.floor(length / (2 * grid) + 0.5)
+const gridLengthAtLeast = (length: number, grid: number) => 2 * grid * Math.ceil(length / (2 * grid))
+
 /** Size, outline and port positions of a Card (world units, relative to its
- *  top-left corner). Shared by drawing, wires, the selection and hit-tests. */
+ *  top-left corner). Shared by drawing, wires, the selection and hit-tests.
+ *
+ *  With the grid on, a port's place along its edge is on grid/n of the canvas:
+ *  a Card's corner is on a grid line, so every offset here is a multiple of
+ *  grid/n from the corner, and the Card's length across the flow is an even
+ *  number of grids so the middle of the edge is on a line too. */
 export class CardGeometry {
   static readonly width = 220
   static readonly header = 32
@@ -148,6 +164,12 @@ export class CardGeometry {
   static readonly untitledTop = 8
   /** Labels narrower than this are hidden (shown on hover instead). */
   static readonly minLabel = 26
+  /** Ports this far apart have room for a whole name between them, while there are few. */
+  static readonly labelPitch = 60
+  /** Port marks are 8 wide: closer than this they would touch. */
+  static readonly minPortPitch = 10
+  /** Kept free at the ends of a Card's edge (its rounded corners). */
+  static readonly portMargin = 12
 
   readonly inputs: string[]
   readonly outputs: string[]
@@ -160,6 +182,7 @@ export class CardGeometry {
   readonly draft: boolean
   readonly draftEditing: boolean
   readonly untitled: boolean
+  readonly grid?: number
 
   constructor(d: CardNodeData, readonly flow: FlowDirection) {
     this.inputs = d.inputs.map((p) => p.name)
@@ -174,16 +197,79 @@ export class CardGeometry {
     this.result = d.kind === 'logger' || d.hasDisplay
     this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
+    this.grid = d.portGrid
   }
 
   /** Width across the flow and length along it of a routing Card's outline. */
   private get routingSize() {
     switch (this.shape) {
-      case 'branch': return { width: 60, height: 48 }
-      case 'fork': return { width: Math.max(56, this.outputs.length * 30 + 12), height: 40 }
-      case 'merge': return { width: Math.max(56, this.inputs.length * 30 + 12), height: 40 }
+      // Its ports are at a quarter and three quarters of this.
+      case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
+      case 'fork': return { width: this.fanWidth(this.outputs.length), height: 40 }
+      case 'merge': return { width: this.fanWidth(this.inputs.length), height: 40 }
       default: return { width: 0, height: 0 }
     }
+  }
+
+  /** The wide edge of a fork or merge: it grows with its ports, so they are never squeezed. */
+  private fanWidth(count: number) {
+    if (!this.grid) return Math.max(56, count * 30 + 12)
+    return gridLengthAtLeast(Math.max(56, (count - 1) * this.fanPitch(count, this.grid) + 16), this.grid)
+  }
+
+  /** The closest ports can be with a row each (grid/n, or whole grids on a fine grid). */
+  static rowPitch(grid: number) {
+    return grid < CardGeometry.portRow ? Math.ceil(CardGeometry.portRow / grid) * grid : grid / Math.floor(grid / CardGeometry.portRow)
+  }
+
+  /** Ports of a fork or merge. Two or four around the middle take twice the
+   *  pitch to stay on the same lines as a Card's ports across a wire; more
+   *  of them would make the mark too wide, and close up onto grid/2 instead. */
+  private fanPitch(count: number, grid: number) {
+    return CardGeometry.rowPitch(grid) * (count === 2 || count === 4 ? 2 : 1)
+  }
+
+  /** Ports of a Card's edge across the flow, gathered around its middle in
+   *  a bit over half its length: far enough apart for their names while few, then
+   *  by the grid, grid/2, grid/3 and so on. Past `minPortPitch` they stop
+   *  closing up and spread further along the edge instead. */
+  private edgePitch(count: number, grid: number) {
+    const room = gridLengthNear(CardGeometry.width, grid) * 0.6
+    // An even number of grids: two ports around the middle land on grid lines.
+    let pitch = gridLengthAtLeast(CardGeometry.labelPitch, grid)
+    let n = 1
+    while ((count - 1) * pitch > room) {
+      let next = pitch - grid
+      if (pitch <= grid) {
+        n += 1
+        next = grid / n
+      }
+      if (next < CardGeometry.minPortPitch) break
+      pitch = next
+    }
+    return pitch
+  }
+
+  /** The Card's length across the flow; it grows if its ports would not fit. */
+  get cardWidth() {
+    if (!this.grid) return CardGeometry.width
+    let w = gridLengthNear(CardGeometry.width, this.grid)
+    if (this.flow === 'topToBottom') {
+      for (const count of [this.inputs.length, this.outputs.length]) {
+        if (count > 1) w = Math.max(w, gridLengthAtLeast((count - 1) * this.edgePitch(count, this.grid) + 2 * CardGeometry.portMargin, this.grid))
+      }
+    }
+    return w
+  }
+
+  /** With the grid on, the place of a port along an edge across the flow. */
+  private alongGrid(index: number, count: number, output: boolean): number | undefined {
+    if (!this.grid) return undefined
+    const middle = index - (count - 1) / 2
+    if (this.shape === 'card') return this.cardWidth / 2 + middle * this.edgePitch(count, this.grid)
+    // A triangle's apex is one point: everything on that side is on it.
+    const w = this.routingSize.width
+    return (this.shape === 'fork') === !output ? w / 2 : w / 2 + middle * this.fanPitch(count, this.grid)
   }
 
   private get bandIn() {
@@ -194,9 +280,25 @@ export class CardGeometry {
   }
 
   get portBand() {
-    // A Draft has no port names to give a row: its ports are at the middle of its sides.
-    if (this.flow !== 'leftToRight' || this.shape !== 'card' || this.draft) return 0
-    return Math.max(this.inputs.length, this.outputs.length, 1) * CardGeometry.portRow
+    if (this.flow !== 'leftToRight' || this.shape !== 'card') return 0
+    const count = Math.max(this.inputs.length, this.outputs.length, 1)
+    if (this.draft) {
+      // A Draft has no port names to give a row: its ports are at the middle
+      // of its sides. On the grid they do not close up, so it makes room.
+      if (!this.grid) return 0
+      return Math.max(0, count * CardGeometry.rowPitch(this.grid) + 8 - this.contentHeight)
+    }
+    if (!this.grid) return count * CardGeometry.portRow
+    const p = CardGeometry.rowPitch(this.grid)
+    return this.firstRow(p) - this.rowsTop + (count - 1) * p + CardGeometry.portRow / 2
+  }
+  /** Where the rows of a left-to-right Card begin, under its header and summary. */
+  private get rowsTop() {
+    return CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
+  }
+  /** The first grid line a port's row fits under them. */
+  private firstRow(pitch: number) {
+    return Math.ceil((this.rowsTop + CardGeometry.portRow / 2) / pitch) * pitch
   }
   /** The header, or what is left of it over the content of a Draft without a name. */
   get headerRow() {
@@ -218,10 +320,13 @@ export class CardGeometry {
       const r = this.routingSize
       return this.flow === 'topToBottom' ? { width: r.width, height: this.bandIn + r.height + this.bandOut } : { width: r.height + 60, height: r.width }
     }
-    if (this.collapsed) return { width: CardGeometry.width, height: CardGeometry.header }
-    const h = this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.portBand + this.params * CardGeometry.paramRow +
+    if (this.collapsed) return { width: this.cardWidth, height: CardGeometry.header }
+    return { width: this.cardWidth, height: this.contentHeight + this.portBand }
+  }
+  /** A Card's height without its port rows. */
+  private get contentHeight() {
+    return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.params * CardGeometry.paramRow +
       (this.result ? CardGeometry.resultRow : 0) + (this.stages ? CardGeometry.stageRow : 0) + this.bottomLabels + 4
-    return { width: CardGeometry.width, height: h }
   }
   get height() {
     return this.size.height
@@ -262,7 +367,7 @@ export class CardGeometry {
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
   private edgeSpan(input: boolean) {
     if (this.shape === 'card' || this.shape === 'branch') {
-      const w = this.shape === 'card' ? CardGeometry.width : this.routingSize.width
+      const w = this.shape === 'card' ? this.cardWidth : this.routingSize.width
       return { start: 0, width: w }
     }
     const w = this.routingSize.width
@@ -278,8 +383,9 @@ export class CardGeometry {
     if (this.shape === 'branch') return this.routingSize.width / 2 - 8
     const span = this.edgeSpan(input)
     // A single label may be as wide as the Card; several share the edge.
-    const pitch = span.width / (list.length + 1)
-    return list.length === 1 ? Math.max(pitch * 2, 90) : pitch - 4
+    if (list.length === 1) return Math.max(span.width, 90)
+    if (this.grid && this.shape === 'card') return this.edgePitch(list.length, this.grid) - 4
+    return span.width / (list.length + 1) - 4
   }
 
   /** Labels are shown when there is room for them; otherwise on hover. */
@@ -300,13 +406,18 @@ export class CardGeometry {
     if (!this.draft || this.collapsed || (output ? this.outputs : this.inputs).length) return undefined
     const r = this.outlineRect
     return this.flow === 'topToBottom'
-      ? { x: CardGeometry.width / 2, y: output ? r.y + r.height : r.y }
-      : { x: output ? CardGeometry.width : 0, y: r.y + r.height / 2 }
+      ? { x: this.cardWidth / 2, y: output ? r.y + r.height : r.y }
+      : { x: output ? this.cardWidth : 0, y: this.grid ? snapToGrid(r.y + r.height / 2, CardGeometry.rowPitch(this.grid)) : r.y + r.height / 2 }
   }
 
   /** A Draft's ports are around the middle of its side, closer together when there are many. */
   private draftPortY(index: number, count: number) {
     const r = this.outlineRect
+    if (this.grid) {
+      // The height is not on the grid: the nearest lines to the middle.
+      const p = CardGeometry.rowPitch(this.grid)
+      return snapToGrid(r.y + r.height / 2 - ((count - 1) * p) / 2, p) + index * p
+    }
     const pitch = Math.min(CardGeometry.portRow, (r.height - 8) / (count + 1))
     return r.y + r.height / 2 + (index - (count - 1) / 2) * pitch
   }
@@ -326,20 +437,27 @@ export class CardGeometry {
       if (this.flow === 'topToBottom') return { x: r.x + r.width * (first ? 0.25 : 0.75), y: r.y + r.height * (output ? 0.75 : 0.25) }
       return { x: r.x + r.width * (output ? 0.75 : 0.25), y: r.y + r.height * (first ? 0.25 : 0.75) }
     }
+    const along = this.alongGrid(index, list.length, output)
     if (this.flow === 'topToBottom') {
+      const y = output ? r.y + r.height : r.y
+      if (along !== undefined) return { x: along, y }
       const span = this.edgeSpan(!output)
-      return { x: span.start + (span.width * (index + 1)) / (n + 1), y: output ? r.y + r.height : r.y }
+      return { x: span.start + (span.width * (index + 1)) / (n + 1), y }
     }
     if (this.shape !== 'card') {
+      if (along !== undefined) return { x: output ? r.x + r.width : r.x, y: r.y + along }
       const narrowSide = (this.shape === 'fork') === !output
       const h = narrowSide ? 0 : r.height
       return { x: output ? r.x + r.width : r.x, y: r.y + r.height / 2 - h / 2 + (h * (index + 1)) / (n + 1) }
     }
-    const x = output ? CardGeometry.width : 0
-    if (this.collapsed) return { x, y: CardGeometry.header / 2 }
+    const x = output ? this.cardWidth : 0
+    if (this.collapsed) return { x, y: this.grid ? snapToGrid(CardGeometry.header / 2, CardGeometry.rowPitch(this.grid)) : CardGeometry.header / 2 }
     if (this.draft) return { x, y: this.draftPortY(index, list.length) }
-    const top = CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
-    return { x, y: top + index * CardGeometry.portRow + CardGeometry.portRow / 2 }
+    if (this.grid) {
+      const p = CardGeometry.rowPitch(this.grid)
+      return { x, y: this.firstRow(p) + index * p }
+    }
+    return { x, y: this.rowsTop + index * CardGeometry.portRow + CardGeometry.portRow / 2 }
   }
 }
 

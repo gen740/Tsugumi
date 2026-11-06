@@ -214,6 +214,8 @@ struct CardNodeData: Equatable {
   var draftEditing = false
   /// A Draft without a name of its own: its content is all it shows.
   var untitled = false
+  /// The canvas grid's spacing while the grid is on: the ports follow it.
+  var portGrid: CGFloat?
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
@@ -254,8 +256,18 @@ enum CardShape {
   }
 }
 
+/// The nearest grid line. Not `.rounded()`: that goes away from zero on a tie
+/// and the web's `Math.round` goes up, and a Card on a negative half would
+/// land one grid apart on the two.
+func snapToGrid(_ v: CGFloat, _ grid: CGFloat) -> CGFloat { ((v / grid + 0.5).rounded(.down)) * grid }
+
 /// Size, outline and port positions of a Card (world units, relative to its
 /// top-left corner). Shared by drawing, wires, the selection and hit-tests.
+///
+/// With the grid on, a port's place along its edge is on grid/n of the canvas:
+/// a Card's corner is on a grid line, so every offset here is a multiple of
+/// grid/n from the corner, and the Card's length across the flow is an even
+/// number of grids so the middle of the edge is on a line too.
 struct CardGeometry {
   static let width: CGFloat = 220
   static let header: CGFloat = 32
@@ -275,6 +287,12 @@ struct CardGeometry {
   static let minLabel: CGFloat = 26
   /// Share of a triangle's wide edge taken by its narrow end (its apex).
   static let narrow: CGFloat = 0
+  /// Ports this far apart have room for a whole name between them, while there are few.
+  static let labelPitch: CGFloat = 60
+  /// Port marks are 8 wide: closer than this they would touch.
+  static let minPortPitch: CGFloat = 10
+  /// Kept free at the ends of a Card's edge (its rounded corners).
+  static let portMargin: CGFloat = 12
 
   let inputs: [String]
   let outputs: [String]
@@ -288,6 +306,7 @@ struct CardGeometry {
   let draft: Bool
   let draftEditing: Bool
   let untitled: Bool
+  let grid: CGFloat?
 
   init(_ d: CardNodeData, flow: FlowDirection) {
     inputs = d.inputs.map(\.name)
@@ -303,6 +322,7 @@ struct CardGeometry {
     stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
+    grid = d.portGrid
   }
 
   // MARK: Outline
@@ -311,13 +331,87 @@ struct CardGeometry {
   private var routingSize: CGSize {
     switch shape {
     // Small marks: what they do is plain from the shape (details on hover).
-    case .branch: return CGSize(width: 60, height: 48)
-    case .fork: return CGSize(width: max(56, CGFloat(outputs.count) * 30 + 12), height: 40)
-    case .merge: return CGSize(width: max(56, CGFloat(inputs.count) * 30 + 12), height: 40)
+    case .branch:
+      // Its ports are at a quarter and three quarters of this.
+      if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
+      return CGSize(width: 60, height: 48)
+    case .fork: return CGSize(width: fanWidth(outputs.count), height: 40)
+    case .merge: return CGSize(width: fanWidth(inputs.count), height: 40)
     // The start Card: its name and a run button, nothing more.
-    case .start: return CGSize(width: 116, height: 34)
+    case .start:
+      guard let grid else { return CGSize(width: 116, height: 34) }
+      return CGSize(width: Self.gridLength(near: 116, grid), height: flow == .leftToRight ? 2 * Self.rowPitch(grid) : 34)
     case .card: return .zero
     }
+  }
+
+  /// The wide edge of a fork or merge: it grows with its ports, so they are never squeezed.
+  private func fanWidth(_ count: Int) -> CGFloat {
+    guard let grid else { return max(56, CGFloat(count) * 30 + 12) }
+    return Self.gridLength(atLeast: max(56, CGFloat(count - 1) * fanPitch(count, grid) + 16), grid)
+  }
+
+  /// An even number of grids, so half of it is on a grid line.
+  private static func gridLength(near length: CGFloat, _ grid: CGFloat) -> CGFloat {
+    2 * grid * (length / (2 * grid) + 0.5).rounded(.down)
+  }
+  private static func gridLength(atLeast length: CGFloat, _ grid: CGFloat) -> CGFloat {
+    2 * grid * (length / (2 * grid)).rounded(.up)
+  }
+
+  /// The closest ports can be with a row each (grid/n, or whole grids on a fine grid).
+  static func rowPitch(_ grid: CGFloat) -> CGFloat {
+    grid < portRow ? (portRow / grid).rounded(.up) * grid : grid / (grid / portRow).rounded(.down)
+  }
+
+  /// Ports of a fork or merge. Two or four around the middle take twice the
+  /// pitch to stay on the same lines as a Card's ports across a wire; more
+  /// of them would make the mark too wide, and close up onto grid/2 instead.
+  private func fanPitch(_ count: Int, _ grid: CGFloat) -> CGFloat {
+    Self.rowPitch(grid) * (count == 2 || count == 4 ? 2 : 1)
+  }
+
+  /// Ports of a Card's edge across the flow, gathered around its middle in
+  /// a bit over half its length: far enough apart for their names while few, then
+  /// by the grid, grid/2, grid/3 and so on. Past `minPortPitch` they stop
+  /// closing up and spread further along the edge instead.
+  private func edgePitch(_ count: Int, _ grid: CGFloat) -> CGFloat {
+    let room = Self.gridLength(near: Self.width, grid) * 0.6
+    // An even number of grids: two ports around the middle land on grid lines.
+    var pitch = Self.gridLength(atLeast: Self.labelPitch, grid)
+    var n: CGFloat = 1
+    while CGFloat(count - 1) * pitch > room {
+      var next = pitch - grid
+      if pitch <= grid {
+        n += 1
+        next = grid / n
+      }
+      if next < Self.minPortPitch { break }
+      pitch = next
+    }
+    return pitch
+  }
+
+  /// The Card's length across the flow; it grows if its ports would not fit.
+  var cardWidth: CGFloat {
+    guard let grid else { return Self.width }
+    var w = Self.gridLength(near: Self.width, grid)
+    if flow == .topToBottom {
+      for count in [inputs.count, outputs.count] where count > 1 {
+        w = max(w, Self.gridLength(atLeast: CGFloat(count - 1) * edgePitch(count, grid) + 2 * Self.portMargin, grid))
+      }
+    }
+    return w
+  }
+
+  /// With the grid on, the place of a port along an edge across the flow.
+  private func alongGrid(_ index: Int, of count: Int, output: Bool) -> CGFloat? {
+    guard let grid else { return nil }
+    let middle = CGFloat(index) - CGFloat(count - 1) / 2
+    if shape == .card { return cardWidth / 2 + middle * edgePitch(count, grid) }
+    // A triangle's apex is one point: everything on that side is on it.
+    let w = routingSize.width
+    return (shape == .fork) == !output ? w / 2 : w / 2 + middle * fanPitch(count, grid)
   }
 
   /// Labels of a routing Card sit outside its outline, in these bands.
@@ -325,9 +419,24 @@ struct CardGeometry {
   private var bandOut: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
   var portBand: CGFloat {
-    // A Draft has no port names to give a row: its ports are at the middle of its sides.
-    guard flow == .leftToRight, shape == .card, !draft else { return 0 }
-    return CGFloat(max(inputs.count, outputs.count, 1)) * Self.portRow
+    guard flow == .leftToRight, shape == .card else { return 0 }
+    let count = max(inputs.count, outputs.count, 1)
+    if draft {
+      // A Draft has no port names to give a row: its ports are at the middle
+      // of its sides. On the grid they do not close up, so it makes room.
+      guard let grid else { return 0 }
+      let p = Self.rowPitch(grid)
+      return max(0, CGFloat(count) * p + 8 - contentHeight)
+    }
+    guard let grid else { return CGFloat(count) * Self.portRow }
+    let p = Self.rowPitch(grid)
+    return firstRow(p) - rowsTop + CGFloat(count - 1) * p + Self.portRow / 2
+  }
+  /// Where the rows of a left-to-right Card begin, under its header and summary.
+  private var rowsTop: CGFloat { Self.header + (summary ? Self.summaryRow : 0) }
+  /// The first grid line a port's row fits under them.
+  private func firstRow(_ pitch: CGFloat) -> CGFloat {
+    ((rowsTop + Self.portRow / 2) / pitch).rounded(.up) * pitch
   }
   /// The header, or what is left of it over the content of a Draft without a name.
   var headerRow: CGFloat { untitled ? Self.untitledTop : Self.header }
@@ -343,10 +452,13 @@ struct CardGeometry {
       return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
                                   : CGSize(width: r.height + 60, height: r.width)
     }
-    if collapsed { return CGSize(width: Self.width, height: Self.header) }
-    let h = topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + portBand + CGFloat(params) * Self.paramRow +
+    if collapsed { return CGSize(width: cardWidth, height: Self.header) }
+    return CGSize(width: cardWidth, height: contentHeight + portBand)
+  }
+  /// A Card's height without its port rows.
+  private var contentHeight: CGFloat {
+    topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + CGFloat(params) * Self.paramRow +
       (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 4
-    return CGSize(width: Self.width, height: h)
   }
   var height: CGFloat { size.height }
 
@@ -398,7 +510,7 @@ struct CardGeometry {
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
     case .card, .branch, .start:
-      let s = shape == .card ? CGSize(width: Self.width, height: collapsed ? Self.header : 0) : routingSize
+      let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .fork, .merge:
       let w = routingSize.width
@@ -416,8 +528,9 @@ struct CardGeometry {
     let span = edgeSpan(input: input)
     // A single label may be as wide as the Card; several share the edge
     // without overlapping their neighbours.
-    let pitch = span.width / CGFloat(list.count + 1)
-    return list.count == 1 ? max(pitch * 2, 90) : pitch - 4
+    if list.count == 1 { return max(span.width, 90) }
+    if let grid, shape == .card { return edgePitch(list.count, grid) - 4 }
+    return span.width / CGFloat(list.count + 1) - 4
   }
 
   /// Labels are shown when there is room for them; otherwise the whole name
@@ -440,13 +553,18 @@ struct CardGeometry {
   func newPortPoint(output: Bool) -> CGPoint? {
     guard draft, !collapsed, (output ? outputs : inputs).isEmpty else { return nil }
     let r = outlineRect
-    return flow == .topToBottom ? CGPoint(x: Self.width / 2, y: output ? r.maxY : r.minY)
-                                : CGPoint(x: output ? Self.width : 0, y: r.midY)
+    return flow == .topToBottom ? CGPoint(x: cardWidth / 2, y: output ? r.maxY : r.minY)
+                                : CGPoint(x: output ? cardWidth : 0, y: grid.map { snapToGrid(r.midY, Self.rowPitch($0)) } ?? r.midY)
   }
 
   /// A Draft's ports are around the middle of its side, closer together when there are many.
   private func draftPortY(_ index: Int, of count: Int) -> CGFloat {
     let r = outlineRect
+    if let grid {
+      // The height is not on the grid: the nearest lines to the middle.
+      let p = Self.rowPitch(grid)
+      return snapToGrid(r.midY - CGFloat(count - 1) * p / 2, p) + CGFloat(index) * p
+    }
     let pitch = min(Self.portRow, (r.height - 8) / CGFloat(count + 1))
     return r.midY + (CGFloat(index) - CGFloat(count - 1) / 2) * pitch
   }
@@ -472,19 +590,25 @@ struct CardGeometry {
     }
     switch flow {
     case .topToBottom:
+      let y = output ? r.maxY : r.minY
+      if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: along, y: y) }
       let span = edgeSpan(input: !output)
-      return CGPoint(x: span.start + span.width * (i + 1) / (n + 1), y: output ? r.maxY : r.minY)
+      return CGPoint(x: span.start + span.width * (i + 1) / (n + 1), y: y)
     case .leftToRight:
       if shape != .card {
+        if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: output ? r.maxX : r.minX, y: r.minY + along) }
         let narrowSide = (shape == .fork) == !output
         let h = narrowSide ? r.height * Self.narrow : r.height
         return CGPoint(x: output ? r.maxX : r.minX, y: r.midY - h / 2 + h * (i + 1) / (n + 1))
       }
-      let x = output ? Self.width : 0
-      if collapsed { return CGPoint(x: x, y: Self.header / 2) }
+      let x = output ? cardWidth : 0
+      if collapsed { return CGPoint(x: x, y: grid.map { snapToGrid(Self.header / 2, Self.rowPitch($0)) } ?? Self.header / 2) }
       if draft { return CGPoint(x: x, y: draftPortY(index, of: list.count)) }
-      let top = Self.header + (summary ? Self.summaryRow : 0)
-      return CGPoint(x: x, y: top + i * Self.portRow + Self.portRow / 2)
+      if let grid {
+        let p = Self.rowPitch(grid)
+        return CGPoint(x: x, y: firstRow(p) + i * p)
+      }
+      return CGPoint(x: x, y: rowsTop + i * Self.portRow + Self.portRow / 2)
     }
   }
 
@@ -687,7 +811,7 @@ struct CardNodeView: View {
         if g.stages { statusRow.frame(height: s(CardGeometry.stageRow)).padding(.horizontal, s(8)) }
       }
     }
-    .frame(width: s(CardGeometry.width), alignment: .leading)
+    .frame(width: s(g.cardWidth), alignment: .leading)
     // Done when the focus has left both of a Draft's fields (not on the way
     // from one to the other).
     .onChange(of: draftField) { _, field in
@@ -743,7 +867,7 @@ struct CardNodeView: View {
 
   /// Whether a Draft's content fits in the room it has while it is being written.
   private func draftTextFits(_ text: String, _ g: CardGeometry) -> Bool {
-    let width = s(CardGeometry.width - 20)
+    let width = s(g.cardWidth - 20)
     let box = (text as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
                                               options: [.usesLineFragmentOrigin, .usesFontLeading],
                                               attributes: [.font: NSFont.systemFont(ofSize: max(6, 11 * z))])
@@ -849,7 +973,7 @@ struct CardNodeView: View {
       if g.showLabels(input: true) { ForEach(data.inputs, id: \.name) { p in label(p, g, output: false) } }
       if g.showLabels(input: false) { ForEach(data.outputs, id: \.name) { p in label(p, g, output: true) } }
     } else if g.shape == .card, !g.collapsed, !g.draft {
-      let w = CardGeometry.width / 2 - 14
+      let w = g.cardWidth / 2 - 14
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
         Text(p.name).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
@@ -1364,9 +1488,9 @@ struct CanvasSurface: View {
           }.onEnded { _ in lastPan = nil })
         WireLayer(wires: wireDraws, animate: animateWires, zoom: camera.zoom)
         ForEach(items) { item in
-          CardNodeView(data: item.data, flow: flow, zoom: camera.zoom, selected: selection.contains(item.id),
+          CardNodeView(data: data(item), flow: flow, zoom: camera.zoom, selected: selection.contains(item.id),
                        onToggleCollapse: { toggle(item.id) })
-            .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(item.data, flow: flow).size,
+            .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(data(item), flow: flow).size,
                          zoom: camera.zoom, pixel: displayScale)
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
               .onChanged { v in
@@ -1422,19 +1546,29 @@ struct CanvasSurface: View {
 
   /// Bounding box of the Cards (re-framed when a Card appears or changes size).
   private var itemsBox: CGRect {
-    items.reduce(CGRect.null) { $0.union(CGRect(origin: $1.origin, size: CardGeometry($1.data, flow: flow).size)) }
+    items.reduce(CGRect.null) { $0.union(CGRect(origin: placed($1), size: CardGeometry(data($1), flow: flow).size)) }
   }
 
   private var wireDraws: [WireDraw] {
-    var router = WireRouter(flow: flow, obstacles: items.map { CGRect(origin: origin($0), size: CardGeometry($0.data, flow: flow).size) })
+    var router = WireRouter(flow: flow, obstacles: items.map { CGRect(origin: origin($0), size: CardGeometry(data($0), flow: flow).size) })
     return wires.map { w in
       let world = router.route(point(w.from, w.fromPort, output: true), point(w.to, w.toPort, output: false))
       return WireDraw(path: world.applying(camera.transform), style: w.active ? .active : .normal)
     }
   }
 
+  private func data(_ item: CanvasItem) -> CardNodeData {
+    var d = item.data
+    d.portGrid = grid ? gridSize : nil
+    return d
+  }
+
+  private func placed(_ item: CanvasItem) -> CGPoint {
+    grid ? CGPoint(x: snapToGrid(item.origin.x, gridSize), y: snapToGrid(item.origin.y, gridSize)) : item.origin
+  }
+
   private func origin(_ item: CanvasItem) -> CGPoint {
-    var o = item.origin
+    var o = placed(item)
     if let d = drag, selection.contains(item.id) {
       o.x += d.offset.width / camera.zoom
       o.y += d.offset.height / camera.zoom
@@ -1445,7 +1579,7 @@ struct CanvasSurface: View {
   /// A port in world units.
   private func point(_ id: String, _ port: String, output: Bool) -> CGPoint {
     guard let item = items.first(where: { $0.id == id }) else { return .zero }
-    let o = origin(item), p = CardGeometry(item.data, flow: flow).port(port, output: output)
+    let o = origin(item), p = CardGeometry(data(item), flow: flow).port(port, output: output)
     return CGPoint(x: o.x + p.x, y: o.y + p.y)
   }
 
