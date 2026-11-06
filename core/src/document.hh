@@ -104,6 +104,9 @@ std::string layout_following_cards(const std::string& text, const std::map<std::
                                    const std::set<std::string>& gone);
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
 schema::CardMeta parse_meta_json(const std::string& text);
+// _meta.json with its empty description and context filled; what has text stays as it is.
+std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
+                           const std::optional<std::string>& context);
 schema::CardLink parse_link_json(const std::string& id, const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
 schema::Project parse_external_project(const std::string& rel, const std::string& text);

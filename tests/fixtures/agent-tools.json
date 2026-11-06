@@ -130,6 +130,14 @@
            "keep_meta": {
             "type": "boolean",
             "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."
+           },
+           "fill_description": {
+            "type": "string",
+            "description": " Fill _meta.json's description if it is empty; what has text stays as it is  (keeps the rest of _meta.json, as keep_meta)."
+           },
+           "fill_context": {
+            "type": "string",
+            "description": " Fill _meta.json's context if it is empty; what has text stays as it is."
            }
           },
           "additionalProperties": false,

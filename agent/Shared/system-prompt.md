@@ -40,7 +40,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   under externals/<name>/ (base_hash of the file you read).
 - Definitions and sources change in the same project_save: {"value_type": "PutDefinition", "value": {"id": "...",
   "card_json": "<_card.json>", "keep_meta": true}} keeps _meta.json as it is (never rewrite the user's intent text;
-  send "meta_json" only to change it, e.g. port descriptions, or to fill it when implementing a Draft),
+  send "meta_json" only to change it, e.g. port descriptions or comments),
   {"value_type": "PutSource", "value": {"path": "definitions/<id>/<file>", "bytes": "<file text>", "base_hash":
   "<hash when replacing>"}}, RemoveDefinition.
   One save is one transaction: either everything is stored or nothing is.
@@ -63,14 +63,15 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
   content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions; context:
   extra notes). Keep the Card ids and the wiring. The save that implements a Draft (its _card.json no longer says
-  template "draft") leaves its intent complete: PutDefinition with "meta_json" holding every field it had, word
-  for word, plus what is empty, in the user's language:
-  * description: one line saying what the Card does.
-  * context: what the user asked of this Card in this conversation (requests, constraints, reasons) and what its
+  template "draft") leaves its intent complete. PutDefinition with "keep_meta": true keeps all the Draft had, so do
+  not send it back; fill only what is empty, in the user's language (what already has text stays as it is):
+  * "fill_description": one line saying what the Card does.
+  * "fill_context": what the user asked of this Card in this conversation (requests, constraints, reasons) and what its
     description and content say a later reader should know. State only what they said, never invent anything; with
-    no description, content or instruction to go on, leave it empty.
-  Use "keep_meta": true only when nothing is empty. Otherwise the save is refused with validation_failed, naming
-  the Card and the field. Decide for each Draft what it becomes:
+    no description, content or instruction to go on, leave it out.
+  A save that leaves one empty is refused with validation_failed, naming the Card and the field. Send "meta_json" only
+  when it also changes something else there (port descriptions, comments), and then with every field the Draft had,
+  word for word. Decide for each Draft what it becomes:
   * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
     _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
     relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the

@@ -33,6 +33,9 @@ struct ChangeIn {
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   bool keep_meta = false;  // PutDefinition without meta_json keeps the current _meta.json
+  // With keep_meta: what fills the _meta.json's fields that are empty.
+  std::optional<std::string> fill_description;
+  std::optional<std::string> fill_context;
   std::string path;   // sources
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;

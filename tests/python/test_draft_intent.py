@@ -19,9 +19,9 @@ PLAN = {"description": "Count words", "content": "Split the text and count.", "o
 IMPLEMENTED = {"template": "logger"}
 
 
-def implement(meta=None, cid="plan", body=IMPLEMENTED):
+def implement(meta=None, cid="plan", body=IMPLEMENTED, **fills):
     if meta is None:
-        return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepMeta=True)
+        return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepMeta=True, **fills)
     return change("PutDefinition", id=cid, cardJson=json.dumps(body), metaJson=json.dumps(meta))
 
 
@@ -98,6 +98,20 @@ def test_an_empty_description_is_refused_and_a_blank_one_counts_as_empty(project
     refused(c, [implement({"description": "  \n", "content": "Split the text and count.", "context": "why"})], "description")
     save(c, [implement({"description": "Counts words", "content": "Split the text and count.", "context": "why"})])
     assert meta_of(c)["description"] == "Counts words"
+
+
+def test_a_draft_is_implemented_by_filling_only_what_is_empty(project):
+    """The model need not write the Draft's words again, so it cannot change them."""
+    c = project()
+    save(c, [implement(None, fillContext="The user wants the count for the report.", fillDescription="Ignored: it has text")])
+    assert not is_draft(c)
+    assert meta_of(c) == dict(PLAN, context="The user wants the count for the report.")
+
+
+def test_filling_writes_a_description_only_where_there_is_none(project):
+    c = project({"content": "Split the text and count."})
+    save(c, [implement(None, fillDescription="Counts words", fillContext="For the report.")])
+    assert meta_of(c) == {"content": "Split the text and count.", "description": "Counts words", "context": "For the report."}
 
 
 def test_what_the_draft_had_may_not_change(project):

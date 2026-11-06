@@ -114,6 +114,11 @@ table PutDefinition {
   /// Keep _meta.json as it is (meta_json omitted): change settings without
   /// writing the intent text again.
   keep_meta:bool = false (id: 4);
+  /// Fill _meta.json's description if it is empty; what has text stays as it is
+  /// (keeps the rest of _meta.json, as keep_meta).
+  fill_description:string (id: 5);
+  /// Fill _meta.json's context if it is empty; what has text stays as it is.
+  fill_context:string (id: 6);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 /// A Card's new name: its definition folder (with its sources) moves, and

@@ -248,6 +248,32 @@ schema::CardDefinition parse_card_json(const std::string& id, const std::string&
 
 schema::CardMeta parse_meta_json(const std::string& text) { return decode_doc<schema::CardMeta>("_meta.json", text); }
 
+std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
+                           const std::optional<std::string>& context) {
+  auto meta = parse_meta_json(text);
+  const auto empty = [](const auto& field) {
+    const auto* s = schema::get(field);
+    if (!s) return true;
+    const std::string value(*s);
+    return value.find_first_not_of(" \t\r\n") == std::string::npos;
+  };
+  schema::v::Mapping<schema::v::String, schema::Json> root;
+  if (schema::decode(schema::capture(text), root)) throw DocumentError("invalid_document", "_meta.json is not an object");
+  bool any = false;
+  const auto fill = [&](const std::string& name, const std::optional<std::string>& value, bool is_empty) {
+    if (!value || !is_empty) return;
+    std::remove_reference_t<decltype(root.value())> next;
+    for (const auto& [key, field] : root.value())
+      if (key != name) next.emplace_back(key, field);
+    next.emplace_back(name, schema::string_value(*value));
+    root.value() = std::move(next);
+    any = true;
+  };
+  fill("description", description, empty(meta.description));
+  fill("context", context, empty(meta.context));
+  return any ? schema::pretty_text(schema::encode(root)) : text;
+}
+
 void check_structure(const Document& doc) {
   const auto& graph = doc.project.canvas->value();
   std::set<std::string> ids;
