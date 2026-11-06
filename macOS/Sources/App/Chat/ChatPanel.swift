@@ -211,6 +211,8 @@ struct ChatPanel: View {
           Spacer()
           if chat.usageLimited {
             Button("Manage usage") { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }.controlSize(.small).buttonStyle(.borderedProminent)
+          } else if chat.contextFull {
+            Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
           if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }

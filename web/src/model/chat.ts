@@ -67,6 +67,8 @@ export interface ProviderInfo {
 /** The Agent's error at the ChatGPT plan's usage limit (web/server/chatgpt.ts). */
 export const USAGE_LIMIT_TEXT = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 export const USAGE_URL = 'https://chatgpt.com/settings/usage'
+/** The Agent's error when the conversation cannot be made to fit the model's context (web/server/agent.ts). */
+export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's context"
 
 interface ContentBlock {
   type: string
@@ -94,6 +96,8 @@ interface Conversation {
   summary?: string
 }
 
+const COMPACTING = '会話を圧縮しています…'
+
 export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
@@ -107,6 +111,8 @@ export class ChatController extends Observable {
   failed = false
   /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
   usageLimited = false
+  /** The last turn could not make the conversation fit the model's context. */
+  contextFull = false
   /** The last turn stopped at the step limit and can go on. */
   stoppedAtLimit = false
   sessions: SessionInfo[] = []
@@ -172,6 +178,7 @@ export class ChatController extends Observable {
     this.busy = false
     this.failed = false
     this.usageLimited = false
+    this.contextFull = false
     this.stoppedAtLimit = false
     if (this.available) this.status = undefined
     this.currentId = id
@@ -389,7 +396,7 @@ export class ChatController extends Observable {
 
   compact() {
     this.begin()
-    this.status = '会話を圧縮しています…'
+    this.status = COMPACTING
     this.changed()
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
@@ -438,6 +445,7 @@ export class ChatController extends Observable {
     this.busy = true
     this.failed = false
     this.usageLimited = false
+    this.contextFull = false
     this.stoppedAtLimit = false
     this.status = undefined
     this.changed()
@@ -545,9 +553,14 @@ export class ChatController extends Observable {
         }
         break
       }
+      case 'compacting':
+        // The next reply waits for it (over a minute with a long conversation).
+        this.status = COMPACTING
+        break
       case 'compacted':
         // Earlier messages were summarized for the model; the whole text stays
         // in the conversation, so nothing is announced.
+        if (this.status === COMPACTING) this.status = undefined
         this.reloadCurrent()
         break
       case 'retrying':
@@ -566,8 +579,11 @@ export class ChatController extends Observable {
         this.busy = false
         this.failed = e.message !== 'cancelled'
         this.usageLimited = e.message === USAGE_LIMIT_TEXT
+        this.contextFull = e.message === CONTEXT_FULL_TEXT
         this.status = e.message === 'cancelled' ? '回答を停止しました（Workflow の実行は止めていません）。'
-          : this.usageLimited ? 'Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。' : `エラー: ${e.message}`
+          : this.usageLimited ? 'Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。'
+          : this.contextFull ? 'この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。'
+          : `エラー: ${e.message}`
         this.refreshAfterTurn()
         break
       case 'finished':
@@ -575,8 +591,8 @@ export class ChatController extends Observable {
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         this.busy = false
-        // A note left by a retry (e.g. a reply cut at the output limit) is no longer current.
-        if (this.status?.startsWith('再試行中')) this.status = undefined
+        // A note left by a retry (e.g. a reply cut at the output limit) or the compaction is no longer current.
+        if (this.status?.startsWith('再試行中') || this.status === COMPACTING) this.status = undefined
         this.refreshAfterTurn()
         queueMicrotask(() => this.flushNotes())
         break

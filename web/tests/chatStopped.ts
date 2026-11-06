@@ -8,7 +8,7 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
-const { ChatController } = await import('../src/model/chat')
+const { ChatController, CONTEXT_FULL_TEXT } = await import('../src/model/chat')
 
 const chat = () => {
   const c = Object.create(ChatController.prototype) as any
@@ -18,6 +18,28 @@ const chat = () => {
   return c
 }
 const STOPPED = '回答を停止しました（Workflow の実行は止めていません）。'
+
+// The context limit: while compacting the chat says so, and a conversation that
+// cannot fit says what to do; the next answer has none of it left.
+{
+  const c = chat()
+  c.begin()
+  c.handle({ kind: 'compacting' })
+  assert.equal(c.status, '会話を圧縮しています…')
+  c.reloadCurrent = () => {}
+  c.handle({ kind: 'compacted' })
+  assert.equal(c.status, undefined)
+  c.handle({ kind: 'error', message: CONTEXT_FULL_TEXT })
+  assert.equal(c.busy, false)
+  assert.equal(c.contextFull, true)
+  assert.match(c.status, /新しい会話を始めてください/)
+  c.begin()
+  assert.equal(c.contextFull, false)
+  assert.equal(c.status, undefined)
+  c.handle({ kind: 'compacting' })
+  c.handle({ kind: 'finished' })
+  assert.equal(c.status, undefined)
+}
 const cancelled = { kind: 'error', message: 'cancelled' }
 
 // The next answer began first.

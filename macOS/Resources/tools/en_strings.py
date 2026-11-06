@@ -71,6 +71,7 @@ EN = {
 "手分けして進めました": "Split the work among helpers",
 "終わりました": "Finished",
 "手数の上限で止まりました": "Stopped at the step limit",
+"この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。": "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).",
 "%@ は空ではありません。空のフォルダか新しい名前を選んでください。": "%@ is not empty. Choose an empty folder or a new name.",
 "システムに従う（視差効果を減らす）": "Follow the system (Reduce motion)",
 "動かす": "Animate",
