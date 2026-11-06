@@ -22,6 +22,7 @@ await import("./table")
 
 await import("./draft")
 await import("./wires")
+await import("./wireDemos")
 
 await import("./modelMenu")
 

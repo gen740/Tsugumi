@@ -578,16 +578,15 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
     setCamera((c) => ({ x: p.x - ((p.x - c.x) * nz) / c.zoom, y: p.y - ((p.y - c.y) * nz) / c.zoom, zoom: nz }))
   }
 
-  const router = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(it.data, flow).size })))
   const point = (id: string, port: string, output: boolean): Pt => {
     const it = items.find((x) => x.id === id)
     if (!it) return { x: 0, y: 0 }
     const o = origin(it), p = new CardGeometry(it.data, flow).port(port, output)
     return { x: o.x + p.x, y: o.y + p.y }
   }
-  const draws: WireDraw[] = wires.map((w) => ({
-    d: pathToScreen(router.route(point(w.from, w.fromPort, true), point(w.to, w.toPort, false)).d, camera), style: w.active ? 'active' : 'normal',
-  }))
+  const routes = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(it.data, flow).size })))
+    .routeAll(wires.map((w) => ({ a: point(w.from, w.fromPort, true), b: point(w.to, w.toPort, false) })))
+  const draws: WireDraw[] = wires.map((w, i) => ({ d: pathToScreen(routes[i].d, camera), style: w.active ? 'active' : 'normal' }))
 
   return (
     <div ref={ref} className="cv-surface" style={{ ...gridStyle(camera, grid, gridSize), ...style }}
