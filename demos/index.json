@@ -378,6 +378,20 @@
         "Python",
         "画像"
       ]
+    },
+    {
+      "id": "mnist-classifiers-draft",
+      "title": "MNIST · 分類器くらべ（Draft）",
+      "description": "Real MNIST digits are loaded and subsampled, and seven classifiers (kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a CNN) wait as Drafts with a shared output type, each in its own Nix environment: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each, and then writes the comparison.",
+      "path": "mnist-classifiers-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "手分け",
+        "Python",
+        "機械学習",
+        "分岐・分配・合流"
+      ]
     }
   ]
 }

@@ -29,6 +29,7 @@
 | [生態系のモデル比較](#生態系のモデル比較ecology-models) | ノウサギとオオヤマネコの毛皮の記録（1900–1920） | 捕食モデルのあてはめと AICc・未知の年の予測による比較。良い値が機構の正しさを意味しないこと |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
+| [MNIST · 分類器くらべ（Draft）](#mnist--分類器くらべdraftmnist-classifiers-draft) | 手書き数字の分類（7 種） | データまで実装済みの計画から、7 つの分類器を helper が同時に実装し、Agent が比較をまとめる |
 
 図の矢印は Card の線（`出力ポート → 入力ポート`）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。
 
@@ -652,6 +653,32 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 
 「Card を生成」を押すと、Agent は 6 つの Draft を helper に分けます。helper ごとに色の違うツグミが自分の Card を同時に書き、実行して確かめます。helper の報告がそろうと、Agent がそれぞれの Card を確かめてまとめて報告します（[手分け](features.md#9-agent)）。
 
+## MNIST · 分類器くらべ（Draft）（`mnist-classifiers-draft`）
+
+[MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers)と同じ問題を、Agent に実装させるデモです。力学系ギャラリーと違い、helper たちの仕事は最後に 1 つの比較へ合流します。
+
+```text
+start → load → prepare → share ─┬→ knn ──────┐
+          （実装済み）           ├→ logistic ─┤
+                                ├→ svm ──────┤
+                                ├→ forest ───┤
+                                ├→ boosting ─┼→ compare
+                                ├→ mlp ──────┤
+                                ├→ cnn ──────┤
+                                └────────────┘
+```
+
+| Card | 状態 | 誰が書くか |
+| --- | --- | --- |
+| `load`, `prepare` | 実装済み。本物の MNIST を Nix のハッシュで固定し、訓練 5000 枚・テスト 1000 枚に層化して渡す | 最初から入っている |
+| `knn`, `logistic`, `svm`, `forest`, `boosting`, `mlp`, `cnn` | Draft。互いに線がなく、環境（scikit-learn, xgboost, torch）も分かれる | helper が 1 つずつ同時に |
+| `compare` | Draft。7 つの結果を待って順位表と散布図を作る | helper の報告のあとで Agent が |
+
+- **合流できる理由:** 各 Draft の説明に、出力 `result` の型（`mnist.Result`）をそのまま書いてあります。helper は互いの書くものを見られないので、この約束がないと `compare` が 1 つの型で読めません。
+- **確かめること:** 各 Draft の説明には、計算の手順と `assert` があります。枚数と 0〜9 の範囲、正解率の下限に加えて、手法ごとに結果が決まる性質を確かめます（kNN と numpy の総当たりの一致、ロジスティック回帰の予測と重み付き和の一致、フォレストの予測と木の平均の一致、ネットのパラメータ数の式など）。`compare` は digest の一致と、正解率を予測から計算し直した値との一致を確かめます。
+- **枚数が小さい理由:** 1 つのプロジェクトで実行できるのは一度に 1 つなので、helper の実行は順番を待ちます（1 回の待ちの上限は 900 秒）。完成版と同じ訓練 10000 枚・テスト 2000 枚では 1 回の実行に 52〜122 秒かかり、訓練 5000 枚・テスト 1000 枚では 20〜37 秒でした（M3 Max の Seatbelt、他の処理が動いている状態。共通 VM では 17〜24 秒）。常駐する worker のメモリは 1 つ 0.6 GiB 以下です。
+- **答え:** このデモと完成版の `mnist-classifiers` は、Agent の `reference_read` の一覧にも読み取りにも出ません。
+
 ## 試せる操作と、確認できる結果
 
 | デモ | 試せる操作 | 確認できる結果 |
@@ -678,4 +705,5 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **生態系のモデル比較**（`ecology-models`） | そのまま実行する。`forecast` の `fit_until` を変えてその Card だけを再実行する。`fit` の `restarts`、`phase` の `years` を変える | この 21 年では 3 つのモデルの当てはめはほぼ同じ（対数 RMSE 0.219）で、AICc はパラメータの少ないロトカ・ヴォルテラが最良、ホリングの処理時間 h は 0 に近づく。1914 年までで当てはめた予測の誤差もロトカ・ヴォルテラが小さい（0.353、他は 0.421）。先まで延ばすと閉じた軌道と渦に分かれる。note は、AIC が良くても仕組みが正しいとは言えないこと、毛皮は個体数ではないことを述べる |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
+| **MNIST · 分類器くらべ（Draft）**（`mnist-classifiers-draft`） | 開いて「Card を生成」を押す | `load` と `prepare` を実行したあと、7 つの分類器を helper が同時に書いて確かめ、Agent が `compare` を書いて順位表と散布図を出す |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
