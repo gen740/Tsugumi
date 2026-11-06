@@ -1,6 +1,6 @@
 // The file the Agent is writing, as the Mac app's AgentPresence and WritingPanel:
-// read out of a save's arguments while the model writes them, played slowly
-// enough to see, and placed clear of the bird by its Card.
+// read out of a save's arguments while the model writes them, shown as far as
+// they have arrived, and placed clear of the bird by its Card.
 
 /** A file as it arrives in the arguments of a save (project_save,
  *  project_validate): `path` is undefined until its key has come, `text` is what
@@ -97,10 +97,10 @@ export function fileOfCard(path: string): { card: string; file: string } | undef
 
 export interface LiveCode { card: string; file: string; text: string; saved: boolean }
 
-/** A file is played no faster than `rate` (characters a second), however fast
- *  it arrives, and each stays long enough to see; a long one speeds up so that
- *  the bird does not stay far behind (seconds). */
-export const CODE_TIMING = { rate: 150, shortest: 2, longest: 5, hold: 0.8, backlog: 20, first: 1.6 }
+/** A short file is seen `shortest` at the least; its last lines stay `hold` when
+ *  no other file comes after it; a pause in what arrives may last `stalled`
+ *  before its scene ends by itself (seconds). */
+export const CODE_TIMING = { shortest: 1.5, hold: 0.8, stalled: 5 }
 
 /** The files a model writes, a scene each, one after another. Times in seconds. */
 export class LiveCodePlayer {
@@ -132,52 +132,54 @@ export class LiveCodePlayer {
     } else if (this.live) {
       this.live.code.text = w.text
       // It goes on arriving: its scene goes on.
-      if (this.live.start + this.live.length < now + 0.5) this.live.length = now - this.live.start + 1
+      if (this.live.start + this.live.length < now + CODE_TIMING.stalled / 2) this.live.length = now - this.live.start + CODE_TIMING.stalled
     }
     if (w.done) this.arrived(now)
   }
 
   private startScene(code: LiveCode, now: number) {
+    // The file being written goes first: one that has all arrived and still
+    // waits is not shown, and the one on the screen gives up its hold. So the
+    // window is never further behind than `shortest`.
+    this.scenes = this.scenes.filter((s) => s.start <= now && s.start + s.length > now)
     const last = this.scenes[this.scenes.length - 1]
-    const start = Math.max(now, last ? last.start + last.length : now)
-    if (start - now > CODE_TIMING.backlog) return // too far behind: not shown
-    this.scenes = this.scenes.filter((s) => s.start + s.length > now)
-    this.live = { start, length: CODE_TIMING.first, code }
+    if (last) last.length = Math.max(now - last.start, CODE_TIMING.shortest)
+    this.live = { start: last ? last.start + last.length : now, length: CODE_TIMING.stalled, code }
     this.scenes.push(this.live)
   }
 
-  /** The file has all arrived: its scene plays it out and holds its end. */
+  /** The file has all arrived: its scene holds its end. */
   private arrived(now: number) {
     if (!this.live) return
-    const played = Math.min(CODE_TIMING.longest, Math.max(CODE_TIMING.shortest, this.live.code.text.length / CODE_TIMING.rate))
-    this.live.length = Math.max(now - this.live.start, played) + CODE_TIMING.hold
+    this.live.length = Math.max(now - this.live.start, CODE_TIMING.shortest) + CODE_TIMING.hold
     this.live = undefined
   }
 
   /** The call ended, was asked again or was given up. What a call that went
-   *  through wrote plays on; `ok` false: it is not on the screen any more. */
+   *  through wrote holds its last lines; `ok` false: it is not on the screen any more. */
   ended(ok: boolean, now: number) {
     this.arrived(now)
     this.path = undefined
     this.index = undefined
-    if (!ok) this.scenes = []
+    if (!ok) this.stop()
   }
 
-  /** The save has gone through: what still plays says so. */
-  saved() {
+  /** No file is on the screen from now on: a call failed, or the workflow runs. */
+  stop() {
+    this.scenes = []
+  }
+
+  /** The save has gone through: a file that still waits is not shown, and the
+   *  one on the screen says so for what is left of its hold. */
+  saved(now: number) {
+    this.scenes = this.scenes.filter((s) => s.start <= now)
     for (const s of this.scenes) s.code.saved = true
   }
 
-  /** The file to show at `now`: as far as it has been played, never past what has arrived. */
+  /** The file to show at `now`, as far as it has arrived. */
   at(now: number): LiveCode | undefined {
     const s = this.scenes.find((x) => x.start <= now && now < x.start + x.length)
-    if (!s) return undefined
-    // A long file speeds up to end within `longest`.
-    const rate = Math.max(CODE_TIMING.rate, s.code.text.length / CODE_TIMING.longest)
-    let text = s.code.text.slice(0, Math.floor((now - s.start) * rate))
-    // Not half of a character outside the BMP.
-    if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1)
-    return { ...s.code, text }
+    return s && { ...s.code }
   }
 }
 

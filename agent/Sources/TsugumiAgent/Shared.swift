@@ -444,6 +444,7 @@ your replies.
       }
     }
   },
+  "invalidArguments": "The arguments of this call were not a complete JSON object, so it was not run and nothing was changed. Make the call again with valid JSON (mind the escapes in source files). What you wrote:\n{json}",
   "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
 }
 """#

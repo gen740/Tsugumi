@@ -94,6 +94,7 @@ extension Shared {
     let comment: Comment
     let webSearch: WebSearch
     let permissionDeclined: String
+    let invalidArguments: String
   }
 
   static let data: Data = {
@@ -121,7 +122,8 @@ extension Shared {
                 webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
                                  openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
                                  note: w["note"] as! String, sources: w["sources"] as! String, maxUses: w["maxUses"] as! Int),
-                permissionDeclined: o["permissionDeclined"] as! String)
+                permissionDeclined: o["permissionDeclined"] as! String,
+                invalidArguments: o["invalidArguments"] as! String)
   }()
 
   /// `{name}` in a text replaced by its value, in one pass (values are not read again).

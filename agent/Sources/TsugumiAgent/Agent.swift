@@ -307,6 +307,7 @@ public actor Agent {
       cutReplies = 0
       var done = false
       var refusals = 0
+      var brokenReplies = 0
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
@@ -376,6 +377,11 @@ public actor Agent {
         try Task.checkCancellation()
         conversation.messages.append(ChatMessage(role: "user", content: results))
         try conversation.save(storage)
+        // Each try may be a whole file long: asked again a few times, as a cut reply is.
+        if uses.contains(where: { ContentBlock.arguments($0.2) == nil }) {
+          brokenReplies += 1
+          guard brokenReplies <= 3 else { throw AgentError.provider("the arguments of the model's tool calls were broken JSON three times") }
+        }
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? .finished : .stepLimit(steps: maxSteps, unconfirmedRun: unconfirmedRun))
@@ -621,8 +627,13 @@ public actor Agent {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
+    // Broken arguments never run, whatever the tool: the model is told to write
+    // them again. (A reply cut at the output limit does not come this far: loop.)
+    guard let args = ContentBlock.arguments(input) else {
+      return try finish(&record, Self.invalidArgumentsText(input), isError: true, events)
+    }
     if name == Self.referenceTool.name, !references.isEmpty {
-      let path = (try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any])?["path"] as? String ?? ""
+      let path = args["path"] as? String ?? ""
       let (text, isError) = readReference(path)
       return try finish(&record, text, isError: isError, events)
     }
@@ -640,10 +651,6 @@ public actor Agent {
     }
     guard let spec = catalog.tool(named: name) else {
       return try finish(&record, "unknown tool \(name)", isError: true, events)
-    }
-    // Incomplete or invalid arguments are never executed.
-    guard let data = input.data(using: .utf8), let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-      return try finish(&record, "the arguments are not a complete JSON object", isError: true, events)
     }
     if name == "attached_folder_read" {
       let folder = Self.trimmedFolder(args["folder"] as? String ?? "")
@@ -888,6 +895,13 @@ public actor Agent {
     guard s.count > resultLimit else { return s }
     return String(s.prefix(resultLimit)) + "\n[cut: showing the first \(resultLimit) of \(s.count) characters; "
       + "read the rest with a narrower request (an offset, a range or one file)]"
+  }
+
+  /// What the model is told of arguments that are not a JSON object: to write
+  /// them again, with the text it wrote (it may mend that instead of starting over).
+  static func invalidArgumentsText(_ input: String) -> String {
+    let wrapped = (try? JSONSerialization.data(withJSONObject: ["INVALID_JSON": input], options: [.withoutEscapingSlashes])) ?? Data()
+    return Shared.fill(Shared.data.invalidArguments, ["json": String(decoding: wrapped, as: UTF8.self)])
   }
 
   private func finish(_ record: inout ToolRecord, _ result: String, isError: Bool,

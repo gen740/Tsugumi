@@ -108,12 +108,20 @@ public enum ContentBlock: Codable, Equatable {
     }
   }
 
+  /// The arguments of a tool call as the object they must be; nil: broken JSON
+  /// or something else than an object (the API does not check them as they
+  /// stream). A broken call goes back as an empty one: the APIs want an object
+  /// there, and its text is in its result.
+  public static func arguments(_ input: String) -> [String: Any]? {
+    (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]
+  }
+
   /// Wire JSON for the Messages API.
   var wire: [String: Any] {
     switch self {
     case .text(let t): return ["type": "text", "text": t]
     case .toolUse(let id, let name, let input):
-      let obj = (try? JSONSerialization.jsonObject(with: Data(input.utf8))) ?? [String: Any]()
+      let obj = Self.arguments(input) ?? [:]
       return ["type": "tool_use", "id": id, "name": name, "input": obj]
     case .toolResult(let id, let content, let isError):
       return ["type": "tool_result", "tool_use_id": id, "content": content, "is_error": isError]
@@ -411,7 +419,9 @@ public struct MessagesProvider: Sendable {
     let cache: [String: Any] = ["type": "ephemeral"]
     var wireTools: [[String: Any]] = tools.map {
       if $0.server { return Self.webSearchWire }
-      return ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema]
+      // Eager: the arguments come as the model writes them, not held back until
+      // each is whole, so the API no longer checks them (Agent.runTool does).
+      return ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema, "eager_input_streaming": true]
     }
     if !wireTools.isEmpty, tools.last?.server != true { wireTools[wireTools.count - 1]["cache_control"] = cache }
     // Search blocks go back only with the tool declared, and only whole.
@@ -569,7 +579,7 @@ extension MessagesProvider {
         case .webSearch(let s): texts.append(["type": "output_text", "text": s.note])
         case .toolUse(let id, let name, let input):
           flush()
-          var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": input]
+          var call: [String: Any] = ["type": "function_call", "call_id": id, "name": name, "arguments": ContentBlock.arguments(input) == nil ? "{}" : input]
           if let namespace { call["namespace"] = namespace }
           out.append(call)
         case .toolResult(let id, let content, _):

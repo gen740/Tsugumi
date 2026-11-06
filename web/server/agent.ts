@@ -136,6 +136,19 @@ export class ToolCatalog {
 
 // ---- Conversation ------------------------------------------------------------
 
+/** The arguments of a tool call as the object they must be; undefined: broken
+ *  JSON or something else than an object (the API does not check them as they
+ *  stream). A broken call goes back as an empty one: the APIs want an object
+ *  there, and its text is in its result. */
+export function toolArguments(input: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(input)
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: string }
@@ -385,8 +398,10 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
   if (c.effort) body.output_config = { effort: c.effort }
   if (c.fast) body.speed = 'fast'
   if (tools.length) {
+    // Eager: the arguments come as the model writes them, not held back until
+    // each is whole, so the API no longer checks them (runTool does).
     body.tools = tools.map((t, i) => (t.server ? WEB_SEARCH_WIRE : {
-      name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
+      name: t.name, description: t.description, input_schema: t.inputSchema, eager_input_streaming: true, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
   return body
@@ -471,9 +486,7 @@ const WEB_SEARCH_TOOL: ToolSpec = {
  *  zero data retention. A turn's searches are capped. */
 const WEB_SEARCH_WIRE = { type: AGENT.webSearch.anthropicType, name: AGENT.webSearch.name, max_uses: AGENT.webSearch.maxUses }
 
-const parsedInput = (json: string | undefined): any => {
-  try { return JSON.parse(json ?? '{}') } catch { return {} }
-}
+const parsedInput = (json: string | undefined): any => toolArguments(json ?? '{}') ?? {}
 
 /** The sources in a web_search_tool_result's content, or its error object. */
 function searchResultOf(content: any): { sources: WebSource[]; error?: string } {
@@ -566,7 +579,7 @@ function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] 
       else if (b.type === 'web_search') texts.push({ type: 'output_text', text: searchNote(b) })
       else if (b.type === 'tool_use') {
         flush()
-        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
+        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: toolArguments(b.input) ? b.input : '{}', ...(namespace ? { namespace } : {}) })
       } else {
         flush()
         out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
@@ -687,8 +700,7 @@ function openAISearch(action: any): { query: string; sources: WebSource[] } {
 function wire(b: ContentBlock): unknown {
   if (b.type === 'web_search') return { type: 'text', text: searchNote(b) }
   if (b.type === 'tool_use') {
-    let input: unknown = {}
-    try { input = JSON.parse(b.input) } catch {}
+    const input = toolArguments(b.input) ?? {}
     return { type: 'tool_use', id: b.id, name: b.name, input }
   }
   return b
@@ -848,6 +860,10 @@ export function runReply(json: string): { runId?: string; state?: string } {
 }
 
 /** How much of a tool's result the model gets; a longer one says it was cut. */
+/** What the model is told of arguments that are not a JSON object: to write
+ *  them again, with the text it wrote (it may mend that instead of starting over). */
+export const invalidArgumentsText = (input: string) => fill(AGENT.invalidArguments, { json: JSON.stringify({ INVALID_JSON: input }) })
+
 export const RESULT_LIMIT = 60_000
 export function clip(s: string): string {
   if (s.length <= RESULT_LIMIT) return s
@@ -1127,6 +1143,7 @@ export class Agent {
       let cutReplies = 0
       let done = false
       let refusals = 0
+      let brokenReplies = 0
       for (let i = 0; i < this.maxSteps; i++) {
         if (signal.aborted) throw new Cancelled()
         await this.compactIfNeeded(events, signal)
@@ -1197,6 +1214,8 @@ export class Agent {
         if (signal.aborted) throw new Cancelled()
         this.conversation.messages.push({ role: 'user', content: results })
         this.save()
+        // Each try may be a whole file long: asked again a few times, as a cut reply is.
+        if (uses.some((u) => !toolArguments(u.input)) && ++brokenReplies > 3) throw new Error("the arguments of the model's tool calls were broken JSON three times")
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? { kind: 'finished' } : { kind: 'stepLimit', steps: this.maxSteps, unconfirmedRun: this.unconfirmedRun })
@@ -1397,12 +1416,12 @@ export class Agent {
     events({ kind: 'toolStarted', id, name, arguments: input })
     const record: ToolRecord = this.conversation.tools.find((t) => t.id === id) ?? { id, name, arguments: input, state: 'pending', isError: false }
     this.conversation.tools = this.conversation.tools.filter((t) => t.id !== id)
+    // Broken arguments never run, whatever the tool: the model is told to write
+    // them again. (A reply cut at the output limit does not come this far: loop.)
+    const args = toolArguments(input)
+    if (!args) return this.finish(record, invalidArgumentsText(input), true, events)
     if (name === REFERENCE_TOOL.name && Object.keys(this.references).length) {
-      let p = ''
-      try {
-        p = String(JSON.parse(input)?.path ?? '')
-      } catch {}
-      const [text, isError] = this.readReference(p)
+      const [text, isError] = this.readReference(String(args.path ?? ''))
       return this.finish(record, text, isError, events)
     }
     if (name === GUIDE_SHOW_TOOL.name && (this.role === 'guide' || !this.helper)) return this.finish(record, AGENT.guide.shown, false, events)
@@ -1415,15 +1434,6 @@ export class Agent {
     }
     const spec = this.catalog.tool(name)
     if (!spec) return this.finish(record, `unknown tool ${name}`, true, events)
-    // Incomplete or invalid arguments are never executed.
-    let args: Record<string, unknown>
-    try {
-      const v = JSON.parse(input)
-      if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error()
-      args = v
-    } catch {
-      return this.finish(record, 'the arguments are not a complete JSON object', true, events)
-    }
     // tsugumid on this host reads any absolute folder: only the attached ones are offered.
     if (name === 'attached_folder_read') {
       const folder = typeof args.folder === 'string' ? args.folder.replace(/\/+$/, '') : ''

@@ -53,15 +53,13 @@ final class AgentPresence {
     static let thread = 1.5
     static let threadStart = 0.35, threadLength = 1.1
     static let run = 1.4
-    /// A file as it is written is played no faster than this (characters a
-    /// second), however fast it arrives, and each stays long enough to see;
-    /// a long one speeds up so that the bird does not stay far behind.
-    static let codeRate = 150.0
-    static let codeShortest = 2.0, codeLongest = 5.0
-    /// Its last lines stay this long before the next scene.
+    /// A file as it is written shows what has arrived, at the pace it arrives;
+    /// a short one is seen this long at the least.
+    static let codeShortest = 1.5
+    /// Its last lines stay this long when no other file comes after it.
     static let codeHold = 0.8
-    /// Files that would start further ahead than this are not shown.
-    static let codeBacklog = 20.0
+    /// A pause in what arrives may last this long before its scene ends by itself.
+    static let codeStalled = 5.0
     /// How long the colour of a written Card takes to settle and fade.
     static let settle = 4.0
     /// Beats that would start further ahead than this are dropped if they
@@ -161,10 +159,10 @@ final class AgentPresence {
     activity = (text, now)
   }
 
-  /// A piece of a tool call's arguments as the model writes them. Each file
-  /// is a scene of its own, played at `Timing.codeRate`: arriving fast does not
-  /// make it go by in a moment. Pieces come far faster than a screen shows them,
-  /// so the view changes at most 30 times a second (a new file and its end at once).
+  /// A piece of a tool call's arguments as the model writes them. Each file is a
+  /// scene of its own, showing what has arrived. Pieces may come far faster than
+  /// a screen shows them, so the view changes at most 30 times a second (a new
+  /// file and its end at once).
   func toolInput(index: Int, tool: String, delta: String, now: Date = Date()) {
     guard working, PresenceEvents.writesSources(tool: tool) else { return }
     if liveIndex != index {
@@ -188,17 +186,27 @@ final class AgentPresence {
     } else if let liveID {
       codes[liveID]?.text = w.text
       // It goes on arriving: its scene goes on.
-      if let i = beats.indices.last, beats[i].code == liveID, beats[i].end < now.addingTimeInterval(0.5) {
-        beats[i].length = now.timeIntervalSince(beats[i].start) + 1
+      if let i = beats.indices.last, beats[i].code == liveID, beats[i].end < now.addingTimeInterval(Timing.codeStalled / 2) {
+        beats[i].length = now.timeIntervalSince(beats[i].start) + Timing.codeStalled
       }
+    } else if !w.done {
+      // It waited behind the bird's other scenes: it may have room now.
+      startCode(LiveCode(card: key([id]), file: file, text: w.text), now: now)
     }
     if w.done { arrived(now: now) }
   }
 
   private func startCode(_ code: LiveCode, now: Date) {
-    let before = beats.count
+    // The file being written goes first: one that has all arrived and still
+    // waits is not shown, and the one on the screen gives up its hold. So the
+    // window is never further behind than `Timing.codeShortest`.
+    beats.removeAll { $0.code != nil && $0.start > now }
+    if let i = beats.indices.last, beats[i].code != nil {
+      beats[i].length = max(now.timeIntervalSince(beats[i].start), Timing.codeShortest)
+    }
     enqueue(.compose(code.card), now: now)
-    guard beats.count > before, let i = beats.indices.last else { return }  // too far behind: not shown
+    // Not there (too far behind): not shown. Not by the count: enqueue also drops old scenes.
+    guard let i = beats.indices.last, beats[i].beat == .compose(code.card), beats[i].code == nil else { return }
     let id = nextCode
     nextCode += 1
     codes[id] = code
@@ -207,22 +215,25 @@ final class AgentPresence {
     codes = codes.filter { c in beats.contains { $0.code == c.key } }
   }
 
-  /// The file has all arrived: its scene plays it out and holds its end.
+  /// The file has all arrived: its scene holds its end.
   private func arrived(now: Date) {
     defer { liveID = nil }
-    guard let liveID, let text = codes[liveID]?.text, let i = beats.indices.last, beats[i].code == liveID else { return }
-    let played = min(Timing.codeLongest, max(Timing.codeShortest, Double(text.unicodeScalars.count) / Timing.codeRate))
-    beats[i].length = max(now.timeIntervalSince(beats[i].start), played) + Timing.codeHold
+    guard let liveID, let i = beats.indices.last, beats[i].code == liveID else { return }
+    beats[i].length = max(now.timeIntervalSince(beats[i].start), Timing.codeShortest) + Timing.codeHold
   }
 
   /// The call ended, was asked again or was given up. What a call that went
-  /// through wrote plays on; `ok` false: it is not on the screen any more (a
-  /// save that went through is written out by its own scenes).
+  /// through wrote holds its last lines; `ok` false: it is not on the screen any
+  /// more (a save that went through is written out by its own scenes).
   func toolInputEnded(ok: Bool = true, now: Date = Date()) {
     arrived(now: now)
     livePath = nil
     liveIndex = nil
-    guard !ok else { return }
+    if !ok { stopShowingCode(now: now) }
+  }
+
+  /// No file is on the screen from `now` on: a call failed, or the workflow runs.
+  func stopShowingCode(now: Date = Date()) {
     beats.removeAll { $0.code != nil && $0.start > now }
     if let i = beats.lastIndex(where: { $0.code != nil && $0.start <= now && $0.end > now }) {
       beats[i].length = now.timeIntervalSince(beats[i].start)
@@ -230,15 +241,11 @@ final class AgentPresence {
     codes.removeAll()
   }
 
-  /// The file to show at `now`: as far as it has been played, never past what
-  /// has arrived. nil when no file's scene is playing.
+  /// The file to show at `now`, as far as it has arrived. nil when no file's
+  /// scene is playing.
   func liveCode(at now: Date) -> LiveCode? {
-    guard let cur = current(at: now)?.beat, cur.end > now, let id = cur.code, var code = codes[id] else { return nil }
-    let all = code.text.unicodeScalars
-    // A long file speeds up to end within codeLongest.
-    let rate = max(Timing.codeRate, Double(all.count) / Timing.codeLongest)
-    code.text = String(String.UnicodeScalarView(all.prefix(Int(now.timeIntervalSince(cur.start) * rate))))
-    return code
+    guard let cur = current(at: now)?.beat, cur.end > now, let id = cur.code else { return nil }
+    return codes[id]
   }
 
   func enqueue(_ beat: Beat, now: Date = Date()) {
@@ -248,9 +255,7 @@ final class AgentPresence {
     case .visit(let k), .compose(let k):
       // Already there, or too far behind to be worth showing.
       if case .visit = beat, let last = beats.last, last.beat.card == k, last.end > now.addingTimeInterval(-0.5) { return }
-      if case .compose = beat {
-        if start.timeIntervalSince(now) > Timing.codeBacklog { return }
-      } else if start.timeIntervalSince(now) > Timing.maxBacklog { return }
+      if start.timeIntervalSince(now) > Timing.maxBacklog { return }
     default: break
     }
     beats.append(Scheduled(beat: beat, start: start, length: length(of: beat), line: line(for: beat)))
@@ -262,6 +267,9 @@ final class AgentPresence {
   /// A save by the Agent: the Cards it wrote (in flow order) and the wires
   /// to thread after them.
   func saved(written: [(CardKey, reveal: Bool)], wires: [Wire], now: Date = Date()) {
+    // The save has gone through: a file that still waits is not shown, and the
+    // one on the screen says so for what is left of its hold.
+    beats.removeAll { $0.code != nil && $0.start > now }
     for (id, code) in codes where written.contains(where: { $0.0 == code.card }) { codes[id]?.saved = true }
     for (k, reveal) in written { enqueue(.write(k, reveal: reveal), now: now) }
     for w in wires { enqueue(.thread(w), now: now) }
@@ -373,7 +381,7 @@ final class AgentPresence {
   private func length(of beat: Beat) -> Double {
     switch beat {
     case .visit: Timing.visit
-    case .compose: Timing.visit
+    case .compose: Timing.codeStalled
     case .write(_, let reveal): reveal ? Timing.reveal : Timing.update
     case .thread: Timing.thread
     case .run: Timing.run
