@@ -568,3 +568,33 @@ import Testing
     }
   }
 }
+
+/// Counts the requests to redraw the whole column.
+private final class CountingRuler: LineNumberRuler {
+  var wholeRedraws = 0
+  override var needsDisplay: Bool {
+    get { super.needsDisplay }
+    set {
+      if newValue { wholeRedraws += 1 }
+      super.needsDisplay = newValue
+    }
+  }
+}
+
+/// AppKit may ask the line numbers for more than the column's height and then
+/// count all of it as drawn, so a scroll alone would leave the rest blank.
+@MainActor @Test func scrollingTheEditorRedrawsTheWholeLineNumberColumn() {
+  let scroll = NSTextView.scrollableTextView()
+  scroll.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+  let tv = scroll.documentView as! NSTextView
+  tv.string = (1...100).map { "line \($0)" }.joined(separator: "\n")
+  scroll.hasVerticalRuler = true
+  scroll.rulersVisible = true
+  let ruler = CountingRuler(textView: tv)
+  scroll.verticalRulerView = ruler
+  tv.layoutManager?.ensureLayout(for: tv.textContainer!)
+  ruler.wholeRedraws = 0
+
+  scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
+  #expect(ruler.wholeRedraws > 0)
+}

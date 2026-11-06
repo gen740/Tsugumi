@@ -292,7 +292,7 @@ final class GuideTextView: NSTextView {
 }
 
 /// Line numbers; lines with a problem get a red mark and the message as tooltip.
-final class LineNumberRuler: NSRulerView {
+class LineNumberRuler: NSRulerView {
   weak var textView: NSTextView?
   var problemLines: [Int: String] = [:] {
     didSet { toolTip = problemLines.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "\n") }
@@ -310,6 +310,16 @@ final class LineNumberRuler: NSRulerView {
     }
     NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main) { [weak self] _ in
       self?.needsDisplay = true
+    }
+    // The whole column on every scroll. When the text is only a little taller
+    // than the view, AppKit asks for all of it at once, counts it as drawn and
+    // asks for nothing more while scrolling, but drawing stops at the column's
+    // height: the numbers would end at the last line shown before the scroll.
+    if let clip = textView.enclosingScrollView?.contentView {
+      clip.postsBoundsChangedNotifications = true
+      NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { [weak self] _ in
+        self?.needsDisplay = true
+      }
     }
   }
 
