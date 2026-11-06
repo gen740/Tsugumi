@@ -213,17 +213,19 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   split, a comment moves with its id to the part it is about. Inside a Card in Card, _meta.json is a source of that
   Card's external (PutSource).
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
-  delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<the whole task>"}]} starts
+  delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<what it must know>"}]} starts
   one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
   implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
   write their Cards. Choose how they meet with "runs": "together" has them only write and check, and you run once
   from the trigger after their reports; "each" (the default when "runs" is left out) lets every helper run its own
   work, and one run holds up the others until it ends. Use "together" unless a helper needs results from its own
   runs to write its Cards: a run from the trigger runs every branch, so a helper's run would hold up the rest and
-  stop at the Cards not written yet. Each instruction
-  stands alone, since a helper sees nothing of this conversation: the Card's intent (description, content and
-  context of its Draft) and what the user asked of it, so that the helper can fill its _meta.json as above, how to
-  check it, what to report.
+  stop at the Cards not written yet. The app gives each
+  helper these rules and, read at the start, its Cards' definitions and _meta.json (a Draft's description, content and
+  context among them), the wires at them and the Cards that feed them with their types and code. A helper sees nothing
+  of this conversation, so its instruction says only what none of that says: what the user asked of its Cards here, a
+  choice the helpers must share that the Drafts leave open. Never copy a Draft or these rules into it; "Implement the
+  Draft." is enough when they say it all.
   Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
@@ -389,7 +391,7 @@ your replies.
             "properties": {
               "name": { "type": "string", "description": "a short name for the helper, e.g. its Card's id" },
               "cards": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "ids of the root-level Cards this helper owns" },
-              "instruction": { "type": "string", "description": "what to do, how to check it and what to report" }
+              "instruction": { "type": "string", "description": "what the helper must know beyond what the app gives it (the rules, its Cards' definitions and _meta.json, the wires at them, the Cards that feed them); \"Implement the Draft.\" when those say it all" }
             }
           }
         }
@@ -397,11 +399,14 @@ your replies.
     }
   },
   "helper": {
-    "prompt": "You are the helper \"{name}\", one of several Agents the main Agent started to work on this project at the same time. Your task:\n{instruction}\nThe Cards you own: {cards}. Change only their definitions (PutDefinition, and PutSource under definitions/<id>/); never SetProject, SetLayout, RemoveDefinition or RenameDefinition, and never another Card. {running} You cannot delegate. End with a short report for the main Agent, in the language of your Cards' descriptions: {report}, and anything left undone.",
-    "each": "The other helpers save and run at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save or run meets their work (busy, revision_conflict) the app waits and sends it again for you. The first time, run the workflow from its trigger Card (the other helpers' Cards may run too; look only at yours with run_record); once your Card has run, you may run it alone: run {\"base_rev\": ..., \"card\": {\"segments\": [\"<your Card>\"]}, \"propagate\": false}.",
+    "prompt": "You are the helper \"{name}\", one of several Agents the main Agent started to work on this project at the same time. Your task:\n{instruction}\nThe Cards you own: {cards}. Change only their definitions (PutDefinition, and PutSource, PatchSource or RemoveSource under definitions/<id>/); never SetProject, SetLayout, RemoveDefinition or RenameDefinition, and never another Card. Leave base_rev out of project_save and run: the app fills it in. {running} You cannot delegate. End with a short report for the main Agent, in the language of your Cards' descriptions: {report}, and anything left undone.",
+    "each": "The other helpers save and run at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save or run meets their work (busy, revision_conflict) the app waits and sends it again for you. The first time, run the workflow from its trigger Card (the other helpers' Cards may run too; look only at yours with run_record); once your Card has run, you may run it alone: run {\"card\": {\"segments\": [\"<your Card>\"]}, \"propagate\": false}.",
     "eachReport": "what each of your Cards does, what its run produced",
     "together": "The other helpers save at the same time: project_validate may report their unfinished Cards (not yours to fix); when a save meets their work (revision_conflict) the app sends it again for you. Do not run anything: the main Agent runs the whole workflow once after all the helpers have reported. Save your Cards, check them once with project_validate, and read their code once more, since no run will catch a mistake before you report.",
     "togetherReport": "what each of your Cards does, what you checked, what the main Agent should look at in the run",
+    "brief": "Do your task (in the rules above) and end with your report.\n\nWhat the app read for you at the start (revision {rev}): your Cards, the wires at them and the Cards that feed them. It holds what project_inspect and project_file_read would say of these Cards, so start from it and do not read them again; read something only when this leaves out what you need (another Card, a file it only names).\n\n{project}",
+    "revision": "The project is now at revision {rev}: your next project_save or run starts from it.",
+    "unread": "No helper started: the project could not be read ({why}).",
     "runRefused": "The helper {name} only writes its Cards: the main Agent runs the workflow once after all the helpers have reported. Nothing was run. Check your Cards with project_validate and report.",
     "reportsEach": "Reports of the helpers. Check each Card with run_record before reporting to the user.",
     "reportsTogether": "Reports of the helpers. Their Cards have not run: run the workflow once from its trigger Card, then check each Card with run_record, fix what failed, and report to the user.",

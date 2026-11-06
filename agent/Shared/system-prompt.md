@@ -209,17 +209,19 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   split, a comment moves with its id to the part it is about. Inside a Card in Card, _meta.json is a source of that
   Card's external (PutSource).
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
-  delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<the whole task>"}]} starts
+  delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<what it must know>"}]} starts
   one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
   implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
   write their Cards. Choose how they meet with "runs": "together" has them only write and check, and you run once
   from the trigger after their reports; "each" (the default when "runs" is left out) lets every helper run its own
   work, and one run holds up the others until it ends. Use "together" unless a helper needs results from its own
   runs to write its Cards: a run from the trigger runs every branch, so a helper's run would hold up the rest and
-  stop at the Cards not written yet. Each instruction
-  stands alone, since a helper sees nothing of this conversation: the Card's intent (description, content and
-  context of its Draft) and what the user asked of it, so that the helper can fill its _meta.json as above, how to
-  check it, what to report.
+  stop at the Cards not written yet. The app gives each
+  helper these rules and, read at the start, its Cards' definitions and _meta.json (a Draft's description, content and
+  context among them), the wires at them and the Cards that feed them with their types and code. A helper sees nothing
+  of this conversation, so its instruction says only what none of that says: what the user asked of its Cards here, a
+  choice the helpers must share that the Drafts leave open. Never copy a Draft or these rules into it; "Implement the
+  Draft." is enough when they say it all.
   Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",

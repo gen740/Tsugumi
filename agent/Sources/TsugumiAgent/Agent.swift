@@ -142,6 +142,9 @@ public actor Agent {
   /// Each definition's _card.json as this Agent last saw it (inspect, its
   /// own saves): a save that meets only others' layout changes is sent again.
   var seenDefinitions: [String: String] = [:]
+  /// The latest revision a helper knows, which its saves and runs start from
+  /// (nil: the one it was started with).
+  var helperRev: String?
   var approverForHelpers: Approver? { approver }
   /// A run started by a tool call whose end was not seen yet.
   private var unconfirmedRun: String?
@@ -713,6 +716,10 @@ public actor Agent {
       record.opId = record.opId ?? UUID().uuidString.lowercased()
       full["op_id"] = record.opId
       full["origin"] = "agent"
+      // A helper leaves base_rev to the app: the latest it knows, and a conflict goes on below.
+      if let helper, let rev = helperRev ?? helper.rev, (spec.inputSchema["properties"] as? [String: Any])?["base_rev"] != nil {
+        full["base_rev"] = rev
+      }
     }
     // Validate by building once before sending anything.
     do {
@@ -811,6 +818,11 @@ public actor Agent {
       }
       noteRun(tool: name, reply: replyType, json: json)
       noteDefinitions(reply: replyType, json: json)
+      if helper != nil, replyType == "SaveResult" || replyType == "ProjectSnapshot",
+         let value = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["value"] as? [String: Any],
+         let rev = value["rev"] as? NSNumber {
+        helperRev = rev.stringValue
+      }
       return try finish(&record, json, isError: replyType == "Failure", events)
     } catch let error as ConversationStorageError {
       throw error

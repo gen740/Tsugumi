@@ -8,10 +8,10 @@ import path from 'node:path'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
-import { AGENT, commentRequest, draftRequest, modelChoices, modelOptions } from '../src/shared/agentShared'
+import { AGENT, commentRequest, draftRequest, fill, modelChoices, modelOptions } from '../src/shared/agentShared'
 import os from 'node:os'
 import { ChildProcess, spawn } from 'node:child_process'
-import { Agent, AgentEvent, approvalRequired, CONTEXT_FULL_TEXT, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
+import { Agent, AgentEvent, approvalRequired, CONTEXT_FULL_TEXT, DEMO_SKILL, delegateTasks, helperBrief, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -39,6 +39,7 @@ if (mode === '--update') {
 }
 
 const fixture = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/agent-contract.json'), 'utf8')) as Fixture
+const behavior = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/agent-behavior.json'), 'utf8')) as { helperBrief: { name: string; cards: string[]; snapshot: unknown; files: Record<string, string>; expect: string }[] }
 const codec = new FlatJSON(schema)
 for (const c of fixture.flatjson) {
   const object = schema.object(c.type)
@@ -111,6 +112,38 @@ for (const c of fixture.modelOptions) {
   assert.equal(helperOutside(h, [{ value_type: 'PutDefinition', value: { id: 'life' } }]), 'the definition life')
   assert.equal(helperOutside(h, [{ value_type: 'SetProject', value: { json: '{}' } }]), 'SetProject')
   assert.ok(helperOutside(h, [{ value_type: 'PutSource', value: { path: 'definitions/lorenz/../life/x' } }]))
+  // A patch or a removal of its own file is its own (a patch was refused once, as outside).
+  assert.equal(helperOutside(h, [{ value_type: 'PatchSource', value: { path: 'definitions/lorenz/src/main.py' } },
+    { value_type: 'RemoveSource', value: { path: 'definitions/lorenz/src/old.py' } }]), undefined)
+  assert.equal(helperOutside(h, [{ value_type: 'PatchSource', value: { path: 'definitions/life/src/main.py' } }]), 'definitions/life/src/main.py')
+  // What a helper starts from (as the Swift Agent's).
+  for (const c of behavior.helperBrief) {
+    const brief = await helperBrief({ name: 'x', cards: c.cards, instruction: '' }, c.snapshot, async (p) => c.files[p])
+    assert.equal(brief, fill(AGENT.helper.brief, { rev: '7', project: c.expect }), c.name)
+  }
+  // A helper leaves base_rev to the app, whatever the model writes; the main Agent's stays its own.
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-helper-'))
+    const none = { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never
+    const noRpc = async () => { throw new Error('no rpc in this check') }
+    const built = async (a: Agent, tool: string, input: unknown) => {
+      const sent: Record<string, unknown>[] = []
+      const codec = (a as unknown as { codec: { build: (o: number, f: Record<string, unknown>, b: unknown) => unknown } }).codec
+      const build = codec.build.bind(codec)
+      codec.build = (o, f, b) => { sent.push({ ...f }); return build(o, f, b) }
+      await a.call(tool, JSON.stringify(input), () => {})
+      return sent[0]
+    }
+    const catalog = new ToolCatalog(schema)
+    const helper = new Agent(catalog, noRpc, none, path.join(tmp, 'h.json'), 'h', {}, h)
+    helper.helperRev = '12'
+    const changes = [{ value_type: 'PutSource', value: { path: 'definitions/lorenz/x', bytes: 'y' } }]
+    assert.equal((await built(helper, 'project_save', { changes }))?.base_rev, '12')
+    assert.equal((await built(helper, 'project_save', { base_rev: 'latest', changes }))?.base_rev, '12')
+    assert.equal((await built(helper, 'run', { card: { segments: ['lorenz'] } }))?.base_rev, '12')
+    const main = new Agent(catalog, noRpc, none, path.join(tmp, 'm.json'), 'm')
+    assert.equal((await built(main, 'project_save', { base_rev: '3', changes }))?.base_rev, '3')
+  }
 }
 // The guide only reads and offers buttons (as the Swift Agent's Role.guide).
 {

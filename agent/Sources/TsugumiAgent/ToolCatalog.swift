@@ -71,6 +71,7 @@ extension Shared {
       let prompt: String, outside: String, invalid: String
       let each: String, eachReport: String, together: String, togetherReport: String
       let runRefused: String, reportsEach: String, reportsTogether: String
+      let brief: String, unread: String, revision: String
     }
     /// The guide (Agent.Role.guide): the tools it reads with, its own tool and the app's notes to it.
     struct Guide {
@@ -115,7 +116,8 @@ extension Shared {
                 helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!,
                               each: h["each"]!, eachReport: h["eachReport"]!, together: h["together"]!,
                               togetherReport: h["togetherReport"]!, runRefused: h["runRefused"]!,
-                              reportsEach: h["reportsEach"]!, reportsTogether: h["reportsTogether"]!),
+                              reportsEach: h["reportsEach"]!, reportsTogether: h["reportsTogether"]!,
+                              brief: h["brief"]!, unread: h["unread"]!, revision: h["revision"]!),
                 guide: .init(tools: g["tools"] as! [String],
                              showTool: .init(name: gt["name"] as! String, description: gt["description"] as! String,
                                              inputSchema: gt["inputSchema"] as! [String: Any]),

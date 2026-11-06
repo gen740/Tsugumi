@@ -93,6 +93,9 @@ import TsugumiRPC
     #expect(refused.count == Self.drafts.count, "\(log.all)")
     #expect(try await client.history().runs.count == before + 1, "one run, the main Agent's")
     let after = try await client.inspect()
+    // The report says where the helpers left the project: the main Agent's next save starts from it.
+    let reported = await agent.conversation.tools.first { $0.name == "delegate" }?.result ?? ""
+    #expect(reported.contains("now at revision \(after.rev ?? 0)"), "\(reported)")
     for d in Self.drafts {
       let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == d })
       #expect(try JSONValue.parse(def.cardJson)["language"]?.string == "bash", "\(d) is still a Draft")
@@ -136,6 +139,20 @@ import TsugumiRPC
     #expect(h.outside([["value_type": "SetProject", "value": ["json": "{}"]]]) == "SetProject")
     #expect(h.outside([["value_type": "PutSource", "value": ["path": "definitions/lorenz/../life/x"]]]) != nil)
     #expect(h.outside([["value_type": "PutSource", "value": ["path": "tsugumi.json"]]]) == "tsugumi.json")
+    // A patch or a removal of its own file is its own (a patch was refused once, as outside).
+    #expect(h.outside([["value_type": "PatchSource", "value": ["path": "definitions/lorenz/src/main.py"]],
+                       ["value_type": "RemoveSource", "value": ["path": "definitions/lorenz/src/old.py"]]]) == nil)
+    #expect(h.outside([["value_type": "PatchSource", "value": ["path": "definitions/life/src/main.py"]]]) == "definitions/life/src/main.py")
+  }
+
+  /// What a helper starts from (as the web Agent's).
+  @Test func aHelperStartsFromItsCardsAndWhatFeedsThem() async throws {
+    for c in try agentBehaviorCases("helperBrief") {
+      let helper = Agent.Helper(name: "x", cards: c["cards"] as! [String], instruction: "")
+      let files = c["files"] as! [String: String]
+      let brief = await Agent.helperBrief(helper, snapshot: c["snapshot"] as! [String: Any]) { files[$0] }
+      #expect(brief == Shared.fill(Shared.data.helper.brief, ["rev": "7", "project": c["expect"] as! String]), "\(c["name"]!)")
+    }
   }
 
   /// While the Agent works, the app tidies the canvas (a layout save): the

@@ -534,5 +534,447 @@
       "text": null,
       "images": []
     }
+  ],
+  "helperBrief": [
+    {
+      "name": "a Draft, through a fork to the Card that makes its value, and who reads it",
+      "cards": [
+        "alpha"
+      ],
+      "snapshot": {
+        "rev": 7,
+        "project_json": "{\"name\": \"t\", \"canvas\": {\"cards\": [], \"connections\": [{\"from\": {\"card\": \"start\", \"port\": \"out\"}, \"to\": {\"card\": \"src\", \"port\": \"start\"}}, {\"from\": {\"card\": \"src\", \"port\": \"msg\"}, \"to\": {\"card\": \"share\", \"port\": \"in\"}}, {\"from\": {\"card\": \"share\", \"port\": \"alpha\"}, \"to\": {\"card\": \"alpha\", \"port\": \"data\"}}, {\"from\": {\"card\": \"share\", \"port\": \"beta\"}, \"to\": {\"card\": \"beta\", \"port\": \"data\"}}, {\"from\": {\"card\": \"alpha\", \"port\": \"result\"}, \"to\": {\"card\": \"end\", \"port\": \"alpha\"}}, {\"from\": {\"card\": \"beta\", \"port\": \"result\"}, \"to\": {\"card\": \"end\", \"port\": \"beta\"}}]}}",
+        "definitions": [
+          {
+            "id": "alpha",
+            "card_json": "{\n  \"template\": \"draft\",\n  \"inputs\": [\n    {\n      \"name\": \"data\"\n    }\n  ]\n}\n",
+            "meta_json": "{\n  \"description\": \"アルファ\",\n  \"content\": \"Say done.\",\n  \"inputs\": [\n    {\n      \"name\": \"data\",\n      \"description\": \"the text\"\n    }\n  ],\n  \"outputs\": [\n    {\n      \"name\": \"result\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "beta",
+            "card_json": "{\n  \"language\": \"python\"\n}\n",
+            "meta_json": ""
+          },
+          {
+            "id": "end",
+            "card_json": "{\n  \"template\": \"draft\",\n  \"inputs\": [\n    {\n      \"name\": \"data\"\n    }\n  ]\n}\n",
+            "meta_json": "{\n  \"description\": \"Compares\",\n  \"inputs\": [\n    {\n      \"name\": \"alpha\",\n      \"description\": \"alpha's result\"\n    },\n    {\n      \"name\": \"beta\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "share",
+            "card_json": "{\"template\": \"fork\"}\n",
+            "meta_json": ""
+          },
+          {
+            "id": "src",
+            "card_json": "{\n  \"language\": \"python\"\n}\n",
+            "meta_json": "{\n  \"description\": \"Reads it\",\n  \"outputs\": [\n    {\n      \"name\": \"msg\",\n      \"description\": \"the text\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "start",
+            "card_json": "{\"template\": \"trigger\"}\n",
+            "meta_json": ""
+          }
+        ],
+        "resolution": [
+          {
+            "card": {
+              "segments": [
+                "alpha"
+              ]
+            },
+            "diagnostics": [
+              {
+                "code": "draft",
+                "message": "not written",
+                "severity": "error"
+              }
+            ],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "data",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "kind": "FlatBuffer",
+                "name": "result",
+                "optional": true,
+                "root_type": "tsugumi.builtin.Empty",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          },
+          {
+            "card": {
+              "segments": [
+                "beta"
+              ]
+            },
+            "diagnostics": [
+              {
+                "code": "input_missing",
+                "message": "data is not read",
+                "severity": "error"
+              }
+            ],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "data",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "card": {
+              "segments": [
+                "share"
+              ]
+            },
+            "diagnostics": [],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "in",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "kind": "File",
+                "name": "alpha",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              },
+              {
+                "kind": "File",
+                "name": "beta",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          },
+          {
+            "card": {
+              "segments": [
+                "src"
+              ]
+            },
+            "diagnostics": [],
+            "inputs": [],
+            "outputs": [
+              {
+                "kind": "File",
+                "name": "msg",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          }
+        ],
+        "sources": [
+          {
+            "exists": true,
+            "hash": "b1",
+            "kind": "file",
+            "path": "definitions/beta/src/main.py",
+            "size_bytes": 9
+          },
+          {
+            "exists": false,
+            "hash": "",
+            "kind": "file",
+            "path": "definitions/beta/src/gone.py",
+            "size_bytes": 0
+          },
+          {
+            "exists": true,
+            "hash": "s0",
+            "kind": "file",
+            "path": "definitions/src/_outputs.fbs",
+            "size_bytes": 22
+          },
+          {
+            "exists": true,
+            "hash": "s1",
+            "kind": "file",
+            "path": "definitions/src/default.nix",
+            "size_bytes": 10
+          },
+          {
+            "exists": true,
+            "hash": "s2",
+            "kind": "file",
+            "path": "definitions/src/image.png",
+            "size_bytes": 4
+          },
+          {
+            "exists": true,
+            "hash": "s3",
+            "kind": "file",
+            "path": "definitions/src/src/big.py",
+            "size_bytes": 8001
+          },
+          {
+            "exists": true,
+            "hash": "s4",
+            "kind": "file",
+            "path": "definitions/src/src/main.py",
+            "size_bytes": 13
+          }
+        ]
+      },
+      "files": {
+        "definitions/src/_outputs.fbs": "table Text { a:string; }\n",
+        "definitions/src/src/main.py": "print('src')\n"
+      },
+      "expect": "# Your Cards\n## alpha\n_card.json:\n{\n  \"template\": \"draft\",\n  \"inputs\": [\n    {\n      \"name\": \"data\"\n    }\n  ]\n}\n_meta.json:\n{\n  \"description\": \"アルファ\",\n  \"content\": \"Say done.\",\n  \"inputs\": [\n    {\n      \"name\": \"data\",\n      \"description\": \"the text\"\n    }\n  ],\n  \"outputs\": [\n    {\n      \"name\": \"result\"\n    }\n  ]\n}\nports: in data (File t.Text); out result (FlatBuffer tsugumi.builtin.Empty, optional)\nwires: share.alpha -> alpha.data, alpha.result -> end.alpha\n\n# What feeds them\n## share\n_card.json:\n{\"template\": \"fork\"}\nports: in in (File t.Text); out alpha (File t.Text), beta (File t.Text)\n## src\n_card.json:\n{\n  \"language\": \"python\"\n}\n_meta.json:\n{\n  \"description\": \"Reads it\",\n  \"outputs\": [\n    {\n      \"name\": \"msg\",\n      \"description\": \"the text\"\n    }\n  ]\n}\nports: in none; out msg (File t.Text)\n--- definitions/src/_outputs.fbs\ntable Text { a:string; }\n--- definitions/src/image.png (4 bytes, not shown: read it by its path)\n--- definitions/src/src/big.py (8001 bytes, not shown: read it by its path)\n--- definitions/src/src/main.py\nprint('src')\n\n# What reads their outputs\nend.alpha: alpha's result (end: Compares)"
+    },
+    {
+      "name": "its own files by hash, its problems, a Card to come, and a reader with no words",
+      "cards": [
+        "beta",
+        "gamma"
+      ],
+      "snapshot": {
+        "rev": 7,
+        "project_json": "{\"name\": \"t\", \"canvas\": {\"cards\": [], \"connections\": [{\"from\": {\"card\": \"start\", \"port\": \"out\"}, \"to\": {\"card\": \"src\", \"port\": \"start\"}}, {\"from\": {\"card\": \"src\", \"port\": \"msg\"}, \"to\": {\"card\": \"share\", \"port\": \"in\"}}, {\"from\": {\"card\": \"share\", \"port\": \"alpha\"}, \"to\": {\"card\": \"alpha\", \"port\": \"data\"}}, {\"from\": {\"card\": \"share\", \"port\": \"beta\"}, \"to\": {\"card\": \"beta\", \"port\": \"data\"}}, {\"from\": {\"card\": \"alpha\", \"port\": \"result\"}, \"to\": {\"card\": \"end\", \"port\": \"alpha\"}}, {\"from\": {\"card\": \"beta\", \"port\": \"result\"}, \"to\": {\"card\": \"end\", \"port\": \"beta\"}}]}}",
+        "definitions": [
+          {
+            "id": "alpha",
+            "card_json": "{\n  \"template\": \"draft\",\n  \"inputs\": [\n    {\n      \"name\": \"data\"\n    }\n  ]\n}\n",
+            "meta_json": "{\n  \"description\": \"アルファ\",\n  \"content\": \"Say done.\",\n  \"inputs\": [\n    {\n      \"name\": \"data\",\n      \"description\": \"the text\"\n    }\n  ],\n  \"outputs\": [\n    {\n      \"name\": \"result\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "beta",
+            "card_json": "{\n  \"language\": \"python\"\n}\n",
+            "meta_json": ""
+          },
+          {
+            "id": "end",
+            "card_json": "{\n  \"template\": \"draft\",\n  \"inputs\": [\n    {\n      \"name\": \"data\"\n    }\n  ]\n}\n",
+            "meta_json": "{\n  \"description\": \"Compares\",\n  \"inputs\": [\n    {\n      \"name\": \"alpha\",\n      \"description\": \"alpha's result\"\n    },\n    {\n      \"name\": \"beta\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "share",
+            "card_json": "{\"template\": \"fork\"}\n",
+            "meta_json": ""
+          },
+          {
+            "id": "src",
+            "card_json": "{\n  \"language\": \"python\"\n}\n",
+            "meta_json": "{\n  \"description\": \"Reads it\",\n  \"outputs\": [\n    {\n      \"name\": \"msg\",\n      \"description\": \"the text\"\n    }\n  ]\n}\n"
+          },
+          {
+            "id": "start",
+            "card_json": "{\"template\": \"trigger\"}\n",
+            "meta_json": ""
+          }
+        ],
+        "resolution": [
+          {
+            "card": {
+              "segments": [
+                "alpha"
+              ]
+            },
+            "diagnostics": [
+              {
+                "code": "draft",
+                "message": "not written",
+                "severity": "error"
+              }
+            ],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "data",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "kind": "FlatBuffer",
+                "name": "result",
+                "optional": true,
+                "root_type": "tsugumi.builtin.Empty",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          },
+          {
+            "card": {
+              "segments": [
+                "beta"
+              ]
+            },
+            "diagnostics": [
+              {
+                "code": "input_missing",
+                "message": "data is not read",
+                "severity": "error"
+              }
+            ],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "data",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "card": {
+              "segments": [
+                "share"
+              ]
+            },
+            "diagnostics": [],
+            "inputs": [
+              {
+                "kind": "File",
+                "name": "in",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "kind": "File",
+                "name": "alpha",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              },
+              {
+                "kind": "File",
+                "name": "beta",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          },
+          {
+            "card": {
+              "segments": [
+                "src"
+              ]
+            },
+            "diagnostics": [],
+            "inputs": [],
+            "outputs": [
+              {
+                "kind": "File",
+                "name": "msg",
+                "optional": false,
+                "root_type": "t.Text",
+                "schema_bfbs": {
+                  "binary_schema_bytes": 164
+                }
+              }
+            ]
+          }
+        ],
+        "sources": [
+          {
+            "exists": true,
+            "hash": "b1",
+            "kind": "file",
+            "path": "definitions/beta/src/main.py",
+            "size_bytes": 9
+          },
+          {
+            "exists": false,
+            "hash": "",
+            "kind": "file",
+            "path": "definitions/beta/src/gone.py",
+            "size_bytes": 0
+          },
+          {
+            "exists": true,
+            "hash": "s0",
+            "kind": "file",
+            "path": "definitions/src/_outputs.fbs",
+            "size_bytes": 22
+          },
+          {
+            "exists": true,
+            "hash": "s1",
+            "kind": "file",
+            "path": "definitions/src/default.nix",
+            "size_bytes": 10
+          },
+          {
+            "exists": true,
+            "hash": "s2",
+            "kind": "file",
+            "path": "definitions/src/image.png",
+            "size_bytes": 4
+          },
+          {
+            "exists": true,
+            "hash": "s3",
+            "kind": "file",
+            "path": "definitions/src/src/big.py",
+            "size_bytes": 8001
+          },
+          {
+            "exists": true,
+            "hash": "s4",
+            "kind": "file",
+            "path": "definitions/src/src/main.py",
+            "size_bytes": 13
+          }
+        ]
+      },
+      "files": {},
+      "expect": "# Your Cards\n## beta\n_card.json:\n{\n  \"language\": \"python\"\n}\nports: in data (File t.Text); out none\nproblems: input_missing: data is not read\nwires: share.beta -> beta.data, beta.result -> end.beta\nfiles: definitions/beta/src/main.py (hash b1)\n## gamma\nIt is not in the project yet.\n\n# What feeds them\n## share\n_card.json:\n{\"template\": \"fork\"}\nports: in in (File t.Text); out alpha (File t.Text), beta (File t.Text)\n## src\n_card.json:\n{\n  \"language\": \"python\"\n}\n_meta.json:\n{\n  \"description\": \"Reads it\",\n  \"outputs\": [\n    {\n      \"name\": \"msg\",\n      \"description\": \"the text\"\n    }\n  ]\n}\nports: in none; out msg (File t.Text)\n--- definitions/src/_outputs.fbs (22 bytes, not shown: read it by its path)\n--- definitions/src/image.png (4 bytes, not shown: read it by its path)\n--- definitions/src/src/big.py (8001 bytes, not shown: read it by its path)\n--- definitions/src/src/main.py (13 bytes, not shown: read it by its path)\n\n# What reads their outputs\nend.beta (end: Compares)"
+    }
   ]
 }

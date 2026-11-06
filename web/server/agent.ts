@@ -811,7 +811,7 @@ export function helperOutside(h: Helper, changes: unknown): string | undefined {
     if (kind === 'PutDefinition') {
       const id = String(v.id ?? '')
       if (!h.cards.includes(id)) out.push(`the definition ${id}`)
-    } else if (kind === 'PutSource' || kind === 'RemoveSource') {
+    } else if (kind === 'PutSource' || kind === 'PatchSource' || kind === 'RemoveSource') {
       const p = String(v.path ?? '')
       const parts = p.split('/')
       if (!(parts.length >= 3 && parts[0] === 'definitions' && h.cards.includes(parts[1]) && !parts.includes('..'))) out.push(p || kind)
@@ -820,6 +820,86 @@ export function helperOutside(h: Helper, changes: unknown): string | undefined {
     }
   }
   return out.length ? out.join(', ') : undefined
+}
+
+/** How much of a Card that feeds a helper's the helper gets to read, in bytes:
+ *  one file, and all of them together; longer ones it gets by name. */
+const BRIEF_FILE_LIMIT = 8000
+const BRIEF_FILES_LIMIT = 20_000
+
+/** What a helper starts from, in place of reading the whole project: of a
+ *  ProjectSnapshot's value, its Cards, the wires at them, the Cards that feed
+ *  them (through the ones that only hand a value on, such as a fork) with the
+ *  types and code of those, and who reads their outputs. As the Swift Agent's
+ *  (tests/fixtures/agent-behavior.json). */
+export async function helperBrief(h: Helper, snapshot: any, read: (path: string) => Promise<string | undefined>): Promise<string> {
+  const wires: { from?: { card?: string; port?: string }; to?: { card?: string; port?: string } }[] = parsed(snapshot.project_json)?.canvas?.connections ?? []
+  const definitions: any[] = snapshot.definitions ?? []
+  const definition = (id: string) => definitions.find((d) => d.id === id)
+  const files = (id: string): any[] => (snapshot.sources ?? []).filter((f: any) => f.kind === 'file' && f.exists !== false && String(f.path).startsWith(`definitions/${id}/`))
+  const name = (end?: { card?: string; port?: string }) => `${end?.card}.${end?.port}`
+  const ports = (list: any[]) => list.map((p) => `${p.name} (${p.kind} ${p.root_type}${p.optional ? ', optional' : ''})`).join(', ') || 'none'
+  const about = (id: string) => {
+    const d = definition(id)
+    if (!d) return [`## ${id}`, 'It is not in the project yet.']
+    const out = [`## ${id}`, '_card.json:', String(d.card_json ?? '').trim()]
+    if (d.meta_json) out.push('_meta.json:', String(d.meta_json).trim())
+    const r = (snapshot.resolution ?? []).find((c: any) => c.card?.segments?.length === 1 && c.card.segments[0] === id)
+    if (r) {
+      out.push(`ports: in ${ports(r.inputs ?? [])}; out ${ports(r.outputs ?? [])}`)
+      const problems = (r.diagnostics ?? []).filter((x: any) => x.code !== 'draft').map((x: any) => `${x.code}: ${x.message}`)
+      if (problems.length) out.push(`problems: ${problems.join('; ')}`)
+    }
+    return out
+  }
+  const lines: string[] = ['# Your Cards']
+  for (const id of h.cards) {
+    lines.push(...about(id))
+    const at = wires.filter((w) => w.from?.card === id || w.to?.card === id).map((w) => `${name(w.from)} -> ${name(w.to)}`)
+    if (at.length) lines.push(`wires: ${at.join(', ')}`)
+    const own = files(id).map((f) => `${f.path} (hash ${f.hash})`)
+    if (own.length) lines.push(`files: ${own.join(', ')}`)
+  }
+  // Back along the wires, to the Cards that make the values.
+  const feeding: string[] = []
+  const back = (id: string) => {
+    for (const w of wires) {
+      const from = w.to?.card === id ? w.from?.card : undefined
+      if (!from || h.cards.includes(from) || feeding.includes(from)) continue
+      feeding.push(from)
+      if (!files(from).length && parsed(definition(from)?.card_json)?.template !== 'draft') back(from)
+    }
+  }
+  h.cards.forEach(back)
+  let left = BRIEF_FILES_LIMIT
+  if (feeding.length) lines.push('', '# What feeds them')
+  for (const id of feeding) {
+    lines.push(...about(id))
+    for (const f of files(id)) {
+      // (what _card.json and _meta.json say is above, and a Card's build is its own)
+      const rel = String(f.path).slice(`definitions/${id}/`.length)
+      if (rel === 'default.nix') continue
+      const size = Number(f.size_bytes ?? 0)
+      const text = size <= BRIEF_FILE_LIMIT && size <= left ? await read(f.path) : undefined
+      if (text === undefined) lines.push(`--- ${f.path} (${size} bytes, not shown: read it by its path)`)
+      else {
+        left -= size
+        lines.push(`--- ${f.path}`, text.replace(/\n$/, ''))
+      }
+    }
+  }
+  const readers = wires.filter((w) => h.cards.includes(w.from?.card ?? '') && !h.cards.includes(w.to?.card ?? ''))
+  if (readers.length) lines.push('', '# What reads their outputs')
+  for (const w of readers) {
+    const meta = parsed(definition(w.to?.card ?? '')?.meta_json)
+    const port = (meta?.inputs ?? []).find((p: any) => p?.name === w.to?.port)?.description
+    lines.push(`${name(w.to)}${port ? `: ${port}` : ''} (${w.to?.card}${meta?.description ? `: ${meta.description}` : ''})`)
+  }
+  return fill(AGENT.helper.brief, { rev: String(snapshot.rev ?? ''), project: lines.join('\n') })
+}
+
+function parsed(json: unknown): any {
+  try { return JSON.parse(String(json)) } catch { return undefined }
 }
 
 /** Whether a read refused for naming a revision gone by goes again at the latest: takes `at_rev` away. */
@@ -1027,6 +1107,10 @@ export class Agent {
   /** Each definition's _card.json as this Agent last saw it (inspect, its
    *  own saves): a save that meets only others' layout changes is sent again. */
   private seenDefinitions = new Map<string, string>()
+  /** A helper's first message: its task's start, what the app read for it. */
+  brief = ''
+  /** The latest revision a helper knows, which its saves and runs start from. */
+  helperRev?: string
 
   constructor(
     readonly catalog: ToolCatalog,
@@ -1079,6 +1163,18 @@ export class Agent {
     return r.type === 'tool_result' ? { text: r.content, isError: r.is_error, images: r.images } : { text: '', isError: true }
   }
 
+  /** The value of a read the app makes itself; a failure is thrown. */
+  private async readValue(tool: string, args: Record<string, unknown>): Promise<any> {
+    const spec = this.catalog.tool(tool)
+    if (!spec) throw new Error(`unknown tool ${tool}`)
+    const rpc = await this.rpc()
+    const r = await rpc.callRaw(spec.payloadType, (b) => this.codec.build(spec.object, args, b))
+    const type = this.catalog.replyNames.get(r.type) ?? 'Unknown'
+    const reply = JSON.parse(this.renderReply(type, r.bb, r.table))
+    if (type === 'Failure') throw new Error(`${tool}: ${reply.value?.kind} ${reply.value?.diagnostic ?? ''}`)
+    return reply.value
+  }
+
   /** Runs the helpers of a delegate call at the same time and returns their
    *  reports (an error only when the call itself is wrong or none finished). */
   private async delegate(input: string, events: (e: AgentEvent) => void, signal?: AbortSignal): Promise<[string, boolean]> {
@@ -1087,6 +1183,20 @@ export class Agent {
     // Each helper keeps its conversation next to this one's; a new call starts them afresh.
     const dir = this.storage.replace(/\.json$/, '') + '.helpers'
     fs.mkdirSync(dir, { recursive: true })
+    // Each starts from what the app reads for it here, not from reading the project.
+    let briefs: string[]
+    let rev: string
+    try {
+      const snapshot = await this.readValue('project_inspect', {})
+      rev = String(snapshot.rev)
+      const read = async (p: string) => {
+        const bytes = (await this.readValue('project_file_read', { path: p })).bytes
+        return typeof bytes === 'string' ? bytes : undefined
+      }
+      briefs = await Promise.all(tasks.map((h) => helperBrief(h, snapshot, read)))
+    } catch (e) {
+      return [fill(AGENT.helper.unread, { why: String((e as Error).message ?? e) }), true]
+    }
     // The user answers one approval at a time, whichever helper asks.
     let line: Promise<unknown> = Promise.resolve()
     const approver = this.approver
@@ -1095,13 +1205,15 @@ export class Agent {
       line = next.catch(() => {})
       return next
     } : undefined
-    const reports = await Promise.all(tasks.map(async (h) => {
+    const reports = await Promise.all(tasks.map(async (h, i) => {
       const file = path.join(dir, h.name + '.json')
       fs.rmSync(file, { force: true })
       const a = new Agent(this.catalog, this.rpc, this.provider, file, `${this.id}.${h.name}`, this.references, h)
       a.maxSteps = HELPER_STEPS
       a.statusWait = this.statusWait
       a.approver = ask
+      a.brief = briefs[i]
+      a.helperRev = rev
       return a.work((e) => events({ kind: 'helper', name: h.name, event: e }), signal)
     }))
     const u = this.conversation.usage
@@ -1113,7 +1225,10 @@ export class Agent {
     this.save()
     const text = tasks.map((h, i) => `## ${h.name} (${h.cards.join(', ')}): ${reports[i].outcome}\n${reports[i].report || '(no report)'}`).join('\n\n')
     const header = tasks.some((h) => h.runsTogether) ? AGENT.helper.reportsTogether : AGENT.helper.reportsEach
-    return [header + '\n\n' + text,
+    // The helpers' saves moved the revision on: the next save or run starts from here.
+    const now = await this.readValue('project_inspect', {}).then((v) => v.rev, () => undefined)
+    const revision = now === undefined ? '' : ' ' + fill(AGENT.helper.revision, { rev: String(now) })
+    return [header + revision + '\n\n' + text,
       !reports.some((r) => r.outcome === 'finished')]
   }
 
@@ -1121,7 +1236,7 @@ export class Agent {
   async work(events: (e: AgentEvent) => void, outer?: AbortSignal) {
     this.conversation = newConversation(this.id)
     this.conversation.title = this.helper?.name
-    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: 'Do your task (in the rules above) and end with your report.' }] })
+    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: this.brief }] })
     try {
       this.save()
     } catch (e) {
@@ -1571,6 +1686,8 @@ export class Agent {
       record.opId = record.opId ?? randomUUID()
       full.op_id = record.opId
       full.origin = 'agent'
+      // A helper leaves base_rev to the app: the latest it knows, and a conflict goes on below.
+      if (this.helper && this.helperRev !== undefined && (spec.inputSchema as any).properties?.base_rev) full.base_rev = this.helperRev
     }
     // Validate by building once before sending anything.
     try {
@@ -1650,6 +1767,10 @@ export class Agent {
       }
       this.noteRun(name, replyType, json)
       this.noteDefinitions(replyType, json)
+      if (this.helper && (replyType === 'SaveResult' || replyType === 'ProjectSnapshot')) {
+        const rev = parsed(json)?.value?.rev
+        if (rev !== undefined) this.helperRev = String(rev)
+      }
       return this.finish(record, json, replyType === 'Failure', events)
     } catch (e) {
       // Unknown outcome: keep the record as sent so a resume asks OperationGet.
