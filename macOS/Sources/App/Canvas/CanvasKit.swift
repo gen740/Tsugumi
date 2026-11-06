@@ -315,7 +315,8 @@ struct CardGeometry {
     draft = d.isDraft
     draftEditing = d.isDraft && d.draftEditing
     untitled = d.isDraft && d.untitled && !d.draftEditing && !d.collapsed
-    summary = d.summary != nil && !d.isRouting && !d.isDraft
+    // The small ones keep their shape: their summary is on hover.
+    summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
     params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     result = d.kind == .logger || d.hasDisplay
