@@ -54,6 +54,9 @@ final class UIScript {
     Task { await shared.run(text.split(separator: "\n").map(String.init)) }
   }
 
+  /// A line for the script's log from elsewhere in the app (what a step caused).
+  func note(_ s: String) { say(s) }
+
   private func say(_ s: String) {
     log?.write(Data((s + "\n").utf8))
     try? log?.synchronize()
