@@ -108,7 +108,7 @@ extension Agent {
     let dir = storage.deletingPathExtension().appendingPathExtension("helpers")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let line = ApprovalLine(approverForHelpers)
-    let (catalog, transport, config, references) = (self.catalog, self.transport, self.providerConfig, self.references)
+    let (catalog, transport, config, references, folders) = (self.catalog, self.transport, self.providerConfig, self.references, self.folders)
     let reports = await withTaskGroup(of: (Int, HelperReport).self) { group in
       for (i, h) in helpers.enumerated() {
         let file = dir.appendingPathComponent(h.name + ".json")
@@ -120,6 +120,7 @@ extension Agent {
         }
         group.addTask {
           await agent.setMaxSteps(Self.helperSteps)
+          await agent.setFolders(folders)
           await agent.setApprover { asked in await line.ask(asked) }
           return (i, await agent.work { e in events(.helper(name: h.name, event: e)) })
         }

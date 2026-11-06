@@ -34,7 +34,7 @@ cd web && npm install && nix develop --command npm run gen && npm run build
 node web/dist/server.js --open
 ```
 
-起動時に表示される `http://127.0.0.1:8780/?key=…` を開きます（`--open` なら自動で開きます）。`key` は起動のたびに作る鍵で、このページだけが送る cookie（HttpOnly・SameSite=Strict）に置き換わってアドレスバーから消えます。`/api/` はすべて（GET とイベントの購読も）この cookie を求めるので、同じマシンの他のユーザーや他のサイトのページからは使えません。変更を伴う呼び出しはさらに専用のヘッダーを求めます。応答には CSP（`frame-ancestors 'none'`）と `nosniff` を付けます。`--port` でポートを、引数のプロジェクトフォルダでそのまま開くプロジェクトを指定できます。起動中はデータフォルダに `server.json`（ポートと鍵、0600）を置き、[Claude Code の plugin](claude-code.md) はこれで動いているサーバーを見つけます。core のバイナリがない場合は、初期設定画面からビルドすることもできます。
+起動時に表示される `http://127.0.0.1:8780/?key=…` を開きます（`--open` なら自動で開きます）。`key` は起動のたびに作る鍵で、このページだけが送る cookie（HttpOnly・SameSite=Strict）に置き換わってアドレスバーから消えます。`/api/` はすべて（GET とイベントの購読も）この cookie を求めるので、同じマシンの他のユーザーや他のサイトのページからは使えません。変更を伴う呼び出しはさらに専用のヘッダーを求めます。応答には CSP（`frame-ancestors 'none'`）と `nosniff` を付けます。`--port` でポートを、引数のプロジェクトフォルダでそのまま開くプロジェクトを指定できます。起動中はデータフォルダに `server.json`（ポートと Agent 用の鍵、0600）を置き、[Claude Code の plugin](claude-code.md) はこれで動いているサーバーを見つけます。この鍵はページの鍵とは別で、plugin が使う口（`AGENT_ROUTES`）にしか届かず、Card の権限を広げる保存の承認には答えられません（[セキュリティ §8](security.md#agent-の権限境界)）。core のバイナリがない場合は、初期設定画面からビルドすることもできます。
 
 | 環境変数 | 内容 |
 | --- | --- |

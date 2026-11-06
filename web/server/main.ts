@@ -10,7 +10,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ServerInfo, webDataDir } from './paths'
+import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
 import { chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './env'
 
@@ -387,7 +387,7 @@ const routes: Record<string, Handler> = {
     stopTerminal(terminal(b.id))
     return { ok: true }
   },
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, openPage }),
 }
 
 // The page is opened through the URL printed at start, which carries this
@@ -395,13 +395,33 @@ const routes: Record<string, Handler> = {
 // sends (HttpOnly, SameSite=Strict) and every /api/ request must carry it.
 // Other users of this host and other sites' pages get nothing.
 const key = randomBytes(32).toString('hex')
+// Local clients (the Claude Code plugin's MCP server) find this server through
+// server.json and get another key, which reaches only AGENT_ROUTES: the page's
+// key, which answers approvals, is never written there. A save from Claude
+// Code that widens what Cards may do waits for the user on the page.
+const agentKey = randomBytes(32).toString('hex')
 const serverFile = path.join(support, 'server.json')
 const cookieName = () => `tsugumi_${(server.address() as net.AddressInfo).port}`
+
+const sameSecret = (got: string, want: string) =>
+  got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
 
 function authorized(req: http.IncomingMessage): boolean {
   const want = `${cookieName()}=${key}`
   const got = (req.headers.cookie ?? '').split(';').map((c) => c.trim()).find((c) => c.startsWith(cookieName() + '='))
-  return !!got && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
+  return !!got && sameSecret(got, want)
+}
+
+function agentAuthorized(req: http.IncomingMessage, route: string): boolean {
+  const got = req.headers[AGENT_KEY_HEADER]
+  return typeof got === 'string' && AGENT_ROUTES.has(route) && sameSecret(got, agentKey)
+}
+
+/** Opens the page in the default browser (the page's key goes to `open` alone). */
+function openPage(project?: string) {
+  const p = (server.address() as net.AddressInfo).port
+  const url = `http://127.0.0.1:${p}/?key=${key}` + (project ? `&project=${encodeURIComponent(project)}` : '')
+  spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
 }
 
 // The module viewer (/modules/: a Card's Plotly figure or Vega-Lite chart) is
@@ -458,7 +478,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     })
     return void res.end()
   }
-  if (url.pathname.startsWith('/api/') && !authorized(req)) {
+  if (url.pathname.startsWith('/api/') && !authorized(req) && !agentAuthorized(req, `${req.method} ${url.pathname}`)) {
     return send(res, 401, { error: 'このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。' })
   }
   if (url.pathname === '/api/events') {
@@ -499,10 +519,11 @@ server.listen(port, '127.0.0.1', () => {
   console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
   console.log(`  data:     ${support}`)
   // For local clients of this user (the Claude Code plugin's MCP server): how
-  // to reach this server. Readable by this user alone, like the key in the URL.
-  fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, key, pid: process.pid, cookie: cookieName() } satisfies ServerInfo), { mode: 0o600 })
+  // to reach this server, with the agent key (not the page's). Readable by this user alone.
+  fs.rmSync(serverFile + '.tmp', { force: true })
+  fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
-  if (openBrowser) spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).unref()
+  if (openBrowser) openPage(launchProject)
 })
 
 let stopping = false
