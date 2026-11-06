@@ -21,6 +21,7 @@ await import("./storage")
 await import("./table")
 
 await import("./draft")
+await import("./freedName")
 await import("./summary")
 await import("./wires")
 await import("./wireDemos")

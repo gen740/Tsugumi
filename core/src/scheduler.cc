@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <flatbuffers/reflection.h>
@@ -1676,13 +1677,95 @@ RunStatusData Scheduler::cancel(const std::string& run_id) {
 void Scheduler::publish_display(const DisplayData& d) {
   {
     std::lock_guard<std::mutex> l(mu_);
-    displays_[path_key(d.card)] = d;
+    auto k = path_key(d.card);
+    displays_[k] = d;
+    gone_.erase(k);
+    no_display_.erase(k);
   }
   svc_.server()->broadcast(display_note(d));
 }
 
+namespace {
+
+// What a Card is made of: its settings (whatever the spacing of their JSON, a
+// client writes its own) and the files of its definition folder.
+std::string card_content(const Document& doc, const Node& n) {
+  std::string out;
+  if (n.def_dir.empty()) return out;
+  if (n.project_dir.empty()) {
+    if (auto d = doc.definitions.find(n.path.back()); d != doc.definitions.end()) {
+      bool quoted = false, escaped = false;
+      for (char c : d->second.card_json) {
+        if (escaped) escaped = false;
+        else if (quoted && c == '\\') escaped = true;
+        else if (c == '"') quoted = !quoted;
+        else if (!quoted && (c == ' ' || c == '\n' || c == '\t' || c == '\r')) continue;
+        out += c;
+      }
+    }
+  }
+  for (auto s = doc.sources.lower_bound(n.def_dir); s != doc.sources.end() && s->first.starts_with(n.def_dir); ++s) {
+    out += '\0' + s->first + '\0' + s->second.hash;
+  }
+  return out;
+}
+
+}  // namespace
+
+void Scheduler::document_changed(const Document& before, const Document& after,
+                                 const std::vector<std::pair<std::string, std::string>>& renamed) {
+  if (!before.resolution || !after.resolution) return;
+  if (before.resolution == after.resolution && renamed.empty()) return;
+  auto inside = [](const std::string& k, const std::string& card) { return k == card || k.starts_with(card + "/"); };
+  std::lock_guard<std::mutex> l(mu_);
+  for (const auto& [from, to] : renamed) {
+    auto moved = [&, &from = from, &to = to](const std::string& k) { return to + k.substr(from.size()); };
+    // What a Card that left had is not this Card's. The history has just given
+    // it the new name, so that is not asked either.
+    std::vector<std::string> left, blocked;
+    for (const auto& [k, content] : gone_)
+      if (inside(k, from)) left.push_back(k);
+    for (const auto& k : no_display_)
+      if (inside(k, from)) blocked.push_back(k);
+    for (const auto& k : left) no_display_.insert(moved(k));
+    for (const auto& k : blocked) {
+      no_display_.erase(k);
+      no_display_.insert(moved(k));
+    }
+    std::vector<std::string> keys;
+    for (const auto& [k, d] : displays_)
+      if (inside(k, from) && !gone_.count(k)) keys.push_back(k);
+    for (const auto& k : keys) {
+      auto n = displays_.extract(k);
+      auto t = moved(k);
+      n.mapped().card = path_from_key(t);
+      displays_[t] = std::move(n.mapped());
+      gone_.erase(t);
+      no_display_.erase(t);
+    }
+  }
+  for (const auto& n : before.resolution->nodes) {
+    if (after.resolution->find(n.path)) continue;
+    auto k = path_key(n.path);
+    if (std::any_of(renamed.begin(), renamed.end(), [&](const auto& r) { return inside(k, r.first); })) continue;
+    // The first Card that left: an undo goes back through the ones that followed it.
+    gone_.try_emplace(k, card_content(before, n));
+  }
+}
+
 std::optional<Note> Scheduler::latest_display_note(const std::string& card_key) {
   std::lock_guard<std::mutex> l(mu_);
+  if (auto g = gone_.find(card_key); g != gone_.end()) {
+    auto doc = svc_.store().current();
+    const Node* n = doc->resolution ? doc->resolution->find(path_from_key(card_key)) : nullptr;
+    if (!n) return std::nullopt;
+    if (card_content(*doc, *n) != g->second) {
+      displays_.erase(card_key);
+      no_display_.insert(card_key);
+    }
+    gone_.erase(g);
+  }
+  if (no_display_.count(card_key)) return std::nullopt;
   auto it = displays_.find(card_key);
   if (it != displays_.end()) return display_note(it->second);
   // After a restart the latest display comes from the last run's history.

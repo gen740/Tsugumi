@@ -692,6 +692,9 @@ export class ProjectSession extends Observable {
     }
     this.resolution = r
     this.diagnostics = all
+    // A result belongs to a Card of the document. A Card that comes back asks for
+    // its own again: displayedCards changed (refreshVisibleDisplays).
+    for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
   private applyDelta(d: R.DocumentDeltaT, fromSave = false) {
@@ -1785,7 +1788,25 @@ export class ProjectSession extends Observable {
 
   /** Adds a Card instance to a scope's canvas. */
   appendCard(id: string, scope: string[]) {
+    this.startClean(key([...scope, id]))
     this.updateGraph(scope, (g) => g.set('cards', [...(arr(g.get('cards')) ?? []), obj([['id', id]])]))
+  }
+
+  /** A new Card's name can be one a Card had (renamed or deleted, by the Agent
+   *  too, which leaves the layout as it is): nothing of that Card stays with it. */
+  private startClean(k: CardKey) {
+    this.displays.delete(k)
+    this.cardStates.delete(k)
+    this.updateLayout(path(k).slice(0, -1), (l) => this.dropLayoutEntries(k, l))
+  }
+
+  /** The Card's place and frame (and the places of anything inside it). */
+  private dropLayoutEntries(k: CardKey, l: JObj) {
+    const lk = this.layoutKey(k)
+    const cards = l.get('cards')
+    if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
+    const displays = l.get('displays')
+    if (isObj(displays)) displays.set(lk, undefined)
   }
 
   /** A new Card from a template, with its own definition folder. */
@@ -1957,6 +1978,7 @@ export class ProjectSession extends Observable {
     const made = new Set<CardKey>()
     this.edit((x) => {
       for (const a of applies) a(x)
+      for (const nw of map.values()) x.startClean(key([...scope, nw]))
       x.updateGraph(scope, (g) => {
         const cards = [...(arr(g.get('cards')) ?? [])]
         const conns = [...(arr(g.get('connections')) ?? [])]
@@ -2175,14 +2197,7 @@ export class ProjectSession extends Observable {
       })
     }
     x.updateLayout(scope, (l) => {
-      for (const k of keys) {
-        // Layout entries of the Card and of anything inside it.
-        const lk = x.layoutKey(k)
-        const cards = l.get('cards')
-        if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
-        const displays = l.get('displays')
-        if (isObj(displays)) displays.set(lk, undefined)
-      }
+      for (const k of keys) x.dropLayoutEntries(k, l)
     })
     x.updateGroups(scope, (groups) => {
       for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))

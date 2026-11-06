@@ -250,6 +250,152 @@ import Testing
     #expect(tab.selectedNotes.isEmpty && !tab.hasSelection)
   }
 
+  /// A name a Card has had is free again, but its frame and its result stay
+  /// behind: a new Card under that name (the next Draft) starts with neither,
+  /// also when it is implemented later, and the Card that had them keeps them
+  /// through a rename and gets them back when a delete is undone.
+  @Test func aNewCardTakesAFreedNameButNotItsFrameOrResult() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func eventually(_ what: String, _ ok: () -> Bool) async throws {
+      for _ in 0..<200 where !ok() { try await Task.sleep(for: .milliseconds(25)) }
+      #expect(ok(), "\(what)")
+    }
+    /// The core has had the time to send what it would send.
+    func settled() async throws { try await Task.sleep(for: .milliseconds(300)) }
+    func noFrame(_ k: CardKey) {
+      #expect(s.displays[k] == nil, "no result of the Card that had the name")
+      #expect(s.displayFrame(k) == nil, "no place of the Card that had the name")
+      #expect(!s.framedCards(in: []).contains(k))
+      #expect(s.cardStates[k] == nil, "no run state of the Card that had the name")
+    }
+    func place(_ k: CardKey) {
+      s.updateDisplayFrame(k) {
+        $0["x"] = .real(700)
+        $0["y"] = .real(700)
+        $0["width"] = .real(300)
+        $0["height"] = .real(200)
+      }
+    }
+    let b = key(["b"]), kept = key(["kept"])
+    s.deleteCards([key(["a"]), key(["c"])], in: [])
+    s.connect(from: (key(["start"]), "out"), to: (b, "in"), in: [])
+    place(b)
+    await s.save()
+    try await s.run(card: ["start"], propagate: true)
+    try await eventually("the Card shows its result") { s.displays[b] != nil }
+
+    // Renamed: frame and result follow the Card, and nothing stays at the old name.
+    try await s.renameCard(b, to: "kept")
+    try await eventually("the result follows the name") { s.resolution[kept] != nil && s.displays[kept] != nil }
+    #expect(s.displayFrame(kept) != nil)
+    #expect(s.displays[b] == nil)
+    let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 400), name: "b")
+    #expect(draft == b)
+    noFrame(b)
+    await s.save()
+    try await settled()
+    noFrame(b)
+
+    // The Draft implemented (here as a logger): the old run's result does not come to it.
+    let rpc = try #require(s.rpc)
+    _ = try await rpc.save(baseRev: s.rev, opId: UUID(), origin: "elsewhere",
+                           changes: [Change.putDefinition(id: "b", cardJSON: "{\"template\": \"logger\"}", metaJSON: nil)])
+    try await eventually("the Draft became a logger") { s.displayedCards.contains(b) }
+    try await settled()
+    noFrame(b)
+
+    // Deleted: the name is free, the result does not wait for the next Card...
+    s.deleteCards([kept], in: [])
+    await s.save()
+    try await eventually("the Card went") { s.resolution[kept] == nil }
+    #expect(s.displays[kept] == nil)
+    let again = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 800), name: "kept")
+    #expect(again == kept)
+    noFrame(kept)
+    await s.save()
+    try await settled()
+    noFrame(kept)
+
+    // ...and undoing it (the new Draft first, then the delete) brings the Card back whole.
+    s.undo()
+    await s.save()
+    s.undo()
+    await s.save()
+    try await eventually("the result comes back with the Card") { s.displays[kept] != nil }
+    #expect(s.displayFrame(kept) != nil)
+
+    // A deleted Card's name taken by another Card: implemented, it does not get
+    // the old result, and its own run shows.
+    s.deleteCards([kept], in: [])
+    await s.save()
+    let other = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 1200), name: "kept")
+    await s.save()
+    _ = try await rpc.save(baseRev: s.rev, opId: UUID(), origin: "elsewhere",
+                           changes: [Change.putDefinition(id: "kept", cardJSON: "{\"template\": \"logger\", \"markdown\": true}", metaJSON: nil)])
+    try await eventually("the Draft became a logger") { s.displayedCards.contains(other) }
+    try await settled()
+    noFrame(other)
+    s.deleteCards([b], in: [])
+    s.connect(from: (key(["start"]), "out"), to: (other, "in"), in: [])
+    await s.save()
+    try await s.run(card: ["start"], propagate: true)
+    try await eventually("its own run shows") { s.displays[other] != nil }
+  }
+
+  /// The Agent renames a Card with its own save, which leaves the layout as it
+  /// was: the next Draft under the old name starts without the frame or the result.
+  @Test func aNewCardIsClearOfWhatAnAgentRenameLeftBehind() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let b = key(["b"]), renamed = key(["renamed"])
+    s.deleteCards([key(["a"]), key(["c"])], in: [])
+    s.connect(from: (key(["start"]), "out"), to: (b, "in"), in: [])
+    s.updateDisplayFrame(b) {
+      $0["x"] = .real(700)
+      $0["y"] = .real(700)
+      $0["width"] = .real(300)
+      $0["height"] = .real(200)
+    }
+    await s.save()
+    try await s.run(card: ["start"], propagate: true)
+    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.displays[b] != nil)
+
+    let snap = try await s.rpc!.inspect()
+    var proj = try JSONValue.parse(snap.projectJson)
+    let cards = proj["canvas"]?["cards"]?.array ?? []
+    proj["canvas"]?["cards"] = .array(cards.map { $0["id"]?.string == "b" ? .object([("id", .string("renamed"))]) : $0 })
+    proj["canvas"]?["connections"] = .array([])
+    _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
+                              changes: [Change.setProject(proj.serialized()), Change.renameDefinition(id: "b", to: "renamed")])
+    for _ in 0..<200 where s.resolution[renamed] == nil || s.displays[renamed] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.displays[renamed] != nil, "the result follows the name")
+    #expect(s.displays[b] == nil)
+
+    let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 400), name: "b")
+    #expect(draft == b)
+    #expect(s.displays[b] == nil && s.displayFrame(b) == nil && !s.framedCards(in: []).contains(b))
+    await s.save()
+    #expect(s.saveError == nil && s.displayFrame(b) == nil)
+
+    // A copy takes a free name too.
+    s.updateDisplayFrame(key(["renamed-2"])) { $0["x"] = .real(1) }
+    let copies = await s.duplicate([renamed], in: [])
+    #expect(copies == [key(["renamed-2"])])
+    #expect(s.displayFrame(key(["renamed-2"])) == nil)
+  }
+
   /// A Draft's wires make its ports and take them away, and what is written on
   /// its Card is kept, under a new name too.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
