@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <tuple>
 
+#include "graph.hh"
 #include "model.hh"
 #include "schema.hh"
 #include "util/fs.hh"
@@ -145,6 +146,30 @@ std::optional<std::string> file_at(git_repository* r, git_tree* tree, const char
   Blob b;
   if (git_blob_lookup(b.out(), r, git_tree_entry_id(e.get())) != 0) return std::nullopt;
   return std::string(static_cast<const char*>(git_blob_rawcontent(b.get())), git_blob_rawsize(b.get()));
+}
+
+// What a Card is in this version and, for a fork or merge, how many ports it
+// fans over: the same answers graph.cc gives from the same files.
+void read_definition(git_repository* r, git_tree* tree, VersionCanvasData::Card& card) {
+  const std::string dir = "definitions/" + card.id + "/";
+  const auto link = file_at(r, tree, (dir + "_link.json").c_str());
+  const auto text = file_at(r, tree, (dir + "_card.json").c_str());
+  DefinitionDoc def;
+  if (link) def.link = *link;
+  if (text && schema::decode(*text, def.card)) def.card = {};
+  const Template kind = template_of(link || text ? &def : nullptr);
+  card.kind = kind == Template::Code ? "code" : template_name(kind);
+  if (kind == Template::Fork) {
+    card.fan = 2;
+    if (const auto* params = schema::get(def.card.params))
+      for (const auto& p : *params) {
+        const auto* name = schema::get(p.name);
+        const auto* data = schema::get(p.data);
+        if (name && *name == "branches" && data) card.fan = static_cast<uint32_t>(string_array_param(*data).size());
+      }
+  } else if (kind == Template::Merge) {
+    if (const auto* inputs = schema::get(def.card.inputs)) card.fan = static_cast<uint32_t>(inputs->size());
+  }
 }
 
 std::string iso(int64_t seconds) {
@@ -526,6 +551,7 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
     if (const auto* id = schema::get(card.id)) {
       index[*id] = out.cards.size();
       out.cards.push_back({*id});
+      read_definition(r.get(), tree.get(), out.cards.back());
     }
   if (const auto* connections = schema::get(graph->connections))
     for (const auto& w : *connections) {
@@ -536,21 +562,39 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
       if (a && b && index.count(*a) && index.count(*b)) out.wires.emplace_back(*a, *b);
     }
   // Saved positions, when every Card has one.
-  std::map<std::string, std::pair<double, double>> saved;
+  std::map<std::string, schema::Position> saved;
   schema::Layout layout;
   auto layout_text = file_at(r.get(), tree.get(), "layout.json");
   if (layout_text && !schema::decode(*layout_text, layout))
     if (const auto* positions = schema::get(layout.cards))
-      for (const auto& [key, position] : positions->entries()) {
-        const auto* x = schema::get(position.x);
-        const auto* y = schema::get(position.y);
-        if (x && y) saved[key] = {*x, *y};
-      }
+      for (const auto& [key, position] : positions->entries())
+        if (schema::get(position.x) && schema::get(position.y)) saved[key] = position;
   bool placed = !out.cards.empty();
   for (const auto& card : out.cards) placed = placed && saved.count(card.id);
-  if (placed)
-    for (auto& card : out.cards) std::tie(card.x, card.y) = saved[card.id];
-  if (placed) return out;
+  if (placed) {
+    for (auto& card : out.cards) {
+      const auto& position = saved[card.id];
+      card.x = *schema::get(position.x);
+      card.y = *schema::get(position.y);
+      const auto* collapsed = schema::get(position.collapsed);
+      card.collapsed = collapsed && *collapsed;
+    }
+    // The saved direction; without one, read from where the wired Cards sit,
+    // as the clients do for the canvas.
+    const auto* flow = schema::get(layout.flow);
+    if (flow && (*flow == "topToBottom" || *flow == "leftToRight")) {
+      out.flow = *flow;
+    } else {
+      double across = 0;
+      double down = 0;
+      for (const auto& [a, b] : out.wires) {
+        across += std::abs(out.cards[index[b]].x - out.cards[index[a]].x);
+        down += std::abs(out.cards[index[b]].y - out.cards[index[a]].y);
+      }
+      if (down > 0 && down >= across) out.flow = "topToBottom";
+    }
+    return out;
+  }
   // Columns by depth (a wire back in a loop does not push a Card further).
   std::vector<size_t> depth(out.cards.size(), 0);
   for (size_t round = 0; round < out.cards.size(); ++round)

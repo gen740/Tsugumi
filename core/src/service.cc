@@ -1083,10 +1083,10 @@ void Service::version_canvas(RequestIn& req) {
   auto canvas = versions_->canvas(r->commit()->str());
   FBB b;
   std::vector<flatbuffers::Offset<R::VersionCanvasCard>> cards;
-  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), c.x, c.y));
+  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), c.x, c.y, b.CreateString(c.kind), c.fan, c.collapsed));
   std::vector<flatbuffers::Offset<R::VersionCanvasWire>> wires;
   for (const auto& [from, to] : canvas.wires) wires.push_back(R::CreateVersionCanvasWire(b, b.CreateString(from), b.CreateString(to)));
-  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires));
+  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires), b.CreateString(canvas.flow));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas, vc.Union()));
 }
 

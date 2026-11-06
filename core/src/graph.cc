@@ -104,6 +104,20 @@ std::optional<std::string> check_param_value(ParamType t, const hosq::json::Gene
   return std::string("expected ") + param_type_name(t) + " (integers must be in range, no implicit conversion)";
 }
 
+Template template_of(const DefinitionDoc* def) {
+  if (!def) return Template::Draft;
+  if (def->link) return Template::Subgraph;
+  const auto* t = schema::get(def->card.template_name);
+  if (!t || *t == "none" || t->empty()) return Template::Code;
+  static const std::map<std::string, Template> m = {
+      {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
+      {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
+      {"draft", Template::Draft},
+  };
+  auto it = m.find(*t);
+  return it == m.end() ? Template::Code : it->second;
+}
+
 std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v) {
   schema::v::Array<schema::v::String> a;
   if (schema::decode(v, a)) return {};
@@ -172,20 +186,6 @@ class Builder {
     std::string to;
     std::string to_port;
   };
-
-  Template template_of(const DefinitionDoc* def) {
-    if (!def) return Template::Draft;
-    if (def->link) return Template::Subgraph;
-    const auto* t = schema::get(def->card.template_name);
-    if (!t || *t == "none" || t->empty()) return Template::Code;
-    static const std::map<std::string, Template> m = {
-        {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
-        {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
-        {"draft", Template::Draft},
-    };
-    auto it = m.find(*t);
-    return it == m.end() ? Template::Code : it->second;
-  }
 
   void timeout(Node& n, const char* key, const hosq::json::GenericDom<>* v, std::optional<uint64_t>& out) {
     if (!v) return;

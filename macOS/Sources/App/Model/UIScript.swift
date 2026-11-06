@@ -23,6 +23,7 @@ import TsugumiRPC
 ///   save                            key delete|forwarddelete|escape
 ///   winsize <w> <h> <window title>  home | demos (Home's demo list)
 ///   open versions                   makerepo (the project becomes a repository)
+///   hoverversion <row>              (what the pointer on that row of the version tree opens)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
@@ -143,6 +144,9 @@ final class UIScript {
           t.selectedFrames = items.frames
           say("marquee cards=\(items.cards.count) notes=\(items.notes.count) frames=\(items.frames.count)")
         }
+      case "hoverversion":
+        // Not `move`: SwiftUI's hover does not see a mouse event sent to a window in the back.
+        NotificationCenter.default.post(name: .versionHover, object: Int(w[1]) ?? 0)
       case "explainer": request = .explainer
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)

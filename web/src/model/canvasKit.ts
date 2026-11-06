@@ -360,16 +360,18 @@ export class CardGeometry {
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
 
-  /** The outline (Card box, diamond, triangle) inside `r`, as SVG path data. */
-  outline(r: Rect): string {
+  /** The outline (Card box, diamond, triangle) inside `r`, as SVG path data.
+   *  `cornerScale` shrinks the corners that stay the same at every zoom, for a
+   *  drawing much smaller than the canvas. */
+  outline(r: Rect, cornerScale = 1): string {
     const P = (x: number, y: number): Pt => ({ x, y })
     switch (this.shape) {
       case 'card':
-        return roundedRect(r, 9)
+        return roundedRect(r, 9 * cornerScale)
       case 'start':
         return roundedRect(r, r.height / 2)
       case 'branch':
-        return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6)
+        return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
       default: {
         // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
         // twice so it stays sharp: the ports of that side are on its very tip.

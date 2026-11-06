@@ -60,25 +60,56 @@ struct VersionLayout {
   }
 }
 
-/// Where a version's Cards go in a minimap at most width x height: the whole
-/// graph fitted and centered across, as web/src/ui/versions.tsx does.
+/// Where a version's Cards go in a minimap at most width x height, each with
+/// the outline it has on the canvas: the whole graph fitted and centered
+/// across, as web/src/ui/versions.tsx does.
 struct VersionMiniMapLayout {
-  static let cardWidth = 220.0, cardHeight = 80.0, padding = 8.0
-  var cards: [String: CGRect] = [:]
+  struct Card {
+    var id: String
+    var x: Double
+    var y: Double
+    var kind = CardKind.code
+    var fan = 0
+    var collapsed = false
+
+    /// A Card as far as a version says: its shape and the size the canvas gives
+    /// it with one port on each side and no parameters, never more than it
+    /// really takes, so what does not overlap on the canvas does not overlap here.
+    var data: CardNodeData {
+      func ports(_ n: Int) -> [PortData] { (0..<n).map { PortData(name: "p\($0)") } }
+      var d = CardNodeData(title: id, kind: kind, summary: nil,
+                           inputs: ports(kind == .merge ? fan : 1), outputs: ports(kind == .fork ? fan : 1))
+      d.collapsed = collapsed
+      return d
+    }
+  }
+  struct Placed {
+    let box: CGRect
+    let outline: Path
+    let shape: CardShape
+    let draft: Bool
+  }
+  static let padding = 8.0
+  var cards: [String: Placed] = [:]
   var height = 0.0
   var named = false
 
-  init(_ cards: [(id: String, x: Double, y: Double)], width: Double, height maxHeight: Double) {
+  init(_ cards: [Card], flow: FlowDirection, width: Double, height maxHeight: Double) {
+    let placed = cards.map { (card: $0, g: CardGeometry($0.data, flow: flow)) }
     guard let left = cards.map(\.x).min(), let top = cards.map(\.y).min(),
-          let right = cards.map(\.x).max(), let bottom = cards.map(\.y).max() else { return }
-    let spanX = right - left + Self.cardWidth, spanY = bottom - top + Self.cardHeight
+          let right = placed.map({ $0.card.x + $0.g.size.width }).max(),
+          let bottom = placed.map({ $0.card.y + $0.g.size.height }).max() else { return }
+    let spanX = right - left, spanY = bottom - top
     let k = min((width - Self.padding * 2) / spanX, (maxHeight - Self.padding * 2) / spanY, 0.3)
     let ox = (width - spanX * k) / 2
-    for c in cards {
-      self.cards[c.id] = CGRect(x: ox + (c.x - left) * k, y: Self.padding + (c.y - top) * k, width: Self.cardWidth * k, height: Self.cardHeight * k)
+    for (c, g) in placed {
+      let x = ox + (c.x - left) * k, y = Self.padding + (c.y - top) * k
+      let o = g.outlineRect
+      let outline = g.outline(in: CGRect(x: x + o.minX * k, y: y + o.minY * k, width: o.width * k, height: o.height * k), cornerScale: k)
+      self.cards[c.id] = Placed(box: CGRect(x: x, y: y, width: g.size.width * k, height: g.size.height * k), outline: outline, shape: g.shape, draft: c.kind == .draft)
     }
     height = spanY * k + Self.padding * 2
-    named = Self.cardWidth * k >= 34
+    named = CardGeometry.width * k >= 34
   }
 }
 
@@ -91,11 +122,13 @@ struct VersionMiniMap: View {
 
   var body: some View {
     let cards = canvas.cards.compactMap { $0 }
-    let map = VersionMiniMapLayout(cards.map { (id: $0.id, x: $0.x, y: $0.y) }, width: Self.width, height: Self.maxHeight)
+    let map = VersionMiniMapLayout(
+      cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind(rawValue: $0.kind) ?? .code, fan: Int($0.fan), collapsed: $0.collapsed) },
+      flow: canvas.flow == "topToBottom" ? .topToBottom : .leftToRight, width: Self.width, height: Self.maxHeight)
     let touched = Set(changed.map { String($0.split(separator: "/").first ?? "") })
     Canvas { g, _ in
       for w in canvas.wires.compactMap({ $0 }) {
-        guard let a = map.cards[w.from], let b = map.cards[w.to] else { continue }
+        guard let a = map.cards[w.from]?.box, let b = map.cards[w.to]?.box else { continue }
         var p = Path()
         p.move(to: CGPoint(x: a.midX, y: a.midY))
         p.addLine(to: CGPoint(x: b.midX, y: b.midY))
@@ -103,12 +136,13 @@ struct VersionMiniMap: View {
       }
       for card in cards {
         let id = card.id
-        guard let r = map.cards[id] else { continue }
-        let shape = Path(roundedRect: r, cornerRadius: 2.5)
-        g.fill(shape, with: .color(Color(nsColor: .windowBackgroundColor)))
-        g.fill(shape, with: .color(touched.contains(id) ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22)))
-        g.stroke(shape, with: .color(touched.contains(id) ? Color.accentColor : .secondary), lineWidth: touched.contains(id) ? 1.25 : 0.75)
-        if map.named {
+        guard let c = map.cards[id] else { continue }
+        let r = c.box
+        g.fill(c.outline, with: .color(Color(nsColor: .windowBackgroundColor)))
+        g.fill(c.outline, with: .color(touched.contains(id) ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22)))
+        g.stroke(c.outline, with: .color(touched.contains(id) ? Color.accentColor : .secondary),
+                 style: StrokeStyle(lineWidth: touched.contains(id) ? 1.25 : 0.75, dash: c.draft ? [3, 2] : []))
+        if map.named && (c.shape == .card || c.shape == .start) {
           let fit = max(1, Int(r.width / 5) - 1)
           g.draw(Text(id.count * 5 > Int(r.width) ? id.prefix(fit) + "…" : id).font(.system(size: 8.5)), at: CGPoint(x: r.midX, y: r.midY))
         }
@@ -208,6 +242,11 @@ struct VersionTreeView: View {
       hovered = commit
       await session.loadVersionCanvas(commit)
       await session.summarizeVersion(commit)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .versionHover)) { n in
+      guard let row = n.object as? Int, let commits = session.versionGraph?.commitList, commits.indices.contains(row) else { return }
+      pointed = commits[row].id
+      pointerY = CGFloat(row) * Self.rowHeight
     }
     .sheet(isPresented: $naming) { nameSheet }
   }
