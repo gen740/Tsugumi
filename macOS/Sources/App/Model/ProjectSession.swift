@@ -180,6 +180,8 @@ final class ProjectSession {
   // Connection
   private(set) var environment: EnvironmentState = .stopped
   private(set) var connected = false
+  /// Closed for good (close): it will not connect again.
+  private(set) var closed = false
   private(set) var connectionMessage: String?
   @ObservationIgnored private var client: RPCClient?
   @ObservationIgnored private var subscription: String?
@@ -423,6 +425,7 @@ final class ProjectSession {
   /// VM, so its slot is free. Unsaved edits were saved before (the caller
   /// does not close a dirty session).
   func close() async {
+    closed = true
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil

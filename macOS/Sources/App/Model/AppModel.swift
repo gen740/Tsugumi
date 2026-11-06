@@ -68,11 +68,16 @@ final class AppModel {
   /// Chats already created (opening Settings never creates new ones).
   var openChats: [ChatController] { Array(chats.values) }
 
-  /// One chat per project, shared by its panel and its detached window.
+  /// One chat per project, shared by its panel and its detached window, on the
+  /// session open now: a view leaving a closed session (drawn once more) never
+  /// keeps the project's chat on it, where its tools have no connection.
   func chat(for s: ProjectSession) -> ChatController {
-    if let c = chats[s.identity.id] { return c }
-    let c = ChatController(session: s)
-    chats[s.identity.id] = c
+    let id = s.identity.id
+    let current = sessions[id] ?? s
+    if let c = chats[id], c.session === current { return c }
+    chats[id]?.cancel()
+    let c = ChatController(session: current)
+    chats[id] = c
     return c
   }
 

@@ -92,6 +92,8 @@ interface Conversation {
 export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
+  /** Stop was pressed and that answer has not reported its end yet. */
+  private stopping = false
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
@@ -350,6 +352,7 @@ export class ChatController extends Observable {
 
   cancel() {
     void api('/api/chat/cancel', this.base).catch(() => {})
+    this.stopping = true
     this.busy = false
     this.status = '回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。'
     this.changed()
@@ -499,6 +502,12 @@ export class ChatController extends Observable {
         this.status = `再試行中: ${e.message}`
         break
       case 'error':
+        // The stopped answer ended after the next one began, which goes on.
+        if (e.message === 'cancelled' && this.stopping && this.busy) {
+          this.stopping = false
+          break
+        }
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         if (e.message === 'cancelled') this.notes = []
@@ -510,6 +519,7 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         break
       case 'finished':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         this.busy = false
@@ -519,6 +529,7 @@ export class ChatController extends Observable {
         queueMicrotask(() => this.flushNotes())
         break
       case 'stepLimit':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
         this.busy = false

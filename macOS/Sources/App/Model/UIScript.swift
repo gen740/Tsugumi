@@ -25,6 +25,7 @@ import TsugumiRPC
 ///   open versions                   makerepo (the project becomes a repository)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
+///   chatstate | chatstop            reopen <project folder> (from Home)
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
 ///   (points from the window's top-left; sent to the window like a real
@@ -145,6 +146,21 @@ final class UIScript {
         }
       case "explainer": request = .explainer
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "reopen":
+        // reopen <project folder>: from Home, as choosing it there does.
+        if let s = try? AppModel.shared.session(for: URL(fileURLWithPath: w.dropFirst().joined(separator: " "))) {
+          AppModel.shared.hold(s)
+          workspace?.open(s)
+        }
+      case "chatstop":
+        // The chat's stop button.
+        if let s = session { AppModel.shared.chat(for: s).cancel() }
+      case "chatstate":
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          let last = chat.items.last.map { "\($0.role): \($0.text.prefix(60))" } ?? "-"
+          say("chatstate bound=\(chat.session === s) busy=\(chat.busy) items=\(chat.items.count) status=\(chat.status ?? "-") last=\(last.replacingOccurrences(of: "\n", with: " "))")
+        }
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
         // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
