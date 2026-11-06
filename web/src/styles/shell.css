@@ -204,7 +204,8 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .version-tree { position: relative; min-height: 0; }
 .version-hover { position: absolute; right: 12px; width: 308px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; z-index: 5;
   background: var(--material); backdrop-filter: blur(16px); border: 0.5px solid var(--separator); border-radius: 8px; box-shadow: 0 6px 24px rgb(0 0 0 / 28%); font-size: 12px; line-height: 1.45; }
-.version-map rect { fill: color-mix(in srgb, var(--secondary) 22%, transparent); stroke: var(--secondary); stroke-width: 0.75; }
-.version-map rect.changed { fill: color-mix(in srgb, var(--accent) 45%, transparent); stroke: var(--accent); stroke-width: 1.25; }
+.version-map path { fill: color-mix(in srgb, var(--secondary) 22%, transparent); stroke: var(--secondary); stroke-width: 0.75; }
+.version-map path.ground { fill: var(--window-bg); stroke: none; }
+.version-map path.changed { fill: color-mix(in srgb, var(--accent) 45%, transparent); stroke: var(--accent); stroke-width: 1.25; }
 .version-map text { font-size: 8.5px; fill: var(--label); }
 .versions-detail { width: 320px; flex: none; padding: 14px; border-left: 1px solid var(--separator); }

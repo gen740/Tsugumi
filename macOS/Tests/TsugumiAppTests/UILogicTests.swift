@@ -10,16 +10,75 @@ import Testing
     == "Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n")
   #expect(VersionSummarizer.clean(" 緑を\n  広げた。 ") == "緑を 広げた。")
   // Every Card stays inside the box, in the order it has on the canvas.
-  let wide = VersionMiniMapLayout([(id: "a", x: 100, y: 0), (id: "b", x: 5000, y: 300), (id: "c", x: 2500, y: -400)], width: 284, height: 132)
-  for (_, r) in wide.cards {
+  let wide = VersionMiniMapLayout([.init(id: "a", x: 100, y: 0), .init(id: "b", x: 5000, y: 300), .init(id: "c", x: 2500, y: -400)],
+                                  flow: .leftToRight, width: 284, height: 132)
+  for (_, c) in wide.cards {
+    let r = c.box
     #expect(r.minX >= 0 && r.maxX <= 284 && r.minY >= 0 && r.maxY <= wide.height && wide.height <= 132)
   }
-  #expect(wide.cards["a"]!.minX < wide.cards["c"]!.minX && wide.cards["c"]!.minX < wide.cards["b"]!.minX)
+  #expect(wide.cards["a"]!.box.minX < wide.cards["c"]!.box.minX && wide.cards["c"]!.box.minX < wide.cards["b"]!.box.minX)
   #expect(!wide.named)
   // A small graph is not blown up, and is only as tall as it is.
-  let small = VersionMiniMapLayout([(id: "a", x: 0, y: 0)], width: 284, height: 132)
-  #expect(small.cards["a"]!.width == 220 * 0.3 && small.height == 80 * 0.3 + 16 && small.named)
-  #expect(VersionMiniMapLayout([], width: 284, height: 132).cards.isEmpty)
+  let small = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0)], flow: .leftToRight, width: 284, height: 132)
+  #expect(small.cards["a"]!.box.width == 220 * 0.3 && small.height == small.cards["a"]!.box.height + 16 && small.named)
+  #expect(VersionMiniMapLayout([], flow: .leftToRight, width: 284, height: 132).cards.isEmpty)
+}
+
+@Test func aVersionsMinimapDrawsWhatIsNotACardWithItsCanvasShape() {
+  func canvas(_ kind: CardKind, fan: Int = 0, flow: FlowDirection = .leftToRight) -> CardGeometry {
+    CardGeometry(VersionMiniMapLayout.Card(id: "c", x: 0, y: 0, kind: kind, fan: fan).data, flow: flow)
+  }
+  func outline(_ g: CardGeometry, in box: CGRect, _ k: CGFloat) -> Path {
+    let o = g.outlineRect
+    return g.outline(in: CGRect(x: box.minX + o.minX * k, y: box.minY + o.minY * k, width: o.width * k, height: o.height * k), cornerScale: k)
+  }
+  // A graph laid out on the canvas does not overlap here: start -> fork -> two Cards.
+  let start = canvas(.trigger), fork = canvas(.fork, fan: 2)
+  let forked = VersionMiniMapLayout([
+    .init(id: "start", x: 0, y: 30, kind: .trigger),
+    .init(id: "fork", x: start.size.width + 10, y: 20, kind: .fork, fan: 2),
+    .init(id: "load", x: start.size.width + fork.size.width + 40, y: -30),
+    .init(id: "draft", x: start.size.width + fork.size.width + 40, y: 60, kind: .draft),
+  ], flow: .leftToRight, width: 284, height: 132)
+  let at = forked.cards
+  #expect(at["start"]!.shape == .start && at["fork"]!.shape == .fork && at["load"]!.shape == .card && at["draft"]!.shape == .card)
+  #expect(at["draft"]!.draft && !at["load"]!.draft)
+  let boxes = Array(at.values.map(\.box))
+  for (i, a) in boxes.enumerated() {
+    for b in boxes[(i + 1)...] { #expect(!a.intersects(b)) }
+  }
+  // The shapes are those of the canvas, scaled and at their place.
+  let k = at["fork"]!.box.width / fork.size.width
+  #expect(k > 0 && k <= 0.3)
+  #expect(abs(at["fork"]!.box.height - fork.size.height * k) < 1e-9 && abs(at["start"]!.box.width - start.size.width * k) < 1e-9)
+  #expect(at["fork"]!.outline == outline(fork, in: at["fork"]!.box, k))
+  #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
+  #expect(abs(at["fork"]!.outline.boundingRect.minX - (at["fork"]!.box.minX + fork.outlineRect.minX * k)) < 1)
+
+  // A branch is a diamond whose corners shrink with it; a merge is a triangle that
+  // grows with its inputs, and a fork with its outputs; both follow the flow.
+  let diamond = VersionMiniMapLayout([.init(id: "b", x: 0, y: 0, kind: .branch)], flow: .leftToRight, width: 284, height: 132).cards["b"]!
+  #expect(diamond.shape == .branch && abs(diamond.box.width - canvas(.branch).size.width * 0.3) < 1e-9)
+  #expect(diamond.outline == outline(canvas(.branch), in: diamond.box, 0.3))
+  #expect(diamond.outline != outline(canvas(.branch), in: diamond.box, 1))
+  func single(_ kind: CardKind, _ fan: Int, _ flow: FlowDirection = .leftToRight) -> VersionMiniMapLayout.Placed {
+    VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], flow: flow, width: 284, height: 132).cards["m"]!
+  }
+  #expect(single(.merge, 2).shape == .merge)
+  #expect(single(.merge, 6).box.height > single(.merge, 2).box.height)
+  #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
+  #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
+  #expect(single(.fork, 6).box.height > single(.fork, 2).box.height)
+
+  // A loop is a merge and a branch with a wire back: they keep their shapes and do not overlap.
+  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .branch)],
+                                  flow: .leftToRight, width: 284, height: 132).cards
+  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .branch)
+  #expect(!loop["m"]!.box.intersects(loop["step"]!.box) && !loop["step"]!.box.intersects(loop["b"]!.box))
+
+  // A folded Card is its header.
+  let folded = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0, collapsed: true)], flow: .leftToRight, width: 284, height: 132).cards["a"]!
+  #expect(abs(folded.box.height - CardGeometry.header * 0.3) < 1e-9)
 }
 
 @Test func stagesOfCodeAndBuiltinCards() {
