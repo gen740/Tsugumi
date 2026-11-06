@@ -97,20 +97,46 @@ const STORY = [
 /** What the list leaves out: reached from Home (the download, the gallery) or from the list of documents. */
 const OFF_THE_LIST = new Set(['INSTALL.md', 'docs/Demos.md', 'docs/Limitations.md'])
 
-/** The demos of the gallery on Home (demos/index.json has the rest), in plain words. */
+/** The demos of the gallery on Home, by what they are about, in plain words (demos/index.json has the rest). */
 const GALLERY = [
-  ['casa', 'Cas A · Chandra RGB', 'X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。'],
-  ['report', 'データからレポートへ', 'データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。'],
-  ['collatz', 'Collatz (C++ / Python)', '二つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。'],
-  ['plots', 'Plots', 'ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。'],
-  ['live-stream', 'Live Stream', '時系列の出力を、実行中にそのままグラフで描く。'],
-  ['gw150914', 'GW150914', '公開データから、重力波のチャープを取り出して図にする。'],
-  ['protein-6lu7', '6LU7', 'タンパク質の立体構造を取得して、結合ポケットを見る。'],
-  ['exoplanet-transit', 'Kepler-6 b', '光度曲線を折りたたんで、系外惑星のトランジットを見る。'],
-  ['seismic-trench', '日本海溝', '地震カタログから、震源の断面と b 値を見る。'],
-  ['dynamics-draft', '力学系ギャラリー', '6 つの Draft を、Agent が helper に手分けさせて同時に実装する。'],
+  ['基本のデモ', [
+    ['report', 'データからレポートへ', 'データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。'],
+    ['collatz', 'Collatz (C++ / Python)', '二つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。'],
+    ['plots', 'Plots', 'ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。'],
+    ['live-stream', 'Live Stream', '時系列の出力を、実行中にそのままグラフで描く。'],
+  ]],
+  ['公開データの解析', [
+    ['casa', 'Cas A · Chandra RGB', 'X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。'],
+    ['gw150914', 'GW150914', '公開データから、重力波のチャープを取り出して図にする。'],
+    ['protein-6lu7', '6LU7', 'タンパク質の立体構造を取得して、結合ポケットを見る。'],
+    ['exoplanet-transit', 'Kepler-6 b', '光度曲線を折りたたんで、系外惑星のトランジットを見る。'],
+    ['seismic-trench', '日本海溝', '地震カタログから、震源の断面と b 値を見る。'],
+  ]],
+  ['機械学習と計算', [
+    ['mnist-classifiers', 'MNIST · 分類器くらべ', '本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べる。'],
+    ['newton', 'Newton 法', '初期値で行き先と収束の速さが変わる様子を、複素平面の地図で見る。'],
+    ['max-flow', '最大流と最小カット', '架空のネットワークで、どの辺を増やせば流れが増えるかを確かめる。'],
+    ['pharmacokinetics', '薬物動態（架空の薬物）', '投与間隔で濃度がどう動くかを比べる教材。医療上の助言ではない。'],
+    ['dose-response', '濃度–反応曲線（合成データ）', '真の値が分かるデータで、当てはめと信頼区間を確かめる。'],
+    ['molecules', '分子の物性', 'SMILES から RDKit で物性と構造式を求める。'],
+    ['cell-count', '細胞画像の計数', '正解のある合成画像で数え方を採点し、実際の核の画像にもかける。'],
+  ]],
+  ['R の統計', [
+    ['survival', '生存時間解析', '同じハザード比が、対象者と調整でどれだけ動くかを並べる。'],
+    ['meta-analysis', 'メタ解析: BCG ワクチン', '併合の方法や試験の除外で、結論がどう動くかを比べる。'],
+    ['rna-seq', 'RNA-seq: airway', 'DESeq2 と edgeR で、発現の動く遺伝子の数が閾値でどう変わるかを見る。'],
+    ['simpson', '集計と層別で逆転する相関', '全体と層で向きが逆になる例を、2 つの実データで確かめる。'],
+  ]],
+  ['Julia のシミュレーション', [
+    ['battery', '蓄電池の最適運用', '架空の料金で、充放電を動的計画法で最適化する。'],
+    ['gillespie', '化学反応のゆらぎ', 'Gillespie 法のシミュレーションを理論と照合する。'],
+    ['heat-inverse', '熱伝導の逆問題', '素朴な逆解が破綻し、正則化で復元できることを見る。'],
+    ['ecology-models', '生態系のモデル比較', '毛皮の記録に捕食モデルを当てはめて比べる。'],
+  ]],
+  ['Agent に任せる', [
+    ['dynamics-draft', '力学系ギャラリー', '6 つの Draft を、Agent が helper に手分けさせて同時に実装する。'],
+  ]],
 ]
-const VERSION_NOW = () => read('VERSION').trim()
 const DOWNLOAD = `${REPO}/releases/latest`
 
 const ICON = {
@@ -393,7 +419,8 @@ function homePage(groups, pages, tagline, lead) {
       return door(g.title, g.title, doorText[g.title] ?? '', docs.map((d) => row(pages.get(d), titleOf(d), shortNote(d))).join(''))
     }),
   ].join('')
-  const tiles = GALLERY.map(([id, title, text]) => `<button type="button" class="demo-tile" data-demo="${id}"><span class="demo-thumb"></span><b>${esc(title)}</b><span>${esc(text)}</span></button>`).join('')
+  const tile = ([id, title, text]) => `<button type="button" class="demo-tile" data-demo="${id}"><span class="demo-thumb"></span><b>${esc(title)}</b><span>${esc(text)}</span></button>`
+  const tiles = GALLERY.map(([name, demos]) => `<h3>${esc(name)}</h3><div class="demo-grid">${demos.map(tile).join('')}</div>`).join('')
   return `<article class="home">
 <header class="home-hero">
   <div class="home-copy">
@@ -404,7 +431,7 @@ function homePage(groups, pages, tagline, lead) {
       <a class="cta" href="${DOWNLOAD}">${ICON.download}Mac 版をダウンロード</a>
       <a class="cta quiet" href="#demos">インストールせずにデモを見る</a>
     </div>
-    <p class="home-note">v${esc(VERSION_NOW())} · Apple silicon / macOS 26 以降 · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
+    <p class="home-note">Apple silicon / macOS 26 以降 · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>
@@ -412,7 +439,7 @@ function homePage(groups, pages, tagline, lead) {
 <section class="gallery" id="demos">
   <h2>デモを、そのまま動かしてみる</h2>
   <p>同梱のデモです。インストールしなくても、Card のつながりと実行の様子をここで見られます。押すと大きく開きます。一つずつの説明は<a href="${pages.get('docs/Demos.md')}">同梱デモのしくみ</a>にあります。</p>
-  <div class="demo-grid">${tiles}</div>
+  ${tiles}
 </section>
 <p class="home-foot"><a href="${pages.get('README.md')}">README</a> · <a href="${pages.get('docs/README.md')}">すべての文書</a> · <a href="${pages.get('docs/Limitations.md')}">まだできないこと</a> · <a href="llms.txt">AI 向けの案内（llms.txt）</a></p>
 </article>
