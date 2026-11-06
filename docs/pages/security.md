@@ -101,7 +101,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 - **すべての名前空間を分離**（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（`lo`）のみです。`network: true` を指定した Card に限り、network 名前空間を分離せず（`--share-net`）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。
 - **Linux capability をすべて破棄**（`--cap-drop ALL`）します。
-- **見えるファイル**：`/nix/store`（読み取り専用）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。
+- **見えるファイル**：`/nix/store`（読み取り専用）、worker の実行ファイル（開発ビルドで `/nix/store` の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。
 - **環境変数は空から再構成**（`PATH=/var/empty`、`LANG=C.UTF-8`、および Tsugumi が渡す変数のみ）し、`tsugumid` やホストの環境変数は引き継ぎません。
 - **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
 - **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。
@@ -221,7 +221,9 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - Agent が実行できる操作は公開された RPC の tool のみであり、UI や Mac のファイルシステムを直接操作することはできません。`tsugumid` から見れば UI と対等な 1 クライアントであり、同じリビジョン検査と競合検出を通ります。
 - 変更を伴う tool 呼び出しには一意な `op_id` が付与され、応答が途切れた場合も `OperationGet` で適用状態を確認するため、盲目的な再実行による二重適用は起きません。
 - **Card の権限は利用者のものです**。Agent の保存が Card にネットワーク（`network: true`）、隔離なしの実行（`sandbox: false`）、ホストのフォルダ（`hostFolders`、読み取りと書き込み）を新たに与えるとき、`tsugumid` は保存せず `approval_required` で返し、広がる権限を 1 つずつ挙げます（Card in Card の中の Card も含みます。`core/src/permissions.cc`）。アプリ（Mac・Web）は、設定の「API」で「Agent が確認なしに Card に与えてよい権限」に入れた種類はそのまま承認し、それ以外は利用者に確認します。確認の画面で、その種類を以後は確認しないことにもできます（既定ではすべて確認します）。承認は Agent の実行部分がつける欄（`approved_permissions`）で送り、モデルからは設定できません。許可されなければ何も保存されず、Agent には理由を利用者に説明するよう伝えます。利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。
-- **Claude Code の plugin**（[Claude Code から使う](claude-code.md)）は、Web UI のサーバーを通してだけ操作します。サーバーはチャットの Agent と同じ道具を同じ検査で実行し、Card の権限を広げる保存は Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。plugin の MCP サーバーは、サーバーがデータフォルダに書く `server.json`（ポートと起動ごとの鍵、0600、終了時に削除）でサーバーを見つけます。この利用者として動くプログラムは、この鍵で Web UI の `/api/` を使えます（起動時に表示する URL の鍵と同じものです）。
+- **Claude Code の plugin**（[Claude Code から使う](claude-code.md)）は、Web UI のサーバーを通してだけ操作します。サーバーはチャットの Agent と同じ道具を同じ検査で実行し、Card の権限を広げる保存は Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。plugin の MCP サーバーは、サーバーがデータフォルダに書く `server.json`（ポートと起動ごとの Agent 用の鍵、0600、終了時に削除）でサーバーを見つけます。この鍵で届くのは plugin が使う 5 つの口（`/api/project/open`・`/api/project/create`・`/api/agent/tools`・`/api/agent/open`・`/api/agent/call`。`web/server/paths.ts` の `AGENT_ROUTES`）だけで、承認への回答（`/api/chat/permission`）、イベントの購読、端末、ファイル一覧、設定には届きません（`tests/python/test_claude_code_plugin.py`）。ページの鍵（起動時に表示する URL の鍵）は `server.json` に書かず、ページを開くときはサーバー自身がブラウザを開きます。
+  - この境界が守るのは、**Tsugumi の道具を通した操作**です。Claude Code はシェルとファイル操作も持つので、利用者と同じ権限でプロジェクトのファイル（`_card.json` など）を直接書き換えたり、利用者の読めるもの（Claude Code が起動したサーバーのログ `server.log` に出る URL など）を読んだりできます。それを止めるのは Claude Code 自身の権限設定で、Tsugumi ではありません。
+- チャットに添えたフォルダは、添えているものだけを Agent が `attached_folder_read` で読みます（アプリでは `agent/Sources/TsugumiAgent/Agent.swift`、Web UI では `web/server/agent.ts` が送る前に確かめます）。アプリで外したフォルダは、VM との共有が次に環境が起動するまで残りますが、Agent は外した時点から読みません（`macOS/CoreTests` の `onlyAttachedFoldersAreRead`）。
 - チャットの「停止」はモデルとの通信および未送信の tool 呼び出しを止めます（すでに開始された Workflow の実行自体を止める場合は、Canvas の停止ボタンを使います）。
 - 会話履歴と tool の呼び出し証跡はホスト側（`~/Library/Application Support` 配下）に保存されます。
 

@@ -147,6 +147,16 @@ public actor Agent {
   private var cutReplies = 0
   /// How long run_status waits for a run to end before it answers.
   public var statusWait: TimeInterval = 300
+  /// Folders of the Mac attached to the chat: the only ones attached_folder_read
+  /// may read. A folder detached stays shared with the environment until it next
+  /// starts, so the Agent refuses it here at once.
+  public private(set) var folders: [String] = []
+  public func setFolders(_ f: [String]) { folders = f.map(Self.trimmedFolder) }
+  static func trimmedFolder(_ f: String) -> String {
+    var f = f
+    while f.count > 1, f.hasSuffix("/") { f.removeLast() }
+    return f
+  }
 
   /// The rules and working examples the model gets. The default.nix and
   /// _outputs.fbs examples are the bundled demos' own files (a test keeps
@@ -521,6 +531,15 @@ public actor Agent {
     // Incomplete or invalid arguments are never executed.
     guard let data = input.data(using: .utf8), let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
       return try finish(&record, "the arguments are not a complete JSON object", isError: true, events)
+    }
+    if name == "attached_folder_read" {
+      let folder = Self.trimmedFolder(args["folder"] as? String ?? "")
+      guard folders.contains(folder) else {
+        let failure: [String: Any] = ["reply": "Failure", "value": ["kind": "not_found",
+          "message": "the folder \(folder) is not attached here (attach it in the chat)"]]
+        let text = String(decoding: try JSONSerialization.data(withJSONObject: failure, options: [.sortedKeys]), as: UTF8.self)
+        return try finish(&record, text, isError: true, events)
+      }
     }
     var full = args
     // Fields the Agent fills itself: never the model's.

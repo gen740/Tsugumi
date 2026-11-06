@@ -2,7 +2,8 @@
 # tests against a host tsugumid (Cards sandboxed with bubblewrap); the web UI
 # built and checked. On macOS: the Swift packages' tests against a host
 # tsugumid. The shared VM (Virtualization.framework) is not available on
-# hosted runners and is tested on a Mac (TSUGUMI_TEST_CONTAINER=1).
+# hosted runners and is tested on a Mac (TSUGUMI_TEST_CONTAINER=1); the host
+# sandboxes (bubblewrap on Linux, Seatbelt on the Mac) are checked here.
 name: CI
 on:
   push:
@@ -71,6 +72,11 @@ jobs:
       # The worker runs the Cards an Agent test builds (TeamTests runs bash Cards).
       - name: Build the host tsugumid and its worker (the Swift tests talk to them)
         run: nix develop -c bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid tsugumi-worker'
+      # A tsugumid on a Mac (the Web UI) isolates Cards with Seatbelt, not
+      # bubblewrap: the Linux job cannot check it. (The shared VM's isolation
+      # needs Virtualization.framework: TSUGUMI_TEST_CONTAINER=1 on a Mac.)
+      - name: Card isolation on a Mac host (Seatbelt)
+        run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q test_host_isolation.py test_host_sandbox.py'
       # The packages' builds, kept per dependency set: what did not change is not compiled again.
       - name: Cache the Swift builds
         uses: actions/cache@v4
