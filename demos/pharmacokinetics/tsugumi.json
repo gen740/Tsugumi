@@ -1,0 +1,92 @@
+{
+  "name": "薬物動態 · 架空の薬物ツグミシン",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "simulate"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "check"
+      },
+      {
+        "id": "window"
+      },
+      {
+        "id": "missed"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "simulate",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "simulate",
+          "port": "curves"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "check"
+        },
+        "to": {
+          "card": "check",
+          "port": "curves"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "window"
+        },
+        "to": {
+          "card": "window",
+          "port": "curves"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "missed"
+        },
+        "to": {
+          "card": "missed",
+          "port": "curves"
+        }
+      }
+    ]
+  }
+}

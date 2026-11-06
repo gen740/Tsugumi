@@ -1,0 +1,81 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 200,
+      "y": 0
+    },
+    "roots": {
+      "x": 480,
+      "y": 0
+    },
+    "share": {
+      "x": 1000,
+      "y": 0
+    },
+    "orbits": {
+      "x": 1260,
+      "y": -620
+    },
+    "order": {
+      "x": 1960,
+      "y": -620
+    },
+    "basins": {
+      "x": 1260,
+      "y": 60
+    },
+    "trouble": {
+      "x": 1260,
+      "y": 700
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Newton 法: 初期値が行き先を決める\n\n$p(z) = 0$ の根を次の反復で探します（$\\lambda$ は減衰係数で、ふつうは 1）。\n\n$$z_{k+1} = z_k - \\lambda\\,\\frac{p(z_k)}{p'(z_k)}$$\n\n単純根の近くでは誤差が 2 乗で減ります（$e_{k+1} \\approx C e_k^2$）。ただし、どの根に着くかは初期値で決まり、その境界はフラクタルになります。\n\n重複度 $m$ の根では $e_{k+1} \\approx (1-\\lambda/m)\\,e_k$ と 1 次に落ち、$\\lambda = m$ で 2 次に戻ります。$p' = 0$ の臨界点の近くでは遠くへ飛ばされ、閉路に入れば収束しません。\n\n**settings** の coeffs を `[1, 0, -3, 2]`（重根）や `[1, 0, -2, 2]`（閉路）に、damping を 0.5 にして全体を実行できます。**orbits** の初期値、**basins** の拡大、**trouble** の offset は、その Card だけを実行し直せます。\n\n限界: 計算は倍精度なので、重根での誤差はおよそ $\\sqrt{\\varepsilon} \\approx 10^{-8}$ で頭打ちになります。",
+      "x": -40,
+      "y": -620,
+      "width": 900,
+      "height": 560
+    }
+  ],
+  "displays": {
+    "roots": {
+      "x": 420,
+      "y": 170,
+      "width": 520,
+      "height": 360
+    },
+    "orbits": {
+      "x": 1240,
+      "y": -470,
+      "width": 660,
+      "height": 470
+    },
+    "order": {
+      "x": 1940,
+      "y": -470,
+      "width": 720,
+      "height": 400
+    },
+    "basins": {
+      "x": 1240,
+      "y": 210,
+      "width": 860,
+      "height": 430
+    },
+    "trouble": {
+      "x": 1240,
+      "y": 850,
+      "width": 780,
+      "height": 620
+    }
+  }
+}

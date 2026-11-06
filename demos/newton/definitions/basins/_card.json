@@ -1,0 +1,30 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "problem"
+    }
+  ],
+  "params": [
+    {
+      "name": "grid",
+      "type": "uint64",
+      "data": 600
+    },
+    {
+      "name": "center_re",
+      "type": "double",
+      "data": 0.0
+    },
+    {
+      "name": "center_im",
+      "type": "double",
+      "data": 0.0
+    },
+    {
+      "name": "half_width",
+      "type": "double",
+      "data": 2.0
+    }
+  ]
+}

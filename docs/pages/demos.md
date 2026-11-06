@@ -13,6 +13,9 @@
 | [Cas A · Chandra RGB](#cas-a--chandra-rgbcasa) | 超新星残骸の X 線観測 | Nix で固定した観測データ、Card 単位の再実行、版の履歴 |
 | [科学デモ](#科学デモ公開データの取得と解析) | 重力波・タンパク質・系外惑星・地震 | 公開データの取得（大きさと SHA-256）と解析・図示 |
 | [MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers) | 手書き数字の分類（kNN から CNN まで 7 種） | 1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる |
+| [Newton 法](#newton-法newton) | 複素平面での Newton 法 | 初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う |
+| [薬物動態](#薬物動態pharmacokinetics) | 架空の薬物の血中濃度 | 投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない） |
+| [最大流と最小カット](#最大流と最小カットmax-flow) | 最大流と最小カット | 最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る |
 | [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
 | [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
 
@@ -227,6 +230,85 @@ start → load → prepare → share ─┬→ knn ──────┐
 
 データは LeCun・Cortes・Burges の MNIST で、PyTorch のミラー `https://ossci-datasets.s3.amazonaws.com/mnist/` から取得します。
 
+### Newton 法（`newton`）
+
+$z^3 - 1 = 0$ を複素平面で解き、初期値が行き先と収束の速さをどう決めるかを見ます。2 次収束の見積もりと収束先の地図に加えて、2 次収束を失う場合と収束しない場合を並べます。
+
+```text
+start → settings → roots ─ share ─┬→ orbits ─errors→ order
+                                  ├→ basins
+                                  └→ trouble
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | 多項式の実数係数 `coeffs`（高次から、既定は `[1, 0, 0, -1]`）、減衰係数 `damping`、`tolerance`、`max_iter` を流す |
+| `roots` | Python | Newton 法を使わず、コンパニオン行列の固有値（`numpy.roots`）で根と重複度、臨界点を求める。根と係数の関係で確かめ、$z^n = c$ の形なら閉じた式とも比べる |
+| `share` | fork | 問題を `orbits`・`basins`・`trouble` に配る |
+| `orbits` | Python | `start_re`・`start_im` の初期値ごとに、誤差を反復に対して対数軸で描く |
+| `order` | Python | 誤差の列から収束の次数 $q$ と定数を見積もり、重複度と $\lambda$ から決まる理論値と並べて表にする |
+| `basins` | Python | 格子の全点を初期値にして、どの根に着くかと反復の回数を描く。`center_re`・`center_im`・`half_width` で拡大できる |
+| `trouble` | Python | 基準の場合、臨界点の近く（`offset`）、重根、$\lambda = 2$ で 2 次に戻した重根、周期 2 の閉路を並べる（多項式は固定） |
+
+**試すこと**
+- `basins` の `center_re` を -0.8、`half_width` を 0.2 にして、その Card だけを実行し直す。境界のどこを拡大しても 3 色が集まっている。
+- `trouble` の `offset` を 1e-5 にする。最初の一歩が $1/(3 z_0^2)$ まで飛ばされ、遠くでは 1 回に 2/3 ずつしか戻らないので、反復が 37 回から 60 回に増える（既定の `max_iter` ちょうど。さらに小さくすると `max_iter` を増やす必要がある）。
+- `settings` の `damping` を 0.5 にして全体を実行する。どの初期値でも次数が 1、比が 0.5 になり、地図の境界の形も変わる。
+- `settings` の `coeffs` を `[1, 0, -3, 2]`（$(z-1)^2(z+2)$）にする。重複度 2 の根で次数が 1、比が 0.5 に落ち、誤差はおよそ $10^{-8}$ で止まる。
+- `settings` の `coeffs` を `[1, 0, -2, 2]`（$z^3 - 2z + 2$）にする。0 の周りに黒い領域（周期 2 の閉路に吸い込まれて収束しない初期値）が現れる。
+
+### 薬物動態（`pharmacokinetics`）
+
+架空の薬物「ツグミシン」の 1 コンパートメント経口モデルで、投与間隔を変えると濃度がどう動くかを比べます。**教育用の架空のモデルです。実在の薬の値ではなく、医療上の助言や投与の指針でもありません。** 有効域も作り物です。
+
+```text
+start → settings → simulate ─curves→ share ─┬→ check
+                                            ├→ window
+                                            └→ missed
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | 比べる投与計画（`doses_mg`・`intervals_h`）、`half_life_h`、`ka_per_h`、`volume_l`、`bioavailability`、作り物の有効域（`low_mg_l`・`high_mg_l`）、`days` を流す |
+| `simulate` | Python | 微分方程式を投与ごとに区切って `solve_ivp` で解き、投与計画を並べて濃度の推移を Plotly で描く |
+| `share` | fork | 結果を `check`・`window`・`missed` に配る |
+| `check` | Python | 閉じた式の重ね合わせ、定常状態の蓄積比 $R$、平均濃度を数値解と比べて表にする。差が大きければ失敗する |
+| `window` | Python | 最後の投与間隔の濃度を重ね、山、谷、有効域の中にいる時間の割合を比べる |
+| `missed` | Python | `missed_at_h` 以降の投与を `missed_count` 回抜いたときの濃度を、閉じた式で投与計画ごとに描く |
+
+**試すこと**
+- そのまま実行して `window` を見る。400 mg を 24 時間ごとと 200 mg を 12 時間ごとは平均濃度が同じ（`check` の表）で、間隔を詰めると山と谷の差が縮む。
+- `missed` の `missed_count` を 2 にして、その Card だけを実行し直す。1 日量が同じなら、間隔が長い計画ほど有効域の下にいる時間が大きく増える。
+- `settings` の `half_life_h` を 16 にして全体を実行する。蓄積比が大きくなり、定常に着くまでの時間も延びる。
+- `settings` の `days` を短くすると、定常に着かないことが `check` の「定常への到達」に出る。
+
+### 最大流と最小カット（`max-flow`）
+
+seed から作った架空の層状ネットワークで、最大流と最小カットが等しいことを確かめます。どの辺の容量を増やせば最大流が増え、どの辺では増えないのかを、比べて見られます。
+
+```text
+start → settings → network → flow → cut ─ share ─┬→ verify
+                                                 ├→ whatif
+                                                 └→ sweep
+```
+
+| Card | 種類 | していること |
+| --- | --- | --- |
+| `settings` | input | `seed`（53）、`layers`、`width`、`edge_probability`、`max_capacity` を流す |
+| `network` | Python | seed から層状の容量つき有向グラフを作る（架空のデータ） |
+| `flow` | Python | networkx で最大流を求め、各辺の流量/容量を図に描く。容量と保存則を確かめる |
+| `cut` | Python | networkx で最小カットを求め、$s$ 側、$t$ 側、カットの辺を図に描く。最大流 = 最小カットでなければ失敗する |
+| `share` | fork | 結果を `verify`・`whatif`・`sweep` に配る |
+| `verify` | Python | scipy の `maximum_flow` と全カットの総当たりで同じ値が出ることを確かめ、最小カットの数を数える |
+| `whatif` | Python | カット上の辺とカット外の辺の容量を `raise_by` だけ増やし、最大流と新しいカットを表で比べる。`edge`（例: `a1->b1`）で辺を選べる |
+| `sweep` | Python | すべての辺について、容量を `raise_by` だけ増やしたときの最大流の増分を棒で並べる |
+
+**試すこと**
+- そのまま実行して `sweep` を見る。カットの 3 本のうち増えるのは 2 本だけで、`a2->b2` は別の最小カットが残っているので増えない（`verify` が最小カット 2 個と数える）。
+- `whatif` の `edge` を `s->a2` にして、`raise_by` を 1000 にする。容量いっぱいに流れている辺でも、カット外なら最大流は増えない。
+- `whatif` の `edge` を `b3->c3` にする。10 増やしても 8 しか増えない。次のカットが詰まるからで、`raise_by` を増やしても増分はそこで止まる。
+- `settings` の `seed` を変えて全体を実行する。別のネットワークでも `verify` の値はすべて一致する。
+
 ## Draft 版（Agent に実装させる）
 
 `casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
@@ -264,6 +346,9 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
 | **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`forest` から先を実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
+| **Newton 法**（`newton`） | そのまま実行する。`orbits` の初期値、`basins` の拡大、`trouble` の `offset` を変えてその Card だけを実行し直す。`settings` の `coeffs`（`[1, 0, -3, 2]` で重根、`[1, 0, -2, 2]` で閉路）や `damping` を変えて全体を実行する | `orbits` の誤差が対数軸で 2 次に落ち、`order` の表で推定次数が理論値と並ぶ。`basins` にフラクタルの境界が描かれ、`roots` で閉じた式との差が表示される。`trouble` では重根で次数 1 に落ち、$z^3 - 2z + 2$ の $z_0 = 0$ が収束しない |
+| **薬物動態**（`pharmacokinetics`、架空の薬物の教育用モデル） | そのまま実行し、`simulate` の表示を拡大してズーム・ホバーする。`settings` の `doses_mg`・`intervals_h`・`half_life_h` を変えて全体を実行する。`missed` の `missed_at_h`・`missed_count` を変えてその Card だけを実行し直す | 投与計画ごとの濃度が定常状態へ近づく様子を並べて見られる。`check` で数値解と閉じた式の差と蓄積比が表になり、`window` で山、谷、作り物の有効域の中にいる時間の割合、`missed` で飲み忘れの影響が表示される |
+| **最大流と最小カット**（`max-flow`） | そのまま実行する。`whatif` の `edge`・`raise_by`、`sweep` の `raise_by` を変えてその Card だけを実行し直す。`settings` の `seed` を変えて全体を実行する | `flow` と `cut` の図に流量とカットの辺が描かれ、最大流と最小カットの値が一致する。`verify` で scipy と全カットの総当たりも同じ値になる。`whatif` と `sweep` で、カット外の辺を太くしても最大流が変わらないことを確かめられる |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |

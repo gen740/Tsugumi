@@ -1,0 +1,30 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "coeffs",
+      "type": "double[]",
+      "data": [
+        1.0,
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "name": "damping",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "tolerance",
+      "type": "double",
+      "data": 1e-12
+    },
+    {
+      "name": "max_iter",
+      "type": "uint64",
+      "data": 60
+    }
+  ]
+}

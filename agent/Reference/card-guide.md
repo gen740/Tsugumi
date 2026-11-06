@@ -148,7 +148,7 @@ through the SDK's backend (`sdk/python/tsugumi/mpl.py`), so code written for a w
 `main` returns are shown too; `plt.pause()` loops and `FuncAnimation` + `plt.show()` update the
 display live while the Card runs (an endless animation ends when the run is stopped).
 `ctx.display_figure(fig)` shows a figure with any backend. Japanese labels draw as they are (a
-Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Do not call `matplotlib.use("Agg")` and
+Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Keep Japanese and `$...$` math on separate lines of a label: mathtext has no fallback font and draws tofu for Japanese. Do not call `matplotlib.use("Agg")` and
 `savefig` just to display. Example: `demos/plots` (a static figure, a live animation, Plotly and Altair).
 
 Plotly (`ps.plotly`) and Altair (`ps.altair`) are interactive plots in the display (zoom, hover,
