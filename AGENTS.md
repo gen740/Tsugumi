@@ -49,12 +49,12 @@
 | --- | --- |
 | Card ごとの実行環境を Nix で固定する | [sdk/nix/default.nix](sdk/nix/default.nix)、[docs/features.md](docs/features.md) §3、[tests/cpp](tests/cpp)（Nix 上流参照） |
 | ポートの型で配線の整合性を検査する | [docs/features.md](docs/features.md) §2「型付きのポート」、[tests/cpp](tests/cpp)（型・構造的互換・merge union） |
-| 分岐・合流・有限ループ・Card in Card を実行できる | [tests/python/test_scheduler.py](tests/python/test_scheduler.py) |
+| 分岐・合流・有限ループ・Card in Card を実行できる | [tests/python/test_scheduler.py](tests/python/test_scheduler.py)（ループは [tests/python/test_demos.py](tests/python/test_demos.py) の Collatz） |
 | 「完了した」と表示されたものには保存済みの記録が伴う | [docs/novelty.md](docs/novelty.md)、[tests/python/test_regressions.py](tests/python/test_regressions.py)（履歴保存に失敗した run は成功にならない）、[tests/python/test_contract.py](tests/python/test_contract.py)（障害注入） |
 | 実行ごとの版と結果をたどり、古い版から始め直せる | [docs/Versions.md](docs/Versions.md)、[tests/python/test_versions.py](tests/python/test_versions.py)、[tests/python/test_history.py](tests/python/test_history.py) |
 | 途中から部分実行できる（保存済みの入力で） | [docs/novelty.md](docs/novelty.md)「部分実行」、[tests/python/test_regressions.py](tests/python/test_regressions.py) |
-| Card は隔離され、ネットワークは既定で遮断される | [docs/security.md](docs/security.md)、[tests/python/test_cards_container.py](tests/python/test_cards_container.py)、[tests/python/test_host_sandbox.py](tests/python/test_host_sandbox.py)、[tests/python/test_untrusted_project.py](tests/python/test_untrusted_project.py) |
-| Agent が Card の権限を広げる保存は、人間の承認なしでは通らない | [tests/python/test_permissions.py](tests/python/test_permissions.py)、[docs/security.md](docs/security.md) §8「Agent の権限境界」 |
+| Card は隔離され、ネットワークは既定で遮断される（Nix の固定出力 derivation はビルド時に通信できる: [docs/security.md](docs/security.md) §5） | [docs/security.md](docs/security.md)、[tests/python/test_host_isolation.py](tests/python/test_host_isolation.py)（CI の Linux・macOS で毎回）、[tests/python/test_host_sandbox.py](tests/python/test_host_sandbox.py)、VM では [tests/python/test_cards_container.py](tests/python/test_cards_container.py)（`TSUGUMI_TEST_CONTAINER=1`、手元の Mac）、[tests/python/test_untrusted_project.py](tests/python/test_untrusted_project.py) |
+| Agent（アプリ・Web のチャット、Claude Code の plugin）が Tsugumi の道具で Card の権限を広げる保存は、人間の承認なしでは通らない（Claude Code 自身のシェル・ファイル操作はこの外） | [tests/python/test_permissions.py](tests/python/test_permissions.py)、[tests/python/test_claude_code_plugin.py](tests/python/test_claude_code_plugin.py)（plugin の鍵は承認に答えられない）、[docs/security.md](docs/security.md) §8「Agent の権限境界」 |
 | UI と Agent は同じ契約の対等なクライアント | [protocol/tsugumi.fbs](protocol/tsugumi.fbs)、[tests/python/test_agent_contract.py](tests/python/test_agent_contract.py) |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | [docs/AgentRun.md](docs/AgentRun.md)（うまくいかなかった試行と、それを受けて直したことも含む） |
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
