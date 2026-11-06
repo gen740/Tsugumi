@@ -66,6 +66,10 @@ class Scheduler {
   std::optional<RunStatusData> active_status();
   RunStatusData cancel(const std::string& run_id);
   std::optional<Note> latest_display_note(const std::string& card_key);
+  // A committed change of the document. A renamed Card keeps its display; the
+  // display of a Card that left the document is its own: see gone_.
+  void document_changed(const Document& before, const Document& after,
+                        const std::vector<std::pair<std::string, std::string>>& renamed);
   void shutdown();
 
   // Called by RunExec.
@@ -78,6 +82,13 @@ class Scheduler {
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;
   std::map<std::string, DisplayData> displays_;  // latest per card key (any run)
+  // Cards that left the document, with what they were made of. Their name can
+  // come back: the same Card (an undo, an older version) has its display again,
+  // another Card under that name starts without one.
+  std::map<std::string, std::string> gone_;
+  // Card keys whose display went that way: the last run's history is not asked
+  // for them either, until they show something themselves.
+  std::set<std::string> no_display_;
 };
 
 Note display_note(const DisplayData& d);

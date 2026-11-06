@@ -886,6 +886,7 @@ void Service::save(RequestIn& req) {
         log::error("history: renaming " + from + " to " + to + " failed: " + e.what());
       }
     }
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, renamed);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -923,6 +924,7 @@ void Service::reload(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1038,6 +1040,7 @@ void Service::version_checkout(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1202,6 +1205,7 @@ void Service::import_definitions(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::ProjectImportResult, ir.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);

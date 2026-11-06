@@ -164,11 +164,30 @@ extension ProjectSession {
 
   /// Adds a Card instance to a scope's canvas.
   func appendCard(_ id: String, in scope: [String]) {
+    startClean(key(scope + [id]))
     updateGraph(scope) { g in
       var cards = g["cards"]?.array ?? []
       cards.append(.object([("id", .string(id))]))
       g["cards"] = .array(cards)
     }
+  }
+
+  /// A new Card's name can be one a Card had: nothing of that Card stays with it.
+  /// The core keeps this project's layout up with renames and deletes, but a Card
+  /// in Card's layout or a file written by hand can still hold a frame.
+  private func startClean(_ k: CardKey) {
+    forgetResult(k)
+    updateLayout(of: Array(path(k).dropLast())) { dropLayoutEntries(of: k, from: &$0) }
+  }
+
+  /// The Card's place and frame (and the places of anything inside it).
+  private func dropLayoutEntries(of k: CardKey, from l: inout JSONValue) {
+    let lk = layoutKey(k)
+    if var cards = l["cards"]?.object {
+      cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
+      l["cards"] = .object(cards)
+    }
+    l["displays"]?[lk] = nil
   }
 
   /// A new Card from a template, with its own definition folder.
@@ -410,6 +429,7 @@ extension ProjectSession {
     var made: Set<CardKey> = []
     edit { s in
       for a in applies { a(s) }
+      for new in map.values { s.startClean(key(scope + [new])) }
       s.updateGraph(scope) { g in
         var cards = g["cards"]?.array ?? []
         var conns = g["connections"]?.array ?? []
@@ -606,15 +626,7 @@ extension ProjectSession {
       }
     }
     s.updateLayout(of: scope) { l in
-      for k in keys {
-        // Layout entries of the Card and of anything inside it.
-        let lk = s.layoutKey(k)
-        if var cards = l["cards"]?.object {
-          cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
-          l["cards"] = .object(cards)
-        }
-        l["displays"]?[lk] = nil
-      }
+      for k in keys { s.dropLayoutEntries(of: k, from: &l) }
     }
     s.updateGroups(in: scope) { groups in
       for i in groups.indices {
