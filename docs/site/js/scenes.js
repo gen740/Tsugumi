@@ -958,7 +958,7 @@ export const Author = {
 
 export const Name = {
   feet: pt(318, 556), scale: 0.36, temari: { center: pt(196, 664), radius: 34 },
-  card: (k) => rect(520 + k * 160, 418, 124, 56),
+  card: (k) => rect(480 + k * 150, 418, 124, 56),
   names: ['load', 'bands', 'rgb'],
 
   draw(g, p, t) {
@@ -1061,7 +1061,7 @@ export const Figures = {
       [nameGape, 0.36], [pt(Name.card(0).x, midY(Name.card(0))), 0.46], [pt(maxX(Name.card(0)), midY(Name.card(0))), 0.5],
       [pt(Name.card(1).x, midY(Name.card(1))), 0.57], [pt(maxX(Name.card(1)), midY(Name.card(1))), 0.62],
       [pt(Name.card(2).x, midY(Name.card(2))), 0.68], [pt(maxX(Name.card(2)), midY(Name.card(2))), 0.73],
-      [pt(985, 480), 0.77], [pt(975, 700), 0.88], [pt(160, 728), 1]],
+      [pt(925, 480), 0.77], [pt(918, 670), 0.86], [pt(860, 722), 0.9], [pt(160, 728), 1]],
     occluders: () => [Name.card(0), Name.card(1), Name.card(2)],
     birdAway: [0, 1], pace: 1.1,
     // 名前 / 「つぐみ」 / 継ぐ・積む・組む / 紡ぐ、そして手毬と糸
