@@ -57,6 +57,9 @@ interface Settings {
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
+  /** The chat's Agent may search the web through the provider (its queries
+   *  leave for the provider's search service). Off until the user turns it on. */
+  webSearch: boolean
   /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
   guide: GuideState
 }
@@ -70,7 +73,7 @@ export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', '
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
-  models: {}, modelNames: {}, allowedPermissions: [],
+  models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
   guide: { setupDone: false, demoAnswered: false, tour: null },
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
@@ -93,6 +96,7 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   }
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
+  if (typeof b.webSearch === 'boolean') out.webSearch = b.webSearch
   return out
 }
 
@@ -190,12 +194,12 @@ async function providerFor(id: ProviderId): Promise<ProviderConfig> {
   }
   if (s.provider === 'chatgpt') {
     return { name: 'ChatGPT', baseURL: process.env.TSUGUMI_CHATGPT_API ?? 'https://api.openai.com', model: s.chatGPTModel || defaultSettings.chatGPTModel,
-             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000 }
+             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
   }
   if (s.provider === 'openai') {
-    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000 }
+    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
   }
-  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000 }
+  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
 }
 
 /** What the page may know of the connection (no key, no token). */

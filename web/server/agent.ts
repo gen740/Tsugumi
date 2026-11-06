@@ -24,6 +24,8 @@ export interface ToolSpec {
   description: string
   inputSchema: Record<string, unknown>
   mutating: boolean
+  /** Run by the model provider (web search): it has no tool_use of ours. */
+  server?: boolean
 }
 
 export const DEFAULT_REQUESTS = AGENT.requests
@@ -137,6 +139,10 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: string }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+  /** A search the provider ran: what was asked and what came back. */
+  | { type: 'web_search'; id: string; query: string; sources: WebSource[]; error?: string }
+
+export interface WebSource { url: string; title?: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -144,6 +150,10 @@ export interface ChatMessage {
   /** What the chat shows for a request the app wrote for the model (the
    *  model gets `content`; this is never sent). */
   display?: string
+  /** A reply with search blocks as the Messages API sent them: it wants them
+   *  back unchanged (encrypted results, citations) while the search tool is
+   *  declared. `content` says the same in the app's own terms. */
+  providerContent?: Record<string, unknown>[]
 }
 
 export interface ToolRecord {
@@ -186,6 +196,7 @@ export function loadConversation(file: string, id: string): Conversation {
     m && ['user', 'assistant'].includes(m.role) && Array.isArray(m.content) && m.content.every((b: any) =>
       b && (b.type === 'text' ? typeof b.text === 'string'
         : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
+        : b.type === 'web_search' ? [b.id, b.query].every((v) => typeof v === 'string') && Array.isArray(b.sources)
         : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
   if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
       !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
@@ -245,7 +256,12 @@ export interface ProviderConfig {
   /** Output limit of one model reply: a Card's sources fit in one save. */
   maxTokens: number
   contextLimit: number
+  /** The user's setting (Settings > API): the model may search the web. */
+  webSearch?: boolean
 }
+
+/** The provider runs the searches itself: the local fixture has none. */
+export const searchesWeb = (c: ProviderConfig) => !!c.webSearch && c.auth !== 'none'
 
 class HTTPStatusError extends Error {
   /** retryAfter: the provider's retry-after in seconds, when it sent one. */
@@ -278,6 +294,10 @@ type StreamEvent =
   | { t: 'text'; text: string }
   | { t: 'toolStart'; index: number; id: string; name: string }
   | { t: 'toolInput'; index: number; json: string }
+  | { t: 'search'; id: string; query: string }
+  | { t: 'searchResult'; id: string; sources: WebSource[]; error?: string }
+  | { t: 'citation'; source: WebSource }
+  | { t: 'providerContent'; blocks: Record<string, unknown>[] }
   | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
 async function headers(c: ProviderConfig, stale?: string): Promise<Record<string, string>> {
@@ -330,29 +350,43 @@ function stream(c: ProviderConfig, system: string, messages: ChatMessage[], tool
   return c.api === 'openAIResponses' ? responsesStream(c, system, messages, tools, signal) : messagesStream(c, system, messages, tools, signal)
 }
 
-/** Anthropic Messages API with SSE streaming. */
-async function* messagesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+/** The request of the Messages API. */
+export function messagesBody(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[]): Record<string, unknown> {
   // Prompt caching: the system prompt and the tools are the same in every
   // step, and each step repeats the conversation before it, so all three end
   // with a cache breakpoint (at most 4 are allowed).
   const cache = { type: 'ephemeral' }
-  const wired: any[] = messages.map((m) => ({ role: m.role, content: m.content.map(wire) }))
+  // Search blocks go back only with the tool declared, and only whole.
+  const replay = tools.some((t) => t.server) ? replayable(messages) : new Set<number>()
+  const wired: any[] = messages.map((m, i) => ({ role: m.role, content: replay.has(i) ? m.providerContent! : m.content.map(wire) }))
   const last = wired[wired.length - 1]
-  if (last?.content.length) last.content[last.content.length - 1] = { ...last.content[last.content.length - 1], cache_control: cache }
+  if (last?.content.length) {
+    const at = last.content.findLastIndex(cacheable)
+    if (at >= 0) last.content = last.content.map((b: unknown, i: number) => (i === at ? { ...(b as object), cache_control: cache } : b))
+  }
   const body: Record<string, unknown> = {
     model: c.model, max_tokens: c.maxTokens, stream: true,
     system: [{ type: 'text', text: system, cache_control: cache }], messages: wired,
   }
   if (tools.length) {
-    body.tools = tools.map((t, i) => ({
+    body.tools = tools.map((t, i) => (t.server ? WEB_SEARCH_WIRE : {
       name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
+  return body
+}
+
+/** Anthropic Messages API with SSE streaming. */
+async function* messagesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const body = messagesBody(c, system, messages, tools)
   const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(body), signal })
   if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
   let stopped = false
+  // The reply's blocks as they come, to send them back.
+  const reply = new Map<number, Record<string, any>>()
+  const inputs = new Map<number, string>()
   for await (const line of sseLines(r)) {
     if (line.startsWith('event:')) { event = line.slice(6).trim(); continue }
     if (!line.startsWith('data:')) continue
@@ -366,23 +400,134 @@ async function* messagesStream(c: ProviderConfig, system: string, messages: Chat
         inputTokens = (u?.input_tokens ?? 0) + cacheRead + cacheWrite
         break
       }
-      case 'content_block_start':
-        if (obj.content_block?.type === 'tool_use') yield { t: 'toolStart', index: obj.index ?? 0, id: obj.content_block.id ?? randomUUID(), name: obj.content_block.name ?? '' }
+      case 'content_block_start': {
+        const b = obj.content_block, index = obj.index ?? 0
+        if (['text', 'tool_use', 'server_tool_use', 'web_search_tool_result'].includes(b?.type)) reply.set(index, { ...b })
+        if (b?.type === 'tool_use') yield { t: 'toolStart', index, id: b.id ?? randomUUID(), name: b.name ?? '' }
+        if (b?.type === 'web_search_tool_result') yield { t: 'searchResult', id: b.tool_use_id ?? '', ...searchResultOf(b.content) }
         break
-      case 'content_block_delta':
-        if (typeof obj.delta?.text === 'string') yield { t: 'text', text: obj.delta.text }
-        if (typeof obj.delta?.partial_json === 'string') yield { t: 'toolInput', index: obj.index ?? 0, json: obj.delta.partial_json }
+      }
+      case 'content_block_delta': {
+        const index = obj.index ?? 0, block = reply.get(index)
+        if (typeof obj.delta?.text === 'string') {
+          if (block) block.text = (block.text ?? '') + obj.delta.text
+          yield { t: 'text', text: obj.delta.text }
+        }
+        if (typeof obj.delta?.partial_json === 'string') {
+          inputs.set(index, (inputs.get(index) ?? '') + obj.delta.partial_json)
+          if (block?.type !== 'server_tool_use') yield { t: 'toolInput', index, json: obj.delta.partial_json }
+        }
+        if (obj.delta?.citation) {
+          if (block) block.citations = [...(block.citations ?? []), obj.delta.citation]
+          if (typeof obj.delta.citation.url === 'string') yield { t: 'citation', source: { url: obj.delta.citation.url, title: obj.delta.citation.title } }
+        }
         break
-      case 'message_delta':
+      }
+      case 'content_block_stop': {
+        const block = reply.get(obj.index ?? 0)
+        if (block?.type === 'tool_use' || block?.type === 'server_tool_use') block.input = parsedInput(inputs.get(obj.index ?? 0))
+        if (block?.type === 'server_tool_use') yield { t: 'search', id: block.id ?? randomUUID(), query: String(block.input?.query ?? '') }
+        break
+      }
+      case 'message_delta': {
         outputTokens = obj.usage?.output_tokens ?? outputTokens
-        if (obj.delta?.stop_reason) yield { t: 'stop', reason: obj.delta.stop_reason, inputTokens, outputTokens, cacheRead, cacheWrite }
+        if (!obj.delta?.stop_reason) break
+        const blocks = replyToSendBack(reply)
+        if (blocks) yield { t: 'providerContent', blocks }
+        yield { t: 'stop', reason: obj.delta.stop_reason, inputTokens, outputTokens, cacheRead, cacheWrite }
         break
+      }
       case 'message_stop': stopped = true; break
       case 'error': throw new Error(obj.error?.message ?? 'stream error')
     }
   }
   // A stream cut before message_stop is a lost connection, not a short answer.
   if (!stopped) throw new ConnectionLost()
+}
+
+// ---- Web search ----------------------------------------------------------------
+
+const WEB_SEARCH_TOOL: ToolSpec = {
+  name: AGENT.webSearch.name, payloadType: -1, object: -1, description: '', inputSchema: {}, mutating: false, server: true,
+}
+/** The basic tool: dynamic filtering (the later versions) runs code at the
+ *  provider, which needs a container kept through the turn and is outside
+ *  zero data retention. A turn's searches are capped. */
+const WEB_SEARCH_WIRE = { type: AGENT.webSearch.anthropicType, name: AGENT.webSearch.name, max_uses: AGENT.webSearch.maxUses }
+
+const parsedInput = (json: string | undefined): any => {
+  try { return JSON.parse(json ?? '{}') } catch { return {} }
+}
+
+/** The sources in a web_search_tool_result's content, or its error object. */
+function searchResultOf(content: any): { sources: WebSource[]; error?: string } {
+  if (!Array.isArray(content)) return { sources: [], error: String(content?.error_code ?? 'unavailable') }
+  return { sources: content.filter((r) => typeof r?.url === 'string').map((r) => ({ url: r.url, title: r.title })) }
+}
+
+/** A reply's blocks to send back, when it has anything only they can carry.
+ *  No thinking blocks: this Agent sends none back anywhere, and one in an
+ *  edited history is refused. */
+function replyToSendBack(reply: Map<number, Record<string, any>>): Record<string, unknown>[] | undefined {
+  const blocks = [...reply.entries()].sort(([a], [b]) => a - b).map(([, b]) => {
+    const { citations, ...rest } = b
+    return citations?.length ? { ...rest, citations } : rest
+  }).filter((b) => b.type !== 'text' || b.text)
+  return blocks.some((b) => b.type === 'server_tool_use' || b.type === 'web_search_tool_result' || b.citations) ? blocks : undefined
+}
+
+/** Whether a block may hold a cache breakpoint: not the provider's own blocks. */
+const cacheable = (b: Record<string, unknown>) => b.type === 'tool_use' || b.type === 'tool_result' || (b.type === 'text' && !b.citations)
+
+/** The messages whose search blocks can go back to the API as they came. It
+ *  refuses a search without its result, unless the conversation ends there
+ *  (pause_turn, or one that waits for our tool results), and a result without
+ *  its search: after a stopped turn or a compaction those go in words. */
+export function replayable(messages: ChatMessage[]): Set<number> {
+  const keep = new Set(messages.flatMap((m, i) => (m.providerContent ? [i] : [])))
+  const last = messages.length - 1
+  const waitingForResults = last >= 0 && messages[last].role === 'user' && messages[last].content.every((b) => b.type === 'tool_result')
+  for (;;) {
+    const open = new Map<string, number>()
+    let bad: number | undefined
+    for (const i of [...keep].sort((a, b) => a - b)) {
+      for (const b of messages[i].providerContent!) {
+        if (b.type === 'server_tool_use') open.set(String(b.id), i)
+        else if (b.type === 'web_search_tool_result' && !open.delete(String(b.tool_use_id))) bad = i
+      }
+    }
+    for (const i of open.values()) if (i !== last && !(i === last - 1 && waitingForResults)) bad = i
+    if (bad === undefined) return keep
+    keep.delete(bad)
+  }
+}
+
+/** A search in words, for a request that cannot carry the provider's blocks
+ *  (the tool off, another provider). It never names the tool. */
+function searchNote(b: Extract<ContentBlock, { type: 'web_search' }>): string {
+  const results = b.sources.length ? `; results: ${b.sources.map((s) => s.url).join(', ')}` : ''
+  return `[web search: ${b.query}${b.error ? `; failed: ${b.error}` : ''}${results}]`
+}
+
+/** What a search found, for the chat's row and the tool record. */
+function searchSummary(sources: WebSource[], error?: string): string {
+  if (error) return `failed: ${error}`
+  return sources.map((s) => (s.title ? `${s.title} — ${s.url}` : s.url)).join('\n') || 'no results'
+}
+
+/** The cited sources as Markdown links under a reply. They come from the web:
+ *  only http(s) is linked, and a title cannot break out of its link. */
+export function sourcesText(sources: WebSource[]): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const s of sources) {
+    if (!/^https?:\/\//i.test(s.url) || seen.has(s.url)) continue
+    seen.add(s.url)
+    const url = s.url.replace(/[\s()<>]/g, (c) => encodeURIComponent(c).replace('(', '%28').replace(')', '%29'))
+    const title = (s.title ?? s.url).replace(/[\[\]\r\n]+/g, ' ').trim() || s.url
+    lines.push(`- [${title}](${url})`)
+  }
+  return lines.length ? `\n\n${AGENT.webSearch.sources}:\n${lines.join('\n')}\n` : ''
 }
 
 /** The ChatGPT plan takes function tools only grouped in a namespace; the
@@ -401,6 +546,8 @@ function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] 
     }
     for (const b of m.content) {
       if (b.type === 'text') texts.push({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: b.text })
+      // In words: a web_search_call item would bring back none of its results.
+      else if (b.type === 'web_search') texts.push({ type: 'output_text', text: searchNote(b) })
       else if (b.type === 'tool_use') {
         flush()
         out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
@@ -414,19 +561,31 @@ function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] 
   return out
 }
 
-/** OpenAI Responses API, with an API key or the ChatGPT plan. The plan takes
- *  no max_output_tokens and the tools in a namespace; store false and stream
- *  true always. */
-async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+/** The request of the Responses API, with an API key or the ChatGPT plan. The
+ *  plan takes no max_output_tokens and the tools in a namespace; store false
+ *  and stream true always. */
+export function responsesBody(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[]): Record<string, unknown> {
   const plan = c.auth === 'chatgpt'
   const body: Record<string, unknown> = {
     model: c.model, instructions: system, input: responsesInput(messages, plan ? TOOL_NAMESPACE : undefined), stream: true, store: false,
   }
   if (!plan) body.max_output_tokens = c.maxTokens
+  const own = tools.filter((t) => !t.server)
+  const hosted: unknown[] = own.length === tools.length ? [] : [{ type: AGENT.webSearch.openAIType }]
   if (tools.length) {
-    const functions = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
-    body.tools = plan ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : functions
+    const functions = own.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+    body.tools = [...(plan ? (functions.length ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : []) : functions), ...hosted]
   }
+  // The sources of a search (the plan's rules do not say it takes `include`:
+  // there the cited sources are what can be followed).
+  if (hosted.length && !plan) body.include = [AGENT.webSearch.openAIInclude]
+  return body
+}
+
+/** OpenAI Responses API, with an API key or the ChatGPT plan. */
+async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  const plan = c.auth === 'chatgpt'
+  const body = responsesBody(c, system, messages, tools)
   let stale: string | undefined
   let r: Response
   for (;;) {
@@ -467,6 +626,18 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
       case 'response.function_call_arguments.delta':
         if (typeof obj.delta === 'string') yield { t: 'toolInput', index, json: obj.delta }
         break
+      case 'response.output_item.done':
+        if (obj.item?.type === 'web_search_call') {
+          const id: string = obj.item.id ?? randomUUID()
+          const { query, sources } = openAISearch(obj.item.action)
+          yield { t: 'search', id, query }
+          yield { t: 'searchResult', id, sources, error: obj.item.status === 'failed' ? 'failed' : undefined }
+        } else if (obj.item?.type === 'message') {
+          for (const c of obj.item.content ?? []) for (const a of c.annotations ?? []) {
+            if (a?.type === 'url_citation' && typeof a.url === 'string') yield { t: 'citation', source: { url: a.url, title: a.title } }
+          }
+        }
+        break
       case 'response.completed': case 'response.incomplete': {
         const u = obj.response?.usage
         const reason = obj.type === 'response.incomplete' ? 'max_tokens' : usedTools ? 'tool_use' : 'end_turn'
@@ -486,7 +657,17 @@ async function* responsesStream(c: ProviderConfig, system: string, messages: Cha
   if (!finished) throw new ConnectionLost()
 }
 
+/** What a web_search_call did: a search, or a look at a page. */
+function openAISearch(action: any): { query: string; sources: WebSource[] } {
+  const url = typeof action?.url === 'string' ? action.url : undefined
+  const sources: WebSource[] = (action?.sources ?? []).filter((s: any) => typeof s?.url === 'string').map((s: any) => ({ url: s.url }))
+  if (url) sources.push({ url })
+  const queries: string[] = Array.isArray(action?.queries) && action.queries.length ? action.queries : typeof action?.query === 'string' ? [action.query] : []
+  return { query: queries.join(', ') || (typeof action?.pattern === 'string' ? action.pattern : url ?? ''), sources }
+}
+
 function wire(b: ContentBlock): unknown {
+  if (b.type === 'web_search') return { type: 'text', text: searchNote(b) }
   if (b.type === 'tool_use') {
     let input: unknown = {}
     try { input = JSON.parse(b.input) } catch {}
@@ -696,14 +877,20 @@ export class Agent {
   get tools(): ToolSpec[] {
     const reference = Object.keys(this.references).length ? [REFERENCE_TOOL] : []
     if (this.role === 'guide') return [...this.catalog.tools.filter((t) => GUIDE_TOOLS.has(t.name)), ...reference, GUIDE_SHOW_TOOL]
-    return [...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL, GUIDE_SHOW_TOOL])]
+    return [...(this.searches ? [WEB_SEARCH_TOOL] : []), ...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL, GUIDE_SHOW_TOOL])]
+  }
+
+  /** The main Agent may search, when the setting is on (the helpers work from
+   *  what it tells them; the guide explains the app). */
+  private get searches(): boolean {
+    return this.role === 'worker' && !this.helper && searchesWeb(this.provider)
   }
 
   /** The rules, and for a helper its task. */
   get system(): string {
     if (this.role === 'guide') return GUIDE_PROMPT
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
-    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote
+    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote + (this.searches ? '\n\n' + AGENT.webSearch.note : '')
     return SYSTEM_PROMPT + '\n\n' + fill(AGENT.helper.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction })
   }
@@ -876,7 +1063,7 @@ export class Agent {
       for (let i = 0; i < this.maxSteps; i++) {
         if (signal.aborted) throw new Cancelled()
         await this.compactIfNeeded(events, signal)
-        let { blocks, stop } = await this.modelTurn(events, signal)
+        let { blocks, stop, providerContent } = await this.modelTurn(events, signal)
         if (stop === 'max_tokens') {
           // The reply was cut at the output limit, maybe inside a tool call:
           // nothing of it is executed; the model is asked for smaller steps.
@@ -894,8 +1081,11 @@ export class Agent {
           this.save()
           continue
         }
-        this.conversation.messages.push({ role: 'assistant', content: blocks })
+        this.conversation.messages.push({ role: 'assistant', content: blocks, ...(providerContent ? { providerContent } : {}) })
         this.save()
+        // The provider paused a long search turn: the reply goes back as it is,
+        // with nothing added, and the same request goes on (one more step).
+        if (stop === 'pause_turn') continue
         const uses = blocks.filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
         if (!uses.length || stop !== 'tool_use') {
           done = true
@@ -935,6 +1125,14 @@ export class Agent {
       const tools = new Map<number, { id: string; name: string; json: string }>()
       const order: number[] = []
       let stop = 'end_turn'
+      // Text and searches in the order they came; the sources the reply cites.
+      const parts: ContentBlock[] = []
+      const cited: WebSource[] = []
+      let providerContent: Record<string, unknown>[] | undefined
+      const flush = () => {
+        if (text) parts.push({ type: 'text', text })
+        text = ''
+      }
       try {
         for await (const e of stream(this.provider, this.system, this.wireMessages(), this.tools, signal)) {
           if (e.t === 'text') {
@@ -946,6 +1144,16 @@ export class Agent {
           } else if (e.t === 'toolInput') {
             const t = tools.get(e.index)
             if (t) t.json += e.json
+          } else if (e.t === 'search') {
+            flush()
+            parts.push({ type: 'web_search', id: e.id, query: e.query, sources: [] })
+            events({ kind: 'toolStarted', id: e.id, name: AGENT.webSearch.name, arguments: JSON.stringify({ query: e.query }) })
+          } else if (e.t === 'searchResult') {
+            this.searchEnded(e.id, e.sources, e.error, parts, events)
+          } else if (e.t === 'citation') {
+            cited.push(e.source)
+          } else if (e.t === 'providerContent') {
+            providerContent = e.blocks
           } else {
             stop = e.reason
             const u = this.conversation.usage
@@ -956,19 +1164,24 @@ export class Agent {
           }
         }
         if (signal.aborted) throw new Cancelled()
-        const blocks: ContentBlock[] = []
-        if (text) blocks.push({ type: 'text', text })
+        const sources = sourcesText(cited)
+        if (sources) {
+          text += sources
+          events({ kind: 'text', text: sources })
+        }
+        flush()
+        const blocks: ContentBlock[] = parts
         for (const i of order) {
           const t = tools.get(i)!
           blocks.push({ type: 'tool_use', id: t.id, name: t.name, input: t.json || '{}' })
         }
-        return { blocks, stop }
+        return { blocks, stop, providerContent }
       } catch (e) {
         if (signal.aborted) throw new Cancelled()
         const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost || e instanceof TransientError
         if (!retryable || attempt >= 3) throw e
         // The reply is asked again: what it had streamed goes.
-        if (text) events({ kind: 'discardText' })
+        if (text || parts.length) events({ kind: 'discardText' })
         // The provider's retry-after when it gave one (rate limits), else backoff.
         const wait = Math.min(120, Math.max(e instanceof HTTPStatusError ? e.retryAfter ?? 0 : 0, 0.5 * (1 << (attempt + 1))))
         events({ kind: 'retrying', message: e instanceof HTTPStatusError || e instanceof TransientError
@@ -977,6 +1190,25 @@ export class Agent {
         continue
       }
     }
+  }
+
+  /** A search's result: in this reply's blocks, or in an earlier reply's when
+   *  it waited for our tools. Recorded at once: the query has left, whatever
+   *  becomes of the reply. */
+  private searchEnded(id: string, sources: WebSource[], error: string | undefined, parts: ContentBlock[], events: (e: AgentEvent) => void) {
+    let block: Extract<ContentBlock, { type: 'web_search' }> | undefined
+    for (const b of [...parts, ...this.conversation.messages.flatMap((m) => m.content)]) {
+      if (b.type === 'web_search' && b.id === id) { block = b; break }
+    }
+    if (block) {
+      block.sources = sources
+      if (error) block.error = error
+    }
+    const summary = searchSummary(sources, error)
+    this.conversation.tools = this.conversation.tools.filter((t) => t.id !== id)
+    this.conversation.tools.push({ id, name: AGENT.webSearch.name, arguments: JSON.stringify({ query: block?.query ?? '' }), state: 'completed', result: summary, isError: !!error })
+    this.save()
+    events({ kind: 'toolFinished', id, name: AGENT.webSearch.name, ok: !error, summary })
   }
 
   private wireMessages(): ChatMessage[] {
@@ -1304,6 +1536,7 @@ export class Agent {
       for (const b of m.content) {
         if (b.type === 'text') transcript += `${m.role}: ${b.text}\n`
         else if (b.type === 'tool_use') transcript += `tool call ${b.name} ${b.input.slice(0, 500)}\n`
+        else if (b.type === 'web_search') transcript += `${searchNote(b)}\n`
         else transcript += `tool result${b.is_error ? ' (error)' : ''}: ${b.content.slice(0, 800)}\n`
       }
     }

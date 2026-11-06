@@ -455,6 +455,7 @@ interface APIState {
   keys: { Anthropic: KeySource; OpenAI: KeySource }
   keyEnv: { Anthropic: string; OpenAI: string }
   allowedPermissions: string[]
+  webSearch: boolean
 }
 
 /** Re-reads the connection of every open chat (after it changed here). */
@@ -513,6 +514,12 @@ function APISettings() {
           </Row>
         ))}
         <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。</span></Row>
+      </Section>
+      <Section title="Web 検索">
+        <Row label="Agent が自分の判断で Web を検索する"><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>
+        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{s.provider === 'fixture'
+          ? 'ローカル fixture には検索がないため、オンでも使えません。'
+          : 'オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。'}</span></Row>
       </Section>
       <GuideSettings />
       <div className="caption secondary">チャットは任意機能です。通常の操作はすべて UI から行えます。</div>

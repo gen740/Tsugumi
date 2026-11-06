@@ -571,7 +571,7 @@ struct ToolStep {
     if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?["segments"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?.string { return c }
-    return v["path"]?.string ?? v["definition"]?.string
+    return v["path"]?.string ?? v["definition"]?.string ?? v["query"]?.string
   }
 
   var card: CardKey? {
@@ -585,6 +585,7 @@ struct ToolStep {
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
     if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
+    if n == "web_search" { return (String(localized: "Web を検索しています"), String(localized: "Web を検索")) }
     if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
     if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
     if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }
@@ -634,6 +635,18 @@ private struct ToolRow: View {
   let session: ProjectSession
   @State private var open = false
 
+  /// A search's details with its sources as links (only http and https).
+  static func linked(_ text: String) -> AttributedString {
+    var out = AttributedString(text)
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
+    for m in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+      guard let url = m.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+            let r = Range(m.range, in: text), let a = Range(r, in: out) else { continue }
+      out[a].link = url
+    }
+    return out
+  }
+
   var body: some View {
     let step = ToolStep(name: item.tool?.name ?? "", args: item.text)
     VStack(alignment: .leading, spacing: 4) {
@@ -661,7 +674,8 @@ private struct ToolRow: View {
           .help(open ? "詳細を閉じる" : "ツールの詳細")
       }
       if open {
-        Text(item.text).font(.caption.monospaced()).textSelection(.enabled)
+        (item.tool?.name == "web_search" ? Text(Self.linked(item.text)) : Text(item.text))
+          .font(.caption.monospaced()).textSelection(.enabled)
           .lineLimit(40)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(6)

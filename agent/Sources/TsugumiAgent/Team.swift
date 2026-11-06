@@ -58,7 +58,9 @@ extension Agent {
   var system: String {
     if role == .guide { return Self.guidePrompt }
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
-    guard let helper else { return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") }
+    guard let helper else {
+      return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") + (searches ? "\n\n" + Shared.data.webSearch.note : "")
+    }
     return Self.systemPrompt + "\n\n" + Shared.fill(Shared.data.helper.prompt, [
       "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction])
   }

@@ -70,6 +70,10 @@ interface ContentBlock {
   input?: string
   content?: string
   is_error?: boolean
+  /** A web search the provider ran. */
+  query?: string
+  sources?: { url: string; title?: string }[]
+  error?: string
 }
 
 interface Message {
@@ -197,6 +201,10 @@ export class ChatController extends Observable {
       for (const b of m.content) {
         if (b.type === 'text') out.push({ id: uuid(), role: m.role, text: b.text ?? '', archived })
         else if (b.type === 'tool_use') out.push({ id: uuid(), role: 'tool', text: b.input ?? '', tool: { name: b.name ?? '' }, archived })
+        else if (b.type === 'web_search') {
+          const sources = (b.sources ?? []).map((s) => (s.title ? `${s.title} — ${s.url}` : s.url)).join('\n')
+          out.push({ id: uuid(), role: 'tool', text: `${JSON.stringify({ query: b.query ?? '' })}\n→ ${b.error ? `failed: ${b.error}` : sources || 'no results'}`, tool: { name: 'web_search', ok: !b.error }, archived })
+        }
         else if (b.type === 'tool_result') {
           const j = [...out].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
           if (j) {

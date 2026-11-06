@@ -43,6 +43,18 @@ in a namespace whose calls name it) and answers "exceed the usage limit" with
 subscription_sharing_usage_limit_exceeded. GET /fixture/chatgpt reports what
 it saw (refreshes, revocations, rule violations).
 
+Web search ("search the web for <query>"), when the request declares the tool
+(web_search on the Messages API, {"type": "web_search"} on the Responses API):
+the fixture answers as the provider's own search does, with made-up results,
+and searches nothing. On the Messages API "... with a pause" stops with
+pause_turn on a search that has not run, and "... alongside inspect" calls
+project_inspect in the same reply (the search runs once its result is back).
+Like the API it refuses a request that sends the blocks back wrongly: without
+the tool, without encrypted_content or encrypted_index, or with a search left
+without its result. Without the tool it says it cannot search.
+GET /fixture/requests lists every model request it saw (path, tools, include,
+and whether its text names web_search).
+
 Options:
   --slow SECONDS   delay between streamed chunks (cancellation tests)
   --drop-once      drop the first response mid-stream (retry tests)
@@ -67,6 +79,7 @@ TASK = re.compile(r"set (\S+?)\.(\S+) to (.+?) and run(?:, then report (\S+))?",
 TERMINAL = {"succeeded", "failed", "cancelled"}
 PERMISSION = re.compile(r"give (\S+) network access", re.I)
 STALE_READ = "validate at revision 0"
+SEARCH = re.compile(r"search the web for (.+?)(?: (with a pause|alongside inspect))?\s*$", re.I)
 
 
 def blocks(msg):
@@ -130,6 +143,81 @@ def unanswered_tool_uses(messages):
         if missing:
             return missing
     return []
+
+
+def search_task(messages):
+    """The search asked for by the latest user text, with what follows it."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] != "user":
+            continue
+        texts = [b["text"] for b in blocks(messages[i]) if b.get("type") == "text"]
+        if not texts:
+            continue
+        m = SEARCH.search(texts[-1].split("\n\n[Context")[0])
+        return (m, messages[i + 1:]) if m else (None, [])
+    return None, []
+
+
+def search_replay_errors(messages, declared):
+    """What the Messages API refuses in the search blocks sent back."""
+    used, answered = {}, set()
+    for i, m in enumerate(messages):
+        for b in blocks(m):
+            kind = b.get("type")
+            if kind == "server_tool_use":
+                used[b["id"]] = i
+            elif kind == "web_search_tool_result":
+                if b.get("tool_use_id") not in used:
+                    return f"web_search_tool_result {b.get('tool_use_id')} has no server_tool_use before it"
+                answered.add(b["tool_use_id"])
+                if not declared:
+                    return f"`web_search` tool use found, but no `web_search` tool was provided"
+                content = b.get("content")
+                if isinstance(content, list) and any(not str(r.get("encrypted_content", "")).startswith("enc-") for r in content):
+                    return "encrypted_content is missing or was changed"
+            elif kind == "text":
+                if any(not str(c.get("encrypted_index", "")).startswith("idx-") for c in b.get("citations") or []):
+                    return "encrypted_index is missing or was changed"
+    last = len(messages) - 1
+    only_results = bool(messages) and messages[last]["role"] == "user" and all(b.get("type") == "tool_result" for b in blocks(messages[last]))
+    for tool_id, i in used.items():
+        if tool_id in answered:
+            continue
+        if not declared:
+            return f"`web_search` tool use found, but no `web_search` tool was provided"
+        # Still open: only the end of the conversation may wait for its result.
+        if not (i == last or (i == last - 1 and only_results)):
+            return f"`web_search` tool use with id `{tool_id}` was found without a corresponding `web_search_tool_result` block"
+    return None
+
+
+def search_results(query):
+    return [{"type": "web_search_result", "url": f"https://example.com/{i}?q={uuid.uuid5(uuid.NAMESPACE_URL, query).hex[:6]}",
+             "title": f"Result {i} on {query}", "encrypted_content": f"enc-{i}", "page_age": "May 1, 2026"} for i in (1, 2)]
+
+
+def search_reply(query, kind, rest):
+    """A reply's blocks and stop reason for a search task on the Messages API."""
+    uses = [b["id"] for m in rest for b in blocks(m) if b.get("type") == "server_tool_use"]
+    done = {b.get("tool_use_id") for m in rest for b in blocks(m) if b.get("type") == "web_search_tool_result"}
+    if uses and done.issuperset(uses):
+        return [{"type": "text", "text": "The search is done."}], "end_turn"
+    results = search_results(query)
+    answer = [{"type": "text", "text": f"Found on {query}: "},
+              {"type": "text", "text": "the first result says so", "citations": [{
+                  "type": "web_search_result_location", "url": results[0]["url"], "title": results[0]["title"],
+                  "encrypted_index": "idx-1", "cited_text": "says so"}]},
+              {"type": "text", "text": "."}]
+    if uses:
+        # The search that waited runs now: its result comes first in this reply.
+        return [{"type": "web_search_tool_result", "tool_use_id": uses[-1], "content": results}] + answer, "end_turn"
+    use = {"type": "server_tool_use", "id": "srvtoolu_" + uuid.uuid4().hex[:12], "name": "web_search", "input": {"query": query}}
+    if kind and kind.lower().startswith("with"):
+        return [{"type": "text", "text": "Looking it up."}, use], "pause_turn"
+    if kind:
+        return [use, {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": "project_inspect", "input": {}}], "tool_use"
+    return [{"type": "text", "text": "Looking it up."}, use,
+            {"type": "web_search_tool_result", "tool_use_id": use["id"], "content": results}] + answer, "end_turn"
 
 
 def cache_marked(body):
@@ -483,6 +571,8 @@ def plan_violations(body: dict) -> list[tuple[str, str]]:
         if f in body:
             out.append((f, f"{f} is not supported"))
     for t in body.get("tools", []):
+        if t.get("type") == "web_search":
+            continue
         if t.get("type") != "namespace" or not t.get("tools"):
             out.append(("tools", "function tools must be grouped in a namespace"))
     names = {t.get("name") for t in body.get("tools", [])}
@@ -503,6 +593,7 @@ class Handler(BaseHTTPRequestHandler):
     cut = False
     cached = False
     lock = threading.Lock()
+    requests: list = []
 
     def log_message(self, *args):
         pass
@@ -527,6 +618,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/.well-known/jwks.json":
             self._json({"keys": [{"kty": "RSA", "kid": KID, "use": "sig", "alg": "RS256",
                                   "n": b64url(int_bytes(RSA_N)), "e": b64url(int_bytes(RSA_E))}]})
+        elif url.path == "/fixture/requests":
+            with Handler.lock:
+                self._json(Handler.requests)
         elif url.path == "/fixture/chatgpt":
             with ChatGPT.lock:
                 self._json(ChatGPT.stats)
@@ -655,15 +749,28 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/v1/messages":
             self.send_error(404)
             return
-        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        raw = self.rfile.read(int(self.headers["content-length"]))
+        body = json.loads(raw)
+        names = [t["name"] for t in body.get("tools", [])]
+        self._note_request(names, raw)
         missing = unanswered_tool_uses(body["messages"])
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
             return
+        declared = "web_search" in names
+        if bad := search_replay_errors(body["messages"], declared):
+            self._error(400, bad)
+            return
+        search, rest = search_task(body["messages"])
+        if search and declared:
+            self._search_reply(body, search.group(1), search.group(2), rest)
+            return
         if system_text(body).startswith("You summarize"):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
+        elif search:
+            decision = ("text", "I have no way to search the web here.")
         else:
-            decision = decide(body["messages"], system_text(body), [t["name"] for t in body.get("tools", [])])
+            decision = decide(body["messages"], system_text(body), names)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
@@ -715,9 +822,60 @@ class Handler(BaseHTTPRequestHandler):
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
         self._event("message_stop", {"type": "message_stop"})
 
+    def _note_request(self, tools, raw, include=None):
+        with Handler.lock:
+            Handler.requests.append({"path": self.path, "tools": tools, "include": include,
+                                     "names_web_search": b"web_search" in raw})
+
+    def _search_reply(self, body, query, kind, rest):
+        """A reply with the provider's search, block by block as the API streams it."""
+        reply, stop = search_reply(query, kind, rest)
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        self._event("message_start", {"type": "message_start", "message": {"usage": {"input_tokens": len(json.dumps(body["messages"])) // 4}}})
+        for i, b in enumerate(reply):
+            if b["type"] == "web_search_tool_result":
+                self._event("content_block_start", {"type": "content_block_start", "index": i, "content_block": b})
+            elif b["type"] == "text":
+                self._event("content_block_start", {"type": "content_block_start", "index": i, "content_block": {"type": "text", "text": ""}})
+                self._event("content_block_delta", {"type": "content_block_delta", "index": i, "delta": {"type": "text_delta", "text": b["text"]}})
+                for c in b.get("citations", []):
+                    self._event("content_block_delta", {"type": "content_block_delta", "index": i, "delta": {"type": "citations_delta", "citation": c}})
+            else:
+                self._event("content_block_start", {"type": "content_block_start", "index": i, "content_block": {**b, "input": {}}})
+                text = json.dumps(b["input"])
+                for at in range(0, len(text), 8):
+                    self._event("content_block_delta", {"type": "content_block_delta", "index": i, "delta": {"type": "input_json_delta", "partial_json": text[at:at + 8]}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": i})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 20}})
+        self._event("message_stop", {"type": "message_stop"})
+
+    def _responses_search(self, query):
+        """A reply with the Responses API's hosted search (made-up results)."""
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        results = search_results(query)
+        call = {"type": "web_search_call", "id": "ws_" + uuid.uuid4().hex[:12], "status": "in_progress"}
+        self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": 0, "item": call})
+        self._event("response.web_search_call.searching", {"type": "response.web_search_call.searching", "output_index": 0, "item_id": call["id"]})
+        self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": {
+            **call, "status": "completed",
+            "action": {"type": "search", "query": query, "queries": [query], "sources": [{"type": "url", "url": r["url"]} for r in results]}}})
+        text = f"Found on {query}."
+        self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 1, "delta": text})
+        self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 1, "item": {
+            "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": [{
+                "type": "url_citation", "url": results[0]["url"], "title": results[0]["title"], "start_index": 0, "end_index": len(text)}]}]}})
+        self._event("response.completed", {"type": "response.completed", "response": {"usage": {"input_tokens": 100, "output_tokens": 20}}})
+
     def _responses(self):
         """The same decisions over the OpenAI Responses API wire format."""
-        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        raw = self.rfile.read(int(self.headers["content-length"]))
+        body = json.loads(raw)
+        declared = any(t.get("type") == "web_search" for t in body.get("tools", []))
+        self._note_request(["web_search"] if declared else [], raw, body.get("include"))
         plan = (self.headers.get("authorization") or "").startswith("Bearer chatgpt-")
         if plan:
             if self._plan_client() is None:
@@ -754,8 +912,14 @@ class Handler(BaseHTTPRequestHandler):
                 messages[-1]["content"].append(block)
             else:
                 messages.append({"role": role, "content": [block]})
+        search, _ = search_task(messages)
+        if search and declared:
+            self._responses_search(search.group(1))
+            return
         if body.get("instructions", "").startswith("You summarize"):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
+        elif search:
+            decision = ("text", "I have no way to search the web here.")
         else:
             decision = decide(messages)
         self.send_response(200)

@@ -14,12 +14,14 @@
 | Mac のファイルで VM から見えるのは、開いているプロジェクトと、明示的に指定したフォルダだけ（§2） | [test_workers.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)（`test_mac_folders_are_read_only_unless_written`） |
 | RPC は `127.0.0.1` だけで待ち受け、token がなければ切断し、ブラウザのページからはつながらない（§6） | [test_transport.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_transport.py)、[test_frame_fuzz.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_frame_fuzz.py) |
 | Agent が Card の権限（ネットワーク・隔離なし・Mac のフォルダ）を広げる保存は、利用者の承認なしには通らない（§8） | [test_permissions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py) |
+| Web 検索は既定でオフで、オフの間はモデルにツールを見せず、要求にも載せない（§8） | [WebSearchTests.swift](https://github.com/gen740/Tsugumi/blob/main/macOS/CoreTests/Tests/CoreTests/WebSearchTests.swift)、[contract.ts](https://github.com/gen740/Tsugumi/blob/main/web/server/contract.ts) |
 | API キーとトークンは Keychain に置き、`tsugumid`・VM・Card には渡さない（§8） | [agent/Sources/TsugumiAgent/Provider.swift](https://github.com/gen740/Tsugumi/blob/main/agent/Sources/TsugumiAgent/Provider.swift)、[test_release.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_release.py)（アプリと Web UI が同じ Keychain 項目を使う） |
 | 他人から来たプロジェクトの `.tsugumi/` は、使う前に検査する | [test_untrusted_project.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_untrusted_project.py) |
 
 | 守っていないこと | 詳しく |
 | --- | --- |
 | Agent を使うと、Agent が読んだコード・ログ・入出力値はモデルのプロバイダへ送られる | [モデルに送られるもの](#モデルに送られるもの) |
+| Web 検索をオンにすると、検索語が検索サービスへ出る。未公開のデータが検索語に載らないことは保証できない（既定はオフ） | [Web 検索](#web-検索) |
 | 他人のプロジェクトを開くとき、`_card.json` に書かれた `network`・`sandbox: false`・`hostFolders` に確認は出ない | [§10](#10-既知の制限と注意事項) |
 | プロジェクト間の隔離は 1 つの Linux カーネルの上で、カーネルの脆弱性までは防げない | [§10](#10-既知の制限と注意事項) |
 | `network: false` でも、Nix の固定出力 derivation はビルド時に通信できる | [§5](#5-nix-評価の制限) |
@@ -235,10 +237,23 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - チャットに参照として追加した Card や可視化の情報
 - Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから `AttachedFolderRead` で読み取ったファイル内容など）
 - ガイドのツグミに質問したとき、またデモの案内中：質問文と、そのとき画面に出ているものの要約（プロジェクトの名前とフォルダ、表示中の Workflow の Card、選択した Card の状態と結果の要約、実行と接続の状態、同梱デモの一覧）、およびガイドが読み取りの tool で読んだ内容。ガイドは保存・実行・停止の tool を持たず、プロジェクトを変えません。
+- 設定の「API」で Web 検索をオンにしたとき：Agent が書いた検索語は、プロバイダからさらにその検索サービスへ渡ります（[Web 検索](#web-検索)）。
 
 **Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される**点に注意してください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。
 
 なお、**Agent を使用せず、かつ `network: true` を有効にした Card も存在しない場合、プロジェクトの内容やデータが Mac とローカル VM の外へ出ることはありません**（Nix がパッケージを取得する通信を除く）。`network: true` を許可した Card は、その Card がアクセスできるデータ（入力値や指定したホストフォルダの内容など）を外部ネットワークへ送信できます。
+
+### Web 検索
+
+Agent が自分の判断で Web を検索できる設定です（設定の「API」の「Web 検索」）。**既定はオフ**で、オフの間はモデルにツールを見せず、要求にも規則にも載せません。
+
+- **検索はプロバイダが行います。** Anthropic の `web_search` と OpenAI の `web_search` を使い、Tsugumi は検索サービスに接続しません。新しい API キーも要りません。検索語はプロバイダのデータの扱いに従って扱われます。接続先の設定で検索が止められていると、その要求は失敗します（Anthropic の Console の組織設定、ChatGPT プランのモデルとワークスペースの方針）。
+- **検索語は外に出ます。未公開のデータが載る危険があります。** 検索語を書くのはモデルで、Tsugumi はその中身を検査しません。モデルには、未公開のデータ・結果・ファイルや Card の名前・パス・コードを検索語に入れないよう規則で指示していますが、**確実に防げるものではありません**。Agent が読んだ内容が検索語に混ざることはありえます。未公開の研究を扱うプロジェクトでは、接続先のプロバイダだけでなく検索サービスへ渡ってよいかまで考えて、オンにするか決めてください。
+- **検索したことは残ります。** 検索語と見つかった URL は、ほかの tool と同じようにチャットの行と会話の記録（`tools`・`messages`）に残り、応答が引用した出典は応答の下にリンクで出ます。行の詳細の URL もリンクです。リンクにするのは `http`・`https` だけです。応答が途中で失敗して破棄されても、検索の記録は残ります（検索語はもう出ているからです）。
+- **検索結果は外部の文章です。** 結果に Agent への指示が書かれている可能性があります。モデルには指示として扱わないよう規則で伝えていますが、これも保証ではありません。Card の権限を広げる保存が利用者の承認なしに通らないこと（[Agent の権限境界](#agent-の権限境界)）は、検索しても変わりません。
+- **使えるのはチャットの Agent だけです。** helper（`delegate`）とガイドのツグミには渡しません。helper はチャットの Agent が渡した指示で働き、ガイドはアプリの説明が役目です。ローカル fixture には検索がないので、オンでも現れません。
+- **回数と料金。** Anthropic では 1 ターンの検索を 5 回までに制限しています。OpenAI には同じ制限がありません。検索はトークンとは別に課金されることがあります（プロバイダの料金表を確認してください）。
+- Anthropic は基本の版（`web_search_20250305`）を使います。動的フィルタのある新しい版はプロバイダの側でコードを実行し、zero data retention の対象外になるからです。検索結果は暗号化された形で会話の記録（Mac の会話ファイル、Web のデータフォルダ）に残り、次の要求でプロバイダへ送り返します。設定をオフにした後は、この形では送らず、検索語と URL を文にして送ります。
 
 ### Agent の権限境界
 

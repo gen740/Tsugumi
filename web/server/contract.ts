@@ -10,7 +10,8 @@ import { BFBS } from '../src/shared/bfbs'
 import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { AGENT, draftRequest } from '../src/shared/agentShared'
 import os from 'node:os'
-import { Agent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, readsLatestInstead, referenceDemos, ToolCatalog } from './agent'
+import { spawn } from 'node:child_process'
+import { Agent, AgentEvent, approvalRequired, DEMO_SKILL, delegateTasks, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -114,6 +115,150 @@ for (const c of fixture.approvalRequired) assert.deepEqual(approvalRequired(c.js
   assert.equal(readsLatestInstead(false, 'revision_conflict', args), true)
   assert.deepEqual(args, {})
   assert.equal(readsLatestInstead(false, 'revision_conflict', args), false, 'nothing more to take away')
+}
+
+// Web search is the provider's own tool: off, the model never hears of it; on,
+// a search shows like any tool, its sources can be followed, and its blocks go
+// back to the API as they came (the fixture refuses them otherwise). The same
+// cases as macOS/CoreTests (WebSearchTests).
+{
+  const fixture = spawn('python3', [path.join(root, 'tests/fixtures/model_fixture.py'), '--port', '0'], { stdio: ['ignore', 'pipe', 'inherit'] })
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-search-'))
+  try {
+    const base = await new Promise<string>((resolve, reject) => {
+      fixture.stdout!.on('data', (d: Buffer) => {
+        const m = /http:\/\/127\.0\.0\.1:\d+/.exec(String(d))
+        if (m) resolve(m[0])
+      })
+      fixture.once('exit', () => reject(new Error('the fixture ended')))
+    })
+    const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean }[]
+    const catalog = new ToolCatalog(schema)
+    const noRpc = async () => { throw new Error('no rpc in this check') }
+    const provider = (webSearch: boolean, api: ProviderConfig['api'] = 'anthropicMessages'): ProviderConfig => ({
+      name: 'Test', baseURL: base, model: 'fixture', api, auth: 'apiKey', apiKey: 'fixture-key', maxTokens: 32768, contextLimit: 180_000, webSearch })
+    let serial = 0
+    const agentWith = (p: ProviderConfig) => { serial++; return new Agent(catalog, noRpc, p, path.join(tmp, `${serial}.json`), `c${serial}`) }
+    const turn = (a: Agent, text: string) => new Promise<AgentEvent[]>((resolve) => {
+      const events: AgentEvent[] = []
+      a.send(text, text, (e) => {
+        events.push(e)
+        if (e.kind === 'finished' || e.kind === 'error' || e.kind === 'stepLimit') resolve(events)
+      })
+    })
+    const says = (events: AgentEvent[]) => events.flatMap((e) => (e.kind === 'text' ? [e.text] : [])).join('')
+    const offered = (a: Agent) => a.tools.map((t) => t.name)
+    const finished = (events: AgentEvent[]) => assert.equal(events[events.length - 1].kind, 'finished', JSON.stringify(events[events.length - 1]))
+
+    // Off (the default): no tool, not a word about it in the request.
+    const off = agentWith({ ...provider(false), webSearch: undefined })
+    assert.ok(!offered(off).includes('web_search'))
+    assert.ok(!off.system.includes('web_search'))
+    let events = await turn(off, 'search the web for tsugumi')
+    finished(events)
+    assert.match(says(events), /no way to search/)
+    assert.equal((await requests()).at(-1)?.names_web_search, false, 'off, the request names web_search')
+
+    // On, but not for the local fixture (it has no search), the guide or a helper.
+    const none: ProviderConfig = { name: 'Local fixture', baseURL: base, model: 'fixture', api: 'anthropicMessages', auth: 'none', maxTokens: 32768, contextLimit: 6000, webSearch: true }
+    assert.ok(!offered(agentWith(none)).includes('web_search'))
+    assert.ok(!offered(new Agent(catalog, noRpc, provider(true), path.join(tmp, 'g.json'), 'g', {}, undefined, 'guide')).includes('web_search'))
+    assert.ok(!offered(new Agent(catalog, noRpc, provider(true), path.join(tmp, 'h.json'), 'h', {}, { name: 'h', cards: ['h'], instruction: '' })).includes('web_search'))
+
+    // On: the tool list changes, and the search is the provider's.
+    const on = agentWith(provider(true))
+    assert.equal(offered(on)[0], 'web_search')
+    assert.equal(offered(on).length, offered(off).length + 1)
+    assert.ok(on.system.includes('web_search'), 'the rules say what a query may not hold')
+    const body = messagesBody(provider(true), on.system, [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], on.tools) as { tools: Record<string, unknown>[] }
+    assert.deepEqual(body.tools[0], { type: AGENT.webSearch.anthropicType, name: 'web_search', max_uses: AGENT.webSearch.maxUses })
+    assert.ok(body.tools[body.tools.length - 1].cache_control, 'the last tool ends the cached prefix')
+
+    events = await turn(on, 'search the web for tsugumi')
+    finished(events)
+    assert.deepEqual((await requests()).at(-1)?.tools[0], 'web_search')
+    const started = events.find((e) => e.kind === 'toolStarted')
+    assert.ok(started?.kind === 'toolStarted' && started.name === 'web_search' && JSON.parse(started.arguments).query === 'tsugumi', JSON.stringify(started))
+    const done = events.find((e) => e.kind === 'toolFinished')
+    assert.ok(done?.kind === 'toolFinished' && done.ok && done.summary.includes('https://example.com/1'), JSON.stringify(done))
+    assert.match(says(events), /\[Result 1 on tsugumi\]\(https:\/\/example\.com\/1/, 'the cited source is a link')
+    const record = on.conversation.tools.find((t) => t.name === 'web_search')
+    assert.ok(record?.state === 'completed' && record.result?.includes('https://example.com/2') && JSON.parse(record.arguments).query === 'tsugumi', JSON.stringify(record))
+    const reply = on.conversation.messages[1]
+    assert.ok(reply.content.some((b) => b.type === 'web_search' && b.sources.length === 2), JSON.stringify(reply.content))
+    assert.ok(JSON.stringify(reply.providerContent).includes('enc-1'), 'the reply is kept as the provider sent it')
+    // The next request sends it back (the fixture refuses it changed or left out).
+    finished(await turn(on, 'thanks'))
+    const again = messagesBody(provider(true), on.system, on.conversation.messages, on.tools) as { messages: { content: Record<string, unknown>[] }[] }
+    assert.ok(JSON.stringify(again.messages[1].content).includes('encrypted_index'), JSON.stringify(again.messages[1]))
+    // A saved conversation reads back with it.
+    assert.deepEqual(new Agent(catalog, noRpc, provider(true), on.storage, on.id).conversation.messages[1], reply)
+
+    // Turned off later: the tool and its blocks leave the request, the fact of the search stays.
+    on.setProvider(provider(false))
+    assert.ok(!offered(on).includes('web_search'))
+    finished(await turn(on, 'thanks again'))
+    assert.equal((await requests()).at(-1)?.names_web_search, false, 'turned off, the request names web_search')
+    const later = messagesBody(provider(false), on.system, on.conversation.messages, on.tools) as { messages: { content: { text?: string }[] }[] }
+    assert.ok(later.messages[1].content.some((b) => b.text?.includes('[web search: tsugumi')), JSON.stringify(later.messages[1]))
+
+    // pause_turn: the paused reply goes back unchanged, with no message added, and the turn goes on.
+    const paused = agentWith(provider(true))
+    events = await turn(paused, 'search the web for tsugumi with a pause')
+    finished(events)
+    assert.equal(paused.conversation.messages.filter((m) => m.role === 'user').length, 1)
+    assert.ok(events.some((e) => e.kind === 'toolFinished' && e.name === 'web_search' && e.ok), JSON.stringify(events))
+    finished(await turn(paused, 'thanks'))
+
+    // A search called beside a tool of ours runs once that tool's result is back.
+    const mixed = agentWith(provider(true))
+    events = await turn(mixed, 'search the web for tsugumi alongside inspect')
+    finished(events)
+    assert.ok(mixed.conversation.messages.flatMap((m) => m.content).some((b) => b.type === 'web_search' && b.sources.length === 2), JSON.stringify(mixed.conversation.messages))
+    assert.ok(mixed.conversation.tools.some((t) => t.name === 'web_search' && t.state === 'completed'))
+    finished(await turn(mixed, 'thanks'))
+
+    // A search left open by a stopped turn cannot go back as it is (the API refuses it): it goes in words.
+    const stopped = agentWith(provider(true))
+    stopped.conversation.messages.push(
+      { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      { role: 'assistant', content: [{ type: 'web_search', id: 'srvtoolu_open', query: 'open', sources: [] }],
+        providerContent: [{ type: 'server_tool_use', id: 'srvtoolu_open', name: 'web_search', input: { query: 'open' } }] })
+    finished(await turn(stopped, 'thanks'))
+
+    // The Responses API: its hosted tool, with the sources asked for.
+    const responses = agentWith(provider(true, 'openAIResponses'))
+    assert.ok(offered(responses).includes('web_search'))
+    events = await turn(responses, 'search the web for tsugumi')
+    finished(events)
+    const seen = (await requests()).at(-1)
+    assert.ok(seen?.tools.includes('web_search') && seen.include?.includes('web_search_call.action.sources'), JSON.stringify(seen))
+    assert.ok(events.some((e) => e.kind === 'toolFinished' && e.name === 'web_search' && e.summary.includes('https://example.com/2')), JSON.stringify(events))
+    assert.match(says(events), /\[Result 1 on tsugumi\]\(https:\/\/example\.com\/1/)
+    // Its history carries the search in words (no call item: nothing of the results could come back).
+    finished(await turn(responses, 'thanks'))
+    const input = responsesBody(provider(true, 'openAIResponses'), responses.system, responses.conversation.messages, responses.tools).input as unknown[]
+    assert.ok(JSON.stringify(input).includes('[web search: tsugumi') && !JSON.stringify(input).includes('web_search_call'), JSON.stringify(input))
+    finished(await turn(agentWith(provider(false, 'openAIResponses')), 'search the web for tsugumi'))
+    assert.equal((await requests()).at(-1)?.names_web_search, false)
+
+    // The ChatGPT plan: the hosted tool beside the namespace, and no include (not known to be accepted).
+    const plan: ProviderConfig = { ...provider(true, 'openAIResponses'), auth: 'chatgpt', apiKey: undefined, token: async () => 'token' }
+    const planBody = responsesBody(plan, 'rules', [], agentWith(plan).tools)
+    assert.deepEqual((planBody.tools as { type: string }[]).map((t) => t.type), ['namespace', 'web_search'])
+    assert.equal(planBody.include, undefined)
+    assert.ok(!((responsesBody(provider(false, 'openAIResponses'), 'rules', [], agentWith(provider(false, 'openAIResponses')).tools).tools as { type: string }[]).some((t) => t.type === 'web_search')))
+
+    // Sources come from the web: only http(s) links, and a title cannot break out of its link.
+    const text = sourcesText([{ url: 'javascript:alert(1)', title: 'x' }, { url: 'https://a.example/b)c', title: 'a]b\nc' }, { url: 'https://a.example/b)c' }])
+    assert.ok(!text.includes('javascript:'), text)
+    assert.equal(text.match(/https:/g)?.length, 1, text)
+    assert.ok(text.includes('[a b c](https://a.example/b%29c)'), text)
+    assert.equal(sourcesText([{ url: 'file:///etc/passwd' }]), '')
+  } finally {
+    fixture.kill()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
 }
 
 console.log(`contract: ${tools.length} tools, ${fixture.flatjson.length} FlatJSON cases, ${fixture.draftRequest.length} Draft requests`)

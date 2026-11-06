@@ -548,6 +548,7 @@ private struct APISettings: View {
   @AppStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
   @AppStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @AppStorage("agent.fixturePort") private var port = 8765
+  @AppStorage(AgentSettings.webSearchKey) private var webSearch = false
 
   var body: some View {
     Form {
@@ -582,6 +583,16 @@ private struct APISettings: View {
         Text("Agent が確認なしに Card に与えてよい権限")
       } footer: {
         Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      Section {
+        Toggle("Agent が自分の判断で Web を検索する", isOn: $webSearch)
+      } header: {
+        Text("Web 検索")
+      } footer: {
+        Text(provider == "fixture"
+             ? "ローカル fixture には検索がないため、オンでも使えません。"
+             : "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。")
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {

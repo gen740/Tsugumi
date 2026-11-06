@@ -301,7 +301,7 @@ public actor Agent {
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
-        var (blocks, stop) = try await modelTurn(events)
+        var (blocks, stop, providerContent) = try await modelTurn(events)
         if stop == "max_tokens" {
           // The reply was cut at the output limit, maybe inside a tool call:
           // nothing of it is executed; the model is asked for smaller steps.
@@ -318,8 +318,11 @@ public actor Agent {
           try conversation.save(storage)
           continue
         }
-        conversation.messages.append(ChatMessage(role: "assistant", content: blocks))
+        conversation.messages.append(ChatMessage(role: "assistant", content: blocks, providerContent: providerContent))
         try conversation.save(storage)
+        // The provider paused a long search turn: the reply goes back as it is,
+        // with nothing added, and the same request goes on (one more step).
+        if stop == "pause_turn" { continue }
         let uses = blocks.compactMap { b -> (String, String, String)? in
           if case .toolUse(let id, let name, let input) = b { return (id, name, input) }
           return nil
@@ -356,13 +359,21 @@ public actor Agent {
 
   /// One streamed model response; transient provider errors are retried with
   /// backoff before any of its tool calls has been executed.
-  private func modelTurn(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ([ContentBlock], String) {
+  private func modelTurn(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ([ContentBlock], String, String?) {
     var attempt = 0
     while true {
       var text = ""
       var tools: [Int: (id: String, name: String, json: String)] = [:]
       var order: [Int] = []
       var stopReason = "end_turn"
+      // Text and searches in the order they came; the sources the reply cites.
+      var parts: [ContentBlock] = []
+      var cited: [WebSource] = []
+      var providerContent: String?
+      func flushText() {
+        if !text.isEmpty { parts.append(.text(text)) }
+        text = ""
+      }
       do {
         for try await e in try provider.stream(system: system, messages: wireMessages(), tools: self.tools) {
           switch e {
@@ -377,6 +388,17 @@ public actor Agent {
             if let name = tools[i]?.name { events(.toolInput(index: i, name: name, delta: pj)) }
           case .blockStop:
             break
+          case .search(let id, let query):
+            flushText()
+            let search = WebSearch(id: id, query: query)
+            parts.append(.webSearch(search))
+            events(.toolStarted(id: id, name: Shared.data.webSearch.name, arguments: search.arguments))
+          case .searchResult(let id, let sources, let error):
+            try searchEnded(id: id, sources: sources, error: error, parts: &parts, events)
+          case .citation(let source):
+            cited.append(source)
+          case .providerContent(let json):
+            providerContent = json
           case .stop(let reason, let usage):
             stopReason = reason
             conversation.usage.inputTokens = usage.inputTokens
@@ -387,28 +409,63 @@ public actor Agent {
         }
         // A cancelled consumer sees the stream end normally; it is not an answer.
         try Task.checkCancellation()
-        var blocks: [ContentBlock] = []
-        if !text.isEmpty { blocks.append(.text(text)) }
+        let sources = WebSearch.sourcesText(cited)
+        if !sources.isEmpty {
+          text += sources
+          events(.text(sources))
+        }
+        flushText()
+        var blocks = parts
         for i in order {
           guard let t = tools[i] else { continue }
           blocks.append(.toolUse(id: t.id, name: t.name, input: t.json.isEmpty ? "{}" : t.json))
         }
-        return (blocks, stopReason)
+        return (blocks, stopReason, providerContent)
       } catch let e as MessagesProvider.HTTPStatusError where e.retryable && attempt < 3 {
         attempt += 1
         // The provider's retry-after when it gave one (rate limits), else backoff.
         let wait = min(120, max(e.retryAfter ?? 0, 0.5 * Double(1 << attempt)))
-        if !text.isEmpty { events(.discardText) }
+        if !text.isEmpty || !parts.isEmpty { events(.discardText) }
         events(.retrying("provider returned \(e.status); retry \(attempt) in \(Int(wait.rounded(.up))) s"))
         try await Task.sleep(for: .seconds(wait))
         continue
       } catch let e as URLError where attempt < 3 && e.code != .cancelled {
         attempt += 1
-        if !text.isEmpty { events(.discardText) }
+        if !text.isEmpty || !parts.isEmpty { events(.discardText) }
         events(.retrying("connection to the model failed (\(e.code.rawValue)); retry \(attempt)"))
       }
       try await Task.sleep(for: .milliseconds(500 * (1 << attempt)))
     }
+  }
+
+  /// A search's result: in this reply's blocks, or in an earlier reply's when
+  /// it waited for our tools. Recorded at once: the query has left, whatever
+  /// becomes of the reply.
+  private func searchEnded(id: String, sources: [WebSource], error: String?, parts: inout [ContentBlock],
+                           _ events: @escaping @Sendable (AgentEvent) -> Void) throws {
+    func filled(_ blocks: inout [ContentBlock]) -> WebSearch? {
+      for i in blocks.indices {
+        guard case .webSearch(var s) = blocks[i], s.id == id else { continue }
+        s.sources = sources
+        s.error = error
+        blocks[i] = .webSearch(s)
+        return s
+      }
+      return nil
+    }
+    var search = filled(&parts)
+    if search == nil {
+      for m in conversation.messages.indices.reversed() {
+        search = filled(&conversation.messages[m].content)
+        if search != nil { break }
+      }
+    }
+    let done = search ?? WebSearch(id: id, query: "", sources: sources, error: error)
+    conversation.tools.removeAll { $0.id == id }
+    conversation.tools.append(ToolRecord(id: id, name: Shared.data.webSearch.name, arguments: done.arguments, state: .completed,
+                                         result: done.summary, isError: error != nil))
+    try conversation.save(storage)
+    events(.toolFinished(id: id, name: Shared.data.webSearch.name, ok: error == nil, summary: done.summary))
   }
 
   private func wireMessages() -> [ChatMessage] {
@@ -424,8 +481,16 @@ public actor Agent {
     if role == .guide {
       return catalog.tools.filter { Shared.data.guide.tools.contains($0.name) } + reference + [Self.guideShowTool]
     }
-    return catalog.tools + reference + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
+    return (searches ? [Self.webSearchTool] : []) + catalog.tools + reference + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
   }
+
+  /// The main Agent may search, when the setting is on (the helpers work from
+  /// what it tells them; the guide explains the app).
+  var searches: Bool { role == .worker && helper == nil && providerConfig.searchesWeb }
+
+  static let webSearchTool = ToolSpec(
+    name: Shared.data.webSearch.name, requestName: "", payloadType: 0, object: -1, description: "", inputSchema: [:],
+    mutating: false, server: true)
 
   static let guideShowTool = ToolSpec(
     name: Shared.data.guide.showTool.name, requestName: "", payloadType: 0, object: -1,
@@ -852,6 +917,7 @@ public actor Agent {
         case .text(let t): transcript += "\(m.role): \(t)\n"
         case .toolUse(_, let n, let a): transcript += "tool call \(n) \(a.prefix(500))\n"
         case .toolResult(_, let c, let e): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
+        case .webSearch(let s): transcript += s.note + "\n"
         }
       }
     }

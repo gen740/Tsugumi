@@ -286,6 +286,8 @@ final class ChatController {
             out[j].tool?.ok = !e
             out[j].text += "\n→ " + String(c.prefix(400))
           }
+        case .webSearch(let s):
+          out.append(Item(role: "tool", text: s.arguments + "\n→ " + s.summary, tool: ("web_search", s.error == nil), archived: archived))
         }
       }
     }
@@ -752,17 +754,24 @@ enum AgentSettings {
     case "chatgpt":
       var c = ProviderConfig.chatGPT
       if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     case "openai":
       var c = ProviderConfig.openAI
       if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     default:
       var c = ProviderConfig.anthropic
       if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     }
   }
+
+  /// The chat's Agent may search the web through the provider (Settings > API;
+  /// off until the user turns it on: its queries leave for a search service).
+  static let webSearchKey = "agent.webSearch"
 
   /// Where a connection keeps its chosen model.
   static func modelKey(_ provider: String) -> String {

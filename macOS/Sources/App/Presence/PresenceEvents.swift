@@ -41,6 +41,7 @@ enum PresenceEvents {
     case "attached_folder_read": String(localized: "添えられたフォルダを読んでいます")
     case "run_cancel": String(localized: "実行を止めています")
     case "delegate": String(localized: "手分けして進めています")
+    case "web_search": String(localized: "Web を検索しています")
     default: nil
     }
   }
