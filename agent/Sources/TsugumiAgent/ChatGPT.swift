@@ -369,21 +369,29 @@ public actor ChatGPTAuth {
 
   // MARK: Tokens
 
+  public struct AccessToken: Sendable {
+    public let clientId: String
+    public let value: String
+  }
+
   /// The active account's access token, refreshed near its expiry. `stale`
   /// is a token the API refused: it is refreshed unless another refresh
   /// already replaced it. Without `asking` the record is read without the
   /// keychain's access dialog (it fails instead, and nothing changes).
-  public func accessToken(replacing stale: String? = nil, asking: Bool = true) async throws -> String {
+  public func accessToken(replacing stale: AccessToken? = nil, asking: Bool = true) async throws -> AccessToken {
     guard let s = load(asking: asking), let id = s.active, let a = s.accounts.first(where: { $0.clientId == id }) else {
       throw ChatGPTError.signInRequired("no ChatGPT account is signed in")
     }
+    if let stale, stale.clientId != id { throw ChatGPTError.failed("the active account changed; try again") }
     guard a.signedIn, let current = a.accessToken else { throw ChatGPTError.signInRequired("signed out") }
     guard a.planEnabled else { throw ChatGPTError.planNotEnabled }
-    if stale == nil && !a.expiresSoon() { return current }
+    let needsRefresh = stale.map { $0.value == current } ?? a.expiresSoon()
+    if !needsRefresh { return AccessToken(clientId: id, value: current) }
     // Not cancelled with the turn: once OpenAI rotated the refresh token, the
     // answer must be saved, or the next refresh reuses the old token and the
     // account is signed out.
-    return try await Task { try await self.refreshLocked(id: id, stale: stale, asking: asking) }.value
+    let value = try await Task { try await self.refreshLocked(id: id, stale: stale?.value, asking: asking) }.value
+    return AccessToken(clientId: id, value: value)
   }
 
   private func refreshLocked(id: String, stale: String?, asking: Bool) async throws -> String {
@@ -393,6 +401,8 @@ public actor ChatGPTAuth {
             let refresh = a.refreshToken else {
         throw ChatGPTError.signInRequired("signed out")
       }
+      guard s.active == id else { throw ChatGPTError.failed("the active account changed; try again") }
+      guard a.planEnabled else { throw ChatGPTError.planNotEnabled }
       if stale == nil ? !a.expiresSoon() : current != stale { return current }
       let r = try await refreshRequest(clientId: id, refreshToken: refresh)
       // May ask whatever the caller said: the rotated refresh token must be saved.

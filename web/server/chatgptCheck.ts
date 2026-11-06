@@ -15,7 +15,7 @@ import { Agent, AgentEvent, listModels, ProviderConfig, ToolCatalog } from './ag
 import { ChatGPTAuth, ChatGPTError, endpointsFor, USAGE_LIMIT_TEXT } from './chatgpt'
 
 const [root] = process.argv.slice(2)
-const fixture = spawn('python3', [path.join(root, 'tests/fixtures/model_fixture.py'), '--port', '0', '--chatgpt-expires', '1'], { stdio: ['ignore', 'pipe', 'inherit'] })
+const fixture = spawn('python3', [path.join(root, 'tests/fixtures/model_fixture.py'), '--port', '0', '--chatgpt-expires', '1', '--refuse-model-lists', '3'], { stdio: ['ignore', 'pipe', 'inherit'] })
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-chatgpt-'))
 try {
   const issuer = await new Promise<string>((resolve, reject) => {
@@ -43,7 +43,11 @@ try {
 
   const provider: ProviderConfig = { name: 'ChatGPT', baseURL: issuer, model: 'fixture', api: 'openAIResponses', auth: 'chatgpt',
     token: (stale) => auth.accessToken(stale), maxTokens: 32768, contextLimit: 180_000 }
+  // Two refusals must stop one lookup. The next lookup recovers from the third.
+  await assert.rejects(listModels(provider), /401/)
+  assert.equal((await stats()).refreshes, 2) // near expiry, then one forced refresh
   assert.deepEqual(await listModels(provider), [{ id: 'fixture', label: 'Fixture model' }])
+  assert.equal((await stats()).refreshes, 4)
 
   const schema = new BFBS(new Uint8Array(fs.readFileSync(path.join(root, 'web/src/gen/tsugumi.bfbs'))))
   // No tsugumid: every tool call fails, so each step sends the history back with its calls.
@@ -74,6 +78,12 @@ try {
   assert.ok(last.client_id === r.account.clientId && last.agent_name_hint === undefined && last.id_token_hint === true, JSON.stringify(last))
   assert.equal(last.ext_agent_host_id, first.ext_agent_host_id)
 
+  const refused = await auth.accessToken()
+  const before = (await stats()).refreshes
+  const replacements = await Promise.all([auth.accessToken(refused), auth.accessToken(refused)])
+  assert.equal(replacements[0].value === replacements[1].value, true)
+  assert.equal((await stats()).refreshes, before + 1)
+
   assert.equal(await auth.signOut(r.account.clientId), true)
   assert.deepEqual(auth.accounts().map((a) => a.signedIn), [false])
   await assert.rejects(auth.accessToken(), ChatGPTError)
@@ -81,6 +91,11 @@ try {
   assert.ok(!record.includes('chatgpt-access-') && !record.includes('chatgpt-refresh-'))
   s = await stats()
   assert.equal(s.revoked, 1)
+  const second = await auth.begin()
+  await fetch(second.url)
+  await second.done
+  await assert.rejects(auth.accessToken(refused), /active account changed/)
+  assert.equal((await stats()).refreshes, s.refreshes)
   console.log(`chatgpt: signed in, ${s.plan_requests} plan requests, ${s.refreshes} refreshes, usage limit, signed out`)
 } finally {
   fixture.kill()
