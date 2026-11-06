@@ -26,10 +26,12 @@ from __future__ import annotations
 import importlib
 import os
 import sys
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import _tsugumi_host as _host
-import flatbuffers
+
+if TYPE_CHECKING:
+    import flatbuffers
 
 __all__ = ["Context", "Failure"]
 
@@ -111,6 +113,10 @@ class Context:
 
     # -- outputs --
     def builder(self, size: int = 1024) -> flatbuffers.Builder:
+        # Not at the top: it imports numpy, and with it the native libraries that read
+        # their settings as they load. The top of the Card's main.py comes before them.
+        import flatbuffers
+
         return flatbuffers.Builder(size)
 
     def output(self, port: str, builder: flatbuffers.Builder, root: Optional[int] = None) -> None:

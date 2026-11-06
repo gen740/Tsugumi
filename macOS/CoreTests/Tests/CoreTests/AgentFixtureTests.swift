@@ -682,8 +682,10 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let (demos, e5) = await agent.readReference("demos")
     let listed = demos.split(separator: "\n").map(String.init)
     #expect(!e5 && Set(["collatz/", "live-stream/", "plots/", "report/"]).isSubset(of: listed))
-    #expect(Set(["casa/", "casa-draft/", "gw150914/", "dynamics-draft/"]).isDisjoint(with: listed))
-    for hidden in ["demos/casa", "demos/casa/definitions/bands/src/main.py", "demos/casa-draft", "demos/gw150914/tsugumi.json"] {
+    #expect(Set(["casa/", "casa-draft/", "gw150914/", "dynamics-draft/", "mnist-classifiers/", "mnist-classifiers-draft/"]).isDisjoint(with: listed))
+    for hidden in ["demos/casa", "demos/casa/definitions/bands/src/main.py", "demos/casa-draft", "demos/gw150914/tsugumi.json",
+                   "demos/mnist-classifiers", "demos/mnist-classifiers/definitions/cnn/src/main.py",
+                   "demos/mnist-classifiers-draft", "demos/mnist-classifiers-draft/definitions/load/src/main.py"] {
       let (_, e) = await agent.readReference(hidden)
       #expect(e, "\(hidden) is readable")
     }

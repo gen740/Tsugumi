@@ -388,6 +388,40 @@ def test_python_card_environment(env):
     check_python_card_environment(c)
 
 
+# As the guide says to limit threads, with a library that takes it as it loads.
+THREADS_MAIN = '''
+import os, sys
+FIRST = "numpy" not in sys.modules
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import json
+import numpy as np
+import sklearn.neighbors
+from threadpoolctl import threadpool_info
+
+def main(ctx):
+    ctx.display_text(json.dumps({"first": FIRST, "threads": [i["num_threads"] for i in threadpool_info()]}))
+'''
+
+THREADS_NIX = PYTHON_NIX.replace("src = ./src;", "src = ./src; packages = ps: [ ps.numpy ps.scikit-learn ps.threadpoolctl ];") % ""
+
+
+def check_threads_limited_at_the_top(c) -> None:
+    _, shown = shown_by_probe(c)
+    seen = json.loads(shown)
+    assert seen["first"], "numpy was loaded before the top of main.py"
+    assert seen["threads"] and set(seen["threads"]) == {1}, seen
+
+
+def test_python_card_limits_threads_at_the_top_of_main(env):
+    defs, cards, conns, files = python_probe_project(THREADS_MAIN)
+    defs["show"]["_nix"] = THREADS_NIX
+    write(env.project, defs, cards, conns, files)
+    c = env.client()
+    reload(c)
+    check_threads_limited_at_the_top(c)
+
+
 def test_python_displays(env):
     main = '''
 import struct, zlib

@@ -1,0 +1,16 @@
+{
+  "description": "k 近傍法で数字を当てる",
+  "content": "テスト画像ごとに訓練画像との距離を総当たりで求め、近い k 枚の多数決で数字を当てる。scikit-learn の KNeighborsClassifier（algorithm=\"brute\"）を使う。k はパラメータにする（既定 3）。間違えたテスト画像の数枚を、その近傍の訓練画像と並べて図に足す。data は prepare の npz ファイルのパスで、train_images と test_images は 0〜1 に揃えた 784 次元の配列、train_labels と test_labels は数字、digest はテスト画像の指紋。OMP_NUM_THREADS=1 を main.py の先頭（import より前）で設定して 1 スレッドで動かす。学習と予測の時間は time.process_time() の差で測る。出力 result の型は 7 つの分類器で同じで、compare が 1 つの型で読むので、_outputs.fbs は一字も変えずに 「namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;」とする。model は Card の id、settings はパラメータの値の文字列、digest は受け取った値をそのまま、predictions はテスト全枚の予測。正解率・時間と、間違いの内訳（正解と予測の 10×10 の表）を matplotlib の図で表示する。次を assert で確かめる: predictions の長さがテスト枚数と等しいこと、予測がすべて 0〜9 であること、正解率が 0.93 以上であること、k=1 の予測が、テスト画像の先頭 100 枚について numpy で距離を総当たりして求めた最近傍のラベルと一致すること、k=1 で訓練画像の先頭 100 枚を予測すると全部当たること。numpy・matplotlib・scikit-learn を使う。",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare の部分データ（npz ファイルのパス）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "正解率、CPU 時間、設定、テスト全枚の予測"
+    }
+  ]
+}

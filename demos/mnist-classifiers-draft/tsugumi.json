@@ -1,0 +1,227 @@
+{
+  "name": "MNIST · 手書き数字の分類器くらべ",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "prepare"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "knn"
+      },
+      {
+        "id": "logistic"
+      },
+      {
+        "id": "svm"
+      },
+      {
+        "id": "forest"
+      },
+      {
+        "id": "boosting"
+      },
+      {
+        "id": "mlp"
+      },
+      {
+        "id": "cnn"
+      },
+      {
+        "id": "compare"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "dataset"
+        },
+        "to": {
+          "card": "prepare",
+          "port": "dataset"
+        }
+      },
+      {
+        "from": {
+          "card": "prepare",
+          "port": "subset"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "knn"
+        },
+        "to": {
+          "card": "knn",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "knn",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "knn"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "logistic"
+        },
+        "to": {
+          "card": "logistic",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "logistic",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "logistic"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "svm"
+        },
+        "to": {
+          "card": "svm",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "svm",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "svm"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "forest"
+        },
+        "to": {
+          "card": "forest",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "forest",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "forest"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "boosting"
+        },
+        "to": {
+          "card": "boosting",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "boosting",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "boosting"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "mlp"
+        },
+        "to": {
+          "card": "mlp",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "mlp",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "mlp"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "cnn"
+        },
+        "to": {
+          "card": "cnn",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "cnn",
+          "port": "result"
+        },
+        "to": {
+          "card": "compare",
+          "port": "cnn"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "compare"
+        },
+        "to": {
+          "card": "compare",
+          "port": "data"
+        }
+      }
+    ]
+  }
+}

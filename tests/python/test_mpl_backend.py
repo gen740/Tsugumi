@@ -184,3 +184,13 @@ def test_a_display_of_the_card_is_not_replaced_by_a_figure_left_open(run):
         res = call(body); res["texts"] = h.texts; print(json.dumps(res))
     ''')
     assert r["ok"] and r["frames"] == 0 and r["texts"] == ["the result"] and r["open"] == []
+
+
+def test_the_sdk_loads_no_native_library_before_the_card(tmp_path):
+    """flatbuffers imports numpy. Were the SDK to import it first, the top of a
+    Card's main.py would be too late for what numpy's libraries read as they load."""
+    (tmp_path / "_tsugumi_host.py").write_text(HOST)
+    env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{ROOT / 'sdk' / 'python'}"}
+    code = 'import sys, tsugumi; print(sorted({"numpy", "flatbuffers"} & set(sys.modules)))'
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip() == "[]", out.stdout + out.stderr
