@@ -1,0 +1,10 @@
+{
+  "description": "サポートベクターマシン（RBF）",
+  "content": "RBF カーネルの SVM（scikit-learn の SVC、1 スレッド）。C は誤りへの罰の強さ、gamma はカーネルの幅の逆数。正解率・時間・間違いの内訳と、数字ごとのサポートベクター数を表示し、テスト全枚の予測を compare に渡す。",
+  "outputs": [
+    {
+      "name": "result",
+      "description": "正解率、CPU 時間、設定、テスト全枚の予測"
+    }
+  ]
+}

@@ -5,6 +5,7 @@
 3. Saved inputs for a single-Card run keep File contents across CacheClear and restarts.
 4. A run stalled by a full downstream queue ends instead of hanging
    (needs a code Card feedback loop: test_cards_container.py).
+5. A Logger Card shows numbers exactly (it used to keep 12 decimals, so 1e-20 was 0.0).
 """
 
 from __future__ import annotations
@@ -140,7 +141,9 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path):
 
 def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
     """Cancelling as a run starts, runs or ends: callbacks of a run that has
-    ended still find it (they hold it), so tsugumid answers throughout."""
+    ended still find it (they hold it), so tsugumid answers throughout, and the
+    run always ends (a cancel just after its final status was taken once wrote
+    "cancelling" over it, about 1 attempt in 100: hence the many attempts)."""
     from projects import builtin_project, start_run, wait_run
     root = tmp_path / "p"
     builtin_project(root)
@@ -148,10 +151,10 @@ def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
     try:
         c = d.client()
         c.hello()
-        for i in range(30):
+        for i in range(150):
             rid = start_run(c, "start")
             if i % 3:
-                time.sleep(0.001 * i)
+                time.sleep(0.0005 * (i % 30))
             try:
                 c.call("RunCancelRequest", runId=rid)
             except RpcFailure:
@@ -159,5 +162,38 @@ def test_cancel_at_any_moment_of_a_run_keeps_tsugumid_well(tmp_path):
             wait_run(c, rid, timeout=60)
         assert d.proc.poll() is None
         c.call("ProjectInspectRequest")
+    finally:
+        d.cleanup()
+
+
+def test_a_logger_shows_numbers_exactly(tmp_path):
+    root = tmp_path / "p"
+    write(root,
+          defs={"trigger": {"template": "trigger"},
+                "reading": {"template": "input",
+                            "params": [{"name": "rate", "type": "double", "data": 0.042169650342858},
+                                       {"name": "tiny", "type": "double", "data": 1e-20}],
+                            "_outputs": """
+namespace nums;
+table Reading { rate:double; tiny:double; }
+table Outputs { reading:Reading (required); }
+root_type Outputs;
+"""},
+                "fork": {"template": "fork"},
+                "log": {"template": "logger"},
+                "notes": {"template": "logger", "markdown": True}},
+          cards=[card("src", "reading"), card("split", "fork"), card("plain", "log"), card("md", "notes")],
+          conns=[conn("src", "reading", "split", "in"), conn("split", "out1", "plain", "in"), conn("split", "out2", "md", "in")])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        run_id, st = run_and_wait(c, "src")
+        assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+        line = '{"rate": 0.042169650342858,"tiny": 1e-20}'
+        shown = lambda card_id: c.call("RunRecordRequest", runId=run_id, card=path(card_id)).record.display.value
+        assert text(shown("plain").text) == line
+        assert text(c.call("LogRangeRequest", runId=run_id, card=path("plain"), invocation=1, stream=1).text) == line + "\n"
+        assert shown("md").markdown and text(shown("md").text) == "```json\n" + line + "\n```"
     finally:
         d.cleanup()

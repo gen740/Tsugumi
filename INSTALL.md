@@ -8,6 +8,8 @@
 
 [GitHub Releases](https://github.com/gen740/Tsugumi/releases) の最新版を `/Applications` に入れます。
 
+`Tsugumi.dmg` を開いて `Applications` へドラッグするか、次のコマンドで入れます。
+
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
@@ -32,7 +34,7 @@ xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 
 以下はアプリを作る手順と、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
 
-ソースからビルドしたアプリは**開発版（Tsugumi Dev）**です。リリース版とは別のアプリとして扱われ（bundle id `app.tsugumi.Tsugumi.dev`）、VM・Nix store・control フォルダ・会話履歴を `~/Library/Application Support/Tsugumi-dev/` に置きます（リリース版は `Tsugumi/`）。そのため、開発版や開発版で回すテストがリリース版の VM を止めたり初期化したりすることはなく、両方を同時に起動できます。開発版は自動更新しません。
+ソースからビルドしたアプリは**開発版**（Tsugumi Dev）です。リリース版とは別のアプリとして扱われ（bundle id `app.tsugumi.Tsugumi.dev`）、VM・Nix store・control フォルダ・会話履歴を `~/Library/Application Support/Tsugumi-dev/` に置きます（リリース版は `Tsugumi/`）。そのため、開発版や開発版で回すテストがリリース版の VM を止めたり初期化したりすることはなく、両方を同時に起動できます。開発版は自動更新しません。
 
 ### 前提環境
 

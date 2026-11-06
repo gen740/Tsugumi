@@ -130,7 +130,7 @@ rec {
   # the binary cache for the VM (aarch64-linux), and their tests pull large
   # builds (narwhals: duckdb; plotly: nodejs, bokeh, xarray): a Card using
   # plotly or altair took over half an hour to build the first time, against
-  # a minute or two without the tests.
+  # a minute or two without the tests. scikit-learn's suite adds over ten minutes.
   cardPython =
     let
       noCheck = p: p.overridePythonAttrs { doCheck = false; };
@@ -140,6 +140,7 @@ rec {
           narwhals = noCheck super.narwhals;
           plotly = noCheck super.plotly;
           altair = noCheck super.altair;
+          scikit-learn = noCheck super.scikit-learn;
         };
       };
     in
@@ -193,6 +194,45 @@ rec {
       '';
     };
 
+  # An R Card: `src/main.R` defines `main(ctx)` (sdk/r/tsugumi.R). R has no
+  # FlatBuffers generator, so the Card is a process that exchanges the port
+  # messages as JSON: `run` is a bash script and the result has no `sdk`.
+  # `packages` picks from nixpkgs' rPackages. `fonts`: what plots draw with
+  # (Latin, then Japanese); a Card has no system fonts in its sandbox.
+  rCard =
+    {
+      src,
+      packages ? (ps: [ ]),
+      fonts ? [ pkgs.dejavu_fonts pkgs.ipaexfont ],
+    }:
+    let
+      r = pkgs.rWrapper.override { packages = [ pkgs.rPackages.jsonlite ] ++ packages pkgs.rPackages; };
+    in
+    ''
+      export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = fonts; }}
+      exec ${r}/bin/Rscript --vanilla ${sdkRoot + "/r/tsugumi.R"} ${src}
+    '';
+
+  # A Julia Card: `src/main.jl` defines `main(ctx)` (sdk/julia/tsugumi.jl),
+  # a process that exchanges JSON as rCard does. `packages` are names from the
+  # General registry, fixed at build time by julia-bin.withPackages.
+  juliaCard =
+    { src, packages ? [ ] }:
+    let
+      # Linux takes it from the binary cache. A macOS host (development only:
+      # the app runs Cards in the Linux VM) would run Julia's whole test suite
+      # first, which takes over half an hour.
+      base =
+        if pkgs.stdenv.hostPlatform.isDarwin then
+          pkgs.julia-bin.overrideAttrs { doInstallCheck = false; }
+        else
+          pkgs.julia-bin;
+      julia = if packages == [ ] then base else base.withPackages packages;
+    in
+    ''
+      exec ${julia}/bin/julia --startup-file=no --history-file=no ${sdkRoot + "/julia/tsugumi.jl"} ${src}
+    '';
+
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.
   #   run      the body: a package (derivation; the worker loads its
@@ -201,6 +241,7 @@ rec {
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT)
   #   preRun   bash before the body, every invocation (also with a resident
   #            worker); no Card inputs; its environment and `cd` carry over
+  #            to the call, not to the loading of a package, which comes first
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)

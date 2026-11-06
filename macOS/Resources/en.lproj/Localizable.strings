@@ -4,7 +4,6 @@
 " · 未配置" = " · not placed";
 " ほか %lld" = " and %lld more";
 " 実行 %@ の結果はまだ確かめていません。" = " The result of run %@ has not been checked yet.";
-"## 受け取るもの（入力）\n- 例: 数値の列（仮の入力 numbers）\n\n## 出すもの（出力）\n- 例: 平均と最大値（仮の出力 summary）\n\n## 処理の内容\n- 例: 空の列ならエラーにする\n- 例: 平均は小数第 2 位まで\n\n## できたと言える条件\n- 例: [1, 2, 3] から 平均 2、最大 3 が出る" = "## What it takes (inputs)\n- e.g. a list of numbers (provisional input numbers)\n\n## What it gives (outputs)\n- e.g. the mean and maximum (provisional output summary)\n\n## What it does\n- e.g. an empty list is an error\n- e.g. the mean to 2 decimal places\n\n## When it is done\n- e.g. [1, 2, 3] gives mean 2 and maximum 3";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
@@ -16,6 +15,7 @@
 "%@ から実行しています" = "Running from %@";
 "%@ が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。" = "%@ was changed outside Tsugumi. Reload to take it in (the changes are kept).";
 "%@ でサインインしました。" = "Signed in as %@.";
+"%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
 "%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
 "%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
@@ -95,13 +95,11 @@
 "Continue with ChatGPT（別のアカウント）" = "Continue with ChatGPT (another account)";
 "Draft %lld 枚（%@）から Card を生成します" = "Generating Cards from %lld Drafts (%@)";
 "Draft Card を追加" = "Add Draft Card";
-"Draft · %@" = "Draft · %@";
 "Draft から Card を生成" = "Generate Cards from Drafts";
-"Draft が見つかりません" = "Draft not found";
-"Draft ではありません" = "Not a Draft";
 "Draft のため実行しない" = "Not run: a Draft";
+"Draft の内容" = "Draft content";
+"Draft の名前" = "Draft name";
 "Draft の実装は、チャットから Agent に頼めるよ" = "Ask the Agent in the chat to implement a Draft.";
-"Draft を編集…" = "Edit Draft…";
 "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ" = "Place Drafts and wire them up to sketch the flow before writing any code.";
 "Draft（未実装の計画）" = "Draft (plan, not implemented)";
 "File / Directory の出力がないため、保持できる出力はありません" = "No File / Directory output, so no output can be kept";
@@ -132,7 +130,6 @@
 "Plotly のグラフ" = "Plotly chart";
 "Python の処理" = "Python step";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
-"Return で名前を変えます（定義のフォルダ・接続・配置が新しい名前に移ります）" = "Return renames (the definition folder, connections and layout move to the new name)";
 "Return で送信" = "Return sends";
 "Return で送信（⇧Return で改行）" = "Return sends (⇧Return for a new line)";
 "Run %@ · 実行 #%llu" = "Run %@ · invocation #%llu";
@@ -156,6 +153,7 @@
 "Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
 "Tsugumi は最新です" = "Tsugumi is up to date";
+"Tsugumi を知る" = "Learn about Tsugumi";
 "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。" = "Usage limit reached: review your plan or this app's limit in ChatGPT settings.";
 "Using ChatGPT plan" = "Using ChatGPT plan";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
@@ -258,7 +256,6 @@
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
-"この仮の入出力を削除" = "Delete this provisional input or output";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -385,6 +382,7 @@
 "ターミナルを開けませんでした" = "Could not open the terminal";
 "ダウンロードしたアプリが正しくありません（%@）" = "The downloaded app is not valid (%@)";
 "ダウンロードしたファイルのチェックサムが一致しません" = "The checksum of the downloaded file does not match";
+"ダブルクリックで内容を書く" = "Double-click to write";
 "ダブルクリックで編集" = "Double-click to edit";
 "ダブルクリックまたは Canvas へドラッグして配置" = "Double-click or drag onto the canvas to place";
 "ダーク" = "Dark";
@@ -428,6 +426,8 @@
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
 "ドラッグして入力ポートへ接続" = "Drag to an input port to connect";
+"ドラッグして前の Card から接続（入力は線に合わせて作られます）" = "Drag to connect from the previous Card (the input is made with the wire)";
+"ドラッグして次の Card へ接続（出力は線に合わせて作られます）" = "Drag to connect to the next Card (the output is made with the wire)";
 "ドラッグで動かせます" = "Drag to move";
 "ドラッグで移動できます" = "Drag to move";
 "ドラッグで範囲を拡大・横スクロールで移動" = "Drag to zoom into a range; scroll sideways to move";
@@ -486,7 +486,6 @@
 "ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
 "ホーム" = "Home";
-"ポート名は英字・数字・_ で、英字か _ で始めてください。" = "Port names use letters, digits and _, starting with a letter or _.";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メンバーを選択" = "Select Members";
@@ -533,9 +532,6 @@
 "付箋を編集" = "Edit Note";
 "付箋を編集…" = "Edit Note…";
 "付箋を追加" = "Add Note";
-"仮の入出力で先に配線できます。適用した後に Canvas の「Card を生成」で実装を依頼します。" = "Provisional inputs and outputs can be wired first. After applying, ask for the implementation with “Generate Cards” on the canvas.";
-"仮の入力" = "Provisional inputs";
-"仮の出力" = "Provisional outputs";
 "会話" = "Conversations";
 "会話に戻る" = "Back to the conversation";
 "会話の一覧と検索" = "Conversations and search";
@@ -545,7 +541,7 @@
 "会話を表示中" = "Conversation open";
 "会話を閉じます" = "Closes the conversation";
 "何が起きたか" = "What happened";
-"何を受け取り、何を出し、どう処理するかを自由に書きます。型やコードはまだ要りません。" = "Write freely what it takes, what it gives and how. No types or code are needed yet.";
+"何を受け取り、何を出し、どう処理するかを書きます" = "Write what it takes, what it gives and how";
 "作成" = "Create";
 "作成場所を選ぶ…" = "Choose Location…";
 "作業・出力領域を使う" = "Use work and output area";
@@ -555,11 +551,6 @@
 "使う接続先" = "Connection in Use";
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
-"例: numbers" = "e.g. numbers";
-"例: summary" = "e.g. summary";
-"例: 平均と最大値" = "e.g. the mean and maximum";
-"例: 数値の列から平均と最大値を求める" = "e.g. the mean and maximum of a list of numbers";
-"例: 集計する数値の列" = "e.g. the numbers to sum up";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -681,6 +672,7 @@
 "合流" = "Merge";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
+"名前と内容を書く" = "Write name and content";
 "名前と実行環境" = "Name and Environment";
 "名前に使えるのは英数字と - _ . だけです（128 文字まで）。" = "A name may contain only letters, digits and - _ . (up to 128 characters).";
 "名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。" = "The name is the Card's ID and its definition folder name (definitions/<name>/). Changing it carries over connections, layout and run history (saved at once).";
@@ -802,7 +794,6 @@
 "実行環境内（このプロジェクトだけが見えます）" = "Inside the environment (only this project is visible)";
 "実行環境（Nixpkgs）" = "Environment (Nixpkgs)";
 "実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。" = "The environment (the VM all projects share, its Nix store and run history disk images, each project's control folder) is in the folder below. Projects' documents and artifacts, and the run history saved in a project (.tsugumi/runs.sqlite), are in the project folders, not here.";
-"実装済みの Card は Card 設定で編集します。" = "Implemented Cards are edited in Card Settings.";
 "対象" = "Which";
 "小さく" = "Smaller";
 "展開" = "Expand";
@@ -902,9 +893,7 @@
 "未完了" = "Not done";
 "未実行" = "Not run";
 "未実行（0 回）" = "Not run (0 times)";
-"未実装" = "Not implemented";
 "未実装（Draft）" = "Not implemented (Draft)";
-"未実装（実行されません）" = "Not implemented (never runs)";
 "未接続" = "Offline";
 "未確認" = "Not checked yet";
 "未解決" = "Unresolved";
@@ -960,7 +949,6 @@
 "生成" = "Generated";
 "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: " = "Could not generate (unsaved changes or unresolved types prevent it): ";
 "用途" = "Purpose";
-"用途の説明" = "What it is for";
 "用途（何を出すか）" = "Purpose (what it gives)";
 "用途（何を受け取るか）" = "Purpose (what it receives)";
 "画像" = "Image";
@@ -998,7 +986,6 @@
 "考えています…" = "Thinking…";
 "興味のあること（例: 画像処理）" = "What interests you (e.g. image processing)";
 "色" = "Color";
-"英数字と - _ .（Card の ID とフォルダ名）" = "Letters, digits and - _ . (the Card's ID and folder name)";
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
 "表示" = "Show";
 "表示しない" = "Don't show";

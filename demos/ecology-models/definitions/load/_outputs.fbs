@@ -1,0 +1,4 @@
+namespace ecology;
+table Pelts { years:[long]; hare:[double]; lynx:[double]; }
+table Outputs { pelts:Pelts (required); }
+root_type Outputs;

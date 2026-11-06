@@ -635,7 +635,9 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     // The Draft demos are tasks and the finished demo of each is its answer:
     // neither is listed nor read (implementing casa-draft must not copy casa).
     let (demos, e5) = await agent.readReference("demos")
-    #expect(!e5 && demos.split(separator: "\n") == ["collatz/", "live-stream/", "plots/", "report/"])
+    let listed = demos.split(separator: "\n").map(String.init)
+    #expect(!e5 && Set(["collatz/", "live-stream/", "plots/", "report/"]).isSubset(of: listed))
+    #expect(Set(["casa/", "casa-draft/", "gw150914/", "dynamics-draft/"]).isDisjoint(with: listed))
     for hidden in ["demos/casa", "demos/casa/definitions/bands/src/main.py", "demos/casa-draft", "demos/gw150914/tsugumi.json"] {
       let (_, e) = await agent.readReference(hidden)
       #expect(e, "\(hidden) is readable")

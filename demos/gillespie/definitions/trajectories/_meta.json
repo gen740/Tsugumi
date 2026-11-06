@@ -1,0 +1,5 @@
+{
+  "description": "軌道と率方程式",
+  "content": "mRNA の生成と分解（∅ → X、X → ∅）を Gillespie 法で runs 本シミュレーションする。shown_runs 本の軌道、全本の平均、率方程式の解を重ねて図に示す。",
+  "outputs": []
+}

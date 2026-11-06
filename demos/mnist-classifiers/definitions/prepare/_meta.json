@@ -1,0 +1,10 @@
+{
+  "description": "層化して部分データを作る",
+  "content": "seed で固定した乱数で、訓練用から train_size 枚、テスト用から test_size 枚を、数字の割合を保ったまま（層化）抜き出す。既定の枚数は 7 つの分類器の実行時間を 1 分以内に収めるため。画素は 0〜1 に揃え、784 次元のベクトルにして npz ファイルで全分類器に渡す。数字ごとの枚数を表示する。",
+  "outputs": [
+    {
+      "name": "subset",
+      "description": "正規化した部分データ（train_images, train_labels, test_images, test_labels, digest の npz）"
+    }
+  ]
+}

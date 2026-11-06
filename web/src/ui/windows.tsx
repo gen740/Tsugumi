@@ -6,7 +6,7 @@ import { CardSettingsEditor } from './cardSettings'
 import { ChatPanel } from './chat'
 import { CardArtifactsView, CardExecutionView, VisualizationWindow } from './history'
 import { Icon } from './icons'
-import { CardDatabaseView, DraftEditor, WorkflowSettingsView } from './projectViews'
+import { CardDatabaseView, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
 import { VersionTreeView } from './versions'
 
@@ -15,7 +15,6 @@ function title(w: DetailWindow): string {
   const name = (k: string) => s?.displayName(k) ?? k
   switch (w.what.kind) {
     case 'card': return `Card 設定 · ${name(w.what.card)}`
-    case 'draft': return `Draft · ${name(w.what.card)}`
     case 'definitions': return 'Card 定義'
     case 'versions': return '版の履歴'
     case 'executions': return `実行履歴 · ${name(w.what.card)}`
@@ -35,7 +34,6 @@ function Content({ w }: { w: DetailWindow }) {
   if (!s) return null
   switch (what.kind) {
     case 'card': return <CardSettingsEditor session={s} card={what.card} initial={what.category} onClose={close} />
-    case 'draft': return <DraftEditor session={s} cardKey={what.card} onClose={close} />
     case 'definitions': return <CardDatabaseView session={s} definition={what.definition} />
     case 'versions': return <VersionTreeView session={s} />
     case 'executions': return <CardExecutionView session={s} cardKey={what.card} />

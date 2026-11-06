@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 216" width="1280" height="216" role="img" aria-labelledby="t">
+  <title id="t">ドキュメントを読む: gen740.github.io/Tsugumi</title>
+  <defs>
+    <clipPath id="card"><rect width="1280" height="216" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="1280" height="216" fill="#16282d"/>
+    <polygon points="0,0 210,0 96,126" fill="#1d3a3e"/>
+    <polygon points="0,0 96,126 0,216" fill="#1a3338"/>
+    <polygon points="0,216 96,126 262,216" fill="#173136"/>
+    <polygon points="96,126 210,0 262,216" fill="#1b363a"/>
+    <polygon points="1280,0 1050,0 1190,112" fill="#1d3a3e"/>
+    <polygon points="1280,0 1190,112 1280,216" fill="#1a3338"/>
+    <polygon points="1050,0 1190,112 1010,216" fill="#173136"/>
+    <polygon points="1190,112 1280,216 1010,216" fill="#1b363a"/>
+
+    <!-- the thread, from the temari through three Cards -->
+    <path d="M118 126 C 170 66, 214 150, 262 108" fill="none" stroke="#efe0c3" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="96" cy="136" r="36" fill="#9fb070"/>
+    <polygon points="96,100 132,136 96,136" fill="#b6c489"/>
+    <polygon points="60,136 96,100 96,136" fill="#8a9c5f"/>
+    <polygon points="60,136 96,172 96,136" fill="#7a8c52"/>
+    <polygon points="96,172 132,136 96,136" fill="#92a568"/>
+    <path d="M66 116 Q 96 138 128 122" fill="none" stroke="#f6ecd8" stroke-width="5"/>
+    <path d="M62 146 Q 96 124 126 156" fill="none" stroke="#d58b49" stroke-width="5"/>
+
+    <text x="288" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="52" font-weight="700" fill="#f3ede2">ドキュメントを読む</text>
+    <text x="290" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="22" fill="#c3cbc8">動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説</text>
+    <text x="290" y="186" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9fb070">gen740.github.io/Tsugumi</text>
+
+    <!-- the way in -->
+    <rect x="1088" y="66" width="128" height="84" rx="42" fill="#c97d3d"/>
+    <path d="M1124 108 H1180 M1160 88 L1182 108 L1160 128" fill="none" stroke="#1b1d1f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

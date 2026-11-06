@@ -36,18 +36,27 @@ extension ProjectSession {
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
-    if definition == nil, let r = resolution[k] {
+    // A Draft's ports change with its wires, before they are resolved again.
+    let draft = kind(k) == .draft
+    if definition == nil, !draft, let r = resolution[k] {
       return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
               r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }
-      return PortData(name: n, optional: i["optional"]?.bool ?? false, note: note("inputs", n))
+      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.rootType,
+                      optional: i["optional"]?.bool ?? false, note: note("inputs", n))
     }
-    var outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? []
-    if outs.isEmpty, let declared = m?["outputs"]?.array {
-      outs = declared.compactMap { o in o["name"]?.string.map { PortData(name: $0, note: o["description"]?.string) } }
+    // A Draft's resolved outputs beyond the declared ones are those of its _outputs.fbs.
+    let typed = !draft || definitionDir(k).map { hasSource($0 + "_outputs.fbs") } ?? false
+    var outs = typed ? resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? [] : []
+    if draft || outs.isEmpty {
+      for o in m?["outputs"]?.array ?? [] {
+        if let n = o["name"]?.string, !outs.contains(where: { $0.name == n }) {
+          outs.append(PortData(name: n, typeName: resolution[k]?.outputs.first { $0.name == n }?.rootType, note: o["description"]?.string))
+        }
+      }
     }
     return (ins, outs)
   }
@@ -74,6 +83,13 @@ extension ProjectSession {
     if let d = cardDefinition(k)?["description"]?.string, !d.isEmpty { return d }
     if let d = cardMeta(k)?["description"]?.string, !d.isEmpty { return d }
     return nil
+  }
+
+  /// What a Card says about itself on hover: a Draft's summary and content.
+  func cardDetails(_ k: CardKey) -> [String] {
+    var lines = cardDescription(k).map { [$0] } ?? []
+    if kind(k) == .draft, let c = cardMeta(k)?["content"]?.string, !c.isEmpty { lines.append(c) }
+    return lines
   }
 
   /// Whether a Card does not run because it needs a Draft's output: a
@@ -176,8 +192,12 @@ extension ProjectSession {
     // The name is the Card's id.
     let title = path(k).last ?? k
     var summary = def?["description"]?.string
-    if summary?.isEmpty ?? true { summary = (meta ?? cardMeta(k))?["description"]?.string }
+    let m = meta ?? cardMeta(k)
+    if summary?.isEmpty ?? true { summary = m?["description"]?.string }
+    // What a Draft shows on its Card is what it says it will do.
+    if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
     if summary?.isEmpty ?? true { summary = nil }
+    let editing = kind == .draft && inlineDraft?.card == k
     let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
       title: title, kind: kind,
@@ -190,7 +210,8 @@ extension ProjectSession {
       invocation: state?.invocation ?? 0, runContinues: runActive,
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
-      collapsed: collapsed ?? self.collapsed(k), hasDisplay: display, permissions: CardPermission.of(def))
+      collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
+      draftEditing: editing, untitled: draftUntitled(k))
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

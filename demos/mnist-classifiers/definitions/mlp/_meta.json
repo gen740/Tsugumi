@@ -1,0 +1,10 @@
+{
+  "description": "多層パーセプトロン",
+  "content": "全結合の隠れ層 2 つのニューラルネット（torch、CPU、1 スレッド、シード固定）。hidden は隠れ層の幅、epochs は訓練データを回す回数。正解率・時間・間違いの内訳と、損失の推移を表示し、テスト全枚の予測を compare に渡す。",
+  "outputs": [
+    {
+      "name": "result",
+      "description": "正解率、CPU 時間、設定、テスト全枚の予測"
+    }
+  ]
+}

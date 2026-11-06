@@ -1,0 +1,6 @@
+namespace cells;
+// Label images (size x size, 0 is background): connected components after the
+// threshold alone, and after the watershed split.
+table Labels { size:ulong; plain:[int]; split:[int]; }
+table Outputs { labels:Labels (required); }
+root_type Outputs;

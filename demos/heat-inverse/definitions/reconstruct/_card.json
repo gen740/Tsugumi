@@ -1,0 +1,23 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "measurement"
+    },
+    {
+      "name": "choice"
+    }
+  ],
+  "params": [
+    {
+      "name": "lambda",
+      "type": "double",
+      "data": 0.0
+    },
+    {
+      "name": "too_far_factor",
+      "type": "double",
+      "data": 100.0
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "name": "Newton 法 · 初期値と収束",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "roots"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "orbits"
+      },
+      {
+        "id": "order"
+      },
+      {
+        "id": "basins"
+      },
+      {
+        "id": "trouble"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "roots",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "roots",
+          "port": "problem"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "orbits"
+        },
+        "to": {
+          "card": "orbits",
+          "port": "problem"
+        }
+      },
+      {
+        "from": {
+          "card": "orbits",
+          "port": "errors"
+        },
+        "to": {
+          "card": "order",
+          "port": "errors"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "basins"
+        },
+        "to": {
+          "card": "basins",
+          "port": "problem"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "trouble"
+        },
+        "to": {
+          "card": "trouble",
+          "port": "problem"
+        }
+      }
+    ]
+  }
+}

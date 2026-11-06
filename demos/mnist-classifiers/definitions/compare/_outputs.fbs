@@ -1,0 +1,12 @@
+namespace mnist;
+table Comparison {
+  models:[string] (required);
+  accuracy:[double] (required);
+  fit_seconds:[double] (required);
+  predict_seconds:[double] (required);
+  test_labels:[ubyte] (required);
+  predictions:[ubyte] (required);
+  test_images:[ubyte] (required);
+}
+table Outputs { comparison:Comparison (required); }
+root_type Outputs;

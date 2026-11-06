@@ -1,0 +1,4 @@
+namespace cells;
+table RealImage { path:string; source:string; }
+table Outputs { image:RealImage (required); }
+root_type Outputs;

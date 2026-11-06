@@ -1,0 +1,15 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "trials"
+    }
+  ],
+  "params": [
+    {
+      "name": "method",
+      "type": "string",
+      "data": "DL"
+    }
+  ]
+}

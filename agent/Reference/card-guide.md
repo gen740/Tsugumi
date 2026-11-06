@@ -148,7 +148,7 @@ through the SDK's backend (`sdk/python/tsugumi/mpl.py`), so code written for a w
 `main` returns are shown too; `plt.pause()` loops and `FuncAnimation` + `plt.show()` update the
 display live while the Card runs (an endless animation ends when the run is stopped).
 `ctx.display_figure(fig)` shows a figure with any backend. Japanese labels draw as they are (a
-Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Do not call `matplotlib.use("Agg")` and
+Japanese font is in the Card's package when it uses matplotlib; `pythonCard`'s `fonts` changes it). Keep Japanese and `$...$` math on separate lines of a label: mathtext has no fallback font and draws tofu for Japanese. Do not call `matplotlib.use("Agg")` and
 `savefig` just to display. Example: `demos/plots` (a static figure, a live animation, Plotly and Altair).
 
 Plotly (`ps.plotly`) and Altair (`ps.altair`) are interactive plots in the display (zoom, hover,
@@ -158,10 +158,66 @@ beyond that, plot fewer points or use matplotlib (an image). Charts cannot load 
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.
 
+`src/main.py` is imported once when the worker starts, before any `preRun`; the worker stays, and
+`preRun` runs before every call. So `preRun`'s exports and `cd` reach `main` (in `os.environ` too)
+but not the module's top. Native libraries often read their settings as they load: limit threads
+at the top of `main.py`, before the imports, and it lasts for the worker:
+
+```python
+import os
+os.environ["OMP_NUM_THREADS"] = "1"  # OpenMP and OpenBLAS
+
+import numpy as np
+```
+
+What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
+
 ### bash
 
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);
 outputs are written as `{"<port>": {...}}` JSON to `$TSUGUMI_OUTPUT`; `jq` is available.
+
+Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, write one JSON member to
+`$TSUGUMI_DISPLAY`: `{"markdown": "..."}`, `{"text": "..."}`, `{"table": {"columns": [...], "rows": [[...]]}}`
+(cells are strings), `{"image": {"path": "plot.png", "alt": "..."}}` or `{"module": {"name": "vega-lite", "data":
+{...}}}`. It is shown when the script ends successfully.
+
+### R (`src/main.R`)
+
+`_card.json`: `{"language": "r", ...}`; `default.nix`: `run = inputs.tsugumi.rCard { src = ./src; packages = ps: [
+ps.survival ps.ggplot2 ]; };` (from nixpkgs' `rPackages`). No `sdk`, no generated classes: messages and params are
+lists, exchanged as JSON and checked against the port's type by the worker.
+
+```r
+main <- function(ctx) {
+  n <- ctx$input("events")$value          # a message; ctx$path("events") for a File / Directory
+  ctx$output("counts", list(red = 703367, bins = I(c(1, 2))))  # I(): a field that is an array, whatever its length
+  ctx$plot(plot(density(x)), alt = "...") # base graphics or a ggplot, as the Card's image
+  ctx$display_table(df)                   # or display_text, display_markdown, display_image(path), display_module(name, spec)
+}
+```
+
+`ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
+goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
+integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+
+### Julia (`src/main.jl`)
+
+`_card.json`: `{"language": "julia", ...}`; `default.nix`: `run = inputs.tsugumi.juliaCard { src = ./src; };`, with
+`packages = [ "JuMP" ];` for General registry packages (fixed at build time). Prefer the standard library when it
+does the job: packages take long to build.
+
+```julia
+function main(ctx)
+    n = input(ctx, "events")["value"]     # a Dict; path(ctx, "events") for a File / Directory
+    output(ctx, "counts", Dict("red" => 703367))
+    display_vegalite(ctx, spec)           # a Vega-Lite spec as a Dict, data inline: an interactive chart
+    display_markdown(ctx, "**done**")     # or display_text, display_table(ctx, columns, rows), display_image(ctx, path; alt=""), display_module
+end
+```
+
+`ctx.params["low"]`, `ctx.output_directory`, `ctx.temporary_directory`. A thrown error fails the Card and goes to its
+log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or add one by `packages`.
 
 ## Checking and running
 

@@ -10,7 +10,6 @@ import { CardEditorCategory } from './workspace'
 
 export type WindowKind =
   | { kind: 'card'; card: CardKey; category?: CardEditorCategory }
-  | { kind: 'draft'; card: CardKey }
   | { kind: 'definitions'; definition?: string }
   | { kind: 'versions' }
   | { kind: 'executions'; card: CardKey }
@@ -32,7 +31,7 @@ export interface DetailWindow {
 }
 
 const SIZES: Record<WindowKind['kind'], [number, number]> = {
-  card: [860, 620], draft: [640, 560], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
+  card: [860, 620], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
   workflowSettings: [680, 480], visual: [900, 600], chat: [460, 720], appSettings: [760, 520],
 }
 

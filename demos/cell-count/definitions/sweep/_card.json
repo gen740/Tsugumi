@@ -1,0 +1,53 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "scene"
+    }
+  ],
+  "params": [
+    {
+      "name": "cells",
+      "type": "uint64[]",
+      "data": [
+        40,
+        80,
+        160,
+        240,
+        320,
+        400
+      ]
+    },
+    {
+      "name": "noises",
+      "type": "double[]",
+      "data": [
+        0.1,
+        0.3,
+        0.6,
+        1.0,
+        1.5
+      ]
+    },
+    {
+      "name": "background_radius",
+      "type": "uint64",
+      "data": 30
+    },
+    {
+      "name": "sigma",
+      "type": "double",
+      "data": 1.5
+    },
+    {
+      "name": "min_distance",
+      "type": "uint64",
+      "data": 5
+    },
+    {
+      "name": "min_area",
+      "type": "uint64",
+      "data": 30
+    }
+  ]
+}

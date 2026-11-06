@@ -54,7 +54,12 @@ TypeScript の binding と `tsugumi.bfbs` は `npm run gen`（`flatc` 25.12.19�
 - 書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（`runs/<run>/work/…/out`）だけです。Linux では出力フォルダを `/proc/self/fd` 経由で渡しますが、macOS にはないためパスで渡します。
 - bubblewrap と違い、ファイルの存在確認（`stat`）は全体で許可しています（中身は読めません）。また、uid の分離はしません。
 - Mac のフォルダを Card に共有する機能（`/host/<name>`）は共通 VM が必要なため、Web UI では使えません。
-- ネットワークを許可した Card も、このマシン自身（loopback と Unix ソケット）には接続できません（tsugumid や Web サーバーに触れないため）。
+- ネットワークを許可した Card も、このマシン自身には接続できません（tsugumid や Web サーバーに触れないため）。loopback だけでなく、LAN や VPN のアドレス、`0.0.0.0` 宛ても同じです（Seatbelt の `localhost` はこのマシンのアドレス全体を指します）。Unix ソケットも閉じています。例外は `mDNSResponder` のソケット（`/var/run/mDNSResponder`）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。
+- ネットワークを許可した Card が使える Mach サービスは、証明書の検証に使う `com.apple.trustd.agent` だけです。クリップボードや LaunchServices（アプリや URL を開く）、Apple Event には届きません。名前解決と HTTPS はこれで動きます（Python・curl・Go・NSURLSession で確認）。代わりに、ネットワークなしの Card と同じくユーザー情報（`getpwuid`）を引けないので、`ssh` は `No user exists for uid` で失敗します。システム設定のプロキシも読みません。
+- 塞げない経路が 3 つあります。これらが問題になるネットワークでは、他人の Card に `network: true` を与えないでください。
+  - **同じ LAN や VPN の他の機器には届きます。** Seatbelt で宛先に書けるのは `*` と `localhost` だけで、アドレスや範囲を指定して拒否できません。
+  - **UDP のブロードキャストとマルチキャストは、このマシンにも届きます。** `0.0.0.0` で UDP を待ち受けるサービスには届き、返事も受け取れます。ブロードキャストだけを止める指定がなく、止めるなら UDP 全体を閉じることになるので、開けてあります。tsugumid と Web サーバーは UDP を使わないので対象外です。
+  - **Card は待ち受けを開けます。** このマシンから接続できることを確認しました。LAN の他の機器からも、ファイアウォールが通せば届きます。
 - チャットに添付したフォルダは、サーバーが control フォルダの `attached.json` に書いたものだけを tsugumid が読みます（RPC からは変えられません）。
 - `sandbox: false` の Card は、このマシンで利用者の権限のまま動きます。Card 設定で「ファイルアクセスを制限」をオフにするときは、そのことを確認してから切り替えます（`tsugumid` 自身は判断しません）。Linux で他人の Card を動かすときは、`tsugumid` を隔離されたコンテナの中で動かしてください。
 

@@ -1,0 +1,8 @@
+namespace battery;
+table Scenario {
+  seed:ulong; days:ulong; capacity_kwh:double; power_kw:double; round_trip_efficiency:double;
+  export_ratio:double; soc_step_kwh:double;
+  load:[double]; solar:[double]; flat:[double]; tou:[double]; spot:[double];
+}
+table Outputs { scenario:Scenario (required); }
+root_type Outputs;

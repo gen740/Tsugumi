@@ -1,0 +1,15 @@
+namespace newton;
+table Problem {
+  label:string;
+  coeffs:[double];
+  roots_re:[double];
+  roots_im:[double];
+  multiplicity:[ulong];
+  critical_re:[double];
+  critical_im:[double];
+  damping:double;
+  tolerance:double;
+  max_iter:ulong;
+}
+table Outputs { problem:Problem (required); }
+root_type Outputs;

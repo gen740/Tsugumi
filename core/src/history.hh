@@ -22,7 +22,8 @@ namespace tsugumi {
 
 struct InvocationRecordData {
   InvocationSummaryData summary;
-  std::vector<Value> inputs, outputs;  // only when record_io
+  std::vector<Value> inputs;   // only when record_io
+  std::vector<Value> outputs;  // only when record_io
   std::vector<InputSourceData> input_sources;
   std::optional<DisplayData> display;
   bool record_io = false;
@@ -47,8 +48,11 @@ struct LogEnd {
 
 struct LogRead {
   std::string text;
-  uint64_t offset = 0, next_offset = 0, size = 0;
-  bool exists = false, truncated = false;
+  uint64_t offset = 0;
+  uint64_t next_offset = 0;
+  uint64_t size = 0;
+  bool exists = false;
+  bool truncated = false;
 };
 
 class History {
@@ -89,7 +93,11 @@ class History {
   static std::optional<RunSummaryData> run(sql::Db& db, const std::string& run_id);
   static std::optional<RunSummaryData> latest_run(sql::Db& db);
   static std::optional<std::string> run_receipt_digest(sql::Db& db, const std::string& op_id);
-  struct ReceiptRow { std::string kind, digest, bytes; };
+  struct ReceiptRow {
+    std::string kind;
+    std::string digest;
+    std::string bytes;
+  };
   static std::optional<ReceiptRow> receipt(sql::Db& db, const std::string& op_id);
   static std::vector<InvocationSummaryData> invocations(sql::Db& db, const std::string& run_id,
                                                         const CardPath& card, uint64_t after,
@@ -103,7 +111,13 @@ class History {
   static std::optional<uint64_t> latest_completed(sql::Db& db, const std::string& run_id,
                                                   const CardPath& card);
   static bool run_has_card(sql::Db& db, const std::string& run_id, const CardPath& card);
-  struct Aggregate { uint64_t calls = 0, succeeded = 0, failed = 0, cancelled = 0, total_ms = 0; };
+  struct Aggregate {
+    uint64_t calls = 0;
+    uint64_t succeeded = 0;
+    uint64_t failed = 0;
+    uint64_t cancelled = 0;
+    uint64_t total_ms = 0;
+  };
   static Aggregate aggregate(sql::Db& db, const std::string& run_id, const CardPath& card);
   static std::optional<FailureData> latest_failure(sql::Db& db, const std::string& run_id,
                                                    const CardPath& card);
@@ -188,7 +202,8 @@ class History {
   std::string fault_;
   std::unique_ptr<sql::Db> writer_db_;
   std::mutex wmu_;
-  std::condition_variable wcv_, wspace_;
+  std::condition_variable wcv_;
+  std::condition_variable wspace_;
   std::deque<std::pair<Work, std::function<void(bool)>>> wq_;
   bool stopping_ = false;
   std::thread writer_;

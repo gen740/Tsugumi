@@ -1,0 +1,4 @@
+namespace ecology;
+table Forecast { fit_until:long; last_year:long; names:[string]; rmse_fit:[double]; rmse_heldout:[double]; }
+table Outputs { forecast:Forecast (required); }
+root_type Outputs;

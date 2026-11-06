@@ -19,10 +19,9 @@ The support-header notice identifies the upstream project; it does not
 claim that all vendored grammars were regenerated with CLI 0.25.10.
 The original generator version is not recorded for every vendored file.
 
-These files preserve notices in the source repository. They are **not**
-yet automatically copied into `Tsugumi.app` by the audited build script.
-The remaining binary packaging work is documented in
-[LicenseAudit.md](../../docs/LicenseAudit.md).
+These files preserve notices in the source repository. The app carries the
+same texts, taken from the checkouts it was built from, in
+`Contents/Resources/licenses/` ([bundle-licenses.sh](../../macOS/tools/bundle-licenses.sh)).
 
 When updating a grammar or its queries, refresh its license from that same
 upstream revision and preserve copyright holders verbatim. Do not substitute

@@ -11,7 +11,7 @@ import TsugumiRPC
 ///   wait <seconds>                  sidebar hide|show
 ///   size <width> <height>           chat show|hide
 ///   select <card path>              open card <card path> <category>
-///   open draft <card path>          open definitions | workflow-settings
+///   open definitions | workflow-settings
 ///   settings <category>             close settings
 ///   edit <card path> <param> <v>    external <card path> <field> <value>
 ///   capture <name>                  arrange
@@ -25,6 +25,7 @@ import TsugumiRPC
 ///   open versions                   makerepo (the project becomes a repository)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
+///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -33,7 +34,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), draft(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings
+    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
   }
 
   var request: Request?
@@ -108,7 +109,6 @@ final class UIScript {
         case "card":
           let cat = CardEditorCategory(rawValue: w.count > 3 ? w[3] : "general") ?? .general
           request = .card(CardRef(path: ref.path, card: w[2], category: cat))
-        case "draft": request = .draft(CardRef(path: ref.path, card: w[2]))
         case "visual": request = .visual(CardRef(path: ref.path, card: w[2]))
         case "definitions": request = .definitions(ref)
         case "versions": request = .versions(ref)
@@ -129,6 +129,7 @@ final class UIScript {
           _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other",
                                   changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
         }
+      case "explainer": request = .explainer
       case "home": NotificationCenter.default.post(name: .appHome, object: nil)
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
@@ -332,6 +333,16 @@ final class UIScript {
           try? await Task.sleep(for: .milliseconds(60))
           if let u = event(.leftMouseUp) { win.sendEvent(u) }
         }
+      case "scroll":
+        // scroll <x> <y> <dy>: a wheel event at a point of the window (dy > 0 scrolls down), as a trackpad sends
+        let title = w.dropFirst(4).joined(separator: " ")
+        let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }
+        guard let win, w.count >= 4, let x = Double(w[1]), let y = Double(w[2]), let dy = Double(w[3]),
+              let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(-dy), wheel2: 0, wheel3: 0)
+        else { say("no window for " + line); break }
+        let screenHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        cg.location = CGPoint(x: win.frame.minX + x, y: screenHeight - win.frame.maxY + y)
+        if let e = NSEvent(cgEvent: cg) { win.sendEvent(e) }
       case "drag":
         let title = w.dropFirst(5).joined(separator: " ")
         let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }

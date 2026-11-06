@@ -1,0 +1,81 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 260,
+      "y": 0
+    },
+    "share": {
+      "x": 540,
+      "y": 0
+    },
+    "trajectories": {
+      "x": 800,
+      "y": -596
+    },
+    "stationary": {
+      "x": 800,
+      "y": -192
+    },
+    "scaling": {
+      "x": 800,
+      "y": 192
+    },
+    "binding": {
+      "x": 800,
+      "y": 586
+    },
+    "check": {
+      "x": 1090,
+      "y": 400
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## 化学反応のゆらぎ\n\n細胞の中の分子は少なく、反応は 1 回ずつ確率的に起きます。Gillespie 法は、次の反応までの時間を指数分布から、どの反応かを速さの比から引いて、この過程を厳密にたどります。\n\n$$\\emptyset \\xrightarrow{kV} X,\\qquad X \\xrightarrow{\\gamma n} \\emptyset,\\qquad \\frac{dn}{dt}=kV-\\gamma n$$\n\nこの系の定常分布は平均 $N=kV/\\gamma$ のポアソン分布なので\n\n$$\\mathrm{Var}[n]=N,\\quad \\frac{\\mathrm{Var}[n]}{N}=1,\\quad \\mathrm{CV}=\\frac{1}{\\sqrt{N}}$$\n\nです。反応が線形なので平均は率方程式と一致します。**binding** の $A+B\\rightleftharpoons C$ は非線形で、小さな体積では平均そのものが率方程式から外れます。\n\n**settings** の volume を 0.1 にすると分子は 2 個ほどになり、軌道は 0 にも落ちます。synthesis・degradation・runs も変えられます。速さの値は説明用で、特定の遺伝子の実測ではありません。\n",
+      "x": -40,
+      "y": -620,
+      "width": 660,
+      "height": 560
+    }
+  ],
+  "displays": {
+    "trajectories": {
+      "x": 1380,
+      "y": -620,
+      "width": 700,
+      "height": 380
+    },
+    "stationary": {
+      "x": 1380,
+      "y": -216,
+      "width": 700,
+      "height": 360
+    },
+    "scaling": {
+      "x": 1380,
+      "y": 168,
+      "width": 790,
+      "height": 370
+    },
+    "binding": {
+      "x": 1380,
+      "y": 562,
+      "width": 700,
+      "height": 360
+    },
+    "check": {
+      "x": 800,
+      "y": 960,
+      "width": 760,
+      "height": 500
+    }
+  }
+}

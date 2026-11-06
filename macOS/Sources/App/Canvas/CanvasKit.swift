@@ -188,7 +188,8 @@ struct CardNodeData: Equatable {
   var title: String
   var kind: CardKind
   var symbol: String?
-  /// Short description (one line on the Card; the whole text on hover).
+  /// Short description (one line on the Card, a Draft's content in a few;
+  /// the whole text on hover).
   var summary: String?
   var inputs: [PortData]
   var outputs: [PortData]
@@ -209,6 +210,10 @@ struct CardNodeData: Equatable {
   var hasDisplay = false
   /// What it may do beyond computing (network, no sandbox, Mac folders).
   var permissions: [CardPermission] = []
+  /// A Draft being written on the canvas: the Card opens up for it.
+  var draftEditing = false
+  /// A Draft without a name of its own: its content is all it shows.
+  var untitled = false
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
@@ -259,6 +264,13 @@ struct CardGeometry {
   static let paramRow: CGFloat = 26
   static let resultRow: CGFloat = 18
   static let stageRow: CGFloat = 22
+  /// A Draft's content on the Card (three lines), and while it is being written.
+  static let draftRow: CGFloat = 50
+  static let draftEditRow: CGFloat = 120
+  /// What is left of the header over the content of a Draft without a name.
+  static let untitledTop: CGFloat = 8
+  /// What a wire names to end at a Draft's next port (`connect` makes the port).
+  static let newPort = "+"
   /// Labels narrower than this are hidden (shown on hover instead).
   static let minLabel: CGFloat = 26
   /// Share of a triangle's wide edge taken by its narrow end (its apex).
@@ -273,16 +285,22 @@ struct CardGeometry {
   let stages: Bool
   let flow: FlowDirection
   let shape: CardShape
+  let draft: Bool
+  let draftEditing: Bool
+  let untitled: Bool
 
   init(_ d: CardNodeData, flow: FlowDirection) {
     inputs = d.inputs.map(\.name)
     outputs = d.outputs.map(\.name)
     collapsed = d.collapsed
-    summary = d.summary != nil && !d.isRouting
+    draft = d.isDraft
+    draftEditing = d.isDraft && d.draftEditing
+    untitled = d.isDraft && d.untitled && !d.draftEditing && !d.collapsed
+    summary = d.summary != nil && !d.isRouting && !d.isDraft
     params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     result = d.kind == .logger || d.hasDisplay
-    stages = d.kind == .code || d.kind == .draft
+    stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
   }
@@ -307,8 +325,14 @@ struct CardGeometry {
   private var bandOut: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
   var portBand: CGFloat {
-    flow == .leftToRight && shape == .card ? CGFloat(max(inputs.count, outputs.count, 1)) * Self.portRow : 0
+    // A Draft has no port names to give a row: its ports are at the middle of its sides.
+    guard flow == .leftToRight, shape == .card, !draft else { return 0 }
+    return CGFloat(max(inputs.count, outputs.count, 1)) * Self.portRow
   }
+  /// The header, or what is left of it over the content of a Draft without a name.
+  var headerRow: CGFloat { untitled ? Self.untitledTop : Self.header }
+  /// The room for a Draft's content under its header.
+  var draftRow: CGFloat { !draft ? 0 : draftEditing ? Self.draftEditRow : Self.draftRow }
   var topLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: true) ? Self.portRow : 0 }
   var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
@@ -320,7 +344,7 @@ struct CardGeometry {
                                   : CGSize(width: r.height + 60, height: r.width)
     }
     if collapsed { return CGSize(width: Self.width, height: Self.header) }
-    let h = topLabels + Self.header + (summary ? Self.summaryRow : 0) + portBand + CGFloat(params) * Self.paramRow +
+    let h = topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + portBand + CGFloat(params) * Self.paramRow +
       (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 4
     return CGSize(width: Self.width, height: h)
   }
@@ -401,6 +425,8 @@ struct CardGeometry {
   func showLabels(input: Bool) -> Bool {
     let list = input ? inputs : outputs
     guard !list.isEmpty else { return false }
+    // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
+    if draft { return false }
     if shape == .card && collapsed { return false }
     if shape == .start { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
@@ -409,7 +435,24 @@ struct CardGeometry {
     return spacing(input: input) >= Self.minLabel
   }
 
+  /// Where a wire starts from a side of a Draft that has no port yet (the
+  /// middle of the side, where the port will be). A side with ports starts from them.
+  func newPortPoint(output: Bool) -> CGPoint? {
+    guard draft, !collapsed, (output ? outputs : inputs).isEmpty else { return nil }
+    let r = outlineRect
+    return flow == .topToBottom ? CGPoint(x: Self.width / 2, y: output ? r.maxY : r.minY)
+                                : CGPoint(x: output ? Self.width : 0, y: r.midY)
+  }
+
+  /// A Draft's ports are around the middle of its side, closer together when there are many.
+  private func draftPortY(_ index: Int, of count: Int) -> CGFloat {
+    let r = outlineRect
+    let pitch = min(Self.portRow, (r.height - 8) / CGFloat(count + 1))
+    return r.midY + (CGFloat(index) - CGFloat(count - 1) / 2) * pitch
+  }
+
   func port(_ name: String, output: Bool) -> CGPoint {
+    if name == Self.newPort, let p = newPortPoint(output: output) { return p }
     let list = output ? outputs : inputs
     let index = list.firstIndex(of: name) ?? 0
     let i = CGFloat(index)
@@ -439,6 +482,7 @@ struct CardGeometry {
       }
       let x = output ? Self.width : 0
       if collapsed { return CGPoint(x: x, y: Self.header / 2) }
+      if draft { return CGPoint(x: x, y: draftPortY(index, of: list.count)) }
       let top = Self.header + (summary ? Self.summaryRow : 0)
       return CGPoint(x: x, y: top + i * Self.portRow + Self.portRow / 2)
     }
@@ -526,6 +570,16 @@ extension View {
 
 // MARK: - Card view
 
+/// Writing a Draft on its Card: what is typed so far, where it goes, and how it ends.
+struct DraftEdit {
+  let name: Binding<String>
+  let content: Binding<String>
+  /// Why the Card cannot take the name typed so far.
+  let nameProblem: String?
+  /// Done, the focus having moved elsewhere (false) or by the keyboard (true).
+  let onDone: (_ byKey: Bool) -> Void
+}
+
 /// A Card as drawn on every canvas, at the screen scale `zoom`.
 struct CardNodeView: View {
   let data: CardNodeData
@@ -544,7 +598,11 @@ struct CardNodeView: View {
   var onToggleCollapse: (() -> Void)?
   /// The start Card's button: runs the workflow from it (nil: not offered).
   var onRun: (() -> Void)?
+  var draftEdit: DraftEdit?
+  private enum DraftField { case name, content }
+  @FocusState private var draftField: DraftField?
 
+  private var edit: DraftEdit? { data.draftEditing ? draftEdit : nil }
   private var z: CGFloat { CGFloat(zoom) }
   private func s(_ v: CGFloat) -> CGFloat { v * z }
   private func font(_ size: CGFloat, _ weight: Font.Weight = .regular, mono: Bool = false) -> Font {
@@ -581,6 +639,9 @@ struct CardNodeView: View {
         let pt = g.port(port.name, output: output)
         p.addRect(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit))
       }
+      if onPortDrag != nil, paramsEditable, let pt = g.newPortPoint(output: output) {
+        p.addRect(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit))
+      }
     }
     return p
   }
@@ -601,8 +662,9 @@ struct CardNodeView: View {
   private func cardBody(_ g: CardGeometry) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       Color.clear.frame(height: s(g.topLabels))
-      header.frame(height: s(CardGeometry.header))
+      if g.untitled { Color.clear.frame(height: s(g.headerRow)) } else { header.frame(height: s(CardGeometry.header)) }
       if !g.collapsed {
+        if g.draft { draftBody(g) }
         if g.summary, let summary = data.summary {
           Text(summary).font(font(10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
@@ -626,17 +688,83 @@ struct CardNodeView: View {
       }
     }
     .frame(width: s(CardGeometry.width), alignment: .leading)
+    // Done when the focus has left both of a Draft's fields (not on the way
+    // from one to the other).
+    .onChange(of: draftField) { _, field in
+      guard field == nil, edit != nil else { return }
+      Task { @MainActor in
+        await Task.yield()
+        if draftField == nil { edit?.onDone(false) }
+      }
+    }
+    // The content is what is written first: a name is not needed.
+    .task(id: edit != nil) { if edit != nil { draftField = .content } }
+  }
+
+  /// A Draft's content, written on the Card while it is being edited.
+  @ViewBuilder private func draftBody(_ g: CardGeometry) -> some View {
+    if let edit {
+      // No box: the text stays where it is on the Card (the editor insets its text by 5).
+      VStack(alignment: .leading, spacing: s(2)) {
+        if let problem = edit.nameProblem {
+          Text(problem).font(font(9.5)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 5)
+        }
+        ZStack(alignment: .topLeading) {
+          if edit.content.wrappedValue.isEmpty {
+            Text("何を受け取り、何を出し、どう処理するかを書きます").font(font(11)).foregroundStyle(.tertiary)
+              .padding(.horizontal, 5).allowsHitTesting(false)
+          }
+          TextEditor(text: edit.content)
+            .font(font(11)).foregroundStyle(.secondary).scrollContentBackground(.hidden)
+            // A scroll bar only when the text does not fit.
+            .scrollIndicators(draftTextFits(edit.content.wrappedValue, g) ? .never : .automatic)
+            .focused($draftField, equals: .content)
+            .onExitCommand { edit.onDone(true) }
+            .onKeyPress(.return, phases: .down) { press in
+              guard press.modifiers.contains(.command) else { return .ignored }
+              edit.onDone(true)
+              return .handled
+            }
+            .accessibilityLabel("Draft の内容")
+        }
+      }
+      .padding(.horizontal, max(0, s(10) - 5)).padding(.bottom, s(8))
+      .frame(height: s(g.draftRow), alignment: .top)
+    } else {
+      Group { if let text = data.summary { Text(verbatim: text) } else { Text("ダブルクリックで内容を書く") } }
+        .font(font(11)).foregroundStyle(.secondary).opacity(data.summary == nil ? 0.6 : 1)
+        .lineLimit(3).truncationMode(.tail)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.horizontal, s(10))
+        .frame(height: s(g.draftRow), alignment: .top)
+    }
+  }
+
+  /// Whether a Draft's content fits in the room it has while it is being written.
+  private func draftTextFits(_ text: String, _ g: CardGeometry) -> Bool {
+    let width = s(CardGeometry.width - 20)
+    let box = (text as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                              options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                              attributes: [.font: NSFont.systemFont(ofSize: max(6, 11 * z))])
+    return box.height <= s(g.draftRow - 8)
   }
 
   private var header: some View {
     HStack(spacing: s(6)) {
       Image(systemName: data.symbol ?? data.kind.symbol).font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
-      Text(data.title).font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
-      if data.isDraft {
-        Text("未実装").font(font(9, .semibold)).padding(.horizontal, s(4))
-          .background(Color.orange.opacity(0.2), in: Capsule())
+      if let edit {
+        TextField("名前", text: edit.name)
+          .textFieldStyle(.plain).font(font(12, .semibold))
+          .focused($draftField, equals: .name)
+          .onSubmit { if edit.nameProblem == nil { draftField = .content } }
+          .onExitCommand { edit.onDone(true) }
+          .accessibilityLabel("Draft の名前")
+      } else {
+        Text(verbatim: data.untitled ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
+          .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       }
-      Spacer(minLength: s(2))
+      if edit == nil { Spacer(minLength: s(2)) }
       ForEach(data.permissions) { p in
         Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
       }
@@ -646,7 +774,7 @@ struct CardNodeView: View {
         Image(systemName: "exclamationmark.triangle.fill").font(font(11)).foregroundStyle(.yellow)
       }
       stateBadge
-      if let toggle = onToggleCollapse, data.kind != .trigger {
+      if let toggle = onToggleCollapse, data.kind != .trigger, edit == nil {
         Button(action: toggle) {
           Image(systemName: data.collapsed ? "chevron.down" : "chevron.up").font(font(9, .semibold))
         }
@@ -720,7 +848,7 @@ struct CardNodeView: View {
     if flow == .topToBottom {
       if g.showLabels(input: true) { ForEach(data.inputs, id: \.name) { p in label(p, g, output: false) } }
       if g.showLabels(input: false) { ForEach(data.outputs, id: \.name) { p in label(p, g, output: true) } }
-    } else if g.shape == .card, !g.collapsed {
+    } else if g.shape == .card, !g.collapsed, !g.draft {
       let w = CardGeometry.width / 2 - 14
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
@@ -798,6 +926,23 @@ struct CardNodeView: View {
             .onEnded { onPortDrop?(p.name, $0.location) })
           .help(portHelp(p, output: true) + (onPortDrag != nil ? String(localized: "（ドラッグして入力ポートへ接続）") : ""))
       }
+      if onPortDrag != nil, paramsEditable {
+        newPortMark(g, output: false)
+        newPortMark(g, output: true)
+      }
+    }
+  }
+
+  /// Dragging from here draws a wire that makes a Draft's first port on this
+  /// side (nothing is drawn until the pointer is over it).
+  @ViewBuilder private func newPortMark(_ g: CardGeometry, output: Bool) -> some View {
+    if let pt = g.newPortPoint(output: output) {
+      NewPortMark(mark: max(6, s(8)), hit: max(16, s(18)))
+        .position(x: s(pt.x), y: s(pt.y))
+        .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
+          .onChanged { (output ? onPortDrag : onInputDrag)?(CardGeometry.newPort, $0.location) }
+          .onEnded { (output ? onPortDrop : onInputDrop)?(CardGeometry.newPort, $0.location) })
+        .help(output ? "ドラッグして次の Card へ接続（出力は線に合わせて作られます）" : "ドラッグして前の Card から接続（入力は線に合わせて作られます）")
     }
   }
 
@@ -818,6 +963,21 @@ struct CardNodeView: View {
     if selected { return .accentColor }
     if let s = data.state, s != .notStarted { return s.color.opacity(0.7) }
     return .secondary.opacity(data.isDraft ? 0.7 : 0.4)
+  }
+}
+
+/// A place to start a wire from: shows only under the pointer.
+private struct NewPortMark: View {
+  let mark: CGFloat
+  let hit: CGFloat
+  @State private var over = false
+
+  var body: some View {
+    Circle().fill(Color.accentColor).opacity(over ? 1 : 0)
+      .frame(width: mark, height: mark)
+      .frame(width: hit, height: hit)
+      .contentShape(Circle())
+      .onHover { over = $0 }
   }
 }
 

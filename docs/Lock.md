@@ -12,3 +12,5 @@
 | hosq（C++ JSON） | `CLI20-dev/hosq@1eb8942`（flake input） |
 | Dawn（WebGPU） | `v20261023.194543`（`ui/renderer/CMakeLists.txt`、Metal バックエンド） |
 | SwiftTerm（ターミナル表示、MIT） | 1.11.2（以降のバージョンはシェーダーコンパイルに Xcode Metal Toolchain の追加取得が必要となるため固定） |
+| libgit2（版の管理） | 1.9.7（固定した nixpkgs の `libgit2`） |
+| plotly.js / Vega / Vega-Lite / Vega-Embed（Card のグラフの表示部品） | 3.6.0 / 6.4.0 / 6.4.3 / 7.3.0（`web/package-lock.json`。Mac アプリも同じファイルを `build-app.sh` でコピー） |

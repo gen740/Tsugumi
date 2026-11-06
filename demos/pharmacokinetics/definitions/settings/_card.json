@@ -1,0 +1,60 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "doses_mg",
+      "type": "double[]",
+      "data": [
+        400.0,
+        200.0,
+        100.0,
+        200.0
+      ]
+    },
+    {
+      "name": "intervals_h",
+      "type": "double[]",
+      "data": [
+        24.0,
+        12.0,
+        6.0,
+        24.0
+      ]
+    },
+    {
+      "name": "half_life_h",
+      "type": "double",
+      "data": 8.0
+    },
+    {
+      "name": "ka_per_h",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "volume_l",
+      "type": "double",
+      "data": 40.0
+    },
+    {
+      "name": "bioavailability",
+      "type": "double",
+      "data": 0.8
+    },
+    {
+      "name": "low_mg_l",
+      "type": "double",
+      "data": 2.0
+    },
+    {
+      "name": "high_mg_l",
+      "type": "double",
+      "data": 6.0
+    },
+    {
+      "name": "days",
+      "type": "double",
+      "data": 5.0
+    }
+  ]
+}

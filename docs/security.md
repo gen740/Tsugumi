@@ -6,23 +6,23 @@
 ## 1. 信頼境界の全体像
 
 ```text
-┌─ macOS（ユーザー権限） ──────────────────────────────────────────────┐
-│  Tsugumi.app                                                        │
-│   ├ SwiftUI UI                                                      │
-│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）   │
-│   └ LoopbackBridge 127.0.0.1:<空きポート>  ◀── 外部クライアント       │
-│        │ vsock                                                      │
-│  ┌─ 共通 Linux VM（Virtualization.framework） ────────────────────┐ │
-│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）       │ │
-│  │  ┌─ project A ───────────────────────┐ ┌─ project B ────────┐  │ │
-│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │  │ │
-│  │  │ cgroup tsugumi/<A>                 │ │                    │  │ │
-│  │  │ tsugumid                           │ │ tsugumid           │  │ │
-│  │  │  └ worker（bubblewrap: 全 ns 分離、 │ │  └ worker          │  │ │
-│  │  │     デフォルトで通信・cap なし）    │ │                    │  │ │
-│  │  └────────────────────────────────────┘ └────────────────────┘  │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌─ macOS（ユーザー権限） ────────────────────────────────────────────────┐
+│  Tsugumi.app                                                           │
+│   ├ SwiftUI UI                                                         │
+│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）     │
+│   └ LoopbackBridge 127.0.0.1:<空きポート>  ◀── 外部クライアント        │
+│        │ vsock                                                         │
+│  ┌─ 共通 Linux VM（Virtualization.framework） ──────────────────────┐  │
+│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）      │  │
+│  │  ┌─ project A ────────────────────────┐ ┌─ project B ────────┐   │  │
+│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │   │  │
+│  │  │ cgroup tsugumi/<A>                 │ │                    │   │  │
+│  │  │ tsugumid                           │ │ tsugumid           │   │  │
+│  │  │  └ worker（bubblewrap: 全 ns 分離、│ │  └ worker          │   │  │
+│  │  │     デフォルトで通信・cap なし）   │ │                    │   │  │
+│  │  └────────────────────────────────────┘ └────────────────────┘   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 隔離の境界は、最も内側から外側へ向かって 4 段あります。
@@ -82,7 +82,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
 
 ### プロジェクト間で共有しているもの
 
-- `nix-daemon` と `/nix/store` を共有しています。store 内のパスはすべて入力のハッシュで識別され、ビルドは `nix-daemon` のサンドボックス（`sandbox = true`）内で行われるため、あるプロジェクトが他プロジェクトのビルド成果物を書き換えることはできません。ただし、Nix の仕様上**「どのパスが store 内に存在するか」は全プロジェクトから参照可能**です。秘密情報を Nix store に入れないでください。
+- `nix-daemon` と `/nix/store` を共有しています。store 内のパスはすべて入力のハッシュで識別され、ビルドは `nix-daemon` のサンドボックス（`sandbox = true`）内で行われるため、あるプロジェクトが他プロジェクトのビルド成果物を書き換えることはできません。ただし、Nix の仕様上、**「どのパスが store 内に存在するか」は全プロジェクトから参照可能**です。秘密情報を Nix store に入れないでください。
 
 ## 4. Card（worker）⇄ tsugumid
 
@@ -93,6 +93,7 @@ VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次�
 ```text
 bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
+      --symlink <store の bash> /bin/sh
       --uid <nobody 相当> --gid <…>
       --ro-bind <保存済み入力・runs>  --bind <worker の一時領域>
       -- tsugumi-worker
@@ -105,7 +106,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 - **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
 - **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。
 - **`bubblewrap` が利用できない環境では、`sandbox: true` の Card を実行せず即座に拒否します**（`permission_denied`）。暗黙のうちに隔離なしで実行することはありません。
-- 例外は [Web UI](WebUI.md) のように `tsugumid` を macOS ホストで直接動かす場合で、bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離します（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。`sandbox-exec` がない場合は同じく拒否します。
+- 例外は [Web UI](WebUI.md) のように `tsugumid` を macOS ホストで直接動かす場合で、bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離します（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）。`network: true` の Card にはネットワークを開きますが、このマシン自身のアドレス（loopback・LAN・VPN）と Unix ソケットは閉じたままで、例外は名前解決に必要な `mDNSResponder` のソケットだけです。Mach サービスも、証明書の検証に使う `com.apple.trustd.agent` のほかは閉じているので、クリップボードや LaunchServices には届きません。`sandbox-exec` がない場合は同じく拒否します。
 
 ### `sandbox: false`
 
@@ -143,8 +144,10 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 
 ### 待ち受け経路
 
-- `tsugumid` は VM 内の `127.0.0.1:<7700 + n>` で待ち受け、Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`）。LAN や外部ネットワークには一切公開されません。
-- `tsugumid` 自体はネットワーク名前空間を共有しているため、VM 内の `127.0.0.1` はプロジェクト間で共通です。別プロジェクトの `tsugumid` へソケット接続すること自体は可能ですが、認証 token を持たないため最初の `SessionHello` で拒否されます（なお、Card の worker はネットワーク名前空間が分離されているため、ソケット接続自体ができません）。
+- `tsugumid` は VM の中では TCP ポートを開かず、Unix ソケット `/run/tsugumi/rpc/s` で WebSocket を待ち受けます（`--listen-unix-ws`、`core/src/vmd_main.cc`）。実体はそのプロジェクトの uid だけが入れる 0700 のフォルダ `/run/tsugumi-rpc/<id>` にあります（§3）。
+- Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`、vsock 1025 で `tsugumi-vmd` がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには一切公開されません。
+- VM の loopback にポートがないので、別のプロジェクトや、ネットワークを許可した Card から `tsugumid` へ接続する経路はありません。
+- Web UI では `tsugumid` がホストで直接動き、`127.0.0.1` の WebSocket で待ち受けます（[Web UI](WebUI.md)）。
 - Unix ドメインソケットを使う場合は `umask 0177`（パーミッション `0600`）で作成します。アプリの標準経路は WebSocket であり、常に token 認証が必須です。
 
 ### 認証 token
@@ -242,6 +245,7 @@ Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI�
 - **共通 VM は 1 つの Linux カーネルを共有しています**。プロジェクト間の隔離は Linux の uid・名前空間・cgroup によるものであり、万一カーネル自体の脆弱性を突かれた場合は他プロジェクトへ影響が及ぶ可能性があります。極めて強い隔離が求められるプロジェクト同士は、同時に開かないでください。
 - 共通の `/nix/store` はすべてのプロジェクトから読み取り可能です（§3）。
 - VM 自体には NAT による外部ネットワーク接続があります。`tsugumid` や `nix-daemon` は外部と通信可能であり、Card も `network: true` を設定したものは外部と通信できます。
+- Mac 上の `tsugumid`（Web UI）で `network: true` の Card は、同じ LAN や VPN の他の機器に届き、UDP のブロードキャストとマルチキャストはこのマシンにも届きます。Seatbelt では宛先のアドレスを指定して拒否できないためです（[Web UI の隔離](WebUI.md#隔離macos-ホスト)）。
 - `network: true` と `hostFolders`（特に `write: true`）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の `_card.json` に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。
 - `sandbox: false` の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと `.tsugumi` は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。
 - 開発・テスト用に Mac ホスト上で直接 `tsugumid` を動かすモード（`bubblewrap` なし）ではサンドボックス隔離が行われません（通常のアプリ実行経路では使用されません）。

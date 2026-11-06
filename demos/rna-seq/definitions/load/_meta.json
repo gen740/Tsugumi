@@ -1,0 +1,10 @@
+{
+  "description": "airway のカウントを読む",
+  "content": "airway パッケージの 8 サンプル（4 細胞株 × デキサメタゾンの有無）のカウント行列と遺伝子名を CSV にし、サンプルの一覧と読まれた数を表で示す。",
+  "outputs": [
+    {
+      "name": "airway",
+      "description": "counts.csv と samples.csv"
+    }
+  ]
+}

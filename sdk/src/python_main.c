@@ -8,6 +8,13 @@
 
 #include "tsugumi/sdk/abi.h"
 
+#ifdef __APPLE__
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron()) /* a shared library has no `environ` to link to */
+#else
+extern char** environ;
+#endif
+
 static const tsugumi_call* g_call = NULL;
 
 static PyObject* host_inputs(PyObject* self, PyObject* args) {
@@ -30,6 +37,20 @@ static PyObject* host_info(PyObject* self, PyObject* args) {
                        (unsigned long long)g_call->invocation, "working_directory", g_call->working_directory,
                        "temporary_directory", g_call->temporary_directory, "output_directory",
                        g_call->output_directory);
+}
+
+/* The process environment as (name, value) bytes: os.environ is a copy from
+ * when the interpreter started. */
+static PyObject* host_environ(PyObject* self, PyObject* args) {
+  PyObject* list = PyList_New(0);
+  for (char** e = environ; *e; ++e) {
+    const char* eq = strchr(*e, '=');
+    if (!eq) continue;
+    PyObject* item = Py_BuildValue("(y#y)", *e, (Py_ssize_t)(eq - *e), eq + 1);
+    PyList_Append(list, item);
+    Py_DECREF(item);
+  }
+  return list;
 }
 
 static PyObject* host_emit_output(PyObject* self, PyObject* args) {
@@ -72,8 +93,10 @@ static PyObject* host_display_line_chart(PyObject* self, PyObject* args) {
   double** buffers = calloc((size_t)n * 2 + 1, sizeof(double*));
   int ok = 1;
   for (Py_ssize_t i = 0; i < n && ok; ++i) {
-    const char *id, *label;
-    PyObject *xs, *ys;
+    const char* id;
+    const char* label;
+    PyObject* xs;
+    PyObject* ys;
     if (!PyArg_ParseTuple(PyList_GetItem(list, i), "ssOO", &id, &label, &xs, &ys)) { ok = 0; break; }
     PyObject* xf = PySequence_Fast(xs, "x must be a sequence");
     PyObject* yf = PySequence_Fast(ys, "y must be a sequence");
@@ -109,9 +132,11 @@ static PyObject* host_display_line_chart(PyObject* self, PyObject* args) {
 }
 
 static PyObject* host_display_table(PyObject* self, PyObject* args) {
-  PyObject *cols, *rows;
+  PyObject* cols;
+  PyObject* rows;
   if (!PyArg_ParseTuple(args, "O!O!", &PyList_Type, &cols, &PyList_Type, &rows)) return NULL;
-  Py_ssize_t nc = PyList_Size(cols), nr = PyList_Size(rows);
+  Py_ssize_t nc = PyList_Size(cols);
+  Py_ssize_t nr = PyList_Size(rows);
   const char** c = calloc((size_t)nc + 1, sizeof(char*));
   const char** cells = calloc((size_t)(nc * nr) + 1, sizeof(char*));
   int ok = 1;
@@ -133,7 +158,8 @@ static PyObject* host_display_table(PyObject* self, PyObject* args) {
 }
 
 static PyObject* host_display_image(PyObject* self, PyObject* args) {
-  const char *media, *alt;
+  const char* media;
+  const char* alt;
   Py_buffer data;
   if (!PyArg_ParseTuple(args, "sy*s", &media, &data, &alt)) return NULL;
   g_call->display_image(g_call->host, media, (const uint8_t*)data.buf, (size_t)data.len, alt);
@@ -142,7 +168,10 @@ static PyObject* host_display_image(PyObject* self, PyObject* args) {
 }
 
 static PyObject* host_display_points(PyObject* self, PyObject* args) {
-  PyObject *xs, *ys, *zs, *cs;
+  PyObject* xs;
+  PyObject* ys;
+  PyObject* zs;
+  PyObject* cs;
   if (!PyArg_ParseTuple(args, "OOOO", &xs, &ys, &zs, &cs)) return NULL;
   Py_ssize_t n = PySequence_Size(xs);
   if (n < 0 || PySequence_Size(ys) != n || PySequence_Size(zs) != n) {
@@ -157,7 +186,9 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
   float* p = malloc(sizeof(float) * (size_t)(n * 3 + 1));
   uint32_t* c = with_colors ? malloc(sizeof(uint32_t) * (size_t)(n + 1)) : NULL;
   for (Py_ssize_t i = 0; i < n; ++i) {
-    PyObject *a = PySequence_GetItem(xs, i), *b = PySequence_GetItem(ys, i), *d = PySequence_GetItem(zs, i);
+    PyObject* a = PySequence_GetItem(xs, i);
+    PyObject* b = PySequence_GetItem(ys, i);
+    PyObject* d = PySequence_GetItem(zs, i);
     p[i] = (float)PyFloat_AsDouble(a);
     p[n + i] = (float)PyFloat_AsDouble(b);
     p[2 * n + i] = (float)PyFloat_AsDouble(d);
@@ -177,7 +208,8 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
 }
 
 static PyObject* host_display_module(PyObject* self, PyObject* args) {
-  const char *name, *data;
+  const char* name;
+  const char* data;
   if (!PyArg_ParseTuple(args, "ss", &name, &data)) return NULL;
   g_call->display_module(g_call->host, name, data);
   Py_RETURN_NONE;
@@ -199,7 +231,8 @@ static PyObject* host_remaining_ms(PyObject* self, PyObject* args) {
 }
 
 static PyObject* host_fail(PyObject* self, PyObject* args) {
-  const char *kind, *msg;
+  const char* kind;
+  const char* msg;
   if (!PyArg_ParseTuple(args, "ss", &kind, &msg)) return NULL;
   g_call->fail(g_call->host, kind, msg);
   Py_RETURN_NONE;
@@ -209,6 +242,7 @@ static PyMethodDef host_methods[] = {
     {"inputs", host_inputs, METH_NOARGS, NULL},
     {"params", host_params, METH_NOARGS, NULL},
     {"info", host_info, METH_NOARGS, NULL},
+    {"environ", host_environ, METH_NOARGS, NULL},
     {"emit_output", host_emit_output, METH_VARARGS, NULL},
     {"display_text", host_display_text, METH_VARARGS, NULL},
     {"display_markdown", host_display_markdown, METH_VARARGS, NULL},

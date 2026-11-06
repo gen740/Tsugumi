@@ -284,7 +284,8 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   };
   if (!h->protocol()) return failure(FailureKind::invalid_request, "protocol is required");
   // The newest version both speak.
-  uint32_t client_max = *h->protocol(), client_min = h->min_protocol().value_or(client_max);
+  uint32_t client_max = *h->protocol();
+  uint32_t client_min = h->min_protocol().value_or(client_max);
   uint32_t chosen = std::min(client_max, kProtocol);
   if (client_min > client_max || chosen < std::max(client_min, kMinProtocol))
     return failure(FailureKind::protocol_mismatch, "server speaks protocol " + std::to_string(kMinProtocol) + " to " +
@@ -852,7 +853,8 @@ void Service::save(RequestIn& req) {
     auto renamed = staged.delta.renamed;
     if (r->renamed_cards())
       for (const auto* c : *r->renamed_cards()) {
-        auto from = wire::card_arg(c->from(), "from"), to = wire::card_arg(c->to(), "to");
+        auto from = wire::card_arg(c->from(), "from");
+        auto to = wire::card_arg(c->to(), "to");
         if (staged.doc->resolution->find(to) && !staged.doc->resolution->find(from))
           renamed.emplace_back(path_key(from), path_key(to));
       }
@@ -935,7 +937,8 @@ void Service::note_run_end(const RunStatusData& s) {
   VersionRunNote n;
   n.run_id = *s.run_id;
   n.state = Tsugumi::Data::EnumNameRunState(s.state);
-  int64_t end = s.ended_at.value_or(0), start = s.started_at.value_or(s.accepted_at.value_or(end));
+  int64_t end = s.ended_at.value_or(0);
+  int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
   try {
@@ -1158,7 +1161,8 @@ void Service::cache_clear(RequestIn& req) {
     workers_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
     FBB b;
-    std::vector<flatbuffers::Offset<flatbuffers::String>> del, ret;
+    std::vector<flatbuffers::Offset<flatbuffers::String>> del;
+    std::vector<flatbuffers::Offset<flatbuffers::String>> ret;
     for (const auto& d : result.deleted) del.push_back(b.CreateString(d));
     for (const auto& d : result.retained) ret.push_back(b.CreateString(d));
     auto cr = R::CreateProjectCacheClearResult(b, b.CreateVector(del), b.CreateVector(ret), result.freed_bytes);
@@ -1193,7 +1197,8 @@ void Service::history_delete(RequestIn& req) {
         if (stdfs::is_regular_file(f, ec)) n += stdfs::file_size(f, ec);
       return n;
     };
-    uint64_t before = sizes(), files = 0;
+    uint64_t before = sizes();
+    uint64_t files = 0;
     auto ids = history_->delete_runs(runs_copy(), r->ended_before());
     // The runs' own files: outputs, copied work folders.
     for (const auto& id : ids) {
@@ -1355,7 +1360,8 @@ void Service::file_list(RequestIn& req) {
   for (const auto& f : files) {
     if (!prefix.empty() && !f.starts_with(prefix)) continue;
     std::string rest = f.substr(prefix.size());
-    size_t level = 0, pos = 0;
+    size_t level = 0;
+    size_t pos = 0;
     while (true) {
       size_t slash = rest.find('/', pos);
       if (slash == std::string::npos) {
@@ -1493,7 +1499,8 @@ namespace {
 std::string pretty_json(const std::string& compact) {
   std::string out;
   int depth = 0;
-  bool in_str = false, esc = false;
+  bool in_str = false;
+  bool esc = false;
   auto newline = [&] { out += '\n' + std::string(static_cast<size_t>(depth) * 2, ' '); };
   for (size_t i = 0; i < compact.size(); ++i) {
     char c = compact[i];
@@ -1548,7 +1555,8 @@ std::optional<std::string> find_tool(const std::string& name) {
 
 // Byte offset of 1-based line/column in text.
 uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
-  uint64_t off = 0, l = 1;
+  uint64_t off = 0;
+  uint64_t l = 1;
   while (l < line && off < text.size()) {
     if (text[off] == '\n') ++l;
     ++off;
@@ -1562,7 +1570,8 @@ uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
 // request/reply only. Formatters are external tools of the environment.
 void Service::attached_folder_read(RequestIn& req) {
   const auto* r = req.request()->value_as_AttachedFolderReadRequest();
-  std::string folder = r->folder()->str(), rel = r->path()->str();
+  std::string folder = r->folder()->str();
+  std::string rel = r->path()->str();
   if (folder.empty() || folder.front() != '/') throw Failed(FailureKind::invalid_path, "folder must be an absolute path");
   if (!rel.empty() && !fs::valid_relative_path(rel)) throw Failed(FailureKind::invalid_path, "invalid path " + rel, {{"path", rel}});
   // On the host every path is reachable: only the folders the launcher listed
@@ -1585,7 +1594,8 @@ void Service::attached_folder_read(RequestIn& req) {
   auto target = stdfs::canonical(rel.empty() ? base : base / rel, ec);
   if (ec) throw Failed(FailureKind::not_found, rel + " does not exist", {{"path", rel}});
   // Never outside the attached folder (links included).
-  auto t = target.string(), b = base.string();
+  auto t = target.string();
+  auto b = base.string();
   if (t != b && !t.starts_with(b + "/")) throw Failed(FailureKind::permission_denied, rel + " leaves the attached folder", {{"path", rel}});
   uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
   std::string bytes;
@@ -1609,7 +1619,9 @@ void Service::attached_folder_read(RequestIn& req) {
 
 void Service::output_types(RequestIn& req) {
   const auto* r = req.request()->value_as_OutputTypesRequest();
-  std::string text = r->text()->str(), root, err;
+  std::string text = r->text()->str();
+  std::string root;
+  std::string err;
   auto bfbs = types::schema_bfbs(text, &root, &err);
   std::optional<std::string> changed;
   if (bfbs && r->port() && r->type_name()) {

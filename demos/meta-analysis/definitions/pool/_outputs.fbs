@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace bcg;
+table Pooled { value:string; }
+table Outputs { pooled:Pooled (required, tsugumi: "file"); }
+root_type Outputs;

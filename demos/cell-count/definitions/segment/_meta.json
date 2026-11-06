@@ -1,0 +1,10 @@
+{
+  "description": "閾値と watershed で切り分ける",
+  "content": "大津の閾値で前景を求め、つながった領域に番号を振る（閾値のみ）。さらに距離変換の極大を種に watershed をかけ、接した細胞を切り分ける。",
+  "outputs": [
+    {
+      "name": "labels",
+      "description": "閾値のみと watershed のラベル画像"
+    }
+  ]
+}

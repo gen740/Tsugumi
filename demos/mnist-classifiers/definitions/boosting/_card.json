@@ -1,0 +1,30 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "params": [
+    {
+      "name": "rounds",
+      "type": "uint64",
+      "data": 60
+    },
+    {
+      "name": "max_depth",
+      "type": "uint64",
+      "data": 4
+    },
+    {
+      "name": "eta",
+      "type": "double",
+      "data": 0.3
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 0
+    }
+  ]
+}

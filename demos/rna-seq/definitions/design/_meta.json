@@ -1,0 +1,10 @@
+{
+  "description": "細胞株の項の有無を比べる",
+  "content": "細胞株を入れない ~ dex でもう一度 DESeq2 を実行し、~ cell + dex の結果と推定値・統計量を並べて描く。",
+  "outputs": [
+    {
+      "name": "design",
+      "description": "両方の設計の log2FC・統計量・FDR の CSV"
+    }
+  ]
+}

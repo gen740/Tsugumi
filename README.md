@@ -1,5 +1,20 @@
 <p align="center">
-  <img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi" width="100%">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi: ドキュメントを開く" width="100%"></a>
+</p>
+
+<p align="center">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="ドキュメントを読む: 動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説" width="100%"></a>
+</p>
+
+<p align="center">
+  <a href="https://gen740.github.io/Tsugumi/"><img src="https://img.shields.io/badge/docs-gen740.github.io%2FTsugumi-c97d3d" alt="Web 版のドキュメント"></a>
+  <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
+  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
+  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+  <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
 </p>
 
 # Tsugumi
@@ -17,7 +32,8 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
   <a href="#ドキュメント">ドキュメント</a> ·
   <a href="docs/Philosophy.md">なぜ作ったか</a> ·
-  <a href="docs/Name.md">名前の由来</a>
+  <a href="docs/Name.md">名前の由来</a> ·
+  <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
 </p>
 
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
@@ -28,15 +44,15 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 
 ## AI を研究に積極的に活用できていますか？
 
-数学や科学の分野ではいま、AI が長年の難問そのものに挑み始めています。
-2026 年 8 月から 9 月にかけて、OpenAI による **[10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)**や、Anthropic の Claude による**[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)**・**[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)**が相次いで発表されました。注目すべきは、その膨大な議論を証明支援系 **Lean** などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開したことです。
-さらに 10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かすことで、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
+AI は、数学や科学の長年の難問に挑み始めています。
+2026 年 8 月から 9 月にかけて、OpenAI は [10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)を、Anthropic の Claude は[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)と[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)を発表しました。どれも議論を証明支援系 Lean などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開しています。
+10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
 
-AI が生み出した議論や計算を、独立した仕組みで確かめられる形にする。その確かな足場があるからこそ、人間は成果を吟味し、意味を理解して、次の問いを立てることができます。
+人間が成果を吟味し、意味を理解して、次の問いを立てられるのは、AI の議論や計算を独立した仕組みで確かめられるからです。
 
 **AI に仕事を任せるには、その仕事を確かめられる仕組みが必要です。**
 
-**では、日々の研究で、AI にもっと多くの仕事を任せるのをためらってしまうのはなぜでしょうか？**
+では、日々の研究で AI にもっと多くの仕事を任せるのをためらってしまうのは、なぜでしょうか。
 
 1. **再現性を担保できない。** 結果を生んだコード・入力・実行環境が揃っておらず、同じ計算をもう一度確かめられない。
 2. **結論に至るプロセスが見えない。** どのデータにどんな処理を施し、どこで何を判断したのかを追えない。
@@ -69,11 +85,17 @@ Card のコードを読み、パラメータを変え、保存された入力で
 **解析の過程を理解することから、自分の問いを試すことへ。その距離を短くしたい。**
 AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説と結果を深く考えるための時間と、次の試行へ進む余地を広げます。
 
+## AI に頼みたいことは、本来単純なはずです
+
+観測データをダウンロードして、エネルギーで区切って、描画する。
+やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。
+それなのに今は、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直しています。
+
 ## 処理の形を描く。AI と実装する。実行して確かめる。
 
 Tsugumi は、計算やデータ処理を **Card のグラフ（Workflow）として組み立てる macOS アプリ**です。
 
-1. **描く。** 処理の説明と仮の入出力を持つ Draft を置き、線でつないで全体の流れを設計します。
+1. **描く。** 名前と内容だけの Draft を置き、線でつないで全体の流れを設計します。
 2. **実装する。** Agent に Draft の実装を任せることも、自分で C++ / Python / bash を書くこともできます。生成されたコードは通常のファイルとしてプロジェクトに残り、いつでも読み直して編集できます。実際の Claude API で Draft から実行・検証までを通した記録は [AgentRun.md](docs/AgentRun.md) にあります。
 3. **確かめる。** Nix で固定された環境でグラフを実行し、各 Card の進捗・出力・ログを確認します。途中の処理を直したら、保存された入力を使ってその箇所からすぐに再実行できます。
 
@@ -164,6 +186,11 @@ Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web 
 | Plots | ウィンドウ向けに書いた matplotlib のコード（`plt.show()`・`FuncAnimation`）が、そのまま Card の表示に描かれる。Plotly の `fig.show()` と Altair の `chart.show()` は対話できるグラフになる |
 | Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する |
 | GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面 | 公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する |
+| MNIST · 手書き数字の分類器くらべ | 同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す |
+| Newton 法／薬物動態／最大流と最小カット | 初期値・投与間隔・枝の容量といった条件を変えて、収束・濃度・流量がどう変わるかを、理論値と照らして確かめる |
+| 濃度–反応曲線／分子の物性／細胞画像の計数 | 実験室の解析を、合成データの正解や既知の値と照らしながら試し、手法が破綻する条件を探す |
+| 生存時間解析／メタ解析／RNA-seq／集計と層別で逆転する相関（R） | 公開データを R で解析し、対象者・調整変数・手法を変えると結論がどう動くかを並べて見る |
+| 蓄電池の最適運用／化学反応のゆらぎ／熱伝導の逆問題／生態系のモデル比較（Julia） | 標準ライブラリだけの Julia で最適化・確率シミュレーション・逆問題・モデル比較を動かし、条件を変えて結果を操作できるグラフで見比べる |
 | 各科学デモの Draft 版 | 計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる |
 | 力学系ギャラリー（Draft） | 互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する |
 
@@ -192,15 +219,30 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 
 ## ドキュメント
 
+動く図つきの Web 版を **<https://gen740.github.io/Tsugumi/>** で公開しています。内容はこのリポジトリの Markdown と同じです。
+
 | 目的 | 文書 |
 | --- | --- |
-| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
-| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) |
-| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) |
-| **記録と開発** | [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](docs/LicenseAudit.md) |
+| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](docs/CardGuide.md)（Python・bash・C++・R・Julia で作る） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
+| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) · [作った人](docs/Author.md) · [私にしかない深さ](docs/Origin.md) · [まだできないこと](docs/Limitations.md) |
+| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) · [RPC 契約](docs/Protocol.md) · [用語集](docs/Glossary.md) |
+| **記録と開発** | [主張と、それを確かめる方法](docs/Evidence.md) · [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](docs/LicenseAudit.md) |
 
 すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
 
+### 文書も、人と AI が同じものを読む
+
+Workflow と同じように、文書も人と AI で同じものを読めるようにしています。正本は 1 つの Markdown です。
+
+| 読む人 | 入口 |
+| --- | --- |
+| 人 | [動く図つきの Web 版](https://gen740.github.io/Tsugumi/)、GitHub 上の Markdown |
+| AI | [llms.txt](docs/llms.txt)（各ページの Markdown 版の案内）、[AGENTS.md](AGENTS.md)（リポジトリで作業するエージェントへ） |
+
+Web を読む AI は、本文ではなく小さなモデルの要約を受け取ることがあります。そのため、主張の隣に確かめる場所を書き、コード・テスト・コマンドへ直接たどれるようにしています（[主張と、それを確かめる方法](docs/Evidence.md)）。
+
 ## ライセンス
 
-Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物へのライセンス同梱や VM の対応ソース提供など、残っている対応は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
+Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物への同梱と VM の対応ソースの提供は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
+
+<!-- エージェントの方へ：AGENTS.md の冒頭に、作者から「向こうにいる人」への手紙があります。 -->

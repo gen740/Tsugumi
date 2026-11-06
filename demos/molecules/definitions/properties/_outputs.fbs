@@ -1,0 +1,17 @@
+namespace mol;
+// One entry per readable molecule, in the order given.
+table Molecules {
+  names:[string];
+  smiles:[string];
+  formula:[string];
+  mw:[double];
+  logp:[double];
+  tpsa:[double];
+  hbd:[int];
+  hba:[int];
+  rotatable:[int];
+  nh_oh:[int];
+  n_o:[int];
+}
+table Outputs { molecules:Molecules (required); }
+root_type Outputs;

@@ -167,7 +167,10 @@ class Builder {
  private:
   struct RawEdge {
     CardPath scope;
-    std::string from, from_port, to, to_port;
+    std::string from;
+    std::string from_port;
+    std::string to;
+    std::string to_port;
   };
 
   Template template_of(const DefinitionDoc* def) {
@@ -386,9 +389,9 @@ class Builder {
       switch (n.kind) {
         case Template::Code:
           if (n.settings.language != "cpp" && n.settings.language != "python" &&
-              n.settings.language != "bash")
+              n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia")
             n.exec_diags.push_back(diag(n.path, "invalid_language",
-                                        "language must be cpp, python or bash"));
+                                        "language must be cpp, python, bash, r or julia"));
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
                                         n.def_dir + "default.nix"));
@@ -431,14 +434,15 @@ class Builder {
           n.input_defs = {{"in", false}};
           break;
         case Template::Draft:
-          // Provisional outputs let a Draft be wired before it is implemented:
-          // typed ones from _outputs.fbs, otherwise the names (and purposes)
-          // in _meta.json, carrying an empty message until implemented.
+          // A Draft can be wired before it is implemented: its outputs are the
+          // typed ones of _outputs.fbs and the names in _meta.json (a wire drawn
+          // from the Draft adds one there), carrying an empty message until
+          // implemented.
           load_catalog(n);
-          if (n.outputs.empty() && def && def->meta)
+          if (def && def->meta)
             if (const auto* outs = schema::get(def->meta->outputs))
               for (const auto& o : *outs)
-                if (const auto* name = schema::get(o.name); name && valid_id(*name))
+                if (const auto* name = schema::get(o.name); name && valid_id(*name) && !n.output(*name))
                   n.outputs.push_back({*name, PortKind::FlatBuffer, true, types::empty_type()});
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;
@@ -533,7 +537,8 @@ class Builder {
       }
     }
     for (const auto& e : raw_) {
-      CardPath from = e.scope, to = e.scope;
+      CardPath from = e.scope;
+      CardPath to = e.scope;
       from.push_back(e.from);
       to.push_back(e.to);
       auto src = leaf(from, e.from_port, true, from);

@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace airway;
+table Normalized { value:string; }
+table Outputs { normalized:Normalized (required, tsugumi: "directory"); }
+root_type Outputs;

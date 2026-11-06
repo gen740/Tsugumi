@@ -496,8 +496,12 @@ private struct GeneralCategory: View {
                                        set: { model.definition?["symbol"] = $0.map { .string($0) } }),
                        inherited: model.kind.symbol)
         }
-        TextField("概要", text: string("description"), axis: .vertical)
+        TextField("概要", text: model.kind == .draft ? metaString("description") : string("description"), axis: .vertical)
           .lineLimit(2...5)
+        if model.kind == .draft {
+          TextField("内容", text: metaString("content"), prompt: Text("何を受け取り、何を出し、どう処理するかを書きます"), axis: .vertical)
+            .lineLimit(6...16)
+        }
       }
       if let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
@@ -576,6 +580,16 @@ private struct GeneralCategory: View {
   private func string(_ name: String, fallback: String? = nil) -> Binding<String> {
     Binding(get: { model.definition?[name]?.string ?? fallback ?? "" },
             set: { v in model.definition?[name] = v.isEmpty || v == fallback ? nil : .string(v) })
+  }
+
+  /// A Draft's intent is in _meta.json.
+  private func metaString(_ name: String) -> Binding<String> {
+    Binding(get: { model.meta?[name]?.string ?? "" },
+            set: { v in
+              var meta = model.meta ?? .object([])
+              meta[name] = v.isEmpty ? nil : .string(v)
+              model.meta = meta
+            })
   }
 
   private func toggle(_ name: String, label: LocalizedStringKey, fallback: Bool) -> some View {

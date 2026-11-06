@@ -99,7 +99,8 @@ void Store::open() {
     fs::write_atomic(id_path, project_id_, 0600);
   }
   recover_journal();
-  uint64_t rev = 0, exec_rev = 0;
+  uint64_t rev = 0;
+  uint64_t exec_rev = 0;
   {
     std::lock_guard<std::mutex> l(mu_);
     if (doc_) {
@@ -162,7 +163,8 @@ void Store::recover_journal() {
   journal_fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_APPEND, 0600);
   if (journal_fd_ < 0) throw fs::Error("open journal: " + std::string(std::strerror(errno)));
   auto data = fs::read_file_or_throw(path);
-  size_t pos = 0, good = 0;
+  size_t pos = 0;
+  size_t good = 0;
   struct Txn {
     schema::JournalRecord rec;
     bool committed = false;
@@ -170,7 +172,8 @@ void Store::recover_journal() {
   std::vector<Txn> txns;
   std::map<std::string, Receipt> receipts;
   std::deque<std::string> order;
-  uint64_t rev = 0, exec_rev = 0;
+  uint64_t rev = 0;
+  uint64_t exec_rev = 0;
   auto to_receipt = [](const schema::JournalRecord& r) {
     Receipt rc;
     rc.op_id = *r.op;
@@ -181,7 +184,8 @@ void Store::recover_journal() {
   };
   while (pos + 12 <= data.size()) {
     if (std::memcmp(data.data() + pos, kMagic, 4) != 0) break;
-    uint32_t len, crc;
+    uint32_t len;
+    uint32_t crc;
     std::memcpy(&len, data.data() + pos + 4, 4);
     std::memcpy(&crc, data.data() + pos + 8, 4);
     if (pos + 12 + len > data.size()) break;
@@ -262,10 +266,12 @@ void Store::compact_journal() {
   auto path = state_dir() / "document.journal";
   if (stdfs::file_size(path, ec) < kCompactBytes || ec) return;
   std::vector<Receipt> keep;
-  uint64_t rev = 0, exec_rev = 0;
+  uint64_t rev = 0;
+  uint64_t exec_rev = 0;
   {
     std::lock_guard<std::mutex> l(mu_);
-    size_t kept = 0, bytes = 0;
+    size_t kept = 0;
+    size_t bytes = 0;
     for (auto it = receipt_order_.rbegin(); it != receipt_order_.rend(); ++it, ++kept) {
       const auto& r = receipts_.at(*it);
       size_t size = r.op_id.size() + r.kind.size() + r.digest.size() + r.bytes.size();
@@ -284,7 +290,8 @@ void Store::compact_journal() {
   }
   auto record = [](const std::string& payload) {
     std::string r(kMagic, 4);
-    uint32_t len = static_cast<uint32_t>(payload.size()), crc = crypto::crc32(payload.data(), payload.size());
+    uint32_t len = static_cast<uint32_t>(payload.size());
+    uint32_t crc = crypto::crc32(payload.data(), payload.size());
     r.append(reinterpret_cast<const char*>(&len), 4);
     r.append(reinterpret_cast<const char*>(&crc), 4);
     return r + payload;

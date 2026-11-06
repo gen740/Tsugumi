@@ -277,7 +277,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   RunStatusData request_cancel(bool interrupted) {
     std::lock_guard<std::mutex> l(mu_);
-    if (!summary_.status.terminal() && !cancel_) {
+    // Once finalize() has taken the final status it is on its way to the history:
+    // a "cancelling" written now would land after it and stay as the run's state.
+    if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
       summary_.status.state = RunState::cancelling;
@@ -418,16 +420,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& s : plan.seeds) seeded.insert(path_key(s));
     for (const auto& s : plan.starts)
       if (!seeded.count(path_key(s))) nodes_[res.index.at(path_key(s))].start = true;
-    for (const auto& s : plan.seeds) seed_boundary(nodes_[res.index.at(path_key(s))]);
+    for (const auto& s : plan.seeds) {
+      NodeRt& n = nodes_[res.index.at(path_key(s))];
+      std::set<std::string> outside;
+      for (const auto& e : res.edges)
+        if (e.to == n.idx && !nodes_[e.from].in_targets) outside.insert(e.to_port);
+      seed_saved(n, outside);
+    }
+    for (const auto& j : plan.joins) seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
   }
 
-  // Queues the saved values of the ports an inner Card receives from outside
-  // the subgraph being run. All of them come from one saved invocation.
-  void seed_boundary(NodeRt& n) {
-    const auto& res = *doc_->resolution;
-    std::set<std::string> outside;
-    for (const auto& e : res.edges)
-      if (e.to == n.idx && !nodes_[e.from].in_targets) outside.insert(e.to_port);
+  // Queues the saved values of ports the run itself will not fill. All of them
+  // come from one saved invocation.
+  void seed_saved(NodeRt& n, const std::set<std::string>& outside) {
     auto fail = [&](FailureKind k, const std::string& msg) {
       start_failure_ = FailureData::make(k, msg, {{"card", path_key(n.node->path)}});
       n.halted = true;
@@ -463,6 +468,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       t.from_inv = last->invocation;
       t.seq = ++token_seq_;
       n.queues[port].push_back(std::move(t));
+      // No Card of this run sent it: the record says where it comes from.
+      seed_notes_.push_back(path_key(n.node->path) + "." + port + " uses the saved value from run " +
+                            (one ? one->run_id : last->run_id) + ", invocation " +
+                            std::to_string(one ? one->invocation : last->invocation));
     }
   }
 
@@ -561,6 +570,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     prepare_graph();
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
+    for (const auto& note : seed_notes_) journal("run", "seeded", std::nullopt, std::nullopt, note);
     // Execution pool.
     for (uint32_t lane = 0; lane < p_.max_concurrency; ++lane)
       pool_.emplace_back([this, lane] { pool_loop(lane); });
@@ -1025,7 +1035,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             }
             members.emplace_back(prm.name, val);
           }
-          std::string bytes, err;
+          std::string bytes;
+          std::string err;
           if (!types::json_to_flatbuffer(*port.type, schema::object_text(members), &bytes, &err))
             throw Failed(FailureKind::output_invalid, "input " + port.name + ": " + err);
           p.outputs.push_back({port.name, port.kind, port.type, std::move(bytes), {}});
@@ -1063,7 +1074,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       case Template::Logger: {
         const Value* v = input(in, "in");
         if (!v) throw Failed(FailureKind::input_missing, "logger input missing");
-        std::string text, err;
+        std::string text;
+        std::string err;
         if (!types::flatbuffer_to_json(*v->type, v->bytes, &text, &err)) throw Failed(FailureKind::output_invalid, err);
         card_log(node.path, s.invocation, LogStream::stdout, text + "\n");
         DisplayData d;
@@ -1184,7 +1196,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool needs_out = false;
     for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
     auto dir = invocation_dir(node, s.invocation);
-    std::string work = worker.work_dir(), tmp = worker.tmp_dir(), out;
+    std::string work = worker.work_dir();
+    std::string tmp = worker.tmp_dir();
+    std::string out;
     std::vector<std::pair<std::string, int32_t>> project_dirs;  // real path, descriptor slot
     auto make_dir = [&](const stdfs::path& d) {
       stdfs::create_directories(d);
@@ -1336,6 +1350,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     RunSummaryData sum;
     {
       std::lock_guard<std::mutex> l(mu_);
+      finishing_ = true;
       sum = summary_;
     }
     auto& st = sum.status;
@@ -1397,7 +1412,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   stdfs::path run_dir_;
   std::thread thread_;
   std::mutex mu_;
-  std::condition_variable cv_, task_cv_;
+  std::condition_variable cv_;
+  std::condition_variable task_cv_;
   std::vector<NodeRt> nodes_;
   std::map<std::pair<size_t, std::string>, std::vector<std::pair<size_t, std::string>>> out_edges_;
   std::deque<Work> tasks_;
@@ -1405,9 +1421,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   bool pool_stop_ = false;
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
+  std::vector<std::string> seed_notes_;  // journaled once the run has started
   std::atomic<bool> cancel_{false};
+  bool finishing_ = false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;
-  std::optional<FailureData> first_failure_, start_failure_, stall_failure_;
+  std::optional<FailureData> first_failure_;
+  std::optional<FailureData> start_failure_;
+  std::optional<FailureData> stall_failure_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
 };
@@ -1467,7 +1487,8 @@ std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
       if (res.nodes[i].is_virtual || waits.count(i)) continue;
       for (const auto& p : res.nodes[i].inputs) {
         if (p.optional) continue;
-        bool fed = false, only_waiting = true;
+        bool fed = false;
+        bool only_waiting = true;
         for (const auto& e : res.edges)
           if (e.to == i && e.to_port == p.name) {
             fed = true;
@@ -1490,7 +1511,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
   if (!target) throw Failed(FailureKind::not_found, "unknown card " + path_key(card), {{"card", path_key(card)}});
   size_t t = res.index.at(path_key(card));
   std::set<size_t> targets;
-  std::vector<size_t> starts, seeds;
+  std::vector<size_t> starts;
+  std::vector<size_t> seeds;
   auto inside = [&](size_t i) {
     const auto& p = res.nodes[i].path;
     return p.size() > card.size() && std::equal(card.begin(), card.end(), p.begin());
@@ -1501,7 +1523,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
     for (size_t i = 0; i < res.nodes.size(); ++i) {
       if (!inside(i) || res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft) continue;
       targets.insert(i);
-      bool from_outside = false, any_in = false;
+      bool from_outside = false;
+      bool any_in = false;
       for (const auto& e : res.edges)
         if (e.to == i) {
           any_in = true;
@@ -1569,6 +1592,22 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card, bool pr
   for (size_t s : seeds) {
     out.seeds.push_back(res.nodes[s].path);
     out.starts.push_back(res.nodes[s].path);
+  }
+  // A Card further down that waits for all its inputs would never run without
+  // the ports nothing in this run feeds; a port something in this run feeds
+  // gets that value alone, and an `any` Card runs on what arrives.
+  std::set<size_t> given(starts.begin(), starts.end());
+  given.insert(seeds.begin(), seeds.end());
+  for (size_t i : targets) {
+    if (res.nodes[i].settings.any_mode || given.count(i)) continue;
+    std::set<std::string> fed, saved;
+    for (const auto& e : res.edges) {
+      if (e.to != i) continue;
+      if (targets.count(e.from)) fed.insert(e.to_port);
+      else if (!waits.count(e.from)) saved.insert(e.to_port);
+    }
+    for (const auto& port : fed) saved.erase(port);
+    if (!saved.empty()) out.joins.push_back({res.nodes[i].path, std::move(saved)});
   }
   return out;
 }

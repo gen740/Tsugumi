@@ -1,0 +1,25 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "measurement"
+    }
+  ],
+  "params": [
+    {
+      "name": "log10_lambda_min",
+      "type": "double",
+      "data": -6
+    },
+    {
+      "name": "log10_lambda_max",
+      "type": "double",
+      "data": 1
+    },
+    {
+      "name": "sweep",
+      "type": "uint64",
+      "data": 57
+    }
+  ]
+}

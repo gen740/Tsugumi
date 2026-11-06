@@ -12,10 +12,16 @@
 // cleared by a later step's success. One deadline covers all steps, and
 // cancel/deadline are checked before each step starts.
 //
+// The environment of a package body, weakest first: what the worker was
+// started with, the call's, what the package set while loading (the top of a
+// Python Card's main.py), preRun's exports. A package is loaded before any
+// preRun, so preRun cannot reach what a library reads as it is loaded.
+//
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
-// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT.
+// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT and what it
+// shows as JSON to $TSUGUMI_DISPLAY (read when it ends; see BashDisplay).
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
@@ -28,6 +34,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -44,6 +51,7 @@
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
+#include "message_json.hh"
 #include "schema.hh"
 
 extern char** environ;
@@ -175,8 +183,10 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string package;          // a package body: <package>/lib/main.so
-  std::string pre, run, post;   // files with bash text (run: a bash body)
+  std::string package;  // a package body: <package>/lib/main.so
+  std::string pre;      // a file with bash text
+  std::string run;      // a file with bash text (a bash body)
+  std::string post;     // a file with bash text
 };
 
 struct Call {
@@ -318,7 +328,9 @@ int display_image_impl(void*, const char* media_type, const uint8_t* data, size_
 
 int display_points_impl(void*, const float* x, const float* y, const float* z, const uint32_t* colors, size_t count) {
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto xv = b.CreateVector(x, count), yv = b.CreateVector(y, count), zv = b.CreateVector(z, count);
+    auto xv = b.CreateVector(x, count);
+    auto yv = b.CreateVector(y, count);
+    auto zv = b.CreateVector(z, count);
     auto cv = b.CreateVector(colors, colors ? count : 0);
     return std::make_pair(D::DisplayValue::DisplayPointCloud, D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
   });
@@ -327,7 +339,8 @@ int display_points_impl(void*, const float* x, const float* y, const float* z, c
 
 int display_module_impl(void*, const char* name, const char* data_json) {
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(name), d = b.CreateString(data_json);
+    auto n = b.CreateString(name);
+    auto d = b.CreateString(data_json);
     return std::make_pair(D::DisplayValue::DisplayModule, D::CreateDisplayModule(b, n, d).Union());
   });
   return 0;
@@ -437,6 +450,14 @@ tsugumi_main_fn g_main = nullptr;
 tsugumi_main_fn g_run_start = nullptr;
 std::string g_load_error;
 std::string g_last_run;
+std::vector<std::string> g_loaded_env;  // the process environment once the package was loaded
+std::vector<std::string> g_set_by_load;  // the part of it that loading set or changed
+
+std::vector<std::string> process_env() {
+  std::vector<std::string> out;
+  for (char** e = environ; *e; ++e) out.emplace_back(*e);
+  return out;
+}
 
 void load_package(const Options& opt) {
   std::string lib = opt.package + "/lib/main.so";
@@ -488,6 +509,22 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   return c;
 }
 
+// The environment of a package body (the order is at the top of this file):
+// `step` is the call's environment with preRun's exports, `call` without them.
+std::vector<std::string> body_env(const std::vector<std::string>& call, const std::vector<std::string>& step) {
+  auto out = g_loaded_env;
+  for (const auto& e : step) {
+    auto eq = e.find('=');
+    set_env(out, e.substr(0, eq), e.substr(eq + 1));
+  }
+  for (const auto& e : g_set_by_load) {
+    auto eq = e.find('=');
+    std::string name = e.substr(0, eq);
+    if (get_env(step, name) == get_env(call, name)) set_env(out, name, e.substr(eq + 1));
+  }
+  return out;
+}
+
 // Replaces the process environment with the step environment.
 void apply_env(const std::vector<std::string>& env) {
   std::vector<std::string> names;
@@ -510,7 +547,7 @@ void bash_inputs(const W::WorkerCall* m, const std::string& tmp, std::vector<std
     std::string up = upper(port);
     auto* p = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
     std::string json;
-    if (!p || flatbuffers::GenText(*p, in->value()->bytes()->data(), &json)) {
+    if (!p || tsugumi::message_json::gen_text(*p, in->value()->bytes()->data(), &json)) {
       record_failure(D::FailureKind::worker_failed, "cannot convert input " + port + " to JSON");
       return;
     }
@@ -558,6 +595,73 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
   }
 }
 
+// $TSUGUMI_DISPLAY of a bash body, which is also how R and Julia Cards show
+// things: exactly one member. A relative image path is from the working directory.
+struct BashDisplayTable {
+  tsugumi::schema::Opt<"columns", tsugumi::schema::v::Array<tsugumi::schema::v::String>> columns;
+  tsugumi::schema::Opt<"rows", tsugumi::schema::v::Array<tsugumi::schema::v::Array<tsugumi::schema::v::String>>> rows;
+};
+struct BashDisplayImage {
+  tsugumi::schema::Opt<"path", tsugumi::schema::v::String> path;
+  tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
+};
+struct BashDisplayModule {
+  tsugumi::schema::Opt<"name", tsugumi::schema::v::String> name;
+  tsugumi::schema::Opt<"data", tsugumi::schema::Json> data;
+};
+struct BashDisplay {
+  tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
+  tsugumi::schema::Opt<"markdown", tsugumi::schema::v::String> markdown;
+  tsugumi::schema::Opt<"table", tsugumi::schema::Obj<BashDisplayTable>> table;
+  tsugumi::schema::Opt<"image", tsugumi::schema::Obj<BashDisplayImage>> image;
+  tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>> module;
+};
+
+void bash_display(const std::string& path, const std::string& cwd) {
+  namespace sc = tsugumi::schema;
+  if (::access(path.c_str(), R_OK) != 0) return;
+  auto invalid = [](const std::string& why) {
+    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_DISPLAY: " + why);
+  };
+  BashDisplay d;
+  if (auto err = sc::decode(read_text(path), d)) return invalid(err->message);
+  if (const auto* t = sc::get(d.text)) {
+    display_text_impl(nullptr, t->c_str());
+  } else if (const auto* m = sc::get(d.markdown)) {
+    display_markdown_impl(nullptr, m->c_str());
+  } else if (const auto* table = sc::get(d.table)) {
+    const auto* columns = sc::get(table->columns);
+    if (!columns) return invalid("a table needs columns");
+    std::vector<const char*> names, cells;
+    for (const auto& c : *columns) names.push_back(c.c_str());
+    size_t row_count = 0;
+    if (const auto* rows = sc::get(table->rows))
+      for (const auto& row : *rows) {
+        if (row.size() != names.size()) return invalid("a table row has " + std::to_string(row.size()) + " cells, not " + std::to_string(names.size()));
+        for (const auto& c : row) cells.push_back(c.c_str());
+        ++row_count;
+      }
+    display_table_impl(nullptr, names.data(), names.size(), cells.data(), row_count);
+  } else if (const auto* image = sc::get(d.image)) {
+    const auto* file = sc::get(image->path);
+    if (!file) return invalid("an image needs a path");
+    std::string full = file->starts_with("/") ? *file : cwd + "/" + *file;
+    if (::access(full.c_str(), R_OK) != 0) return invalid("cannot read the image " + *file);
+    std::string bytes = read_text(full);
+    const char* media = bytes.starts_with("\x89PNG") ? "image/png" : bytes.starts_with("\xFF\xD8") ? "image/jpeg" : nullptr;
+    if (!media) return invalid(*file + " is neither PNG nor JPEG");
+    const auto* alt = sc::get(image->alt);
+    display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
+  } else if (const auto* module = sc::get(d.module)) {
+    const auto* name = sc::get(module->name);
+    const auto* data = sc::get(module->data);
+    if (!name || !data) return invalid("a module needs a name and data");
+    display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str());
+  } else {
+    invalid("name one of text, markdown, table, image or module");
+  }
+}
+
 void execute(const Options& opt, Call& call) {
   const auto* m = call.msg;
   std::string work = m->working_directory()->str();
@@ -569,6 +673,7 @@ void execute(const Options& opt, Call& call) {
   set_env(env, "TSUGUMI_TMP_DIR", tmp);
   if (!out_dir.empty()) set_env(env, "TSUGUMI_OUTPUT_DIR", out_dir);
   set_env(env, "TMPDIR", tmp);
+  const auto call_env = env;
   bool timed_out = false;
   std::string cwd = work;
   // Nothing starts after a cancel or once the single call deadline passed.
@@ -616,7 +721,7 @@ void execute(const Options& opt, Call& call) {
       for (const auto* in : *m->inputs())
         values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
                           in->value()->bytes()->size()});
-      apply_env(env);
+      apply_env(body_env(call_env, env));
       if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
       tsugumi_call c = make_call(call, values, work, tmp, out_dir);
       // The first invocation of each run starts it (onRunStart / on_run_start).
@@ -640,10 +745,17 @@ void execute(const Options& opt, Call& call) {
     std::string out_json = tmp + "/output.json";
     ::unlink(out_json.c_str());
     set_env(run_env, "TSUGUMI_OUTPUT", out_json);
+    std::string display_json = tmp + "/display.json";
+    ::unlink(display_json.c_str());
+    set_env(run_env, "TSUGUMI_DISPLAY", display_json);
     if (!call.failure) {
       int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
-      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) step_failed("run", st);
-      else bash_outputs(m, out_json);
+      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
+        step_failed("run", st);
+      } else {
+        bash_display(display_json, cwd);
+        if (!call.failure) bash_outputs(m, out_json);
+      }
     }
   }
   // postRun also runs after a failed step (cleanup), but never after a
@@ -731,7 +843,13 @@ int main(int argc, char** argv) {
     else if (k == "--run") opt.run = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];
   }
-  if (!opt.package.empty()) load_package(opt);
+  if (!opt.package.empty()) {
+    auto before = process_env();
+    load_package(opt);
+    g_loaded_env = process_env();
+    for (const auto& e : g_loaded_env)
+      if (std::find(before.begin(), before.end(), e) == before.end()) g_set_by_load.push_back(e);
+  }
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
   while (true) {

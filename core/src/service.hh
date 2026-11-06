@@ -195,7 +195,8 @@ class Service : public RequestSink {
   void export_now();
   std::mutex export_mu_;
   std::condition_variable export_cv_;
-  std::optional<std::chrono::steady_clock::time_point> export_first_, export_last_;
+  std::optional<std::chrono::steady_clock::time_point> export_first_;
+  std::optional<std::chrono::steady_clock::time_point> export_last_;
   bool export_stop_ = false;
   std::thread exporter_;
 };

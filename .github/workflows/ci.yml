@@ -9,7 +9,33 @@ on:
   push:
     branches: [main]
   pull_request:
+# A new push to a pull request replaces its run; main keeps every run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # Documents alone need no Swift build. The app does read four of them
+  # (Help > Tsugumi を知る, macOS/Tests checks that it finds them).
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          app=true
+          if files="$(git diff --name-only "$BASE" HEAD)" && [ -n "$files" ]; then
+            others="$(grep -vE '^docs/|^[A-Z_]+\.md$' <<<"$files" || true)"
+            read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Name|Author)\.md)$' <<<"$files" || true)"
+            if [ -z "$others$read_by_app" ]; then app=false; fi
+          fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
   core:
     name: tsugumid and Python tests (Linux)
     runs-on: ubuntu-24.04
@@ -36,6 +62,8 @@ jobs:
 
   macos:
     name: Swift tests (macOS, no VM)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-26
     timeout-minutes: 120
     steps:
@@ -49,6 +77,14 @@ jobs:
       # needs Virtualization.framework: TSUGUMI_TEST_CONTAINER=1 on a Mac.)
       - name: Card isolation on a Mac host (Seatbelt)
         run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q test_host_isolation.py test_host_sandbox.py'
+      # The packages' builds, kept per dependency set: what did not change is not compiled again.
+      - name: Cache the Swift builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            macOS/.build
+            macOS/CoreTests/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift') }}
       # Swift and its SDK are Xcode's; only flatc comes from the flake.
       - name: Model, RPC, Agent and launcher (macOS/CoreTests)
         run: |

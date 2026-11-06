@@ -39,7 +39,7 @@
 | [web/](web/) | ブラウザ UI とホストサーバー |
 | [demos/](demos/) | 同梱デモと、その Draft 版（実装前の処理の形だけ） |
 | [tests/](tests/) | 契約・スケジューラー・履歴・隔離・デモ・fuzz などのテスト |
-| [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md) |
+| [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md)。Web 版と AI 向けの [docs/llms.txt](docs/llms.txt) の生成は `node docs/site/build.mjs` |
 
 構成の全体図とディレクトリの詳細は [docs/Development.md](docs/Development.md) の「実行基盤」「ディレクトリ」にあります。
 
@@ -60,7 +60,7 @@
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
 | 何をハッカソン前に用意し、何をこの期間に作ったか | [docs/Provenance.md](docs/Provenance.md)、Git の履歴 |
 
-テストの一覧と実行方法は [docs/Development.md](docs/Development.md) の「テスト」「確認範囲」、CI は [.github/workflows/ci.yml](.github/workflows/ci.yml) にあります。
+コマンドと最後に確認した環境まで含む表は [docs/Evidence.md](docs/Evidence.md)、テストの一覧は [docs/Development.md](docs/Development.md) の「テスト」「確認範囲」、CI は [.github/workflows/ci.yml](.github/workflows/ci.yml) にあります。
 
 ## このリポジトリで作業するエージェントへ
 

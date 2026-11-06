@@ -19,3 +19,5 @@ await import("./compaction")
 await import("./storage")
 
 await import("./table")
+
+await import("./draft")

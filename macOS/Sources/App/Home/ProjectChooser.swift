@@ -349,6 +349,7 @@ private struct HomeSidebar: View {
         }
         .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream).padding(.top, 4)
         .guideTarget("demos")
+        OpenExplainerLink()
       }
       .padding(.horizontal, 18)
       .opacity(reveal).offset(y: 10 * (1 - reveal))
@@ -358,6 +359,15 @@ private struct HomeSidebar: View {
     .frame(maxHeight: .infinity)
     .background(LowPolyBackground().ignoresSafeArea())
     .environment(\.colorScheme, .dark)
+  }
+}
+
+/// Home: the documents, read with their figures (the same window as Help > Tsugumi を知る).
+private struct OpenExplainerLink: View {
+  @Environment(\.openWindow) private var openWindow
+  var body: some View {
+    Button { openWindow(id: "explainer") } label: { Label("Tsugumi を知る", systemImage: "book.closed") }
+      .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream)
   }
 }
 

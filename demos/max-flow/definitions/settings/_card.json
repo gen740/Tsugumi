@@ -1,0 +1,30 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 53
+    },
+    {
+      "name": "layers",
+      "type": "uint64",
+      "data": 3
+    },
+    {
+      "name": "width",
+      "type": "uint64",
+      "data": 3
+    },
+    {
+      "name": "edge_probability",
+      "type": "double",
+      "data": 0.6
+    },
+    {
+      "name": "max_capacity",
+      "type": "uint64",
+      "data": 20
+    }
+  ]
+}

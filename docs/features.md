@@ -24,20 +24,19 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 
 | 種類 | 役割 |
 | --- | --- |
-| コード Card | `default.nix` で実行環境を、`src/` で処理を定義する（C++ / Python / bash） |
+| コード Card | `default.nix` で実行環境を、`src/` で処理を定義する（C++ / Python / bash / R / Julia） |
 | trigger | Workflow の実行起点（出力ポート `out`） |
 | input | `_outputs.fbs` の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー） |
-| fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型） |
-| loop | 有限のフィードバックループ（ループ上の Card の `maxRuns` で反復上限を指定） |
+| fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の `maxRuns` で反復の上限を決めます |
 | logger | 受け取った値を外部 DB に記録する（現在は `.tsugumi/logger/` 配下の `sqlite:<name>` に対応） |
 | subgraph（Card in Card） | 子 Workflow を 1 つの Card として扱う。`boundary` で外側のポートを内部の Card に対応づける |
-| Draft | 型のない仮ポートで先に配線できる「未実装の Card」。後から Agent に実装を生成させられる |
+| Draft | 名前と内容をカードに直接書き、線を落とすだけでつなげる「未実装の Card」（ポートは線に合わせて作られ、型はない）。後から Agent に実装を生成させられる |
 
 ### 型付きのポート
 
 - 出力ポートからの線は 1 本です。1 つの値を複数の Card に送るときは fork Card を通します（同じことを書く方法を 1 つにし、Canvas で分配が Card として見えるようにするため）。2 本以上の線が出ている出力は `fan_out` として報告され、実行できません。Canvas で使用中の出力からもう 1 本引くと、fork が自動で挟まります（出力が fork や fork につながっているときは、その fork に枝が増えます）。
 - 出力ポートの型は FlatBuffers スキーマ（`_outputs.fbs`）で宣言し、下流の入力ポートの型は上流から自動的に導出されます。配線時に構造的互換性を検査し、merge では自動的に union 型が構成されます。
-- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
+- 値は FlatBuffers のバイナリ列のまま Card 間を流れます。C++ / Python / bash（R と Julia は JSON に変換して）の間で 64 bit 整数・enum・struct・union・File / Directory を一切の欠落なく受け渡せることを自動テストで検証しています。
 
 ### 実行の意味論（スケジューラー）
 
@@ -45,7 +44,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 - 有界キューと背圧（バックプレッシャー）、並列度 1〜64、キャンセル、タイムアウト期限（呼び出し全体で 1 つ）、反復上限（`maxRuns`）を備えています。
 - 条件分岐で選ばれなかった経路の下流は `skipped`、Draft や失敗した上流に依存する Card は理由付きの `blocked` となり、それらと独立した経路は止まらずに実行されます。
 - 異常終了や再起動で途中だった実行は `interrupted` として記録されます。
-- 「ここから実行」や「選択 Card のみ」による単体再実行では、前回保存された入力（File の実体を含む）をそのまま再利用します。
+- 「ここから下流を実行」や「この Card だけ実行（最後の入力）」による部分実行では、前回保存された入力（File の実体を含む）をそのまま再利用します。「ここから下流を実行」で合流に届くと、すべての入力を待つ Card は今回届かないポートだけを保存された入力で埋めて実行します（`any` の Card は届いた値だけで動きます）。
 
 ## 3. Nix による再現可能な実行環境
 
@@ -141,7 +140,7 @@ in
 - Card のコードから `tsugumi::visualization::text(...)` などの API を呼ぶことで、text・scalar・折れ線・表・画像・3D 点群・Canvas module の出力表示を行えます。
 - 折れ線グラフは Dawn（WebGPU 実装、Metal バックエンド）で高速に描画され、Live Stream デモのように実行中もリアルタイムに更新されます。
 - Python Card の matplotlib は、SDK の backend（`tsugumi.mpl`）を通じてそのまま Card の出力表示に描かれます。ウィンドウ向けに書いたコードがそのまま動く、X 転送のような仕組みです。`plt.show()` で図を表示し（開いたままの図も呼び出しの終わりに表示）、`plt.pause()` のループや `FuncAnimation` は実行中にライブで更新されます。matplotlib を使う Card には日本語フォント（IPAex）が入り、日本語のラベルもそのまま描けます。
-- Plotly の `fig.show()` と Altair の `chart.show()` は、Card の出力表示に対話できるグラフとして出ます（拡大表示でズーム・ホバー・凡例の操作）。描画には同梱の plotly.js / Vega を使い、ネットワークには出ません（Card のグラフは外部からデータを読めません）。Plots デモを参照してください。Plots デモを参照してください。
+- Plotly の `fig.show()` と Altair の `chart.show()` は、Card の出力表示に対話できるグラフとして出ます（拡大表示でズーム・ホバー・凡例の操作）。描画には同梱の plotly.js / Vega を使い、ネットワークには出ません（Card のグラフは外部からデータを読めません）。Plots デモを参照してください。
 - 出力表示は Canvas 上の独立した枠として自由に配置・拡大でき、そのレイアウトは `layout.json` に保存されます。
 
 ## 8. UI（ワークベンチ）
@@ -159,7 +158,7 @@ in
 - `agent/` として分離された独立パッケージです。Anthropic Messages API および OpenAI Responses API に対応し、ストリーミングで応答します。OpenAI は API キーのほか、利用者の ChatGPT プラン（Sign in with ChatGPT、オープンソースのツール向けの手順）でも使えます（[セキュリティ](security.md#chatgpt-プランsign-in-with-chatgpt)）。
 - Agent が使う tool 定義は `tsugumi.bfbs`（FlatBuffers スキーマの doc comment 付き）から自動生成され、tool 引数と FlatBuffers メッセージの相互変換も同一のスキーマで行います。RPC 契約を更新すれば Agent の tool も自動的に追従します。
 - 変更を伴う tool 呼び出しには Agent が一意な `op_id` を付与し、UI とまったく同じリビジョン検査・競合検出・確定通知の経路を通ります。
-- **Draft から Card を生成**：Draft の概要・処理内容・仮ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させたうえで、ビルドと実行による検証まで行わせます。途中の失敗やキャンセルでは中途半端な変更を保存せず、計画は残ります。
+- **Draft から Card を生成**：Draft の概要・処理内容・ポートと前後の配線を Agent に渡し、型・Nix 定義・ソースコードを 1 トランザクションで保存させたうえで、ビルドと実行による検証まで行わせます。途中の失敗やキャンセルでは中途半端な変更を保存せず、計画は残ります。
 - Skill（プロジェクト内の `skills/` や設定で追加したフォルダ）を `$` で呼び出せます。会話の一覧・全文検索・要約圧縮に対応しています。
 - **手分け（delegate）**：互いに依存しない作業（線でつながっていない Draft など）は、Agent が helper の Agent に分けて同時に進められます。helper はそれぞれ自分の会話と同じツールを持ち、受け持った Card の定義だけを保存できます（`tsugumi.json`・配置・他の Card は変えられません）。helper 同士の保存と実行がぶつかったとき（実行中の `busy`、`revision_conflict`）は、Agent の側で実行の終わりを待ち、最新のリビジョンから送り直します。helper の報告がそろうと Agent がそれぞれの Card を確かめて報告します。helper の会話は元の会話の隣（`<会話>.helpers/`）に残ります。
 - Mac のフォルダをチャットに添付すると、Agent が `AttachedFolderRead` ツールで読み取れます（そのプロジェクトだけに読み取り専用で共有されます。読み取った内容はモデルに送信されます）。
@@ -178,6 +177,21 @@ in
 | `plots` | ウィンドウ向けの matplotlib のコード（`plt.show()`・`FuncAnimation`）がそのまま Card の表示に描かれる。静止図とライブのアニメーション、Plotly と Altair の対話できるグラフ |
 | `casa` | Nix で固定した Chandra の観測（取得は最初の 1 回だけ）、エネルギー帯の分割と RGB 画像、matplotlib のエネルギースペクトル（帯域と輝線）、Card 単位の再実行 |
 | `gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench` | 公開データの取得（出典・大きさ・SHA-256 の表示）と解析・図示 |
+| `mnist-classifiers`（MNIST · 手書き数字の分類器くらべ） | 1 つの入力から 7 つの分岐が別々の Nix 環境（scikit-learn, xgboost, torch）で同時に動き、1 つの比較に合流する。データは Nix で固定、シードと 1 スレッドで数値が再現し、差に意味があるかを比較 Card が文章で示す。1 つの分岐だけを条件を変えて実行し直せる |
+| `newton` | $z^3 - 1$ の収束先のフラクタルと、数値で見積もる収束の次数。臨界点の近く、重根、閉路で 2 次収束を失う様子を並べ、閉じた式の根と照合する |
+| `pharmacokinetics` | 架空の薬物の 1 コンパートメントモデル（教育用で、投与の指針ではない）。投与計画を Plotly で並べ、数値解を閉じた式の重ね合わせと定常状態の蓄積比で照合する |
+| `max-flow` | 最大流 = 最小カットを networkx、scipy、全カットの総当たりで照合する。カット外の辺を太くしても最大流は変わらず、カット上の辺でも別の最小カットがあれば増えない |
+| `dose-response` | 真の値を知っている合成データで、当てはめと信頼区間が回復できるかを確かめる。濃度範囲が EC50 を挟まないと区間が開き、Card がそう言う |
+| `molecules` | Canvas に SMILES を貼って再実行できる RDKit の物性計算。読めない入力は理由を示して飛ばし、分子量と logP の地図は対話できるグラフになる |
+| `cell-count` | 正解が分かっている合成画像で数え方を採点し、閾値のみと watershed を比べる。密度とノイズを変えて破綻する場所を表に示し、Nix で固定した実画像にも同じ手順をかける |
+| `survival` | R の survival と ggplot2。Kaplan–Meier・log-rank・Cox に加え、対象者と調整の組み合わせでハザード比がどう動くかを 1 枚の図で比べ、`cox.zph` で仮定を確かめる。テストは手書きの KM・log-rank・Cox と照合する |
+| `meta-analysis` | R の metafor。固定効果と変量効果、森林図とファンネル、緯度によるメタ回帰、1 試験を除く比較と推定量の比較。テストは手書きの逆分散重みと DerSimonian–Laird、公表の REML の値と照合する |
+| `rna-seq` | R の DESeq2 と edgeR（Bioconductor を Nix でビルド）。正規化、PCA、MA・火山プロット、上位遺伝子、閾値の格子、2 手法の比較、細胞株の項の有無の比較。テストは手書きのサイズ因子と既知の応答遺伝子の倍率変化と照合する |
+| `simpson` | R と ggplot2。集計と層別で符号が変わる相関と比率を、層別の変数を param で変えながら比べる。どちらを読むかは因果の問いで決まることをノートで述べる。テストは手書きの Pearson の r と Mantel–Haenszel と照合する |
+| `battery`（蓄電池の最適運用） | Julia の Card と Vega-Lite の図、読める長さの動的計画法、全探索との照合、料金の形で運転が変わること（定額なら動かない）、容量の限界価値の逓減 |
+| `gillespie`（化学反応のゆらぎ） | 確率シミュレーションと率方程式の比較、ポアソン分布とファノ因子、CV ∝ 1/√N、非線形な反応で小さな体積の平均が率方程式から外れること、閉じた式との自動照合 |
+| `heat-inverse`（熱伝導の逆問題） | 悪条件な逆問題の仕組みを順に見る（特異値、発散、正則化、L 曲線と食い違い原理）、測定時刻で失われる情報、順問題の保存則と解析解での確認 |
+| `ecology-models`（生態系のモデル比較） | 実データ（ハドソン湾会社の毛皮の記録）への当てはめ、手書きの RK4 と Nelder-Mead、AIC・BIC と残した年の予測の比較、当てはめが似ていても先の動きが違うこと、保存量と文献値での確認 |
 | `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
 | `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
 

@@ -1,0 +1,45 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 7
+    },
+    {
+      "name": "size",
+      "type": "uint64",
+      "data": 400
+    },
+    {
+      "name": "cells",
+      "type": "uint64",
+      "data": 80
+    },
+    {
+      "name": "touching_pairs",
+      "type": "uint64",
+      "data": 16
+    },
+    {
+      "name": "noise",
+      "type": "double",
+      "data": 0.1
+    },
+    {
+      "name": "unevenness",
+      "type": "double",
+      "data": 0.5
+    },
+    {
+      "name": "radius",
+      "type": "double",
+      "data": 9.0
+    }
+  ]
+}

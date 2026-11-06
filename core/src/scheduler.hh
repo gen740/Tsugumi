@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -21,10 +22,20 @@ class Service;
 class RunExec;
 
 struct RunPlanData {
-  std::vector<CardPath> targets, starts, build_candidates;
+  std::vector<CardPath> targets;
+  std::vector<CardPath> starts;
+  std::vector<CardPath> build_candidates;
   // Subgraph runs: inner Cards fed from outside the subgraph. They receive
   // their saved values for exactly those ports (also listed in starts).
   std::vector<CardPath> seeds;
+  // Partial runs: Cards further down that wait for all their inputs and have
+  // ports nothing in this run feeds. They receive their saved values for
+  // exactly those ports and run when the values of this run arrive.
+  struct Join {
+    CardPath card;
+    std::set<std::string> saved_ports;
+  };
+  std::vector<Join> joins;
   std::vector<Diag> diagnostics;
 };
 

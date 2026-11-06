@@ -395,6 +395,60 @@ extension ProjectSession {
     return made
   }
 
+  /// Why a Card cannot take a name (nil: it can).
+  func cardNameProblem(_ k: CardKey, _ raw: String) -> String? {
+    let new = raw.trimmingCharacters(in: .whitespaces)
+    guard new != path(k).last else { return nil }
+    guard !new.isEmpty, new.count <= 128, new != ".", new != "..",
+          new.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else {
+      return String(localized: "名前に使えるのは英数字と - _ . だけです（128 文字まで）。")
+    }
+    if uniqueId(new, in: Array(path(k).dropLast())) != new { return String(localized: "「\(new)」はすでに使われています。") }
+    return nil
+  }
+
+  // MARK: - A Draft written on the canvas
+
+  /// Whether a Draft has no name of its own: its id is one made for it.
+  func draftUntitled(_ k: CardKey) -> Bool {
+    kind(k) == .draft && displayName(k).range(of: #"^draft(-[0-9]+)?$"#, options: .regularExpression) != nil
+  }
+
+  /// Starts writing a Draft's name and content on its Card.
+  func startDraftEdit(_ k: CardKey) {
+    inlineDraft = InlineDraft(card: k, name: draftUntitled(k) ? "" : displayName(k), content: cardMeta(k)?["content"]?.string ?? "")
+  }
+
+  /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
+  func draftNameProblem(_ k: CardKey, _ name: String) -> String? {
+    name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cardNameProblem(k, name)
+  }
+
+  /// Keeps what was written. A name the Card cannot take stays as it was, with
+  /// a notice. The Card's key when it was renamed.
+  func finishDraftEdit() async -> CardKey? {
+    guard let e = inlineDraft else { return nil }
+    inlineDraft = nil
+    guard instance(e.card) != nil else { return nil }
+    if e.content != cardMeta(e.card)?["content"]?.string ?? "" {
+      edit { s in s.updateMeta(e.card) { $0["content"] = e.content.isEmpty ? nil : .string(e.content) } }
+    }
+    // No name: an id is made for it (a Draft that has none keeps the one it has).
+    var name = e.name.trimmingCharacters(in: .whitespaces)
+    if name.isEmpty {
+      if draftUntitled(e.card) { return nil }
+      name = uniqueId("draft", in: Array(path(e.card).dropLast()))
+    }
+    guard name != displayName(e.card) else { return nil }
+    do {
+      try await renameCard(e.card, to: name)
+      return key(Array(path(e.card).dropLast()) + [name])
+    } catch {
+      notice = (error as? RPCFailure)?.diagnostic ?? "\(error)"
+      return nil
+    }
+  }
+
   /// Renames a Card (its id, its definition folder): saved at once, with its
   /// connections and positions following (and, for this project's Cards, its
   /// run history).
@@ -403,11 +457,7 @@ extension ProjectSession {
     let scope = Array(path(k).dropLast())
     let new = raw.trimmingCharacters(in: .whitespaces)
     guard new != old else { return }
-    guard !new.isEmpty, new.count <= 128, new != ".", new != "..",
-          new.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else {
-      throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "名前に使えるのは英数字と - _ . だけです（128 文字まで）。"))
-    }
-    if uniqueId(new, in: scope) != new { throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "「\(new)」はすでに使われています。")) }
+    if let problem = cardNameProblem(k, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
     if dirty { await save() }
     if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
     guard let rpc else { throw RPCError.disconnected }
@@ -494,12 +544,14 @@ extension ProjectSession {
         if let ext = s.cardExternal(k) { s.removeExternal(ext) }
         s.removeCardDefinition(k)
       }
+      let cut = s.connections(in: scope).filter {
+        ids.contains($0["from"]?["card"]?.string ?? "") || ids.contains($0["to"]?["card"]?.string ?? "")
+      }
       s.updateGraph(scope) { g in
         g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
-        g["connections"] = .array((g["connections"]?.array ?? []).filter {
-          !ids.contains($0["from"]?["card"]?.string ?? "") && !ids.contains($0["to"]?["card"]?.string ?? "")
-        })
+        g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
       }
+      s.dropDraftPorts(cut, in: scope)
       if !prefix.isEmpty {
         // Boundary ports of removed Cards go too.
         s.updateExternal(prefix) { e in
@@ -531,14 +583,17 @@ extension ProjectSession {
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) {
     guard let fromId = path(from.0).last, let toId = path(to.0).last else { return }
-    // One wire per output: a value goes to several Cards through a fork Card.
-    // A second wire from an output inserts one (or, from a fork, adds a branch).
-    let taken = connections(in: scope).filter {
-      $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == from.1
-        && !($0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == to.1)
-    }
     edit { s in
-      var source = (card: fromId, port: from.1)
+      // An end at CardGeometry.newPort makes the Draft's port now.
+      let fromPort = s.draftPort(from, output: true, other: to.1, in: scope)
+      let toPort = s.draftPort(to, output: false, other: fromPort, in: scope)
+      // One wire per output: a value goes to several Cards through a fork Card.
+      // A second wire from an output inserts one (or, from a fork, adds a branch).
+      let taken = s.connections(in: scope).filter {
+        $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == fromPort
+          && !($0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort)
+      }
+      var source = (card: fromId, port: fromPort)
       if !taken.isEmpty {
         let next = taken.count == 1 ? taken[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
         if s.kind(from.0) == .fork {
@@ -547,19 +602,75 @@ extension ProjectSession {
           // The output already feeds a fork: one more branch of it.
           source = (forkId, s.addForkBranch(next, for: toId))
         } else {
-          let fork = s.insertFork(after: (fromId, from.1), wires: taken, in: scope)
+          let fork = s.insertFork(after: (fromId, fromPort), wires: taken, in: scope)
           source = (fork, s.addForkBranch(key(scope + [fork]), for: toId))
         }
       }
+      // One connection per input port: a new wire replaces the old one.
+      let replaced = s.connections(in: scope).filter { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort }
       s.updateGraph(scope) { g in
-        var conns = g["connections"]?.array ?? []
-        // One connection per input port: a new wire replaces the old one.
-        conns.removeAll { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == to.1 }
+        var conns = (g["connections"]?.array ?? []).filter { !replaced.contains($0) }
         conns.append(.object([
           ("from", .object([("card", .string(source.card)), ("port", .string(source.port))])),
-          ("to", .object([("card", .string(toId)), ("port", .string(to.1))])),
+          ("to", .object([("card", .string(toId)), ("port", .string(toPort))])),
         ]))
         g["connections"] = .array(conns)
+      }
+      s.dropDraftPorts(replaced, in: scope)
+    }
+  }
+
+  /// Whether a wire of the scope ends at this port.
+  func portWired(_ k: CardKey, _ port: String, output: Bool, in scope: [String]) -> Bool {
+    let id = path(k).last
+    let side = output ? "from" : "to"
+    return connections(in: scope).contains { $0[side]?["card"]?.string == id && $0[side]?["port"]?.string == port }
+  }
+
+  /// The port a wire's end names. At CardGeometry.newPort: a Draft's port
+  /// without a wire or a new one, named after the port at the wire's other end
+  /// when that says more than "in" or "out". A Draft's ports are declared by
+  /// its wires.
+  private func draftPort(_ end: (CardKey, String), output: Bool, other: String, in scope: [String]) -> String {
+    guard end.1 == CardGeometry.newPort else { return end.1 }
+    let ports = portData(end.0)
+    let names = (output ? ports.outputs : ports.inputs).map(\.name)
+    if let free = names.first(where: { !portWired(end.0, $0, output: output, in: scope) }) { return free }
+    let says = other.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
+      && other.range(of: #"^(in|out)[0-9]*$"#, options: .regularExpression) == nil
+    let base = says ? other : output ? "out" : "in"
+    var name = base
+    var n = 2
+    while names.contains(name) { name = "\(base)\(n)"; n += 1 }
+    let note: JSONValue = .object([("name", .string(name))])
+    if output {
+      updateMeta(end.0) { $0["outputs"] = .array(($0["outputs"]?.array ?? []) + [note]) }
+    } else {
+      updateCard(end.0) { $0["inputs"] = .array(($0["inputs"]?.array ?? []) + [note]) }
+    }
+    return name
+  }
+
+  /// After wires are gone: a Draft's port goes with its last wire.
+  private func dropDraftPorts(_ removed: [JSONValue], in scope: [String]) {
+    func held(_ k: CardKey, _ port: String, output: Bool) -> Bool {
+      if portWired(k, port, output: output, in: scope) { return true }
+      // Inside a Card in Card, the outer Card's boundary may name it.
+      guard !scope.isEmpty, let side = boundary(key(scope))?[output ? "outputs" : "inputs"]?.object else { return false }
+      return side.contains { $0.1["card"]?.string == path(k).last && $0.1["port"]?.string == port }
+    }
+    func without(_ list: JSONValue?, _ port: String) -> JSONValue? {
+      let rest = (list?.array ?? []).filter { $0["name"]?.string != port }
+      return rest.isEmpty ? nil : .array(rest)
+    }
+    for c in removed {
+      for (side, output) in [("from", true), ("to", false)] {
+        guard let id = c[side]?["card"]?.string, let port = c[side]?["port"]?.string else { continue }
+        let k = key(scope + [id])
+        guard instance(k) != nil, kind(k) == .draft, !held(k, port, output: output) else { continue }
+        if !output { updateCard(k) { $0["inputs"] = without($0["inputs"], port) } }
+        let list = output ? "outputs" : "inputs"
+        updateMeta(k) { $0[list] = without($0[list], port) }
       }
     }
   }
@@ -612,11 +723,11 @@ extension ProjectSession {
 
   func removeConnection(at index: Int, in scope: [String]) {
     edit { s in
-      s.updateGraph(scope) { g in
-        guard var conns = g["connections"]?.array, index < conns.count else { return }
-        conns.remove(at: index)
-        g["connections"] = .array(conns)
-      }
+      var conns = s.connections(in: scope)
+      guard index < conns.count else { return }
+      let removed = conns.remove(at: index)
+      s.updateGraph(scope) { g in g["connections"] = .array(conns) }
+      s.dropDraftPorts([removed], in: scope)
     }
   }
 
@@ -627,17 +738,18 @@ extension ProjectSession {
       s.updateGraph(scope) { g in
         g["connections"] = .array((g["connections"]?.array ?? []).filter { !list.contains($0) })
       }
+      s.dropDraftPorts(list, in: scope)
     }
   }
 
   func disconnect(_ k: CardKey, inputs: Bool, in scope: [String]) {
     guard let id = path(k).last else { return }
     edit { s in
+      let removed = s.connections(in: scope).filter { ($0[inputs ? "to" : "from"]?["card"]?.string ?? "") == id }
       s.updateGraph(scope) { g in
-        g["connections"] = .array((g["connections"]?.array ?? []).filter {
-          ($0[inputs ? "to" : "from"]?["card"]?.string ?? "") != id
-        })
+        g["connections"] = .array((g["connections"]?.array ?? []).filter { !removed.contains($0) })
       }
+      s.dropDraftPorts(removed, in: scope)
     }
   }
 
@@ -956,6 +1068,10 @@ extension ProjectSession {
     for p in sourcePaths where p.hasPrefix(dir) && !(prefix.isEmpty ? false : ExternalProject.isDocument(String(p.dropFirst(prefix.count)))) {
       removeSource(p)
     }
+  }
+
+  func hasSource(_ p: String) -> Bool {
+    !sourceRemovals.contains(p) && (sources[p] != nil || sourceEdits[p] != nil)
   }
 
   func putSource(_ p: String, _ text: String) {

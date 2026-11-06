@@ -33,6 +33,49 @@ import Testing
   #expect(d.runText!.hasPrefix("実行 #1 · 成功") && d.runText!.contains("次の入力"))
 }
 
+/// The bubble takes its ideal size: long text must wrap inside it, not run out of it.
+@MainActor @Test func theHoverBubbleHoldsItsWrappedText() {
+  func size(_ lines: [String]) -> CGSize {
+    NSHostingView(rootView: HoverBubble(content: .init(title: "rgb", subtitle: "Draft", symbol: "circle", lines: lines, status: "未実装（Draft）",
+                                                       problems: ["draft cards are not implemented and cannot run"]))
+      .fixedSize()).fittingSize
+  }
+  let short = size(["短い説明"])
+  let long = size([String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)])
+  #expect(long.width <= 361)
+  #expect(long.height >= short.height + 40, "\(short) \(long)")
+}
+
+@Test func aDraftOffersItsNextPortAndOpensWhileWritten() {
+  var data = CardNodeData(title: "x", kind: .draft, summary: "plan", inputs: [], outputs: [])
+  let empty = CardGeometry(data, flow: .topToBottom)
+  #expect(empty.newPortPoint(output: true) == CGPoint(x: CardGeometry.width / 2, y: empty.height))
+  #expect(empty.port(CardGeometry.newPort, output: false) == CGPoint(x: CardGeometry.width / 2, y: 0))
+  data.outputs = [PortData(name: "out")]
+  let wired = CardGeometry(data, flow: .topToBottom)
+  // The port is where the wire started; wires do not change the size of a Draft.
+  #expect(wired.port("out", output: true) == CGPoint(x: CardGeometry.width / 2, y: wired.height))
+  #expect(wired.newPortPoint(output: true) == nil, "a side with a port starts its wires from it")
+  #expect(wired.height == empty.height)
+  // Across a left-to-right flow: the middle of the side; several around it.
+  let right = CardGeometry(data, flow: .leftToRight)
+  #expect(right.port("out", output: true) == CGPoint(x: CardGeometry.width, y: right.height / 2))
+  #expect(right.newPortPoint(output: false) == CGPoint(x: 0, y: right.height / 2))
+  data.outputs = [PortData(name: "x"), PortData(name: "y")]
+  let two = CardGeometry(data, flow: .leftToRight)
+  #expect((two.port("x", output: true).y + two.port("y", output: true).y) / 2 == two.height / 2)
+  // Without a name, a Draft is its content.
+  data.untitled = true
+  #expect(CardGeometry(data, flow: .topToBottom).headerRow == CardGeometry.untitledTop)
+  data.untitled = false
+  data.draftEditing = true
+  #expect(CardGeometry(data, flow: .topToBottom).draftRow == CardGeometry.draftEditRow)
+  data.draftEditing = false
+  data.outputs = []
+  data.collapsed = true
+  #expect(CardGeometry(data, flow: .topToBottom).newPortPoint(output: true) == nil)
+}
+
 @Test func wirePortsFollowTheFlow() {
   let data = CardNodeData(title: "x", kind: .code, summary: nil,
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")])

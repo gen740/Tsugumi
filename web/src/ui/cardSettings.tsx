@@ -543,6 +543,15 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
     value: str(get(def, n)) ?? fallback ?? '',
     onChange: (v: string) => model.setSetting(n, !v || v === fallback ? undefined : v),
   })
+  // A Draft's intent is in _meta.json.
+  const metaString = (n: string) => ({
+    value: str(get(model.meta, n)) ?? '',
+    onChange: (v: string) => model.update((x) => {
+      const meta: JObj = isObj(x.meta) ? x.meta : obj()
+      meta.set(n, v || undefined)
+      x.meta = meta
+    }),
+  })
   const toggle = (n: string, label: string, fallback: boolean, help?: string) => (
     <Row label={label} help={help}>
       <Toggle checked={bool(get(def, n)) ?? fallback} onChange={(v) => model.setSetting(n, v === fallback ? undefined : v)} />
@@ -589,8 +598,13 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           </Row>
         )}
         <Row label="概要">
-          <TextField {...string('description')} multiline rows={2} style={{ width: '100%', minHeight: 38, maxHeight: 90 }} />
+          <TextField {...(kind === 'draft' ? metaString('description') : string('description'))} multiline rows={2} style={{ width: '100%', minHeight: 38, maxHeight: 90 }} />
         </Row>
+        {kind === 'draft' && (
+          <Row label="内容">
+            <TextField {...metaString('content')} multiline rows={10} placeholder="何を受け取り、何を出し、どう処理するかを書きます" style={{ width: '100%', minHeight: 160 }} />
+          </Row>
+        )}
       </Section>
       {params.length > 0 && (
         <Section title="パラメータ">

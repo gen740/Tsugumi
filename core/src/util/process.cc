@@ -15,7 +15,8 @@ namespace tsugumi::proc {
 
 pid_t spawn(const Spec& spec) {
   if (spec.argv.empty()) throw std::invalid_argument("empty argv");
-  std::vector<char*> argv, envp;
+  std::vector<char*> argv;
+  std::vector<char*> envp;
   for (const auto& a : spec.argv) argv.push_back(const_cast<char*>(a.c_str()));
   argv.push_back(nullptr);
   for (const auto& e : spec.env) envp.push_back(const_cast<char*>(e.c_str()));
@@ -127,7 +128,8 @@ int wait(pid_t pid) {
 Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
            const std::function<void(const std::string&)>& on_stderr, std::chrono::milliseconds grace) {
-  int out_pipe[2], err_pipe[2];
+  int out_pipe[2];
+  int err_pipe[2];
   if (::pipe(out_pipe) != 0 || ::pipe(err_pipe) != 0) throw std::runtime_error("pipe failed");
   Spec spec = spec_in;
   spec.stdout_fd = out_pipe[1];
@@ -143,7 +145,8 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   ::close(err_pipe[1]);
   Result res;
   std::string err_line;
-  bool out_open = true, err_open = true;
+  bool out_open = true;
+  bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
   bool term_sent = false;
   while (out_open || err_open) {

@@ -61,6 +61,11 @@ if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$'
 fi
 cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
+# SwiftMath's bundle has 12 math fonts, each with its own terms; the app draws
+# with one, the default of MTMathUILabel, loaded on demand. The others stay out.
+math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle"
+[ -f "$math_fonts/latinmodern-math.otf" ]
+find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The module viewer (ui/modules) and the plot libraries it loads: the web UI's
 # pinned npm packages (web/package-lock.json), the same files the web UI serves.
@@ -79,6 +84,21 @@ done
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
+# Help > Tsugumi を知る: the documentation site's story pages, as they are, with
+# what they use (Sources/App/Explainer/ExplainerWindow.swift).
+explainer="$app/Contents/Resources/explainer"
+mkdir -p "$explainer/pages" "$explainer/site/js" "$explainer/site/assets" "$explainer/assets"
+stories=$(grep -l 'class="story"' "$repo"/docs/pages/*.html)
+[ -n "$stories" ] || { echo "no story pages in docs/pages" >&2; exit 1; }
+cp $stories "$explainer/pages/"
+cp "$repo/docs/site/site.css" "$explainer/site/"
+cp "$repo"/docs/site/js/{reader,art,scenes,scenes2}.js "$explainer/site/js/"
+cp "$repo"/docs/site/assets/* "$explainer/site/assets/"
+# The images the pages name, and no others: docs/assets holds all the screenshots.
+for used in $(grep -oh 'src="\.\./assets/[^"]*"\|href="\.\./assets/[^"]*"' $stories | sed 's/.*"\.\.\/\(.*\)"/\1/' | sort -u); do
+  mkdir -p "$explainer/$(dirname "$used")"
+  cp "$repo/docs/$used" "$explainer/$used"
+done
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
@@ -92,6 +112,15 @@ grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
   mkdir -p "$src/$(dirname "$entry")"
   cp -R "$repo/$entry" "$src/$entry"
 done
+# The licenses of all of the above, and the boot disk's from its release
+# (publish-vm.sh, with its source). A release needs them; a disk not published
+# yet can still be tried in a dev build.
+"$repo/macOS/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
+vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/tsugumi-vm}/releases/download/$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
+if ! curl -fsSL "$vm_licenses" | tar -xz -C "$app/Contents/Resources/licenses"; then
+  [ "$channel" != release ] || { echo "no licenses at $vm_licenses: run macOS/tools/publish-vm.sh" >&2; exit 1; }
+  echo "warning: no licenses of the boot disk at $vm_licenses" >&2
+fi
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST

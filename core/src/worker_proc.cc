@@ -140,9 +140,19 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
          "(deny file-write* (subpath " + quote(scripts) + "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
-         // own ports and sockets, the web server, other local services.
-         (sp.network ? "(allow network*)\n(allow mach-lookup)\n(deny network-outbound (remote ip \"localhost:*\"))\n"
+         // own ports and sockets, the web server, other local services. For
+         // Seatbelt "localhost" is every address of this host (LAN, VPN,
+         // 0.0.0.0), not only loopback; it accepts no other host, so other
+         // machines cannot be denied one by one. The one exception is
+         // mDNSResponder: getaddrinfo asks its socket for every name not in
+         // /etc/hosts. The last matching rule wins, so it comes after the
+         // denial. Of the Mach services only trustd: Security.framework (Go,
+         // NSURLSession) verifies certificates through it. The others are the
+         // user's session: the clipboard, LaunchServices, Apple events.
+         (sp.network ? "(allow network*)\n(allow mach-lookup (global-name \"com.apple.trustd.agent\"))\n"
+                       "(deny network-outbound (remote ip \"localhost:*\"))\n"
                        "(deny network-outbound (remote unix-socket))\n"
+                       "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n"
                      : "");
 }
 #endif
@@ -159,7 +169,10 @@ bool worker_uid_on_host() {
 }
 
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
-  int data[2], control[2], out[2], err[2];
+  int data[2];
+  int control[2];
+  int out[2];
+  int err[2];
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 ||
       ::pipe(out) != 0 || ::pipe(err) != 0)
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
@@ -215,6 +228,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
                  "--ro-bind", "/nix/store", "/nix/store", "--proc", "/proc", "--dev", "/dev",
                  "--tmpfs", "/tmp"};
+    // popen and system(3) run /bin/sh by that name (R needs it to start).
+    if (!sp.bash.empty()) spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
     if (sp.network) spec.argv.push_back("--share-net");
     if (sp.uid) {
       spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
@@ -254,6 +269,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   if (sp.network)
     for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
       if (const char* x = std::getenv(v)) spec.env.push_back(std::string(v) + "=" + x);
+  // Not where tsugumid runs, which the sandbox does not let it read (getcwd
+  // fails): libraries ask for the current directory while they are imported.
+  spec.cwd = work_dir();
   spec.fds = {{3, data[1]}, {4, control[1]}};
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];
@@ -543,7 +561,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   auto evv = b.CreateVector(ev);
   auto run = b.CreateString(run_id);
   auto cp = wire::path(b, card);
-  auto w = b.CreateString(work), t = b.CreateString(tmp);
+  auto w = b.CreateString(work);
+  auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
   flatbuffers::Offset<flatbuffers::Vector<int32_t>> pf;

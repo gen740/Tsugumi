@@ -1,0 +1,10 @@
+{
+  "description": "ロジスティック回帰",
+  "content": "画素の重み付き和で数字を当てる線形モデル（scikit-learn の lbfgs、1 スレッド）。C は正則化の弱さ。正解率・時間・間違いの内訳と、数字ごとの重みの画像を表示し、テスト全枚の予測を compare に渡す。",
+  "outputs": [
+    {
+      "name": "result",
+      "description": "正解率、CPU 時間、設定、テスト全枚の予測"
+    }
+  ]
+}

@@ -22,7 +22,12 @@ struct CardMenu: View {
       Button("別ウインドウで開く") { openWindow(id: "workflow", value: WorkflowRef(path: ref.path, scope: path(cardKey))) }
       Divider()
     }
-    if kind == .draft { Button("Draft を編集…") { openWindow(id: "draft", value: ref) } }
+    if kind == .draft {
+      Button("名前と内容を書く") {
+        NotificationCenter.default.post(name: .canvasWriteDraft, object: tab.id, userInfo: ["card": cardKey])
+      }
+      .disabled(!session.isEditable)
+    }
     Button("設定…") { openWindow(id: "card", value: ref) }
     Button("実行履歴…") { openWindow(id: "executions", value: ref) }
     Button("成果物…") { openWindow(id: "artifacts", value: ref) }
