@@ -119,6 +119,9 @@
   "dynamics-draft": {
     "intro": "互いに依存しない 6 つの Draft です。アプリの「Card を生成」で、Agent が helper に手分けさせて同時に実装します。"
   },
+  "mnist-classifiers-draft": {
+    "intro": "データの Card までは実装済みで、7 つの分類器と比較が Draft です。アプリの「Card を生成」で、Agent が helper に 7 つの分類器を同時に実装させ、そのあと比較を書きます。"
+  },
   "mnist-classifiers": {
     "intro": "本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べるデモです。分類器ごとに Nix の環境が分かれています。",
     "cards": {

@@ -141,11 +141,14 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const s
     doc->resolution = base->resolution;
     return doc;
   }
-  auto root = opts_.root;
-  Document* raw = doc.get();
-  doc->resolution = resolve(*doc, [root, raw, pending](const std::string& rel) -> std::optional<std::string> {
-    auto it = raw->sources.find(rel);
-    if (it == raw->sources.end()) return std::nullopt;
+  doc->resolution = resolve(*doc, reader(*doc, pending));
+  return doc;
+}
+
+SourceReader Store::reader(const Document& doc, const std::vector<FileOp>* pending) const {
+  return [root = opts_.root, &doc, pending](const std::string& rel) -> std::optional<std::string> {
+    auto it = doc.sources.find(rel);
+    if (it == doc.sources.end()) return std::nullopt;
     if (pending) {
       for (const auto& op : *pending)
         if (op.path == rel) return op.content;
@@ -153,8 +156,7 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const s
     auto data = fs::read_file(root / rel);
     if (!data || crypto::sha256_hex(*data) != it->second.hash) return std::nullopt;
     return data;
-  });
-  return doc;
+  };
 }
 
 // Journal record: magic(4) | len(u32 LE) | crc32(u32 LE) | payload (compact JSON).

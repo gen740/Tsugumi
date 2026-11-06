@@ -45,6 +45,16 @@ enum PresenceEvents {
     }
   }
 
+  /// The tools whose arguments carry whole files, shown as they are written.
+  static func writesSources(tool: String) -> Bool { tool == "project_save" || tool == "project_validate" }
+
+  /// `definitions/<id>/<file>` → (id, file).
+  static func fileOfCard(_ path: String) -> (card: String, file: String)? {
+    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+    guard parts.count >= 3, parts[0] == "definitions" else { return nil }
+    return (String(parts[1]), parts[2...].joined(separator: "/"))
+  }
+
   /// `definitions/<id>/...` → id.
   static func cardOfFile(_ path: String) -> String? {
     let parts = path.split(separator: "/", omittingEmptySubsequences: true)

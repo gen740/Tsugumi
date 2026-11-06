@@ -135,6 +135,7 @@ const GALLERY = [
   ]],
   ['Agent に任せる', [
     ['dynamics-draft', '力学系ギャラリー', '6 つの Draft を、Agent が helper に手分けさせて同時に実装する。'],
+    ['mnist-classifiers-draft', 'MNIST · 分類器くらべ', '7 つの分類器を helper が同時に実装し、Agent が比較に合流させる。'],
   ]],
 ]
 const DOWNLOAD = `${REPO}/releases/latest`

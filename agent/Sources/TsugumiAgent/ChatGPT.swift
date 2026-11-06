@@ -157,8 +157,8 @@ public actor ChatGPTAuth {
     enum CodingKeys: String, CodingKey { case hostId = "ext_agent_host_id", active = "active_client_id", accounts }
   }
 
-  private func load() -> Store? {
-    guard let s = Keychain.load(account: storeAccount) else { return nil }
+  private func load(asking: Bool = true) -> Store? {
+    guard let s = asking ? Keychain.load(account: storeAccount) : Keychain.loadWithoutAsking(account: storeAccount) else { return nil }
     return try? JSONDecoder().decode(Store.self, from: Data(s.utf8))
   }
 
@@ -210,6 +210,17 @@ public actor ChatGPTAuth {
 
   public func accounts() -> [ChatGPTAccountInfo] {
     guard let s = load() else { return [] }
+    return s.accounts.map {
+      ChatGPTAccountInfo(clientId: $0.clientId, email: $0.email, signedIn: $0.signedIn, planEnabled: $0.planEnabled,
+                         active: $0.clientId == s.active)
+    }
+  }
+
+  /// The accounts, read without the keychain's access dialog; nil when the
+  /// record is there but cannot be read without it.
+  public func accountsWithoutAsking() -> [ChatGPTAccountInfo]? {
+    guard Keychain.exists(account: storeAccount) else { return [] }
+    guard let s = load(asking: false) else { return nil }
     return s.accounts.map {
       ChatGPTAccountInfo(clientId: $0.clientId, email: $0.email, signedIn: $0.signedIn, planEnabled: $0.planEnabled,
                          active: $0.clientId == s.active)
@@ -360,9 +371,10 @@ public actor ChatGPTAuth {
 
   /// The active account's access token, refreshed near its expiry. `stale`
   /// is a token the API refused: it is refreshed unless another refresh
-  /// already replaced it.
-  public func accessToken(replacing stale: String? = nil) async throws -> String {
-    guard let s = load(), let id = s.active, let a = s.accounts.first(where: { $0.clientId == id }) else {
+  /// already replaced it. Without `asking` the record is read without the
+  /// keychain's access dialog (it fails instead, and nothing changes).
+  public func accessToken(replacing stale: String? = nil, asking: Bool = true) async throws -> String {
+    guard let s = load(asking: asking), let id = s.active, let a = s.accounts.first(where: { $0.clientId == id }) else {
       throw ChatGPTError.signInRequired("no ChatGPT account is signed in")
     }
     guard a.signedIn, let current = a.accessToken else { throw ChatGPTError.signInRequired("signed out") }
@@ -371,18 +383,19 @@ public actor ChatGPTAuth {
     // Not cancelled with the turn: once OpenAI rotated the refresh token, the
     // answer must be saved, or the next refresh reuses the old token and the
     // account is signed out.
-    return try await Task { try await self.refreshLocked(id: id, stale: stale) }.value
+    return try await Task { try await self.refreshLocked(id: id, stale: stale, asking: asking) }.value
   }
 
-  private func refreshLocked(id: String, stale: String?) async throws -> String {
+  private func refreshLocked(id: String, stale: String?, asking: Bool) async throws -> String {
     try await locked {
       // Read again: the other process may have refreshed meanwhile.
-      guard let s = load(), let a = s.accounts.first(where: { $0.clientId == id }), let current = a.accessToken,
+      guard let s = load(asking: asking), let a = s.accounts.first(where: { $0.clientId == id }), let current = a.accessToken,
             let refresh = a.refreshToken else {
         throw ChatGPTError.signInRequired("signed out")
       }
       if stale == nil ? !a.expiresSoon() : current != stale { return current }
       let r = try await refreshRequest(clientId: id, refreshToken: refresh)
+      // May ask whatever the caller said: the rotated refresh token must be saved.
       guard var s2 = load(), let i = s2.accounts.firstIndex(where: { $0.clientId == id }) else {
         throw ChatGPTError.signInRequired("signed out")
       }

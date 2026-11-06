@@ -5,7 +5,7 @@
 // self-contained canvas (CanvasSurface) for previews.
 import { CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
-  Camera, CardGeometry, CardNodeData, currentStage, fitCamera, isRouting, ParamData, PortData, Pt, Rect, Stage, STAGE_INFO,
+  Camera, CardGeometry, CardNodeData, currentStage, fitCamera, isRouting, ParamData, PortData, Pt, Rect, snapToGrid, Stage, STAGE_INFO,
   NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
 import { pathToScreen, WireStyle } from '../model/canvas'
@@ -69,6 +69,8 @@ export interface CardNodeProps {
   draftEdit?: DraftEdit
   onStageTap?: (stage: Stage) => void
   onToggleCollapse?: () => void
+  /** The start Card's button: runs the workflow from it (undefined: not offered). */
+  onRun?: () => void
   style?: CSSProperties
   className?: string
   onPointerDown?: (e: React.PointerEvent) => void
@@ -100,7 +102,7 @@ export function CardNodeView(p: CardNodeProps) {
       <svg className="cv-card-fill" width={w} height={h}>
         <path d={outline} fill={fill} style={{ filter: `drop-shadow(0 1px ${selected ? 4 : 1.5}px rgba(0,0,0,${selected ? 0.2 : 0.07}))` }} />
       </svg>
-      {g.shape === 'card' ? <CardBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
+      {g.shape === 'card' ? <CardBody p={p} g={g} /> : g.shape === 'start' ? <StartBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
       <svg className="cv-card-stroke" width={w} height={h}>
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
@@ -184,7 +186,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const edit = g.draftEditing ? p.draftEdit : undefined
   const fields = useDraftFields(edit)
   return (
-    <div className="cv-card-body" style={{ width: s(CardGeometry.width) }}
+    <div className="cv-card-body" style={{ width: s(g.cardWidth) }}
       onBlur={edit ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) edit.onDone() } : undefined}>
       <div style={{ height: s(g.topLabels) }} />
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
@@ -259,16 +261,36 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   )
 }
 
+/** Its name and a small run button; the run's state beside the name. */
+function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
+  const { data } = p
+  const z = p.zoom ?? 1
+  const s = (v: number) => v * z
+  const font = (size: number) => Math.max(6, size * z)
+  const o = g.outlineRect
+  const running = data.state !== undefined && data.state !== D.CardState.not_started
+  return (
+    <div className="cv-card-body cv-start" style={{ width: s(o.width), height: s(o.height), padding: `0 ${s(7)}px`, gap: s(6) }}>
+      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title="ここから Workflow を実行" {...stopping}
+        onClick={(e) => { e.stopPropagation(); p.onRun?.() }}>
+        <Icon name="play.fill" size={font(9)} />
+      </button>
+      <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
+      <span style={{ flex: 1 }} />
+      {running && <Icon name={cardState(data.state!).icon} size={font(10)} style={{ color: colorVar(cardState(data.state!).color) }} />}
+    </div>
+  )
+}
+
 /** Only the kind's icon, coloured by the state; name and details on hover. */
 function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const o = g.outlineRect
-  const r = { x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z }
-  const y = g.shape === 'fork' ? r.y + r.height * 0.62 : g.shape === 'merge' ? r.y + r.height * 0.38 : r.y + r.height / 2
+  const center = g.iconCenter({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
   const color = data.state === undefined || data.state === D.CardState.not_started ? 'var(--secondary)' : colorVar(cardState(data.state).color)
   const rt = runText(data)
   const size = Math.max(6, 10 * z)
   return (
-    <span className="cv-routing-icon" style={{ left: r.x + r.width / 2 - size / 2, top: y - size / 2, color }}
+    <span className="cv-routing-icon" style={{ left: center.x - size / 2, top: center.y - size / 2, color }}
       title={data.title + ' · ' + KIND_LABEL[data.kind] + (rt ? ' · ' + rt : '')}>
       <Icon name={KIND_ICON[data.kind]} size={size} />
     </span>
@@ -309,7 +331,7 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
       }
     }
   } else if (g.shape === 'card' && !g.collapsed) {
-    const w = CardGeometry.width / 2 - 14
+    const w = g.cardWidth / 2 - 14
     if (g.draft) return null
     for (const p of data.inputs) {
       const pt = g.port(p.name, false)
@@ -527,9 +549,14 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
     return () => o.disconnect()
   }, [])
 
-  const origin = (it: CanvasItem): Pt => (drag && selection.has(it.id) ? { x: it.origin.x + drag.dx, y: it.origin.y + drag.dy } : it.origin)
+  const dataOf = (it: CanvasItem): CardNodeData => ({ ...it.data, portGrid: grid ? gridSize : undefined })
+  const placed = (it: CanvasItem): Pt => (grid ? { x: snapToGrid(it.origin.x, gridSize), y: snapToGrid(it.origin.y, gridSize) } : it.origin)
+  const origin = (it: CanvasItem): Pt => {
+    const o = placed(it)
+    return drag && selection.has(it.id) ? { x: o.x + drag.dx, y: o.y + drag.dy } : o
+  }
   const box = items.reduce<Rect | null>((u, it) => {
-    const r = { ...it.origin, ...new CardGeometry(it.data, flow).size }
+    const r = { ...placed(it), ...new CardGeometry(dataOf(it), flow).size }
     return u ? union(u, r) : r
   }, null)
   const fit = () => {
@@ -555,16 +582,15 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
     setCamera((c) => ({ x: p.x - ((p.x - c.x) * nz) / c.zoom, y: p.y - ((p.y - c.y) * nz) / c.zoom, zoom: nz }))
   }
 
-  const router = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(it.data, flow).size })))
   const point = (id: string, port: string, output: boolean): Pt => {
     const it = items.find((x) => x.id === id)
     if (!it) return { x: 0, y: 0 }
-    const o = origin(it), p = new CardGeometry(it.data, flow).port(port, output)
+    const o = origin(it), p = new CardGeometry(dataOf(it), flow).port(port, output)
     return { x: o.x + p.x, y: o.y + p.y }
   }
-  const draws: WireDraw[] = wires.map((w) => ({
-    d: pathToScreen(router.route(point(w.from, w.fromPort, true), point(w.to, w.toPort, false)).d, camera), style: w.active ? 'active' : 'normal',
-  }))
+  const routes = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(dataOf(it), flow).size })))
+    .routeAll(wires.map((w) => ({ a: point(w.from, w.fromPort, true), b: point(w.to, w.toPort, false) })))
+  const draws: WireDraw[] = wires.map((w, i) => ({ d: pathToScreen(routes[i].d, camera), style: w.active ? 'active' : 'normal' }))
 
   return (
     <div ref={ref} className="cv-surface" style={{ ...gridStyle(camera, grid, gridSize), ...style }}
@@ -585,7 +611,7 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
       {items.map((it) => {
         const o = origin(it)
         return (
-          <CardNodeView key={it.id} data={it.data} flow={flow} zoom={camera.zoom} selected={selection.has(it.id)}
+          <CardNodeView key={it.id} data={dataOf(it)} flow={flow} zoom={camera.zoom} selected={selection.has(it.id)}
             style={{ position: 'absolute', left: Math.round((o.x * camera.zoom + camera.x) * 2) / 2, top: Math.round((o.y * camera.zoom + camera.y) * 2) / 2 }}
             onToggleCollapse={() => onItemsChange?.(items.map((x) => (x.id === it.id ? { ...x, data: { ...x.data, collapsed: !x.data.collapsed } } : x)))}
             onPointerDown={(e) => {

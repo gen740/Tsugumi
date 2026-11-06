@@ -21,3 +21,14 @@ await import("./storage")
 await import("./table")
 
 await import("./draft")
+await import("./summary")
+await import("./wires")
+await import("./wireDemos")
+
+await import("./modelMenu")
+
+await import("./projectActions")
+
+await import("./thumbnails")
+
+await import("./portGrid")
