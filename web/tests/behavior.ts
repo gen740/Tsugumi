@@ -37,3 +37,5 @@ await import("./portGrid")
 await import("./marquee")
 
 await import("./arrange")
+
+await import("./deleteCard")
