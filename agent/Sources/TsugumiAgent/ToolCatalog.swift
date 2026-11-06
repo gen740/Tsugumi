@@ -12,6 +12,8 @@ public struct ToolSpec {
   /// Mutating requests carry an op_id that the Agent assigns once per tool
   /// call; re-sending the same call reuses it and never runs twice.
   public let mutating: Bool
+  /// Run by the model provider (web search): it has no tool_use of ours.
+  public var server = false
 }
 
 /// Tool definitions generated from the published RPC schema (tsugumi.bfbs).
@@ -76,6 +78,11 @@ extension Shared {
       let texts: [String: String]
       func text(_ k: String) -> String { texts[k]! }
     }
+    /// The provider's web search: how each API names it, and what the model and the user read.
+    struct WebSearch {
+      let name: String, anthropicType: String, openAIType: String, openAIInclude: String, note: String, sources: String
+      let maxUses: Int
+    }
     let requests: [String]
     let agentFields: Set<String>
     let referenceTool: Tool
@@ -83,6 +90,7 @@ extension Shared {
     let helper: Helper
     let guide: Guide
     let draft: Draft
+    let webSearch: WebSearch
     let permissionDeclined: String
   }
 
@@ -91,6 +99,7 @@ extension Shared {
     let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
     let dt = o["delegateTool"] as! [String: Any], h = o["helper"] as! [String: String]
     let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
+    let w = o["webSearch"] as! [String: Any]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
@@ -105,6 +114,9 @@ extension Shared {
                                              inputSchema: gt["inputSchema"] as! [String: Any]),
                              texts: g.compactMapValues { $0 as? String }),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
+                webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
+                                 openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
+                                 note: w["note"] as! String, sources: w["sources"] as! String, maxUses: w["maxUses"] as! Int),
                 permissionDeclined: o["permissionDeclined"] as! String)
   }()
 

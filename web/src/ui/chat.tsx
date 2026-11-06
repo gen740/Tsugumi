@@ -478,10 +478,11 @@ export function toolStep(name: string, args: string) {
   } catch {}
   const segs: string[] | undefined = Array.isArray(v?.card?.segments) ? v.card.segments : Array.isArray(v?.card) ? v.card : undefined
   const card: CardKey | undefined = segs?.length ? key(segs.map(String)) : typeof v?.card === 'string' ? v.card : undefined
-  const target: string | undefined = card ?? (typeof v?.path === 'string' ? v.path : typeof v?.definition === 'string' ? v.definition : undefined)
+  const target: string | undefined = card ?? (typeof v?.path === 'string' ? v.path : typeof v?.definition === 'string' ? v.definition : typeof v?.query === 'string' ? v.query : undefined)
   const n = name.toLowerCase()
   const [running, done] =
     n === 'delegate' ? ['手分けして進めています', '手分けして進めました']
+    : n === 'web_search' ? ['Web を検索しています', 'Web を検索']
     : n.includes('save') || n.includes('put') || n.includes('write') ? ['変更を保存しています', '変更を保存']
     : n.includes('run') && !n.includes('status') ? ['実行しています', '実行']
     : n.includes('read') || n.includes('inspect') || n.includes('get') ? ['確認しています', '確認']
@@ -510,6 +511,12 @@ function HelperRow({ item }: { item: ChatItem }) {
   )
 }
 
+/** A search's details with its sources as links (only http and https). */
+function Linked({ text }: { text: string }) {
+  return <>{text.split(/(https?:\/\/[^\s]+)/).map((part, i) =>
+    (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer noopener">{part}</a> : part))}</>
+}
+
 /** A folded tool step: one line saying what was done; details on demand. */
 function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSession; tab?: WorkflowTab }) {
   const [open, setOpen] = useState(false)
@@ -535,7 +542,7 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
         <span className="spacer" />
         <Button kind="borderless" iconOnly small icon={open ? 'chevron.up' : 'chevron.down'} help={open ? '詳細を閉じる' : 'ツールの詳細'} onClick={() => setOpen(!open)} />
       </div>
-      {open && <pre className="tool-detail selectable">{item.text.split('\n').slice(0, 40).join('\n')}</pre>}
+      {open && <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>}
     </div>
   )
 }

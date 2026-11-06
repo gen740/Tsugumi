@@ -55,6 +55,7 @@
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
+"Agent が自分の判断で Web を検索する" = "Let the Agent search the web on its own";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
 "Anthropic API キー" = "Anthropic API Key";
@@ -165,6 +166,9 @@
 "VM 内の実行履歴" = "Run history in the VM";
 "VM 内の実行履歴を削除しますか？" = "Delete the run history in the VM?";
 "Vega-Lite のグラフ" = "Vega-Lite chart";
+"Web を検索" = "Searched the web";
+"Web を検索しています" = "Searching the web";
+"Web 検索" = "Web search";
 "Workflow の実行を停止（チャットの回答停止とは別の操作です）" = "Stop the workflow run (separate from stopping a chat answer)";
 "Workflow の相談・生成・編集を依頼できます。" = "Ask for advice, generation or edits of the workflow.";
 "Workflow 階層" = "Workflow Hierarchy";
@@ -319,6 +323,7 @@
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
 "オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）" = "When on, a small model writes each version's change in a short sentence (code and settings are sent)";
+"オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。" = "When on, search queries go through the connected provider to its search service. The Agent is told to keep unpublished data out of them, but this cannot be guaranteed. Queries and sources stay in the chat. Searches may be charged.";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
 "ガイドのツグミに聞く" = "Ask Tsugumi the Guide";
@@ -510,6 +515,7 @@
 "ログを読み込めませんでした" = "Could not read the log";
 "ログを読み込めませんでした: " = "Could not read the log: ";
 "ログを読んでいます" = "Reading the log";
+"ローカル fixture には検索がないため、オンでも使えません。" = "The local fixture has no search, so this does nothing with it.";
 "ローカル fixture（テスト用・通信なし）" = "Local fixture (tests, no network)";
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";

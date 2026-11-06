@@ -62,6 +62,18 @@ try {
   assert.deepEqual(s.violations, [])
   assert.ok(s.plan_requests >= 2 && s.refreshes >= 2, JSON.stringify(s))
 
+  // Web search on the plan: the hosted tool beside the namespace keeps the plan's rules.
+  const searching = new Agent(agent.catalog, async () => { throw new Error('no rpc in this check') }, { ...provider, webSearch: true }, path.join(dir, 's.json'), 's')
+  const found = await new Promise<AgentEvent[]>((resolve) => {
+    const seen: AgentEvent[] = []
+    searching.send('search the web for tsugumi', 'check', (e) => {
+      seen.push(e)
+      if (e.kind === 'finished' || e.kind === 'error' || e.kind === 'stepLimit') resolve(seen)
+    })
+  })
+  assert.ok(found.some((e) => e.kind === 'toolFinished' && e.name === 'web_search') && found.at(-1)?.kind === 'finished', JSON.stringify(found))
+  assert.deepEqual((await stats()).violations, [])
+
   const limited = await turn('now exceed the usage limit')
   assert.ok(limited.some((e) => e.kind === 'error' && e.message === USAGE_LIMIT_TEXT), JSON.stringify(limited))
   assert.ok(!limited.some((e) => e.kind === 'retrying'))

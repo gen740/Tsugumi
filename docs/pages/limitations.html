@@ -53,7 +53,7 @@
 </ul>
 <h2 id="データと権限">データと権限</h2>
 <ul>
-<li><strong>Agent に送る内容を自動で伏せる仕組みはありません。</strong> Agent が読んだソース・ログ・入出力値はモデルのプロバイダへ送られます（<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>、<a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a>）。</li>
+<li><strong>Agent に送る内容を自動で伏せる仕組みはありません。</strong> Agent が読んだソース・ログ・入出力値はモデルのプロバイダへ送られます（<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>、<a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a>）。Web 検索をオンにすると検索語も検索サービスへ出て、そこに未公開のデータが載らないことは保証できません（<a href="security.html#web-検索">Web 検索</a>、既定はオフ）。</li>
 <li><strong>他人のプロジェクトを開くときに、権限の確認は出ません。</strong> <code>_card.json</code> に書かれた <code>hostFolders</code> は開くときに共有され、<code>network</code> と <code>sandbox: false</code> は実行時に有効です。確認が出るのは Agent が権限を広げる保存のときだけです。受け取ったプロジェクトは、Card のアイコンと Experimental の項目を確かめてから動かしてください（<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
 <li><strong>プロジェクト間の隔離は 1 つの Linux カーネルの上です。</strong> カーネルの脆弱性までは防げません。共通の <code>/nix/store</code> は全プロジェクトから読めます（<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
 <li><strong><code>network: false</code> でも、Nix の固定出力 derivation はビルド時に通信できます</strong>（<a href="security.html#5-nix-評価の制限">Nix 評価の制限</a>）。</li>
