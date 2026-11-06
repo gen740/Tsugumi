@@ -128,8 +128,8 @@ export interface CardNodeData {
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'
 
-export type CardShape = 'card' | 'branch' | 'fork' | 'merge'
-export const shapeOf = (k: CardKind): CardShape => (k === 'branch' || k === 'fork' || k === 'merge' ? k : 'card')
+export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'start'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' ? k : 'card')
 
 /** Size, outline and port positions of a Card (world units, relative to its
  *  top-left corner). Shared by drawing, wires, the selection and hit-tests. */
@@ -182,6 +182,8 @@ export class CardGeometry {
       case 'branch': return { width: 60, height: 48 }
       case 'fork': return { width: Math.max(56, this.outputs.length * 30 + 12), height: 40 }
       case 'merge': return { width: Math.max(56, this.inputs.length * 30 + 12), height: 40 }
+      // The start Card: its name and a run button, nothing more.
+      case 'start': return { width: 116, height: 34 }
       default: return { width: 0, height: 0 }
     }
   }
@@ -214,6 +216,7 @@ export class CardGeometry {
   }
 
   get size() {
+    if (this.shape === 'start') return this.routingSize
     if (this.shape !== 'card') {
       const r = this.routingSize
       return this.flow === 'topToBottom' ? { width: r.width, height: this.bandIn + r.height + this.bandOut } : { width: r.height + 60, height: r.width }
@@ -230,7 +233,7 @@ export class CardGeometry {
   /** The outline's frame inside the Card's box. */
   get outlineRect(): Rect {
     const s = this.size
-    if (this.shape === 'card') return { x: 0, y: 0, ...s }
+    if (this.shape === 'card' || this.shape === 'start') return { x: 0, y: 0, ...s }
     if (this.flow === 'topToBottom') return { x: 0, y: this.bandIn, width: s.width, height: s.height - this.bandIn - this.bandOut }
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
@@ -241,6 +244,8 @@ export class CardGeometry {
     switch (this.shape) {
       case 'card':
         return roundedRect(r, 9)
+      case 'start':
+        return roundedRect(r, r.height / 2)
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6)
       default: {
@@ -261,7 +266,7 @@ export class CardGeometry {
 
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
   private edgeSpan(input: boolean) {
-    if (this.shape === 'card' || this.shape === 'branch') {
+    if (this.shape === 'card' || this.shape === 'branch' || this.shape === 'start') {
       const w = this.shape === 'card' ? CardGeometry.width : this.routingSize.width
       return { start: 0, width: w }
     }
@@ -289,6 +294,7 @@ export class CardGeometry {
     // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
+    if (this.shape === 'start') return false
     if (this.shape === 'fork' || this.shape === 'merge') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
@@ -320,6 +326,10 @@ export class CardGeometry {
     const index = Math.max(0, list.indexOf(name))
     const n = Math.max(list.length, 1)
     const r = this.outlineRect
+    if (this.shape === 'start') {
+      // Its one output, in the middle of the downstream edge.
+      return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height } : { x: r.x + r.width, y: r.y + r.height / 2 }
+    }
     if (this.shape === 'branch') {
       // value / condition on the two upper edges, a / b on the two lower edges.
       const first = index === 0

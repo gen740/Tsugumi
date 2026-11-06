@@ -21,7 +21,7 @@
 /* In a small thumbnail the Card's text cannot be read and its minimum size runs over the Card: only the shape and the state stay. */
 .tp-small .cv-param-row > *, .tp-small .cv-summary, .tp-small .cv-result > *, .tp-small .cv-stage-row, .tp-small .cv-draft-text span, .tp-small .cv-state .mono-digits { visibility: hidden; }
 .tp-small .cv-port > span { transform: scale(0.7); }
-.tp-tiny .cv-card-header > *, .tp-tiny .cv-routing-icon { visibility: hidden; }
+.tp-tiny .cv-card-header > *, .tp-tiny .cv-start > *, .tp-tiny .cv-routing-icon { visibility: hidden; }
 .tp-tiny .cv-port > span { transform: scale(0.45); }
 .tp-message { padding: 16px; color: var(--secondary); }
 .tp-compact.tp-message { background: var(--text-bg); }
