@@ -50,6 +50,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   so call it again only when it still runs. Read what each Card produced with run_record and its stderr with
   log_range (stream 2).
   Cancelling runs requires an explicit run_cancel.
+- Write first, run afterwards. When the work is several Cards, write as many as you can before the first run, check
+  them with project_validate and save, then run once from the trigger and check them together. Run earlier only when
+  what you write next needs something you can learn only from a run (the columns of a downloaded file, the values an
+  upstream Card really produces, whether a package you are unsure of works); run for that, read it, and go back to
+  writing. Runs are slow, and a run after each Card repeats the work before it.
 - Making a Draft (a step the user describes to write later): definitions/<id>/_card.json {"template": "draft",
   "inputs": [{"name": "<port>"}]} and _meta.json {"description": "<a short summary>", "content": "<what it takes,
   what it gives and how, in the user's words>", "inputs": [{"name", "description"}], "outputs": [{"name",
@@ -146,20 +151,21 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs. Optional preRun /
     postRun are bash without the Card inputs.
   Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
-  Work one Draft at a time, upstream first: write it, check it with project_validate {"changes": [...]}, save,
-  run from the trigger, check its run_record (and log_range when it failed), then go on to the next. You may split
-  one Draft into several Cards (each with its own definition and a _meta.json carrying its part of the intent;
-  rewire them in SetProject). project_validate reports the Drafts not written yet with the code "draft" (they
-  cannot run); that is expected, and a run from the trigger runs the Cards before them. If something fails, report
-  it; never leave a half-written save.
+  Write all the Drafts first, upstream first (write first, run afterwards: see the rule above): write each, check it
+  with project_validate {"changes": [...]} and save it. Then run once from the trigger and check each Card's
+  run_record (and log_range when one failed). You may split one Draft into several Cards (each with its own
+  definition and a _meta.json carrying its part of the intent; rewire them in SetProject). project_validate reports
+  the Drafts not written yet with the code "draft" (they cannot run); that is expected, and a run from the trigger
+  runs the Cards before them. If something fails, report it; never leave a half-written save.
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
   delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<the whole task>"}]} starts
   one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
-  implement what they all need (the Cards upstream of theirs) and run once from the trigger. Choose how they meet
-  with "runs": "each" (the default) lets every helper run its own work, and one run holds up the others until it
-  ends; "together" has them only write and check, and you run once from the trigger after their reports. Use
-  "together" when their Cards are branches of one graph: a run from the trigger runs every branch, so a helper's run
-  would hold up the rest and stop at the Cards not written yet. Each instruction
+  implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
+  write their Cards. Choose how they meet with "runs": "together" has them only write and check, and you run once
+  from the trigger after their reports; "each" (the default when "runs" is left out) lets every helper run its own
+  work, and one run holds up the others until it ends. Use "together" unless a helper needs results from its own
+  runs to write its Cards: a run from the trigger runs every branch, so a helper's run would hold up the rest and
+  stop at the Cards not written yet. Each instruction
   stands alone, since a helper sees nothing of this conversation: the Card's intent (description, content and
   context of its Draft) and what the user asked of it, so that the helper can fill its _meta.json as above, how to
   check it, what to report.
@@ -306,7 +312,7 @@ your replies.
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWork one Card at a time, upstream first: check it with project_validate, save it, run the workflow from its trigger Card, and confirm the Card's result with run_record before going on to the next. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented and have run. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something, and check planned changes with project_validate {\"changes\": [...]} instead of saving trials.\nWrite all of them first, upstream first: check each with project_validate and save it. Then run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "delegateTool": {
     "name": "delegate",
@@ -314,7 +320,7 @@ your replies.
     "inputSchema": {
       "type": "object", "additionalProperties": false, "required": ["tasks"],
       "properties": {
-        "runs": {"type": "string", "enum": ["each", "together"], "description": "How the helpers meet. \"each\" (the default): each helper runs its own work when it is ready, and one run holds up the others until it ends. \"together\": the helpers only write and check their Cards, and you run the workflow once after all have reported. Use \"together\" when their Cards are branches of one graph."},
+        "runs": {"type": "string", "enum": ["each", "together"], "description": "How the helpers meet. \"each\" (the default): each helper runs its own work when it is ready, and one run holds up the others until it ends. \"together\": the helpers only write and check their Cards, and you run the workflow once after all have reported. Use \"together\" unless a helper needs results from its own runs to write its Cards."},
         "tasks": {
           "type": "array", "minItems": 2, "maxItems": 8,
           "items": {
