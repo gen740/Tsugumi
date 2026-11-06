@@ -155,7 +155,7 @@ for (const c of fixture.modelOptions) {
       })
       fixture.once('exit', () => reject(new Error('the fixture ended')))
     })
-    const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean; effort: string | null; speed: string | null; output_limit: number }[]
+    const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean; eager: boolean; effort: string | null; speed: string | null; output_limit: number }[]
     const catalog = new ToolCatalog(schema)
     const noRpc = async () => { throw new Error('no rpc in this check') }
     const provider = (webSearch: boolean, api: ProviderConfig['api'] = 'anthropicMessages'): ProviderConfig => ({
@@ -289,6 +289,43 @@ for (const c of fixture.modelOptions) {
     assert.equal(text.match(/https:/g)?.length, 1, text)
     assert.ok(text.includes('[a b c](https://a.example/b%29c)'), text)
     assert.equal(sourcesText([{ url: 'file:///etc/passwd' }]), '')
+
+    // The arguments stream as the model writes them, on the Messages API only and
+    // not on its search tool (the fixture refuses that as the API does); so what
+    // is broken is the Agent's to catch. The same cases as macOS/CoreTests
+    // (BrokenArgumentsTests).
+    const eager = messagesBody(provider(true), on.system, [], on.tools) as { tools: Record<string, unknown>[] }
+    assert.ok(eager.tools.every((t) => t.type ? !('eager_input_streaming' in t) : t.eager_input_streaming === true), JSON.stringify(eager.tools.map((t) => t.name)))
+    assert.ok(!JSON.stringify(responsesBody(provider(true, 'openAIResponses'), on.system, [], on.tools)).includes('eager_input_streaming'))
+    assert.ok(!JSON.stringify(responsesBody({ ...provider(true, 'openAIResponses'), auth: 'chatgpt' }, on.system, [], on.tools)).includes('eager_input_streaming'))
+    for (const [asked, sentBack] of [['write a broken project_save 2 times', '[{},{}]'], ['write a broken delegate 1 times as a list', '[{}]']]) {
+      const a = agentWith(provider(false))
+      events = await turn(a, asked)
+      finished(events)
+      const said = says(events)
+      assert.match(said, /Errors: \[True(, True)?\]/, said)
+      assert.ok(said.includes(`Inputs sent back: ${sentBack.replaceAll(',', ', ')}`), said)
+      assert.match(said, /Told to write it again: True\. Shown my text: True/, said)
+      assert.ok(events.every((e) => e.kind !== 'toolFinished' || !e.ok), 'nothing went through')
+      assert.equal(a.conversation.tools[0].opId, undefined, 'never sent')
+    }
+    assert.equal((await requests()).at(-1)?.eager, true)
+    // The next request, over the other API too, holds no broken arguments.
+    const mended = agentWith(provider(false))
+    await turn(mended, 'write a broken project_save 1 times')
+    const inResponses = JSON.stringify(responsesBody(provider(false, 'openAIResponses'), '', mended.conversation.messages, []))
+    assert.ok(inResponses.includes('"arguments":"{}"'), inResponses)
+    // However it is called, broken arguments do not run what needs none or few.
+    const direct = agentWith(provider(false))
+    const shown = await (direct as any).runTool('t', 'guide_show', '{"text":"hi', () => {})
+    assert.ok(shown.is_error && shown.content.includes('INVALID_JSON'), JSON.stringify(shown))
+    // A model that keeps breaking them is not asked for ever.
+    const broke = agentWith(provider(false))
+    events = await turn(broke, 'write a broken project_save 9 times')
+    const stoppedAt = events[events.length - 1]
+    assert.ok(stoppedAt.kind === 'error' && stoppedAt.message.includes('broken JSON three times'), JSON.stringify(stoppedAt))
+    assert.equal(broke.conversation.tools.length, 4)
+    assert.equal(broke.conversation.messages.at(-1)?.role, 'user', 'each call has its result')
 
     // A reply with nothing in it (declined before any output, or only thinking,
     // which is not kept): the turn says so, and the conversation can go on. The

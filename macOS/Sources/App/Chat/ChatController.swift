@@ -601,6 +601,8 @@ final class ChatController {
   /// The tsugumi on the canvas follows what the Agent looks at and runs.
   private func showOnCanvas(tool: String, arguments: String, bird: AgentPresence? = nil) {
     let bird = bird ?? session.presence
+    // What was written is not on the screen once it runs.
+    if tool == "run" { bird.stopShowingCode() }
     switch PresenceEvents.look(tool: tool, arguments: arguments) {
     case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
     case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }

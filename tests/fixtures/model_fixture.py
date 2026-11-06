@@ -105,6 +105,10 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 PERMISSION = re.compile(r"give (\S+) network access", re.I)
 STALE_READ = "validate at revision 0"
 SEARCH = re.compile(r"search the web for (.+?)(?: (with a pause|alongside inspect))?\s*$", re.I)
+# "write a broken project_save 2 times": that many replies end as usual but with
+# arguments that are cut (or, "as a list", not an object), as a model may write
+# them when the API does not check them; then it says what it was told.
+BROKEN = re.compile(r"write a broken (\S+) (\d+) times( as a list)?")
 READ_MANY = re.compile(r"read (\S+) (\d+) times(?: in (\d+) rounds)?", re.I)
 
 
@@ -523,6 +527,26 @@ def decide_permission(messages, card, start):
     return ("text", "Done.")
 
 
+def last_broken_task(messages):
+    for i in range(len(messages) - 1, -1, -1):
+        for b in blocks(messages[i]) if messages[i]["role"] == "user" else []:
+            if b.get("type") == "text":
+                return BROKEN.search(b["text"]), i
+    return None, -1
+
+
+def decide_broken(messages, task, start):
+    rest = messages[start + 1:]
+    results = tool_results(rest)
+    if len(results) < int(task.group(2)):
+        text = "[1, 2]" if task.group(3) else '{"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/m.py","bytes":"print(1'
+        return ("broken", task.group(1), text)
+    sent = [b["input"] for m in rest for b in blocks(m) if b.get("type") == "tool_use"]
+    told = str([r[1] for r in results])
+    return ("text", f"Errors: {[r[2] for r in results]}. Inputs sent back: {json.dumps(sent)}. "
+                    f"Told to write it again: {'Make the call again' in told}. Shown my text: {'INVALID_JSON' in told}.")
+
+
 def last_read_many(messages):
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
@@ -604,6 +628,9 @@ def decide_picture(messages, path, start):
 
 def decide(messages, system="", tools=()):
     """Returns ("tool", name, input) or ("text", message)."""
+    broken, broken_start = last_broken_task(messages)
+    if broken:
+        return decide_broken(messages, broken, broken_start)
     if system.startswith(GUIDE):
         return decide_guide(messages, tools)
     if h := HELPER.search(system):
@@ -1008,6 +1035,15 @@ class Handler(BaseHTTPRequestHandler):
                                                     "delta": {"type": "text_delta", "text": w + (" " if i + 1 < len(words) else "")}})
             self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
             stop = "end_turn"
+        elif decision[0] == "broken":
+            _, name, text = decision
+            self._event("content_block_start", {"type": "content_block_start", "index": 0,
+                                                 "content_block": {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": name, "input": {}}})
+            for i in range(0, len(text), 24):
+                self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                    "delta": {"type": "input_json_delta", "partial_json": text[i:i + 24]}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
+            stop = "tool_use"
         elif decision[0] == "tools":
             with Handler.lock:
                 cut = Handler.cut_once and not Handler.cut
@@ -1065,12 +1101,21 @@ class Handler(BaseHTTPRequestHandler):
         with Handler.lock:
             Handler.requests.append({"path": self.path, "tools": tools, "include": include,
                                      "names_web_search": b"web_search" in raw, "summary": b"You summarize" in raw,
+                                     "eager": b"eager_input_streaming" in raw,
                                      "effort": body.get("output_config", body.get("reasoning", {})).get("effort"),
                                      "speed": body.get("speed", body.get("service_tier")),
                                      "output_limit": body.get("max_tokens", body.get("max_output_tokens"))})
 
     def _refused_option(self, body):
-        """An effort or a speed the APIs do not know (a 400 there)."""
+        """An effort or a speed the APIs do not know (a 400 there), and what the
+        Messages API refuses in the tools and the history."""
+        for t in body.get("tools", []):
+            if "type" in t and "eager_input_streaming" in t:
+                return f"tools: eager_input_streaming is not allowed on {t['type']}"
+        for m in body.get("messages", []):
+            for b in blocks(m) if "role" in m else []:
+                if b.get("type") == "tool_use" and not isinstance(b.get("input"), dict):
+                    return "tool_use.input: Input should be a valid dictionary"
         effort = body.get("output_config", body.get("reasoning", {})).get("effort")
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
             return f"unknown effort {effort}"
