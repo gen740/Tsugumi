@@ -69,6 +69,8 @@ export interface CardNodeProps {
   draftEdit?: DraftEdit
   onStageTap?: (stage: Stage) => void
   onToggleCollapse?: () => void
+  /** The start Card's run button (undefined: it cannot run now). */
+  onRun?: () => void
   style?: CSSProperties
   className?: string
   onPointerDown?: (e: React.PointerEvent) => void
@@ -100,7 +102,7 @@ export function CardNodeView(p: CardNodeProps) {
       <svg className="cv-card-fill" width={w} height={h}>
         <path d={outline} fill={fill} style={{ filter: `drop-shadow(0 1px ${selected ? 4 : 1.5}px rgba(0,0,0,${selected ? 0.2 : 0.07}))` }} />
       </svg>
-      {g.shape === 'card' ? <CardBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
+      {g.shape === 'card' ? <CardBody p={p} g={g} /> : g.shape === 'start' ? <StartBody p={p} /> : <RoutingBody data={data} g={g} z={z} />}
       <svg className="cv-card-stroke" width={w} height={h}>
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
@@ -260,6 +262,28 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
 }
 
 /** Only the kind's icon, coloured by the state; name and details on hover. */
+/** The start Card: its run button and its name. */
+function StartBody({ p }: { p: CardNodeProps }) {
+  const { data } = p
+  const z = p.zoom ?? 1
+  const s = (v: number) => v * z
+  const font = (size: number) => Math.max(6, size * z)
+  return (
+    <div className="cv-start" style={{ gap: s(6), padding: `0 ${s(7)}px` }}>
+      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title="ここから Workflow を実行"
+        onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); p.onRun?.() }}>
+        <Icon name="play.fill" size={font(9)} />
+      </button>
+      <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
+      <span style={{ flex: 1, minWidth: 0 }} />
+      {data.state !== undefined && data.state !== D.CardState.not_started && (
+        <Icon name={cardState(data.state).icon} size={font(10)} style={{ color: colorVar(cardState(data.state).color) }} />
+      )}
+    </div>
+  )
+}
+
 function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const o = g.outlineRect
   const r = { x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z }

@@ -9,6 +9,7 @@ import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt,
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
 } from './canvasKit'
+import { arrangeCards } from './arrange'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
@@ -2647,39 +2648,67 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Arranges the Cards of a scope in layers by their distance from the
-   *  sources, following the flow direction (layout only). */
+  /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
+   *  see `arrangeCards`. Sizes and port positions are those of `CardGeometry`. */
   arrange(scope: string[]) {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
-    const incoming = new Map<string, Set<string>>()
-    for (const c of this.connections(scope)) {
-      const f = str(get(c, 'from', 'card')), t = str(get(c, 'to', 'card'))
-      if (f && t && f !== t) {
-        if (!incoming.has(t)) incoming.set(t, new Set())
-        incoming.get(t)!.add(f)
-      }
+    const cards = ids.map((id) => {
+      const g = this.geometry(key([...scope, id]))
+      const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
+      return { id, ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true) }
+    })
+    const wires = this.connections(scope).flatMap((c) => {
+      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
+      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+    })
+    const frames = ids.flatMap((id) => {
+      const k = key([...scope, id]), f = this.displayFrame(k)
+      if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
+      return [{ id, width: dbl(get(f, 'width')) ?? 320, height: dbl(get(f, 'height')) ?? 170 }]
+    })
+    const notes = this.notes(scope).flatMap((n) => {
+      const id = str(get(n, 'id'))
+      return id ? [{ id, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
+    })
+    const bar = (side: string) => {
+      const list = scope.length ? get(this.boundary(key(scope)), side) : undefined
+      return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
-    const depth = new Map<string, number>()
-    const level = (id: string, seen: Set<string>): number => {
-      const d = depth.get(id)
-      if (d !== undefined) return d
-      const preds = [...(incoming.get(id) ?? [])].filter((p) => !seen.has(p))
-      const v = preds.length === 0 ? 0 : Math.max(...preds.map((p) => level(p, new Set([...seen, id])))) + 1
-      depth.set(id, v)
-      return v
-    }
-    for (const id of ids) level(id, new Set())
-    const layers = new Map<number, string[]>()
-    for (const id of ids) layers.set(depth.get(id) ?? 0, [...(layers.get(depth.get(id) ?? 0) ?? []), id])
-    const vertical = this.flow === 'topToBottom'
+    const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
     this.edit((x) => {
-      for (const [lvl, members] of layers) {
-        members.forEach((id, i) => {
-          const across = i * 260 - (members.length - 1) * 130
-          const along = lvl * (vertical ? 200 : 270)
-          x.setPosition(key([...scope, id]), vertical ? { x: across, y: along } : { x: along, y: across * 0.6 })
-        })
-      }
+      for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
+      x.updateLayout(scope, (l) => {
+        if (placed.frames.length) {
+          let displays = l.get('displays')
+          if (!isObj(displays)) {
+            displays = obj()
+            l.set('displays', displays)
+          }
+          for (const f of placed.frames) {
+            const lk = this.layoutKey(key([...scope, f.id]))
+            let d = (displays as JObj).get(lk)
+            if (!isObj(d)) {
+              d = obj()
+              ;(displays as JObj).set(lk, d)
+            }
+            ;(d as JObj).set('x', real(f.x))
+            ;(d as JObj).set('y', real(f.y))
+          }
+        }
+        if (placed.notes.length) {
+          l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
+            const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
+            const copy = clone(n)
+            if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
+              copy.set('x', real(at.x))
+              copy.set('y', real(at.y))
+            }
+            return copy
+          }))
+        }
+        // The bars of a Card in Card go back to following the Cards.
+        l.set('boundary', undefined)
+      })
     })
   }
 

@@ -1021,33 +1021,61 @@ extension ProjectSession {
     }
   }
 
-  /// Arranges the Cards of a scope in layers by their distance from the
-  /// sources, following the flow direction (layout only).
+  /// Lays out a scope's Cards, output frames and notes (layout only, one undo):
+  /// see `arrangeCards`. Sizes and port positions are those of `CardGeometry`.
   func arrange(_ scope: [String]) {
     let ids = cards(in: scope).compactMap { $0["id"]?.string }
-    var incoming: [String: Set<String>] = [:]
-    for c in connections(in: scope) {
-      if let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string, f != t { incoming[t, default: []].insert(f) }
+    let nodes: [ArrangeCard] = ids.map { id in
+      let g = geometry(key(scope + [id]))
+      func ports(_ names: [String], output: Bool) -> [ArrangePort] {
+        names.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: Double(p.x), y: Double(p.y)) }
+      }
+      return ArrangeCard(id: id, width: Double(g.size.width), height: Double(g.size.height), inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true))
     }
-    var depth: [String: Int] = [:]
-    func level(_ id: String, _ seen: Set<String>) -> Int {
-      if let d = depth[id] { return d }
-      let preds = (incoming[id] ?? []).filter { !seen.contains($0) }
-      let d = preds.isEmpty ? 0 : (preds.map { level($0, seen.union([id])) }.max() ?? 0) + 1
-      depth[id] = d
-      return d
+    let wires: [ArrangeWire] = connections(in: scope).compactMap { c in
+      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
+            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      return ArrangeWire(from: f, fromPort: fp, to: t, toPort: tp)
     }
-    for id in ids { _ = level(id, []) }
-    var layers: [Int: [String]] = [:]
-    for id in ids { layers[depth[id] ?? 0, default: []].append(id) }
-    let vertical = flow == .topToBottom
+    let frames: [ArrangeBox] = ids.compactMap { id in
+      let k = key(scope + [id]), f = displayFrame(k)
+      guard displays[k] != nil || f != nil, f?["hidden"]?.bool != true else { return nil }
+      return ArrangeBox(id: id, width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
+    }
+    let boxes: [ArrangeBox] = notes(in: scope).compactMap { n in
+      n["id"]?.string.map { ArrangeBox(id: $0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120) }
+    }
+    func bar(_ side: String) -> [ArrangeBarEnd] {
+      guard !scope.isEmpty else { return [] }
+      return (boundary(key(scope))?[side]?.object ?? []).map { ArrangeBarEnd(card: $0.1["card"]?.string ?? "", port: $0.1["port"]?.string ?? "") }
+    }
+    let placed = arrangeCards(ArrangeInput(flow: flow, grid: AppPreferences.shared.gridSize, cards: nodes, wires: wires, frames: frames, notes: boxes,
+                                           boundaryInputs: bar("inputs"), boundaryOutputs: bar("outputs")))
     edit { s in
-      for (level, members) in layers {
-        for (i, id) in members.enumerated() {
-          let across = Double(i) * 260 - Double(members.count - 1) * 130
-          let along = Double(level) * (vertical ? 200 : 270)
-          s.setPosition(key(scope + [id]), vertical ? CGPoint(x: across, y: along) : CGPoint(x: along, y: across * 0.6))
+      for c in placed.cards { s.setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
+      s.updateLayout(of: scope) { l in
+        if !placed.frames.isEmpty {
+          var displays = l["displays"] ?? .object([])
+          for f in placed.frames {
+            let lk = layoutKey(key(scope + [f.id]))
+            var d = displays[lk] ?? .object([])
+            d["x"] = .real(f.x)
+            d["y"] = .real(f.y)
+            displays[lk] = d
+          }
+          l["displays"] = displays
         }
+        if !placed.notes.isEmpty, let list = l["notes"]?.array {
+          l["notes"] = .array(list.map { n in
+            guard let at = placed.notes.first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
+            var copy = n
+            copy["x"] = .real(at.x)
+            copy["y"] = .real(at.y)
+            return copy
+          })
+        }
+        // The bars of a Card in Card go back to following the Cards.
+        l["boundary"] = nil
       }
     }
   }

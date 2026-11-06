@@ -110,6 +110,40 @@ import Testing
     #expect(!s.connected)
   }
 
+  /// 整列 changes the layout only, frames and notes too, and is one step of undo.
+  @Test func arrangingIsOneUndo() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let a = s.addCard(template: .trigger, in: [], at: CGPoint(x: 500, y: 500), name: "a")
+    let b = s.addCard(template: .python, in: [], at: .zero, name: "b")
+    let note = s.addNote(in: [], at: CGPoint(x: 3, y: 4))
+    s.updateDisplayFrame(b) { d in
+      d["width"] = .real(300)
+      d["height"] = .real(200)
+    }
+    let before = s.layout
+    let project = s.project
+    s.arrange([])
+    #expect(s.layout != before)
+    #expect(s.project == project, "the layout only")
+    #expect(s.position(a) != CGPoint(x: 500, y: 500))
+    #expect(s.displayFrame(b)?["width"]?.double == 300)
+    #expect(s.displayFrame(b)?["x"]?.double != nil)
+    #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
+    let arranged = s.layout
+    s.undo()
+    #expect(s.layout == before)
+    s.arrange([])
+    #expect(s.layout == arranged, "from the same graph, the same layout")
+    s.arrange([])
+    #expect(s.layout == arranged, "arranging again changes nothing")
+  }
+
   /// A Draft's wires make its ports and take them away, and what is written on
   /// its Card is kept, under a new name too.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
