@@ -7,6 +7,7 @@ configuration); without it a host tsugumid is used.
 from __future__ import annotations
 
 import json
+import shutil
 import time
 
 import pytest
@@ -82,9 +83,40 @@ def test_every_listed_demo_resolves(tmp_path, demo):
         env.cleanup()
 
 
+def without_julia_and_r(dst):
+    """The Collatz demo of C++ and Python alone, as CI runs it: Julia and R (large Nix closures, a process for every
+    step) are left out of the copy, and `compare` loses their two inputs but keeps the rest of its code. The four
+    languages together are checked by test_demo_collatz.py (TSUGUMI_TEST_DEMO_RUNS=1)."""
+    gone = ("collatz-jl", "collatz-r")
+    project = json.loads((dst / "tsugumi.json").read_text())
+    canvas = project["canvas"]
+    canvas["cards"] = [c for c in canvas["cards"] if c["id"] not in gone]
+    canvas["connections"] = [w for w in canvas["connections"] if w["from"]["card"] not in gone and w["to"]["card"] not in gone]
+    (dst / "tsugumi.json").write_text(json.dumps(project))
+    for name in gone:
+        shutil.rmtree(dst / "definitions" / name)
+        shutil.rmtree(dst / "externals" / name)
+    both = dst / "definitions" / "both" / "_card.json"
+    fork = json.loads(both.read_text())
+    set_param(fork, "branches", ["cpp", "python"])
+    both.write_text(json.dumps(fork))
+    compare = dst / "definitions" / "compare"
+    card = json.loads((compare / "_card.json").read_text())
+    card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]
+    (compare / "_card.json").write_text(json.dumps(card))
+    code = (compare / "src" / "main.py").read_text()
+    for old, new in [("from inputs.julia.collatz.Sequence import Sequence as JuliaSequence\n", ""),
+                     ("from inputs.r.collatz.Sequence import Sequence as RSequence\n", ""),
+                     ('        "Julia": values(ctx.input("julia", JuliaSequence)),\n        "R": values(ctx.input("r", RSequence)),\n', ""),
+                     ("C++, Python, Julia and R agree", "C++ and Python agree")]:
+        assert old in code, old
+        code = code.replace(old, new)
+    (compare / "src" / "main.py").write_text(code)
+
+
 @pytest.fixture
 def collatz(tmp_path):
-    env = demo_environment(tmp_path, "collatz")
+    env = demo_environment(tmp_path, "collatz", edit=without_julia_and_r)
     yield env
     env.cleanup()
 
@@ -111,9 +143,6 @@ def collatz_reference(n):
     return seq
 
 
-COLLATZ_LANGUAGES = ("collatz-cpp", "collatz-py", "collatz-jl", "collatz-r")
-
-
 def test_collatz_27(collatz):
     c = connect(collatz)
     rid = start_run(c, ["start"])
@@ -122,14 +151,14 @@ def test_collatz_27(collatz):
     expected = collatz_reference(27)
     assert len(expected) == 112
     shown = c.call("RunRecordRequest", runId=rid, card=path("compare")).record.display.value
-    assert shown.markdown and text(shown.text).startswith("**C++, Python, Julia and R agree**: 112 values, $a_0 = 27$")
+    assert shown.markdown and text(shown.text).startswith("**C++ and Python agree**: 112 values, $a_0 = 27$")
     assert "after $111$ steps" in text(shown.text) and "9232" in text(shown.text)
     # The agreed sequence is kept as a CSV file (a File artifact of record).
     art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
     csv = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
     lines = csv.splitlines()
     assert lines[0] == "k,a_k,parity" and lines[1] == "0,27,odd" and lines[-1] == "111,1,odd" and len(lines) == 113
-    for lang in COLLATZ_LANGUAGES:
+    for lang in ("collatz-cpp", "collatz-py"):
         shown = display_text(c, rid, lang, "collect")
         assert shown == "112 values: " + " ".join(map(str, expected))
     # The C++ Card in Card runs alone from its boundary input (saved value).
@@ -140,18 +169,17 @@ def test_collatz_27(collatz):
 
 def test_collatz_limit_overflow_and_skipped(collatz):
     c = connect(collatz)
-    # Iteration limit: the check Card may run only 10 times, in every language (a failed run still waits for the
-    # branches that go on, and Julia and R start a process for each step).
+    # Iteration limit: the check Card may run only 50 times.
     original = {}
-    for lang in COLLATZ_LANGUAGES:
+    for lang in ("collatz-cpp", "collatz-py"):
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: (original.__setitem__(lang, b.get("maxRuns")),
-                                                                            b.__setitem__("maxRuns", 10)))
+                                                                            b.__setitem__("maxRuns", 50)))
     st = wait_run(c, start_run(c, ["start"]))
     assert st.state == RunState.failed
     assert st.failure.kind == 19  # execution_limit
     # Overflow: 3n+1 exceeds uint64 for this odd value.
     big = 12297829382473034411
-    for lang in COLLATZ_LANGUAGES:
+    for lang in ("collatz-cpp", "collatz-py"):
         edit_external_card(collatz, c, lang, "check", lambda b, lang=lang: b.__setitem__("maxRuns", original[lang]))
     edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0),
               raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
@@ -166,23 +194,6 @@ def test_collatz_limit_overflow_and_skipped(collatz):
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     rec = c.call("RunRecordRequest", runId=rid, card=path("collatz-cpp", "triple"))
     assert rec.status.state == CardState.skipped
-
-
-def test_collatz_r_fails_rather_than_round(collatz):
-    """R holds an integer exactly only below 2^53: past it the R Card in Card fails and says so, and Julia, which
-    computes in UInt64, still returns the exact sequence. (4^28 - 1) / 3 is odd and not a double (2^53 < n), and
-    3n + 1 = 2^56 sends it to 1 in 56 halvings."""
-    c = connect(collatz)
-    n = (4 ** 28 - 1) // 3
-    assert n > 2 ** 53 and float(n) != n
-    edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0), raw=lambda s: s.replace('"data": 0', f'"data": {n}'))
-    rid = start_run(c, ["start"])
-    st = wait_run(c, rid)
-    assert st.state == RunState.failed
-    assert "2^53" in stderr(c, rid, "collatz-r", "check")
-    # The failed run waits for the branches that go on: Julia has the exact sequence.
-    expected = [n] + [2 ** k for k in range(56, -1, -1)]
-    assert display_text(c, rid, "collatz-jl", "collect") == f"{len(expected)} values: " + " ".join(map(str, expected))
 
 
 def test_report_failure_rerun_and_artifacts(report):
