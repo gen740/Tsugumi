@@ -54,10 +54,7 @@ struct MainWindow: View {
       home: { model.leaveProject(in: workspace) },
       newProject: { model.newProject(from: workspace, openWindow: openWindow) },
       showChat: { workspace.showChat = true }))
-    .background(WindowReader { window in
-      workspace.window = window
-      if UIScript.staysBehind { window.orderBack(nil) }
-    })
+    .background(WindowReader { workspace.window = $0 })
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
       guard let closing = n.object as? NSWindow, closing === workspace.window else { return }
       model.windowClosed(workspace)

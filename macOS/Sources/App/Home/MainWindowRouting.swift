@@ -153,7 +153,7 @@ extension AppModel {
 extension Workspace {
   /// To the front, also out of the Dock or from behind another tab.
   func bringForward() {
-    guard let window, !UIScript.staysBehind else { return }
+    guard let window else { return }
     NSApp.activate()
     if window.isMiniaturized { window.deminiaturize(nil) }
     window.makeKeyAndOrderFront(nil)

@@ -27,7 +27,7 @@ import TsugumiRPC
 ///   chatsend <text>                 waitchat
 ///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
-///   menu <item title>               (presses the menu bar's item; the app stays behind, so those that go by the key window are not for this)
+///   menu <item title>               (presses the menu bar's item)
 ///   newproject                      (the new project sheet, as ⌘N in the window steps act on)
 ///   openproject <folder>            (as the open panel of the window in front answers)
 ///   window <n>                      (later steps act on the n-th main window)
@@ -37,18 +37,10 @@ import TsugumiRPC
 ///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
-///
-/// The app stays behind the user's work (macOS/tools/run-ui.sh opens it with
-/// `open -g`): it never activates itself and its windows go to the back.
-/// TSUGUMI_UI_FRONT=1 brings it to the front, for pictures with active colors.
 @MainActor
 @Observable
 final class UIScript {
   static let shared = UIScript()
-
-  /// A scripted check leaves the screen to the user (above).
-  nonisolated static let staysBehind = ProcessInfo.processInfo.environment["TSUGUMI_UI_SCRIPT"] != nil
-    && ProcessInfo.processInfo.environment["TSUGUMI_UI_FRONT"] == nil
 
   enum Request: Equatable {
     case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
@@ -170,7 +162,6 @@ final class UIScript {
         let list = AppModel.shared.mainWindows
         if let n = Int(w[1]), list.indices.contains(n) {
           chosen = list[n]
-          list[n].bringForward()  // (not while the app stays behind)
         } else { say("no main window \(w[1])") }
       case "mainwindows":
         for (i, m) in AppModel.shared.mainWindows.enumerated() {
@@ -383,11 +374,9 @@ final class UIScript {
         let target = w.count > 2
           ? windows.first { $0.title.contains(wanted) || ($0.identifier?.rawValue.localizedCaseInsensitiveContains(wanted) ?? false) }
           : mainWindow
-        // In front when asked for (the window buttons and selection in their active colors).
-        if !Self.staysBehind {
-          NSApp.activate()
-          target?.makeKeyAndOrderFront(nil)
-        }
+        // In front, as when used (the window buttons and selection in their active colors).
+        NSApp.activate()
+        target?.makeKeyAndOrderFront(nil)
         try? await Task.sleep(for: .milliseconds(300))
         say("capture \(w[1]) \(target?.windowNumber ?? -1)")
         try? await Task.sleep(for: .milliseconds(1800))
