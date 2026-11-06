@@ -1815,14 +1815,15 @@ export class ProjectSession extends Observable {
     if (isObj(displays)) displays.set(lk, undefined)
   }
 
-  /** A new Card from a template, with its own definition folder. */
-  addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string): CardKey {
+  /** A new Card from a template, with its own definition folder. `place` says
+   *  where instead of `at`, once the Card's size is known. */
+  addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): CardKey {
     const id = this.uniqueId(name ?? templateBaseName(t), scope)
     const k = key([...scope, id])
     this.edit((x) => {
       x.appendCard(id, scope)
       x.writeTemplate(t, k)
-      x.setPosition(k, at)
+      x.setPosition(k, place ? place(k) : at)
     })
     return k
   }

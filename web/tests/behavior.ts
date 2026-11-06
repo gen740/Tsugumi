@@ -39,4 +39,6 @@ await import("./marquee")
 
 await import("./arrange")
 
+await import("./freeSpot")
+
 await import("./deleteCard")

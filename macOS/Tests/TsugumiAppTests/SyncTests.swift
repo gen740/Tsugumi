@@ -383,9 +383,14 @@ import Testing
     #expect(s.displays[renamed] != nil, "the result follows the name")
     #expect(s.displays[b] == nil)
 
-    let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 400), name: "b")
+    // Put where another Card is, as E does: it goes to a free place, without the old frame.
+    let here = CGPoint(x: 4000, y: 4000)
+    let occupied = s.addCard(template: .draft, in: [], at: here, name: "occupied")
+    let draft = s.addCard(template: .draft, in: [], at: here, name: "b", clearOfOthers: true)
     #expect(draft == b)
     #expect(s.displays[b] == nil && s.displayFrame(b) == nil && !s.framedCards(in: []).contains(b))
+    #expect(!CGRect(origin: s.position(b), size: s.geometry(b).size)
+      .intersects(CGRect(origin: s.position(occupied), size: s.geometry(occupied).size)))
     await s.save()
     #expect(s.saveError == nil && s.displayFrame(b) == nil)
 
@@ -394,6 +399,55 @@ import Testing
     let copies = await s.duplicate([renamed], in: [])
     #expect(copies == [key(["renamed-2"])])
     #expect(s.displayFrame(key(["renamed-2"])) == nil)
+  }
+
+  /// A new Card put on the canvas covers nothing: not a Card, a frame or a note,
+  /// also when several are put in the same place. A free place is taken as it is.
+  @Test func aNewCardCoversNothing() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func covers(_ k: CardKey, in scope: [String]) -> [String] {
+      let r = CGRect(origin: s.placedPosition(k), size: s.geometry(k).size)
+      var hit: [String] = []
+      for c in s.cards(in: scope).compactMap({ $0["id"]?.string }).map({ key(scope + [$0]) }) where c != k {
+        if r.intersects(CGRect(origin: s.placedPosition(c), size: s.geometry(c).size)) { hit.append(c) }
+      }
+      for c in s.framedCards(in: scope) where c != k && r.intersects(s.displayRect(c, origin: s.placedPosition(c))) { hit.append("frame \(c)") }
+      for n in s.notes(in: scope) where r.intersects(s.noteRect(n)) { hit.append("note") }
+      return hit
+    }
+    func check(in scope: [String]) {
+      let here = CGPoint(x: 4000, y: 4000)
+      let first = s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
+      #expect(s.placedPosition(first).x.distance(to: here.x).magnitude < 40, "a free place is taken")
+      let second = s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
+      let third = s.addCard(template: .python, in: scope, at: here, clearOfOthers: true)
+      // Near a frame and a note too.
+      let framed = s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0))
+      s.updateDisplayFrame(framed) {
+        $0["x"] = .real(6000)
+        $0["y"] = .real(6000)
+        $0["width"] = .real(320)
+        $0["height"] = .real(170)
+      }
+      let onFrame = s.addCard(template: .draft, in: scope, at: CGPoint(x: 6100, y: 6050), clearOfOthers: true)
+      _ = s.addNote(in: scope, at: CGPoint(x: 8000, y: 8000))
+      let onNote = s.addCard(template: .draft, in: scope, at: CGPoint(x: 8050, y: 8020), clearOfOthers: true)
+      for k in [first, second, third, onFrame, onNote] { #expect(covers(k, in: scope).isEmpty, "\(k): \(covers(k, in: scope))") }
+      // Aimed at a spot without asking for room: stays there (a drop).
+      let dropped = s.addCard(template: .draft, in: scope, at: here)
+      #expect(s.position(dropped) == here)
+    }
+    check(in: [])
+    let inner = await s.makeSubgraph([key(["a"])], in: [])
+    check(in: path(try #require(inner)))
+    await s.save()
+    #expect(!s.dirty, "\(s.saveError ?? "")")
   }
 
   /// A deleted Card takes its files with it: saving the removal works, for a

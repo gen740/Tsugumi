@@ -10,6 +10,7 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
+const { Scene } = await import('../src/model/canvas')
 const { ProjectSession } = await import('../src/model/session')
 
 const session = (cards: string[]) => {
@@ -97,5 +98,19 @@ const clean = (s: Session, k: string) => {
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])
   clean(s, 'a-2')
+}
+{
+  // Put where another Card is, as E does: it goes to a free place, without the old frame.
+  const s = session([])
+  const here = { x: 4000, y: 4000 }
+  const occupied = s.addCard('draft', [], here, 'occupied')
+  resolved(s, ['b', 'occupied'])
+  framed(s, 'b')
+  const k = s.addCard('draft', [], here, 'b', (c) => new Scene(s, []).freeSpot(here, c))
+  assert.equal(k, 'b')
+  clean(s, k)
+  const scene = new Scene(s, [])
+  const a = scene.cardRect(k), b = scene.cardRect(occupied)
+  assert.ok(!(a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height), 'a free place')
 }
 console.log('freed name behavior: passed')
