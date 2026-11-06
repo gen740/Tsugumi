@@ -173,7 +173,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (n.has(k)) n.delete(k)
       else n.add(k)
       tab.selectedConnection = undefined
-      tab.setSelection(n)
+      // Adding to the selection keeps what a marquee caught.
+      tab.setSelection(n, tab.selectedNotes, tab.selectedFrames)
     } else {
       tab.selectedConnection = undefined
       tab.setSelection([k])
@@ -341,7 +342,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const a = cv.world(start), b = cv.world(local(ev))
         const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }
         tab.selectedConnection = undefined
-        tab.setSelection(scene.cardKeys.filter((k) => intersects(r, { ...session.placedPosition(k), ...scene.geometry(k).size })))
+        const items = scene.itemsIn(r)
+        tab.setSelection(items.cards, items.notes, items.frames)
       })
       return
     }
@@ -369,24 +371,26 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         if (!tab.selection.has(k)) tab.setSelection([k])
         keys = new Set(tab.selection)
       }
-      setCardDrag({ keys, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+      setCardDrag({ keys, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
     }, (ev, moved) => {
       setCardDrag(undefined)
       if (!moved || !keys) return select(k, toggle)
-      const dx = (ev.clientX - start.x) / z, dy = (ev.clientY - start.y) / z
-      const moving = keys
-      // Layout only: no computation is re-resolved for a move.
-      session.edit((s) => {
-        for (const m of moving) {
-          const p = s.position(m)
-          let x = p.x + dx, y = p.y + dy
-          if (prefs.showGrid) {
-            x = snapToGrid(x, prefs.gridSize)
-            y = snapToGrid(y, prefs.gridSize)
-          }
-          s.setPosition(m, { x, y })
-        }
-      })
+      moveSelection((ev.clientX - start.x) / z, (ev.clientY - start.y) / z)
+    })
+  }
+
+  const moveSelection = (dx: number, dy: number) =>
+    cv.moveSelection(tab.selection, tab.selectedNotes, tab.selectedFrames, dx, dy, prefs.showGrid ? prefs.gridSize : undefined)
+
+  /** Drags the selection from one of its notes or frames. */
+  const dragSelection = (e: React.PointerEvent) => {
+    const start = { x: e.clientX, y: e.clientY }
+    drive(e, 3, (ev) => {
+      clearHover()
+      setCardDrag({ keys: tab.selection, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+    }, (ev, moved) => {
+      setCardDrag(undefined)
+      if (moved) moveSelection((ev.clientX - start.x) / z, (ev.clientY - start.y) / z)
     })
   }
 
@@ -575,10 +579,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const d = frameDrag?.card === k ? frameDrag : undefined
         const p = screen(r)
         return (
-          <OutputFrameView key={'f:' + k} session={session} cardKey={k} zoom={z}
+          <OutputFrameView key={'f:' + k} session={session} cardKey={k} zoom={z} selected={tab.selectedFrames.has(k)}
             style={placed({ x: p.x + (d?.dx ?? 0), y: p.y + (d?.dy ?? 0) }, r.width * z, r.height * z)}
             onExpand={() => app.openWindow(session, { kind: 'visual', card: k })}
-            onClose={() => session.updateDisplayFrame(k, (f) => f.set('hidden', true))}
+            onClose={() => cv.closeFrame(k)}
             onResize={(dx, dy) => session.updateDisplayFrame(k, (f) => {
               f.set('x', real(Math.round(r.x)))
               f.set('y', real(Math.round(r.y)))
@@ -589,9 +593,15 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               if (e.button !== 0) return
               e.stopPropagation()
               focus()
+              if (tab.selectedFrames.has(k)) return dragSelection(e)
               const start = { x: e.clientX, y: e.clientY }
+              let first = true
               // Follows the pointer while dragged; the layout changes once, on release.
-              drive(e, 3, (ev) => setFrameDrag({ card: k, dx: ev.clientX - start.x, dy: ev.clientY - start.y }), (ev, moved) => {
+              drive(e, 3, (ev) => {
+                if (first) tab.setSelection([])
+                first = false
+                setFrameDrag({ card: k, dx: ev.clientX - start.x, dy: ev.clientY - start.y })
+              }, (ev, moved) => {
                 setFrameDrag(undefined)
                 if (!moved) return
                 session.updateDisplayFrame(k, (f) => {
@@ -606,7 +616,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               { label: '拡大して表示', action: () => app.openWindow(session, { kind: 'visual', card: k }) },
               { label: 'チャットに参照を追加', action: () => app.chat(session).addReference({ kind: 'display', card: k }) },
               'divider',
-              { label: '枠を削除（Card は残ります）', action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', true)) },
+              { label: '枠を削除（Card は残ります）', action: () => cv.closeFrame(k) },
             ])} />
         )
       })}
@@ -621,10 +631,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const id = str(get(n, 'id'))
         if (!id) return null
         const r = noteRect(n)
-        const d = noteDrag?.id === id ? noteDrag : undefined
+        const d = noteDrag?.id === id ? noteDrag : cardDrag && tab.selectedNotes.has(id) ? { dx: cardDrag.dx * z, dy: cardDrag.dy * z } : undefined
         const p = screen(r)
         return (
-          <StickyNoteView key={id} note={n} zoom={z}
+          <StickyNoteView key={id} note={n} zoom={z} selected={tab.selectedNotes.has(id)}
             style={placed({ x: p.x + (d?.dx ?? 0), y: p.y + (d?.dy ?? 0) }, r.width * z, r.height * z)}
             onResize={(dx, dy) => session.updateNote(id, (v) => {
               v.set('width', real(Math.round(Math.max(120, r.width + dx / z))))
@@ -634,8 +644,14 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               if (e.button !== 0) return
               e.stopPropagation()
               focus()
+              if (tab.selectedNotes.has(id)) return dragSelection(e)
               const start = { x: e.clientX, y: e.clientY }
-              drive(e, 3, (ev) => setNoteDrag({ id, dx: ev.clientX - start.x, dy: ev.clientY - start.y }), (ev, moved) => {
+              let first = true
+              drive(e, 3, (ev) => {
+                if (first) tab.setSelection([])
+                first = false
+                setNoteDrag({ id, dx: ev.clientX - start.x, dy: ev.clientY - start.y })
+              }, (ev, moved) => {
                 setNoteDrag(undefined)
                 if (!moved) return
                 session.updateNote(id, (v) => {
@@ -735,7 +751,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   )
 }
 
-const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 
 /** Right below the pointer (its top-left corner just past it), flipped to the
  *  other side where the canvas ends, and kept inside the canvas. */
@@ -903,10 +918,10 @@ function GroupFrameView({ session, group, scope, zoom: z, ...ev }: { session: Pr
 export const noteFontSize = (n: J | undefined) => dbl(get(n, 'fontSize')) ?? 13
 
 /** Markdown sticky note; it does not take part in runs. Its text size is its own (`fontSize` in layout.json). */
-function StickyNoteView({ note, zoom: z, onResize, ...ev }: { note: J; zoom: number; onResize: (dx: number, dy: number) => void } & ItemEvents) {
+function StickyNoteView({ note, zoom: z, selected, onResize, ...ev }: { note: J; zoom: number; selected: boolean; onResize: (dx: number, dy: number) => void } & ItemEvents) {
   const color = noteColor(get(note, 'color'))
   return (
-    <div className="cv-note" {...ev} title="ダブルクリックで編集"
+    <div className={`cv-note${selected ? ' selected' : ''}`} {...ev} title="ダブルクリックで編集"
       style={{ ...ev.style, padding: 10 * z, borderRadius: 6 * z, background: tint(color, 0.28), borderColor: tint(color, 0.5) }}>
       {/* Cut at the note's size (no scroll bar on the canvas; resize to see more). */}
       <div className="cv-note-text" style={{ fontSize: noteFontSize(note) * z }}><Markdown text={str(get(note, 'text')) ?? ''} /></div>
@@ -935,13 +950,13 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
 }
 
 /** A Card's result in its own movable frame. */
-function OutputFrameView({ session, cardKey, zoom: z, onExpand, onClose, onResize, ...ev }: {
-  session: ProjectSession; cardKey: CardKey; zoom: number; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
+function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClose, onResize, ...ev }: {
+  session: ProjectSession; cardKey: CardKey; zoom: number; selected: boolean; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
 } & ItemEvents) {
   const d = session.displays.get(cardKey)
   const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation()
   return (
-    <div className="cv-frame" {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
+    <div className={`cv-frame${selected ? ' selected' : ''}`} {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
       <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
         <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
         <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{session.displayName(cardKey)}</span>

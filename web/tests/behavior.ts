@@ -32,3 +32,5 @@ await import("./projectActions")
 await import("./thumbnails")
 
 await import("./portGrid")
+
+await import("./marquee")

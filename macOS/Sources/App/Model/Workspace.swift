@@ -59,7 +59,16 @@ struct CardRef: Codable, Hashable {
 final class WorkflowTab: Identifiable {
   let id = UUID()
   var scope: [String]
-  var selection: Set<CardKey> = []
+  var selection: Set<CardKey> = [] {
+    // Choosing Cards anew lets go of the notes and frames: those come from a marquee.
+    didSet {
+      selectedNotes = []
+      selectedFrames = []
+    }
+  }
+  /// Sticky notes (ids) and Cards' output frames caught by a marquee, set after `selection`.
+  var selectedNotes: Set<String> = []
+  var selectedFrames: Set<CardKey> = []
   var back: [[String]] = []
   var selectedConnection: Int?
 
@@ -67,6 +76,8 @@ final class WorkflowTab: Identifiable {
     self.scope = scope
     self.selection = selection
   }
+
+  var hasSelection: Bool { !selection.isEmpty || !selectedNotes.isEmpty || !selectedFrames.isEmpty || selectedConnection != nil }
 
   /// Switches the edited scope; the previous one goes on the back stack.
   func enter(_ s: [String]) {
