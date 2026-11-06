@@ -157,7 +157,9 @@ def module_value(name: str, data: dict) -> dict:
         for r in rows:
             groups.setdefault(str(r.get(cf, "")) if cf else "", []).append(r)
         for label, items in groups.items():
-            if xf and yf and items and xf in items[0] and yf in items[0]:
+            # layers can hold rows of other columns (a band's low and high, say)
+            items = [r for r in items if xf in r and yf in r] if xf and yf else []
+            if items:
                 series.append({"label": label, "x": thin([r[xf] for r in items], MAX_POINTS), "y": thin([r[yf] for r in items], MAX_POINTS), "points": False})
         title = data.get("title", "")
         if isinstance(title, dict):

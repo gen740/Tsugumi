@@ -204,6 +204,7 @@ html.no-figures .ex-fig { display: none; }
 .gallery { position: relative; padding-top: 12px; }
 .gallery h2 { margin: 0 0 8px; font-size: 26px; }
 .gallery > p { max-width: 700px; color: var(--secondary); font-size: 14.5px; }
+.gallery h3 { margin: 30px 0 12px; font-size: 16px; color: var(--secondary); font-weight: 600; }
 .demo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 .demo-tile { display: block; padding: 0 0 14px; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: #202225; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: border-color 0.2s ease, transform 0.2s ease; }
 .demo-tile:hover { border-color: var(--thread); transform: translateY(-2px); }
