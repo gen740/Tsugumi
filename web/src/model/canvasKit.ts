@@ -645,9 +645,10 @@ export class WireRouter {
 
   /** How far along the flow a port's wire has to run to get out of a Card's box (0: not in it). */
   private depth(o: Rect, p: Pt, dir: 1 | -1) {
-    if (p.x <= o.x || p.x >= o.x + o.width) return 0
-    if (dir > 0) return o.y <= p.y && p.y < o.y + o.height ? o.y + o.height - p.y : 0
-    return o.y < p.y && p.y <= o.y + o.height ? p.y - o.y : 0
+    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // beside the wire, and the wire would otherwise go on through all of it.
+    if (p.x <= o.x || p.x >= o.x + o.width || p.y <= o.y || p.y >= o.y + o.height) return 0
+    return dir > 0 ? o.y + o.height - p.y : p.y - o.y
   }
 
   /** Where a port's wire is out of the boxes it starts in (a Card's port is on the edge already). */
