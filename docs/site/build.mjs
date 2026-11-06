@@ -21,7 +21,7 @@ const SECONDARY = ['docs/Name.md', 'docs/Author.md', 'docs/Lock.md', 'docs/Licen
 /** Pages read with the thread and the moving figures, in the order the slide show goes through them. */
 const STORY = [
   {
-    out: 'pages/problem.html', source: 'README.md', title: 'Tsugumi が解決しようとしている課題', know: true,
+    out: 'pages/problem.html', source: 'README.md', title: 'Tsugumi が解決しようとしている課題', navTitle: '解決しようとしている課題', know: true,
     // A section, or its beginning: upTo names the first block left out.
     sections: [
       { title: 'AI を研究に積極的に活用できていますか？' },
@@ -308,7 +308,7 @@ function sidebar(groups, pages, outRel) {
   const href = (to) => (to === outRel ? '#' : path.relative(path.dirname(outRel), to).split(path.sep).join('/'))
   const item = (to, title) => `<li${to === outRel ? ' class="on" aria-current="page"' : ''}><a href="${href(to)}">${esc(title)}</a></li>`
   let out = `<div class="nav-group"><h2>Tsugumi を知る</h2><ul>`
-  for (const s of STORY.filter((x) => x.know)) out += item(s.out, s.title ?? titleOf(s.source))
+  for (const s of STORY.filter((x) => x.know)) out += item(s.out, s.navTitle ?? s.title ?? titleOf(s.source))
   out += '</ul></div>'
   for (const g of groups) {
     const docs = g.docs.filter((d) => !OFF_THE_LIST.has(d) && !STORY.some((s) => s.know && s.source === d))
