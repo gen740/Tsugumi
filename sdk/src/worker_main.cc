@@ -51,6 +51,7 @@
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
+#include "message_json.hh"
 #include "schema.hh"
 
 extern char** environ;
@@ -546,7 +547,7 @@ void bash_inputs(const W::WorkerCall* m, const std::string& tmp, std::vector<std
     std::string up = upper(port);
     auto* p = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
     std::string json;
-    if (!p || flatbuffers::GenText(*p, in->value()->bytes()->data(), &json)) {
+    if (!p || tsugumi::message_json::gen_text(*p, in->value()->bytes()->data(), &json)) {
       record_failure(D::FailureKind::worker_failed, "cannot convert input " + port + " to JSON");
       return;
     }

@@ -91,6 +91,36 @@ main <- function(ctx) {
 """
 
 
+EXACT = """attribute "tsugumi";
+namespace t;
+table Exact { values:[double]; single:float; }
+table Outputs { numbers:Exact (required); }
+root_type Outputs;
+"""
+# More digits than 12 decimals keep, below them, the limits of a double, and a sum that shows every bit.
+EXACT_VALUES = [0.042169650342858, 1e-20, 5e-324, 1.7976931348623157e308, 0.1 + 0.2, 123456.78901234567, 3.0]
+EXACT_JSON = json.dumps({"numbers": {"values": EXACT_VALUES, "single": 0.1}})
+
+BASH_MAKE = "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_OUTPUT\" <<'END'\n" + EXACT_JSON + "\nEND\n''; }\n"
+# R reads its own literals and as.numeric less exactly than a double on some machines, so it compares what C prints.
+R_EXACT = r"""
+main <- function(ctx) {
+  m <- ctx$input("numbers")
+  stopifnot(identical(sprintf("%.17g", m$values), c(""" + ", ".join(f'"{v:.17g}"' for v in EXACT_VALUES) + r""")))
+  ctx$output("numbers", m)
+}
+"""
+JULIA_EXACT = r"""
+function main(ctx)
+    m = input(ctx, "numbers")
+    @assert m["values"] == [""" + ", ".join(repr(v) for v in EXACT_VALUES) + r"""]
+    @assert m["single"] == 0.1
+    output(ctx, "numbers", m)
+end
+"""
+BASH_SHOW = "{ pkgs, inputs, params }: { run = ''\n  jq -n --rawfile m \"$JSON_NUMBERS\" '{text: $m}' > \"$TSUGUMI_DISPLAY\"\n''; }\n"
+
+
 @pytest.fixture
 def project(tmp_path):
     """The project's folder, and a function that opens it after the test wrote it."""
@@ -140,6 +170,26 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
     assert image.valueType == 5 and bytes(image.value.data)[:4] == b"\x89PNG" and text(image.value.alt) == "the values"
     art = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")
     assert bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode() == "sum 18\n"
+
+
+def test_a_double_crosses_bash_r_and_julia_unchanged(project):
+    root, connect = project
+    write_project(root, {
+        "make": {"card": {"language": "bash", "inputs": [{"name": "start"}]}, "nix": BASH_MAKE, "outputs": EXACT},
+        "r": {"card": {"language": "r", "inputs": [{"name": "numbers"}]},
+              "nix": R_NIX, "outputs": EXACT, "src": {"main.R": R_EXACT}},
+        "julia": {"card": {"language": "julia", "inputs": [{"name": "numbers"}]},
+                  "nix": JULIA_NIX, "outputs": EXACT, "src": {"main.jl": JULIA_EXACT}},
+        "show": {"card": {"language": "bash", "inputs": [{"name": "numbers"}]}, "nix": BASH_SHOW},
+    }, [("start", "out", "make", "start"), ("make", "numbers", "r", "numbers"),
+        ("r", "numbers", "julia", "numbers"), ("julia", "numbers", "show", "numbers")])
+    c = connect()
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    log = lambda card: text(c.call("LogRangeRequest", runId=run_id, card=path(card), stream=2, limitBytes=65536).text)
+    assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log("r"), log("julia"))
+    raw = text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
+    assert json.loads(raw) == {"values": EXACT_VALUES, "single": 0.1}
+    assert "0.042169650342858," in raw and "1e-20," in raw  # the shortest digits, as a person would read them
 
 
 @pytest.mark.parametrize("display, check", [
