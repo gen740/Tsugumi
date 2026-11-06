@@ -1012,6 +1012,7 @@
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you are interested in.";
+"設定の「API」で接続を設定してください" = "Set up a connection in Settings > API";
 "設定を表示するプロジェクト（開いているプロジェクトから選びます）" = "The project whose settings are shown (one of the open projects)";
 "許可しない" = "Don't Allow";
 "許可する" = "Allow";
