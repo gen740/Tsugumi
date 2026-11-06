@@ -21,7 +21,7 @@ GROUPS = [
     ("履歴と成果物", ["RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "ArtifactList", "ArtifactRead", "LogRange"]),
     ("表示", ["ViewSetVisible", "ViewSave"]),
-    ("版", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph"]),
+    ("版", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"]),
 ]
 
 

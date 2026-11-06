@@ -111,6 +111,9 @@ class Service : public RequestSink {
   void version_checkout(RequestIn& req);
   // Read pool handlers.
   void version_graph(RequestIn& req);
+  void version_canvas(RequestIn& req);
+  void version_diff(RequestIn& req);
+  void version_summary(RequestIn& req);
   void close_project(RequestIn& req);
   void inspect(RequestIn& req);
   void validate(RequestIn& req);

@@ -271,6 +271,12 @@ export const errorText = (e: unknown): string => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
+/** What a version's summary is written from: its message and what it changed. */
+export function versionSummaryInput(c: Pick<R.VersionCommitT, 'message' | 'changed'>, diff: Pick<R.VersionDiffT, 'text' | 'truncated'>): string {
+  const cards = (c.changed ?? []).map((k) => s(k) || 'the Workflow itself').join(', ')
+  return `Commit message: ${s(c.message).trim()}\nChanged Cards: ${cards}\n\nDiff${diff.truncated ? ' (cut short)' : ''}:\n${s(diff.text)}`
+}
+
 export class ProjectSession extends Observable {
   readonly viewId: string
   readonly origin: string
@@ -751,6 +757,7 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunStatusChanged: {
         const st = (e.value as R.RunStatusChangedT).status
         if (st && (!this.runStatus || s(st.runId) === s(this.runStatus.runId))) this.runStatus = st
+        if (st?.commit && (st.state === D.RunState.succeeded || st.state === D.RunState.failed || st.state === D.RunState.cancelled)) void this.summarizeVersion(s(st.commit))
         break
       }
       case R.RunEventValue.RunCardChanged: {
@@ -2832,6 +2839,66 @@ auto run(Card::Input& input) -> Card::Output {
     try {
       this.versionGraph = await this.client.versionGraph()
     } catch {}
+    this.changed()
+  }
+
+  /** A version's Cards and wires (a commit never changes: read once). */
+  versionCanvases = new Map<string, R.VersionCanvasT>()
+  versionSummaryBusy = new Set<string>()
+  versionSummaryErrors = new Map<string, string>()
+  private versionSummaryTried = new Set<string>()
+
+  async loadVersionCanvas(commit: string) {
+    if (!this.client || this.versionCanvases.has(commit)) return
+    try {
+      this.versionCanvases.set(commit, await this.client.versionCanvas(commit))
+      this.changed()
+    } catch {}
+  }
+
+  /** Switched in the version tree; the server keeps it and refuses while off. */
+  versionSummaries = false
+
+  async loadVersionSummaries() {
+    const v = await api<{ versionSummaries?: boolean }>('/api/settings').catch(() => null)
+    this.versionSummaries = !!v?.versionSummaries
+    this.changed()
+  }
+
+  async setVersionSummaries(on: boolean) {
+    await api('/api/settings', { versionSummaries: on })
+    this.versionSummaries = on
+    this.versionSummaryTried.clear()
+    this.versionSummaryErrors.clear()
+    this.changed()
+  }
+
+  /** Has a small model write what `commit` changed, once, while switched on:
+   *  as a run of it ends and when it is hovered without a summary. Only its
+   *  code and settings go out (VersionDiff); the sentence goes to its note. */
+  async summarizeVersion(commit: string) {
+    if (!this.client || this.versionSummaryTried.has(commit)) return
+    await this.loadVersionSummaries()
+    if (!this.versionSummaries || this.versionSummaryTried.has(commit)) return
+    this.versionSummaryTried.add(commit)
+    this.versionSummaryBusy.add(commit)
+    this.changed()
+    try {
+      await this.refreshVersions()
+      const c = this.versionGraph?.commits.find((x) => x && s(x.id) === commit)
+      if (c && !c.changeSummary) {
+        const diff = await this.client.versionDiff(commit)
+        // Nothing a summary may read changed (the layout, data files).
+        if (s(diff.text)) {
+          const { text } = await api<{ text: string }>('/api/versions/summarize', { input: versionSummaryInput(c, diff) })
+          await this.client.versionSummary(uuid(), 'ui', commit, text)
+          await this.refreshVersions()
+        }
+      }
+    } catch (e) {
+      this.versionSummaryErrors.set(commit, String((e as Error)?.message ?? e))
+    }
+    this.versionSummaryBusy.delete(commit)
     this.changed()
   }
 

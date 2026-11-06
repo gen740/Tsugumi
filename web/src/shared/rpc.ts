@@ -365,6 +365,15 @@ export class RPCClient {
   versionGraph(limit = 500) {
     return this.call<R.VersionGraphT>(RequestPayload.VersionGraphRequest, Object.assign(new R.VersionGraphRequestT(), { limit }))
   }
+  versionCanvas(commit: string) {
+    return this.call<R.VersionCanvasT>(RequestPayload.VersionCanvasRequest, Object.assign(new R.VersionCanvasRequestT(), { commit }))
+  }
+  versionDiff(commit: string) {
+    return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit }))
+  }
+  versionSummary(opId: string, origin: string, commit: string, summary: string) {
+    return this.call<R.VersionResultT>(RequestPayload.VersionSummaryRequest, Object.assign(new R.VersionSummaryRequestT(), { opId, origin, commit, summary }))
+  }
   versionInit(opId: string, origin: string) {
     return this.call<R.VersionResultT>(RequestPayload.VersionInitRequest, Object.assign(new R.VersionInitRequestT(), { opId, origin }))
   }

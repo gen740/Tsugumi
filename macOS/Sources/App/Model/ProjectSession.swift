@@ -357,6 +357,11 @@ final class ProjectSession {
   // Versions (git): the graph as last read, and whether this project is new
   // (made or copied by the app), so it becomes a repository when it connects.
   var versionGraph: Tsugumi_RPC_VersionGraphT?
+  /// A version's Cards and wires (a commit never changes: read once).
+  var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]
+  var versionSummaryBusy: Set<String> = []
+  var versionSummaryErrors: [String: String] = [:]
+  var versionSummaryTried: Set<String> = []
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
@@ -715,6 +720,7 @@ final class ProjectSession {
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
+      if let commit = runStatus?.commit { Task { await summarizeVersion(commit) } }
       if dirty { scheduleSave() }
     default:
       break

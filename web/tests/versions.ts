@@ -1,4 +1,5 @@
-// Hovering a version says what its runs did: newest first, from the note.
+// A version's hover: the summary is written from its message and what it
+// changed, and the minimap fits its Cards.
 import assert from 'node:assert/strict'
 
 const page = globalThis as Record<string, unknown>
@@ -6,20 +7,26 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
-const { runsHelp } = await import('../src/ui/versions')
+const { miniMapLayout } = await import('../src/ui/versions')
+const { versionSummaryInput } = await import('../src/model/session')
 
-assert.equal(runsHelp([]), 'この版での実行はありません。')
 assert.equal(
-  runsHelp([
-    { state: 'failed', seconds: 1.25, summary: 'a だけ / 失敗: a（worker_failed）' },
-    { state: 'succeeded', seconds: 12.3, summary: '全体: a、b ×2' },
-  ]),
-  '成功 · 12.3 秒 · 全体: a、b ×2\n失敗 · 1.3 秒 · a だけ / 失敗: a（worker_failed）',
+  versionSummaryInput({ message: '実行: bands\n', changed: ['bands', ''] }, { text: '+x\n', truncated: true }),
+  'Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n',
 )
-// A run a demo's history lists has no summary.
-assert.equal(runsHelp([{ state: 'succeeded', seconds: 2, summary: null }]), '成功 · 2.0 秒')
-// Only the latest few: the rest are counted.
-assert.equal(
-  runsHelp(Array.from({ length: 7 }, (_, i) => ({ state: 'succeeded', seconds: i, summary: null }))).split('\n').at(-1),
-  'ほか 2 回',
-)
+
+// Every Card stays inside the box, in the order it has on the canvas.
+const wide = miniMapLayout([{ id: 'a', x: 100, y: 0 }, { id: 'b', x: 5000, y: 300 }, { id: 'c', x: 2500, y: -400 }], 284, 132)
+for (const c of wide.cards) {
+  assert.ok(c.x >= 0 && c.x + wide.w <= 284, `${c.id} is inside across`)
+  assert.ok(c.y >= 0 && c.y + wide.h <= wide.height && wide.height <= 132, `${c.id} is inside down`)
+}
+assert.ok(wide.cards[0].x < wide.cards[2].x && wide.cards[2].x < wide.cards[1].x)
+assert.equal(wide.named, false, 'too small for names')
+// A small graph is not blown up, and is centered with its names.
+const small = miniMapLayout([{ id: 'a', x: 0, y: 0 }], 284, 132)
+assert.equal(small.w, 220 * 0.3)
+assert.equal(small.cards[0].x, (284 - small.w) / 2)
+assert.equal(small.named, true)
+assert.equal(small.height, 80 * 0.3 + 16, 'the box is only as tall as the graph')
+assert.deepEqual(miniMapLayout([], 284, 132).cards, [])
