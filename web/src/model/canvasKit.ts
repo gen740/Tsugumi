@@ -383,8 +383,32 @@ export class WireRouter {
     this.bounds = obstacles.reduce<Rect | null>((u, r) => (u ? union(u, r) : r), null)
   }
 
+  /** A wire goes along the flow by at least a little, or by less (its ports
+   *  close together) when the short way crosses no Card. */
   isForward(a: Pt, b: Pt) {
-    return this.flow === 'topToBottom' ? b.y >= a.y + 24 : b.x >= a.x + 24
+    const along = this.flow === 'topToBottom' ? b.y - a.y : b.x - a.x
+    return along >= 24 || (along >= 0 && !this.crossesCard(a, b))
+  }
+
+  private crossesCard(a: Pt, b: Pt) {
+    const [c1, c2] = this.controls(a, b)
+    for (let i = 1; i < 32; i++) {
+      const p = bezier(a, c1, c2, b, i / 32)
+      // A port sits on its Card's edge: only the inside counts.
+      if (this.obstacles.some((o) => p.x > o.x + 2 && p.x < o.x + o.width - 2 && p.y > o.y + 2 && p.y < o.y + o.height - 2)) return true
+    }
+    return false
+  }
+
+  /** Leaves and enters along the flow: by half the distance, and by more only
+   *  as far as the ports are apart across it, so close ports are joined straight. */
+  private controls(a: Pt, b: Pt): [Pt, Pt] {
+    if (this.flow === 'topToBottom') {
+      const dy = Math.max(Math.abs(b.y - a.y) / 2, Math.min(30, Math.abs(b.x - a.x) / 2))
+      return [{ x: a.x, y: a.y + dy }, { x: b.x, y: b.y - dy }]
+    }
+    const dx = Math.max(Math.abs(b.x - a.x) / 2, Math.min(30, Math.abs(b.y - a.y) / 2))
+    return [{ x: a.x + dx, y: a.y }, { x: b.x - dx, y: b.y }]
   }
 
   /** Points of the wire (for hit-testing) and its SVG path data. */
@@ -409,16 +433,7 @@ export class WireRouter {
   }
 
   curve(a: Pt, b: Pt): { d: string; pts: Pt[] } {
-    let c1: Pt, c2: Pt
-    if (this.flow === 'topToBottom') {
-      const dy = Math.max(30, Math.abs(b.y - a.y) / 2)
-      c1 = { x: a.x, y: a.y + dy }
-      c2 = { x: b.x, y: b.y - dy }
-    } else {
-      const dx = Math.max(30, Math.abs(b.x - a.x) / 2)
-      c1 = { x: a.x + dx, y: a.y }
-      c2 = { x: b.x - dx, y: b.y }
-    }
+    const [c1, c2] = this.controls(a, b)
     const pts: Pt[] = []
     for (let i = 0; i <= 32; i++) pts.push(bezier(a, c1, c2, b, i / 32))
     return { d: `M${a.x},${a.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`, pts }

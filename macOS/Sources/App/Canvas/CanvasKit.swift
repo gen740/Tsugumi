@@ -1155,9 +1155,37 @@ struct WireRouter {
     bounds = obstacles.reduce(CGRect.null) { $0.union($1) }
   }
 
-  /// A forward wire goes along the flow by at least a little.
+  /// A forward wire goes along the flow by at least a little, or by less
+  /// (its ports close together) when the short way crosses no Card.
   func isForward(_ a: CGPoint, _ b: CGPoint) -> Bool {
-    flow == .topToBottom ? b.y >= a.y + 24 : b.x >= a.x + 24
+    let along = flow == .topToBottom ? b.y - a.y : b.x - a.x
+    return along >= 24 || (along >= 0 && !crossesCard(a, b))
+  }
+
+  private func crossesCard(_ a: CGPoint, _ b: CGPoint) -> Bool {
+    let (c1, c2) = controls(a, b)
+    // A port sits on its Card's edge: only the inside counts.
+    let inside = obstacles.map { $0.insetBy(dx: 2, dy: 2) }
+    for i in 1..<32 {
+      let t = CGFloat(i) / 32, u = 1 - t
+      let w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t
+      let p = CGPoint(x: w0 * a.x + w1 * c1.x + w2 * c2.x + w3 * b.x, y: w0 * a.y + w1 * c1.y + w2 * c2.y + w3 * b.y)
+      if inside.contains(where: { $0.contains(p) }) { return true }
+    }
+    return false
+  }
+
+  /// Leaves and enters along the flow: by half the distance, and by more only
+  /// as far as the ports are apart across it, so close ports are joined straight.
+  private func controls(_ a: CGPoint, _ b: CGPoint) -> (CGPoint, CGPoint) {
+    switch flow {
+    case .topToBottom:
+      let dy = max(abs(b.y - a.y) / 2, min(30, abs(b.x - a.x) / 2))
+      return (CGPoint(x: a.x, y: a.y + dy), CGPoint(x: b.x, y: b.y - dy))
+    case .leftToRight:
+      let dx = max(abs(b.x - a.x) / 2, min(30, abs(b.y - a.y) / 2))
+      return (CGPoint(x: a.x + dx, y: a.y), CGPoint(x: b.x - dx, y: b.y))
+    }
   }
 
   mutating func route(_ a: CGPoint, _ b: CGPoint) -> Path {
@@ -1198,16 +1226,10 @@ struct WireRouter {
   }
 
   func curve(_ a: CGPoint, _ b: CGPoint) -> Path {
+    let (c1, c2) = controls(a, b)
     var path = Path()
     path.move(to: a)
-    switch flow {
-    case .topToBottom:
-      let dy = max(30, abs(b.y - a.y) / 2)
-      path.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
-    case .leftToRight:
-      let dx = max(30, abs(b.x - a.x) / 2)
-      path.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
-    }
+    path.addCurve(to: b, control1: c1, control2: c2)
     return path
   }
 
