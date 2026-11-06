@@ -315,7 +315,6 @@
 "オン" = "On";
 "オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。" = "On: a received string (a message with one string field) is shown as Markdown with math ($…$, $$…$$). Other messages are shown as JSON code.";
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
-"カード" = "Cards";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
 "ガイドのツグミに聞く" = "Ask Tsugumi the Guide";
@@ -1027,7 +1026,6 @@
 "読み込み中…" = "Loading…";
 "読み込めないため名前を変更しませんでした: " = "Not renamed: it could not be read: ";
 "読み込んでいます…" = "Reading…";
-"読む" = "Read";
 "読めませんでした: " = "Could not read: ";
 "質問できる会話を開きます" = "Opens a conversation to ask questions";
 "起動" = "Start";

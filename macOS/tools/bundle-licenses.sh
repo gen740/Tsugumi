@@ -41,7 +41,7 @@ mkdir -p "$dest/fonts"
 lm="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#lmmath.src)"
 cp -R "$lm" "$dest/fonts/latin-modern-math"
 chmod -R u+w "$dest/fonts/latin-modern-math"
-cp "$repo/macOS/Resources/explainer/YuseiMagic-OFL.txt" "$dest/fonts/"
+cp "$repo/docs/site/assets/YuseiMagic-OFL.txt" "$dest/fonts/"
 
 # The plot viewer's libraries and what they were built from (web/package-lock.json).
 nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" "$dest/plot-viewer"

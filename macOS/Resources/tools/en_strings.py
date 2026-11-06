@@ -32,8 +32,6 @@ def specifiers(s: str) -> list[str]:
 
 EN = {
 "Tsugumi を知る": "Learn about Tsugumi",
-"読む": "Read",
-"カード": "Cards",
 "%@ と同じ文書です": "Same document as %@",
 "%lld–%lld / %lld 行": "%lld–%lld of %lld rows",
 "全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）": "%lld rows · preview of the first %lld (expand to view all)",
