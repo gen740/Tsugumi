@@ -987,6 +987,17 @@ final class ProjectSession {
   /// Drops every unsaved edit and follows the latest confirmed document
   /// (only for edits that cannot be saved).
   func discardDraft() {
+    dropDraft()
+    // A save on its way answers about the draft that went: nothing of it stays.
+    if let saving = saveTask {
+      Task { [weak self] in
+        await saving.value
+        self?.dropDraft()
+      }
+    }
+  }
+
+  private func dropDraft() {
     project = confirmedProject
     layout = confirmedLayout
     sourceEdits = [:]
@@ -996,6 +1007,9 @@ final class ProjectSession {
     sourceBases = [:]
     draftBase = nil
     externalBases = [:]
+    pendingCardRenames = []
+    saveAgain = false
+    conflictRetries = 0
     saveError = nil
     savingAfterRun = false
   }
@@ -1031,10 +1045,18 @@ final class ProjectSession {
   /// meanwhile are merged in first; a conflict means newer changes are on
   /// their way, so the save is tried again once they arrived.
   private func saveOnce() async {
-    guard dirty, let client else { return }
+    guard let client else { return }
+    // Nothing left to save (undone, or met by what arrived): no failure is left either.
+    guard dirty else {
+      saveError = nil
+      return
+    }
     await fillUndoSources()
     if let b = draftBase, b.rev != rev { rebase() }
-    guard dirty else { return }
+    guard dirty else {
+      saveError = nil
+      return
+    }
     saving = true
     defer { saving = false }
     let base = draftBase ?? makeBase()

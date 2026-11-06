@@ -74,6 +74,12 @@ struct MainWindow: View {
     .alert("この操作はできません", isPresented: Binding(get: { workspace.alert != nil }, set: { if !$0 { workspace.alert = nil } })) {
       Button("OK") { workspace.alert = nil }
     } message: { Text(workspace.alert ?? "") }
+    .alert("保存できない変更があります", isPresented: Binding(get: { workspace.unsavedReason != nil }, set: { if !$0 { workspace.unsavedReason = nil } })) {
+      Button("変更を破棄して Home へ戻る", role: .destructive) { model.discardAndLeave(in: workspace) }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: \(workspace.unsavedReason ?? "")")
+    }
   }
 }
 

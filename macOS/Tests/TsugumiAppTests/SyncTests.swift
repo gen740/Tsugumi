@@ -157,6 +157,122 @@ import Testing
     #expect(!s.connected)
   }
 
+  /// A frame still drawn beside its Card has no place of its own yet. 整列 gives it
+  /// the whole frame, or the core refuses the layout and nothing can be saved.
+  @Test func arrangingAFrameWithoutAPlaceCanBeSaved() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let b = key(["b"])
+    s.deleteCards([key(["a"]), key(["c"])], in: [])
+    s.connect(from: (key(["start"]), "out"), to: (b, "in"), in: [])
+    await s.save()
+    try await s.run(card: ["start"], propagate: true)
+    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(s.displays[b] != nil && s.displayFrame(b) == nil, "shown beside its Card, with no frame in the layout")
+
+    s.arrange([])
+    await s.save()
+    #expect(s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(!s.dirty)
+    let f = s.confirmedLayout["displays"]?["b"]
+    #expect(f?["x"]?.double != nil && f?["y"]?.double != nil)
+    #expect(f?["width"]?.double == 320 && f?["height"]?.double == 170)
+  }
+
+  /// A draft the core refuses, while the Agent goes on saving: 変更を破棄 goes back
+  /// to what is saved, the Agent's saves included, and saving works again.
+  @Test func discardingWhatCannotBeSavedGoesBackAndSavingWorksAgain() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let a = key(["a"])
+    s.setPosition(a, CGPoint(x: 100, y: 100))
+    await s.save()
+    #expect(!s.dirty, "\(s.saveError ?? "")")
+
+    // A layout the core refuses, however it came to be.
+    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
+    await s.save()
+    #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
+    #expect(s.dirty)
+
+    // The Agent's save reaches the window meanwhile, and the refused edit stays refused.
+    let rev = s.rev
+    try await Self.agentConnect(s.rpc!, to: "c")
+    for _ in 0..<200 where s.rev == rev { try await Task.sleep(for: .milliseconds(25)) }
+    await s.save()
+    #expect(s.saveError != nil)
+
+    s.discardDraft()
+    #expect(!s.dirty)
+    #expect(s.saveError == nil)
+    #expect(s.layout == s.confirmedLayout)
+    #expect(s.project == s.confirmedProject)
+    #expect(s.connections(in: []).contains { $0["to"]?["card"]?.string == "c" }, "what the Agent saved stays")
+    #expect(s.position(a) == CGPoint(x: 100, y: 100))
+
+    s.setPosition(a, CGPoint(x: 300, y: 300))
+    await s.save()
+    #expect(s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(!s.dirty)
+    #expect(s.confirmedLayout["cards"]?["a"]?["x"]?.double == 300)
+  }
+
+  /// The refused edit undone: nothing is left to save, so the failure does not stay.
+  @Test func undoingWhatCannotBeSavedClearsTheFailure() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
+    await s.save()
+    #expect(s.saveError != nil)
+    s.undo()
+    await s.save()
+    #expect(!s.dirty)
+    #expect(s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(s.syncState == .saved)
+  }
+
+  /// Home with what cannot be saved: the window says why and stays until the user
+  /// gives the changes up; then it goes back to Home with nothing kept.
+  @Test func leavingWithWhatCannotBeSavedAsksAndDiscardingLeaves() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let model = AppModel.shared, w = Workspace()
+    model.hold(s)
+    w.open(s)
+    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
+
+    model.leaveProject(in: w)
+    for _ in 0..<200 where w.unsavedReason == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(w.unsavedReason?.contains("display b") == true, "\(w.unsavedReason ?? "")")
+    #expect(w.alert == nil, "not a dead end")
+    #expect(w.session === s && s.dirty, "it stays, with the changes, until the user answers")
+
+    model.discardAndLeave(in: w)
+    #expect(w.session == nil)
+    #expect(!s.dirty)
+    #expect(s.saveError == nil)
+  }
+
   /// 整列 changes the layout only, frames and notes too, and is one step of undo.
   @Test func arrangingIsOneUndo() async throws {
     let dir = try Self.project()

@@ -130,6 +130,8 @@ final class Workspace {
   var requestNewProject = false
   /// What this window could not do, shown as an alert.
   var alert: String?
+  /// Why the changes cannot be saved, when leaving was asked for: the way out is to give them up.
+  var unsavedReason: String?
   var tabs: [WorkflowTab] = []
   var activeTab: UUID?
   var showChat = true

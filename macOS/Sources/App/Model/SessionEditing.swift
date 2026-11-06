@@ -1217,6 +1217,11 @@ extension ProjectSession {
             var d = displays[lk] ?? .object([])
             d["x"] = .real(f.x)
             d["y"] = .real(f.y)
+            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+            if let size = frames.first(where: { $0.id == f.id }) {
+              d["width"] = .real(size.width)
+              d["height"] = .real(size.height)
+            }
             displays[lk] = d
           }
           l["displays"] = displays
