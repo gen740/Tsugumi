@@ -285,13 +285,12 @@ function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
 /** Only the kind's icon, coloured by the state; name and details on hover. */
 function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const o = g.outlineRect
-  const r = { x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z }
-  const y = g.shape === 'fork' ? r.y + r.height * 0.62 : g.shape === 'merge' ? r.y + r.height * 0.38 : r.y + r.height / 2
+  const center = g.iconCenter({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
   const color = data.state === undefined || data.state === D.CardState.not_started ? 'var(--secondary)' : colorVar(cardState(data.state).color)
   const rt = runText(data)
   const size = Math.max(6, 10 * z)
   return (
-    <span className="cv-routing-icon" style={{ left: r.x + r.width / 2 - size / 2, top: y - size / 2, color }}
+    <span className="cv-routing-icon" style={{ left: center.x - size / 2, top: center.y - size / 2, color }}
       title={data.title + ' · ' + KIND_LABEL[data.kind] + (rt ? ' · ' + rt : '')}>
       <Icon name={KIND_ICON[data.kind]} size={size} />
     </span>

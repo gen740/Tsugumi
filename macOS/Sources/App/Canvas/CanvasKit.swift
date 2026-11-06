@@ -336,8 +336,8 @@ struct CardGeometry {
       // Its ports are at a quarter and three quarters of this.
       if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
       return CGSize(width: 60, height: 48)
-    case .fork: return CGSize(width: fanWidth(outputs.count), height: 40)
-    case .merge: return CGSize(width: fanWidth(inputs.count), height: 40)
+    case .fork: return CGSize(width: fanWidth(outputs.count), height: fanLength(outputs.count))
+    case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     // The start Card: its name and a run button, nothing more.
     case .start:
       guard let grid else { return CGSize(width: 116, height: 34) }
@@ -350,6 +350,15 @@ struct CardGeometry {
   private func fanWidth(_ count: Int) -> CGFloat {
     guard let grid else { return max(56, CGFloat(count) * 30 + 12) }
     return Self.gridLength(atLeast: max(56, CGFloat(count - 1) * fanPitch(count, grid) + 16), grid)
+  }
+
+  /// A fork or merge along the flow: a quarter of its wide edge once that is
+  /// past 40, so many ports make a bigger triangle and not a flatter one (its
+  /// corners stay at 27 degrees or more). On whole grids, as far as it grows.
+  private func fanLength(_ count: Int) -> CGFloat {
+    let length = fanWidth(count) / 4
+    guard length > 40 else { return 40 }
+    return grid.map { (length / $0).rounded(.up) * $0 } ?? length
   }
 
   /// An even number of grids, so half of it is on a grid line.
@@ -482,26 +491,32 @@ struct CardGeometry {
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
                              CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6)
     case .fork, .merge:
-      // Triangle: apex upstream (fork) or downstream (merge).
-      if flow == .topToBottom {
-        return roundedPolygon(shape == .fork
-          ? [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.midX, y: r.maxY)], radius: 4)
-      }
+      // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
+      // twice so it stays sharp: the ports of that side are on its very tip.
+      // Its corners shrink with the zoom, as `r` does.
+      let radius = 7 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
       let pts: [CGPoint]
       if flow == .topToBottom {
-        let inset = r.width * (1 - Self.narrow) / 2
+        let apex = CGPoint(x: r.midX, y: shape == .fork ? r.minY : r.maxY)
         pts = shape == .fork
-          ? [CGPoint(x: r.minX + inset, y: r.minY), CGPoint(x: r.maxX - inset, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX - inset, y: r.maxY), CGPoint(x: r.minX + inset, y: r.maxY)]
+          ? [apex, apex, CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex]
       } else {
-        let inset = r.height * (1 - Self.narrow) / 2
+        let apex = CGPoint(x: shape == .fork ? r.minX : r.maxX, y: r.midY)
         pts = shape == .fork
-          ? [CGPoint(x: r.minX, y: r.minY + inset), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY - inset)]
-          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY + inset), CGPoint(x: r.maxX, y: r.maxY - inset), CGPoint(x: r.minX, y: r.maxY)]
+          ? [apex, apex, CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY)]
+          : [CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)]
       }
-      return roundedPolygon(pts, radius: 7)
+      return roundedPolygon(pts, radius: radius)
     }
+  }
+
+  /// Where the icon of a routing Card sits in the outline `r`: on the axis of the
+  /// flow, and in a triangle toward the wide edge, where it has room.
+  func iconCenter(in r: CGRect) -> CGPoint {
+    let along: CGFloat = shape == .fork ? 0.62 : shape == .merge ? 0.38 : 0.5
+    return flow == .topToBottom ? CGPoint(x: r.midX, y: r.minY + r.height * along)
+                                : CGPoint(x: r.minX + r.width * along, y: r.midY)
   }
 
   // MARK: Ports
@@ -621,14 +636,24 @@ struct CardGeometry {
   }
 }
 
-/// A closed polygon with rounded corners.
+/// A closed polygon with rounded corners: each corner is cut `radius` along its
+/// sides (at most half of them; a side of no length leaves it sharp). An arc of
+/// a fixed radius would not do: it cuts a sharp corner far deeper as the corner
+/// narrows, and took the ends off a flat triangle along with the ports on them.
 func roundedPolygon(_ pts: [CGPoint], radius: CGFloat) -> Path {
-  Path { p in
+  func toward(_ a: CGPoint, _ b: CGPoint, _ length: CGFloat) -> CGPoint {
+    let l = hypot(b.x - a.x, b.y - a.y)
+    return l > 0 ? CGPoint(x: a.x + (b.x - a.x) * length / l, y: a.y + (b.y - a.y) * length / l) : a
+  }
+  return Path { p in
     let n = pts.count
     guard n > 2 else { return }
     p.move(to: CGPoint(x: (pts[n - 1].x + pts[0].x) / 2, y: (pts[n - 1].y + pts[0].y) / 2))
     for i in 0..<n {
-      p.addArc(tangent1End: pts[i], tangent2End: pts[(i + 1) % n], radius: radius)
+      let previous = pts[(i + n - 1) % n], corner = pts[i], next = pts[(i + 1) % n]
+      let cut = min(radius, hypot(corner.x - previous.x, corner.y - previous.y) / 2, hypot(next.x - corner.x, next.y - corner.y) / 2)
+      p.addLine(to: toward(corner, previous, cut))
+      p.addQuadCurve(to: toward(corner, next, cut), control: corner)
     }
     p.closeSubpath()
   }
@@ -957,11 +982,11 @@ struct CardNodeView: View {
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
-    let y = g.shape == .fork ? outline.minY + outline.height * 0.62 : g.shape == .merge ? outline.minY + outline.height * 0.38 : outline.midY
+    let center = g.iconCenter(in: outline)
     return Image(systemName: data.kind.symbol)
       .font(font(10, .semibold))
       .foregroundStyle(data.state.map { $0 == .notStarted ? Color.secondary : $0.color } ?? .secondary)
-      .position(x: outline.midX, y: y)
+      .position(center)
       .help(data.title + " · " + data.kind.label + (data.runText.map { " · " + $0 } ?? ""))
   }
 
