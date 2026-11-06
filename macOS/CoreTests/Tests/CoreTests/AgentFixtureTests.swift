@@ -774,6 +774,11 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(!e3 && sdk.contains("def display_table"))
     let (_, e4) = await agent.readReference("demos/../../core/src/store.cc")
     #expect(e4)
+    // A folder in one call: a Card's files, or every file under any other.
+    let (card, e6) = await agent.readReference("demos/report/definitions/render")
+    #expect(!e6 && ["--- _card.json\n", "--- _outputs.fbs\n", "--- default.nix\n", "--- src/main.py\n"].allSatisfy { card.contains($0) })
+    let (tree, e7) = await agent.readReference("demos/report")
+    #expect(!e7 && tree.split(separator: "\n").contains("definitions/render/src/main.py"))
     // The Draft demos are tasks and the finished demo of each is its answer:
     // neither is listed nor read (implementing casa-draft must not copy casa).
     let (demos, e5) = await agent.readReference("demos")

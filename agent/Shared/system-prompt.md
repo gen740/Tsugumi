@@ -17,9 +17,12 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
-- When unsure how something is written, read the bundled references with reference_read (path "" lists them):
-  demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++ and
-  Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
+- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
+  reference with reference_read only for what the rules do not cover (R or Julia Cards, merge outputs, a Card in Card
+  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the whole
+  Python SDK), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
+  and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
+  folder lists every file under it, and "" lists what there is.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, ...). Change a
@@ -116,6 +119,24 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
           printf '{"archive": {"value": "%s"}}' "$dest" > "$TSUGUMI_OUTPUT"
         '';
       }
+  * Large public data (an observation, a genome) is fixed like a package: fetched once into the Nix store by its hash,
+    never during a run. A param with "nix": true is readable in default.nix as params.<name> (changing it rebuilds the
+    Card). A bash Card hands the store path on as a plain string (a table { path:string; }, not a File port, whose files
+    must be in the output folder), and every Card can read /nix/store:
+      { pkgs, inputs, params }:
+      let
+        raw = pkgs.fetchurl {
+          url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with --ssl-reqd (often faster than https)
+          curlOptsList = [ "--ssl-reqd" ];
+          hash = params.hash;                      # "sha256-..."
+        };
+        data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
+      in
+      {
+        run = ''
+          printf '{"events": {"path": "%s"}}' "${data}" > "$TSUGUMI_OUTPUT"
+        '';
+      }
   * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
     "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
     "filesystem": true in _card.json and write under ctx.output_directory. demos/report/definitions/generate:
@@ -133,7 +154,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         out_dir = ctx.output_directory                           # with "filesystem": true
         b = ctx.builder(); p = b.CreateString(out_dir)
         images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
-        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
+        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar/line_chart
+        raw = ctx.input_bytes("events")                          # an input's bytes as they came; ctx.has_input(port) for an optional one
     raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
     matplotlib (packages = ps: [ ps.matplotlib ]) draws into the Card's display: write it as for a window
     (plt.show(), or leave the figures open; plt.pause() loops and FuncAnimation update it live; never

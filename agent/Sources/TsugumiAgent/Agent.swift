@@ -620,16 +620,36 @@ public actor Agent {
     guard url.resolvingSymlinksInPath().path.hasPrefix(base.resolvingSymlinksInPath().path) else { return ("not found: \(rel)", true) }
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return ("not found: \(rel)", true) }
-    if isDir.boolValue {
-      let names = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-      return (names.filter { !$0.lastPathComponent.hasPrefix(".") }.map { u in
-        ((try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) ? u.lastPathComponent + "/" : u.lastPathComponent
-      }.sorted().joined(separator: "\n"), false)
-    }
+    if isDir.boolValue { return (Self.readFolder(url), false) }
     guard let data = try? Data(contentsOf: url) else { return ("cannot read \(rel)", true) }
     if data.count > 200_000 { return (String(decoding: data.prefix(200_000), as: UTF8.self) + "\n[cut at 200000 bytes]", false) }
     return (String(decoding: data, as: UTF8.self), false)
   }
+
+  /// A reference folder in one call, so that the model need not walk it a
+  /// level per reply: a Card's folder gives all its files, any other lists every
+  /// file under it. Hidden files and symbolic links are left out.
+  static func readFolder(_ url: URL) -> String {
+    let root = url.resolvingSymlinksInPath()
+    var files: [(rel: String, url: URL)] = []
+    let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+    while let u = walk?.nextObject() as? URL {
+      guard (try? u.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+      files.append((String(u.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1)), u))
+    }
+    files.sort { $0.rel < $1.rel }
+    guard files.contains(where: { $0.rel == "_card.json" }) else {
+      let shown = files.prefix(folderEntries).map(\.rel).joined(separator: "\n")
+      return files.count > folderEntries ? shown + "\n[\(files.count - folderEntries) more files]" : shown
+    }
+    return files.map { f in
+      let data = (try? Data(contentsOf: f.url)) ?? Data()
+      let text = data.count > folderFileLimit ? nil : String(data: data, encoding: .utf8)
+      return "--- \(f.rel)\n\(text ?? "(\(data.count) bytes, not shown: read it by its path)")\n"
+    }.joined()
+  }
+  static let folderEntries = 300
+  static let folderFileLimit = 50_000
 
   /// Validates arguments, executes the RPC and records the result.
   func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ContentBlock {

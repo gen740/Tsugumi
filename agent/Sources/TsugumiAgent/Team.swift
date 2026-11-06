@@ -89,6 +89,10 @@ extension Agent {
       }
       guard !helpers.contains(where: { $0.name == name }) else { return .failure(.init("two tasks named \(name)")) }
       guard !cards.isEmpty, !instruction.isEmpty else { return .failure(.init("\(name) has no Cards or no instruction")) }
+      // A helper sees nothing else: a placeholder here is not filled in by anyone.
+      guard instruction.range(of: "__[A-Z][A-Z_]*__", options: .regularExpression) == nil else {
+        return .failure(.init("the instruction of \(name) has a placeholder; write each instruction out in full"))
+      }
       for c in cards {
         guard !c.isEmpty, !c.contains("/") else { return .failure(.init("\(c) is not a root-level Card id")) }
         if let other = owner[c] { return .failure(.init("\(c) is in both \(other) and \(name)")) }

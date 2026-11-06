@@ -21,9 +21,12 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
-- When unsure how something is written, read the bundled references with reference_read (path "" lists them):
-  demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++ and
-  Python Cards in Card), sdk/python/tsugumi/__init__.py (the Python SDK) and card-guide.md.
+- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
+  reference with reference_read only for what the rules do not cover (R or Julia Cards, merge outputs, a Card in Card
+  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the whole
+  Python SDK), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
+  and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
+  folder lists every file under it, and "" lists what there is.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, ...). Change a
@@ -120,6 +123,24 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
           printf '{"archive": {"value": "%s"}}' "$dest" > "$TSUGUMI_OUTPUT"
         '';
       }
+  * Large public data (an observation, a genome) is fixed like a package: fetched once into the Nix store by its hash,
+    never during a run. A param with "nix": true is readable in default.nix as params.<name> (changing it rebuilds the
+    Card). A bash Card hands the store path on as a plain string (a table { path:string; }, not a File port, whose files
+    must be in the output folder), and every Card can read /nix/store:
+      { pkgs, inputs, params }:
+      let
+        raw = pkgs.fetchurl {
+          url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with --ssl-reqd (often faster than https)
+          curlOptsList = [ "--ssl-reqd" ];
+          hash = params.hash;                      # "sha256-..."
+        };
+        data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
+      in
+      {
+        run = ''
+          printf '{"events": {"path": "%s"}}' "${data}" > "$TSUGUMI_OUTPUT"
+        '';
+      }
   * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
     "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
     "filesystem": true in _card.json and write under ctx.output_directory. demos/report/definitions/generate:
@@ -137,7 +158,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         out_dir = ctx.output_directory                           # with "filesystem": true
         b = ctx.builder(); p = b.CreateString(out_dir)
         images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
-        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar
+        ctx.display_table(["band", "photons"], [["red", 703367]])  # also display_text/markdown/image(png bytes)/scalar/line_chart
+        raw = ctx.input_bytes("events")                          # an input's bytes as they came; ctx.has_input(port) for an optional one
     raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
     matplotlib (packages = ps: [ ps.matplotlib ]) draws into the Card's display: write it as for a window
     (plt.show(), or leave the figures open; plt.pause() loops and FuncAnimation update it live; never
@@ -313,11 +335,11 @@ your replies.
   "notForModels": { "ProjectValidateRequest": ["changes"] },
   "referenceTool": {
     "name": "reference_read",
-    "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A folder lists its entries.",
+    "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A Card's folder gives all its files at once; any other folder lists every file under it.",
     "inputSchema": {
       "type": "object", "additionalProperties": false, "required": ["path"],
       "properties": {
-        "path": { "type": "string", "description": "e.g. \"\" for the list, \"demos/report/definitions/generate/src/main.py\"" }
+        "path": { "type": "string", "description": "e.g. \"\" for the list, \"demos/report\" for its files, \"demos/report/definitions/generate\" for that Card's files" }
       }
     }
   },
@@ -325,12 +347,12 @@ your replies.
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). Look at the bundled demos with reference_read when unsure how to write something.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: a one-line description if it has none, and a context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "commentRequest": {
     "card": "- {key} (definition {definition}):\n{comments}",
     "comment": "  * {id}: {text}",
-    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections, SetLayout for their place, in the same save. A Draft among them is implemented as the rules say, following its comments. Read each Card first and look at the bundled demos with reference_read when unsure how to write something.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
+    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections, SetLayout for their place, in the same save. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
   },
   "delegateTool": {
     "name": "delegate",

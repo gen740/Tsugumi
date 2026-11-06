@@ -61,6 +61,13 @@ import TsugumiRPC
     #expect(again == message)
   }
 
+  /// A helper sees only its instruction, so a placeholder would leave it to find out everything itself.
+  @Test func aDelegatedInstructionMayNotBeAPlaceholder() {
+    let input = #"{"tasks":[{"name":"a","cards":["a"],"instruction":"__COMMON__ Your Card: a"},{"name":"b","cards":["b"],"instruction":"do __init__.py"}]}"#
+    guard case .failure(let e) = Agent.tasks(input) else { Issue.record("accepted"); return }
+    #expect(e.why.contains("placeholder"))
+  }
+
   private func looksAtPicture(_ ask: String) async throws -> (String, Conversation) {
     var h = AgentHarness()
     // Before the start: tsugumid reads the project when it opens it.

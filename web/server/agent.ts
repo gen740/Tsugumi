@@ -777,6 +777,8 @@ export function delegateTasks(input: string): Helper[] | string {
     if (!name || name.length > 40 || !/^[\p{L}\p{N}_-]+$/u.test(name)) return `the name "${name}" (letters, digits, - and _)`
     if (helpers.some((h) => h.name === name)) return `two tasks named ${name}`
     if (!cards.length || !instruction) return `${name} has no Cards or no instruction`
+    // A helper sees nothing else: a placeholder here is not filled in by anyone.
+    if (/__[A-Z][A-Z_]*__/.test(instruction)) return `the instruction of ${name} has a placeholder; write each instruction out in full`
     for (const c of cards) {
       if (!c || c.includes('/')) return `${c} is not a root-level Card id`
       if (owner.has(c)) return `${c} is in both ${owner.get(c)} and ${name}`
@@ -899,6 +901,39 @@ export function splitImages(result: string): { text: string; images: ToolImage[]
   }
   const out = replacing(parsed)
   return found ? { text: JSON.stringify(out), images } : { text: result, images: [] }
+}
+
+const FOLDER_ENTRIES = 300
+const FOLDER_FILE_LIMIT = 50_000
+
+/** A reference folder in one call, so that the model need not walk it a level
+ *  per reply: a Card's folder gives all its files, any other lists every file
+ *  under it. Hidden files and symbolic links are left out. */
+export function readFolder(root: string): string {
+  const files: string[] = []
+  const walk = (rel: string) => {
+    for (const d of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      if (d.name.startsWith('.')) continue
+      const child = rel ? `${rel}/${d.name}` : d.name
+      if (d.isDirectory()) walk(child)
+      else if (d.isFile()) files.push(child)
+    }
+  }
+  walk('')
+  // As Swift sorts them: by UTF-16 code units, whatever the locale.
+  files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  if (!files.includes('_card.json')) {
+    const shown = files.slice(0, FOLDER_ENTRIES).join('\n')
+    return files.length > FOLDER_ENTRIES ? `${shown}\n[${files.length - FOLDER_ENTRIES} more files]` : shown
+  }
+  return files.map((rel) => {
+    const data = fs.readFileSync(path.join(root, rel))
+    let text: string | undefined
+    if (data.length <= FOLDER_FILE_LIMIT) {
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(data) } catch {}
+    }
+    return `--- ${rel}\n${text ?? `(${data.length} bytes, not shown: read it by its path)`}\n`
+  }).join('')
 }
 
 /** A tool's result as the model gets it: its images as images, its text clipped. */
@@ -1422,10 +1457,7 @@ export class Agent {
       return [`not found: ${rel}`, true]
     }
     if (real !== realBase && !real.startsWith(realBase + '/')) return [`not found: ${rel}`, true]
-    if (isDir(real)) {
-      const entries = fs.readdirSync(real, { withFileTypes: true }).filter((d) => !d.name.startsWith('.'))
-      return [entries.map((d) => (d.isDirectory() ? d.name + '/' : d.name)).sort().join('\n'), false]
-    }
+    if (isDir(real)) return [readFolder(real), false]
     try {
       const data = fs.readFileSync(real)
       if (data.length > 200_000) return [data.subarray(0, 200_000).toString('utf8') + '\n[cut at 200000 bytes]', false]
