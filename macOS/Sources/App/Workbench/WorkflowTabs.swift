@@ -44,7 +44,7 @@ struct WorkflowTabs: View {
       .inspector(isPresented: $workspace.showChat) {
         // Wider by default; the width the user gives it is kept (per Mac).
         // The chat is Tsugumi: the bird waits at its top left (GuideNest).
-        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
+        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active, shown: workspace.showChat)
           .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
             if w >= 320 { chatWidth = Double(w.rounded()) }
           }
