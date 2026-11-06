@@ -2,8 +2,10 @@
 // commits what is saved when it starts (when it changed) and records that
 // commit; when it ends, a line goes to the commit's note (refs/notes/tsugumi),
 // with what ran, so a commit has its runs' results and git selects versions by them
-// (git log --notes=tsugumi --grep=failed). A version the user names is an
-// annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
+// (git log --notes=tsugumi --grep=failed). A client may keep what a version
+// changed, in words a model wrote from its diff, in a note of its own
+// (refs/notes/tsugumi-summary), apart from that record. A version the user
+// names is an annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
 #pragma once
 
 #include <cstdint>
@@ -38,6 +40,23 @@ struct VersionCommit {
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
   std::vector<std::string> changed;
+  std::string change_summary;  // refs/notes/tsugumi-summary; empty until written
+};
+
+// A version's own Cards and how they connect, for a minimap.
+struct VersionCanvasData {
+  struct Card {
+    std::string id;
+    double x = 0;
+    double y = 0;
+  };
+  std::vector<Card> cards;
+  std::vector<std::pair<std::string, std::string>> wires;  // from, to
+};
+
+struct VersionDiffData {
+  std::string text;
+  bool truncated = false;
 };
 
 struct VersionGraphData {
@@ -71,6 +90,13 @@ class Versions {
   // commit starts a branch.
   void checkout(const std::string& commit);
   VersionGraphData graph(size_t limit);
+  // The Cards of `commit`: saved positions, or columns by depth when a Card
+  // has none. No Cards when its documents cannot be read.
+  VersionCanvasData canvas(const std::string& commit);
+  // What `commit` changed from its first parent: the files a summary may read
+  // (summary_reads), cut at a limit.
+  VersionDiffData diff(const std::string& commit);
+  void set_summary(const std::string& commit, const std::string& summary);
 
   static std::string format_note(const VersionRunNote& r);
   static std::string iso_utc(int64_t ms);
@@ -78,6 +104,10 @@ class Versions {
   // "definitions/a/x" -> "a", "externals/p/definitions/b/y" -> "p/b",
   // "tsugumi.json" -> "", anything else -> nullopt.
   static std::optional<std::string> card_of(const std::string& path);
+  // Whether a file's changes may go to a model for a summary: a project's and
+  // a Card's own documents and its code, never data ("definitions/a/src/x.py"
+  // yes, "definitions/a/src/x.csv" and "definitions/a/data/x.txt" no).
+  static bool summary_reads(const std::string& path);
 
  private:
   std::filesystem::path root_;

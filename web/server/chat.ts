@@ -7,7 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { BFBS } from '../src/shared/bfbs'
 import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, externalTools, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { Agent, externalTools, summarizeVersion, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { keychainReader } from './keychain'
 import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
@@ -59,6 +59,8 @@ interface Settings {
   allowedPermissions: string[]
   /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
   guide: GuideState
+  /** A small model writes what each version changed (off: nothing is sent for it). */
+  versionSummaries: boolean
 }
 
 /** The demo the guide shows: its id and title, the copy's folder, and
@@ -72,6 +74,7 @@ const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
   models: {}, modelNames: {}, allowedPermissions: [],
   guide: { setupDone: false, demoAnswered: false, tour: null },
+  versionSummaries: false,
 }
 const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
 
@@ -82,6 +85,7 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
     out.skillFolders = b.skillFolders.filter((f) => f && typeof f.path === 'string').map((f) => ({ path: String(f.path), enabled: f.enabled !== false }))
   }
   if (b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' || b.provider === 'fixture') out.provider = b.provider
+  if (typeof b.versionSummaries === 'boolean') out.versionSummaries = b.versionSummaries
   if (typeof b.model === 'string') out.model = b.model.trim()
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
@@ -595,6 +599,18 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const next = { ...settings(), ...cleanSettings(b ?? {}) }
     ctx.writeJSON(settingsFile(), next)
     return next
+  },
+  // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
+  'POST /api/versions/summarize': async (b) => {
+    const s = settings()
+    if (!s.versionSummaries) throw ctx.httpError(400, '版の要約はオフです。')
+    if (s.provider === 'chatgpt') throw ctx.httpError(400, 'ChatGPT プランでは版の要約を作りません。')
+    const c = await provider()
+    // Room for the model's own reasoning on a large diff: the answer itself is cut to one line.
+    const small = { ...c, maxTokens: 1500, model: s.provider === 'anthropic' ? 'claude-haiku-5-5' : c.model }
+    const text = await summarizeVersion(small, String(b.input ?? ''), AbortSignal.timeout(60_000))
+    if (!text) throw ctx.httpError(502, 'モデルが文を返しませんでした。')
+    return { text }
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),

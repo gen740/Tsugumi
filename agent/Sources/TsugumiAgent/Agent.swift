@@ -164,6 +164,8 @@ public actor Agent {
   public static let systemPrompt = Shared.systemPrompt
   /// The guide's rules (agent/Shared/guide-prompt.md).
   public static let guidePrompt = Shared.guidePrompt
+  /// What a model is told to write a version's summary (agent/Shared); {language} is the app's.
+  public static let versionSummaryPrompt = Shared.versionSummaryPrompt
   /// The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around.
   public static let demoSkill = Shared.demoSkill
 

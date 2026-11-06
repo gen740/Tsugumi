@@ -257,6 +257,30 @@ public extension RPCClient {
     return try await call(.versiongraphrequest, r)
   }
 
+  /// A version's own Cards and wires, for a minimap.
+  func versionCanvas(commit: String) async throws -> Tsugumi_RPC_VersionCanvasT {
+    let r = Tsugumi_RPC_VersionCanvasRequestT()
+    r.commit = commit
+    return try await call(.versioncanvasrequest, r)
+  }
+
+  /// What a version changed: the code and settings a summary may read, never data.
+  func versionDiff(commit: String) async throws -> Tsugumi_RPC_VersionDiffT {
+    let r = Tsugumi_RPC_VersionDiffRequestT()
+    r.commit = commit
+    return try await call(.versiondiffrequest, r)
+  }
+
+  /// Keeps a summary of a version in its own note.
+  func versionSummary(opId: UUID, origin: String, commit: String, summary: String) async throws -> Tsugumi_RPC_VersionResultT {
+    let r = Tsugumi_RPC_VersionSummaryRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    r.commit = commit
+    r.summary = summary
+    return try await call(.versionsummaryrequest, r)
+  }
+
   /// Makes the project a git repository (a demo's history becomes its versions).
   func versionInit(opId: UUID, origin: String) async throws -> Tsugumi_RPC_VersionResultT {
     let r = Tsugumi_RPC_VersionInitRequestT()
