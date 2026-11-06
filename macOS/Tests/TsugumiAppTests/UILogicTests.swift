@@ -198,6 +198,36 @@ import Testing
   #expect(router.isForward(CGPoint(x: 0, y: 80), CGPoint(x: 0, y: 160)))
 }
 
+@Test func wiresBetweenClosePortsTakeTheShortWay() {
+  func length(_ path: Path) -> CGFloat {
+    let points = stride(from: 0.0, through: 1.0, by: 1.0 / 64).map { path.trimmedPath(from: 0, to: max($0, 0.0001)).currentPoint ?? .zero }
+    return zip(points, points.dropFirst()).reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+  }
+  let merge = CGRect(x: 0, y: 0, width: 80, height: 50)
+  for gap in [0, 1, 20, 23, 24, 25, 40] as [CGFloat] {
+    let card = CGRect(x: -70, y: 50 + gap, width: 220, height: 90)
+    var down = WireRouter(flow: .topToBottom, obstacles: [merge, card])
+    #expect(length(down.route(CGPoint(x: 40, y: 50), CGPoint(x: 40, y: 50 + gap))) <= gap + 0.5, "top to bottom, \(gap)")
+  }
+  var across = WireRouter(flow: .leftToRight, obstacles: [CGRect(x: 0, y: 0, width: 50, height: 80), CGRect(x: 70, y: -70, width: 90, height: 220)])
+  #expect(length(across.route(CGPoint(x: 50, y: 40), CGPoint(x: 70, y: 46))) < 25)
+  // No bulge past either port.
+  var offset = WireRouter(flow: .topToBottom, obstacles: [merge])
+  let bent = offset.route(CGPoint(x: 40, y: 50), CGPoint(x: 52, y: 70)).boundingRect
+  #expect(bent.minY >= 49.5 && bent.maxY <= 70.5)
+  // Upstream by a point is still upstream: it goes around.
+  var back = WireRouter(flow: .topToBottom, obstacles: [merge, CGRect(x: -70, y: 70, width: 220, height: 90)])
+  #expect(length(back.route(CGPoint(x: 40, y: 51), CGPoint(x: 40, y: 50))) > 50)
+  // The short way through a Card is not taken.
+  let wall = CGRect(x: 100, y: 45, width: 60, height: 30)
+  var blocked = WireRouter(flow: .topToBottom, obstacles: [merge, wall])
+  #expect(!blocked.isForward(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60)))
+  let around = blocked.route(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60))
+  for t in stride(from: 0.02, through: 0.98, by: 0.02) {
+    #expect(!wall.insetBy(dx: 2, dy: 2).contains(around.trimmedPath(from: 0, to: t).currentPoint ?? .zero))
+  }
+}
+
 @Test func editedOutputsAreReadFromTheText() {
   let ok = OutputCatalog.parse("""
     namespace t; // ports

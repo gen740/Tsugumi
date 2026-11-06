@@ -84,6 +84,19 @@ private func scene(_ id: String) throws -> DemoScene {
   }
 }
 
+/// No two of a demo's Cards lie on each other, in Home's thumbnails as on the
+/// Canvas: both use this geometry. web/tests/thumbnails.ts checks the Web UI's.
+@Test func noThumbnailHasCardsOnEachOther() throws {
+  for id in try demoIds() {
+    let s = try scene(id)
+    for (i, a) in s.placed.enumerated() {
+      for b in s.placed[(i + 1)...] {
+        #expect(!a.rect.intersects(b.rect), "\(id): \(a.card.id) \(a.rect) lies on \(b.card.id) \(b.rect)")
+      }
+    }
+  }
+}
+
 /// A Draft has no run to play.
 @Test func aDraftHasNoReplay() throws {
   let s = try scene("casa-draft")
