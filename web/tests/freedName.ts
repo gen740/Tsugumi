@@ -53,7 +53,7 @@ const clean = (s: Session, k: string) => {
 }
 
 {
-  // The Agent renamed the Card: the layout still has its frame. The next Draft takes the name.
+  // A frame left under the name (a Card in Card's layout, a file written by hand). The next Draft takes the name.
   const s = session(['renamed'])
   resolved(s, ['b'])
   framed(s, 'b')

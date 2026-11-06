@@ -395,8 +395,9 @@ import Testing
     try await eventually("its own run shows") { s.displays[other] != nil }
   }
 
-  /// The Agent renames a Card with its own save, which leaves the layout as it
-  /// was: the next Draft under the old name starts without the frame or the result.
+  /// The Agent renames a Card with its own save: its frame (the core's save) and
+  /// its result (the core's display) follow it, and the next Draft under the old
+  /// name starts with neither. Deleted and made again by the Agent: neither either.
   @Test func aNewCardIsClearOfWhatAnAgentRenameLeftBehind() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -429,6 +430,8 @@ import Testing
     for _ in 0..<200 where s.resolution[renamed] == nil || s.displays[renamed] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[renamed] != nil, "the result follows the name")
     #expect(s.displays[b] == nil)
+    #expect(s.displayFrame(renamed)?["width"]?.double == 300, "the frame follows the name")
+    #expect(s.displayFrame(b) == nil)
 
     // Put where another Card is, as E does: it goes to a free place, without the old frame.
     let here = CGPoint(x: 4000, y: 4000)
@@ -446,6 +449,23 @@ import Testing
     let copies = await s.duplicate([renamed], in: [])
     #expect(copies == [key(["renamed-2"])])
     #expect(s.displayFrame(key(["renamed-2"])) == nil)
+    await s.save()
+
+    // The Agent deletes the Card, then makes another under its name.
+    func agentSave(_ edit: ([JSONValue]) -> [JSONValue], _ change: Tsugumi_RPC_DocumentChangeT) async throws {
+      let snap = try await s.rpc!.inspect()
+      var proj = try JSONValue.parse(snap.projectJson)
+      let cards = proj["canvas"]?["cards"]?.array ?? []
+      proj["canvas"]?["cards"] = .array(edit(cards))
+      _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [Change.setProject(proj.serialized()), change])
+    }
+    try await agentSave({ $0.filter { $0["id"]?.string != "renamed" } }, Change.removeDefinition(id: "renamed"))
+    for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await agentSave({ $0 + [.object([("id", .string("renamed"))])] },
+                        Change.putDefinition(id: "renamed", cardJSON: "{\"template\": \"logger\", \"markdown\": true}", metaJSON: nil))
+    for _ in 0..<200 where s.resolution[renamed] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(s.displays[renamed] == nil && s.displayFrame(renamed) == nil && !s.framedCards(in: []).contains(renamed))
   }
 
   /// A new Card put on the canvas covers nothing: not a Card, a frame or a note,

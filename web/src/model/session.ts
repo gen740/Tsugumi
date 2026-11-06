@@ -1805,8 +1805,9 @@ export class ProjectSession extends Observable {
     this.updateGraph(scope, (g) => g.set('cards', [...(arr(g.get('cards')) ?? []), obj([['id', id]])]))
   }
 
-  /** A new Card's name can be one a Card had (renamed or deleted, by the Agent
-   *  too, which leaves the layout as it is): nothing of that Card stays with it. */
+  /** A new Card's name can be one a Card had: nothing of that Card stays with it.
+   *  The core keeps this project's layout up with renames and deletes, but a Card
+   *  in Card's layout or a file written by hand can still hold a frame. */
   private startClean(k: CardKey) {
     this.displays.delete(k)
     this.cardStates.delete(k)

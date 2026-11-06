@@ -172,8 +172,9 @@ extension ProjectSession {
     }
   }
 
-  /// A new Card's name can be one a Card had (renamed or deleted, by the Agent
-  /// too, which leaves the layout as it is): nothing of that Card stays with it.
+  /// A new Card's name can be one a Card had: nothing of that Card stays with it.
+  /// The core keeps this project's layout up with renames and deletes, but a Card
+  /// in Card's layout or a file written by hand can still hold a frame.
   private func startClean(_ k: CardKey) {
     forgetResult(k)
     updateLayout(of: Array(path(k).dropLast())) { dropLayoutEntries(of: k, from: &$0) }
