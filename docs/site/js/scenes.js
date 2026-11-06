@@ -533,12 +533,18 @@ export const CasA = {
     const n = 28
     const sketch = Array.from({ length: n + 1 }, (_, i) => {
       const s = i / n
-      return pt(mix(a.x, b.x, s), a.y + Math.sin(s * 7 + k) * 5 * (1 - u) - Math.sin(s * Math.PI) * 10 * (1 - u))
+      // a pen stroke: almost straight, a slight bow and a small tremor, no hump
+      return pt(mix(a.x, b.x, s), a.y + (Math.sin(s * 9 + k * 2) * 1.2 - 3) * Math.sin(s * Math.PI) * (1 - u))
     })
     const target = CasA.wire(CasA.outPort(CasA.cardRect(k - 1)), CasA.inPort(CasA.cardRect(k)))
     CasA.drawWire(g, new Polyline(sketch.map((q, i) => mixP(q, target[i], u))), p, t, k, u, drawnF)
     const head = (1 - span(u, 0, 0.35)) * span(drawnF, 0.8, 1)
-    if (head > 0.01) faded(g, head, () => stroke(g, [pt(b.x - 14, b.y - 10), b, pt(b.x - 13, b.y + 11)], Ink.penC, 3))
+    if (head > 0.01) {
+      // the head follows the line's last direction, its two barbs a touch uneven like a hand's
+      const tail = sketch[n - 3], dir = Math.atan2(b.y - tail.y, b.x - tail.x)
+      const barb = (da, len) => pt(b.x - Math.cos(dir + da) * len, b.y - Math.sin(dir + da) * len)
+      faded(g, head, () => stroke(g, [barb(-0.55, 13), b, barb(0.5, 12)], Ink.penC, 3))
+    }
   },
 
   drawWire(g, line, p, t, into, ink, drawn) {
