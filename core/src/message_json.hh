@@ -1,7 +1,8 @@
 // A FlatBuffer message as JSON, written from its parsed schema, for the Cards
-// that read their inputs as JSON (bash, R, Julia). This is the output of
-// flatbuffers::GenText with strict_json, natural_utf8 and
-// output_default_scalars_in_json, except for floats: GenText keeps 12 decimals
+// that read their inputs as JSON (bash, R, Julia) and what a Logger Card shows.
+// This is the output of flatbuffers::GenText with strict_json, natural_utf8 and
+// output_default_scalars_in_json, indented by the parser's indent_step (negative:
+// one line), except for floats: GenText keeps 12 decimals
 // of a double and 6 of a float, with no option, so 1e-20 becomes 0.0. Here they
 // are the shortest digits that read back as the same value. tests/cpp compares
 // the two on every kind of field. The parser comes from a binary schema, which
@@ -11,6 +12,7 @@
 
 #include <flatbuffers/idl.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <concepts>
@@ -58,11 +60,11 @@ void with_scalar_type(fb::BaseType type, F&& f) {
 
 class Writer {
  public:
-  explicit Writer(std::string& out) : out_(out) {}
+  Writer(std::string& out, int indent_step) : out_(out), indent_step_(indent_step) {}
 
   const char* table(const fb::StructDef& def, const fb::Table* t, int indent) {
     out_ += '{';
-    const int inner = indent + kIndent;
+    const int inner = deeper(indent);
     int written = 0;
     const std::uint8_t* previous = nullptr;  // a union's type field comes just before it
     for (const fb::FieldDef* field : def.fields.vec) {
@@ -70,8 +72,7 @@ class Writer {
       const fb::voffset_t offset = field->value.offset;
       if (!def.fixed && !t->CheckField(offset) && (!fb::IsScalar(type.base_type) || field->deprecated)) continue;
       if (written++) out_ += ',';
-      out_ += '\n';
-      out_.append(inner, ' ');
+      next_line(inner);
       out_ += '"' + field->name + "\": ";
       if (fb::IsScalar(type.base_type)) {
         scalar_field(*field, t, def.fixed);
@@ -80,14 +81,19 @@ class Writer {
       }
       previous = def.fixed ? reinterpret_cast<const std::uint8_t*>(t) + offset : t->GetAddressOf(offset);
     }
-    out_ += '\n';
-    out_.append(indent, ' ');
+    next_line(indent);
     out_ += '}';
     return nullptr;
   }
 
  private:
-  static constexpr int kIndent = 2;
+  int deeper(int indent) const { return indent + std::max(indent_step_, 0); }
+
+  void next_line(int indent) {
+    if (indent_step_ < 0) return;
+    out_ += '\n';
+    out_.append(indent, ' ');
+  }
 
   template <class T>
   void scalar(T v, const fb::Type& type) {
@@ -167,10 +173,14 @@ class Writer {
 
   // Scalars and structs are stored in place, the rest behind an offset.
   const char* elements(const std::uint8_t* data, std::size_t count, const fb::Type& element, int indent, const std::uint8_t* previous) {
-    const int inner = indent + kIndent;
-    out_ += "[\n";
+    const int inner = deeper(indent);
+    out_ += '[';
+    next_line(0);
     for (std::size_t i = 0; i < count; ++i) {
-      if (i) out_ += ",\n";
+      if (i) {
+        out_ += ',';
+        next_line(0);
+      }
       out_.append(inner, ' ');
       const auto index = static_cast<fb::soffset_t>(i);
       const char* error = nullptr;
@@ -184,22 +194,22 @@ class Writer {
       }
       if (error) return error;
     }
-    out_ += '\n';
-    out_.append(indent, ' ');
+    next_line(indent);
     out_ += ']';
     return nullptr;
   }
 
   std::string& out_;
+  int indent_step_;
 };
 
 }  // namespace detail
 
 // Like flatbuffers::GenText: nullptr, or what went wrong. The parser has its root type set.
 inline const char* gen_text(const flatbuffers::Parser& parser, const void* buffer, std::string* out) {
-  detail::Writer writer(*out);
+  detail::Writer writer(*out, parser.opts.indent_step);
   const char* error = writer.table(*parser.root_struct_def_, flatbuffers::GetRoot<flatbuffers::Table>(buffer), 0);
-  if (!error) *out += '\n';
+  if (!error && parser.opts.indent_step >= 0) *out += '\n';
   return error;
 }
 
