@@ -65,6 +65,24 @@ def stderr(c, run_id, *card):
 DEMOS = json.loads((ROOT / "demos" / "index.json").read_text())["demos"]
 
 
+def test_every_bundled_card_says_what_it_does():
+    """Every definition of every demo, inside Cards in Card too, has a summary
+    in its _meta.json, which is where the Canvas and Card settings read it."""
+    definitions = sorted(p for p in (ROOT / "demos").rglob("definitions/*") if p.is_dir())
+    assert len(definitions) > 200
+    bad = []
+    for d in definitions:
+        where = d.relative_to(ROOT / "demos")
+        meta = d / "_meta.json"
+        summary = json.loads(meta.read_text()).get("description", "").strip() if meta.exists() else ""
+        if not summary or summary == d.name:
+            bad.append(f"{where}: no summary")
+        card = d / "_card.json"
+        if card.exists() and "description" in json.loads(card.read_text()):
+            bad.append(f"{where}: description in _card.json")
+    assert not bad, bad
+
+
 @pytest.mark.parametrize("demo", [d["path"] for d in DEMOS])
 def test_every_listed_demo_resolves(tmp_path, demo):
     """Each demo on the list opens and resolves: implemented ones without a

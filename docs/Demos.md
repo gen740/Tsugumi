@@ -32,6 +32,7 @@
 | [MNIST · 分類器くらべ（Draft）](#mnist--分類器くらべdraftmnist-classifiers-draft) | 手書き数字の分類（7 種） | データまで実装済みの計画から、7 つの分類器を helper が同時に実装し、Agent が比較をまとめる |
 
 図の矢印は Card の線（`出力ポート → 入力ポート`）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。
+どの Card にも `_meta.json` に概要があり、Canvas（trigger・fork・merge・branch はホバー）と Card 設定で読めます。
 
 ## 基本のデモ
 

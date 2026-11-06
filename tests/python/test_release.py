@@ -22,6 +22,18 @@ def test_the_app_finds_its_resources_on_any_mac():
     assert 'grep -F "$repo/"' in script
 
 
+def test_the_dev_build_can_be_signed_with_your_certificate_and_the_release_never_is():
+    script = (ROOT / "macOS/build-app.sh").read_text()
+    # ad-hoc unless a dev build is given an identity
+    assert "\nidentity=-\n" in script
+    assert 'if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then' in script
+    assert 'identity="$TSUGUMI_CODESIGN_IDENTITY"' in script
+    # the dylibs and the app are signed alike, and nothing is signed ad-hoc by a fixed "-"
+    assert 'codesign --force --sign "$identity" "$lib"' in script
+    assert 'codesign --force --sign "$identity" --entitlements' in script
+    assert "--sign -" not in script
+
+
 def test_paths_of_the_build_machine_stay_in_debug_builds():
     outside = []
     for path in list((ROOT / "macOS/Sources").rglob("*.swift")) + list((ROOT / "agent/Sources").rglob("*.swift")):

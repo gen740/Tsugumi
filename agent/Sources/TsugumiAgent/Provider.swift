@@ -156,24 +156,41 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
 public enum Keychain {
   static let service = "app.tsugumi.agent"
 
+  /// Operations under way that may show the access dialog, and the lock that
+  /// keeps a read without asking from turning their dialog off.
+  private static let gate = NSLock()
+  nonisolated(unsafe) private static var mayAsk = 0
+
+  private static func askingAllowed<T>(_ body: () -> T) -> T {
+    gate.lock()
+    mayAsk += 1
+    gate.unlock()
+    defer {
+      gate.lock()
+      mayAsk -= 1
+      gate.unlock()
+    }
+    return body()
+  }
+
   /// Removes the stored secret of a provider (no error when there is none).
   public static func delete(account: String) {
     let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                             kSecAttrAccount as String: account]
-    SecItemDelete(q as CFDictionary)
+    askingAllowed { _ = SecItemDelete(q as CFDictionary) }
   }
 
   /// Saves in place when the item exists (a reader never sees it missing).
   public static func save(_ secret: String, account: String) throws {
     let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                kSecAttrAccount as String: account]
-    let u = SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary)
+    let u = askingAllowed { SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary) }
     if u == errSecSuccess { return }
     guard u == errSecItemNotFound else { throw AgentError.provider("Keychain error \(u)") }
     var add = base
     add[kSecValueData as String] = Data(secret.utf8)
     add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    let s = SecItemAdd(add as CFDictionary, nil)
+    let s = askingAllowed { SecItemAdd(add as CFDictionary, nil) }
     guard s == errSecSuccess else { throw AgentError.provider("Keychain error \(s)") }
   }
 
@@ -189,6 +206,27 @@ public enum Keychain {
     let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                             kSecAttrAccount as String: account, kSecReturnData as String: true]
     var out: CFTypeRef?
+    guard askingAllowed({ SecItemCopyMatching(q as CFDictionary, &out) }) == errSecSuccess, let d = out as? Data else { return nil }
+    return String(data: d, encoding: .utf8)
+  }
+
+  /// The secret if this program may read it now; never shows the access
+  /// dialog (nil: no such item, or it would have to ask). For reads nobody
+  /// asked for, such as listing models when a menu opens.
+  ///
+  /// The switch is process-wide, so it is off only for this read and never
+  /// while another operation may be asking. It is deprecated, but nothing
+  /// replaces it: a login keychain item still shows its dialog with
+  /// kSecUseAuthenticationUIFail.
+  public static func loadWithoutAsking(account: String) -> String? {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                            kSecAttrAccount as String: account, kSecReturnData as String: true]
+    gate.lock()
+    defer { gate.unlock() }
+    guard mayAsk == 0 else { return nil }
+    SecKeychainSetUserInteractionAllowed(false)
+    defer { SecKeychainSetUserInteractionAllowed(true) }
+    var out: CFTypeRef?
     guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
     return String(data: d, encoding: .utf8)
   }
@@ -200,23 +238,30 @@ public struct MessagesProvider: Sendable {
   public let config: ProviderConfig
   let session: URLSession
 
-  public init(config: ProviderConfig) {
-    self.config = config
+  /// One session for every provider: nothing of it is kept on disk, and a
+  /// provider is made for each listing of models (a session is never freed).
+  private static let shared: URLSession = {
     let c = URLSessionConfiguration.ephemeral
     c.timeoutIntervalForRequest = 120
-    session = URLSession(configuration: c)
+    return URLSession(configuration: c)
+  }()
+
+  public init(config: ProviderConfig) {
+    self.config = config
+    session = Self.shared
   }
 
   /// A request with its credentials: the API key, or the ChatGPT access
-  /// token (`stale`: one the API refused, to be refreshed).
-  private func request(path: String, stale: String? = nil) async throws -> URLRequest {
+  /// token (`stale`: one the API refused, to be refreshed). Without `asking`
+  /// it fails rather than show the keychain's access dialog.
+  private func request(path: String, stale: String? = nil, asking: Bool = true) async throws -> URLRequest {
     var r = URLRequest(url: config.baseURL.appendingPathComponent(path))
     r.setValue("application/json", forHTTPHeaderField: "content-type")
     if config.api == .anthropicMessages { r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
     switch config.auth {
     case .none: break
     case .apiKey:
-      guard let key = Keychain.load(account: config.name) else {
+      guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
         throw AgentError.provider("no API key for \(config.name); add it in Settings")
       }
       switch config.api {
@@ -224,7 +269,7 @@ public struct MessagesProvider: Sendable {
       case .openAIResponses: r.setValue("Bearer " + key, forHTTPHeaderField: "authorization")
       }
     case .chatGPT:
-      r.setValue("Bearer " + (try await config.chatGPTAuth.accessToken(replacing: stale)), forHTTPHeaderField: "authorization")
+      r.setValue("Bearer " + (try await config.chatGPTAuth.accessToken(replacing: stale, asking: asking)), forHTTPHeaderField: "authorization")
     }
     return r
   }
@@ -233,9 +278,15 @@ public struct MessagesProvider: Sendable {
   public func models() async throws -> [String] { try await modelChoices().map(\.id) }
 
   /// Models with the names to show (the ChatGPT account's catalog lists
-  /// display names, in the server's order).
-  public func modelChoices() async throws -> [(id: String, label: String)] {
-    let (data, resp) = try await session.data(for: try await request(path: "v1/models"))
+  /// display names, in the server's order). Always a new answer of the
+  /// provider, within 15 s. `asking: false` is for lists nobody asked for (the
+  /// model menu opened): it never shows the keychain's access dialog, and
+  /// throws when the secret cannot be read without it.
+  public func modelChoices(asking: Bool = true) async throws -> [(id: String, label: String)] {
+    var r = try await request(path: "v1/models", asking: asking)
+    r.timeoutInterval = 15
+    r.cachePolicy = .reloadIgnoringLocalCacheData
+    let (data, resp) = try await session.data(for: r)
     guard (resp as? HTTPURLResponse)?.statusCode == 200,
           let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw AgentError.provider("cannot list models")

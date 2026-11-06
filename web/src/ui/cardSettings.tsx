@@ -308,8 +308,10 @@ export class CardEditorModel extends Observable {
     const clashing = new Set(this.conflicts)
     session.edit((x) => {
       const d = x.cardDefinitionDraft(k)
-      if (def !== undefined && d && d.link === undefined && (!jeq(def, d.card) || !jeq(m, d.meta))) {
-        x.setCardDefinition(k, { ...cloneDef(d), card: clone(def), meta: clone(m) })
+      // A Card in Card has no settings of its own, but a _meta.json like any other.
+      if (d) {
+        const card = d.link === undefined && def !== undefined ? def : d.card
+        if (!jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
       }
       for (const [p, t] of changedTexts) {
         x.putSource(p, t)
@@ -543,7 +545,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
     value: str(get(def, n)) ?? fallback ?? '',
     onChange: (v: string) => model.setSetting(n, !v || v === fallback ? undefined : v),
   })
-  // A Draft's intent is in _meta.json.
+  // A Card's intent is in _meta.json.
   const metaString = (n: string) => ({
     value: str(get(model.meta, n)) ?? '',
     onChange: (v: string) => model.update((x) => {
@@ -598,7 +600,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           </Row>
         )}
         <Row label="概要">
-          <TextField {...(kind === 'draft' ? metaString('description') : string('description'))} multiline rows={2} style={{ width: '100%', minHeight: 38, maxHeight: 90 }} />
+          <TextField {...metaString('description')} multiline rows={2} style={{ width: '100%', minHeight: 38, maxHeight: 90 }} />
         </Row>
         {kind === 'draft' && (
           <Row label="内容">
