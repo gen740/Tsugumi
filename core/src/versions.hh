@@ -1,7 +1,7 @@
 // A project's versions: its folder is a git repository (libgit2). A run
 // commits what is saved when it starts (when it changed) and records that
 // commit; when it ends, a line goes to the commit's note (refs/notes/tsugumi),
-// so a commit has its runs' results and git selects versions by them
+// with what ran, so a commit has its runs' results and git selects versions by them
 // (git log --notes=tsugumi --grep=failed). A version the user names is an
 // annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
 #pragma once
@@ -20,6 +20,9 @@ struct VersionRunNote {
   std::string state;  // succeeded, failed, cancelled
   std::string ended;  // ISO 8601 (UTC)
   double seconds = 0;
+  // What ran, from what the run did ("全体: a、b ×2 / 失敗: b（worker_failed）").
+  // Empty for a run a demo's history file lists.
+  std::string summary;
 };
 
 struct VersionCommit {

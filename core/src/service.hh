@@ -89,7 +89,7 @@ class Service : public RequestSink {
   // A run finished: its record goes to the project's copy soon.
   void schedule_export();
   // A run ended: its result goes to the note of the version it started from.
-  void note_run_end(const RunStatusData& s);
+  void note_run_end(const RunStatusData& s, const std::string& summary);
 
  private:
   void reply(const RequestIn& req, std::string bytes);

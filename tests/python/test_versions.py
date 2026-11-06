@@ -1,7 +1,8 @@
 """A project's versions are a git repository: a run commits what is saved
 (when it changed) and records that commit, its result goes to the commit's
 note, a named version is an annotated tag, starting from an older version
-opens a branch, and a demo's history file becomes its versions."""
+opens a branch, and a demo's history file becomes its versions. A run's line
+in the note says what ran, from what the run did."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import subprocess
 import time
 
 from conftest import ROOT, Daemon
-from projects import builtin_project, run_and_wait
+from projects import MSG_FBS, builtin_project, card, conn, run_and_wait, write
 from tsugumi_client import _request_class, change, new_id, text
 from Tsugumi.Data.RunState import RunState
 
@@ -128,6 +129,7 @@ def test_a_demo_history_becomes_its_versions(tmp_path):
         assert set(by) == {"計画", "別の文を試す", "採用"}
         assert [text(t) for t in by["採用"].tags] == ["adopted"]
         assert [text(r.state) for r in by["別の文を試す"].runs] == ["failed"]
+        assert not by["別の文を試す"].runs[0].summary  # the history file gives none
         assert src_text(c) == "final"
         assert git(root, "show", "HEAD~1:definitions/src/_card.json").count("tried") == 1
     finally:
@@ -163,5 +165,107 @@ def test_the_casa_demo_carries_its_trials(tmp_path):
         c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=text(plan.id))
         snap = c.call("ProjectInspectRequest")
         assert all(json.loads(text(d.cardJson)).get("template") in ("draft", "trigger") for d in snap.definitions)
+    finally:
+        d.cleanup()
+
+
+def note_lines(root, commit: str) -> list[str]:
+    return git(root, "notes", "--ref=tsugumi", "show", commit).splitlines()
+
+
+def summary_of(c, root, st) -> str:
+    """The summary of the run that just ended: on the last line of its commit's
+    note, and the same through the version graph."""
+    commit = text(st.commit)
+    deadline = time.monotonic() + 10.0
+    while True:
+        runs = next(x.runs or [] for x in graph(c).commits if text(x.id) == commit)
+        if any(text(r.runId) == text(st.runId) for r in runs) or time.monotonic() > deadline:
+            break
+        time.sleep(0.1)
+    run = next(r for r in runs if text(r.runId) == text(st.runId))
+    line = next(x for x in note_lines(root, commit) if x.startswith(f"run {text(st.runId)} "))
+    # run <id> <state> <ended> <seconds> <summary>
+    assert line.split(" ", 5)[5] == text(run.summary), line
+    return text(run.summary)
+
+
+def test_a_run_note_says_what_ran(tmp_path):
+    """A run's note says, from what the run did: where it started, the Cards
+    that ran (how many times, past one), and those that failed or never ran.
+    What did not happen is not there, and a succeeded run's note stays out of
+    git log --grep=failed."""
+    root = tmp_path / "p"
+    write(root,
+          defs={"trigger": {"template": "trigger"},
+                "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
+                "fork": {"template": "fork"},
+                "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
+                "log": {"template": "logger", "maxRuns": 4}},
+          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+          conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
+                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        c.call("VersionInitRequest", opId=new_id(), origin="test")
+        # On its saved inputs before there are any: it fails without running,
+        # and the Cards after it never run.
+        _, st = run_and_wait(c, "both")
+        assert st.state == RunState.failed
+        assert summary_of(c, root, st) == "both から / 失敗: both（input_missing） / 未実行: sink"
+        # The whole Workflow: the trigger is no step of its own, and the merge
+        # and what follows ran once per branch.
+        set_text(c, "second")
+        _, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded
+        whole = text(st.commit)
+        assert summary_of(c, root, st) == "全体: src、split、both ×2、sink ×2"
+        assert whole not in git(root, "log", "--notes=tsugumi", "--grep=failed", "--format=%H", "-1")
+        # A Card and what follows it, then one Card alone, on the saved inputs.
+        _, st = run_and_wait(c, "split")
+        assert summary_of(c, root, st) == "split から（保存済みの入力で）: split、both ×2、sink ×2"
+        _, st = run_and_wait(c, "sink", propagate=False)
+        assert summary_of(c, root, st) == "sink だけ（保存済みの入力で）: sink"
+        # Runs without a change share the commit: each has its own line.
+        lines = note_lines(root, whole)
+        assert len(lines) == 3 and all(x.startswith("run ") for x in lines)
+    finally:
+        d.cleanup()
+
+
+def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path):
+    """The merge's second invocation fails (maxRuns): the record has both
+    invocations, and what follows ran on the first one's value."""
+    root = tmp_path / "p"
+    builtin_project(root, extra_cards=[card("feed", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+                    extra_conns=[conn("feed", "msg", "split", "in"), conn("split", "out1", "both", "a"),
+                                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        c.call("VersionInitRequest", opId=new_id(), origin="test")
+        _, st = run_and_wait(c, "feed")
+        assert st.state == RunState.failed
+        summary = summary_of(c, root, st)
+        assert summary == "feed から: feed、split、both ×2、sink / 失敗: both（execution_limit）", summary
+        assert text(st.commit) in git(root, "log", "--notes=tsugumi", "--grep=failed", "--format=%H", "-1")
+    finally:
+        d.cleanup()
+
+
+def test_a_long_run_summary_stays_short(tmp_path):
+    root = tmp_path / "p"
+    builtin_project(root, extra_cards=[card(f"more{i}", "source") for i in range(8)])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        c.call("VersionInitRequest", opId=new_id(), origin="test")
+        _, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded
+        assert summary_of(c, root, st).endswith(" ほか 4")
     finally:
         d.cleanup()
