@@ -62,7 +62,7 @@ struct AgentOperationTests {
     func read(_ folder: String) async throws -> (String, Bool) {
       let block = try await agent.runTool(id: UUID().uuidString, name: "attached_folder_read",
                                           input: "{\"folder\":\"\(folder)\",\"path\":\"\"}") { _ in }
-      guard case .toolResult(_, let content, let isError) = block else { throw CancellationError() }
+      guard case .toolResult(_, let content, let isError, _) = block else { throw CancellationError() }
       return (content, isError)
     }
     var (text, error) = try await read("/Users/me/data")

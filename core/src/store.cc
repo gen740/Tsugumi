@@ -476,6 +476,10 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
               d.meta = old->second.meta;
               d.meta_json = old->second.meta_json;
             }
+            if (c.fill_description || c.fill_context) {
+              d.meta_json = fill_meta_json(d.meta_json.value_or("{}"), c.fill_description, c.fill_context);
+              d.meta = parse_meta_json(*d.meta_json);
+            }
           }
         });
         doc->definitions[c.id] = std::move(d);

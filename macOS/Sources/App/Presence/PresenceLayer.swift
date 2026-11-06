@@ -201,10 +201,10 @@ struct PresenceLayer: View {
     let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
-      if avatar != .none, let code = presence.liveCode(at: t), let card = geometry.card(code.card) {
-        WritingPanel(code: code, card: card, geometry: geometry,
+      if avatar != .none, let code = presence.liveCode(at: t) {
+        WritingPanel(code: code, card: geometry.card(code.card), geometry: geometry,
                      clear: -BirdMetrics.feetToCenter.dy * CGFloat(geometry.zoom) + PresenceBubble.rise(avatar, zoom: z),
-                     canvas: size, color: color)
+                     canvas: size, color: color, slot: presence.tint)
       }
       if avatar != .none, presence.visible(at: t), let pose = reduceMotion ? ch.still(at: t) : ch.posed(at: t) {
         let fade = presence.fade(at: t)
@@ -285,15 +285,18 @@ struct PresenceLayer: View {
 
 /// The file the Agent is writing, by its Card and clear of the bird and the
 /// bubble there: what has arrived and nothing else, marked as saved or not.
-/// Not drawn when its Card is out of view.
+/// Not drawn when its Card is out of view. A Card that is not on this canvas (a
+/// new one has no place until it is saved) has it where there is room, with its name.
 struct WritingPanel: View {
   let code: AgentPresence.LiveCode
-  let card: CGRect
+  let card: CGRect?
   let geometry: PresenceGeometry
   /// How far above the Card's top edge the bird and its bubble reach (points).
   let clear: CGFloat
   let canvas: CGSize
   let color: Color
+  /// Which bird it is (where its panel goes when it has no Card to stand by).
+  var slot = 0
 
   /// Points at scale 1: scaled with the canvas only as far as stays readable
   /// (the bubble beside it does not scale at all).
@@ -330,33 +333,49 @@ struct WritingPanel: View {
     return CGRect(x: x, y: min(max(y, view.minY), view.maxY - h), width: w, height: h)
   }
 
+  /// Where the panel of a Card that is not on the canvas goes: the first place
+  /// that covers nothing, from the top middle of the view on (`slot`: a later
+  /// bird starts further on, so that two do not take the same one).
+  nonisolated static func frame(scale: CGFloat, in view: CGRect, others: [CGRect] = [], slot: Int = 0) -> CGRect {
+    let w = size.width * scale, h = size.height * scale
+    let xs = [view.midX - w / 2, view.minX, view.maxX - w], ys = [view.minY, view.maxY - h]
+    let places = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (2, 1)].map { CGRect(x: xs[$0.0], y: ys[$0.1], width: w, height: h) }
+    let turn = slot % places.count
+    let turned = Array(places[turn...] + places[..<turn])
+    return turned.first { p in !others.contains { $0.intersects(p) } } ?? turned[0]
+  }
+
   var body: some View {
     let z = Self.scale(zoom: geometry.zoom)
     let m = Self.margins
-    let tl = geometry.screen(CGPoint(x: card.minX, y: card.minY)), br = geometry.screen(CGPoint(x: card.maxX, y: card.maxY))
-    let onScreen = CGRect(x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y)
+    let onScreen = card.map { c -> CGRect in
+      let tl = geometry.screen(CGPoint(x: c.minX, y: c.minY)), br = geometry.screen(CGPoint(x: c.maxX, y: c.maxY))
+      return CGRect(x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y)
+    }
     let view = CGRect(x: m.left, y: m.top, width: canvas.width - m.left - m.right, height: canvas.height - m.top - m.bottom)
     let others = geometry.obstacles().map { r -> CGRect in
       let a = geometry.screen(r.origin), b = geometry.screen(CGPoint(x: r.maxX, y: r.maxY))
       return CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y)
     }
-    if let f = Self.frame(card: onScreen, clear: clear, scale: z, in: view, others: others) {
+    if let f = onScreen.map({ Self.frame(card: $0, clear: clear, scale: z, in: view, others: others) }) ?? Self.frame(scale: z, in: view, others: others, slot: slot) {
       let shown = Self.tail(code.text)
-      // To the right of the Card, where the bird and a short bubble are not.
-      let x = min(f.maxX, onScreen.maxX) - 20 * z
-      Path { p in
-        if f.maxY <= onScreen.minY {
-          p.move(to: CGPoint(x: x, y: f.maxY))
-          p.addLine(to: CGPoint(x: x, y: onScreen.minY))
-        } else if f.minY >= onScreen.maxY {
-          p.move(to: CGPoint(x: x, y: onScreen.maxY))
-          p.addLine(to: CGPoint(x: x, y: f.minY))
+      if let onScreen {
+        // To the right of the Card, where the bird and a short bubble are not.
+        let x = min(f.maxX, onScreen.maxX) - 20 * z
+        Path { p in
+          if f.maxY <= onScreen.minY {
+            p.move(to: CGPoint(x: x, y: f.maxY))
+            p.addLine(to: CGPoint(x: x, y: onScreen.minY))
+          } else if f.minY >= onScreen.maxY {
+            p.move(to: CGPoint(x: x, y: onScreen.maxY))
+            p.addLine(to: CGPoint(x: x, y: f.minY))
+          }
         }
+        .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
       }
-      .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
       VStack(alignment: .leading, spacing: 3 * z) {
         HStack {
-          Text(code.file).lineLimit(1).truncationMode(.head)
+          Text(onScreen == nil ? "\(path(code.card).last ?? code.card)/\(code.file)" : code.file).lineLimit(1).truncationMode(.head)
           Spacer(minLength: 8 * z)
           Text(code.saved ? "保存済み" : "保存前").fixedSize()
         }

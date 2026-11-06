@@ -114,7 +114,7 @@ async function api<T>(route: string, body: unknown): Promise<T> {
 
 // ---- Tools -----------------------------------------------------------------------
 
-type Result = { content: { type: 'text'; text: string }[]; isError?: boolean }
+type Result = { content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]; isError?: boolean }
 const text = (t: string, isError = false): Result => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) })
 
 async function open(args: { folder?: unknown; create?: unknown; browser?: unknown }): Promise<Result> {
@@ -146,8 +146,10 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
 async function call(name: string, args: unknown): Promise<Result> {
   if (name === OPEN_TOOL.name) return open((args ?? {}) as Record<string, unknown>)
   if (!current) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
-  const r = await api<{ text: string; isError: boolean }>('/api/agent/call', { path: current, name, arguments: args ?? {} })
-  return text(r.text, r.isError)
+  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} })
+  const result = text(r.text, r.isError)
+  for (const i of r.images ?? []) result.content.push({ type: 'image', data: i.data, mimeType: i.media_type })
+  return result
 }
 
 // ---- JSON-RPC over stdio ---------------------------------------------------------

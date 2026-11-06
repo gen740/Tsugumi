@@ -488,8 +488,12 @@ export class ChatController extends Observable {
       case 'toolFinished':
         if (writesSources(e.name)) {
           this.writer(who).ended(e.ok, now)
-          if (e.ok && e.name === 'project_save') this.writer(who).saved()
+          if (e.ok && e.name === 'project_save') this.writer(who).saved(now)
         }
+        return false
+      case 'toolStarted':
+        // What was written is not on the screen once it runs.
+        if (e.name === 'run') this.writer(who).stop()
         return false
       case 'finished':
         this.writer(who).ended(true, now)

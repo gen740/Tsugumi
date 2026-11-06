@@ -1,8 +1,9 @@
 // The file the Agent is writing (as the Mac app's PresenceTests): it is read out
-// of the save's arguments at any cut, played slowly enough to see, goes when the
-// call fails, and its panel stays clear of the bird and inside the view.
+// of the save's arguments at any cut, shown as far as it has arrived, goes when
+// the save is through or the call fails, and its panel stays clear of the bird
+// and inside the view.
 import assert from 'node:assert/strict'
-import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
+import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
 
 // The arguments, cut anywhere.
 const args = JSON.stringify({ base_rev: '1', changes: [
@@ -22,43 +23,64 @@ assert.equal(fileOfCard('layout.json'), undefined)
 
 const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `definitions/${card}/m.py`, bytes } }) + ','
 
-// Comes at its pace, not at once, and never past what has arrived.
+// What has arrived is written out up to the next lump, never past what has arrived.
 {
   const p = new LiveCodePlayer()
   p.input(0, '{"changes":[{"value":{"path":"definitions/load/m.py","bytes":"import os', 100)
   assert.equal(p.at(100)?.text, '')
-  assert.equal(p.at(100 + 4 / T.rate + 0.001)?.text, 'impo')
-  assert.equal(p.at(101)?.text, 'import os')
-  assert.equal(p.at(101)?.card, 'load')
-  assert.equal(p.at(101)?.file, 'm.py')
-  // Arriving all at once does not make it go by in a moment: the next waits, the last lines hold.
-  p.input(0, '"}},{"value":{"path":"definitions/rgb/m.py","bytes":"from', 100.05)
-  const next = 100 + T.shortest + T.hold
-  assert.equal(p.at(next - 0.1)?.card, 'load')
-  assert.equal(p.at(next + 1)?.card, 'rgb')
-  // A model slower than the pace: the scene lasts as long as the file arrives.
-  p.input(0, ' a', next + 0.2)
-  p.input(0, ' b', next + 30)
-  assert.equal(p.at(next + 30.4)?.text, 'from a b')
-  // The save goes through: what still plays says so, and plays on after the call.
-  p.saved()
-  p.ended(true, next + 30.5)
-  assert.equal(p.at(next + 30.6)?.saved, true)
-  assert.equal(p.at(next + 40), undefined)
+  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
+  assert.equal(p.at(100 + T.ease + 0.01)?.text, 'import os')
+  assert.equal(p.at(100)?.card, 'load')
+  // The next lump, before this one has been written out: on from where it has got to, never back.
+  p.input(0, ' 1', 100 + T.ease / 2)
+  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
+  assert.equal(p.at(100 + T.ease * 1.5 + 0.01)?.text, 'import os 1')
+  assert.equal(p.at(100)?.file, 'm.py')
+  // A slow model: the scene lasts as long as the file arrives, a pause included.
+  p.input(0, ' a', 130)
+  assert.equal(p.at(130 + T.stalled - 0.1)?.text, 'import os 1 a')
+  // The next file comes: the one on the screen has been seen long enough, so it
+  // does not hold, and the next shows at once.
+  p.input(0, '"}},{"value":{"path":"definitions/rgb/m.py","bytes":"from', 131)
+  assert.equal(p.at(131)?.card, 'rgb')
+  assert.equal(p.at(131 + T.ease + 0.01)?.text, 'from')
+  // The last file has arrived and the save goes through: it says so for its hold,
+  // and is gone by then.
+  p.input(0, ' a"}}]}', 133)
+  p.ended(true, 133.1)
+  p.saved(133.1)
+  assert.equal(p.at(133.2)?.saved, true)
+  assert.equal(p.at(133 + T.hold + 0.01), undefined)
 }
 
-// A long file speeds up, and files too far behind are not shown.
+// A short file stays long enough to see, and the window does not fall behind.
 {
   const p = new LiveCodePlayer()
-  const long = 'x'.repeat(5000)
-  p.input(0, '{"changes":[' + file('a', long), 100)
-  assert.equal(p.at(100 + T.longest / 2)?.text.length, 2500)
-  assert.equal(p.at(100 + T.longest + 0.1)?.text.length, 5000)
-  for (let n = 0; n < 20; n++) p.input(0, file(`c${n}`, long), 100)
-  const shown = new Set<string>()
-  for (let t = 100; t < 200; t += 0.5) { const c = p.at(t)?.card; if (c) shown.add(c) }
-  assert.ok(shown.size < 10, `${shown.size} files`)
-  assert.equal(p.at(100 + T.backlog + T.longest + T.hold + 1), undefined)
+  p.input(0, file('a'), 100)
+  assert.equal(p.at(100 + T.shortest + T.hold - 0.01)?.card, 'a')
+  assert.equal(p.at(100 + T.shortest + T.hold + 0.01), undefined)
+  // More come at once: the first keeps its shortest stay, then only the newest shows.
+  p.input(0, file('b'), 100.1)
+  p.input(0, file('c'), 100.2)
+  assert.equal(p.at(100 + T.shortest - 0.01)?.card, 'a')
+  assert.equal(p.at(100 + T.shortest + 0.01)?.card, 'c')
+}
+
+// A save ends what waits, and a run ends the window.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, file('a'), 100)
+  p.input(0, file('b'), 100.1)
+  p.saved(100.2)
+  p.ended(true, 100.2)
+  assert.equal(p.at(100.3)?.saved, true)
+  assert.equal(p.at(100 + T.shortest + 0.01), undefined)
+  p.input(1, file('c'), 110)
+  p.saved(110.1)
+  p.ended(true, 110.1)
+  assert.equal(p.at(110.2)?.card, 'c')
+  p.stop()
+  assert.equal(p.at(110.2), undefined)
 }
 
 // What a failed or stopped call wrote goes at once; what is not a Card's file never shows.
@@ -105,5 +127,19 @@ assert.deepEqual(panelTail('a\r\nb\n\tc', 3), ['a', 'b', '    c'])
   assert.ok(inside(panelFrame({ x: 400, y: 100, width: 220, height: 700 }, 80, 1, view)!))
   assert.equal(panelFrame({ ...card, x: 3000 }, 80, 1, view), undefined)
   assert.deepEqual([panelScale(0.5), panelScale(1), panelScale(3)], [0.8, 1, 1.3])
+}
+
+// A Card that is not on the canvas: where there is room.
+{
+  const view = { x: 12, y: 52, width: 1000, height: 800 }
+  const [w, h] = [PANEL.width, PANEL.height]
+  const top = panelFreeFrame(1, view)
+  assert.deepEqual(top, { x: view.x + view.width / 2 - w / 2, y: view.y, width: w, height: h })
+  const bottom = panelFreeFrame(1, view, [top])
+  assert.deepEqual(bottom, { x: top.x, y: view.y + view.height - h, width: w, height: h })
+  const corner = panelFreeFrame(1, view, [top, bottom])
+  assert.ok(corner.x === view.x && corner.y === view.y, 'a corner, covering nothing')
+  assert.deepEqual(panelFreeFrame(1, view, [view]), top, 'nothing free: the first place all the same')
+  assert.deepEqual(panelFreeFrame(1, view, [], 1), bottom, 'another panel does not take the same place')
 }
 console.log('live code behavior: passed')

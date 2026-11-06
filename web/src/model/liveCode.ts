@@ -1,9 +1,8 @@
 // The file the Agent is writing, as the Mac app's AgentPresence and WritingPanel:
-// read out of a save's arguments while the model writes them, played slowly
-// enough to see, and placed clear of the bird by its Card.
+// read out of a save's arguments while the model writes them, shown as far as
+// they have arrived, and placed clear of the bird by its Card.
 
-/** A file as it arrives in the arguments of a save (project_save,
- *  project_validate): `path` is undefined until its key has come, `text` is what
+/** A file as it arrives in the arguments of a save (project_save): `path` is undefined until its key has come, `text` is what
  *  has come of `bytes`, and `done` says the change is complete. */
 export interface SourceWriting { path?: string; text: string; done: boolean }
 
@@ -87,7 +86,7 @@ export class SourceWritingScanner {
 }
 
 /** The tools whose arguments carry whole files, shown as they are written. */
-export const writesSources = (tool: string) => tool === 'project_save' || tool === 'project_validate'
+export const writesSources = (tool: string) => tool === 'project_save'
 
 /** `definitions/<id>/<file>` → its Card and file. */
 export function fileOfCard(path: string): { card: string; file: string } | undefined {
@@ -97,18 +96,30 @@ export function fileOfCard(path: string): { card: string; file: string } | undef
 
 export interface LiveCode { card: string; file: string; text: string; saved: boolean }
 
-/** A file is played no faster than `rate` (characters a second), however fast
- *  it arrives, and each stays long enough to see; a long one speeds up so that
- *  the bird does not stay far behind (seconds). */
-export const CODE_TIMING = { rate: 150, shortest: 2, longest: 5, hold: 0.8, backlog: 20, first: 1.6 }
+/** The API sends a file in lumps of about 200 characters, about every 0.43 s
+ *  (measured: docs/ui-view.md), which at once would replace the panel's lines each
+ *  time: what arrives is written out over `ease`, up to the next lump. A short file
+ *  is seen `shortest` at the least; its last lines stay `hold` when no other file
+ *  comes after it; a pause in what arrives may last `stalled` before its scene ends
+ *  by itself (seconds). */
+export const CODE_TIMING = { ease: 0.45, shortest: 1.5, hold: 0.8, stalled: 5 }
+
+interface Scene { start: number; length: number; code: LiveCode; shownFrom: number; grewAt: number }
+
+/** How many characters of the scene's file are shown at `now`. */
+function shownOf(s: Scene, now: number): number {
+  const all = s.code.text.length
+  const u = (now - s.grewAt) / CODE_TIMING.ease
+  return u >= 1 ? all : Math.min(all, s.shownFrom + Math.floor((all - s.shownFrom) * Math.max(0, u)))
+}
 
 /** The files a model writes, a scene each, one after another. Times in seconds. */
 export class LiveCodePlayer {
-  private scenes: { start: number; length: number; code: LiveCode }[] = []
+  private scenes: Scene[] = []
   private scanner = new SourceWritingScanner()
   private index?: number
   private path?: string
-  private live?: { start: number; length: number; code: LiveCode }
+  private live?: Scene
 
   /** A piece of a tool call's arguments as the model writes them. */
   input(index: number, delta: string, now: number) {
@@ -130,51 +141,59 @@ export class LiveCodePlayer {
       this.path = w.path
       this.startScene({ ...at, text: w.text, saved: false }, now)
     } else if (this.live) {
+      this.live.shownFrom = shownOf(this.live, now)
+      this.live.grewAt = now
       this.live.code.text = w.text
       // It goes on arriving: its scene goes on.
-      if (this.live.start + this.live.length < now + 0.5) this.live.length = now - this.live.start + 1
+      if (this.live.start + this.live.length < now + CODE_TIMING.stalled / 2) this.live.length = now - this.live.start + CODE_TIMING.stalled
     }
     if (w.done) this.arrived(now)
   }
 
   private startScene(code: LiveCode, now: number) {
+    // The file being written goes first: one that has all arrived and still
+    // waits is not shown, and the one on the screen gives up its hold. So the
+    // window is never further behind than `shortest`.
+    this.scenes = this.scenes.filter((s) => s.start <= now && s.start + s.length > now)
     const last = this.scenes[this.scenes.length - 1]
-    const start = Math.max(now, last ? last.start + last.length : now)
-    if (start - now > CODE_TIMING.backlog) return // too far behind: not shown
-    this.scenes = this.scenes.filter((s) => s.start + s.length > now)
-    this.live = { start, length: CODE_TIMING.first, code }
+    if (last) last.length = Math.max(now - last.start, CODE_TIMING.shortest)
+    this.live = { start: last ? last.start + last.length : now, length: CODE_TIMING.stalled, code, shownFrom: 0, grewAt: now }
     this.scenes.push(this.live)
   }
 
-  /** The file has all arrived: its scene plays it out and holds its end. */
+  /** The file has all arrived: its scene holds its end. */
   private arrived(now: number) {
     if (!this.live) return
-    const played = Math.min(CODE_TIMING.longest, Math.max(CODE_TIMING.shortest, this.live.code.text.length / CODE_TIMING.rate))
-    this.live.length = Math.max(now - this.live.start, played) + CODE_TIMING.hold
+    this.live.length = Math.max(now - this.live.start, CODE_TIMING.shortest) + CODE_TIMING.hold
     this.live = undefined
   }
 
   /** The call ended, was asked again or was given up. What a call that went
-   *  through wrote plays on; `ok` false: it is not on the screen any more. */
+   *  through wrote holds its last lines; `ok` false: it is not on the screen any more. */
   ended(ok: boolean, now: number) {
     this.arrived(now)
     this.path = undefined
     this.index = undefined
-    if (!ok) this.scenes = []
+    if (!ok) this.stop()
   }
 
-  /** The save has gone through: what still plays says so. */
-  saved() {
+  /** No file is on the screen from now on: a call failed, or the workflow runs. */
+  stop() {
+    this.scenes = []
+  }
+
+  /** The save has gone through: a file that still waits is not shown, and the
+   *  one on the screen says so for what is left of its hold. */
+  saved(now: number) {
+    this.scenes = this.scenes.filter((s) => s.start <= now)
     for (const s of this.scenes) s.code.saved = true
   }
 
-  /** The file to show at `now`: as far as it has been played, never past what has arrived. */
+  /** The file to show at `now`, as far as it has been written out, never past what has arrived. */
   at(now: number): LiveCode | undefined {
     const s = this.scenes.find((x) => x.start <= now && now < x.start + x.length)
     if (!s) return undefined
-    // A long file speeds up to end within `longest`.
-    const rate = Math.max(CODE_TIMING.rate, s.code.text.length / CODE_TIMING.longest)
-    let text = s.code.text.slice(0, Math.floor((now - s.start) * rate))
+    let text = s.code.text.slice(0, shownOf(s, now))
     // Not half of a character outside the BMP.
     if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1)
     return { ...s.code, text }
@@ -213,4 +232,18 @@ export function panelFrame(card: Box, clear: number, scale: number, view: Box, o
     : fitsBelow && free(below) ? below
       : fitsAbove || (!fitsBelow && card.y - view.y > maxY - (card.y + card.height)) ? above : below
   return { x, y: Math.min(Math.max(y, view.y), maxY - height), width, height }
+}
+
+/** Where the panel of a Card that is not on the canvas goes (a new one has no
+ *  place until it is saved): the first place that covers nothing, from the top
+ *  middle of the view on (`slot`: a later panel starts further on). */
+export function panelFreeFrame(scale: number, view: Box, others: Box[] = [], slot = 0): Box {
+  const width = PANEL.width * scale, height = PANEL.height * scale
+  const xs = [view.x + view.width / 2 - width / 2, view.x, view.x + view.width - width]
+  const ys = [view.y, view.y + view.height - height]
+  const places = [[0, 0], [0, 1], [1, 0], [2, 0], [1, 1], [2, 1]].map(([i, j]) => ({ x: xs[i], y: ys[j], width, height }))
+  const turn = slot % places.length
+  const turned = [...places.slice(turn), ...places.slice(0, turn)]
+  const free = (p: Box) => !others.some((o) => o.x < p.x + p.width && p.x < o.x + o.width && o.y < p.y + p.height && p.y < o.y + o.height)
+  return turned.find(free) ?? turned[0]
 }

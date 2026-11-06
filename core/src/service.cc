@@ -775,7 +775,10 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         // the user's intent, and leaving a field blank must not remove that.
         if (p->meta_json() && p->meta_json()->size() > 0) ch.meta_json = p->meta_json()->str();
         if (p->link_json() && p->link_json()->size() > 0) ch.link_json = p->link_json()->str();
-        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
+        if (p->fill_description() && p->fill_description()->size() > 0) ch.fill_description = p->fill_description()->str();
+        if (p->fill_context() && p->fill_context()->size() > 0) ch.fill_context = p->fill_context()->str();
+        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0) ||
+                       (!ch.meta_json && (ch.fill_description || ch.fill_context));
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:

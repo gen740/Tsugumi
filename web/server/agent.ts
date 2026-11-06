@@ -14,7 +14,7 @@ import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
-import { planError, TransientError } from './chatgpt'
+import { ChatGPTError, planError, TransientError } from './chatgpt'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -32,6 +32,8 @@ export interface ToolSpec {
 export const DEFAULT_REQUESTS = AGENT.requests
 /** Filled by the Agent, never by the model. */
 const AGENT_FIELDS = new Set(AGENT.agentFields)
+/** Fields of a request that the apps use and the model is not offered. */
+const NOT_FOR_MODELS: Record<string, string[]> = AGENT.notForModels
 
 /** The permissions an approval_required Failure names. */
 export function approvalRequired(json: string): string[] | undefined {
@@ -72,7 +74,7 @@ export class ToolCatalog {
       return {
         name: toolName(r), payloadType: v.value, object: index,
         description: `${r.replace('Request', '')}: ${doc}`,
-        inputSchema: this.objectSchema(index, 0, AGENT_FIELDS),
+        inputSchema: this.objectSchema(index, 0, new Set([...AGENT_FIELDS, ...(NOT_FOR_MODELS[r] ?? [])])),
         mutating: obj.fields.some((f) => f.name === 'op_id'),
       }
     })
@@ -136,14 +138,31 @@ export class ToolCatalog {
 
 // ---- Conversation ------------------------------------------------------------
 
+/** The arguments of a tool call as the object they must be; undefined: broken
+ *  JSON or something else than an object (the API does not check them as they
+ *  stream). A broken call goes back as an empty one: the APIs want an object
+ *  there, and its text is in its result. */
+export function toolArguments(input: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(input)
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: string }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean; images?: ToolImage[] }
   /** A search the provider ran: what was asked and what came back. */
   | { type: 'web_search'; id: string; query: string; sources: WebSource[]; error?: string }
 
 export interface WebSource { url: string; title?: string }
+
+/** An image in a tool's result (a Card's display in run_record, a PNG read from
+ *  the project or an artifact), which the model sees as an image, never as text. */
+export interface ToolImage { media_type: string; data: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -198,7 +217,8 @@ export function loadConversation(file: string, id: string): Conversation {
       b && (b.type === 'text' ? typeof b.text === 'string'
         : b.type === 'tool_use' ? [b.id, b.name, b.input].every((v) => typeof v === 'string')
         : b.type === 'web_search' ? [b.id, b.query].every((v) => typeof v === 'string') && Array.isArray(b.sources)
-        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean')))
+        : b.type === 'tool_result' && [b.tool_use_id, b.content].every((v) => typeof v === 'string') && typeof b.is_error === 'boolean' &&
+          (b.images === undefined || (Array.isArray(b.images) && b.images.every((i: any) => [i?.media_type, i?.data].every((v) => typeof v === 'string')))))))
   if (!c || typeof c.id !== 'string' || !Number.isFinite(c.updatedAt) || !messages(c.messages) || !messages(c.archive) ||
       !Array.isArray(c.tools) || !c.tools.every((t: any) => t && [t.id, t.name, t.arguments].every((v) => typeof v === 'string') &&
         ['pending', 'sent', 'completed', 'skipped'].includes(t.state) && (t.opId === undefined || typeof t.opId === 'string')) ||
@@ -385,8 +405,10 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
   if (c.effort) body.output_config = { effort: c.effort }
   if (c.fast) body.speed = 'fast'
   if (tools.length) {
+    // Eager: the arguments come as the model writes them, not held back until
+    // each is whole, so the API no longer checks them (runTool does).
     body.tools = tools.map((t, i) => (t.server ? WEB_SEARCH_WIRE : {
-      name: t.name, description: t.description, input_schema: t.inputSchema, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
+      name: t.name, description: t.description, input_schema: t.inputSchema, eager_input_streaming: true, ...(i === tools.length - 1 ? { cache_control: cache } : {}),
     }))
   }
   return body
@@ -471,9 +493,7 @@ const WEB_SEARCH_TOOL: ToolSpec = {
  *  zero data retention. A turn's searches are capped. */
 const WEB_SEARCH_WIRE = { type: AGENT.webSearch.anthropicType, name: AGENT.webSearch.name, max_uses: AGENT.webSearch.maxUses }
 
-const parsedInput = (json: string | undefined): any => {
-  try { return JSON.parse(json ?? '{}') } catch { return {} }
-}
+const parsedInput = (json: string | undefined): any => toolArguments(json ?? '{}') ?? {}
 
 /** The sources in a web_search_tool_result's content, or its error object. */
 function searchResultOf(content: any): { sources: WebSource[]; error?: string } {
@@ -552,7 +572,7 @@ const TOOL_NAMESPACE = 'tsugumi'
 
 /** The conversation as Responses API input items: messages, function calls
  *  (the model's tool uses) and their outputs. */
-function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
+export function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] {
   const out: unknown[] = []
   for (const m of messages) {
     let texts: unknown[] = []
@@ -566,10 +586,13 @@ function responsesInput(messages: ChatMessage[], namespace?: string): unknown[] 
       else if (b.type === 'web_search') texts.push({ type: 'output_text', text: searchNote(b) })
       else if (b.type === 'tool_use') {
         flush()
-        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: b.input, ...(namespace ? { namespace } : {}) })
+        out.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: toolArguments(b.input) ? b.input : '{}', ...(namespace ? { namespace } : {}) })
       } else {
         flush()
-        out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.content })
+        const images = b.images ?? []
+        out.push({ type: 'function_call_output', call_id: b.tool_use_id, output: images.length
+          ? [{ type: 'input_text', text: b.content }, ...images.map((i) => ({ type: 'input_image', image_url: `data:${i.media_type};base64,${i.data}` }))]
+          : b.content })
       }
     }
     flush()
@@ -687,9 +710,13 @@ function openAISearch(action: any): { query: string; sources: WebSource[] } {
 function wire(b: ContentBlock): unknown {
   if (b.type === 'web_search') return { type: 'text', text: searchNote(b) }
   if (b.type === 'tool_use') {
-    let input: unknown = {}
-    try { input = JSON.parse(b.input) } catch {}
+    const input = toolArguments(b.input) ?? {}
     return { type: 'tool_use', id: b.id, name: b.name, input }
+  }
+  if (b.type === 'tool_result' && b.images?.length) {
+    const { images, ...rest } = b
+    return { ...rest, content: [{ type: 'text', text: b.content },
+      ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))] }
   }
   return b
 }
@@ -762,6 +789,8 @@ export function delegateTasks(input: string): Helper[] | string {
     if (!name || name.length > 40 || !/^[\p{L}\p{N}_-]+$/u.test(name)) return `the name "${name}" (letters, digits, - and _)`
     if (helpers.some((h) => h.name === name)) return `two tasks named ${name}`
     if (!cards.length || !instruction) return `${name} has no Cards or no instruction`
+    // A helper sees nothing else: a placeholder here is not filled in by anyone.
+    if (/__[A-Z][A-Z_]*__/.test(instruction)) return `the instruction of ${name} has a placeholder; write each instruction out in full`
     for (const c of cards) {
       if (!c || c.includes('/')) return `${c} is not a root-level Card id`
       if (owner.has(c)) return `${c} is in both ${owner.get(c)} and ${name}`
@@ -847,7 +876,89 @@ export function runReply(json: string): { runId?: string; state?: string } {
   }
 }
 
+/** What one image may be, in base64 characters (the Claude API's limit). */
+const IMAGE_LIMIT = 10_000_000
+/** Told in the text of a result whose images the provider did not accept. */
+const IMAGE_REFUSED = '\n[the model service did not accept the image of this result, so it is not shown]'
+
+/** A tool's result without the data of its images, and those images. Byte
+ *  fields come as {"base64": ...}: PNG and JPEG data among them leaves the
+ *  text, whole or not (a cut image is no use to read). */
+export function splitImages(result: string): { text: string; images: ToolImage[] } {
+  if (!result.includes('"base64":')) return { text: result, images: [] }
+  let parsed: unknown
+  try { parsed = JSON.parse(result) } catch { return { text: result, images: [] } }
+  const images: ToolImage[] = []
+  let found = false
+  const replacing = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(replacing)
+    if (!v || typeof v !== 'object') return v
+    const o = v as Record<string, unknown>, keys = Object.keys(o)
+    if (keys.length === 1 && typeof o.base64 === 'string') {
+      const png = o.base64.startsWith('iVBORw0KGgo'), jpeg = o.base64.startsWith('/9j/')
+      if (png || jpeg) {
+        found = true
+        const bytes = Buffer.from(o.base64, 'base64')
+        const about = `${png ? 'PNG' : 'JPEG'} image, ${bytes.length} bytes`
+        // Whether the data runs to its end marker (a read can stop in the middle).
+        const whole = png ? bytes.length >= 12 && bytes.subarray(-8, -4).toString('latin1') === 'IEND'
+          : bytes.length >= 2 && bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9
+        if (!whole) return `${about}: only part of it, not shown`
+        if (o.base64.length > IMAGE_LIMIT) return `${about}: too large to show`
+        images.push({ media_type: png ? 'image/png' : 'image/jpeg', data: o.base64 })
+        return `${about}: shown with this result`
+      }
+    }
+    return Object.fromEntries(keys.sort().map((k) => [k, replacing(o[k])]))
+  }
+  const out = replacing(parsed)
+  return found ? { text: JSON.stringify(out), images } : { text: result, images: [] }
+}
+
+const FOLDER_ENTRIES = 300
+const FOLDER_FILE_LIMIT = 50_000
+
+/** A reference folder in one call, so that the model need not walk it a level
+ *  per reply: a Card's folder gives all its files, any other lists every file
+ *  under it. Hidden files and symbolic links are left out. */
+export function readFolder(root: string): string {
+  const files: string[] = []
+  const walk = (rel: string) => {
+    for (const d of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      if (d.name.startsWith('.')) continue
+      const child = rel ? `${rel}/${d.name}` : d.name
+      if (d.isDirectory()) walk(child)
+      else if (d.isFile()) files.push(child)
+    }
+  }
+  walk('')
+  // As Swift sorts them: by UTF-16 code units, whatever the locale.
+  files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  if (!files.includes('_card.json')) {
+    const shown = files.slice(0, FOLDER_ENTRIES).join('\n')
+    return files.length > FOLDER_ENTRIES ? `${shown}\n[${files.length - FOLDER_ENTRIES} more files]` : shown
+  }
+  return files.map((rel) => {
+    const data = fs.readFileSync(path.join(root, rel))
+    let text: string | undefined
+    if (data.length <= FOLDER_FILE_LIMIT) {
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(data) } catch {}
+    }
+    return `--- ${rel}\n${text ?? `(${data.length} bytes, not shown: read it by its path)`}\n`
+  }).join('')
+}
+
+/** A tool's result as the model gets it: its images as images, its text clipped. */
+export function resultBlock(id: string, result: string, isError: boolean): ContentBlock {
+  const { text, images } = splitImages(result)
+  return { type: 'tool_result', tool_use_id: id, content: clip(text), is_error: isError, ...(images.length ? { images } : {}) }
+}
+
 /** How much of a tool's result the model gets; a longer one says it was cut. */
+/** What the model is told of arguments that are not a JSON object: to write
+ *  them again, with the text it wrote (it may mend that instead of starting over). */
+export const invalidArgumentsText = (input: string) => fill(AGENT.invalidArguments, { json: JSON.stringify({ INVALID_JSON: input }) })
+
 export const RESULT_LIMIT = 60_000
 export function clip(s: string): string {
   if (s.length <= RESULT_LIMIT) return s
@@ -962,10 +1073,10 @@ export class Agent {
 
   /** One tool call from an agent outside the web UI (Claude Code through the
    *  plugin): the same checks, approvals and RPC as a model's call here. */
-  async call(name: string, input: string, events: (e: AgentEvent) => void): Promise<{ text: string; isError: boolean }> {
+  async call(name: string, input: string, events: (e: AgentEvent) => void): Promise<{ text: string; isError: boolean; images?: ToolImage[] }> {
     if (!EXTERNAL_TOOL_NAMES(this.catalog).has(name)) return { text: `unknown tool ${name}`, isError: true }
     const r = await this.runTool(randomUUID(), name, input, events)
-    return r.type === 'tool_result' ? { text: r.content, isError: r.is_error } : { text: '', isError: true }
+    return r.type === 'tool_result' ? { text: r.content, isError: r.is_error, images: r.images } : { text: '', isError: true }
   }
 
   /** Runs the helpers of a delegate call at the same time and returns their
@@ -1127,6 +1238,7 @@ export class Agent {
       let cutReplies = 0
       let done = false
       let refusals = 0
+      let brokenReplies = 0
       for (let i = 0; i < this.maxSteps; i++) {
         if (signal.aborted) throw new Cancelled()
         await this.compactIfNeeded(events, signal)
@@ -1197,6 +1309,8 @@ export class Agent {
         if (signal.aborted) throw new Cancelled()
         this.conversation.messages.push({ role: 'user', content: results })
         this.save()
+        // Each try may be a whole file long: asked again a few times, as a cut reply is.
+        if (uses.some((u) => !toolArguments(u.input)) && ++brokenReplies > 3) throw new Error("the arguments of the model's tool calls were broken JSON three times")
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? { kind: 'finished' } : { kind: 'stepLimit', steps: this.maxSteps, unconfirmedRun: this.unconfirmedRun })
@@ -1276,6 +1390,15 @@ export class Agent {
       } catch (e) {
         if (signal.aborted) throw new Cancelled()
         const retryable = e instanceof HTTPStatusError ? e.retryable : e instanceof TypeError || e instanceof ConnectionLost || e instanceof TransientError
+        // The provider refused a request with images (a model without vision, a
+        // corrupt or oversized picture): asking again as it is would fail for good.
+        if (((e instanceof HTTPStatusError && e.status === 400 && e.body.toLowerCase().includes('image')) ||
+             (e instanceof ChatGPTError && e.kind === 'unsupported')) && this.dropToolImages()) {
+          if (text || parts.length) events({ kind: 'discardText' })
+          this.save()
+          events({ kind: 'retrying', message: 'the model did not accept an image from a tool; going on without it' })
+          continue
+        }
         if (!retryable || attempt >= 3) throw e
         // The reply is asked again: what it had streamed goes.
         if (text || parts.length) events({ kind: 'discardText' })
@@ -1287,6 +1410,19 @@ export class Agent {
         continue
       }
     }
+  }
+
+  /** A request with an image was refused: without them the conversation goes
+   *  on, and the model is told which results had one. */
+  private dropToolImages(): boolean {
+    let dropped = false
+    for (const m of this.conversation.messages) m.content = m.content.map((b) => {
+      if (b.type !== 'tool_result' || !b.images?.length) return b
+      dropped = true
+      const { images: _, ...rest } = b
+      return { ...rest, content: b.content + IMAGE_REFUSED }
+    })
+    return dropped
   }
 
   /** A search's result: in this reply's blocks, or in an earlier reply's when
@@ -1340,10 +1476,7 @@ export class Agent {
       return [`not found: ${rel}`, true]
     }
     if (real !== realBase && !real.startsWith(realBase + '/')) return [`not found: ${rel}`, true]
-    if (isDir(real)) {
-      const entries = fs.readdirSync(real, { withFileTypes: true }).filter((d) => !d.name.startsWith('.'))
-      return [entries.map((d) => (d.isDirectory() ? d.name + '/' : d.name)).sort().join('\n'), false]
-    }
+    if (isDir(real)) return [readFolder(real), false]
     try {
       const data = fs.readFileSync(real)
       if (data.length > 200_000) return [data.subarray(0, 200_000).toString('utf8') + '\n[cut at 200000 bytes]', false]
@@ -1375,7 +1508,7 @@ export class Agent {
       if (!missing.length) continue
       const results: ContentBlock[] = missing.map((id) => {
         const r = this.conversation.tools.find((t) => t.id === id)
-        if (r?.state === 'completed') return { type: 'tool_result', tool_use_id: id, content: clip(r.result ?? ''), is_error: r.isError }
+        if (r?.state === 'completed') return resultBlock(id, r.result ?? '', !!r.isError)
         if (r?.state === 'pending') r.state = 'skipped'
         return {
           type: 'tool_result', tool_use_id: id, is_error: true,
@@ -1397,12 +1530,12 @@ export class Agent {
     events({ kind: 'toolStarted', id, name, arguments: input })
     const record: ToolRecord = this.conversation.tools.find((t) => t.id === id) ?? { id, name, arguments: input, state: 'pending', isError: false }
     this.conversation.tools = this.conversation.tools.filter((t) => t.id !== id)
+    // Broken arguments never run, whatever the tool: the model is told to write
+    // them again. (A reply cut at the output limit does not come this far: loop.)
+    const args = toolArguments(input)
+    if (!args) return this.finish(record, invalidArgumentsText(input), true, events)
     if (name === REFERENCE_TOOL.name && Object.keys(this.references).length) {
-      let p = ''
-      try {
-        p = String(JSON.parse(input)?.path ?? '')
-      } catch {}
-      const [text, isError] = this.readReference(p)
+      const [text, isError] = this.readReference(String(args.path ?? ''))
       return this.finish(record, text, isError, events)
     }
     if (name === GUIDE_SHOW_TOOL.name && (this.role === 'guide' || !this.helper)) return this.finish(record, AGENT.guide.shown, false, events)
@@ -1415,15 +1548,6 @@ export class Agent {
     }
     const spec = this.catalog.tool(name)
     if (!spec) return this.finish(record, `unknown tool ${name}`, true, events)
-    // Incomplete or invalid arguments are never executed.
-    let args: Record<string, unknown>
-    try {
-      const v = JSON.parse(input)
-      if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error()
-      args = v
-    } catch {
-      return this.finish(record, 'the arguments are not a complete JSON object', true, events)
-    }
     // tsugumid on this host reads any absolute folder: only the attached ones are offered.
     if (name === 'attached_folder_read') {
       const folder = typeof args.folder === 'string' ? args.folder.replace(/\/+$/, '') : ''
@@ -1593,7 +1717,7 @@ export class Agent {
     this.conversation.tools.push(record)
     this.save()
     events({ kind: 'toolFinished', id: record.id, name: record.name, ok: !isError, summary: toolSummary(result) })
-    return { type: 'tool_result', tool_use_id: record.id, content: clip(result), is_error: isError }
+    return resultBlock(record.id, result, isError)
   }
 
   private renderReply(type: string, bb: import('flatbuffers').ByteBuffer, table: number): string {
@@ -1619,7 +1743,7 @@ export class Agent {
         }
         for (const m of this.conversation.messages) m.content = m.content.map((b) =>
           b.type === 'tool_result' && b.tool_use_id === t.id
-            ? { ...b, content: clip(t.result!), is_error: error ?? true } : b)
+            ? resultBlock(t.id, t.result!, error ?? true) : b)
       } catch {}
     }
     this.save()

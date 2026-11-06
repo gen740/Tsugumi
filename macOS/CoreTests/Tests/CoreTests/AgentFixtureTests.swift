@@ -476,7 +476,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     for m in conv.messages[(i + 1)...] {
       for b in m.content {
         if case .toolUse(let id, _, _) = b { asked.insert(id) }
-        if case .toolResult(let id, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
+        if case .toolResult(let id, _, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
       }
     }
     await client.close()
@@ -507,7 +507,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
     let conv = await agent.conversation
     let answered = conv.messages[2].content.compactMap { b -> (String, Bool)? in
-      if case .toolResult(let id, _, let e) = b { return (id, e) }
+      if case .toolResult(let id, _, let e, _) = b { return (id, e) }
       return nil
     }
     #expect(answered.map(\.0) == ["toolu_done", "toolu_never"] && answered.map(\.1) == [false, true], "\(conv.messages[2])")
@@ -774,6 +774,11 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(!e3 && sdk.contains("def display_table"))
     let (_, e4) = await agent.readReference("demos/../../core/src/store.cc")
     #expect(e4)
+    // A folder in one call: a Card's files, or every file under any other.
+    let (card, e6) = await agent.readReference("demos/report/definitions/render")
+    #expect(!e6 && ["--- _card.json\n", "--- _outputs.fbs\n", "--- default.nix\n", "--- src/main.py\n"].allSatisfy { card.contains($0) })
+    let (tree, e7) = await agent.readReference("demos/report")
+    #expect(!e7 && tree.split(separator: "\n").contains("definitions/render/src/main.py"))
     // The Draft demos are tasks and the finished demo of each is its answer:
     // neither is listed nor read (implementing casa-draft must not copy casa).
     let (demos, e5) = await agent.readReference("demos")

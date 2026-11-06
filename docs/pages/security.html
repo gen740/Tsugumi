@@ -251,6 +251,8 @@
 </li>
 <li><p>変更を伴う tool 呼び出しには一意な <code>op_id</code> が付与され、応答が途切れた場合も <code>OperationGet</code> で適用状態を確認するため、盲目的な再実行による二重適用は起きません。</p>
 </li>
+<li><p>モデルが書いた引数は Agent が検査します。Claude API には書いている途中を見せるために <code>eager_input_streaming</code> を指定しているので、API は引数を検査しません。JSON のオブジェクトになっていない呼び出しは、どの tool でも実行せず、<code>is_error</code> の結果で書き直しを促します（1 ターンで 3 回まで。次の要求には空の引数として送り、書かれた文字は結果に含めます）。出力の上限で切れた応答はそれより前の段階で止め、tool を 1 つも実行せず、小さく分けてやり直させます。型と値の検査は、これまでどおり RPC を組み立てるときと <code>tsugumid</code> で行います。</p>
+</li>
 <li><p><strong>Card の権限は利用者のものです。</strong> Agent の保存が、Card に次のどれかを新たに与えるときは、<code>tsugumid</code> は保存せずに <code>approval_required</code> で返し、広がる権限を 1 つずつ挙げます（Card in Card の中の Card も含みます。<code>core/src/permissions.cc</code>）。</p>
 <ul>
 <li>ネットワーク（<code>network: true</code>）</li>
