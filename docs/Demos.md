@@ -221,7 +221,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 
 - そのまま実行する。7 つの分岐が同時に動きます（同時に動く数は設定の「並列実行数」、既定 4）。
 - `forest` の `max_depth` を 3 にして、その Card だけを実行する。他の分岐は動かず、`forest` の正解率だけが 0.9475 から 0.7570 に下がります。
-- 比べ直すときは `share` から実行する。`compare` はすべての分岐の結果を待つためです。シードと 1 スレッドで固定しているので、変えていない分岐の正解率は同じです。
+- 比べ直すときは `forest` から先を実行する（「ここから下流を実行」）。動くのは `forest` と `compare` から先だけで、`compare` は新しい `forest` の結果と、他の分岐・`share` の保存された入力で比べます。変えていない分岐は動かないので、その正解率は同じです。
 - `knn` の `k`、`svm` の `gamma`、`cnn` の `epochs` を変える。
 - `prepare` の `train_size` を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（`svm` と `knn` の予測時間が伸びます）。
 
@@ -263,7 +263,7 @@ start → settings ─ share ─┬→ lorenz      ローレンツ・アトラ�
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
 | **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
-| **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`share` から実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
+| **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`forest` から先を実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
 | **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
 | **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
 | **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
