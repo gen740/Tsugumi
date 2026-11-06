@@ -91,6 +91,12 @@ extension ProjectSession {
     return lines
   }
 
+  /// Whether a wire is drawn dotted: either end is a Draft, with no code
+  /// behind it yet (`to` is nil at the bar of a Card in Card's outputs or inputs).
+  func isDraftWire(from: CardKey, to: CardKey?) -> Bool {
+    kind(from) == .draft || to.map { kind($0) == .draft } ?? false
+  }
+
   /// Whether a Card does not run because it needs a Draft's output: a
   /// required input fed only by Drafts or Cards waiting on one (the core
   /// leaves the same Cards out of a run).

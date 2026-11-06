@@ -66,6 +66,13 @@
 
 Claude Code、Codex などへの作業の指示です（`CLAUDE.md` はこのファイルへのリンク）。
 
+### Mac アプリを動かすとき
+
+人が同じ Mac で別の作業をしています。最前面を奪わず、ダイアログも出さないでください。
+
+- **起動:** [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) を使います（`open -g` で背面に開き、撮影もそのままできます）。直接起動するなら `open -g -n --env TSUGUMI_UI_SCRIPT=<絶対パス> <Tsugumi.app>` にし、実行ファイルを直接動かしません。アクティブな色の画像が要るときだけ `TSUGUMI_UI_FRONT=1` を付けます。
+- **ビルド:** `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh` で署名します。ad-hoc 署名のビルドは再ビルドのたびに別のアプリとして扱われ、API キーを読むときにパスワードのダイアログが出ます（[docs/Development.md](docs/Development.md) の「開発版の署名」）。証明書がない環境（`security find-identity -v -p codesigning`）ではそのままビルドします。
+
 ### 互換性
 
 - **v1.0.0 になるまでは互換性を気にしない。** プロジェクトの文書（`tsugumi.json`・`layout.json` など）、設定、RPC プロトコル、保存形式、VM・サポートフォルダの中身などは、移行コードや互換レイヤーを書かずに変えてよい。
