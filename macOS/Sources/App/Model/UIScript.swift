@@ -354,9 +354,16 @@ final class UIScript {
         guard let win, w.count >= 4, let x = Double(w[1]), let y = Double(w[2]), let dy = Double(w[3]),
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(-dy), wheel2: 0, wheel3: 0)
         else { say("no window for " + line); break }
-        let screenHeight = NSScreen.screens.first?.frame.maxY ?? 0
-        cg.location = CGPoint(x: win.frame.minX + x, y: screenHeight - win.frame.maxY + y)
-        if let e = NSEvent(cgEvent: cg) { win.sendEvent(e) }
+        // An NSEvent made from a CGEvent has no window: its locationInWindow is
+        // its screen location, y up from the primary screen's bottom. So the CG
+        // location is the one that reads back as this point of the window.
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        cg.location = CGPoint(x: x, y: primaryHeight - (win.frame.height - y))
+        guard let e = NSEvent(cgEvent: cg) else { say("no event for " + line); break }
+        // Taken from the queue, so it is NSApp.currentEvent while views are hit-tested
+        // (the canvas and the timeline ask, to take the wheel only).
+        NSApp.postEvent(e, atStart: true)
+        if let next = NSApp.nextEvent(matching: .scrollWheel, until: nil, inMode: .default, dequeue: true) { win.sendEvent(next) }
       case "drag":
         let title = w.dropFirst(5).joined(separator: " ")
         let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }
