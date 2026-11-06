@@ -121,6 +121,7 @@ struct GroupFrameView: View {
 /// text size is its own (`fontSize` in layout.json).
 struct StickyNoteView: View {
   let note: JSONValue
+  var selected = false
   let onResize: (CGSize) -> Void
   @Environment(\.canvasZoom) private var z
 
@@ -134,6 +135,7 @@ struct StickyNoteView: View {
     .padding(10 * z)
     .background(noteColor(note["color"]?.string).opacity(0.28), in: RoundedRectangle(cornerRadius: 6 * z))
     .overlay(RoundedRectangle(cornerRadius: 6 * z).strokeBorder(noteColor(note["color"]?.string).opacity(0.5)))
+    .overlay { if selected { RoundedRectangle(cornerRadius: 6 * z).strokeBorder(Color.accentColor, lineWidth: 2.4) } }
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
     .help("ダブルクリックで編集")
   }
@@ -162,6 +164,7 @@ struct ResizeHandle: View {
 struct OutputFrameView: View {
   let session: ProjectSession
   let cardKey: CardKey
+  var selected = false
   let onExpand: () -> Void
   let onClose: () -> Void
   let onResize: (CGSize) -> Void
@@ -188,6 +191,7 @@ struct OutputFrameView: View {
     .padding(8 * z)
     .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 8 * z).strokeBorder(Color.purple.opacity(0.45)))
+    .overlay { if selected { RoundedRectangle(cornerRadius: 8 * z).strokeBorder(Color.accentColor, lineWidth: 2.4) } }
     .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
   }
 }

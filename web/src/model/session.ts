@@ -2141,46 +2141,50 @@ export class ProjectSession extends Observable {
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
+    this.edit((x) => x.removeCards(keys, scope))
+  }
+
+  /** A step of an edit: see deleteCards. */
+  removeCards(keys: Set<CardKey>, scope: string[]) {
     const ids = new Set([...keys].map((k) => path(k).pop()!).filter(Boolean))
     if (!ids.size) return
     const prefix = this.projectPrefix(scope) ?? ''
-    this.edit((x) => {
-      // Each Card's definition folder goes with it, and a Card in Card's own external copy.
-      for (const k of keys) {
-        const ext = x.cardExternal(k)
-        if (ext) x.removeExternal(ext)
-        x.removeCardDefinition(k)
-      }
-      const cut = x.connections(scope).filter((c) => ids.has(str(get(c, 'from', 'card')) ?? '') || ids.has(str(get(c, 'to', 'card')) ?? ''))
-      x.updateGraph(scope, (g) => {
-        g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
-        g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
-      })
-      x.dropDraftPorts(cut, scope)
-      if (prefix) {
-        // Boundary ports of removed Cards go too.
-        x.updateExternal(prefix, (e) => {
-          const b = get(e.project, 'boundary')
-          if (!isObj(b)) return
-          for (const side of ['inputs', 'outputs']) {
-            const o = b.get(side)
-            if (isObj(o)) b.set(side, new JObj(o.entries().filter(([, v]) => !ids.has(str(get(v, 'card')) ?? ''))))
-          }
-        })
-      }
-      x.updateLayout(scope, (l) => {
-        for (const k of keys) {
-          // Layout entries of the Card and of anything inside it.
-          const lk = x.layoutKey(k)
-          const cards = l.get('cards')
-          if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
-          const displays = l.get('displays')
-          if (isObj(displays)) displays.set(lk, undefined)
+    const x = this
+    // Each Card's definition folder goes with it, and a Card in Card's own external copy.
+    for (const k of keys) {
+      const ext = x.cardExternal(k)
+      if (ext) x.removeExternal(ext)
+      x.removeCardDefinition(k)
+    }
+    const cut = x.connections(scope).filter((c) => ids.has(str(get(c, 'from', 'card')) ?? '') || ids.has(str(get(c, 'to', 'card')) ?? ''))
+    x.updateGraph(scope, (g) => {
+      g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
+      g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
+    })
+    x.dropDraftPorts(cut, scope)
+    if (prefix) {
+      // Boundary ports of removed Cards go too.
+      x.updateExternal(prefix, (e) => {
+        const b = get(e.project, 'boundary')
+        if (!isObj(b)) return
+        for (const side of ['inputs', 'outputs']) {
+          const o = b.get(side)
+          if (isObj(o)) b.set(side, new JObj(o.entries().filter(([, v]) => !ids.has(str(get(v, 'card')) ?? ''))))
         }
       })
-      x.updateGroups(scope, (groups) => {
-        for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
-      })
+    }
+    x.updateLayout(scope, (l) => {
+      for (const k of keys) {
+        // Layout entries of the Card and of anything inside it.
+        const lk = x.layoutKey(k)
+        const cards = l.get('cards')
+        if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
+        const displays = l.get('displays')
+        if (isObj(displays)) displays.set(lk, undefined)
+      }
+    })
+    x.updateGroups(scope, (groups) => {
+      for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
     })
   }
 
@@ -2529,21 +2533,31 @@ export class ProjectSession extends Observable {
   }
 
   updateNote(id: string, fn: (n: JObj) => void) {
+    this.edit((x) => x.changeNote(id, fn))
+  }
+
+  /** A step of an edit: see updateNote. */
+  changeNote(id: string, fn: (n: JObj) => void) {
     const sc = this.scopeHolding('notes', id)
     if (!sc) return
-    this.edit((x) => x.updateLayout(sc, (l) => {
+    this.updateLayout(sc, (l) => {
       const notes = (arr(l.get('notes')) ?? []).map((n) => clone(n))
       const n = notes.find((n) => str(get(n, 'id')) === id)
       if (!isObj(n)) return
       fn(n)
       l.set('notes', notes)
-    }))
+    })
   }
 
   removeNote(id: string) {
+    this.edit((x) => x.dropNote(id))
+  }
+
+  /** A step of an edit: see removeNote. */
+  dropNote(id: string) {
     const sc = this.scopeHolding('notes', id)
     if (!sc) return
-    this.edit((x) => x.updateLayout(sc, (l) => l.set('notes', (arr(l.get('notes')) ?? []).filter((n) => str(get(n, 'id')) !== id))))
+    this.updateLayout(sc, (l) => l.set('notes', (arr(l.get('notes')) ?? []).filter((n) => str(get(n, 'id')) !== id)))
   }
 
   groups(scope: string[]): JObj[] {
@@ -2589,9 +2603,19 @@ export class ProjectSession extends Observable {
     return get(this.layoutOf(path(k).slice(0, -1)), 'displays', this.layoutKey(k))
   }
 
+  /** A frame without a place of its own is drawn beside its Card, so it goes where the Card goes. */
+  frameFollowsCard(k: CardKey, moving: Set<CardKey>): boolean {
+    return moving.has(k) && dbl(get(this.displayFrame(k), 'x')) === undefined
+  }
+
   updateDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
+    this.edit((x) => x.changeDisplayFrame(k, fn))
+  }
+
+  /** A step of an edit: see updateDisplayFrame. */
+  changeDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
     const lk = this.layoutKey(k)
-    this.edit((x) => x.updateLayout(path(k).slice(0, -1), (l) => {
+    this.updateLayout(path(k).slice(0, -1), (l) => {
       let displays = l.get('displays')
       if (!isObj(displays)) {
         displays = obj()
@@ -2603,7 +2627,7 @@ export class ProjectSession extends Observable {
         ;(displays as JObj).set(lk, d)
       }
       fn(d as JObj)
-    }))
+    })
   }
 
   /** Where a scope's boundary ports are drawn (inside a Card in Card). */

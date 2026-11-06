@@ -17,11 +17,11 @@ import re
 import numpy as np
 import pytest
 
-from conftest import demo_environment
+from conftest import ROOT, demo_environment
 from projects import start_run, wait_run
 from test_demos import connect, display_text, edit_card, set_param, stderr
 from test_history import read_all
-from tsugumi_client import RpcFailure, path, text
+from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_DEMO_RUNS") != "1",
@@ -149,3 +149,32 @@ def test_mnist_classifiers(mnist):
     moved = leaderboard(c, onward)
     assert moved["forest"] == pytest.approx(float(shown.group(1)), abs=1e-4)
     assert {m: a for m, a in moved.items() if m != "forest"} == {m: a for m, a in scores.items() if m != "forest"}
+
+
+def test_the_finished_cards_fit_the_draft_demo(tmp_path):
+    """What the helpers are asked for can be done: the finished classifiers,
+    saved over the Drafts of mnist-classifiers-draft as a helper saves, run on
+    its data and clear the floors written in the Drafts, and compare reads them."""
+    env = demo_environment(tmp_path, "mnist-classifiers-draft")
+    try:
+        c = connect(env)
+        finished = ROOT / "demos" / "mnist-classifiers" / "definitions"
+        changes = []
+        for card in MODELS + ["compare"]:
+            body = json.loads((finished / card / "_card.json").read_text())
+            if os.environ.get("TSUGUMI_TEST_CONTAINER") != "1":
+                body["sandbox"] = False  # as demo_environment does on a host
+            changes.append(change("PutDefinition", id=card, cardJson=json.dumps(body), keepMeta=True))
+            for f in ["default.nix", "_outputs.fbs", "src/main.py"]:
+                changes.append(change("PutSource", path=f"definitions/{card}/{f}", bytes=list((finished / card / f).read_bytes())))
+        c.call("ProjectSaveRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test", changes=changes)
+        run_id = start_run(c, ["start"])
+        succeeded(c, run_id)
+        scores = leaderboard(c, run_id)
+        drafts = ROOT / "demos" / "mnist-classifiers-draft" / "definitions"
+        for card in MODELS:
+            content = json.loads((drafts / card / "_meta.json").read_text())["content"]
+            floor = float(re.search(r"正解率が ([\d.]+) 以上", content).group(1))
+            assert scores[card] >= floor, (card, scores[card], floor)
+    finally:
+        env.cleanup()

@@ -20,13 +20,19 @@ export class WorkflowTab extends Observable {
   readonly id = uuid()
   back: string[][] = []
   selectedConnection?: number
+  /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
+  selectedNotes = new Set<string>()
+  selectedFrames = new Set<CardKey>()
 
   constructor(public scope: string[], public selection = new Set<CardKey>()) {
     super()
   }
 
-  setSelection(s: Iterable<CardKey>) {
+  /** Choosing Cards anew lets go of the notes and frames, which come from a marquee. */
+  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = []) {
     this.selection = new Set(s)
+    this.selectedNotes = new Set(notes)
+    this.selectedFrames = new Set(frames)
     this.changed()
   }
 
@@ -35,7 +41,7 @@ export class WorkflowTab extends Observable {
     if (s.join('/') === this.scope.join('/')) return
     this.back.push(this.scope)
     this.scope = s
-    this.selection = new Set()
+    this.setSelection([])
     this.selectedConnection = undefined
     this.changed()
   }
@@ -44,7 +50,7 @@ export class WorkflowTab extends Observable {
     const s = this.back.pop()
     if (!s) return
     this.scope = s
-    this.selection = new Set()
+    this.setSelection([])
     this.selectedConnection = undefined
     this.changed()
   }

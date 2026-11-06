@@ -6,7 +6,9 @@
       "type": "string[]",
       "data": [
         "cpp",
-        "python"
+        "python",
+        "julia",
+        "r"
       ]
     }
   ]

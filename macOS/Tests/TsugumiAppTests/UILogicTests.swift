@@ -405,6 +405,24 @@ import Testing
     #expect(abs(g.size.width - width) < 1e-5, "\(name) width \(g.size.width)")
     #expect(abs(g.size.height - height) < 1e-5, "\(name) height \(g.size.height)")
     let edge = flow == .topToBottom ? width : height
+    if d.kind == .fork || d.kind == .merge {
+      let r = g.outlineRect
+      for z: CGFloat in [1, 0.25] {
+        // What is drawn: every port is on it, and rounding takes only a little off the wide edge.
+        let outline = g.outline(in: CGRect(x: r.minX * z, y: r.minY * z, width: r.width * z, height: r.height * z))
+        let line = outline.strokedPath(StrokeStyle(lineWidth: 2 * z))
+        for (i, output) in (0..<d.inputs.count).map({ ($0, false) }) + (0..<d.outputs.count).map({ ($0, true) }) {
+          let p = g.port("p\(i)", output: output)
+          #expect(line.contains(CGPoint(x: p.x * z, y: p.y * z)), "\(name) port \(i) output \(output) on the outline at \(z)")
+        }
+        let box = outline.boundingRect
+        #expect((flow == .topToBottom ? box.width : box.height) >= edge * z - 8 * z, "\(name) keeps its width at \(z)")
+      }
+      // Many ports make it bigger, not flatter.
+      #expect((flow == .topToBottom ? r.height : r.width) >= edge / 4 - 1e-9, "\(name) not flat")
+      let icon = g.iconCenter(in: r)
+      #expect(abs((flow == .topToBottom ? icon.x : icon.y) - (flow == .topToBottom ? r.midX : r.midY)) < 1e-5, "\(name) icon on the axis")
+    }
     for (key, output) in [("in", false), ("out", true)] {
       let list = c[key] as! [Double]
       let apex = (d.kind == .fork && !output) || (d.kind == .merge && output)

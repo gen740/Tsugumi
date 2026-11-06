@@ -206,8 +206,8 @@ export class CardGeometry {
     switch (this.shape) {
       // Its ports are at a quarter and three quarters of this.
       case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
-      case 'fork': return { width: this.fanWidth(this.outputs.length), height: 40 }
-      case 'merge': return { width: this.fanWidth(this.inputs.length), height: 40 }
+      case 'fork': return { width: this.fanWidth(this.outputs.length), height: this.fanLength(this.outputs.length) }
+      case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       // The start Card: its name and a run button, nothing more.
       case 'start': return { width: 116, height: 34 }
       default: return { width: 0, height: 0 }
@@ -218,6 +218,15 @@ export class CardGeometry {
   private fanWidth(count: number) {
     if (!this.grid) return Math.max(56, count * 30 + 12)
     return gridLengthAtLeast(Math.max(56, (count - 1) * this.fanPitch(count, this.grid) + 16), this.grid)
+  }
+
+  /** A fork or merge along the flow: a quarter of its wide edge once that is
+   *  past 40, so many ports make a bigger triangle and not a flatter one (its
+   *  corners stay at 27 degrees or more). On whole grids, as far as it grows. */
+  private fanLength(count: number) {
+    const length = this.fanWidth(count) / 4
+    if (length <= 40) return 40
+    return this.grid ? Math.ceil(length / this.grid) * this.grid : length
   }
 
   /** The closest ports can be with a row each (grid/n, or whole grids on a fine grid). */
@@ -355,19 +364,27 @@ export class CardGeometry {
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6)
       default: {
-        // Triangle: apex upstream (fork) or downstream (merge).
+        // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
+        // twice so it stays sharp: the ports of that side are on its very tip.
+        // Its corners shrink with the zoom, as `r` does.
         const fork = this.shape === 'fork'
+        const radius = (7 * (this.flow === 'topToBottom' ? r.height : r.width)) / this.routingSize.height
+        const right = r.x + r.width, bottom = r.y + r.height
         if (this.flow === 'topToBottom') {
-          return roundedPolygon(fork
-            ? [P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height), P(r.x, r.y + r.height)]
-            : [P(r.x, r.y), P(r.x + r.width, r.y), P(r.x + r.width / 2, r.y + r.height)], 4)
+          const apex = P(r.x + r.width / 2, fork ? r.y : bottom)
+          return roundedPolygon(fork ? [apex, apex, P(right, bottom), P(r.x, bottom)] : [P(r.x, r.y), P(right, r.y), apex, apex], radius)
         }
-        const inset = r.height / 2
-        return roundedPolygon(fork
-          ? [P(r.x, r.y + inset), P(r.x + r.width, r.y), P(r.x + r.width, r.y + r.height), P(r.x, r.y + r.height - inset)]
-          : [P(r.x, r.y), P(r.x + r.width, r.y + inset), P(r.x + r.width, r.y + r.height - inset), P(r.x, r.y + r.height)], 7)
+        const apex = P(fork ? r.x : right, r.y + r.height / 2)
+        return roundedPolygon(fork ? [apex, apex, P(right, r.y), P(right, bottom)] : [P(r.x, r.y), apex, apex, P(r.x, bottom)], radius)
       }
     }
+  }
+
+  /** Where the icon of a routing Card sits in the outline `r`: on the axis of the
+   *  flow, and in a triangle toward the wide edge, where it has room. */
+  iconCenter(r: Rect): Pt {
+    const along = this.shape === 'fork' ? 0.62 : this.shape === 'merge' ? 0.38 : 0.5
+    return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height / 2 }
   }
 
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
@@ -478,7 +495,8 @@ function roundedRect(r: Rect, rad: number): string {
   return `M${x + c},${y}H${x + w - c}A${c},${c} 0 0 1 ${x + w},${y + c}V${y + h - c}A${c},${c} 0 0 1 ${x + w - c},${y + h}H${x + c}A${c},${c} 0 0 1 ${x},${y + h - c}V${y + c}A${c},${c} 0 0 1 ${x + c},${y}Z`
 }
 
-/** A closed polygon with rounded corners (SVG path data). */
+/** A closed polygon with rounded corners (SVG path data): each corner is cut
+ *  `radius` along its sides (at most half of them; a side of no length leaves it sharp). */
 export function roundedPolygon(pts: Pt[], radius: number): string {
   const n = pts.length
   if (n < 3) return ''
@@ -627,9 +645,10 @@ export class WireRouter {
 
   /** How far along the flow a port's wire has to run to get out of a Card's box (0: not in it). */
   private depth(o: Rect, p: Pt, dir: 1 | -1) {
-    if (p.x <= o.x || p.x >= o.x + o.width) return 0
-    if (dir > 0) return o.y <= p.y && p.y < o.y + o.height ? o.y + o.height - p.y : 0
-    return o.y < p.y && p.y <= o.y + o.height ? p.y - o.y : 0
+    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // beside the wire, and the wire would otherwise go on through all of it.
+    if (p.x <= o.x || p.x >= o.x + o.width || p.y <= o.y || p.y >= o.y + o.height) return 0
+    return dir > 0 ? o.y + o.height - p.y : p.y - o.y
   }
 
   /** Where a port's wire is out of the boxes it starts in (a Card's port is on the edge already). */
