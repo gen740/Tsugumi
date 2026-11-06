@@ -21,3 +21,4 @@ await import("./storage")
 await import("./table")
 
 await import("./draft")
+await import("./summary")

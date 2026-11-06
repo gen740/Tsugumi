@@ -22,6 +22,7 @@
     "definitions/rgb/_outputs.fbs",
     "definitions/rgb/src/main.py",
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",
@@ -54,6 +55,7 @@
    ],
    "removed": [
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",
@@ -86,6 +88,7 @@
    ],
    "removed": [
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",
@@ -123,6 +126,7 @@
    ],
    "removed": [
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",
@@ -154,6 +158,7 @@
    ],
    "removed": [
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",
@@ -192,6 +197,7 @@
    },
    "removed": [
     "definitions/share/_card.json",
+    "definitions/share/_meta.json",
     "definitions/spectrum/_card.json",
     "definitions/spectrum/_meta.json",
     "definitions/spectrum/_outputs.fbs",

@@ -154,6 +154,8 @@ auto run(Card::Input&amp; input) -&gt; Card::Output {
 </li>
 <li><p><strong>Card in Card</strong>: 子 Workflow は <code>boundary.inputs/outputs</code> で外側のポートを内部 Card のポートに対応づけ、外からは通常の Card として接続・実行できます（Run の対象にでき、単体実行では境界入力に保存済みの値を使う）。状態と履歴は完全な Card path で区別します。見た目だけのグループ（layout.json）とは別物です。</p>
 </li>
+<li><p><strong>概要</strong>: Card の概要は種類によらず <code>_meta.json</code> の <code>description</code> だけに持ちます（Card in Card も同じ。<code>_card.json</code> には持ちません）。<code>_meta.json</code> は Nix の評価に入らないので、書き換えても再ビルドは起きません。</p>
+</li>
 <li><p><strong>Draft</strong>: <code>_meta.json</code> に概要・処理内容・制約・完了条件・入出力の用途を持ちます。ポートは線をつなぐと自動で作られ（入力は <code>_card.json</code>、出力は <code>_meta.json</code>。最後の線を切ると消える）、型なしのまま配線できます。実行も成功扱いもせず、Draft に依存する Card は理由付きで blocked、独立した部分はそのまま実行します。「Card を生成」は Agent に Draft・配線・説明を渡し、PutDefinition/PutSource の 1 トランザクションで型・Nix・ソースを保存してから検証・実行させます（途中の失敗や取消では何も保存されず、計画は残ります）。</p>
 </li>
 <li><p><strong>Agent</strong>: <code>agent/</code> の独立パッケージ。tool 定義は <code>tsugumi.bfbs</code>（FBS の doc comment 付き）から生成し、tool 引数⇄FlatBuffers も同じ BFBS で変換します（64 bit は 10 進文字列）。op_id は tool 呼び出しごとに Agent が付け、会話・tool 証跡と一緒にホスト側へ永続化します。応答を失った変更は OperationGet で照合し、盲目的に再送しません。モデルの API キーは Keychain に保存し core/worker には渡しません。取消はモデル通信と未送信 tool を止め、受理済み run は止めません。</p>

@@ -65,7 +65,7 @@ function readCard(root, id, ports, wires) {
   const meta = readJson(path.join(dir, '_meta.json'), {})
   const kind = kindOf(dir, def)
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
-  const description = def.description || meta.description
+  const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
   // Resolved ports are the core's; a Draft's are its declared ones and its wires (as portData in session.ts).
   const resolved = kind === 'draft' ? undefined : ports?.[id]

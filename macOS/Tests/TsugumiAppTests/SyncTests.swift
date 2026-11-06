@@ -287,6 +287,41 @@ import Testing
     await s.close()
   }
 
+  @Test func aCardsSummaryIsInItsMetaWhateverItsKind() async throws {
+    let dir = try Self.project(), other = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    func written(_ id: String) throws -> String? {
+      let url = dir.appendingPathComponent("definitions/\(id)/_meta.json")
+      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+      return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
+    }
+
+    let code = CardEditorModel(session: s, cardKey: "a")
+    code.meta = .object([("description", .string("logs the value"))])
+    #expect(await code.apply())
+    #expect(try written("a") == "logs the value")
+    #expect(s.nodeData("a").summary == "logs the value")
+    #expect(s.cardDescription("a") == "logs the value")
+    #expect(s.cardDefinition("a")?["description"] == nil)
+
+    // A Card in Card has no _card.json, and its summary is saved all the same.
+    let k = try s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
+    await s.save()
+    #expect(s.saveError == nil)
+    let name = path(k).last!
+    let link = CardEditorModel(session: s, cardKey: k)
+    link.meta = .object([("description", .string("the imported graph"))])
+    #expect(await link.apply())
+    #expect(try written(name) == "the imported graph")
+    #expect(s.nodeData(k).summary == "the imported graph")
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -296,21 +331,21 @@ import Testing
     s.start()
     try await Self.connected(s)
     let m = CardEditorModel(session: s, cardKey: "a")
-    m.definition?["description"] = .string("mine")
+    m.definition?["symbol"] = .string("mine")
     // Another client changes another setting and the same one.
     let other = RPCClient(endpoint: d.endpoint.url)
     _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
     let snap = try await other.inspect()
     _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-      Change.putDefinition(id: "a", cardJSON: "{\"template\": \"logger\", \"maxRuns\": 3, \"description\": \"theirs\"}", metaJSON: nil),
+      Change.putDefinition(id: "a", cardJSON: "{\"template\": \"logger\", \"maxRuns\": 3, \"symbol\": \"theirs\"}", metaJSON: nil),
     ])
     for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
     m.follow()
     #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
-    #expect(m.definition?["description"]?.string == "mine") // touched here: kept
-    #expect(m.conflicts == ["_card.json: description"])
+    #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
+    #expect(m.conflicts == ["_card.json: symbol"])
     #expect(await m.apply())
-    #expect(s.confirmedDefinitions["a"]?["description"]?.string == "mine")
+    #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "mine")
     #expect(s.confirmedDefinitions["a"]?["maxRuns"]?.uint64 == 3)
   }
 
