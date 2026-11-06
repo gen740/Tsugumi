@@ -551,6 +551,7 @@
 "使う接続先" = "Connection in Use";
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
+"保存前" = "Not saved";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -645,7 +646,6 @@
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
 "別のプロジェクトを開く…" = "Open Another Project…";
-"別のプロジェクトを開く（必要な保存の後に切り替えます）" = "Open another project (switches after the needed save)";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
@@ -760,7 +760,6 @@
 "実行中は Card を変更できません。実行が終わってから適用してください。" = "Cards cannot change while running. Apply after the run ends.";
 "実行中はデモを開けません。停止するか終了を待ってください。" = "A demo cannot be opened while a run is going. Stop it or wait for it to end.";
 "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。" = "Projects cannot be switched while running. Stop the run or wait for it to end.";
-"実行中は切り替えられません" = "Cannot switch while running";
 "実行中は別の版に移れません。" = "You cannot move to another version while a run is in progress.";
 "実行中は変更できません" = "Cannot change while running";
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
@@ -1012,6 +1011,7 @@
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you are interested in.";
+"設定の「API」で接続を設定してください" = "Set up a connection in Settings > API";
 "設定を表示するプロジェクト（開いているプロジェクトから選びます）" = "The project whose settings are shown (one of the open projects)";
 "許可しない" = "Don't Allow";
 "許可する" = "Allow";

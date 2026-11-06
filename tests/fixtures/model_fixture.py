@@ -428,7 +428,7 @@ class ChatGPT:
     access: dict = {}      # access token -> client id (only the newest per client)
     refresh: dict = {}     # refresh token -> client id (only the newest per client)
     used_refresh: set = set()
-    stats = {"refreshes": 0, "revoked": 0, "violations": [], "plan_requests": 0, "authorize": []}
+    stats = {"refreshes": 0, "revoked": 0, "violations": [], "plan_requests": 0, "authorize": [], "model_lists": 0}
 
     @classmethod
     def issue(cls, client_id: str) -> tuple[str, str]:
@@ -487,6 +487,8 @@ class Handler(BaseHTTPRequestHandler):
             if (self.headers.get("authorization") or "").startswith("Bearer chatgpt-"):
                 if self._plan_client() is None:
                     return
+                with ChatGPT.lock:
+                    ChatGPT.stats["model_lists"] += 1
                 self._json({"models": [{"slug": "fixture", "display_name": "Fixture model", "visibility": "list"},
                                        {"slug": "fixture-hidden", "display_name": "Hidden", "visibility": "hide"}]})
                 return

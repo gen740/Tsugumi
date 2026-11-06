@@ -1,5 +1,6 @@
-/* The player's own rules. build.mjs puts before them the Web UI's colors (scoped to
-   .tp-root), its helper classes and web/src/styles/canvas.css. */
+/* The demo player's own rules (ui/demoPlayer.tsx). For the documentation site,
+   docs/site/player/build.mjs puts before them the Web UI's colors (scoped to
+   .tp-root), its helper classes and canvas.css. */
 .tp-root { font: 13px/1.35 var(--font); color: var(--label); -webkit-font-smoothing: antialiased; user-select: none; text-align: left; letter-spacing: normal; }
 .tp-root * { box-sizing: border-box; }
 .tp-root button { font: inherit; color: inherit; }
