@@ -234,28 +234,37 @@ import Testing
   #expect(p.liveCode(at: t0) == nil && p.beats.isEmpty)
 
   p.toolInput(index: 2, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/src/main.py","bytes":"import os"#, now: t0)
-  // The bird goes there and says so; all that has arrived shows at once.
+  // The bird goes there and says so; what has arrived is written out up to the next lump.
   #expect(p.beats.map(\.beat) == [.compose("load")])
   #expect(p.line(at: t0)?.text == "load を書いています")
-  #expect(p.liveCode(at: t0)?.text == "import os")
+  #expect(p.liveCode(at: t0)?.text == "")
+  #expect(p.liveCode(at: at(T.codeEase / 2))?.text == "impo")
+  #expect(p.liveCode(at: at(T.codeEase + 0.01))?.text == "import os")
   #expect(p.liveCode(at: t0)?.file == "src/main.py")
-  // Pieces faster than the screen are held, and none is lost; a piece goes on the same scene.
-  p.toolInput(index: 2, tool: "project_save", delta: "\\nimp", now: at(0.001))
-  #expect(p.liveCode(at: at(0.001))?.text == "import os")
-  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: at(0.05))
-  #expect(p.liveCode(at: at(0.05))?.text == "import os\nimport")
+  // A lump in many pieces at once, none lost, on the same scene: from where it had got to.
+  p.toolInput(index: 2, tool: "project_save", delta: "\\nimp", now: at(1))
+  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: at(1.001))
+  #expect(p.liveCode(at: at(1.001))?.text == "import os")
+  #expect(p.liveCode(at: at(1.001 + T.codeEase / 2))?.text == "import os\nim")
+  #expect(p.liveCode(at: at(1.001 + T.codeEase + 0.01))?.text == "import os\nimport")
   #expect(p.beats.count == 1)
+  // The next lump before this one has been written out: on from where it has got to, never back.
+  p.toolInput(index: 2, tool: "project_save", delta: " x", now: at(2))
+  p.toolInput(index: 2, tool: "project_save", delta: " y", now: at(2 + T.codeEase / 2))
+  let inLump = p.liveCode(at: at(2 + T.codeEase / 2))?.text.count ?? 0
+  #expect(inLump == "import os\nimport x".count - 1)
+  #expect(p.liveCode(at: at(2 + T.codeEase * 1.5 + 0.01))?.text == "import os\nimport x y")
 
   // A slow model: the scene lasts as long as the file arrives, a pause included.
   p.toolInput(index: 2, tool: "project_save", delta: " a", now: at(30))
-  #expect(p.liveCode(at: at(30 + T.codeStalled - 0.1))?.text == "import os\nimport a")
+  #expect(p.liveCode(at: at(30 + T.codeStalled - 0.1))?.text == "import os\nimport x y a")
 
   // The next file comes: the one on the screen has been seen long enough, so it
   // does not hold, and the next shows at once.
   p.toolInput(index: 2, tool: "project_save", delta: #""}},{"value":{"path":"definitions/rgb/src/main.py","bytes":"from"#, now: at(31))
   #expect(p.beats.map(\.beat) == [.compose("load"), .compose("rgb")])
   #expect(p.liveCode(at: at(31))?.card == "rgb")
-  #expect(p.liveCode(at: at(31))?.text == "from")
+  #expect(p.liveCode(at: at(31 + T.codeEase + 0.01))?.text == "from")
 
   // The last file has arrived and the save goes through: it says so for its hold,
   // and is gone by then.
@@ -299,7 +308,7 @@ import Testing
   #expect(!p.beats.contains { $0.code != nil })
   // Once it is close enough, the file still being written gets its scene, whole so far.
   p.toolInput(index: 0, tool: "project_save", delta: "y", now: at(free))
-  #expect(p.liveCode(at: at(free))?.text == "xy")
+  #expect(p.liveCode(at: at(free + T.codeEase + 0.01))?.text == "xy")
 }
 
 @MainActor @Test func aSaveEndsWhatWaitsAndARunEndsTheWindow() {

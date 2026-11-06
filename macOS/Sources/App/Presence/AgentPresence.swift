@@ -53,8 +53,11 @@ final class AgentPresence {
     static let thread = 1.5
     static let threadStart = 0.35, threadLength = 1.1
     static let run = 1.4
-    /// A file as it is written shows what has arrived, at the pace it arrives;
-    /// a short one is seen this long at the least.
+    /// The API sends a file in lumps of about 200 characters, about every 0.43 s
+    /// (measured: docs/ui-view.md), which at once would replace the panel's lines
+    /// each time. What arrives is written out over this long, up to the next lump.
+    static let codeEase = 0.45
+    /// A short file is seen this long at the least.
     static let codeShortest = 1.5
     /// Its last lines stay this long when no other file comes after it.
     static let codeHold = 0.8
@@ -103,6 +106,22 @@ final class AgentPresence {
     var text: String
     /// The save has gone through while it still plays.
     var saved = false
+    /// How far it was shown when more of it last arrived, and when.
+    var shownFrom = 0
+    var grewAt = Date.distantPast
+
+    /// How many characters are shown at `now`.
+    func shown(at now: Date) -> Int {
+      let all = text.unicodeScalars.count
+      let u = now.timeIntervalSince(grewAt) / Timing.codeEase
+      return u >= 1 ? all : min(all, shownFrom + Int(Double(all - shownFrom) * max(0, u)))
+    }
+
+    mutating func grow(to text: String, at now: Date) {
+      shownFrom = shown(at: now)
+      grewAt = now
+      self.text = text
+    }
   }
 
   /// The files of the compose scenes (apart from `beats`: they change many
@@ -114,7 +133,6 @@ final class AgentPresence {
   private var liveID: Int?
   private var liveScanner = SourceWritingScanner()
   private var liveIndex: Int?
-  private var livePublished = Date.distantPast
 
   /// Bumped when an effect ends, so views that animate it can stop.
   private(set) var revision = 0
@@ -160,9 +178,7 @@ final class AgentPresence {
   }
 
   /// A piece of a tool call's arguments as the model writes them. Each file is a
-  /// scene of its own, showing what has arrived. Pieces may come far faster than
-  /// a screen shows them, so the view changes at most 30 times a second (a new
-  /// file and its end at once).
+  /// scene of its own, showing what has arrived.
   func toolInput(index: Int, tool: String, delta: String, now: Date = Date()) {
     guard working, PresenceEvents.writesSources(tool: tool) else { return }
     if liveIndex != index {
@@ -176,22 +192,19 @@ final class AgentPresence {
       if liveScanner.current != nil { arrived(now: now) }
       return
     }
-    let isNew = livePath != path
-    guard isNew || w.done || now.timeIntervalSince(livePublished) >= 1.0 / 30 else { return }
-    livePublished = now
-    if isNew {
+    if livePath != path {
       arrived(now: now)
       livePath = path
-      startCode(LiveCode(card: key([id]), file: file, text: w.text), now: now)
+      startCode(LiveCode(card: key([id]), file: file, text: w.text, grewAt: now), now: now)
     } else if let liveID {
-      codes[liveID]?.text = w.text
+      codes[liveID]?.grow(to: w.text, at: now)
       // It goes on arriving: its scene goes on.
       if let i = beats.indices.last, beats[i].code == liveID, beats[i].end < now.addingTimeInterval(Timing.codeStalled / 2) {
         beats[i].length = now.timeIntervalSince(beats[i].start) + Timing.codeStalled
       }
     } else if !w.done {
       // It waited behind the bird's other scenes: it may have room now.
-      startCode(LiveCode(card: key([id]), file: file, text: w.text), now: now)
+      startCode(LiveCode(card: key([id]), file: file, text: w.text, grewAt: now), now: now)
     }
     if w.done { arrived(now: now) }
   }
@@ -241,11 +254,12 @@ final class AgentPresence {
     codes.removeAll()
   }
 
-  /// The file to show at `now`, as far as it has arrived. nil when no file's
-  /// scene is playing.
+  /// The file to show at `now`, as far as it has been written out, never past
+  /// what has arrived. nil when no file's scene is playing.
   func liveCode(at now: Date) -> LiveCode? {
-    guard let cur = current(at: now)?.beat, cur.end > now, let id = cur.code else { return nil }
-    return codes[id]
+    guard let cur = current(at: now)?.beat, cur.end > now, let id = cur.code, var code = codes[id] else { return nil }
+    code.text = String(String.UnicodeScalarView(code.text.unicodeScalars.prefix(code.shown(at: now))))
+    return code
   }
 
   func enqueue(_ beat: Beat, now: Date = Date()) {

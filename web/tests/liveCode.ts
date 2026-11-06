@@ -23,21 +23,27 @@ assert.equal(fileOfCard('layout.json'), undefined)
 
 const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `definitions/${card}/m.py`, bytes } }) + ','
 
-// Shows what has arrived, at the pace it arrives.
+// What has arrived is written out up to the next lump, never past what has arrived.
 {
   const p = new LiveCodePlayer()
   p.input(0, '{"changes":[{"value":{"path":"definitions/load/m.py","bytes":"import os', 100)
-  assert.equal(p.at(100)?.text, 'import os')
+  assert.equal(p.at(100)?.text, '')
+  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
+  assert.equal(p.at(100 + T.ease + 0.01)?.text, 'import os')
   assert.equal(p.at(100)?.card, 'load')
+  // The next lump, before this one has been written out: on from where it has got to, never back.
+  p.input(0, ' 1', 100 + T.ease / 2)
+  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
+  assert.equal(p.at(100 + T.ease * 1.5 + 0.01)?.text, 'import os 1')
   assert.equal(p.at(100)?.file, 'm.py')
   // A slow model: the scene lasts as long as the file arrives, a pause included.
   p.input(0, ' a', 130)
-  assert.equal(p.at(130 + T.stalled - 0.1)?.text, 'import os a')
+  assert.equal(p.at(130 + T.stalled - 0.1)?.text, 'import os 1 a')
   // The next file comes: the one on the screen has been seen long enough, so it
   // does not hold, and the next shows at once.
   p.input(0, '"}},{"value":{"path":"definitions/rgb/m.py","bytes":"from', 131)
   assert.equal(p.at(131)?.card, 'rgb')
-  assert.equal(p.at(131)?.text, 'from')
+  assert.equal(p.at(131 + T.ease + 0.01)?.text, 'from')
   // The last file has arrived and the save goes through: it says so for its hold,
   // and is gone by then.
   p.input(0, ' a"}}]}', 133)

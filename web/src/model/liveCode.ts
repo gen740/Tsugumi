@@ -97,18 +97,30 @@ export function fileOfCard(path: string): { card: string; file: string } | undef
 
 export interface LiveCode { card: string; file: string; text: string; saved: boolean }
 
-/** A short file is seen `shortest` at the least; its last lines stay `hold` when
- *  no other file comes after it; a pause in what arrives may last `stalled`
- *  before its scene ends by itself (seconds). */
-export const CODE_TIMING = { shortest: 1.5, hold: 0.8, stalled: 5 }
+/** The API sends a file in lumps of about 200 characters, about every 0.43 s
+ *  (measured: docs/ui-view.md), which at once would replace the panel's lines each
+ *  time: what arrives is written out over `ease`, up to the next lump. A short file
+ *  is seen `shortest` at the least; its last lines stay `hold` when no other file
+ *  comes after it; a pause in what arrives may last `stalled` before its scene ends
+ *  by itself (seconds). */
+export const CODE_TIMING = { ease: 0.45, shortest: 1.5, hold: 0.8, stalled: 5 }
+
+interface Scene { start: number; length: number; code: LiveCode; shownFrom: number; grewAt: number }
+
+/** How many characters of the scene's file are shown at `now`. */
+function shownOf(s: Scene, now: number): number {
+  const all = s.code.text.length
+  const u = (now - s.grewAt) / CODE_TIMING.ease
+  return u >= 1 ? all : Math.min(all, s.shownFrom + Math.floor((all - s.shownFrom) * Math.max(0, u)))
+}
 
 /** The files a model writes, a scene each, one after another. Times in seconds. */
 export class LiveCodePlayer {
-  private scenes: { start: number; length: number; code: LiveCode }[] = []
+  private scenes: Scene[] = []
   private scanner = new SourceWritingScanner()
   private index?: number
   private path?: string
-  private live?: { start: number; length: number; code: LiveCode }
+  private live?: Scene
 
   /** A piece of a tool call's arguments as the model writes them. */
   input(index: number, delta: string, now: number) {
@@ -130,6 +142,8 @@ export class LiveCodePlayer {
       this.path = w.path
       this.startScene({ ...at, text: w.text, saved: false }, now)
     } else if (this.live) {
+      this.live.shownFrom = shownOf(this.live, now)
+      this.live.grewAt = now
       this.live.code.text = w.text
       // It goes on arriving: its scene goes on.
       if (this.live.start + this.live.length < now + CODE_TIMING.stalled / 2) this.live.length = now - this.live.start + CODE_TIMING.stalled
@@ -144,7 +158,7 @@ export class LiveCodePlayer {
     this.scenes = this.scenes.filter((s) => s.start <= now && s.start + s.length > now)
     const last = this.scenes[this.scenes.length - 1]
     if (last) last.length = Math.max(now - last.start, CODE_TIMING.shortest)
-    this.live = { start: last ? last.start + last.length : now, length: CODE_TIMING.stalled, code }
+    this.live = { start: last ? last.start + last.length : now, length: CODE_TIMING.stalled, code, shownFrom: 0, grewAt: now }
     this.scenes.push(this.live)
   }
 
@@ -176,10 +190,14 @@ export class LiveCodePlayer {
     for (const s of this.scenes) s.code.saved = true
   }
 
-  /** The file to show at `now`, as far as it has arrived. */
+  /** The file to show at `now`, as far as it has been written out, never past what has arrived. */
   at(now: number): LiveCode | undefined {
     const s = this.scenes.find((x) => x.start <= now && now < x.start + x.length)
-    return s && { ...s.code }
+    if (!s) return undefined
+    let text = s.code.text.slice(0, shownOf(s, now))
+    // Not half of a character outside the BMP.
+    if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1)
+    return { ...s.code, text }
   }
 }
 
