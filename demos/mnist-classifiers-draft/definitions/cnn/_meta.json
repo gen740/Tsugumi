@@ -1,0 +1,16 @@
+{
+  "description": "畳み込みニューラルネットで数字を当てる",
+  "content": "画像を 1×28×28 のまま見る小さなネット。Conv2d(1, channels, 3, padding=1)、ReLU、MaxPool2d(2)、Conv2d(channels, 2·channels, 3, padding=1)、ReLU、MaxPool2d(2)、Flatten、Linear(2·channels·49, 64)、ReLU、Linear(64, 10)。torch を CPU で使い、torch.set_num_threads(1) と torch.use_deterministic_algorithms(True)、シード固定で動かす。import torch は main.py の先頭に書いてよい。Adam（lr=1e-3）、バッチ 64、CrossEntropyLoss。channels（既定 16）、epochs（既定 8）、seed（既定 0）はパラメータにする。1 層目がテスト画像 1 枚から取り出したものを並べて図に足す。data は prepare の npz ファイルのパスで、train_images と test_images は 0〜1 に揃えた 784 次元の配列、train_labels と test_labels は数字、digest はテスト画像の指紋。OMP_NUM_THREADS=1 を main.py の先頭（import より前）で設定して 1 スレッドで動かす。学習と予測の時間は time.process_time() の差で測る。出力 result の型は 7 つの分類器で同じで、compare が 1 つの型で読むので、_outputs.fbs は一字も変えずに 「namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;」とする。model は Card の id、settings はパラメータの値の文字列、digest は受け取った値をそのまま、predictions はテスト全枚の予測。正解率・時間と、間違いの内訳（正解と予測の 10×10 の表）を matplotlib の図で表示する。次を assert で確かめる: predictions の長さがテスト枚数と等しいこと、予測がすべて 0〜9 であること、正解率が 0.95 以上であること、パラメータの総数が 10·channels + 18·channels² + 2·channels + 6272·channels + 64 + 650 と等しいこと、最後のエポックの訓練損失が最初のエポックの半分より小さいこと。numpy・matplotlib・torch を使う。",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare の部分データ（npz ファイルのパス）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "正解率、CPU 時間、設定、テスト全枚の予測"
+    }
+  ]
+}

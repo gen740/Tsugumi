@@ -195,5 +195,6 @@ in
 | `ecology-models`（生態系のモデル比較） | 実データ（ハドソン湾会社の毛皮の記録）への当てはめ、手書きの RK4 と Nelder-Mead、AIC・BIC と残した年の予測の比較、当てはめが似ていても先の動きが違うこと、保存量と文献値での確認 |
 | `*-draft` | 計画だけのプロジェクトから Agent の「Card を生成」で実装する |
 | `dynamics-draft` | 互いに依存しない 6 つの Draft を、Agent が helper に手分けして同時に実装させる |
+| `mnist-classifiers-draft` | 7 つの分類器の Draft を helper が同時に実装し、Agent が 1 つの比較に合流させる（データの Card は実装済み） |
 
 各デモの Card の構成と動きは[同梱デモのしくみ](Demos.md)を参照してください。デモはホームの「デモを見る」から「コピーを開く」を選ぶことで、`~/Documents/Tsugumi/<demo>` に編集可能なコピーを作ってすぐ試せます。

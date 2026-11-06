@@ -1,0 +1,8 @@
+{
+  "template": "draft",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ]
+}
