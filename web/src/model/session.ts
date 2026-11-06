@@ -3175,6 +3175,9 @@ export const KIND_ICON: Record<CardKind, string> = {
   code: 'chevron.left.forwardslash.chevron.right',
 }
 
+/** A kind as the daemon names it (VersionCanvasCard.kind). */
+export const cardKindNamed = (name: string): CardKind => ((KINDS as string[]).includes(name) ? name as CardKind : 'code')
+
 export function definitionKind(def: J | undefined): CardKind {
   const t = str(get(def, 'template'))
   if (t && (KINDS as string[]).includes(t)) return t as CardKind
