@@ -101,7 +101,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 - **すべての名前空間を分離**（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（`lo`）のみです。`network: true` を指定した Card に限り、network 名前空間を分離せず（`--share-net`）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。
 - **Linux capability をすべて破棄**（`--cap-drop ALL`）します。
-- **見えるファイル**：`/nix/store`（読み取り専用）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。
+- **見えるファイル**：`/nix/store`（読み取り専用）、worker の実行ファイル（開発ビルドで `/nix/store` の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。
 - **環境変数は空から再構成**（`PATH=/var/empty`、`LANG=C.UTF-8`、および Tsugumi が渡す変数のみ）し、`tsugumid` やホストの環境変数は引き継ぎません。
 - **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
 - **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。

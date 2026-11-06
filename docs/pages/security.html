@@ -110,7 +110,7 @@
 <ul>
 <li><strong>すべての名前空間を分離</strong>（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（<code>lo</code>）のみです。<code>network: true</code> を指定した Card に限り、network 名前空間を分離せず（<code>--share-net</code>）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。</li>
 <li><strong>Linux capability をすべて破棄</strong>（<code>--cap-drop ALL</code>）します。</li>
-<li><strong>見えるファイル</strong>：<code>/nix/store</code>（読み取り専用）、プロジェクトの <code>runs</code> と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が <code>hostFolders</code> で指定した Mac のフォルダ（<code>/host/&lt;name&gt;</code>、<code>write: true</code> のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。</li>
+<li><strong>見えるファイル</strong>：<code>/nix/store</code>（読み取り専用）、worker の実行ファイル（開発ビルドで <code>/nix/store</code> の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの <code>runs</code> と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が <code>hostFolders</code> で指定した Mac のフォルダ（<code>/host/&lt;name&gt;</code>、<code>write: true</code> のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは一切見えません。</li>
 <li><strong>環境変数は空から再構成</strong>（<code>PATH=/var/empty</code>、<code>LANG=C.UTF-8</code>、および Tsugumi が渡す変数のみ）し、<code>tsugumid</code> やホストの環境変数は引き継ぎません。</li>
 <li><strong>出力の受け渡し</strong>：各呼び出しの出力先ディレクトリは <code>SCM_RIGHTS</code> でファイル記述子（FD）として渡し、worker 内からは <code>/proc/self/fd/900</code> としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。</li>
 <li><strong>入力を FD で渡さない理由</strong>：読み取り専用で開いた FD であっても、Linux では <code>/proc/self/fd/N</code> を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。</li>
