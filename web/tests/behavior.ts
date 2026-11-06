@@ -30,3 +30,5 @@ await import("./modelMenu")
 await import("./projectActions")
 
 await import("./thumbnails")
+
+await import("./portGrid")

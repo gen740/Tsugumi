@@ -5,7 +5,7 @@
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
 import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import { NEW_PORT, Pt, Rect } from '../model/canvasKit'
+import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
@@ -341,7 +341,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const a = cv.world(start), b = cv.world(local(ev))
         const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }
         tab.selectedConnection = undefined
-        tab.setSelection(scene.cardKeys.filter((k) => intersects(r, { ...session.position(k), ...scene.geometry(k).size })))
+        tab.setSelection(scene.cardKeys.filter((k) => intersects(r, { ...session.placedPosition(k), ...scene.geometry(k).size })))
       })
       return
     }
@@ -381,8 +381,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           const p = s.position(m)
           let x = p.x + dx, y = p.y + dy
           if (prefs.showGrid) {
-            x = Math.round(x / prefs.gridSize) * prefs.gridSize
-            y = Math.round(y / prefs.gridSize) * prefs.gridSize
+            x = snapToGrid(x, prefs.gridSize)
+            y = snapToGrid(y, prefs.gridSize)
           }
           s.setPosition(m, { x, y })
         }
@@ -421,8 +421,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (!moved) return
       let x = origin.x + (ev.clientX - start.x) / z, y = origin.y + (ev.clientY - start.y) / z
       if (prefs.showGrid) {
-        x = Math.round(x / prefs.gridSize) * prefs.gridSize
-        y = Math.round(y / prefs.gridSize) * prefs.gridSize
+        x = snapToGrid(x, prefs.gridSize)
+        y = snapToGrid(y, prefs.gridSize)
       }
       // Layout only (the external's layout.json).
       session.setBoundaryPosition(scope, input ? 'inputs' : 'outputs', { x: Math.round(x), y: Math.round(y) })

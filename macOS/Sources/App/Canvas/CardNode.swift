@@ -209,7 +209,16 @@ extension ProjectSession {
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
-      draftEditing: editing, untitled: draftUntitled(k))
+      draftEditing: editing, untitled: draftUntitled(k),
+      portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil)
+  }
+
+  /// Where a Card is drawn: with the grid on, one saved off the grid (placed
+  /// before the grid was on, or under another spacing) is shown on the nearest
+  /// line, so its ports are on the grid too. Nothing is saved until it is moved.
+  func placedPosition(_ k: CardKey) -> CGPoint {
+    let p = position(k), prefs = AppPreferences.shared
+    return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

@@ -87,7 +87,7 @@ export class Scene {
   }
 
   origin(k: CardKey): Pt {
-    const p = this.session.position(k)
+    const p = this.session.placedPosition(k)
     const d = this.drag.cards
     return d && d.keys.has(k) ? { x: p.x + d.dx, y: p.y + d.dy } : p
   }
@@ -156,7 +156,7 @@ export class Scene {
     if (!ins.length && !outs.length) return undefined
     let box: Rect | null = null
     for (const k of this.cardKeys) {
-      const r = { ...this.session.position(k), ...this.geometry(k).size }
+      const r = { ...this.session.placedPosition(k), ...this.geometry(k).size }
       box = box ? union(box, r) : r
     }
     const bx = box ?? { x: 0, y: 0, width: 240, height: 120 }

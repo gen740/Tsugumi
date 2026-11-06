@@ -221,7 +221,7 @@ struct GraphCanvas: View {
   }
 
   func origin(_ k: CardKey) -> CGPoint {
-    var p = session.position(k)
+    var p = session.placedPosition(k)
     if let d = drag, d.key == k || (tab.selection.contains(k) && tab.selection.contains(d.key)) {
       p.x += d.offset.width / camera.zoom
       p.y += d.offset.height / camera.zoom
@@ -349,7 +349,7 @@ struct GraphCanvas: View {
     guard !tab.scope.isEmpty, let b = session.boundary(scopeKey) else { return nil }
     let ins = b["inputs"]?.object ?? [], outs = b["outputs"]?.object ?? []
     guard !ins.isEmpty || !outs.isEmpty else { return nil }
-    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.position($1), size: session.geometry($1).size)) }
+    var box = cardKeys.reduce(CGRect.null) { $0.union(CGRect(origin: session.placedPosition($1), size: session.geometry($1).size)) }
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
     let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
     let x = box.midX - width / 2
@@ -408,8 +408,8 @@ struct GraphCanvas: View {
         boundaryDrag = nil
         var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
         if prefs.showGrid {
-          x = (x / prefs.gridSize).rounded() * prefs.gridSize
-          y = (y / prefs.gridSize).rounded() * prefs.gridSize
+          x = snapToGrid(x, prefs.gridSize)
+          y = snapToGrid(y, prefs.gridSize)
         }
         // Layout only (the external's layout.json).
         session.setBoundaryPosition(tab.scope, input ? "inputs" : "outputs", CGPoint(x: x.rounded(), y: y.rounded()))
@@ -840,7 +840,7 @@ struct GraphCanvas: View {
         if let m = marquee {
           let a = world(m.start), b = world(v.location)
           let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-          tab.selection = Set(cardKeys.filter { r.intersects(CGRect(origin: session.position($0), size: session.geometry($0).size)) })
+          tab.selection = Set(cardKeys.filter { r.intersects(CGRect(origin: session.placedPosition($0), size: session.geometry($0).size)) })
           marquee = nil
         }
         panStart = nil
@@ -865,8 +865,8 @@ struct GraphCanvas: View {
             let p = s.position(m)
             var x = p.x + dx, y = p.y + dy
             if prefs.showGrid {
-              x = (x / prefs.gridSize).rounded() * prefs.gridSize
-              y = (y / prefs.gridSize).rounded() * prefs.gridSize
+              x = snapToGrid(x, prefs.gridSize)
+              y = snapToGrid(y, prefs.gridSize)
             }
             s.setPosition(m, CGPoint(x: x, y: y))
           }

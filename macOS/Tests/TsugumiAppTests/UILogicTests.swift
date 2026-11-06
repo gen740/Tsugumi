@@ -382,3 +382,44 @@ import Testing
   let doc = try String(contentsOf: dir.appendingPathComponent("tsugumi.json"), encoding: .utf8)
   #expect(doc.contains("first") && !doc.contains("second"))
 }
+
+/// The same numbers as the web (tests/fixtures/port-grid-contract.json, web/tests/portGrid.ts).
+@Test func portsFollowTheGridAsOnTheWeb() throws {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let data = try Data(contentsOf: root.appendingPathComponent("tests/fixtures/port-grid-contract.json"))
+  let contract = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for c in try #require(contract["snap"] as? [[String: Double]]) {
+    #expect(abs(snapToGrid(CGFloat(c["v"]!), CGFloat(c["grid"]!)) - CGFloat(c["to"]!)) < 1e-9)
+  }
+  for c in try #require(contract["ports"] as? [[String: Any]]) {
+    let name = "\(c["flow"]!) \(c["kind"]!) grid \(c["grid"]!) \(c["inputs"]!)/\(c["outputs"]!)"
+    func ports(_ count: Int) -> [PortData] { (0..<count).map { PortData(name: "p\($0)") } }
+    var d = CardNodeData(title: "x", kind: try #require(CardKind(rawValue: c["kind"] as! String)), summary: c["summary"] != nil ? "s" : nil,
+                         inputs: ports(c["inputs"] as! Int), outputs: ports(c["outputs"] as! Int))
+    d.collapsed = c["collapsed"] != nil
+    let grid = c["grid"] as? Double
+    d.portGrid = grid.map { CGFloat($0) }
+    let flow: FlowDirection = c["flow"] as! String == "topToBottom" ? .topToBottom : .leftToRight
+    let g = CardGeometry(d, flow: flow)
+    let width = c["width"] as! Double, height = c["height"] as! Double
+    #expect(abs(g.size.width - width) < 1e-5, "\(name) width \(g.size.width)")
+    #expect(abs(g.size.height - height) < 1e-5, "\(name) height \(g.size.height)")
+    let edge = flow == .topToBottom ? width : height
+    for (key, output) in [("in", false), ("out", true)] {
+      let list = c[key] as! [Double]
+      let apex = (d.kind == .fork && !output) || (d.kind == .merge && output)
+      for (i, v) in list.enumerated() {
+        let p = g.port("p\(i)", output: output)
+        #expect(abs((flow == .topToBottom ? p.x : p.y) - v) < 1e-5, "\(name) \(key) \(i): \(p) != \(v)")
+        guard let grid, let n = c["n"] as? Double else { continue }
+        // A Card's corner is on a grid line, so this is its place on the canvas too.
+        let lines = v * n / grid
+        #expect(abs(lines - lines.rounded()) < 1e-5, "\(name) \(key) \(i) on grid/\(n)")
+        #expect(v >= 0 && v <= edge, "\(name) on its edge")
+        // A triangle's apex takes everything on that side; elsewhere marks never touch.
+        if apex { #expect(abs(v - edge / 2) < 1e-5, "\(name) at the apex") }
+        else if i > 0, c["collapsed"] == nil || flow == .topToBottom { #expect(v - list[i - 1] >= CardGeometry.minPortPitch, "\(name) apart") }
+      }
+    }
+  }
+}
