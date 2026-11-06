@@ -288,7 +288,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
 | 版の管理（git・実行ごとの版と結果・版のツリー、`VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`） | 実装済み（[Versions.md](versions.md)、`test_versions.py`） |
 | Agent の権限の承認（Card の権限を広げる保存は `approval_required`） | 実装済み（[security.md](security.md#agent-の権限境界)、`test_permissions.py`） |
-| ツグミのガイド（`guide_show`・`$demo`）、helper への手分け（`delegate`） | 実装済み（[features.md](features.md#9-agent)、`macOS/CoreTests`・`macOS/Tests` の Guide のテスト） |
+| ツグミのガイド（`guide_show`・`$demo`）、helper への手分け（`delegate`） | 実装済み（[features.md](features.md#9-agent)、`macOS/CoreTests`・`macOS/Tests` の Guide のテスト、Web の helper の鶫は `web/tests/helperBirds.ts`） |
 | Claude Code の plugin | 実装済み（[claude-code.md](claude-code.md)、`test_claude_code_plugin.py`） |
 | Web UI（同じ画面・操作・ショートカットをブラウザで。Mac 上の tsugumid、Seatbelt による Card の隔離） | 実装済み（[WebUI.md](webui.md)）。型検査・ビルドに加え、UI の振る舞い、Agent の共通契約、ホストサーバー、Seatbelt の隔離を対象とするテストあり（上のテスト一覧） |
 

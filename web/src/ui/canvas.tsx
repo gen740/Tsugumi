@@ -4,6 +4,7 @@
 // bars above and below the inner graph.
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
+import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
 import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
@@ -690,9 +691,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         )
       })}
 
-      <WritingPanels writers={app.chat(session).writers} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)}
+      <WritingPanels writers={app.chat(session).writers} team={app.chat(session).team} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)}
         obstacles={() => [...scene.cardKeys.map((k) => scene.cardRect(k)), ...scene.outputKeys.map((k) => scene.frameRect(k))]}
         screen={screen} zoom={z} size={cv.size} />
+      <HelperBirds chat={app.chat(session)} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)} screen={screen} zoom={z} size={cv.size} />
 
       {pending && (() => {
         const a = screen(scene.portWorld(pending.from[0], pending.from[1], pending.fromOutput))
