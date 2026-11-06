@@ -226,6 +226,8 @@ export type AgentEvent =
   | { kind: 'text'; text: string }
   | { kind: 'toolStarted'; id: string; name: string; arguments: string }
   | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
+  /** A piece of a tool call's arguments as the model writes them, for the calls that carry whole files. */
+  | { kind: 'toolInput'; index: number; name: string; delta: string }
   | { kind: 'compacted' }
   | { kind: 'retrying'; message: string }
   /** The text streamed so far in this reply is dropped: it is asked again. */
@@ -1161,6 +1163,7 @@ export class Agent {
           } else if (e.t === 'toolInput') {
             const t = tools.get(e.index)
             if (t) t.json += e.json
+            if (t && (t.name === 'project_save' || t.name === 'project_validate')) events({ kind: 'toolInput', index: e.index, name: t.name, delta: e.json })
           } else if (e.t === 'search') {
             flush()
             parts.push({ type: 'web_search', id: e.id, query: e.query, sources: [] })

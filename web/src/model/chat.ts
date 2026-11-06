@@ -6,6 +6,7 @@ import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, parseShow } from './guide'
+import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
 
@@ -454,7 +455,43 @@ export class ChatController extends Observable {
     void api('/api/chat/permission', { id: p.id, allow, always }).catch((e) => this.fail(e))
   }
 
+  /** The files being written, by who writes them ('': the Agent, or a helper's name). */
+  readonly writers = new Map<string, LiveCodePlayer>()
+
+  private writer(who = '') {
+    let w = this.writers.get(who)
+    if (!w) this.writers.set(who, (w = new LiveCodePlayer()))
+    return w
+  }
+
+  /** What an event means for the file being written; true: nothing else to do. */
+  private noteWriting(who: string, e: any) {
+    const now = Date.now() / 1000
+    switch (e.kind) {
+      case 'toolInput':
+        // Many a second, so nothing else changes: the panel looks for itself.
+        this.writer(who).input(e.index, e.delta, now)
+        if (!who && !this.demoMode) guide.writer = this.writer()
+        return true
+      case 'toolFinished':
+        if (writesSources(e.name)) {
+          this.writer(who).ended(e.ok, now)
+          if (e.ok && e.name === 'project_save') this.writer(who).saved()
+        }
+        return false
+      case 'finished':
+        this.writer(who).ended(true, now)
+        return false
+      case 'discardText': case 'retrying': case 'error': case 'stepLimit':
+        this.writer(who).ended(false, now)
+        return false
+    }
+    return false
+  }
+
   private handle(e: any) {
+    if (this.noteWriting('', e)) return
+    if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
       case 'discardText': {
         // The reply is asked again: what it had streamed goes.

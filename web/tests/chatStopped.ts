@@ -12,7 +12,7 @@ const { ChatController } = await import('../src/model/chat')
 
 const chat = () => {
   const c = Object.create(ChatController.prototype) as any
-  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, stopping: false, session: { dir: '/p' }, currentId: 's' })
+  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, stopping: false, session: { dir: '/p' }, currentId: 's', writers: new Map() })
   c.changed = () => {}
   c.refreshAfterTurn = () => {}
   return c

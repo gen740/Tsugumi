@@ -39,6 +39,8 @@ await import("./projectActions")
 
 await import("./thumbnails")
 
+await import("./liveCode")
+
 await import("./portGrid")
 
 await import("./marquee")

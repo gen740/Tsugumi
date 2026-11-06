@@ -650,7 +650,7 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, let summary):
       thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
       tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
@@ -710,7 +710,7 @@ final class ChatController {
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       thoughts.note(tool: name, ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
       tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
@@ -720,10 +720,13 @@ final class ChatController {
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
       reloadCurrent()
-    case .retrying(let s): status = String(localized: "再試行中: \(s)")
+    case .retrying(let s):
+      // The reply is asked again from its beginning.
+      session.presence.toolInputEnded(ok: false)
+      status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
-      session.presence.toolInputEnded()
+      session.presence.toolInputEnded(ok: false)
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
