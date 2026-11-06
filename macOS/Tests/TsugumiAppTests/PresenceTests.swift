@@ -337,6 +337,25 @@ import Testing
   #expect(p.beats.contains { $0.beat == .write("c", reveal: true) })
 }
 
+@Test func thePanelOfACardNotOnTheCanvasGoesWhereThereIsRoom() {
+  let view = CGRect(x: 12, y: 52, width: 1000, height: 800)
+  let w = WritingPanel.size.width, h = WritingPanel.size.height
+  // The top middle of the view.
+  let top = WritingPanel.frame(scale: 1, in: view)
+  #expect(top == CGRect(x: view.midX - w / 2, y: view.minY, width: w, height: h))
+  // Something there: the bottom middle.
+  let bottom = WritingPanel.frame(scale: 1, in: view, others: [top])
+  #expect(bottom == CGRect(x: view.midX - w / 2, y: view.maxY - h, width: w, height: h))
+  // Both: a corner, whole and covering nothing.
+  let corner = WritingPanel.frame(scale: 1, in: view, others: [top, bottom])
+  #expect(view.contains(corner) && !corner.intersects(top) && !corner.intersects(bottom))
+  // Nothing free: the first place all the same, inside the view.
+  #expect(WritingPanel.frame(scale: 1, in: view, others: [view]) == top)
+  // Another bird does not take the same place, and it scales as the others.
+  #expect(WritingPanel.frame(scale: 1, in: view, slot: 1) == bottom)
+  #expect(WritingPanel.frame(scale: 1.3, in: view).height == h * 1.3)
+}
+
 @MainActor @Test func whatAFailedOrStoppedCallWroteGoesAtOnce() {
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)

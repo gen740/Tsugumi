@@ -234,3 +234,17 @@ export function panelFrame(card: Box, clear: number, scale: number, view: Box, o
       : fitsAbove || (!fitsBelow && card.y - view.y > maxY - (card.y + card.height)) ? above : below
   return { x, y: Math.min(Math.max(y, view.y), maxY - height), width, height }
 }
+
+/** Where the panel of a Card that is not on the canvas goes (a new one has no
+ *  place until it is saved): the first place that covers nothing, from the top
+ *  middle of the view on (`slot`: a later panel starts further on). */
+export function panelFreeFrame(scale: number, view: Box, others: Box[] = [], slot = 0): Box {
+  const width = PANEL.width * scale, height = PANEL.height * scale
+  const xs = [view.x + view.width / 2 - width / 2, view.x, view.x + view.width - width]
+  const ys = [view.y, view.y + view.height - height]
+  const places = [[0, 0], [0, 1], [1, 0], [2, 0], [1, 1], [2, 1]].map(([i, j]) => ({ x: xs[i], y: ys[j], width, height }))
+  const turn = slot % places.length
+  const turned = [...places.slice(turn), ...places.slice(0, turn)]
+  const free = (p: Box) => !others.some((o) => o.x < p.x + p.width && p.x < o.x + o.width && o.y < p.y + p.height && p.y < o.y + o.height)
+  return turned.find(free) ?? turned[0]
+}

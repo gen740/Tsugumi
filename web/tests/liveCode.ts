@@ -3,7 +3,7 @@
 // the save is through or the call fails, and its panel stays clear of the bird
 // and inside the view.
 import assert from 'node:assert/strict'
-import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
+import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
 
 // The arguments, cut anywhere.
 const args = JSON.stringify({ base_rev: '1', changes: [
@@ -127,5 +127,19 @@ assert.deepEqual(panelTail('a\r\nb\n\tc', 3), ['a', 'b', '    c'])
   assert.ok(inside(panelFrame({ x: 400, y: 100, width: 220, height: 700 }, 80, 1, view)!))
   assert.equal(panelFrame({ ...card, x: 3000 }, 80, 1, view), undefined)
   assert.deepEqual([panelScale(0.5), panelScale(1), panelScale(3)], [0.8, 1, 1.3])
+}
+
+// A Card that is not on the canvas: where there is room.
+{
+  const view = { x: 12, y: 52, width: 1000, height: 800 }
+  const [w, h] = [PANEL.width, PANEL.height]
+  const top = panelFreeFrame(1, view)
+  assert.deepEqual(top, { x: view.x + view.width / 2 - w / 2, y: view.y, width: w, height: h })
+  const bottom = panelFreeFrame(1, view, [top])
+  assert.deepEqual(bottom, { x: top.x, y: view.y + view.height - h, width: w, height: h })
+  const corner = panelFreeFrame(1, view, [top, bottom])
+  assert.ok(corner.x === view.x && corner.y === view.y, 'a corner, covering nothing')
+  assert.deepEqual(panelFreeFrame(1, view, [view]), top, 'nothing free: the first place all the same')
+  assert.deepEqual(panelFreeFrame(1, view, [], 1), bottom, 'another panel does not take the same place')
 }
 console.log('live code behavior: passed')
