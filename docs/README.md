@@ -35,7 +35,7 @@
 | [Versions.md](Versions.md) | 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」 |
 | [security.md](security.md) | 守っていること・守っていないことの要点と、4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
 | [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
-| [Protocol.md](Protocol.md) | RPC 契約: 36 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成） |
+| [Protocol.md](Protocol.md) | RPC 契約: 41 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成） |
 | [Glossary.md](Glossary.md) | Card・Draft・Run・invocation・版などの用語集 |
 
 ## 記録と開発

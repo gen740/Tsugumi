@@ -30,10 +30,11 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 
 | 環境 | commit | 結果 |
 | --- | --- | --- |
-| Linux・macOS（GitHub Actions） | [1d3d419](https://github.com/gen740/Tsugumi/actions/runs/41987549543) | [PR #35](https://github.com/gen740/Tsugumi/pull/35) で成功（2026-11-05）。範囲は [ci.yml](../.github/workflows/ci.yml) |
+| Linux・macOS（GitHub Actions） | [72b779a](https://github.com/gen740/Tsugumi/actions/runs/42378858392) | [PR #150](https://github.com/gen740/Tsugumi/pull/150) で成功（2026-11-07）。Python は 273 件成功・55 件スキップ。範囲は [ci.yml](../.github/workflows/ci.yml) |
+| 同じ検査を手元で（`tests/ci-local.sh`、M3 Max, macOS 27.2、Linux は arm64 のコンテナ） | Linux: 0e599de（0.5.3 にスクリプトを加えたもの）、macOS: 524d24a にスクリプトを加えたもの | 両方のジョブが成功（2026-11-07）。Python の件数は上の CI と同じ 273 件成功・55 件スキップ |
 | Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | dd3dd0c に文書の変更を加えたもの | C++ は全件成功。Python は 155 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
 | 共通 VM | | **この commit では未確認。** 26 件はこの環境で流していません |
-| Swift のテスト（`macOS/CoreTests`・`macOS/Tests`） | 1d3d419 | 上の GitHub Actions でのみ確認 |
+| Swift のテスト（`macOS/CoreTests`・`macOS/Tests`） | 72b779a | 上の GitHub Actions と、手元の `tests/ci-local.sh` で確認 |
 
 ## 主張ごとの確かめ方
 

@@ -303,13 +303,18 @@ Home では、アプリ全体で 1 つのガイドの会話（`Agent.Role.guide`
 - ガイドが持つのは、読み取りの tool と `reference_read` と `guide_show` だけです。保存・実行・停止はしません。
 - ガイドは小さなモデルで答えます。Anthropic は `claude-haiku-5-5`、ChatGPT プランは luna のモデル、OpenAI の API キーでは Agent と同じモデルです。デモの案内はコピーのチャットが、チャットのモデルで進めます。
 - 会話は、Mac では `~/Library/Application Support/Tsugumi/agent/guide/`、Web ではデータフォルダの `agent/guide/` に残ります。
-- 初回起動では、Anthropic か OpenAI を選んでどちらか一方の API キーを入力し、接続を確かめてから始めます（「スキップして始める」も選べます）。キーは設定の「API」と同じ経路で Keychain に保存します。すでに使えるキー（または ChatGPT のプラン）があれば何も聞きません。キーのない間は鳥も会話も出さず、キーを登録すると現れ、削除すると消えます。
+- 初回起動では、Anthropic か OpenAI を選んでどちらか一方の API キーを入力し、接続を確かめてから始めます（「スキップして始める」も選べます）。キーは設定の「API」と同じ経路で Keychain に保存します。すでに使えるキー（または ChatGPT のプラン）があれば何も聞きません。
 - 初めて現れたときは「何をしてみますか？」と尋ね、「既にある Workflow を見る」「Draft を AI に実装させる」を出します。前者は分野（`demos/index.json` の `field`）、その分野のデモの順に、後者は Draft のデモを選んでもらいます。ここまではアプリが決まった文で聞くので、モデルを使いません。選んだデモへはデモ一覧を開いて飛び、「このデモを開く」を出します（「ほかのデモ」で選び直せます）。質問を書いたとき、興味を書いたとき、「おすすめを聞く」を押したときだけ、ガイドがモデルで答え、合うデモを分野・説明・タグから選びます。デモを開くと、そのコピーのチャットのツグミが案内を続けます。
+- モデルにつないでいない間（API キーも ChatGPT のサインインもない）も鳥は現れ、決まった台本（`agent/Shared/guide-script.json`。Mac と Web が同じファイルを読みます）で答えます。どこにも送らず、利用料もかかりません。
+  - 台本で案内できるのは、Data to report・Kepler-6 b・薬物動態の 3 つのデモのコピーです。開いたとき、またはそのチャットに `$demo` と送ったときに始まり、選択肢をたどって進みます。実行の結果も、成功と失敗で分かれて続きます。
+  - ほかのデモやプロジェクトでは、この 3 つを開くボタンを出します。自由に書いた質問には、設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなげば答えられることと、デモのコピーでは `$demo` で案内が始まることを伝えます。
+- 利用者がキーを保存して（または ChatGPT にサインインして）初めてモデルにつながったときは、前面のメインウインドウが一度だけ「ガイドを見てみますか？」と尋ねます。案内にはモデルの API を使い利用料がかかることを添え、「ガイドを見る」で Data to report のデモを開いて案内を始めます。「あとで」は吹き出しの「あとで」と同じです。
 - 案内中は、実行の開始・終了（成功・失敗・停止）と接続の切断・再接続を、実際の状態のままチャットに伝えます。答えている間に起きたことは、答え終わってから伝えます。案内の状態と勧誘への回答は保存され、再起動しても繰り返しません。
 
 **確かめる場所**
 
 - tool の一覧と FlatJSON の変換が Mac と Web で同じこと: [test_agent_contract.py](../tests/python/test_agent_contract.py)、`macOS/CoreTests`
+- キーのないときの台本の進み方（Mac と Web で同じこと）: `macOS/Tests/TsugumiAppTests/GuideTests.swift`、`web/tests/guideScript.ts`
 - Draft を実装する保存の規則: [test_draft_intent.py](../tests/python/test_draft_intent.py)
 - コメントの保存の規則と版の履歴: [test_card_comments.py](../tests/python/test_card_comments.py)
 - Agent が Card の権限を広げる保存には承認が要ること: [test_permissions.py](../tests/python/test_permissions.py)

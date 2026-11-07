@@ -78,7 +78,7 @@ Claude Code、Codex などへの作業の指示です（`CLAUDE.md` はこのフ
 
 ### merge の前の確認
 
-GitHub Actions はリポジトリの設定で止めてあります。CI が確かめていたこと（[.github/workflows/ci.yml](.github/workflows/ci.yml) の Linux と macOS のジョブ）は、手元の [tests/ci-local.sh](tests/ci-local.sh) で同じように確かめ、通ってから merge します。Mac では macOS のジョブをそのまま、Linux のジョブを Docker（OrbStack）のコンテナで動かします。
+GitHub Actions はリポジトリの設定で止めることがあります。止めている間は、CI が確かめること（[.github/workflows/ci.yml](.github/workflows/ci.yml) の Linux と macOS のジョブ）を手元の [tests/ci-local.sh](tests/ci-local.sh) で同じように確かめ、通ってから merge します。Mac では macOS のジョブをそのまま、Linux のジョブを Docker（OrbStack）のコンテナで動かします。
 
 ### 互換性
 
