@@ -484,7 +484,7 @@ struct GraphCanvas: View {
                           ? { RunActions.run(session, card: k, propagate: true) } : nil,
                         draftEdit: draftEdit(k))
       .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
-      .guideTarget("card:\(k)", radius: 12)
+      .guideTarget("card:\(k)", radius: 12, zoom: camera.zoom)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))

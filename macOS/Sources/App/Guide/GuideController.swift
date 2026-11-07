@@ -599,7 +599,7 @@ final class GuideController {
   // MARK: - Pointing
 
   /// Where the bird flies and the ring is drawn, until the bubble is closed or it moves on.
-  private func point(at target: String?) {
+  func point(at target: String?) {
     highlightTask?.cancel()
     highlight = target
     // A demo's card is in Home's demo list: it opens to show it.
