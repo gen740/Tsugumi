@@ -225,7 +225,7 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   }
   const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
   return (
-    <Section title="外部ソース" footer="ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。">
+    <Section title="外部ソース" footer="追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。">
       {sources.map((s) => {
         const name = str(get(s, 'name')) ?? ''
         const ref = str(get(s, 'ref')) ?? ''
@@ -396,7 +396,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer="実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。">
+          <Section footer="実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。">
             <Row label="実行履歴をプロジェクトに保存する">
               <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
             </Row>

@@ -235,7 +235,6 @@
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
 "ここです" = "Here";
-"ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here as inputs.sources.<name>.packages.<package>. It is fixed by its commit and hash. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。" = "After this Card runs, each invocation's inputs, outputs, logs and details are kept here.";
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
@@ -556,6 +555,7 @@
 "一覧を表示" = "Show list";
 "上から下" = "Top to bottom";
 "上流から順に Card を書いて、糸でつないでいく" = "Write Cards from upstream on, and tie them together with threads";
+"上流の Card が失敗したので実行していません" = "Not run, because a Card upstream failed";
 "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
 "不明" = "Unknown";
 "並列実行数: %lld" = "Parallel runs: %lld";
@@ -767,6 +767,7 @@
 "天文・地震・タンパク質のデータ" = "Astronomy, seismic and protein data";
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
+"失敗したので結果はありません" = "It failed, so there is no result";
 "失敗の種類" = "Failure kind";
 "完了" = "Done";
 "定番のデモを見る" = "See the Standard Demo";
@@ -1092,6 +1093,7 @@
 "起動中: %@" = "Starting: %@";
 "起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
+"追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here like inputs.sources.ciao.packages.ciao. It is fixed by its commit and hash. Adding, updating and removing are saved at once. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";
 "送信（Return）" = "Send (Return)";

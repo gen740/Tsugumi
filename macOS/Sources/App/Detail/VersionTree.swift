@@ -200,6 +200,7 @@ struct VersionTreeView: View {
         } actions: {
           Button("版管理を始める") { act { try await session.makeRepository() } }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
