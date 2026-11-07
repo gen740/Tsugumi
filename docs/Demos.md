@@ -161,18 +161,21 @@ start → settings ─walk→ simulate ─walks→ share ─┬→ summary
 
 ### Cas A · Chandra RGB（`casa`）
 
-超新星残骸カシオペヤ座 A の X 線イベントデータ（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
+超新星残骸カシオペヤ座 A の X 線イベントデータ（Chandra）と解析ツールの CIAO を Nix で固定し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
 同じ光子のエネルギースペクトルも描き、どの元素の輝線がどの色になったのかを確かめます。
 
 ```text
-start → load ─events→ bands ─images→ share ─┬→ rgb
-                                            └→ spectrum
+start → begin ─┬→ ciao ─tool──┐
+               └→ load ─events┴→ bands ─images→ share ─┬→ rgb
+                                                       └→ spectrum
 ```
 
 | Card | 種類 | していること |
 | --- | --- | --- |
+| `begin` | fork | 開始の合図を `ciao` と `load` に分ける |
+| `ciao` | bash | `default.nix` で、CIAO 4.18 のソースを hash で固定してビルドし、ストアのパスとバージョンを渡す。ビルドは最初の 1 回だけで、数分かかる。式は [gen740/ciao](https://github.com/gen740/ciao) をコミットと hash で固定して読む（`tsugumi.json` の `nixSources`、[外部の Nix ソース](features.md)） |
 | `load` | bash | `default.nix` で、HEASARC の観測ファイルを hash で固定して取得・展開する（explicit FTPS）。ダウンロードは最初の 1 回だけで、以後は Nix store のファイルを使う。実行中はネットワークを使わない |
-| `bands` | Python | 光子を 600–1650 / 1650–2250 / 2250–7500 eV の 3 帯域に分け、Cas A の中心（RA 350.8584°, Dec +58.8113°）に合わせた 360×360 の格子で数える。帯域ごとの FITS と `provenance.json` を書き、光子数を表で示す |
+| `bands` | Python | 光子を 600–1650 / 1650–2250 / 2250–7500 eV の 3 帯域に分け、Cas A の中心（RA 350.8584°, Dec +58.8113°）に合わせた 360×360 の格子で、CIAO の `dmcopy` で数える。数えた光子の合計は、CIAO を使わず astropy で読んだ数と照合する。帯域ごとの FITS と `provenance.json` を書き、光子数を表で示す |
 | `share` | fork | 帯域のディレクトリを `rgb` と `spectrum` に配る |
 | `rgb` | Python | 3 帯域を R・G・B に割り当て、asinh で伸長した PNG を作る（`percentile` 99.5、`q` 10）。表示条件と PNG の SHA-256 を記録する |
 | `spectrum` | Python | 同じ格子の範囲の光子のエネルギーをヒストグラムにして matplotlib で描く。3 帯域を色で塗り、Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける |
@@ -181,7 +184,7 @@ start → load ─events→ bands ─images→ share ─┬→ rgb
 - そのまま実行する。既定の観測は ObsID 25628（2.1 ks、13 MB）。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示す。
 - `load` の `obsid`・`file`・`hash` を ObsID 114（2000 年、50 ks、520 MB）や ObsID 19606（2019 年、49 ks、349 MB）に変えると、深い観測で鮮明な画像になり、約 20 年の変化も比べられる（値は付箋と `load` の説明にある）。最初の実行だけ取得に時間がかかる。
 - `bands` の帯域や `rgb` の伸長、`spectrum` の範囲・刻みを変えて、その Card だけを実行し直す。スペクトルを見ると、緑の帯域がちょうど Si の輝線を含み、S から上は青に入ることが分かる。
-- 版のツリーを開く。帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 `rgb-v1`、その上にスペクトルを足した版）が入っている（[版の管理](Versions.md#デモの履歴)）。
+- 版のツリーを開く。帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 `rgb-v1`、その上にスペクトルを足した版、CIAO を固定した版）が入っている（[版の管理](Versions.md#デモの履歴)）。
 
 ## 科学デモ（公開データの取得と解析）
 
@@ -637,7 +640,7 @@ start → load ─ share ─┬→ fit ─ fits-share ─┬→ check
 
 ## Draft 版（Agent に実装させる）
 
-`casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
+`casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです（`casa-draft` に CIAO の Card はありません）。
 開始 Card と 3 つの Draft があり、各 Draft の説明には、何を受け取り、何をして、何を渡すかが書かれています（実装済みのデモの Card の説明と同じ文です）。
 
 Canvas の右上の「Card を生成」を押すと、Agent が Draft の説明と前後の接続を読み、コード・出力型・Nix の環境定義を作って保存し、実行して確かめます。
@@ -695,7 +698,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 | **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使ってすぐに成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
 | **Collatz (C++ / Python / Julia / R)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++・Python・Julia・R の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
 | **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
-| **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（2000 年、50 ks、520 MB）や ObsID 19606（2019 年、49 ks、349 MB）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
+| **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（2000 年、50 ks、520 MB）や ObsID 19606（2019 年、49 ks、349 MB）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で CIAO を Nix が 1 度だけビルドし（数分）、観測（ObsID 25628、13 MB）を 1 度だけ取得し、以後はストアのものを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
 | **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
 | **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`forest` から先を実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
 | **Newton 法**（`newton`） | そのまま実行する。`orbits` の初期値、`basins` の拡大、`trouble` の `offset` を変えてその Card だけを実行し直す。`settings` の `coeffs`（`[1, 0, -3, 2]` で重根、`[1, 0, -2, 2]` で閉路）や `damping` を変えて全体を実行する | `orbits` の誤差が対数軸で 2 次に落ち、`order` の表で推定次数が理論値と並ぶ。`basins` にフラクタルの境界が描かれ、`roots` で閉じた式との差が表示される。`trouble` では重根で次数 1 に落ち、$z^3 - 2z + 2$ の $z_0 = 0$ が収束しない |
