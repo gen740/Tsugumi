@@ -131,6 +131,7 @@ class Service : public RequestSink {
   void run_status(RequestIn& req);
   void run_history(RequestIn& req);
   void run_invocations(RequestIn& req);
+  void run_latest_invocations(RequestIn& req);
   void run_record(RequestIn& req);
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);

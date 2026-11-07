@@ -982,7 +982,7 @@ function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClos
           <Icon name="xmark" size={11 * z} />
         </button>
       </div>
-      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} /></div>
+      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} /></div>
       <ResizeHandle onEnd={onResize} />
     </div>
   )

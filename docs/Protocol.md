@@ -9,7 +9,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 - **変更を伴う要求**: `op_id` を持ち、同じ `op_id` の再送は 1 回だけ適用されます。応答を失ったら `OperationGet` で確かめます。
 - **Agent の tool**: 同じスキーマ（`tsugumi.bfbs`）から作ります（[主要機能](features.md#9-agent)）。
 
-要求は 40 種あります。
+要求は 41 種あります。
 
 ## 接続
 
@@ -248,6 +248,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | --- | --- | --- |
 | [`RunHistory`](#runhistory) | RunPage, newest accepted first |  |
 | [`RunInvocations`](#runinvocations) | InvocationPage, ascending invocation number |  |
+| [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Each Card's latest invocation of a run, for a client that opens the project after the run: it did not get RunCardChanged for them. |
 | [`RunRecord`](#runrecord) | RecordResult | invocation and follow_latest = true are exclusive. |
 | [`RunValueRead`](#runvalueread) | FileContent | offset = 0, limit_bytes = 1048576. |
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. |
@@ -272,6 +273,12 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | `card` | `CardPath` | はい |  |
 | `cursor` | `string` |  |  |
 | `limit` | `uint32` |  |  |
+
+### RunLatestInvocations
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `run_id` | `string` | はい |  |
 
 ### RunRecord
 

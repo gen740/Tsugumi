@@ -576,7 +576,7 @@ export class ProjectSession extends Observable {
       }
       if (this.dirty) this.scheduleSave()
       this.changed()
-      await this.refreshVisibleDisplays()
+      await Promise.all([this.refreshVisibleDisplays(), this.restoreCardStates(c)])
     } catch (e) {
       this.connected = false
       this.connectionMessage = errorText(e)
@@ -644,22 +644,56 @@ export class ProjectSession extends Observable {
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
-   *  once per frame: a run with thousands of short invocations causes one
+   *  once per frame (or four times a second with no frames): a run with thousands of short invocations causes one
    *  view update per batch, not per event. */
   private listen(c: RPCClient) {
     c.onNotification = (e) => {
       this.inbox.push(e)
       if (this.inboxScheduled) return
       this.inboxScheduled = true
-      requestAnimationFrame(() => {
+      const apply = () => {
+        cancelAnimationFrame(frame)
+        clearTimeout(timer)
         this.inboxScheduled = false
         const batch = this.inbox
         this.inbox = []
         if (batch.length) this.notificationBatches++
         for (const ev of batch) this.handle(ev)
         this.changed()
+      }
+      const frame = requestAnimationFrame(apply)
+      // A tab in the background has no frames: the run still goes on, and must be seen to.
+      const timer = setTimeout(apply, 250)
+    }
+  }
+
+  /** What a Card's invocation says about the Card, from a notification or from the run's record. */
+  private noteInvocation(inv: R.InvocationSummaryT) {
+    const k = key(segs(inv.card))
+    const prev = this.cardStates.get(k)
+    const n = inv.invocation ?? 0n
+    if (!prev || prev.invocation <= n) {
+      const sent = new Set(inv.outputsSent.map((x) => s(x)))
+      this.cardStates.set(k, {
+        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        // Each notification carries the invocation's stages so far.
+        stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
+        sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
+        startedAt: inv.startedAt !== null ? Number(inv.startedAt) : undefined, endedAt: inv.endedAt !== null ? Number(inv.endedAt) : undefined,
+        readyAt: inv.readyAt !== null ? Number(inv.readyAt) : undefined,
       })
     }
+  }
+
+  /** The Cards of the last run, for a project just opened: their notifications were sent before it was. */
+  private async restoreCardStates(c: RPCClient) {
+    const run = sOpt(this.runStatus?.runId)
+    if (!run) return
+    const page = await c.latestInvocations(run).catch(() => undefined)
+    // A run started meanwhile has its own states.
+    if (!page || sOpt(this.runStatus?.runId) !== run) return
+    for (const inv of page.records) this.noteInvocation(inv)
+    this.changed()
   }
 
   private handle(e: Notification) {
@@ -828,23 +862,10 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunCardChanged: {
         const inv = (e.value as R.RunCardChangedT).invocation
         if (!inv) break
-        const k = key(segs(inv.card))
-        const prev = this.cardStates.get(k)
-        const n = inv.invocation ?? 0n
-        if (!prev || prev.invocation <= n) {
-          const sent = new Set(inv.outputsSent.map((x) => s(x)))
-          this.cardStates.set(k, {
-            state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
-            // Each notification carries the invocation's stages so far.
-            stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
-            sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
-            startedAt: inv.startedAt !== null ? Number(inv.startedAt) : undefined, endedAt: inv.endedAt !== null ? Number(inv.endedAt) : undefined,
-            readyAt: inv.readyAt !== null ? Number(inv.readyAt) : undefined,
-          })
-        }
+        this.noteInvocation(inv)
         const lastStart = inv.stages.length ? inv.stages[inv.stages.length - 1].start : null
         this.sampleClock(inv.endedAt ?? (inv.state === D.CardState.running ? lastStart : null))
-        this.recordTimeline(k, inv)
+        this.recordTimeline(key(segs(inv.card)), inv)
         break
       }
       case R.RunEventValue.RunFinished: {
@@ -3015,6 +3036,15 @@ auto run(Card::Input& input) -> Card::Output {
 }
 `)
         break
+    }
+  }
+
+  /** Why a Card that ran has no result to show. */
+  noResultNote(k: CardKey): string | undefined {
+    switch (this.cardStates.get(k)?.state) {
+      case D.CardState.failed: return '失敗したので結果はありません'
+      case D.CardState.blocked: return '上流の Card が失敗したので実行していません'
+      default: return undefined
     }
   }
 

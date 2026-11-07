@@ -262,7 +262,7 @@ std::vector<std::string> Service::capabilities() {
       "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
-      "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
+      "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
       "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
@@ -370,6 +370,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunStatusRequest: return on_lane(r, std::move(req), &Service::run_status);
     case P::RunHistoryRequest: return on_lane(r, std::move(req), &Service::run_history);
     case P::RunInvocationsRequest: return on_lane(r, std::move(req), &Service::run_invocations);
+    case P::RunLatestInvocationsRequest: return on_lane(r, std::move(req), &Service::run_latest_invocations);
     case P::RunRecordRequest: return on_lane(r, std::move(req), &Service::run_record);
     case P::RunValueReadRequest: return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest: return on_lane(r, std::move(req), &Service::artifact_list);

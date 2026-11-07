@@ -64,4 +64,6 @@ await import("./draftDisplays")
 
 await import("./nixSources")
 
+await import("./sessionRestore")
+
 await import("./perchScale")

@@ -18,7 +18,7 @@ GROUPS = [
     ("ファイル", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "AttachedFolderRead"]),
     ("Card の SDK と型", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("実行", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
-    ("履歴と成果物", ["RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
+    ("履歴と成果物", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "ArtifactList", "ArtifactRead", "LogRange"]),
     ("表示", ["ViewSetVisible", "ViewSave"]),
     ("版", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"]),

@@ -357,6 +357,10 @@ export class RPCClient {
       Object.assign(new R.ProjectImportRequestT(), { baseRev, opId, origin, sourceGrant, definitions }),
     )
   }
+  /** Each Card's latest invocation of a run. */
+  latestInvocations(runId: string) {
+    return this.call<R.InvocationPageT>(RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId }))
+  }
   /** Looks a flake up for nixSources (nothing is saved). */
   resolveNixSource(ref: string) {
     return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)

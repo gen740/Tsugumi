@@ -99,6 +99,8 @@ class History {
     std::string bytes;
   };
   static std::optional<ReceiptRow> receipt(sql::Db& db, const std::string& op_id);
+  // Each Card's latest invocation of a run, completed or in progress.
+  static std::vector<InvocationSummaryData> latest_invocations(sql::Db& db, const std::string& run_id);
   static std::vector<InvocationSummaryData> invocations(sql::Db& db, const std::string& run_id,
                                                         const CardPath& card, uint64_t after,
                                                         uint64_t limit);

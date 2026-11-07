@@ -10,7 +10,7 @@ import { Icon } from './icons'
 import { Markdown } from './markdown'
 
 /** Renders a Display value at `zoom` (on the canvas) or larger (`large`, the expanded viewer). */
-export function DisplayContent({ display, large = false, zoom = 1 }: { display?: DisplaySnapshot; large?: boolean; zoom?: number }) {
+export function DisplayContent({ display, large = false, zoom = 1, emptyNote }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string }) {
   const size = (small: number, big: number) => (large ? big : small) * zoom
   // Scrolls in the large viewer; on the canvas (where the wheel moves the
   // canvas) the content is cut at the frame, with no scroll bar.
@@ -20,7 +20,7 @@ export function DisplayContent({ display, large = false, zoom = 1 }: { display?:
   const v = display?.value
   if (!v) {
     if (large) return <Empty title="まだ結果がありません" icon="chart.xyaxis.line" description="実行すると表示されます。" />
-    return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>まだ結果がありません（実行すると表示されます）</div>
+    return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>{emptyNote ?? 'まだ結果がありません（実行すると表示されます）'}</div>
   }
   switch (v.kind) {
     case 'text':

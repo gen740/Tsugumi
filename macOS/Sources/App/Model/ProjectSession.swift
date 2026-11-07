@@ -464,6 +464,7 @@ final class ProjectSession {
       }
       if dirty { scheduleSave() }
       await refreshVisibleDisplays()
+      await restoreCardStates(c)
     } catch {
       connected = false
       connectionMessage = "\(error)"
@@ -636,6 +637,36 @@ final class ProjectSession {
     for k in displays.keys where r[k] == nil { displays[k] = nil }
   }
 
+  /// What a Card's invocation says about the Card, from a notification or from the run's record.
+  private func noteInvocation(_ inv: Tsugumi_RPC_InvocationSummaryT) {
+    let k = key(inv.card.path)
+    let prev = cardStates[k]
+    let n = inv.invocation ?? 0
+    if prev == nil || prev!.invocation <= n {
+      var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+      // Each notification carries the invocation's stages so far.
+      next.stages = inv.stages.compactMap { $0 }.compactMap { t in
+        Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
+      }
+      next.cached = inv.buildCached == true
+      next.workerReused = inv.workerReused == true
+      next.sent = Set(inv.outputsSent.compactMap { $0 })
+      next.sentInRun = (prev?.sentInRun ?? []).union(next.sent)
+      next.startedAt = inv.startedAt
+      next.endedAt = inv.endedAt
+      next.readyAt = inv.readyAt
+      cardStates[k] = next
+    }
+  }
+
+  /// The Cards of the last run, for a project just opened: their notifications were sent before it was.
+  private func restoreCardStates(_ c: RPCClient) async {
+    guard let run = runStatus?.runId, let page = try? await c.latestInvocations(runId: run),
+      runStatus?.runId == run  // a run started meanwhile has its own states
+    else { return }
+    for inv in page.records.compactMap({ $0 }) { noteInvocation(inv) }
+  }
+
   private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
     guard d.baseRev == rev else {
       if let r = d.rev, r <= rev { return }  // already applied (our own save reply)
@@ -702,26 +733,9 @@ final class ProjectSession {
       }
     case .runcardchanged:
       if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
-        let k = key(inv.card.path)
-        let prev = cardStates[k]
-        let n = inv.invocation ?? 0
-        if prev == nil || prev!.invocation <= n {
-          var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
-          // Each notification carries the invocation's stages so far.
-          next.stages = inv.stages.compactMap { $0 }.compactMap { t in
-            Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
-          }
-          next.cached = inv.buildCached == true
-          next.workerReused = inv.workerReused == true
-          next.sent = Set(inv.outputsSent.compactMap { $0 })
-          next.sentInRun = (prev?.sentInRun ?? []).union(next.sent)
-          next.startedAt = inv.startedAt
-          next.endedAt = inv.endedAt
-          next.readyAt = inv.readyAt
-          cardStates[k] = next
-        }
+        noteInvocation(inv)
         sampleClock(inv.endedAt ?? (inv.state == .running ? inv.stages.last??.start : nil))
-        recordTimeline(k, inv)
+        recordTimeline(key(inv.card.path), inv)
       }
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
@@ -1258,6 +1272,15 @@ final class ProjectSession {
   func forgetResult(_ k: CardKey) {
     displays[k] = nil
     cardStates[k] = nil
+  }
+
+  /// Why a Card that ran has no result to show.
+  func noResultNote(_ k: CardKey) -> String? {
+    switch cardStates[k]?.state {
+    case .failed: return String(localized: "失敗したので結果はありません")
+    case .blocked: return String(localized: "上流の Card が失敗したので実行していません")
+    default: return nil
+    }
   }
 
   /// Looks a flake up for nixSources (nothing is saved).
