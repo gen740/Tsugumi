@@ -15,8 +15,45 @@ export interface Binaries {
 export type EnvState =
   | { state: 'stopped' }
   | { state: 'starting'; message: string }
-  | { state: 'ready'; endpoint: string; token: string; projectId: string; unix: string; pid: number; readyFile: string }
+  // unix: the Agent's raw socket; a tsugumid in the VM (vm.ts) has only the endpoint.
+  | { state: 'ready'; endpoint: string; token: string; projectId: string; unix?: string; pid?: number; readyFile: string }
   | { state: 'failed'; message: string; recovery: string; log: string }
+
+/** Where the server runs each project's tsugumid: on this host
+ *  (EnvironmentManager) or in the Mac's shared VM (VMEnvironmentManager, vm.ts). */
+export interface Environments {
+  observe(fn: (key: string, s: EnvState) => void): () => boolean
+  controlDir(key: string): string
+  state(dir: string): EnvState
+  start(dir: string): Promise<EnvState>
+  stop(dir: string): Promise<void>
+  stopAll(): Promise<void[]>
+  /** The folders a project's chats may read now. */
+  attachFolders(dir: string, key: string, folders: string[]): void | Promise<void>
+  grantImport(dir: string, source: string): string
+  list(): { key: string; project: string; state: EnvState }[]
+}
+
+/** Copies what ProjectImport reads of a project into the control folder and
+ *  lists it in grants.json, under the path tsugumid will read it from. */
+export function writeGrant(control: string, source: string, seenAs: (grant: string, dest: string) => string): string {
+  const grant = randomUUID()
+  const dest = path.join(control, 'grants', grant)
+  fs.mkdirSync(dest, { recursive: true })
+  for (const item of ['tsugumi.json', 'layout.json', 'definitions']) {
+    const src = path.join(source, item)
+    if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, item), { recursive: true })
+  }
+  const grantsFile = path.join(control, 'grants.json')
+  let grants: { grants: Record<string, string> } = { grants: {} }
+  try {
+    grants = JSON.parse(fs.readFileSync(grantsFile, 'utf8'))
+  } catch {}
+  grants.grants[grant] = seenAs(grant, dest)
+  fs.writeFileSync(grantsFile + '.tmp', JSON.stringify(grants))
+  fs.renameSync(grantsFile + '.tmp', grantsFile)
+  return grant
+}
 
 interface Env {
   key: string
@@ -37,7 +74,7 @@ export function projectKey(dir: string): { key: string; real: string } {
   return { key: createHash('sha256').update(`${st.dev}:${st.ino}`).digest('hex').slice(0, 16), real }
 }
 
-export class EnvironmentManager {
+export class EnvironmentManager implements Environments {
   private envs = new Map<string, Env>()
   private listeners = new Set<(key: string, s: EnvState) => void>()
 
@@ -188,23 +225,17 @@ export class EnvironmentManager {
   /** Registers a read-only snapshot of an external project for ProjectImport.
    *  The copy is fixed at this moment; core only reads granted copies. */
   grantImport(dir: string, source: string): string {
-    const e = this.env(dir)
-    const grant = randomUUID()
-    const dest = path.join(e.control, 'grants', grant)
-    fs.mkdirSync(dest, { recursive: true })
-    for (const item of ['tsugumi.json', 'layout.json', 'definitions']) {
-      const src = path.join(source, item)
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, item), { recursive: true })
-    }
-    const grantsFile = path.join(e.control, 'grants.json')
-    let grants: { grants: Record<string, string> } = { grants: {} }
-    try {
-      grants = JSON.parse(fs.readFileSync(grantsFile, 'utf8'))
-    } catch {}
-    grants.grants[grant] = dest
-    fs.writeFileSync(grantsFile + '.tmp', JSON.stringify(grants))
-    fs.renameSync(grantsFile + '.tmp', grantsFile)
-    return grant
+    return writeGrant(this.env(dir).control, source, (_grant, dest) => dest)
+  }
+
+  /** tsugumid on this host reads only the folders listed in its control
+   *  folder (attached.json), written here alone. */
+  attachFolders(_dir: string, key: string, folders: string[]) {
+    const control = this.controlDir(key)
+    fs.mkdirSync(control, { recursive: true, mode: 0o700 })
+    const file = path.join(control, 'attached.json')
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ folders }), { mode: 0o600 })
+    fs.renameSync(file + '.tmp', file)
   }
 
   list(): { key: string; project: string; state: EnvState }[] {

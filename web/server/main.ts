@@ -14,7 +14,9 @@ import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
 import { cancelChats, chatRoutes, chatStatus } from './chat'
-import { EnvironmentManager, EnvState, projectKey } from './env'
+import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
+import { VMEnvironmentManager, VMTerminal } from './vm'
+import { desktopRecents, desktopSettings, Recent } from './desktop'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -26,9 +28,12 @@ const opt = (name: string) => {
   const i = argv.indexOf(name)
   return i >= 0 ? argv[i + 1] : undefined
 }
-const port = Number(opt('--port') ?? process.env.TSUGUMI_WEB_PORT ?? 8780)
+const chosenPort = opt('--port') ?? process.env.TSUGUMI_WEB_PORT
+const port = Number(chosenPort ?? 8780)
 const openBrowser = argv.includes('--open')
-const launchProject = argv.filter((a, i) => !a.startsWith('--') && !argv[i - 1]?.startsWith('--')).map((a) => path.resolve(a))
+// The `tsugumi` command: a server of this user that runs already opens the page instead.
+const reuseServer = argv.includes('--reuse')
+const launchProject = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port').map((a) => path.resolve(a))
   .find((a) => fs.existsSync(path.join(a, 'tsugumi.json')))
 
 const build = process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build')
@@ -45,7 +50,17 @@ const projectsDir = process.env.TSUGUMI_PROJECTS_DIR ?? path.join(os.homedir(), 
 const publicDir = path.join(here, 'public')
 
 let origins: string[] = []
-const envs = new EnvironmentManager(bins, support, () => origins)
+// The Mac's tsugumi command (cli/tsugumi): the desktop app's shared VM and settings.
+const vm = process.env.TSUGUMI_VMHOST
+  ? new VMEnvironmentManager({
+      host: process.env.TSUGUMI_VMHOST,
+      image: process.env.TSUGUMI_VM_IMAGE!,
+      source: process.env.TSUGUMI_VM_SOURCE!,
+      support: process.env.TSUGUMI_SUPPORT_DIR!,
+    }, () => origins)
+  : undefined
+const desktop = vm && desktopSettings(vm)
+const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins)
 
 // ---- Small JSON stores -----------------------------------------------------------
 
@@ -62,9 +77,11 @@ function writeJSON(file: string, v: unknown) {
   fs.renameSync(file + '.tmp', file)
 }
 
-interface Recent { path: string; name: string; openedAt: number }
 const recentsFile = path.join(support, 'recent-projects.json')
-const recents = () => readJSON<Recent[]>(recentsFile, []).filter((r) => fs.existsSync(r.path))
+const recentStore = vm
+  ? desktopRecents(vm.options.support)
+  : { read: () => readJSON<Recent[]>(recentsFile, []), write: (list: Recent[]) => writeJSON(recentsFile, list) }
+const recents = () => recentStore.read().filter((r) => fs.existsSync(r.path))
 
 function projectName(dir: string) {
   return readJSON<{ name?: string }>(path.join(dir, 'tsugumi.json'), {}).name || path.basename(dir)
@@ -73,13 +90,13 @@ function projectName(dir: string) {
 function remember(dir: string) {
   const list = recents().filter((r) => r.path !== dir)
   list.unshift({ path: dir, name: projectName(dir), openedAt: Date.now() })
-  writeJSON(recentsFile, list.slice(0, 30))
+  recentStore.write(list.slice(0, 30))
 }
 
 /** Takes projects off the recent list; the folders themselves stay. */
 function forgetRecents(paths: unknown) {
   const gone = new Set(Array.isArray(paths) ? paths.map(String) : [])
-  writeJSON(recentsFile, recents().filter((r) => !gone.has(r.path)))
+  recentStore.write(recents().filter((r) => !gone.has(r.path)))
   return { ok: true }
 }
 
@@ -103,6 +120,11 @@ function copyDemo(id: string): string {
   for (let n = 2; fs.existsSync(dest); n++) dest = path.join(projectsDir, `${id}-${n}`)
   // Not a demo's own state folder (.tsugumi/); its history file comes along.
   fs.cpSync(demo.path, dest, { recursive: true, filter: (src) => !/[\\/]\.tsugumi([\\/]|$)/.test(src) })
+  // Yours to edit: on Linux the demos are in the Nix store, and a copy keeps their read-only modes.
+  for (const f of [dest, ...fs.readdirSync(dest, { recursive: true }).map((r) => path.join(dest, String(r)))]) {
+    const st = fs.lstatSync(f)
+    if (!st.isSymbolicLink()) fs.chmodSync(f, st.mode | 0o200)
+  }
   return dest
 }
 
@@ -242,7 +264,7 @@ function publicState(s: EnvState) {
 /** A shell in a project's folder on this host, on a pseudo terminal: the page
  *  sends keys and draws what it prints. Only the same-origin UI can start one
  *  (the API header), and they end with the server. */
-interface Terminal { id: string; project: string; proc: IPty }
+interface Terminal { id: string; project: string; proc: IPty | VMTerminal }
 const terminals = new Map<string, Terminal>()
 const MAX_TERMINALS = 8
 
@@ -264,21 +286,23 @@ const terminalSize = (v: unknown, fallback: number) => (Number.isInteger(v) && (
 
 async function startTerminal(project: string, cols: unknown, rows: unknown) {
   if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, `ターミナルは同時に ${MAX_TERMINALS} 個までです`)
-  const pty = await loadPty()
   const id = randomUUID()
-  const shell = [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
-  const proc = pty.spawn(shell, ['-l'], {
-    name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
-    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
-  })
+  // In the VM the project's own shell, as in the app's terminal (no node-pty there).
+  const shell = vm ? '/bin/bash' : [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
+  const proc: IPty | VMTerminal = vm
+    ? await vm.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
+    : (await loadPty()).spawn(shell, ['-l'], {
+        name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
+        env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
+      })
   const t: Terminal = { id, project, proc }
   terminals.set(id, t)
   proc.onData((data) => broadcast({ type: 'terminal', id, data }))
-  proc.onExit(({ exitCode, signal }) => {
+  proc.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
     terminals.delete(id)
     broadcast({ type: 'terminal-exit', id, code: exitCode, signal })
   })
-  return { id, cwd: project, shell }
+  return { id, cwd: vm ? '/project' : project, shell }
 }
 
 function terminal(id: unknown): Terminal {
@@ -298,6 +322,11 @@ function stopTerminal(t: Terminal, signal: NodeJS.Signals = 'SIGHUP') {
 let building: { log: string; running: boolean; code?: number } | undefined
 
 function setupStatus() {
+  // In the VM, Tsugumi is built there on its first boot: nothing to do on this host.
+  if (vm) {
+    const ok = { path: vm.options.host, ok: true }
+    return { tsugumid: ok, worker: ok, sdk: ok, nix: { ok: true }, repo, building: null }
+  }
   const has = (p: string) => fs.existsSync(p)
   return {
     tsugumid: { path: bins.tsugumid, ok: has(bins.tsugumid) },
@@ -364,7 +393,7 @@ const routes: Record<string, Handler> = {
   'GET /api/status': () => ({
     setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
     // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
-    hostFolders: process.platform !== 'darwin',
+    hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
   }),
   'POST /api/setup/build': () => {
@@ -414,6 +443,11 @@ const routes: Record<string, Handler> = {
     return { ok: true }
   },
   'GET /api/env/list': () => envs.list().map((e) => ({ key: e.key, project: e.project, name: projectName(e.project), state: publicState(e.state) })),
+  // Another run of the tsugumi command: a page opens (its key goes to `open` alone).
+  'POST /api/page/open': () => {
+    openPage(undefined)
+    return { ok: true }
+  },
   'GET /api/fs': (_b, url) => listDir(url.searchParams.get('path') || os.homedir()),
   'POST /api/fs/mkdir': (b) => {
     const dir = path.join(String(b.parent), String(b.name).replace(/[/\\]/g, '-'))
@@ -435,7 +469,7 @@ const routes: Record<string, Handler> = {
     stopTerminal(terminal(b.id))
     return { ok: true }
   },
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, showOnPage, openPage }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, showOnPage, openPage, desktop }),
 }
 
 // The page is opened through the URL printed at start, which carries this
@@ -469,7 +503,11 @@ function agentAuthorized(req: http.IncomingMessage, route: string): boolean {
 function openPage(project?: string) {
   const p = (server.address() as net.AddressInfo).port
   const url = `http://127.0.0.1:${p}/?key=${key}` + (project ? `&project=${encodeURIComponent(project)}` : '')
-  spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
+  // In WSL (Windows), the browser of Windows: this handler takes a URL as it is, through no shell.
+  const [cmd, args] = process.platform === 'darwin' ? ['open', []]
+    : process.env.WSL_DISTRO_NAME ? ['rundll32.exe', ['url.dll,FileProtocolHandler']]
+    : ['xdg-open', []]
+  spawn(cmd, [...args, url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
 }
 
 // The module viewer (/modules/: a Card's Plotly figure or Vega-Lite chart) is
@@ -561,20 +599,48 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   fs.createReadStream(file).pipe(res)
 }
 
-server.listen(port, '127.0.0.1', () => {
+/** Asks a server of this user that runs already to open a page. */
+async function openOnRunningServer(): Promise<boolean> {
+  try {
+    const info = JSON.parse(fs.readFileSync(serverFile, 'utf8')) as ServerInfo
+    process.kill(info.pid, 0)
+    const r = await fetch(`http://127.0.0.1:${info.port}/api/page/open`, {
+      method: 'POST', headers: { 'x-tsugumi': '1', [AGENT_KEY_HEADER]: info.agentKey }, signal: AbortSignal.timeout(5000),
+    })
+    if (!r.ok) return false
+    console.log(`Tsugumi は動いています（http://127.0.0.1:${info.port}/）。ブラウザでページを開きました。`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+if (reuseServer && await openOnRunningServer()) process.exit(0)
+await desktop?.refresh()
+
+// The usual port keeps the page's own settings (localStorage) across runs; when
+// something else has it, any free port (unless one was asked for).
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code !== 'EADDRINUSE' || chosenPort !== undefined) throw e
+  server.listen(0, '127.0.0.1')
+})
+server.on('listening', () => {
   const p = (server.address() as net.AddressInfo).port
   origins = [`http://127.0.0.1:${p}`, `http://localhost:${p}`]
   const url = `http://127.0.0.1:${p}/?key=${key}` + (launchProject ? `&project=${encodeURIComponent(launchProject)}` : '')
   console.log(`Tsugumi web UI: ${url}`)
-  console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
+  if (vm) console.log(`  VM:       ${path.join(vm.options.support, 'vm')}`)
+  else console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
   console.log(`  data:     ${support}`)
   // For local clients of this user (the Claude Code plugin's MCP server): how
   // to reach this server, with the agent key (not the page's). Readable by this user alone.
   fs.rmSync(serverFile + '.tmp', { force: true })
   fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
+  if (reuseServer) console.log('終了するには Ctrl-C を押します。')
   if (openBrowser) openPage(launchProject)
 })
+server.listen(port, '127.0.0.1')
 
 let stopping = false
 async function shutdown() {
@@ -588,7 +654,9 @@ async function shutdown() {
   server.close()
   // Active runs are interrupted by tsugumid itself; documents stay in the folders.
   await envs.stopAll()
+  await vm?.shutdown()
   process.exit(0)
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+process.on('SIGHUP', shutdown)

@@ -7,16 +7,19 @@ import net from 'node:net'
 import path from 'node:path'
 import { AGENT, modelChoices } from '../src/shared/agentShared'
 import { BFBS } from '../src/shared/bfbs'
-import { RPCClient, Transport } from '../src/shared/rpc'
+import { RPCClient, Transport, webSocketTransport } from '../src/shared/rpc'
 import { Agent, externalTools, summarizeVersion, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { keychainReader } from './keychain'
 import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
-import { EnvironmentManager, projectKey } from './env'
+import { Environments, projectKey } from './env'
+import { DesktopSettings } from './desktop'
 
 export interface ChatContext {
   support: string
-  envs: EnvironmentManager
+  envs: Environments
+  /** The desktop app's settings, when this server shares them (the Mac's tsugumi command). */
+  desktop?: DesktopSettings
   projectDir: (p: unknown) => string
   broadcast: (v: unknown) => void
   httpError: (status: number, message: string) => Error
@@ -85,7 +88,11 @@ const defaultSettings: Settings = {
   guide: { setupDone: false, demoAnswered: false, tour: null },
   versionSummaries: false,
 }
-const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
+const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values })
+const saveSettings = (s: Settings) => {
+  ctx.desktop?.save(settings(), s)
+  ctx.writeJSON(settingsFile(), s)
+}
 
 /** Only these keys are written from the page (never a key or anything else). */
 function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
@@ -321,7 +328,7 @@ async function guideState() {
   let g = settings().guide
   if (available && !g.setupDone) {
     g = { ...g, setupDone: true }
-    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    saveSettings({ ...settings(), guide: g })
   }
   return { available, ...g }
 }
@@ -451,7 +458,7 @@ function answerPermission(id: string, allow: boolean, always: string[] = []) {
   permissionWaits.delete(id)
   if (allow && always.length) {
     const s = settings()
-    ctx.writeJSON(settingsFile(), { ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
+    saveSettings({ ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
   }
   w.resolve(allow ? new Set(w.asked) : new Set())
   ctx.broadcast({ type: 'chat', project: w.project, session: w.session, event: { kind: 'permissionAnswered', id } })
@@ -474,8 +481,9 @@ class ChatHost {
     if (this.client && !this.client.closed) return this.client
     const st = await ctx.envs.start(this.project)
     if (st.state !== 'ready') throw new Error(st.state === 'failed' ? st.message : 'tsugumid is not running')
-    const c = new RPCClient(await unixTransport(st.unix))
-    await c.connect(undefined)
+    // On this host its Unix socket, which needs no token; in the VM its WebSocket.
+    const c = new RPCClient(st.unix ? await unixTransport(st.unix) : await webSocketTransport(st.endpoint))
+    await c.connect(st.unix ? undefined : st.token)
     this.client = c
     return c
   }
@@ -494,16 +502,11 @@ class ChatHost {
     return a
   }
 
-  /** The folders a chat may read; tsugumid on this host reads only those
-   *  listed in its control folder (attached.json), written here alone. */
-  attach(a: Agent, folders: string[]) {
+  /** The folders a chat may read. */
+  async attach(a: Agent, folders: string[]) {
     a.folders = folders
     const all = [...new Set([...this.agents.values()].flatMap((x) => x.folders))].sort()
-    const control = ctx.envs.controlDir(this.key)
-    fs.mkdirSync(control, { recursive: true, mode: 0o700 })
-    const file = path.join(control, 'attached.json')
-    fs.writeFileSync(file + '.tmp', JSON.stringify({ folders: all }), { mode: 0o600 })
-    fs.renameSync(file + '.tmp', file)
+    await ctx.envs.attachFolders(this.project, this.key, all)
   }
 
   events(id: string) {
@@ -605,7 +608,7 @@ async function turnAgent(b: any) {
   const host = chatFor(ctx.projectDir(b.path))
   const a = await host.agent(String(b.session))
   a.setProvider(await chatProvider())
-  if (b.folders) host.attach(a, cleanFolders(b.folders))
+  if (b.folders) await host.attach(a, cleanFolders(b.folders))
   return { host, a }
 }
 
@@ -620,13 +623,13 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   return {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
   'GET /api/settings': async () => ({
-    ...settings(),
+    ...(await ctx.desktop?.refresh(), settings()),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
   'POST /api/settings': (b) => {
     const next = { ...settings(), ...cleanSettings(b ?? {}) }
-    ctx.writeJSON(settingsFile(), next)
+    saveSettings(next)
     return next
   },
   // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
@@ -651,7 +654,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     // Read after the wait: the other connections' lists come at the same time.
     const next = withModelList(settings(), id, list)
     if (!next) throw ctx.httpError(502, 'モデル一覧が空でした。保存済みの一覧はそのままです。')
-    ctx.writeJSON(settingsFile(), next)
+    saveSettings(next)
     return { models: next.models[id], modelNames: next.modelNames }
   },
   /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
@@ -704,7 +707,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!catalog) throw ctx.httpError(503, catalogError!)
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
-    if (b.folders) host.attach(a, cleanFolders(b.folders))
+    if (b.folders) await host.attach(a, cleanFolders(b.folders))
     // Resume work left unfinished by a disconnect or restart.
     if (b.resume && !a.busy) {
       a.setProvider(await chatProvider())
@@ -786,7 +789,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
     if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
     if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
-    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    saveSettings({ ...settings(), guide: g })
     return guideState()
   },
   /** A connection check for the first start: the provider lists its models with the key. */

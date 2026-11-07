@@ -425,7 +425,7 @@ std::string mount_slot(int slot) {
   return "";
 }
 
-std::string start_project(const std::string& id, int cpus, const std::string& name, int slot) {
+std::string start_project(const std::string& id, int cpus, const std::string& name, int slot, const std::string& origins) {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
@@ -499,6 +499,13 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
                "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat"};
+  // The pages that may connect (the Mac's tsugumi command): comma-separated.
+  // Without any, as for the app, a browser's request is refused.
+  for (size_t at = 0; at < origins.size();) {
+    size_t end = std::min(origins.find(',', at), origins.size());
+    args.argv.insert(args.argv.end(), {"--allow-origin", origins.substr(at, end - at)});
+    at = end + 1;
+  }
   args.env = project_env(id);
   args.av = cstrings(args.argv);
   args.ev = cstrings(args.env);
@@ -775,8 +782,8 @@ void control(int conn) {
   if (w.empty()) r = "error empty request";
   else if (w[0] == "ping") r = "ok";
   else if (w[0] == "status") r = status();
-  else if (w[0] == "start" && w.size() == 5 && valid_id(w[1]))
-    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()));
+  else if (w[0] == "start" && (w.size() == 5 || w.size() == 6) && valid_id(w[1]))
+    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "");
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
   else if (w[0] == "gc" && w.size() == 1) r = collect_garbage();

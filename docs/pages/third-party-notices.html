@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</a></li><li class="d2"><a href="#other-macos-app-dependencies">Other macOS app dependencies</a></li><li class="d2"><a href="#web-ui">Web UI</a></li><li class="d3"><a href="#plot-viewer-web-ui-and-macos-app">Plot viewer (web UI and macOS app)</a></li><li class="d2"><a href="#core-daemon-and-execution-environment">Core daemon and execution environment</a></li><li class="d3"><a href="#boot-image-redistributed-with-the-app">Boot image redistributed with the app</a></li><li class="d3"><a href="#downloaded--built-after-installation">Downloaded / built after installation</a></li><li class="d2"><a href="#documentation-site">Documentation site</a></li><li class="d2"><a href="#external-software">External software</a></li><li class="d2"><a href="#external-data">External data</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</a></li><li class="d2"><a href="#other-macos-app-dependencies">Other macOS app dependencies</a></li><li class="d2"><a href="#the-tsugumi-command">The <code>tsugumi</code> command</a></li><li class="d2"><a href="#web-ui">Web UI</a></li><li class="d3"><a href="#plot-viewer-web-ui-and-macos-app">Plot viewer (web UI and macOS app)</a></li><li class="d2"><a href="#core-daemon-and-execution-environment">Core daemon and execution environment</a></li><li class="d3"><a href="#boot-image-redistributed-with-the-app">Boot image redistributed with the app</a></li><li class="d3"><a href="#downloaded--built-after-installation">Downloaded / built after installation</a></li><li class="d2"><a href="#documentation-site">Documentation site</a></li><li class="d2"><a href="#external-software">External software</a></li><li class="d2"><a href="#external-data">External data</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="third-party-notices">Third-party notices</h1>
@@ -78,6 +78,12 @@ resolved for dependency command-line / example targets; it is not a direct
 Tsugumi app product dependency. A lock file entry alone is not proof that
 its code is present in the final executable. Apple&#39;s system frameworks are
 used from the operating system, not copied into the app.</p>
+<h2 id="the-tsugumi-command">The <code>tsugumi</code> command</h2>
+<p>The Mac&#39;s <code>tsugumi-macos-arm64.tar.gz</code> also contains the official Node.js build
+(version and checksum in <code>cli/node-version.env</code>; MIT and the notices in its
+<code>LICENSE</code>, included as <code>licenses/node.LICENSE</code>), the Web UI below with the license files of its
+npm packages (<code>licenses/npm</code>), the boot image below, and FlatBuffers in
+<code>tsugumi-vmhost</code>. On Linux and in WSL on Windows, Nix builds the same from source (<code>nix/cli.nix</code>).</p>
 <h2 id="web-ui">Web UI</h2>
 <p><code>web/package-lock.json</code> pins this runtime package tree. esbuild bundles
 only code reachable from the server and browser entry points.</p>
