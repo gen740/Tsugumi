@@ -7,7 +7,7 @@ import { api } from '../api'
 import { app } from '../model/app'
 import type { ChatController } from '../model/chat'
 import { guide, GuideAction, GuideBubble, GuideItem, GuideScreen, GuideTour } from '../model/guide'
-import { leadColor } from '../model/helperBirds'
+import { leadColor, perchScale } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
@@ -242,7 +242,8 @@ export function GuideFlyer() {
     const right = r.right + 320 < window.innerWidth
     const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
     const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
-    return { left: x - BIRD.w / 2, top: y - BIRD.h, width: BIRD.w, height: BIRD.h, flip: right }
+    const k = perchScale(el?.closest<HTMLElement>('[data-canvas-zoom]')?.dataset.canvasZoom)
+    return { left: x - (BIRD.w * k) / 2, top: y - BIRD.h * k, width: BIRD.w * k, height: BIRD.h * k, flip: right }
   }
   // Where the user dragged the perched bird out of the way, for the target it stands by.
   const [nudge, setNudge] = useState<{ target: string; dx: number; dy: number }>()
@@ -304,7 +305,8 @@ export function GuideFlyer() {
   const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
   const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0
   const feetX = box.left + box.width / 2 + dx, feetY = box.top + box.height + dy
-  // The Agent among its helpers: gold, with its name (it is larger than theirs as it is).
+  // The Agent among its helpers: gold, with its name. By a Card it shrinks with the
+  // canvas as theirs does, only less (perchScale): larger than theirs up to a zoom of 220%.
   const lead = goal === 'perch' && !!guide.team?.out(Date.now() / 1000)
   const leadStyle = lead ? { ['--bird' as string]: leadColor(prefs.dark) } : undefined
   let bx = box.flip ? feetX - 30 : feetX - bw + 30

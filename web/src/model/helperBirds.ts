@@ -33,6 +33,12 @@ export const perchOf = (r: { x: number; y: number }): Pt => ({ x: r.x + 26 + BIR
 /** How far above the Card's top edge a helper's bird and its bubble reach (points). */
 export const helperClear = (zoom: number) => -BIRD.feetToCenter.y * zoom + bubbleRise(zoom * BIRD.helperScale)
 
+/** How large the Agent's bird stands by what it points at, from that element's
+ *  `data-canvas-zoom`: by a Card it goes with the canvas, or it would stand over the
+ *  Cards when zoomed out, but stays large enough to see and never grows past its own
+ *  size. What is not on the canvas has no zoom and leaves the bird as it is. */
+export const perchScale = (canvasZoom?: string) => (canvasZoom === undefined ? 1 : Math.max(0.45, Math.min(1, Number(canvasZoom))))
+
 function hsv(h: number, s: number, v: number): string {
   const f = (n: number) => {
     const k = (n + h * 6) % 6

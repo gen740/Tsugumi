@@ -63,3 +63,5 @@ await import("./saveFailure")
 await import("./draftDisplays")
 
 await import("./nixSources")
+
+await import("./perchScale")

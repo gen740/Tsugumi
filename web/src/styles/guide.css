@@ -100,7 +100,7 @@ body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }
 .helper-edge-dot { background: var(--bird); }
 .helper-dot { width: 7px; height: 7px; }
 @media (prefers-reduced-motion: reduce) { .helper-bird { animation: none !important; } }
-.guide-flying-bird.lead .helper-halo { left: 8px; right: 8px; bottom: -6px; height: 16px; background: color-mix(in srgb, var(--bird) 45%, transparent); z-index: auto; }
+.guide-flying-bird.lead .helper-halo { left: 9%; right: 9%; bottom: -9%; height: 25%; background: color-mix(in srgb, var(--bird) 45%, transparent); z-index: auto; }
 .guide-flying-bird.lead .helper-name { left: calc(100% + 4px); top: 36%; font-size: 11px; font-weight: 700; z-index: auto; }
 .guide-work-line.lead { border: 1px solid color-mix(in srgb, var(--bird) 55%, transparent); }
 .helper-row { display: flex; align-items: center; gap: 6px; padding-left: 10px; min-width: 0; color: var(--secondary); }
