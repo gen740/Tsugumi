@@ -632,8 +632,10 @@ final class GuideController {
   /// [Screen]: what the user's window shows, for the guide to answer about.
   func screenNote(_ screen: Screen, session: ProjectSession?, tab: WorkflowTab?) -> String {
     var lines = ["[Screen]"]
+    var inProject = false
     switch (screen, session) {
     case (.project, let s?):
+      inProject = true
       lines.append("screen: the project \"\(s.scopeName([]))\" (folder \(s.identity.url.path))")
       if let tab {
         lines.append("workflow shown: " + (tab.scope.isEmpty ? "the root workflow" : "the Card in Card \(tab.scope.joined(separator: "/"))"))
@@ -657,9 +659,14 @@ final class GuideController {
     if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
       lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")
     }
-    lines.append("demos (id, title, tags: description):")
-    for d in AppModel.shared.demos {
-      lines.append("- \(d.id) \"\(d.title)\", \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
+    if inProject {
+      lines.append("demos (ids; their descriptions come on Home): " + AppModel.shared.demos.map(\.id).joined(separator: ", "))
+    } else {
+      lines.append("demos (id, title, tags: description):")
+      for d in AppModel.shared.demos {
+        lines.append("- \(d.id) \"\(d.title)\", \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+      }
     }
     return lines.joined(separator: "\n")
   }

@@ -79,7 +79,7 @@
           "open": { "type": "string", "description": "a window the app opens for the user to look at (opening changes nothing): card:<Card id or outer/inner> opens that Card's settings window, where the bird flies to point at param:<name>" },
           "say": { "type": "string", "description": "what the bird says in its speech bubble: one to three short sentences, the point of this step (your reply text is the full explanation)" },
           "choices": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "short replies the user can tap in the bubble (e.g. 次へ, もっと詳しく); the one tapped comes back to you as the user's message" },
-          "endTour": { "type": "boolean", "description": "true at the last step of a demo tour, with a farewell such as 「いつでも呼んでくださいね。わからない機能があれば説明します」: the bird says it, then flies home, and the app stops telling you about runs" },
+          "endTour": { "type": "boolean", "description": "true with the farewell at the end of a demo tour: the bird says it, then flies home, and the app stops telling you about runs" },
           "actions": {
             "type": "array", "maxItems": 3,
             "items": {

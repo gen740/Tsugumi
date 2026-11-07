@@ -296,6 +296,7 @@ in { run = &quot;${ciao}/bin/dmlist ...&quot;; }
 <p>Home では、アプリ全体で 1 つのガイドの会話（<code>Agent.Role.guide</code>、規則は <code>agent/Shared/guide-prompt.md</code>）が右下から同じように話します。</p>
 <ul>
 <li>ガイドが持つのは、読み取りの tool と <code>reference_read</code> と <code>guide_show</code> だけです。保存・実行・停止はしません。</li>
+<li>ガイドは小さなモデルで答えます。Anthropic は <code>claude-haiku-5-5</code>、ChatGPT プランは luna のモデル、OpenAI の API キーでは Agent と同じモデルです。デモの案内はコピーのチャットが、チャットのモデルで進めます。</li>
 <li>会話は、Mac では <code>~/Library/Application Support/Tsugumi/agent/guide/</code>、Web ではデータフォルダの <code>agent/guide/</code> に残ります。</li>
 <li>初回起動では、Anthropic か OpenAI を選んでどちらか一方の API キーを入力し、接続を確かめてから始めます（「スキップして始める」も選べます）。キーは設定の「API」と同じ経路で Keychain に保存します。すでに使えるキー（または ChatGPT のプラン）があれば何も聞きません。キーのない間は鳥も会話も出さず、キーを登録すると現れ、削除すると消えます。</li>
 <li>初めて現れたときは「何に興味がありますか？」と尋ねます（入力するか、候補をタップ）。答えに合うデモを説明とタグから選び、デモ一覧を開いてそのカードへ飛び、理由を一言添えて「このデモを開く」を出します。デモを開くと、そのコピーのチャットのツグミが案内を続けます。</li>

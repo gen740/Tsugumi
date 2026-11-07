@@ -296,12 +296,15 @@ async function guide(): Promise<Agent> {
   return guideAgent
 }
 
-/** The guide's connection: the Agent's, with the small model Tsugumi speaks
- *  with on the ChatGPT plan: gpt-6.1-luna when the account offers it, else
- *  its newest luna (the plan refuses models it does not offer). */
+/** The guide's connection: the Agent's, with a small model: claude-haiku-5-5
+ *  on Anthropic, and on the ChatGPT plan the model Tsugumi speaks with:
+ *  gpt-6.1-luna when the account offers it, else its newest luna (the plan
+ *  refuses models it does not offer). OpenAI keeps the Agent's. Demo tours are
+ *  led by the chat, with the chat's model. */
 async function guideProvider(): Promise<ProviderConfig> {
-  const p = await provider()
-  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) } : p
+  const p = await provider(), id = settings().provider
+  if (id === 'chatgpt') return { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) }
+  return id === 'anthropic' ? { ...p, model: 'claude-haiku-5-5' } : p
 }
 
 export function speechModel(offered: string[], fallback: string): string {

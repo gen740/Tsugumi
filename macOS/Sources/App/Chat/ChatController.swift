@@ -806,10 +806,14 @@ enum AgentSettings {
     return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
   }
 
-  /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.
+  /// The connection of the Home guide: the Agent's, with a small model, as for
+  /// the canvas bird's thoughts: claude-haiku-5-5 on Anthropic, the speech model
+  /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
+  /// chat, with the chat's model.
   static func guide() -> ProviderConfig {
     var c = current()
     if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
+    else if c.auth == .apiKey, c.api == .anthropicMessages { c.model = "claude-haiku-5-5" }
     return c
   }
 

@@ -625,8 +625,13 @@ export class GuideController extends Observable {
       lines.push('screen: Home (recent projects, new project, open, デモを見る)')
     }
     if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
-    lines.push('demos (id, title, tags: description):')
-    for (const d of app.status?.demos ?? []) lines.push(`- ${d.id} "${d.title}", ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
+    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
+    const demos = app.status?.demos ?? []
+    if (screen === 'project' && s) lines.push('demos (ids; their descriptions come on Home): ' + demos.map((d) => d.id).join(', '))
+    else {
+      lines.push('demos (id, title, tags: description):')
+      for (const d of demos) lines.push(`- ${d.id} "${d.title}", ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
+    }
     return lines.join('\n')
   }
 
