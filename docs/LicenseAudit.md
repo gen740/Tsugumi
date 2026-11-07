@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | 実行系 | `tree-sitter` 0.25.10 は MIT、`SwiftTreeSitter` 0.25.0 は BSD-3-Clause | 両者を区別して notices に記載 |
 | Nix / Python grammar | `src/` をコピーして使用。各ディレクトリに上流の LICENSE が既にある | 出典と適用範囲を明記 |
-| C / C++ / JSON / Bash grammar | SwiftPM で取得してリンク。各上流 LICENSE は MIT | 固定 revision の LICENSE へのリンクと、コピー済み query 用のライセンス全文を追加 |
+| C / C++ / JSON / Bash / Go / Rust / Julia / R grammar | SwiftPM で取得してリンク。各上流 LICENSE は MIT（Julia の著作権表示は Max Brunsfeld, GitHub、R は tree-sitter-r authors）。Julia は manifest が `scanner.c` を入れないため、scanner だけを `Grammars/TreeSitterJuliaScanner/` にコピー（LICENSE 付き） | 固定 revision の LICENSE へのリンクと、コピー済み query 用のライセンス全文を追加 |
 | highlight query | `Resources/TreeSitter/SOURCES.md` に grammar ごとの出典がある。C++ は C の query も使う | 出典の説明からライセンス全文へ案内を追加 |
 | FBS grammar | `grammar.js` はこのプロジェクトのもの。`src/parser.c` と metadata はそこから生成 | 自作 grammar と生成物を区別 |
 | `src/tree_sitter/` | generator が配置する外部の補助ヘッダー。自作 FBS grammar のフォルダ内にも存在 | `Grammars/LICENSE.tree-sitter` と適用範囲を追加し、すべて自作と読める説明を訂正 |
