@@ -49,12 +49,14 @@ struct WorkbenchSidebar: View {
             .buttonStyle(.borderless)
             .help("版の履歴（git、⌥⌘Y）")
             .accessibilityLabel("版の履歴")
+            .guideTarget("versions")
           Button {
             ProjectSettingsPane.open(session, with: openSettings)
           } label: { Image(systemName: "gearshape").font(.system(size: 13)).frame(width: 26, height: 22) }
             .buttonStyle(.borderless)
             .help("このプロジェクトの設定（設定ウインドウの「このプロジェクト」）")
             .accessibilityLabel("プロジェクトの設定")
+            .guideTarget("project_settings")
           Spacer()
         }
         .padding(.horizontal, 8).padding(.vertical, 5)

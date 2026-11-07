@@ -93,6 +93,8 @@ export interface Demo {
   description: string
   path: string
   tags: string[]
+  /** The field the guide lists it under (an implemented demo; none: a Draft). */
+  field?: string
 }
 
 export interface Status {

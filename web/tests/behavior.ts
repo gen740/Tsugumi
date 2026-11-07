@@ -65,3 +65,4 @@ await import("./draftDisplays")
 await import("./nixSources")
 
 await import("./perchScale")
+await import("./guideScript")

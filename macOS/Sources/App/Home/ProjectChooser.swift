@@ -346,6 +346,7 @@ private struct HomeSidebar: View {
           .guideTarget("new_project")
         Button(action: onOpen) { Label("既存のプロジェクトを開く…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large)
+          .guideTarget("open_project")
         Button { showDemos.toggle() } label: {
           Label(showDemos ? "最近のプロジェクト" : "デモを見る", systemImage: showDemos ? "clock" : "sparkles")
         }

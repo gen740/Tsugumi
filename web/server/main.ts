@@ -102,12 +102,12 @@ function forgetRecents(paths: unknown) {
 
 // ---- Projects --------------------------------------------------------------------
 
-interface Demo { id: string; title: string; description: string; path: string; tags: string[] }
+interface Demo { id: string; title: string; description: string; path: string; tags: string[]; field?: string }
 function demos(): Demo[] {
-  const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[] }[] }>(path.join(demosRoot, 'index.json'), {})
+  const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[]; field?: string }[] }>(path.join(demosRoot, 'index.json'), {})
   return (idx.demos ?? []).map((d) => {
     const dir = path.join(demosRoot, d.path)
-    return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [] }
+    return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [], ...(d.field ? { field: String(d.field) } : {}) }
   })
 }
 

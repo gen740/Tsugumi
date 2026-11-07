@@ -11,6 +11,8 @@ struct GuideWindowActions {
   var newProject: () -> Void
   /// Opens the project's chat column.
   var showChat: () -> Void = {}
+  /// Opens a panel under the canvas (the log, the timeline, the terminal).
+  var showPanel: (BottomPanel) -> Void = { _ in }
 }
 
 private struct GuideWindowKey: EnvironmentKey { static let defaultValue: GuideWindowActions? = nil }
@@ -158,8 +160,8 @@ struct GuideCorner: View {
           GuidePanel(screen: screen, session: session, tab: tab, perform: perform)
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
         } else if !birdAway {
-          if guide.offersDemo {
-            GuideOfferBubble(perform: perform)
+          if guide.asksDemo {
+            GuideOfferBubble(screen: screen, perform: perform)
           } else if let b = guide.bubble, guide.speakingChat == nil {
             GuideBubbleView(bubble: b, perform: perform)
           } else if guide.failed, !guide.open {
@@ -332,39 +334,85 @@ struct GuideFlow: Layout {
   }
 }
 
-/// The first greeting: what are you interested in? The answer (typed, or a
-/// suggestion tapped) has Tsugumi pick a demo and fly to it.
+/// The first questions, written by the app (no model until a question is
+/// typed or a recommendation asked): what to try, then a field (or the
+/// Drafts), then a demo, which the bird flies to and offers to open.
 private struct GuideOfferBubble: View {
+  let screen: GuideController.Screen
   let perform: GuidePerformer
+  @Environment(AppModel.self) private var model
   @State private var text = ""
   @FocusState private var focused: Bool
   private var guide: GuideController { .shared }
-  static let suggestions = [String(localized: "データの集計とレポート"), String(localized: "ライブ表示"),
-                            String(localized: "C++ と Python"), String(localized: "天文・地震・タンパク質のデータ")]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。").fixedSize(horizontal: false, vertical: true)
-      GuideFlow(spacing: 6) {
-        ForEach(Self.suggestions, id: \.self) { s in
-          Button { guide.answerInterest(s) } label: { GuideChip(text: s) }.buttonStyle(.plain)
+      switch guide.offerStep {
+      case .start:
+        Text("こんにちは、ツグミです。何をしてみますか？").fixedSize(horizontal: false, vertical: true)
+        GuideFlow(spacing: 6) {
+          chip(String(localized: "既にある Workflow を見る")) { guide.offerStep = .fields }
+          chip(String(localized: "Draft を AI に実装させる")) { guide.offerStep = .drafts }
         }
-      }
-      GuideReplyField(text: $text, placeholder: String(localized: "興味のあること（例: 画像処理）")) { guide.answerInterest($0) }
+        GuideReplyField(text: $text, placeholder: String(localized: "質問を書く")) { q in
+          guide.answerDemoOffer()
+          guide.ask(q, screen: screen, session: nil, tab: nil)
+        }
         .focused($focused)
-      HStack {
-        Button("定番のデモを見る") { perform(GuideAction(kind: .openDemo, label: "", demo: "report")) }
-        Button("あとで") { guide.answerDemoOffer() }
+        Button("あとで") { guide.answerDemoOffer() }.controlSize(.small)
+      case .fields:
+        Text("どんな分野に興味がありますか？").fixedSize(horizontal: false, vertical: true)
+        GuideFlow(spacing: 6) {
+          ForEach(fields, id: \.self) { f in chip(String(localized: String.LocalizationValue(f))) { guide.offerStep = .field(f) } }
+        }
+        GuideReplyField(text: $text, placeholder: String(localized: "興味のあること（例: 画像処理）")) { guide.answerInterest($0) }
+          .focused($focused)
+        HStack {
+          Button("定番のデモを見る") { perform(GuideAction(kind: .openDemo, label: "", demo: "report")) }
+          Button("戻る") { guide.offerStep = .start }
+        }
+        .controlSize(.small)
+      case .field(let f):
+        Text("「\(String(localized: String.LocalizationValue(f)))」のデモです。どれを見ますか？").fixedSize(horizontal: false, vertical: true)
+        GuideFlow(spacing: 6) {
+          ForEach(model.demos.filter { $0.field == f }) { d in chip(d.title) { guide.pickDemo(d) } }
+        }
+        HStack {
+          Button("おすすめを聞く") { guide.recommend(in: f) }
+          Button("分野を選び直す") { guide.offerStep = .fields }
+        }
+        .controlSize(.small)
+      case .drafts:
+        Text("どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。").fixedSize(horizontal: false, vertical: true)
+        GuideFlow(spacing: 6) {
+          ForEach(model.demos.filter { $0.field == nil }) { d in chip(Self.short(d.title)) { guide.pickDemo(d) } }
+        }
+        Button("戻る") { guide.offerStep = .start }.controlSize(.small)
       }
-      .controlSize(.small)
     }
     .font(.callout)
     .padding(10)
-    .frame(width: 280, alignment: .leading)
+    .frame(width: 300, alignment: .leading)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(TsugumiPalette.rufous.opacity(0.45)))
     .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     .onAppear { focused = true }
+  }
+
+  /// The fields of the implemented demos, in the order of the list.
+  private var fields: [String] {
+    var out: [String] = []
+    for f in model.demos.compactMap(\.field) where !out.contains(f) { out.append(f) }
+    return out
+  }
+
+  /// A Draft's title without its "（Draft）": the question says it.
+  nonisolated static func short(_ title: String) -> String {
+    title.replacingOccurrences(of: "（Draft）", with: "").trimmingCharacters(in: .whitespaces)
+  }
+
+  private func chip(_ label: String, _ action: @escaping () -> Void) -> some View {
+    Button(action: action) { GuideChip(text: label) }.buttonStyle(.plain)
   }
 }
 
@@ -586,10 +634,14 @@ struct GuideFlyer: View {
         if more == true, guide.speakingChat != nil, arrived { withAnimation(.easeInOut(duration: 0.25)) { facingLeft = false } }
       }
     }
-    // Tsugumi opens a Card's settings to show it (in the window of that project).
+    // Tsugumi opens what it shows (in the window of that project): a panel
+    // under the canvas, the versions, or a Card's settings.
     .onChange(of: guide.openRequest, initial: true) { _, r in
       guard let r, window != nil, let s = guide.flyerSession else { return }
       guide.openRequest = nil
+      if let p = GuideController.panel(r) { window?.showPanel(p); return }
+      if r == "versions" { openWindow(id: "versions", value: ProjectRef(path: s.identity.url.path)); return }
+      guard r.hasPrefix("card:") else { return }
       let path = String(r.dropFirst(5)).split(separator: "/").map(String.init)
       let k = s.instance(key(path)) != nil ? key(path) : key((guide.flyerTab?.scope ?? []) + path)
       guard s.instance(k) != nil else { return }
@@ -1006,6 +1058,39 @@ private struct GuidePanel: View {
   }
 }
 
+// MARK: - The invitation
+
+/// Right after the user's first key (or sign-in): Tsugumi offers to show a
+/// demo itself. ガイドを見る does what the bubble's 定番のデモを見る does.
+struct GuideInviteView: View {
+  let see: () -> Void
+  let later: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      HStack(alignment: .top, spacing: 14) {
+        GuideAvatar(mood: .idle, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
+        VStack(alignment: .leading, spacing: 6) {
+          Text("ガイドを見てみますか？").font(.title2.bold())
+          Text("こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。")
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      Text("案内ではモデルの API を使うため、利用料がかかります。")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("あとで", action: later).keyboardShortcut(.cancelAction)
+        Button("ガイドを見る", action: see).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(24)
+    .frame(width: 460)
+    .tint(TsugumiPalette.rufous)
+  }
+}
+
 // MARK: - First start
 
 /// The first start: choose Anthropic or OpenAI and enter that provider's API
@@ -1045,7 +1130,7 @@ struct GuideSetupView: View {
         Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
       }
-      Text("キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。")
+      Text("キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("スキップして始める") {
@@ -1090,7 +1175,7 @@ struct GuideSetupView: View {
       do {
         _ = try await MessagesProvider(config: AgentSettings.current()).models()
         working = false
-        GuideController.shared.finishSetup()
+        GuideController.shared.finishSetup(connected: true)
         onDone()
       } catch {
         working = false

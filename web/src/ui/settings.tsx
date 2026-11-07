@@ -458,11 +458,12 @@ interface APIState {
   webSearch: boolean
 }
 
-/** Re-reads the connection of every open chat (after it changed here). */
-function refreshChats() {
+/** Re-reads the connection of every open chat (after it changed here);
+ *  `saved`: the user's own save of a key or sign-in (the guide may then ask to show the demo). */
+function refreshChats(saved = false) {
   for (const s of app.sessions.values()) void app.chat(s).refreshProvider()
   // The guide is there exactly while the chosen provider has a key.
-  void guide.refresh()
+  void (saved ? guide.connectionSaved() : guide.refresh())
 }
 
 /** Model connections. API keys stay on this host (the macOS Keychain); they are
@@ -532,11 +533,11 @@ function GuideSettings() {
   useObserve(guide)
   return (
     <Section title="ガイドのツグミ">
-      <Row label="状態"><span className="secondary">{guide.available ? '右下に表示中' : 'API キーが未設定のため表示していません'}</span></Row>
+      <Row label="状態"><span className="secondary">{guide.connected ? '右下に表示中' : 'API キーが未設定のため、決まったデモの案内だけをしています'}</span></Row>
       {/* Pressed, it says what happens next and waits until it has happened. */}
       <Row><Button disabled={guide.offersDemo} onClick={() => void guide.resetIntroduction()}>初回の案内（デモの勧誘）をもう一度表示</Button></Row>
-      {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。</span></Row>}
-      <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。</span></Row>
+      {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。</span></Row>}
+      <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>ガイドは上の接続先とキーを使います。キーがあると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。</span></Row>
     </Section>
   )
 }
@@ -571,7 +572,7 @@ function ChatGPTSettings({ model, setModel, inUse }: { model: string; setModel: 
       if (v.signingIn) return
       setUrl(undefined)
       if (v.outcome) setMessage(v.outcome.message)
-      refreshChats()
+      refreshChats(!!v.outcome?.ok)
     }), 1000)
     return () => clearInterval(t)
   }, [st?.signingIn])
@@ -704,7 +705,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
             const r = await api<{ message: string }>('/api/settings/key', { provider: id, key })
             setKey('')
             await reload()
-            refreshChats()
+            refreshChats(true)
             return r.message
           })}>キーを保存</Button>
           <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {

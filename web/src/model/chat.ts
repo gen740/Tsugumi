@@ -5,7 +5,7 @@ import { commentRequest, draftRequest, toolSummary } from '../shared/agentShared
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
-import { guide, GuideAction, parseShow } from './guide'
+import { guide, GuideAction, type GuideShow, parseShow } from './guide'
 import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
@@ -337,6 +337,8 @@ export class ChatController extends Observable {
 
   send(text: string, selection: CardKey[] = []) {
     if (!text.trim() || !this.available) return
+    // No model connection: Tsugumi answers from its script.
+    if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
     let prompt = text
     for (const sk of this.skillsIn(text)) prompt += `\n\n[Skill ${sk.name}]\n${sk.content}`
     if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
@@ -412,13 +414,23 @@ export class ChatController extends Observable {
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
-  /** Demo mode ($demo, or a demo tour): the bird flies about the screen for
-   *  this chat; it ends with the tour's farewell. Otherwise the chat is a chat. */
+  /** Demo mode ($demo, or a demo tour): the bird leads the user about the
+   *  screen for this chat; it ends with the tour's farewell. Otherwise the chat
+   *  is a chat, whose bird flies only to show where a feature asked about is. */
   demoMode = false
 
   /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
   choices: string[] = []
   offered: GuideAction[] = []
+  /** Without a model connection: Tsugumi's fixed reply (guideScript) to what
+   *  was asked or what the app noted, with its choices and buttons. */
+  showScripted(asked: string | undefined, reply: string, shown: GuideShow) {
+    this.items = [...this.items, ...(asked ? [{ id: uuid(), role: 'user', text: asked }] : []), { id: uuid(), role: 'assistant', text: reply }]
+    this.choices = shown.choices
+    this.offered = shown.actions
+    this.changed()
+  }
+
   /** Notes of the app (a demo tour's runs) that came while it answered. */
   private notes: { prompt: string; display: string }[] = []
 
@@ -550,8 +562,9 @@ export class ChatController extends Observable {
           const shown = parseShow(e.arguments)
           this.choices = shown.choices
           this.offered = shown.actions
-          // The bird moves only in demo mode; after the farewell the chat is a chat again.
-          if (this.demoMode) guide.chatShow(this, e.arguments)
+          // The bird flies for it: in demo mode, and outside it to show where a
+          // feature the user asked about is (the rules keep it to that).
+          guide.chatShow(this, e.arguments)
           if (shown.endTour) this.demoMode = false
           break
         }

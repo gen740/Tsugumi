@@ -115,7 +115,7 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <p>大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python / Julia / R)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。</p>
 <p><img src="../assets/screenshots/subworkflow.png" alt="子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面" loading="lazy"></p>
 <h3 id="ツグミに案内してもらう">ツグミに案内してもらう</h3>
-<p>はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選んで案内します。プロジェクトではチャットがツグミです。<code>$demo</code> と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。</p>
+<p>はじめて開くと、右下のツグミが「何をしてみますか？」と尋ねます。動くデモを見るか、Draft を AI に実装させるかを選び、分野からデモを選ぶと、そのデモまで案内します。プロジェクトではチャットがツグミです。<code>$demo</code> と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。</p>
 <p><img src="../assets/screenshots/guide.png" alt="ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面" loading="lazy"></p>
 <h2 id="使ってみる">使ってみる</h2>
 <div class="table-wrap"><table><thead><tr><th>環境</th><th>使い方</th><th>動作の確認</th></tr></thead><tbody><tr><td>macOS（Apple silicon / macOS 26 以降）</td><td>デスクトップアプリ、または <code>tsugumi</code> コマンド（ブラウザの Web UI）</td><td>確認済み</td></tr><tr><td>Linux（x86_64 / aarch64、Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td>OrbStack の VM（Ubuntu、aarch64）で確認済み</td></tr><tr><td>Windows（WSL2 と、その中の Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td><strong>未確認</strong></td></tr></tbody></table></div>

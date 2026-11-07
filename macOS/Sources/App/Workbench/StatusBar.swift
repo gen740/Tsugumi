@@ -118,6 +118,7 @@ struct StatusBar: View {
     }
     .buttonStyle(StatusButtonStyle())
     .help("保存・同期の詳細")
+    .guideTarget("save")
     .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
   }
 
