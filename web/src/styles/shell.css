@@ -118,11 +118,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .bottom-panel > .panel-bar { border-bottom: 1px solid var(--separator); }
 .terminal-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .terminal-panel > .panel-bar { border-bottom: 1px solid var(--separator); }
-.terminal { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--text-bg); }
-.terminal-out { flex: 1; overflow: auto; padding: 6px 8px; min-height: 0; }
-.terminal-out pre { white-space: pre-wrap; word-break: break-all; font-family: var(--mono); }
-.terminal-line { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--separator); flex: none; }
-.terminal-input { flex: 1; border: 0; outline: none; background: transparent; color: var(--label); font-family: var(--mono); padding: 2px 0; user-select: text; }
+.terminal { flex: 1; min-height: 0; padding: 4px 0 0 8px; background: var(--text-bg); }
 .stage-log { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .stage-log > .panel-bar { border-bottom: 1px solid var(--separator); }
 .stage-log-scroll { flex: 1; overflow: auto; padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }

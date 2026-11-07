@@ -349,7 +349,7 @@ export function Popover({ open, onClose, anchor, children, width, height }: {
 }
 
 /** A modal sheet over its window (or the page). */
-export function Sheet({ children, onClose, width }: { children: ReactNode; onClose: () => void; width?: number }) {
+export function Sheet({ children, onClose, width, backdropCloses = true }: { children: ReactNode; onClose: () => void; width?: number; backdropCloses?: boolean }) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -361,7 +361,7 @@ export function Sheet({ children, onClose, width }: { children: ReactNode; onClo
     return () => window.removeEventListener('keydown', key, true)
   }, [onClose])
   return createPortal(
-    <div className="sheet-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="sheet-backdrop" onMouseDown={(e) => backdropCloses && e.target === e.currentTarget && onClose()}>
       <div className="sheet" style={{ width }} role="dialog" aria-modal>{children}</div>
     </div>,
     document.body,

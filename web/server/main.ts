@@ -2,16 +2,18 @@
 // on this host, and hosts the Agent. The browser talks to tsugumid directly
 // over its WebSocket RPC; this server only does what a page cannot (files,
 // processes, the model API key).
-import { ChildProcess, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
+import { createRequire } from 'node:module'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
-import { chatRoutes, chatStatus } from './chat'
+import { cancelChats, chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './env'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -154,21 +156,21 @@ function projectFiles(root: string, limit: number): Map<string, Buffer> {
 
 /** Reads another Tsugumi project to take in as a Card in Card. The page puts
  *  it under externals/<name>/ as a copy; the original folder is not linked.
- *  Files that are not UTF-8 text are left out (documents edit text only). */
+ *  Files that are not UTF-8 text come as base64, unchanged. */
 function importProject(folder: unknown) {
   if (typeof folder !== 'string' || !fs.existsSync(path.join(folder, 'tsugumi.json'))) throw new HttpError(400, 'tsugumi.json のあるフォルダを選んでください。')
   const root = fs.realpathSync(folder)
   const files: Record<string, string> = {}
-  const skipped: string[] = []
+  const binary: Record<string, string> = {}
   const utf8 = new TextDecoder('utf-8', { fatal: true })
   for (const [rel, d] of projectFiles(root, 64 << 20)) {
     try {
       files[rel] = utf8.decode(d)
     } catch {
-      skipped.push(rel)
+      binary[rel] = Buffer.from(d).toString('base64')
     }
   }
-  return { name: path.basename(root), files, skipped }
+  return { name: path.basename(root), files, binary }
 }
 
 /** A copy of a project's saved documents and sources (what is in its folder,
@@ -237,35 +239,44 @@ function publicState(s: EnvState) {
 
 // ---- Terminals ---------------------------------------------------------------------
 
-/** A shell in a project's folder on this host. No pseudo terminal: the page
- *  sends whole lines and shows what the shell prints (both streams). Only
- *  the same-origin UI can start one (the API header), and they end with the
- *  server. */
-interface Terminal { id: string; project: string; proc: ChildProcess }
+/** A shell in a project's folder on this host, on a pseudo terminal: the page
+ *  sends keys and draws what it prints. Only the same-origin UI can start one
+ *  (the API header), and they end with the server. */
+interface Terminal { id: string; project: string; proc: IPty }
 const terminals = new Map<string, Terminal>()
 const MAX_TERMINALS = 8
 
-function startTerminal(project: string) {
+/** The native module is loaded when a terminal opens: the server runs without it. */
+async function loadPty() {
+  try {
+    const pty = await import('node-pty')
+    // npm drops the helper's executable bit from the package.
+    const require = createRequire(import.meta.url)
+    const helper = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
+    if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
+    return pty
+  } catch (e) {
+    throw new HttpError(500, `ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: ${(e as Error).message}`)
+  }
+}
+
+const terminalSize = (v: unknown, fallback: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) < 1000 ? (v as number) : fallback)
+
+async function startTerminal(project: string, cols: unknown, rows: unknown) {
   if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, `ターミナルは同時に ${MAX_TERMINALS} 個までです`)
+  const pty = await loadPty()
   const id = randomUUID()
-  const bash = fs.existsSync('/bin/bash')
-  const shell = bash ? '/bin/bash' : '/bin/sh'
-  const proc = spawn(shell, bash ? ['--noprofile', '--norc'] : [], {
-    cwd: project,
-    env: { ...process.env, TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat', TSUGUMI_PROJECT: project },
-    stdio: ['pipe', 'pipe', 'pipe'],
-    // Its own process group: stopping it ends what it started too.
-    detached: true,
+  const shell = [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
+  const proc = pty.spawn(shell, ['-l'], {
+    name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
+    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
   })
   const t: Terminal = { id, project, proc }
   terminals.set(id, t)
-  const out = (d: Buffer) => broadcast({ type: 'terminal', id, data: d.toString('utf8') })
-  proc.stdout!.on('data', out)
-  proc.stderr!.on('data', out)
-  proc.on('error', (e) => broadcast({ type: 'terminal', id, data: `\n${e.message}\n` }))
-  proc.on('exit', (code, signal) => {
+  proc.onData((data) => broadcast({ type: 'terminal', id, data }))
+  proc.onExit(({ exitCode, signal }) => {
     terminals.delete(id)
-    broadcast({ type: 'terminal-exit', id, code, signal })
+    broadcast({ type: 'terminal-exit', id, code: exitCode, signal })
   })
   return { id, cwd: project, shell }
 }
@@ -276,13 +287,10 @@ function terminal(id: unknown): Terminal {
   return t
 }
 
-function stopTerminal(t: Terminal, signal: NodeJS.Signals = 'SIGTERM') {
-  t.proc.stdin?.end()
+function stopTerminal(t: Terminal, signal: NodeJS.Signals = 'SIGHUP') {
   try {
-    if (t.proc.pid) process.kill(-t.proc.pid, signal)
-  } catch {
     t.proc.kill(signal)
-  }
+  } catch {}
 }
 
 // ---- Setup -----------------------------------------------------------------------
@@ -355,6 +363,8 @@ type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/status': () => ({
     setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
+    // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
+    hostFolders: process.platform !== 'darwin',
     ...chatStatus(), documents: projectsDir,
   }),
   'POST /api/setup/build': () => {
@@ -384,6 +394,20 @@ const routes: Record<string, Handler> = {
     else pageProjects.delete(String(b.page))
     return {}
   },
+  // A page left the project. It stops with its chat and terminals, unless another
+  // page shows it; a child workflow's page goes with it.
+  'POST /api/project/close': async (b) => {
+    const dir = projectDir(b.path)
+    const page = String(b.page)
+    pageProjects.delete(page)
+    const elsewhere = [...streams.values()].some((p) => !p.detached && p.id !== page && pageProjects.get(p.id) === dir)
+    if (elsewhere) return { stopped: false }
+    broadcast({ type: 'projectClosed', project: dir })
+    cancelChats(dir)
+    for (const t of terminals.values()) if (t.project === dir) stopTerminal(t)
+    await envs.stop(dir)
+    return { stopped: true }
+  },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/stop': async (b) => {
     await envs.stop(projectDir(b.path))
@@ -397,17 +421,15 @@ const routes: Record<string, Handler> = {
     return listDir(dir)
   },
   'POST /api/import/project': (b) => importProject(b.folder),
-  'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path)),
+  'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path), b.cols, b.rows),
   'POST /api/terminal/input': (b) => {
-    const t = terminal(b.id)
-    t.proc.stdin?.write(String(b.data ?? ''))
-    return { ok: true }
+    terminal(b.id).proc.write(String(b.data ?? ''))
+    return {}
   },
-  // Ctrl-C: interrupts the commands the shell is running (not the shell).
-  'POST /api/terminal/interrupt': (b) => {
-    const pid = terminal(b.id).proc.pid
-    if (pid) spawn('pkill', ['-INT', '-P', String(pid)], { stdio: 'ignore' }).on('error', () => {})
-    return { ok: true }
+  'POST /api/terminal/resize': (b) => {
+    const t = terminal(b.id)
+    t.proc.resize(terminalSize(b.cols, t.proc.cols), terminalSize(b.rows, t.proc.rows))
+    return {}
   },
   'POST /api/terminal/stop': (b) => {
     stopTerminal(terminal(b.id))

@@ -30,6 +30,8 @@ nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build ts
 cd web && npm install && nix develop --command npm run gen && npm run build
 ```
 
+ターミナルの `node-pty` はネイティブのモジュールです。macOS には配布物に組み込み済みのものがあり、Linux では `npm install` のときにビルドします（C++ コンパイラと Python が必要）。ビルドできなくても `npm install` と Web UI は動き、ターミナルを開くと理由を表示します。
+
 ```bash
 node web/dist/server.js --open
 ```
@@ -53,7 +55,7 @@ TypeScript の binding と `tsugumi.bfbs` は `npm run gen`（`flatc` 25.12.19�
 - 読み取れるのは `/nix/store`、実行・入力の領域、システムライブラリ、worker 本体だけです。ホームフォルダやプロジェクトの文書は読めません。
 - 書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（`runs/<run>/work/…/out`）だけです。Linux では出力フォルダを `/proc/self/fd` 経由で渡しますが、macOS にはないためパスで渡します。
 - bubblewrap と違い、ファイルの存在確認（`stat`）は全体で許可しています（中身は読めません）。また、uid の分離はしません。
-- Mac のフォルダを Card に共有する機能（`/host/<name>`）は共通 VM が必要なため、Web UI では使えません。
+- Mac のフォルダを Card に共有する機能（`/host/<name>`）は共通 VM が必要なため、macOS 上の Web UI では使えません。Card 設定ではフォルダを追加できず、すでに設定のある Card にはその旨を表示します（実行すると失敗します）。bubblewrap のある Linux では、共通 VM なしで使えるはずです（手元では確かめていません）。
 - ネットワークを許可した Card も、このマシン自身には接続できません（tsugumid や Web サーバーに触れないため）。loopback だけでなく、LAN や VPN のアドレス、`0.0.0.0` 宛ても同じです（Seatbelt の `localhost` はこのマシンのアドレス全体を指します）。Unix ソケットも閉じています。例外は `mDNSResponder` のソケット（`/var/run/mDNSResponder`）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。
 - ネットワークを許可した Card が使える Mach サービスは、証明書の検証に使う `com.apple.trustd.agent` だけです。クリップボードや LaunchServices（アプリや URL を開く）、Apple Event には届きません。名前解決と HTTPS はこれで動きます（Python・curl・Go・NSURLSession で確認）。代わりに、ネットワークなしの Card と同じくユーザー情報（`getpwuid`）を引けないので、`ssh` は `No user exists for uid` で失敗します。システム設定のプロキシも読みません。
 - 塞げない経路が 3 つあります。これらが問題になるネットワークでは、他人の Card に `network: true` を与えないでください。

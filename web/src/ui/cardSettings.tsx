@@ -672,6 +672,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
  *  folder's path is kept in the project. */
 function HostFoldersEditor({ model }: { model: CardEditorModel }) {
   const folders = arr(get(model.definition, 'hostFolders')) ?? []
+  const usable = app.status?.hostFolders ?? true
   const [picking, setPicking] = useState(false)
   const [present, setPresent] = useState<Record<string, boolean>>({})
   const paths = folders.map((f) => str(get(f, 'path')) ?? '')
@@ -707,18 +708,18 @@ function HostFoldersEditor({ model }: { model: CardEditorModel }) {
       <div className="row center">
         <span>ホストのフォルダへのアクセスを許可する</span>
         <span className="spacer" />
-        <Button onClick={() => setPicking(true)}>フォルダを追加…</Button>
+        <Button disabled={!usable} onClick={() => setPicking(true)}>フォルダを追加…</Button>
       </div>
       {folders.map((f, i) => {
         const p = str(get(f, 'path')) ?? ''
         const ok = present[p] !== false
         return (
           <div key={i} className="row gap6 center host-folder">
-            <Icon name={ok ? 'folder' : 'folder.badge.questionmark'} style={{ color: ok ? 'var(--secondary)' : 'var(--orange)' }} />
+            <Icon name={ok && usable ? 'folder' : 'folder.badge.questionmark'} style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }} />
             <div className="col flex1 min0">
               <span className="callout ellipsis" title={p}>{p}</span>
-              <span className="caption" style={{ color: ok ? 'var(--secondary)' : 'var(--orange)' }}>
-                {ok ? `/host/${str(get(f, 'name')) ?? ''}` : 'このホストにはありません（実行すると失敗します）'}
+              <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
+                {!usable ? 'この Web UI では使えません（実行すると失敗します）' : ok ? `/host/${str(get(f, 'name')) ?? ''}` : 'このホストにはありません（実行すると失敗します）'}
               </span>
             </div>
             <Toggle kind="checkbox" label="書き込み" help="オフ（デフォルト）: 読み取り専用" checked={bool(get(f, 'write')) ?? false}
@@ -727,6 +728,7 @@ function HostFoldersEditor({ model }: { model: CardEditorModel }) {
           </div>
         )
       })}
+      {!usable && <div className="caption" style={{ color: 'var(--orange)' }}>macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。</div>}
       <div className="caption secondary">選んだフォルダだけを、この Card の worker から /host/&lt;名前&gt; として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。</div>
       {picking && <FolderPicker message="worker から読めるようにするフォルダを選んでください" onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
     </div>

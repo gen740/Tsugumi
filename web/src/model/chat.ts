@@ -127,11 +127,13 @@ export class ChatController extends Observable {
   available: boolean
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
+  private readonly offEvents: () => void
+
   constructor(readonly session: ProjectSession, private readonly app: AppModel) {
     super()
     this.available = app.status?.chatAvailable ?? true
     if (!this.available) this.status = app.status?.chatError ?? 'RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。'
-    onServerEvent((e) => {
+    this.offEvents = onServerEvent((e) => {
       if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
       // Claude Code's saves (the plugin) are approved here, whichever conversation is open.
       else if (e.type === 'chat' && e.project === session.dir && e.session === 'external' && (e.event.kind === 'permission' || e.event.kind === 'permissionAnswered')) this.handle(e.event)
@@ -139,6 +141,14 @@ export class ChatController extends Observable {
       if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
     })
     void this.init()
+  }
+
+  /** The project was left: this chat hears nothing more. */
+  close() {
+    this.offEvents()
+    this.permission = undefined
+    this.team.endAll('stopped', Date.now() / 1000)
+    guide.chatClosed(this)
   }
 
   private get base() {
