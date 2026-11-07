@@ -328,28 +328,31 @@ def decide_delegate(messages, cards, start):
 
 
 def decide_helper(messages, helper, cards):
-    """A helper implements its own Draft, runs from the trigger and reports."""
+    """A helper implements its own Draft from what the app read for it, leaves
+    base_rev to the app, runs from the trigger and reports."""
     results = tool_results(messages)
-    if not results:
-        return ("tool", "project_inspect", {})
-    name, res, is_error = results[-1]
-    value = res.get("value", {}) if isinstance(res, dict) else {}
     own = cards[0]
-    if name == "project_inspect":
-        d = next(x for x in value["definitions"] if x["id"] == own)
-        meta = json.loads(d["meta_json"]) if d.get("meta_json") else {}
-        card, fbs, nix = implement(json.loads(d["card_json"]), meta)
-        return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
+    if not results:
+        brief = next(b["text"] for b in blocks(messages[0]) if b.get("type") == "text")
+        found = re.search(rf"^## {re.escape(own)}\n_card\.json:\n(.*?)\n_meta\.json:\n(.*?)\nports: ", brief, re.S | re.M)
+        if not found:
+            return ("text", f"{helper}: the app did not give me {own}.")
+        meta = json.loads(found.group(2))
+        card, fbs, nix = implement(json.loads(found.group(1)), meta)
+        return ("tool", "project_save", {"changes": [
             {"value_type": "PutDefinition", "value": {
                 "id": own, "card_json": json.dumps(card), "meta_json": json.dumps(completed_intent(meta))}},
             {"value_type": "PutSource", "value": {"path": f"definitions/{own}/_outputs.fbs", "bytes": fbs}},
             {"value_type": "PutSource", "value": {"path": f"definitions/{own}/default.nix", "bytes": nix}}]})
+    name, res, is_error = results[-1]
+    value = res.get("value", {}) if isinstance(res, dict) else {}
     if name == "project_save":
         if is_error:
             return ("text", f"{helper}: saving failed: {value.get('kind')} {value.get('diagnostic')}")
-        inspect = next(r for n, r, _ in tool_results(messages) if n == "project_inspect")
+        return ("tool", "project_inspect", {})
+    if name == "project_inspect":
         # (told to run together, it tries anyway: the app must refuse)
-        return ("tool", "run", {"base_rev": rev_of(res), "card": {"segments": [trigger_of(inspect.get("value", {}))]}})
+        return ("tool", "run", {"card": {"segments": [trigger_of(value)]}})
     if name in ("run", "run_status"):
         if is_error:
             return ("text", f"{helper}: the run could not start: {value.get('kind')} {value.get('diagnostic')}")
