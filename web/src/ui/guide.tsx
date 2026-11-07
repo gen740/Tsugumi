@@ -52,7 +52,7 @@ export function GuideCorner({ screen }: { screen: GuideScreen }) {
   return (
     <div className="guide-corner">
       {guide.open && <GuidePanel screen={screen} perform={perform} />}
-      {!guide.open && !guide.away && (guide.offersDemo ? <OfferBubble perform={perform} />
+      {!guide.open && !guide.away && (guide.asksDemo ? <OfferBubble screen={screen} perform={perform} />
         : guide.bubble && !guide.speakingChat ? <BubbleView bubble={guide.bubble} perform={perform} />
           : guide.failed ? <span className="guide-bubble material">うまく答えられませんでした</span> : null)}
       <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
@@ -129,22 +129,50 @@ export function ChatChoices({ chat, session, tab }: { chat: ChatController; sess
   )
 }
 
-const SUGGESTIONS = ['データの集計とレポート', 'ライブ表示', 'C++ と Python', '天文・地震・タンパク質のデータ']
+/** A Draft's title without its "（Draft）": the question says it. */
+const shortTitle = (t: string) => t.replace('（Draft）', '').trim()
 
-/** The first greeting: what are you interested in? The answer (typed, or a
- *  suggestion tapped) has Tsugumi pick a demo and fly to it. */
-function OfferBubble({ perform }: { perform: (a: GuideAction) => void }) {
+/** The first questions, written by the app (no model until a question is
+ *  typed or a recommendation asked): what to try, then a field (or the
+ *  Drafts), then a demo, which the bird flies to and offers to open. */
+function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: GuideAction) => void }) {
+  const demos = app.status?.demos ?? []
+  const fields = [...new Set(demos.flatMap((d) => (d.field ? [d.field] : [])))]
+  const step = guide.offerStep
+  const chip = (label: string, onClick: () => void) => <button key={label} type="button" className="guide-choice" onClick={onClick}>{label}</button>
   return (
     <div className="guide-speech material" role="dialog" aria-label="ツグミの吹き出し">
-      <span>こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。</span>
-      <div className="row gap6 wrap">
-        {SUGGESTIONS.map((c) => <button key={c} type="button" className="guide-choice" onClick={() => guide.answerInterest(c)}>{c}</button>)}
-      </div>
-      <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
-      <div className="row gap8">
-        <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
-        <Button small onClick={() => guide.answerDemoOffer()}>あとで</Button>
-      </div>
+      {step.kind === 'start' && <>
+        <span>こんにちは、ツグミです。何をしてみますか？</span>
+        <div className="row gap6 wrap">
+          {chip('既にある Workflow を見る', () => guide.setOfferStep({ kind: 'fields' }))}
+          {chip('Draft を AI に実装させる', () => guide.setOfferStep({ kind: 'drafts' }))}
+        </div>
+        <ReplyField placeholder="質問を書く" autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t, screen) }} />
+        <div className="row gap8"><Button small onClick={() => guide.answerDemoOffer()}>あとで</Button></div>
+      </>}
+      {step.kind === 'fields' && <>
+        <span>どんな分野に興味がありますか？</span>
+        <div className="row gap6 wrap">{fields.map((f) => chip(f, () => guide.setOfferStep({ kind: 'field', field: f })))}</div>
+        <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
+        <div className="row gap8">
+          <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button>
+        </div>
+      </>}
+      {step.kind === 'field' && <>
+        <span>「{step.field}」のデモです。どれを見ますか？</span>
+        <div className="row gap6 wrap">{demos.filter((d) => d.field === step.field).map((d) => chip(d.title, () => guide.pickDemo(d)))}</div>
+        <div className="row gap8">
+          <Button small onClick={() => guide.recommend(step.field)}>おすすめを聞く</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'fields' })}>分野を選び直す</Button>
+        </div>
+      </>}
+      {step.kind === 'drafts' && <>
+        <span>どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。</span>
+        <div className="row gap6 wrap">{demos.filter((d) => !d.field).map((d) => chip(shortTitle(d.title), () => guide.pickDemo(d)))}</div>
+        <div className="row gap8"><Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button></div>
+      </>}
     </div>
   )
 }

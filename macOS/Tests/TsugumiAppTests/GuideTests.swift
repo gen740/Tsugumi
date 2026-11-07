@@ -35,6 +35,13 @@ import TsugumiRPC
   #expect(GuideAction.parse(#"{"open": " card:archive/copy ", "highlight": "param:rows"}"#).open == "card:archive/copy")
 }
 
+/// guide_show "open" names the panels under the canvas; the versions and a Card are no panel.
+@Test func theGuideOpensThePanelsByName() {
+  #expect(GuideController.panel("logs") == .log && GuideController.panel("timeline") == .timeline)
+  #expect(GuideController.panel("terminal") == .terminal)
+  #expect(GuideController.panel("versions") == nil && GuideController.panel("card:summarize") == nil)
+}
+
 /// A long answer sends the user to the chat; one the bubble holds does not.
 @Test func aLongAnswerPointsToTheChat() {
   #expect(GuideController.saysMore(String(repeating: "あ", count: 300), than: "要点です。"))

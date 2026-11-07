@@ -53,7 +53,8 @@ struct MainWindow: View {
       openProject: { model.openProject($0, from: workspace, openWindow: openWindow) },
       home: { model.leaveProject(in: workspace) },
       newProject: { model.newProject(from: workspace, openWindow: openWindow) },
-      showChat: { workspace.showChat = true }))
+      showChat: { workspace.showChat = true },
+      showPanel: { p in workspace.bottomPanel = p; workspace.showBottom = true }))
     .background(WindowReader { workspace.window = $0 })
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
       guard let closing = n.object as? NSWindow, closing === workspace.window else { return }

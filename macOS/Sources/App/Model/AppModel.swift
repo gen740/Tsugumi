@@ -9,6 +9,8 @@ struct DemoEntry: Identifiable, Hashable {
   let description: String
   let url: URL
   var tags: [String] = []
+  /// The field the guide lists it under (an implemented demo; nil: a Draft).
+  var field: String?
 }
 
 struct RecentProject: Codable, Identifiable, Hashable {
@@ -116,7 +118,7 @@ final class AppModel {
     demos = list.compactMap { d in
       guard let id = d["id"] as? String, let title = d["title"] as? String, let p = d["path"] as? String else { return nil }
       return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: root.appendingPathComponent(p),
-                       tags: d["tags"] as? [String] ?? [])
+                       tags: d["tags"] as? [String] ?? [], field: (d["field"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
   }
 

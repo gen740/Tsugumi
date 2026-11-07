@@ -353,7 +353,7 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
           <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>
-          <Button large icon="folder" onClick={onOpen}>既存のプロジェクトを開く…</Button>
+          <Button large icon="folder" guide="open_project" onClick={onOpen}>既存のプロジェクトを開く…</Button>
           <button type="button" className="home-link" data-guide="demos" onClick={onToggleDemos}>
             <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? '最近のプロジェクト' : 'デモを見る'}
           </button>

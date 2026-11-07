@@ -412,8 +412,9 @@ export class ChatController extends Observable {
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
-  /** Demo mode ($demo, or a demo tour): the bird flies about the screen for
-   *  this chat; it ends with the tour's farewell. Otherwise the chat is a chat. */
+  /** Demo mode ($demo, or a demo tour): the bird leads the user about the
+   *  screen for this chat; it ends with the tour's farewell. Otherwise the chat
+   *  is a chat, whose bird flies only to show where a feature asked about is. */
   demoMode = false
 
   /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
@@ -550,8 +551,9 @@ export class ChatController extends Observable {
           const shown = parseShow(e.arguments)
           this.choices = shown.choices
           this.offered = shown.actions
-          // The bird moves only in demo mode; after the farewell the chat is a chat again.
-          if (this.demoMode) guide.chatShow(this, e.arguments)
+          // The bird flies for it: in demo mode, and outside it to show where a
+          // feature the user asked about is (the rules keep it to that).
+          guide.chatShow(this, e.arguments)
           if (shown.endTour) this.demoMode = false
           break
         }
