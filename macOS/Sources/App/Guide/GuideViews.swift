@@ -38,8 +38,8 @@ final class GuideStage {
       GuideController.shared.birdLeft(project, by: 1)
     }
   }
-  /// The pointed-at view and its frame, while it is on the screen.
-  var perch: (id: String, frame: CGRect)?
+  /// The pointed-at view, while it is on the screen.
+  var perch: (id: String, spot: GuideSpot)?
   /// The bird's home in this window now (zero: none shown, e.g. between Home and a project).
   var corner: CGRect = .zero {
     didSet { if corner != .zero { lastCorner = corner } }
@@ -78,18 +78,25 @@ struct GuideWindowLayer: ViewModifier {
 
 // MARK: - Pointing
 
+/// Where a pointed-at view is: its frame, and the zoom of the Canvas it is drawn on (nil: not on a Canvas).
+struct GuideSpot: Equatable {
+  var frame: CGRect
+  var zoom: Double?
+}
+
 /// A ring the guide draws around a part of the screen it talks about; the
 /// bird flies to it (its frame goes to the window's stage).
 private struct GuideTarget: ViewModifier {
   let id: String
   let radius: CGFloat
+  let zoom: Double?
   @Environment(GuideStage.self) private var stage: GuideStage?
 
   func body(content: Content) -> some View {
     content.overlay {
       if GuideController.shared.points(at: id), stage.map({ GuideController.shared.speaks(in: $0.project) }) ?? true {
         GuideRing(radius: radius).allowsHitTesting(false).accessibilityHidden(true)
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.perch = (id, $0) }
+          .onGeometryChange(for: GuideSpot.self) { GuideSpot(frame: $0.frame(in: .global), zoom: zoom) } action: { stage?.perch = (id, $0) }
           .onDisappear { if stage?.perch?.id == id { stage?.perch = nil } }
       }
     }
@@ -117,7 +124,10 @@ private struct GuideRing: View {
 
 extension View {
   /// Lets the guide point at this view (guide_show "highlight") and fly to it.
-  func guideTarget(_ id: String, radius: CGFloat = 8) -> some View { modifier(GuideTarget(id: id, radius: radius)) }
+  /// `zoom`: the Canvas's, for a view drawn on one (the bird goes with it).
+  func guideTarget(_ id: String, radius: CGFloat = 8, zoom: Double? = nil) -> some View {
+    modifier(GuideTarget(id: id, radius: radius, zoom: zoom))
+  }
 }
 
 // MARK: - The corner
@@ -480,23 +490,34 @@ struct GuideFlyer: View {
   private var still: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion) }
   static let birdScale: CGFloat = 0.1
 
-  /// The pointed-at frame while the bubble stands there (window coordinates).
-  private var perch: CGRect? {
+  /// How large the bird stands by what it points at. By a Card it goes with
+  /// the Canvas, or it would stand over the Cards when zoomed out, but stays
+  /// large enough to see and never grows past its own size. What is not on a
+  /// Canvas has no zoom and leaves the bird as it is. The web has the same
+  /// limits (perchScale in web/src/model/helperBirds.ts).
+  static func perchScale(zoom: Double?) -> CGFloat {
+    guard let zoom else { return birdScale }
+    return birdScale * max(0.45, min(1, zoom))
+  }
+
+  /// What is pointed at while the bubble stands there (window coordinates).
+  private var perch: GuideSpot? {
     guard guide.available, guide.speaks(in: stage.project), let b = guide.bubble, let t = b.target, let p = stage.perch,
           guide.points(at: p.id) || p.id == t else { return nil }
-    return p.frame
+    return p.spot
   }
 
   /// Where the bird goes: into the loading card, beside its target, or home.
   /// Home is where its home is shown now (nil: none yet; the bird waits where it is).
-  private enum Goal: Equatable { case loading(CGPoint, CGFloat), perch(CGPoint, left: Bool), home(CGPoint?) }
+  private enum Goal: Equatable { case loading(CGPoint, CGFloat), perch(CGPoint, scale: CGFloat, left: Bool), home(CGPoint?) }
 
   private func goal(_ o: CGPoint, _ size: CGSize) -> Goal {
     if guide.available, window != nil, let l = stage.loadingBird { return .loading(l.feet, l.scale) }
-    if let r = perch {
+    if let spot = perch {
+      let r = spot.frame
       var p = feetPoint(r, origin: o, size: size)
       if let n = nudge, n.target == guide.bubble?.target { p.x += n.by.width; p.y += n.by.height }
-      return .perch(p, left: r.midX > o.x + size.width / 2)
+      return .perch(p, scale: Self.perchScale(zoom: spot.zoom), left: r.midX > o.x + size.width / 2)
     }
     return .home(stage.corner == .zero ? nil : CGPoint(x: stage.corner.midX, y: stage.corner.maxY - 4))
   }
@@ -515,7 +536,8 @@ struct GuideFlyer: View {
               var pose = BirdPose()
               if flying { pose.flap = (sin(t * 22) + 1) / 2; pose.tilt = -0.1 }
               else if !still { pose.hop = CGFloat(max(0, sin(t * 2.4)) * 2); pose.blink = t.truncatingRemainder(dividingBy: 4.2) < 0.12 ? 1 : 0 }
-              TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 8), scale: scale, pose: pose)
+              // As large as its frame is in a flight (a Canvas is not animated with it, and clips to it).
+              TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 8), scale: s.width / 900, pose: pose)
             }
             .scaleEffect(x: left ? -1 : 1, y: 1)
           }
@@ -607,9 +629,9 @@ struct GuideFlyer: View {
       // What it said by the demo's card is done.
       if guide.bubble?.target?.hasPrefix("demo:") == true { guide.dismissBubble() }
       go(p, scale: s) { inCard = true; stage.handoff = false }
-    case .perch(let p, let left):
+    case .perch(let p, let s, let left):
       // Already there (let go after a drag): it stays, no flight.
-      if stage.away, !inCard, feet == p { return }
+      if stage.away, !inCard, feet == p, scale == s { return }
       if !stage.away || inCard {
         // Out of the loading card where it was, from home, or (no home) right there.
         if !inCard { feet = last ?? p; scale = Self.birdScale }
@@ -618,7 +640,7 @@ struct GuideFlyer: View {
       }
       arrived = false
       facingLeft = left
-      go(p, scale: Self.birdScale) { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
+      go(p, scale: s) { withAnimation(.easeOut(duration: 0.2)) { arrived = true } }
     case .home(let home):
       guard stage.away else { return }
       arrived = false

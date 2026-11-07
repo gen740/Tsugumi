@@ -39,6 +39,8 @@ import TsugumiRPC
 ///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
 ///   modelmenu [capture name]        (lists the chat's model menu; with a name, a picture of the window)
 ///   modelpick <item title>          (presses that item of the chat's model menu)
+///   guideshow <json>                (the bird does what a guide_show with these arguments asks)
+///   guideclose                      (its bubble is closed; it flies home)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -362,6 +364,10 @@ final class UIScript {
           `compare` Card の出力 `sequence` を `record` が CSV に書きます。
           """)
         }
+      case "guideshow":
+        // guideshow <json>: the chat's Tsugumi calls guide_show with these arguments, as a model would.
+        if let s = session { GuideController.shared.chatShow(AppModel.shared.chat(for: s), arguments: w.dropFirst().joined(separator: " ")) }
+      case "guideclose": GuideController.shared.dismissBubble()
       case "chatsend":
         // chatsend <text>: sends to the configured model (real provider)
         if let s = session { AppModel.shared.chat(for: s).send(w.dropFirst().joined(separator: " ")) }
