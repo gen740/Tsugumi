@@ -3,6 +3,9 @@
   "inputs": [
     {
       "name": "input"
+    },
+    {
+      "name": "ciao"
     }
   ],
   "filesystem": true,

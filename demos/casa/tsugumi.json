@@ -8,6 +8,12 @@
         "id": "start"
       },
       {
+        "id": "begin"
+      },
+      {
+        "id": "ciao"
+      },
+      {
         "id": "load"
       },
       {
@@ -30,8 +36,38 @@
           "port": "out"
         },
         "to": {
+          "card": "begin",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "begin",
+          "port": "tool"
+        },
+        "to": {
+          "card": "ciao",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "begin",
+          "port": "data"
+        },
+        "to": {
           "card": "load",
           "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "ciao",
+          "port": "tool"
+        },
+        "to": {
+          "card": "bands",
+          "port": "ciao"
         }
       },
       {

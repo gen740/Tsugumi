@@ -57,7 +57,7 @@
     {
       "id": "casa",
       "title": "Cas A · Chandra RGB",
-      "description": "Chandra X-ray events of the supernova remnant Cassiopeia A, fixed by Nix (fetched once by hash from the HEASARC archive), split into three energy bands on a sky grid centred on Cas A and composed into an RGB image. ObsID 25628 (13 MB) by default; 114 is the deep 50 ks observation.",
+      "description": "Chandra X-ray events of the supernova remnant Cassiopeia A and the CIAO tools, both fixed by Nix (the events fetched once by hash from the HEASARC archive, CIAO built once from source). CIAO's dmcopy splits the photons into three energy bands on a sky grid centred on Cas A, which become an RGB image. ObsID 25628 (13 MB) by default; 114 is the deep 50 ks observation.",
       "path": "casa",
       "tags": [
         "Python",

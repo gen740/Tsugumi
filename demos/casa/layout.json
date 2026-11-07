@@ -2,27 +2,35 @@
   "cards": {
     "start": {
       "x": 0.0,
-      "y": 40.0
+      "y": 84.5
+    },
+    "begin": {
+      "x": 160.0,
+      "y": 65.5
+    },
+    "ciao": {
+      "x": 300.0,
+      "y": 35.0
     },
     "load": {
       "x": 300.0,
-      "y": 0.0
+      "y": 160.0
     },
     "bands": {
-      "x": 580.0,
-      "y": 0.0
+      "x": 560.0,
+      "y": 20.0
     },
     "share": {
-      "x": 835.0,
-      "y": 30.0
+      "x": 820.0,
+      "y": 38.5
     },
     "rgb": {
-      "x": 980.0,
-      "y": 0.0
+      "x": 960.0,
+      "y": 8.0
     },
     "spectrum": {
-      "x": 1260.0,
-      "y": 0.0
+      "x": 960.0,
+      "y": 620.0
     }
   },
   "notes": [
@@ -30,30 +38,30 @@
       "id": "about",
       "scope": "",
       "color": "yellow",
-      "text": "## Cas A（Chandra）\n\n超新星残骸カシオペヤ座 A の X 線イベントデータから 3 色画像を作ります。赤は 600–1650 eV、緑は 1650–2250 eV、青は 2250–7500 eV です。\n\n観測は **load** の `default.nix` で Nix に固定しています。最初の実行で HEASARC から一度だけ取得し、以後はストアのファイルを使います（実行中にネットワークは使いません）。\n\n**load** の obsid・file・hash を次の値に変えると、深い観測になります。約 20 年の間に残骸がどう変わったかも比べられます。\n\n- 114（2000 年、50 ks、520 MB）: `acisf00114N006_evt2.fits.gz`、`sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y=`\n- 19606（2019 年、49 ks、349 MB）: `acisf19606N002_evt2.fits.gz`、`sha256-FPE5ByrHvbx0Cxk5wVu/N8kjZCrsiFy5snxV1Ypcvtc=`\n\n**bands** の帯域や **rgb** の伸長を変えて、その Card だけを実行し直せます。\n\n**spectrum** は同じ光子のエネルギースペクトルを matplotlib で描き、どの元素の輝線がどの色に入るかを示します。",
-      "x": 160.0,
-      "y": -440.0,
+      "text": "## Cas A（Chandra）\n\n超新星残骸カシオペヤ座 A の X 線イベントデータから 3 色画像を作ります。赤は 600–1650 eV、緑は 1650–2250 eV、青は 2250–7500 eV です。\n\n観測は **load** の `default.nix` で Nix に固定しています。最初の実行で HEASARC から一度だけ取得し、以後はストアのファイルを使います（実行中にネットワークは使いません）。\n\n解析ツールの CIAO は **ciao** の `default.nix` で同じように固定しています。ソースを hash で固定して最初の実行で一度だけビルドし（数分かかります）、**bands** はそのツールの `dmcopy` で光子を数えます。\n\n**load** の obsid・file・hash を次の値に変えると、深い観測になります。約 20 年の間に残骸がどう変わったかも比べられます。\n\n- 114（2000 年、50 ks、520 MB）: `acisf00114N006_evt2.fits.gz`、`sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y=`\n- 19606（2019 年、49 ks、349 MB）: `acisf19606N002_evt2.fits.gz`、`sha256-FPE5ByrHvbx0Cxk5wVu/N8kjZCrsiFy5snxV1Ypcvtc=`\n\n**bands** の帯域や **rgb** の伸長を変えて、その Card だけを実行し直せます。\n\n**spectrum** は同じ光子のエネルギースペクトルを matplotlib で描き、どの元素の輝線がどの色に入るかを示します。",
+      "x": 1200.0,
+      "y": 540.0,
       "width": 560.0,
-      "height": 400.0
+      "height": 430.0
     }
   ],
   "flow": "leftToRight",
   "displays": {
     "bands": {
-      "x": 453.0,
+      "x": 560.0,
       "y": 180.0,
       "width": 340.0,
       "height": 150.0
     },
     "rgb": {
-      "x": 940.0,
-      "y": 171.0,
+      "x": 1200.0,
+      "y": 80.0,
       "width": 420.0,
       "height": 440.0
     },
     "spectrum": {
-      "x": 960.0,
-      "y": -486.0,
+      "x": 240.0,
+      "y": 540.0,
       "width": 680.0,
       "height": 400.0
     }

@@ -45,6 +45,6 @@ Tree-sitter の実行系と言語 grammar、Dawn、Swift の依存パッケー�
 
 FlatBuffers のスキーマや FBS 用 grammar は Tsugumi の実装ですが、そこから生成した binding・parser の行数を、手で実装した量とは区別します。FBS parser に付属する Tree-sitter の補助ヘッダーも外部コードです。ファイル単位の区分は [grammar の説明](../macOS/Sources/Grammars/README.md) と [ライセンス調査](LicenseAudit.md) に記載しています。
 
-`demos/casa/` の処理は HEASARC の Chandra 観測アーカイブからデータを取得します。デモの処理・表示を作ったことと、天体観測データを作成したことは別です。[取得先と hash を使う定義](../demos/casa/definitions/load/default.nix)を参照してください。
+`demos/casa/` の処理は HEASARC の Chandra 観測アーカイブからデータを取得し、Chandra X-ray Center の CIAO をソースからビルドして使います。デモの処理・表示を作ったことと、天体観測データを作成したことは別です。[取得先と hash を使う定義](../demos/casa/definitions/load/default.nix)を参照してください。
 
 Tsugumi 自身のコードのライセンスは [MIT](../LICENSE) です。既存の自作ライブラリ hosq、外部コード、フォント、観測データを、このライセンスで一括して再ライセンスするものではありません。依存先の条件と、配布に向けて残っている対応は [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) と [ライセンス調査](LicenseAudit.md) を参照してください。
