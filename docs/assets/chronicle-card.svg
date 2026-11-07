@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 216" width="1280" height="216" role="img" aria-labelledby="t">
+  <title id="t">Claude で開発した記録: Tsugumi Chronicle</title>
+  <defs>
+    <clipPath id="card"><rect width="1280" height="216" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="1280" height="216" fill="#16282d"/>
+    <polygon points="0,0 210,0 96,126" fill="#1d3a3e"/>
+    <polygon points="0,0 96,126 0,216" fill="#1a3338"/>
+    <polygon points="0,216 96,126 262,216" fill="#173136"/>
+    <polygon points="96,126 210,0 262,216" fill="#1b363a"/>
+    <polygon points="1280,0 1050,0 1190,112" fill="#1d3a3e"/>
+    <polygon points="1280,0 1190,112 1280,216" fill="#1a3338"/>
+    <polygon points="1050,0 1190,112 1010,216" fill="#173136"/>
+    <polygon points="1190,112 1280,216 1010,216" fill="#1b363a"/>
+
+    <!-- the thread through the sessions and commits: a build log -->
+    <path d="M40 150 C 82 94, 120 160, 160 112 S 226 80, 262 108" fill="none" stroke="#efe0c3" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="62" cy="128" r="13" fill="#d97757"/>
+    <circle cx="62" cy="128" r="5" fill="#16282d"/>
+    <circle cx="125" cy="134" r="13" fill="#d97757"/>
+    <circle cx="125" cy="134" r="5" fill="#16282d"/>
+    <circle cx="190" cy="98" r="13" fill="#d97757"/>
+    <circle cx="190" cy="98" r="5" fill="#16282d"/>
+    <circle cx="246" cy="104" r="9" fill="#efe0c3"/>
+
+    <text x="288" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="52" font-weight="700" fill="#f3ede2">Claude で開発した記録</text>
+    <text x="290" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="22" fill="#c3cbc8">人が問い、Claude が積む。Tsugumi がどう作られたかをたどる</text>
+    <text x="290" y="186" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9fb070">gen740.github.io/Tsugumi-chronicle</text>
+
+    <!-- the way in -->
+    <rect x="1088" y="66" width="128" height="84" rx="42" fill="#c97d3d"/>
+    <path d="M1124 108 H1180 M1160 88 L1182 108 L1160 128" fill="none" stroke="#1b1d1f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
