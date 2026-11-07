@@ -600,12 +600,29 @@ export class GuideController extends Observable {
    *  to its step; anything else gets the one fixed reply (pointing to
    *  Settings), with the step's choices still there to go on with the tour. */
   answerScripted(t: string, chat?: ChatController) {
+    if (chat && t.split(/\s+/).includes('$demo')) return this.startScriptedTour(t, chat)
     const current = chat && this.touring(chat.session) && this.scriptAt ? scriptStep(this.scriptAt) : undefined
     const next = current?.next[t]
     if (next) return this.play(next, t, chat)
     const reply = noConnection()
-    reply.show = { ...reply.show, highlight: current ? this.highlight : undefined, choices: current?.show.choices ?? [] }
+    reply.show = { ...reply.show, highlight: current ? this.highlight : undefined, choices: current?.show.choices ?? [],
+      // In the tour's own chat the tour is already there.
+      actions: current ? reply.show.actions.filter((a) => a.kind !== 'open_demo') : reply.show.actions }
     this.answer(reply, t, chat)
+  }
+
+  /** $demo without a connection: in a copy of the demo the script shows, its
+   *  tour begins there (elsewhere the reply says where it can). */
+  private startScriptedTour(asked: string, chat: ChatController) {
+    const s = chat.session
+    const demo = app.status?.demos.find((d) => d.id === 'report')
+    if (!demo || s.scopeName([]) !== demo.title) return this.play('otherProject', asked, chat)
+    this.answerDemoOffer()
+    this.tour = { demo: demo.id, title: demo.title, path: s.dir, started: true }
+    void this.saveState({ tour: this.tour })
+    this.seen = this.runKey(s)
+    this.seenActive = s.runActive
+    this.play('start', asked, chat)
   }
 
   private play(id: string, asked?: string, chat?: ChatController) {

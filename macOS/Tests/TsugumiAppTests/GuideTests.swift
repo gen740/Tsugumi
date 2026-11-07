@@ -115,13 +115,15 @@ import TsugumiRPC
 /// script and how the web plays it).
 @MainActor @Test func theScriptWithoutAConnectionIsWhole() {
   let script = GuideScript.shared
-  for id in ["interest", "start", "resume", "run", "farewell"] { #expect(script.steps[id] != nil, "\(id)") }
+  for id in ["interest", "start", "resume", "otherProject", "run", "farewell"] { #expect(script.steps[id] != nil, "\(id)") }
   for (id, s) in script.steps {
     #expect(Set(s.next.keys) == Set(s.show.choices), "\(id): every choice leads somewhere")
     for n in Array(s.next.values) + [s.ranOk, s.ranElse].compactMap({ $0 }) { #expect(script.steps[n] != nil, "\(id) → \(n)") }
   }
   #expect(script.steps["run"]?.show.actions.map(\.kind) == [.run])
   #expect(script.steps["farewell"]?.show.endTour == true)
-  #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings])
+  #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings, .openDemo])
+  #expect(script.noConnection.text.contains("$demo"))
+  #expect(script.steps["otherProject"]?.show.actions.first?.kind == .openDemo)
   #expect(script.noConnection.text == script.noConnection.show.say)
 }

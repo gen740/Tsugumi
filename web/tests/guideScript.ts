@@ -34,7 +34,8 @@ const root = process.argv[2]
     if (h?.startsWith('card:')) assert.ok(cards.has(h.slice(5).split('/')[0]), `${id}: ${h} is in the demo`)
   }
   assert.equal(scriptStep('farewell')?.show.endTour, true)
-  assert.deepEqual(noConnection().show.actions.map((a) => a.kind), ['open_settings'])
+  assert.deepEqual(noConnection().show.actions.map((a) => a.kind), ['open_settings', 'open_demo'])
+  assert.ok(noConnection().show.say?.includes('$demo'))
 }
 
 const calls: string[] = []
@@ -52,7 +53,7 @@ globalThis.fetch = (async (url: string) => {
   const [asked, reply] = guide.items.slice(-2)
   assert.deepEqual([asked.role, asked.text], ['user', 'Tsugumi で何ができる？'])
   assert.equal(reply.text, noConnection().text)
-  assert.deepEqual(reply.actions?.map((a) => a.kind), ['open_settings'])
+  assert.deepEqual(reply.actions?.map((a) => a.kind), ['open_settings', 'open_demo'])
   assert.equal(guide.bubble?.say, noConnection().show.say)
   assert.equal(guide.busy, false)
 }
@@ -60,9 +61,9 @@ globalThis.fetch = (async (url: string) => {
 // The tour in the demo's copy: its chat shows each step, a choice leads to the
 // next, a typed question keeps the step's choices, and a run's end is answered.
 {
-  const shown: { asked?: string; reply: string; choices: string[] }[] = []
+  const shown: { asked?: string; reply: string; choices: string[]; actions: string[] }[] = []
   const s = { dir: '/tour', connected: true, runActive: false, runStatus: undefined as { state: number } | undefined, currentRunId: undefined as string | undefined }
-  const chat = { session: s, showScripted: (asked: string | undefined, reply: string, show: { choices: string[] }) => shown.push({ asked, reply, choices: show.choices }) }
+  const chat = { session: s, showScripted: (asked: string | undefined, reply: string, show: { choices: string[]; actions: { kind: string }[] }) => shown.push({ asked, reply, choices: show.choices, actions: show.actions.map((a) => a.kind) }) }
   ;(app as any).chat = () => chat
   guide.startTour({ id: 'report', title: 'Data to report' }, '/tour')
   guide.observe(s as any)
@@ -74,6 +75,7 @@ globalThis.fetch = (async (url: string) => {
   guide.answerScripted('これは何？', chat as any)
   assert.equal(shown[shown.length - 1].reply, noConnection().text)
   assert.deepEqual(shown[shown.length - 1].choices, ['次へ'])
+  assert.deepEqual(shown[shown.length - 1].actions, ['open_settings'], 'no second tour from inside the tour')
   assert.equal(guide.bubble?.target, 'card:settings', 'the bird stays where it was')
   for (const t of ['share', 'generate', 'aggregate', 'render', 'archive', 'run']) {
     guide.answerScripted('次へ', chat as any)
@@ -89,6 +91,29 @@ globalThis.fetch = (async (url: string) => {
   guide.observe(s as any)
   assert.equal(shown[shown.length - 1].asked, '実行が終わりました（成功）')
   assert.equal(guide.bubble?.target, 'card:render')
+}
+
+// $demo in a project's chat: in a copy of the demo the tour begins there;
+// elsewhere the reply says where it can.
+{
+  guide.endTour()
+  ;(app as any).status = { demos: [{ id: 'report', title: 'Data to report', description: '', tags: [] }] }
+  const shown: { asked?: string; reply: string }[] = []
+  const chatIn = (name: string, dir: string) => ({
+    session: { dir, connected: true, runActive: false, runStatus: undefined, currentRunId: undefined, scopeName: () => name },
+    showScripted: (asked: string | undefined, reply: string) => shown.push({ asked, reply }),
+  }) as any
+  guide.answerScripted('$demo', chatIn('My analysis', '/mine'))
+  assert.equal(shown[shown.length - 1].reply, scriptStep('otherProject')!.text)
+  assert.equal(guide.tour, null)
+  const copy = chatIn('Data to report', '/copy')
+  guide.answerScripted('$demo', copy)
+  assert.equal(shown[shown.length - 1].asked, '$demo')
+  assert.equal(shown[shown.length - 1].reply, scriptStep('start')!.text)
+  assert.equal(guide.tour?.path, '/copy')
+  assert.equal(guide.bubble?.target, 'card:start')
+  guide.answerScripted('次へ', copy)
+  assert.equal(guide.bubble?.target, 'card:settings')
 }
 
 assert.deepEqual(calls.filter((c) => c.includes('/api/guide/send') || c.includes('/api/chat/send')), [], 'nothing is sent to a model')

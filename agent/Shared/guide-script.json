@@ -1,5 +1,5 @@
 {
-  "_comment": "Tsugumi without a model connection (no API key, no ChatGPT sign-in): it answers from this script and calls nothing. Each step is a guide_show ('show'), the reply the panel or the chat shows ('text', else 'say'), the step each tapped choice leads to ('next') and the step a run's end leads to while it is out ('ran': 'ok' when it succeeded, 'else' otherwise). 'interest' answers Home's first question, 'start' and 'resume' begin and continue the tour of the demo report (the one Home's 定番のデモを見る opens), and 'noConnection' is the reply to anything typed. The macOS app (GuideScript.swift) and the web (web/src/model/guideScript.ts) read this file as it is.",
+  "_comment": "Tsugumi without a model connection (no API key, no ChatGPT sign-in): it answers from this script and calls nothing. Each step is a guide_show ('show'), the reply the panel or the chat shows ('text', else 'say'), the step each tapped choice leads to ('next') and the step a run's end leads to while it is out ('ran': 'ok' when it succeeded, 'else' otherwise). 'interest' answers Home's first question, 'start' and 'resume' begin and continue (also $demo typed in that demo's copy; elsewhere 'otherProject') the tour of the demo report (the one Home's 定番のデモを見る opens), and 'noConnection' is the reply to anything typed (its open_demo button is left out in the tour's own chat). The macOS app (GuideScript.swift) and the web (web/src/model/guideScript.ts) read this file as it is.",
   "steps": {
     "interest": {
       "show": {
@@ -25,6 +25,12 @@
         "choices": ["次へ"]
       },
       "next": { "次へ": "settings" }
+    },
+    "otherProject": {
+      "show": {
+        "say": "決まった案内ができるのは、定番のデモ「Data to report」のコピーだけです。",
+        "actions": [{ "kind": "open_demo", "demo": "report", "label": "デモの案内を始める" }, { "kind": "open_settings", "label": "API の設定を開く" }]
+      }
     },
     "settings": {
       "show": {
@@ -162,8 +168,8 @@
   },
   "noConnection": {
     "show": {
-      "say": "ごめんなさい、いまは自由な質問には答えられません。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キー、または Sign in with ChatGPT）とつなぐと、答えられるようになります。",
-      "actions": [{ "kind": "open_settings", "label": "API の設定を開く" }]
+      "say": "ごめんなさい、いまは自由な質問には答えられません。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと答えられます。デモのコピーでは、チャットに $demo と送ると案内を始めます。",
+      "actions": [{ "kind": "open_settings", "label": "API の設定を開く" }, { "kind": "open_demo", "demo": "report", "label": "デモの案内を始める" }]
     }
   }
 }

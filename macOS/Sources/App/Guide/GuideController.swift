@@ -617,11 +617,16 @@ final class GuideController {
   /// The step of the script shown last (its choices are the ones out).
   @ObservationIgnored private var scriptAt: String?
 
-  /// A message without a connection: in the tour's chat a tapped choice leads
-  /// to its step; anything else gets the one fixed reply (pointing to
-  /// Settings), with the step's choices still there to go on with the tour.
+  /// A message without a connection: $demo in a project's chat begins the
+  /// tour; in the tour's chat a tapped choice leads to its step; anything else
+  /// gets the one fixed reply (pointing to Settings and $demo), with the
+  /// step's choices still there to go on with the tour.
   func answerScripted(_ text: String, chat: ChatController?) {
     let script = GuideScript.shared
+    if let chat, text.split(whereSeparator: \.isWhitespace).contains("$demo") {
+      startScriptedTour(asked: text, chat: chat)
+      return
+    }
     let current = chat.flatMap { touring($0.session) ? scriptAt.flatMap { script.steps[$0] } : nil }
     if let next = current?.next[text] {
       play(next, asked: text, chat: chat)
@@ -630,7 +635,25 @@ final class GuideController {
     var reply = script.noConnection
     reply.show.highlight = current == nil ? nil : highlight
     reply.show.choices = current?.show.choices ?? []
+    // In the tour's own chat the tour is already there.
+    if current != nil { reply.show.actions.removeAll { $0.kind == .openDemo } }
     present(reply, asked: text, chat: chat)
+  }
+
+  /// $demo without a connection: in a copy of the demo the script shows, its
+  /// tour begins there (elsewhere the reply says where it can).
+  private func startScriptedTour(asked: String, chat: ChatController) {
+    let s = chat.session
+    guard let demo = AppModel.shared.demos.first(where: { $0.id == "report" }), s.scopeName([]) == demo.title else {
+      play("otherProject", asked: asked, chat: chat)
+      return
+    }
+    answerDemoOffer()
+    tour = Tour(demo: demo.id, title: demo.title, path: s.identity.url.path, started: true)
+    saveTour()
+    seen = runKey(s)
+    seenActive = s.runActive
+    play("start", asked: asked, chat: chat)
   }
 
   private func play(_ id: String, asked: String?, chat: ChatController?) {
