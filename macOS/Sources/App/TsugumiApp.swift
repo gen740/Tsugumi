@@ -12,6 +12,10 @@ struct TsugumiApp: App {
     // (AppModel.takeLaunchProject). AppKit must not take it as a file to open:
     // then SwiftUI would not create the main window at all.
     UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    // No window is restored (the scenes below), but a session that ended without
+    // quitting (killed, crashed) leaves saved state, and a launch that has some to
+    // restore makes no first window: SwiftUI leaves that to the restoration.
+    UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": "YES"])
     // Sockets to the VM and to tsugumid: a peer that went away is an error
     // to handle, never the end of the app (sockets also set SO_NOSIGPIPE).
     signal(SIGPIPE, SIG_IGN)
