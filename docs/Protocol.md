@@ -9,7 +9,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 - **変更を伴う要求**: `op_id` を持ち、同じ `op_id` の再送は 1 回だけ適用されます。応答を失ったら `OperationGet` で確かめます。
 - **Agent の tool**: 同じスキーマ（`tsugumi.bfbs`）から作ります（[主要機能](features.md#9-agent)）。
 
-要求は 39 種あります。
+要求は 40 種あります。
 
 ## 接続
 
@@ -169,6 +169,7 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). |
+| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. Slow the first time: it evaluates them, fetching what they need. |
 
 ### CardSDKPrepare
 
@@ -192,6 +193,12 @@ UI・Web・Agent が `tsugumid` と話す RPC の一覧です。[protocol/tsugum
 | `port` | `string` |  |  |
 | `type_name` | `string` |  |  |
 | `kind` | `PortKind` |  |  |
+
+### NixSourceResolve
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `ref` | `string` | はい |  |
 
 ## 実行
 
