@@ -171,8 +171,8 @@ The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handw
 
 The Cas A demo builds CIAO (Chandra X-ray Center, GPL version 3 or later) from
 source on the first run, with CCfits and libwcs from WCSTools, by the Nix
-expressions in `demos/casa/definitions/ciao` (a copy from
-https://github.com/gen740/ciao). Their sources are downloaded from upstream by
+expressions of https://github.com/gen740/ciao, which the demo reads at a fixed
+commit. Their sources are downloaded from upstream by
 hash and are not included in this repository or in the app.
 
 ## External data

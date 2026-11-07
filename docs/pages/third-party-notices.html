@@ -135,8 +135,8 @@ distributing a standalone daemon or a different container image.</p>
 <h2 id="external-software">External software</h2>
 <p>The Cas A demo builds CIAO (Chandra X-ray Center, GPL version 3 or later) from
 source on the first run, with CCfits and libwcs from WCSTools, by the Nix
-expressions in <code>demos/casa/definitions/ciao</code> (a copy from
-<a href="https://github.com/gen740/ciao" rel="noopener">https://github.com/gen740/ciao</a>). Their sources are downloaded from upstream by
+expressions of <a href="https://github.com/gen740/ciao" rel="noopener">https://github.com/gen740/ciao</a>, which the demo reads at a fixed
+commit. Their sources are downloaded from upstream by
 hash and are not included in this repository or in the app.</p>
 <h2 id="external-data">External data</h2>
 <p>The Cas A demo fetches Chandra observation data from HEASARC on demand.

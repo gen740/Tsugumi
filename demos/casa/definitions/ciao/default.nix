@@ -1,9 +1,8 @@
 { pkgs, inputs, params }:
-# CIAO is fixed like the observation in load: its source by hash, then built
-# once by Nix. package.nix and ciao-setup-hook.sh are copies from
-# https://github.com/gen740/ciao at 0bf0f8b (a Card's Nix evaluation can only fetch nixpkgs).
+# CIAO is fixed like the observation in load: the packaging by its commit and
+# hash (nixSources in tsugumi.json), the source by hash, then built once by Nix.
 let
-  ciao = import ./package.nix { inherit pkgs; };
+  ciao = import "${inputs.sources.ciao}/src/package.nix" { inherit pkgs; };
 in
 {
   run = ''

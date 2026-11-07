@@ -173,7 +173,7 @@ start → begin ─┬→ ciao ─tool──┐
 | Card | 種類 | していること |
 | --- | --- | --- |
 | `begin` | fork | 開始の合図を `ciao` と `load` に分ける |
-| `ciao` | bash | `default.nix` で、CIAO 4.18 のソースを hash で固定してビルドし、ストアのパスとバージョンを渡す。ビルドは最初の 1 回だけで、数分かかる。式は [gen740/ciao](https://github.com/gen740/ciao) の写し（Card の Nix 評価は nixpkgs しか取得できないため） |
+| `ciao` | bash | `default.nix` で、CIAO 4.18 のソースを hash で固定してビルドし、ストアのパスとバージョンを渡す。ビルドは最初の 1 回だけで、数分かかる。式は [gen740/ciao](https://github.com/gen740/ciao) をコミットと hash で固定して読む（`tsugumi.json` の `nixSources`、[外部の Nix ソース](features.md)） |
 | `load` | bash | `default.nix` で、HEASARC の観測ファイルを hash で固定して取得・展開する（explicit FTPS）。ダウンロードは最初の 1 回だけで、以後は Nix store のファイルを使う。実行中はネットワークを使わない |
 | `bands` | Python | 光子を 600–1650 / 1650–2250 / 2250–7500 eV の 3 帯域に分け、Cas A の中心（RA 350.8584°, Dec +58.8113°）に合わせた 360×360 の格子で、CIAO の `dmcopy` で数える。数えた光子の合計は、CIAO を使わず astropy で読んだ数と照合する。帯域ごとの FITS と `provenance.json` を書き、光子数を表で示す |
 | `share` | fork | 帯域のディレクトリを `rgb` と `spectrum` に配る |
