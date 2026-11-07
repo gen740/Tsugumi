@@ -36,10 +36,11 @@
 <article class="doc">
 <h1 id="まだできないこと">まだできないこと</h1>
 <p>今の Tsugumi にできないこと、保証していないことの一覧です。各文書に書いたものをここに集めています。</p>
+<p>ここには 2 種類のものが並んでいます。「考え方として保証しないこと」と「データと権限」の多くは、まだ作っていないものではなく、Tsugumi が何を保証し、何を人間やプロジェクトの作者に委ねるかという設計上の線引きです（<a href="philosophy.html">Philosophy</a>、<a href="security.html#どこまでを-tsugumi-が引き受けるか">セキュリティの要点</a>）。それ以外は、これからの作業です。</p>
 <h2 id="考え方として保証しないこと">考え方として保証しないこと</h2>
 <ul>
 <li><strong>科学的な妥当性は保証しません。</strong> Tsugumi が用意するのは、判断の材料に手が届き、別の可能性をすぐに試せる足場までです（<a href="philosophy.html#きれいな結果だけでは確かめられない">Philosophy</a>）。</li>
-<li><strong>同じ環境でも、同じ結果になるとは限りません。</strong> 乱数・外部データ・到着順・保持した状態に結果が依存する処理では、それぞれ条件を決める必要があります（<a href="qa.html#q3-解析の再現性をどのように確保するのですか">Q&amp;A の Q3</a>）。</li>
+<li><strong>環境は固定しますが、計算の中の偶然までは固定しません。</strong> Nix で実行環境を、版でコードと定義を固定するので、プロジェクトさえ共有すれば、一度やった解析は違う Mac でも同じように動きます。ただ、乱数・外部データ・到着順・保持した状態に結果が依存する処理で seed などの条件を決めるのは、計算を書く側です（<a href="qa.html#q3-解析の再現性をどのように確保するのですか">Q&amp;A の Q3</a>）。</li>
 <li><strong>過去の版に戻っても、当時の状態は戻りません。</strong> 戻るのはコードと定義で、worker の状態や全データは復元しません（<a href="qa.html#q6-git-と実行履歴はそれぞれ何を記録するのですか">Q&amp;A の Q6</a>）。</li>
 </ul>
 <h2 id="結果をたどること">結果をたどること</h2>
@@ -53,10 +54,10 @@
 </ul>
 <h2 id="データと権限">データと権限</h2>
 <ul>
-<li><strong>Agent に送る内容を自動で伏せる仕組みはありません。</strong> Agent が読んだソース・ログ・入出力値はモデルのプロバイダへ送られます（<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>、<a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a>）。Web 検索をオンにすると検索語も検索サービスへ出て、そこに未公開のデータが載らないことは保証できません（<a href="security.html#web-検索">Web 検索</a>、既定はオフ）。</li>
-<li><strong>他人のプロジェクトを開くときに、権限の確認は出ません。</strong> <code>_card.json</code> に書かれた <code>hostFolders</code> は開くときに共有され、<code>network</code> と <code>sandbox: false</code> は実行時に有効です。確認が出るのは Agent が権限を広げる保存のときだけです。受け取ったプロジェクトは、Card のアイコンと Experimental の項目を確かめてから動かしてください（<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
-<li><strong>プロジェクト間の隔離は 1 つの Linux カーネルの上です。</strong> カーネルの脆弱性までは防げません。共通の <code>/nix/store</code> は全プロジェクトから読めます（<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
-<li><strong><code>network: false</code> でも、Nix の固定出力 derivation はビルド時に通信できます</strong>（<a href="security.html#5-nix-評価の制限">Nix 評価の制限</a>）。</li>
+<li><strong>Agent に送る内容を自動で伏せる仕組みはありません。</strong> Agent が読んだソース・ログ・入出力値はモデルのプロバイダへ送られます。送るのは Agent が読んだものだけで、Agent を使わなくてもすべての操作は UI からできます（<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>、<a href="vision.html#業務自動化とデータの境界">業務自動化とデータの境界</a>）。Web 検索をオンにすると検索語も検索サービスへ出て、そこに未公開のデータが載らないことは保証できません（<a href="security.html#web-検索">Web 検索</a>、既定はオフ）。</li>
+<li><strong>プロジェクトを開くことは、その中身を信頼するという判断です。</strong> 他人のプロジェクトの <code>_card.json</code> に書かれた <code>hostFolders</code> は開くときに共有され、<code>network</code> と <code>sandbox: false</code> は実行時に有効になり、確認は出ません。<code>make</code> や notebook を動かすのと同じく、作者が書いたとおりに動かすのが Tsugumi の役目で、作者を信頼するかどうかは利用者が決めます。Tsugumi は、書かれた権限を Card のアイコンと Experimental の項目に出し、<code>.tsugumi/</code> を使う前に検査し、Agent が権限を広げる保存には承認を求めます。受け取ったプロジェクトは、それらを確かめてから動かしてください（<a href="security.html#どこまでを-tsugumi-が引き受けるか">どこまでを Tsugumi が引き受けるか</a>、<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
+<li><strong>プロジェクト間の隔離は 1 つの Linux カーネルの上です。</strong> コンテナと同じ隔離のしかたで、カーネルの脆弱性までは防げません（Mac との間は VM で分けています）。共通の <code>/nix/store</code> は全プロジェクトから読めます（<a href="security.html#10-既知の制限と注意事項">既知の制限</a>）。</li>
+<li><strong><code>network: false</code> でも、Nix の固定出力 derivation はビルド時に通信できます。</strong> Nix の仕様です。取得した中身は hash で照合されるので変わりません（<a href="security.html#5-nix-評価の制限">Nix 評価の制限</a>）。</li>
 </ul>
 <h2 id="動く環境">動く環境</h2>
 <ul>
@@ -66,7 +67,7 @@
 <li><strong>リリース版は ad-hoc 署名で、公証していません。</strong> ブラウザで入れると Gatekeeper に止められます（<a href="install.html#デスクトップアプリmacを入れる">インストール</a>）。</li>
 <li><strong>v1.0.0 までは版の間の互換性を保ちません。</strong> プロジェクトの文書や設定の移行はしません（<a href="https://github.com/gen740/Tsugumi/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a>）。</li>
 <li><strong>Mac の共通 VM を使えるのは 1 つのアプリだけです。</strong> <code>tsugumi</code> コマンドとデスクトップ版を同時には使えず、後から始めた方がその旨を表示します（<a href="webui.html#tsugumi-コマンド">tsugumi コマンド</a>）。会話の履歴・Skill のフォルダ・ChatGPT のサインインは両者で別です。</li>
-<li><strong><code>tsugumi</code> コマンドは自動で更新しません。</strong> 入れ直して更新します。デスクトップ版と版が違うと、VM は切り替えのたびにその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので 2 回目からは短くなります）。</li>
+<li><strong><code>tsugumi</code> コマンドは自動では更新しません。</strong> <code>tsugumi update</code> で最新版に入れ替えます。デスクトップ版と版が違うと、VM は切り替えのたびにその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので 2 回目からは短くなります）。</li>
 <li><strong>Mac のホストで直接動かす Web UI には Mac のフォルダの共有がありません。</strong> Seatbelt ではファイルの存在確認（<code>stat</code>）を全体で許可し、uid を分けません。<code>network: true</code> の Card は同じ LAN や VPN の他の機器に届き、<code>ssh</code> は使えません（<a href="webui.html#隔離macos-ホスト">Web UI の隔離</a>）。</li>
 <li><strong>Claude Code の plugin は Mac アプリに対応していません。</strong> Web UI で開いたプロジェクトだけです（<a href="claude-code.html#対応していないこと">Claude Code から使う</a>）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。</li>
 </ul>
@@ -92,7 +93,7 @@
 </ul>
 <h2 id="配布">配布</h2>
 <ul>
-<li><strong>v0.2.0 までの配布物にはライセンス全文が入っていません。</strong> 次の版で直します（<a href="licenseaudit.html#配布経路で残っている対応">配布経路で残っている対応</a>）。</li>
+<li><strong>v0.2.0 までの配布物にはライセンス全文が入っていません。</strong> v0.3.0 からは同梱しています（<a href="licenseaudit.html#配布経路で残っている対応">配布経路で残っている対応</a>）。</li>
 </ul>
 </article>
 </div>

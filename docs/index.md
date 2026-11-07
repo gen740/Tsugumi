@@ -39,7 +39,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
 - **気になった Card だけを、すぐ試す。** 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。
 - **環境ごと固定して、確かめ直せる。** Card ごとの依存関係を Nix で固定し、実行は git の版と結びつけて記録します。
-- **計算は隔離して。** Mac では隔離された VM の中で、Linux では bubblewrap で動かします。Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](pages/security.md#モデルに送られるもの)しています。
+- **計算は隔離して。** Mac では隔離された VM の中で、Linux では bubblewrap で動かします。Card からの外部ネットワークは既定で遮断し、Agent が Card の権限を広げる保存は利用者の承認なしには通りません。Agent に送られる内容も[明示](pages/security.md#モデルに送られるもの)しています。プロジェクトを開くことはその中身を信頼する判断で、Tsugumi が引き受けるのはその内側です（[どこまでを保証するか](pages/security.md#どこまでを-tsugumi-が引き受けるか)）。
 - **完成した Workflow に LLM は要らない。** 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。
 
 ## AI を研究に積極的に活用できていますか？
@@ -247,7 +247,7 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 | --- | --- |
 | **はじめる** | [インストール](pages/install.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](pages/usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](pages/cardguide.md)（Python・bash・C++・R・Julia で作る） · [同梱デモのしくみ](pages/demos.md)（各デモの Card のつながりと動き） · [Web UI](pages/webui.md)（ブラウザから使う） · [Claude Code から使う](pages/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
 | **考え方を知る** | [Q&A](pages/qa.md)（過程が見えない・再現性・データを渡すのが怖い、に答える） · [設計の独自性](pages/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](pages/vision.md) · [AI に使われないために、何を作るか](pages/philosophy.md) · [名前の由来](pages/name.md) · [作った人](pages/author.md) · [私にしかない深さ](pages/origin.md) · [まだできないこと](pages/limitations.md) |
-| **仕組みを知る** | [主要機能](pages/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](pages/versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](pages/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
+| **仕組みを知る** | [主要機能](pages/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](pages/versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](pages/security.md)（どこまでを保証するか・隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
 | **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](pages/licenseaudit.md) |
 
 すべての文書の一覧は [docs/README.md](pages/documents.md) にあります。
