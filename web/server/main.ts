@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
-import { chatRoutes, chatStatus } from './chat'
+import { cancelChats, chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './env'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -154,21 +154,21 @@ function projectFiles(root: string, limit: number): Map<string, Buffer> {
 
 /** Reads another Tsugumi project to take in as a Card in Card. The page puts
  *  it under externals/<name>/ as a copy; the original folder is not linked.
- *  Files that are not UTF-8 text are left out (documents edit text only). */
+ *  Files that are not UTF-8 text come as base64, unchanged. */
 function importProject(folder: unknown) {
   if (typeof folder !== 'string' || !fs.existsSync(path.join(folder, 'tsugumi.json'))) throw new HttpError(400, 'tsugumi.json のあるフォルダを選んでください。')
   const root = fs.realpathSync(folder)
   const files: Record<string, string> = {}
-  const skipped: string[] = []
+  const binary: Record<string, string> = {}
   const utf8 = new TextDecoder('utf-8', { fatal: true })
   for (const [rel, d] of projectFiles(root, 64 << 20)) {
     try {
       files[rel] = utf8.decode(d)
     } catch {
-      skipped.push(rel)
+      binary[rel] = Buffer.from(d).toString('base64')
     }
   }
-  return { name: path.basename(root), files, skipped }
+  return { name: path.basename(root), files, binary }
 }
 
 /** A copy of a project's saved documents and sources (what is in its folder,
@@ -355,6 +355,8 @@ type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/status': () => ({
     setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
+    // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
+    hostFolders: process.platform !== 'darwin',
     ...chatStatus(), documents: projectsDir,
   }),
   'POST /api/setup/build': () => {
@@ -383,6 +385,20 @@ const routes: Record<string, Handler> = {
     if (b.project) pageProjects.set(String(b.page), projectDir(b.project))
     else pageProjects.delete(String(b.page))
     return {}
+  },
+  // A page left the project. It stops with its chat and terminals, unless another
+  // page shows it; a child workflow's page goes with it.
+  'POST /api/project/close': async (b) => {
+    const dir = projectDir(b.path)
+    const page = String(b.page)
+    pageProjects.delete(page)
+    const elsewhere = [...streams.values()].some((p) => !p.detached && p.id !== page && pageProjects.get(p.id) === dir)
+    if (elsewhere) return { stopped: false }
+    broadcast({ type: 'projectClosed', project: dir })
+    cancelChats(dir)
+    for (const t of terminals.values()) if (t.project === dir) stopTerminal(t)
+    await envs.stop(dir)
+    return { stopped: true }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/stop': async (b) => {

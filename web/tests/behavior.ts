@@ -45,6 +45,7 @@ await import("./thumbnails")
 await import("./liveCode")
 
 await import("./helperBirds")
+await import("./leaveProject")
 
 await import("./portGrid")
 

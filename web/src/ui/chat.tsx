@@ -43,13 +43,10 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
         ]} />
       </div>
       {showList ? <SessionList chat={chat} onPick={() => setShowList(false)} /> : <Conversation session={session} chat={chat} tab={tab} />}
-      {chat.permission && <PermissionPrompt key={chat.permission.id} asked={chat.permission.asked} from={chat.permission.from} onAnswer={(allow, always) => chat.answerPermission(allow, always)} />}
     </div>
   )
 }
 
-/** Asks whether the Agent may give Cards what its save needs; each kind can
- *  be allowed without asking from now on (as in the settings). */
 /** Why Fast mode cannot be chosen for the model in use. */
 function fastUnavailable(connection: string): string {
   return connection === 'chatgpt' ? 'Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）'
@@ -57,13 +54,34 @@ function fastUnavailable(connection: string): string {
     : 'Fast mode: Claude Opus 5.5 でだけ選べます'
 }
 
+/** The Agent waits for this answer, so it shows whether or not the chat is open. */
+export function PermissionHost({ session }: { session: ProjectSession }) {
+  const chat = app.chat(session)
+  useObserve(chat)
+  const p = chat.permission
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always) => chat.answerPermission(allow, always)} /> : null
+}
+
+/** Asks whether the Agent may give Cards what its save needs; each kind can
+ *  be allowed without asking from now on (as in the settings). Return allows
+ *  and Esc declines; a click beside it does nothing. */
 function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: string; onAnswer: (allow: boolean, always: string[]) => void }) {
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      // A button with the focus answers for itself.
+      if (e.key !== 'Enter' || e.isComposing || (e.target as HTMLElement | null)?.tagName === 'BUTTON') return
+      e.preventDefault()
+      onAnswer(true, always)
+    }
+    window.addEventListener('keydown', key, true)
+    return () => window.removeEventListener('keydown', key, true)
+  }, [onAnswer, always])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
   const kinds = PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
-    <Sheet width={460} onClose={() => onAnswer(false, [])}>
+    <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {who} が Card の権限を広げようとしています</div>
         <p className="secondary">許可すると、この保存が行われます。許可しなければ何も保存されず、{who} には理由を説明するよう伝えます。</p>
