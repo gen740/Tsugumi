@@ -610,3 +610,14 @@ private final class CountingRuler: LineNumberRuler {
   scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
   #expect(ruler.wholeRedraws > 0)
 }
+
+@Test func theChatTakesItsWidthFromWhatTheWorkbenchLeaves() {
+  #expect(ChatSplit.chatWidth(480, in: 1220) == 480)
+  // What was asked for stays within the chat's limits.
+  #expect(ChatSplit.chatWidth(100, in: 1220) == 320)
+  #expect(ChatSplit.chatWidth(2000, in: 2000) == 900)
+  // The workbench keeps its minimum, in a narrow window too.
+  #expect(ChatSplit.chatWidth(480, in: 700) == 340)
+  #expect(ChatSplit.chatWidth(480, in: 500) == 140)
+  #expect(ChatSplit.chatWidth(480, in: 200) == 0)
+}
