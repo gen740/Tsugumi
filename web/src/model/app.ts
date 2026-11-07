@@ -87,6 +87,17 @@ export class AppModel extends Observable {
     return s
   }
 
+  /** The project was left: its windows and chat close with it (the Mac app's
+   *  ClosesWithProject and release). Opening it again starts anew. */
+  closeProject(s: ProjectSession) {
+    this.windows = this.windows.filter((w) => w.session !== s)
+    this.chats.get(s.key)?.close()
+    this.chats.delete(s.key)
+    this.sessions.delete(s.key)
+    s.close()
+    this.changed()
+  }
+
   /** Takes projects off the recent list (the folders stay). */
   async forgetRecents(paths: Iterable<string>) {
     try {

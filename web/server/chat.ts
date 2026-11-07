@@ -548,6 +548,10 @@ class ChatHost {
     }).sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
+  cancelAll() {
+    for (const a of this.agents.values()) a.cancel()
+  }
+
   delete(id: string) {
     this.agents.get(id)?.cancel()
     this.agents.delete(id)
@@ -587,6 +591,11 @@ function chatFor(dir: string): ChatHost {
   return c
 }
 
+
+/** The project was left: no turn of it goes on. */
+export function cancelChats(dir: string) {
+  chats.get(projectKey(dir).key)?.cancelAll()
+}
 
 const keyedProvider = (v: unknown): KeyedProvider => (v === 'openai' ? 'openai' : 'anthropic')
 

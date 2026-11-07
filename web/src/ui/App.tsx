@@ -3,7 +3,7 @@
 // are routed here to the active project and tab (the macOS menu commands);
 // the canvas handles its own single-key shortcuts while it has the focus.
 import { useEffect, useRef, useState } from 'react'
-import { onServerEvent, reportPageProject } from '../api'
+import { closePageProject, onServerEvent, reportPageProject } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { canvasFor } from '../model/canvas'
@@ -81,10 +81,11 @@ export function App() {
     const settled = await s.settleBeforeLeaving((reason) => new Promise((answer) => setUnsaved({ reason, answer })))
     if (!settled) return false
     workspace.close()
-    reportPageProject(undefined)
+    app.closeProject(s)
     const u = new URL(location.href)
     u.search = ''
     history.replaceState(null, '', u)
+    await closePageProject(s.dir).catch(() => {})
     void app.refresh()
     return true
   }
@@ -132,7 +133,17 @@ export function App() {
   // show it (on Home; other pages keep their projects). When it asks to widen
   // what Cards may do, the chat (where that is approved) opens.
   useEffect(() => {
-    if (detached) return
+    if (detached) {
+      // A child workflow's page closes with its project.
+      return onServerEvent((e) => {
+        const s = workspace.session
+        if (s && e.type === 'projectClosed' && s.dir === e.project) {
+          workspace.close()
+          app.closeProject(s)
+          window.close()
+        }
+      })
+    }
     return onServerEvent((e) => {
       if (e.type === 'agentOpen' && !workspace.session) void commands.current.openProject(e.project)
       if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'permission' && workspace.session?.dir === e.project) workspace.set('showChat', true)

@@ -178,6 +178,16 @@ export class GuideController extends Observable {
     this.changed()
   }
 
+  /** The chat's project was left: the bird no longer speaks or works for it. */
+  chatClosed(chat: { }) {
+    this.work = undefined
+    if (this.speakingChat === chat) {
+      this.speakingChat = undefined
+      this.dismissBubble()
+    }
+    this.changed()
+  }
+
   /** The chat's Agent ended its turn: the bird goes home. */
   chatWorkEnded() {
     if (!this.work) return
