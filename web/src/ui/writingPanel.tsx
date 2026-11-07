@@ -57,7 +57,7 @@ export function WritingPanels({ writers, team, known, rect, obstacles, screen, z
       return (
         <div key={c.card + c.file} aria-hidden style={{ display: 'contents', ...(color && { ['--bird' as string]: color }) }}>
           {card && to! > from! && <span className="cv-writing-line" style={{ left: x, top: from, height: to! - from! }} />}
-          <div className="cv-writing" style={{ left: f.x, top: f.y, width: f.width, height: f.height, ['--s' as string]: s }}>
+          <div className="cv-writing" data-writing-card={c.card} style={{ left: f.x, top: f.y, width: f.width, height: f.height, ['--s' as string]: s }}>
             <div className="cv-writing-head">
               <span className="cv-writing-file"><span>{card ? c.file : `${c.card}/${c.file}`}</span></span>
               <span className="cv-writing-state">{c.saved ? '保存済み' : '保存前'}</span>

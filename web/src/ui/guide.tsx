@@ -258,7 +258,10 @@ export function GuideFlyer() {
   const scrolled = useRef<string>()
   const perchBox = (): Box | undefined => {
     if (!target) return undefined
-    const el = [...document.querySelectorAll(targetSelector(target))].find(visible)
+    const atTarget = [...document.querySelectorAll(targetSelector(target))].find(visible)
+    // A Card still being written is not on the canvas yet: the bird stands by the code it is writing.
+    const panel = !atTarget && writing && target === `card:${writing}` ? document.querySelector(`.cv-writing[data-writing-card="${CSS.escape(writing)}"]`) : null
+    const el = atTarget ?? (visible(panel) ? panel! : undefined)
     // A demo card or a control out of view is brought into view once.
     if (el && scrolled.current !== target) {
       scrolled.current = target
@@ -269,7 +272,8 @@ export function GuideFlyer() {
     if (!r || r.width === 0) return undefined
     const right = r.right + 320 < window.innerWidth
     const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
-    const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
+    // The panel of a new Card is up under the toolbar: halfway down it, the bird stays off the toolbar's buttons.
+    const y = Math.min(Math.max(el === atTarget ? r.top + 10 : r.top + r.height / 2, 70), window.innerHeight - 10)
     const k = perchScale(el?.closest<HTMLElement>('[data-canvas-zoom]')?.dataset.canvasZoom)
     return { left: x - (BIRD.w * k) / 2, top: y - BIRD.h * k, width: BIRD.w * k, height: BIRD.h * k, flip: right }
   }
