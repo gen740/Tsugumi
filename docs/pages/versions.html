@@ -95,7 +95,7 @@ run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの
 <h2 id="nixpkgs">nixpkgs</h2>
 <p>新しいプロジェクトは、作った Tsugumi の nixpkgs（<code>flake.lock</code>）を <code>tsugumi.json</code> の <code>pkgsPath</code> に固定値で持ちます。版の一部なので、過去の版に戻れば nixpkgs も戻ります。固定されていないプロジェクト（<code>tsugumi:default</code>）は、Workflow 設定で固定できます。</p>
 <h2 id="デモの履歴">デモの履歴</h2>
-<p>デモのフォルダにある <code>.tsugumi-history.json</code> は、コピーがリポジトリになるときに commit・枝・tag・note になります（ファイル自体は消えます）。Cas A デモには、帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 <code>rgb-v1</code>、その上にスペクトルを足した版）が入っています。</p>
+<p>デモのフォルダにある <code>.tsugumi-history.json</code> は、コピーがリポジトリになるときに commit・枝・tag・note になります（ファイル自体は消えます）。Cas A デモには、帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 <code>rgb-v1</code>、その上にスペクトルを足した版、CIAO を固定した版）が入っています。</p>
 <h2 id="実装">実装</h2>
 <p><code>core/src/versions.cc</code>（libgit2）。RPC は <code>VersionInit</code>・<code>VersionMark</code>・<code>VersionCheckout</code>・<code>VersionGraph</code>・<code>VersionCanvas</code>・<code>VersionDiff</code>・<code>VersionSummary</code>。git の操作が失敗しても実行は止めません（その実行は版を記録しません）。</p>
 <h2 id="まだできないこと">まだできないこと</h2>

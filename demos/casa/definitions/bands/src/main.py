@@ -1,13 +1,19 @@
 """Bins the Cas A events into three disjoint energy bands on one sky grid
 centred on Cas A (its position converted with the event file's own x, y
-coordinate keywords, so every observation is centred the same way)."""
+coordinate keywords, so every observation is centred the same way). CIAO's
+dmcopy does the binning."""
 import json
 import math
+import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
 
+from inputs.ciao.casa.Ciao import Ciao
 from inputs.input.casa.Events import Events
 import outputs.images.casa.BandDir as out
 
@@ -28,6 +34,8 @@ def sky_pixel(columns, ra, dec):
 def main(ctx):
     events = ctx.input("input", Events)
     source, obsid = events.Path().decode(), events.Obsid().decode()
+    tool = ctx.input("ciao", Ciao)
+    root = tool.Path().decode()
     p = ctx.params()
     limits = [p.RedMinEv(), p.GreenMinEv(), p.BlueMinEv(), p.MaxEv()]
     assert all(a < b for a, b in zip(limits, limits[1:])), "energy boundaries must increase"
@@ -46,31 +54,27 @@ def main(ctx):
         y = np.asarray(ev.data["y"], dtype=float)
         energy = np.asarray(ev.data["energy"], dtype=float)
         inside = (x >= edges_x[0]) & (x < edges_x[-1]) & (y >= edges_y[0]) & (y < edges_y[-1])
-        header = fits.Header()
-        for axis, key, start in [(1, "x", x0), (2, "y", y0)]:
-            c = cols[key]
-            header[f"CTYPE{axis}"] = c.coord_type
-            header[f"CRVAL{axis}"] = c.coord_ref_value
-            header[f"CRPIX{axis}"] = (c.coord_ref_point - start) / step + 0.5
-            header[f"CDELT{axis}"] = c.coord_inc * step
-        header["BUNIT"] = "count"
-        header["OBJECT"] = "CAS A"
-        header["OBS_ID"] = obsid
-        bands = []
-        for i, color in enumerate(COLORS):
-            upper = energy <= limits[i + 1] if i == 2 else energy < limits[i + 1]
-            mask = inside & (energy >= limits[i]) & upper
-            counts = np.histogram2d(y[mask], x[mask], bins=[edges_y, edges_x])[0].astype(np.int32)
-            assert int(counts.sum()) == int(mask.sum()), "no selected photon may be lost"
-            h = header.copy()
-            h["E_MIN"], h["E_MAX"] = limits[i], limits[i + 1]
-            fits.PrimaryHDU(counts, header=h).writeto(dest / f"{color}.fits", overwrite=True)
-            bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum())})
-        selected = int((inside & (energy >= limits[0]) & (energy <= limits[-1])).sum())
+        selected = int((inside & (energy >= limits[0]) & (energy < limits[-1])).sum())
+        bins = f"bin x={edges_x[0]:.6f}:{edges_x[-1]:.6f}:{step},y={edges_y[0]:.6f}:{edges_y[-1]:.6f}:{step}"
+        with tempfile.TemporaryDirectory() as work:
+            env = {**os.environ, "ASCDS_INSTALL": root, "PFILES": f"{work};{root}/param"}
+            bands = []
+            for i, color in enumerate(COLORS):
+                # Written beside the parameter files first: the output directory's path is an open file
+                # descriptor of this process, which dmcopy does not inherit.
+                image = Path(work) / f"{color}.fits"
+                # A range of energy= does not include its upper limit.
+                spec = f"{source}[energy={limits[i]}:{limits[i + 1]}][{bins}]"
+                subprocess.run([f"{root}/bin/dmcopy", spec, str(image)], env=env, check=True)
+                counts = fits.getdata(image)
+                assert counts.shape == (size, size), "dmcopy must give the grid that was asked for"
+                shutil.copyfile(image, dest / image.name)
+                bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum()), "dmcopy": spec})
+        # Counted again without CIAO: what the tool wrote is every selected photon, once.
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
         manifest = {"obsid": obsid, "events_file": source, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
                     "centre_pixel": [round(cx, 2), round(cy, 2)], "grid": {"step": step, "pixels": size},
-                    "selected": selected, "bands": bands}
+                    "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.Version().decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print(json.dumps(manifest, ensure_ascii=False))
     ctx.display_table(["帯域", "エネルギー (eV)", "光子数"],

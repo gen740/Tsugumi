@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</a></li><li class="d2"><a href="#other-macos-app-dependencies">Other macOS app dependencies</a></li><li class="d2"><a href="#web-ui">Web UI</a></li><li class="d3"><a href="#plot-viewer-web-ui-and-macos-app">Plot viewer (web UI and macOS app)</a></li><li class="d2"><a href="#core-daemon-and-execution-environment">Core daemon and execution environment</a></li><li class="d3"><a href="#boot-image-redistributed-with-the-app">Boot image redistributed with the app</a></li><li class="d3"><a href="#downloaded--built-after-installation">Downloaded / built after installation</a></li><li class="d2"><a href="#documentation-site">Documentation site</a></li><li class="d2"><a href="#external-data">External data</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#tree-sitter-copied-sources-and-linked-packages">Tree-sitter: copied sources and linked packages</a></li><li class="d2"><a href="#other-macos-app-dependencies">Other macOS app dependencies</a></li><li class="d2"><a href="#web-ui">Web UI</a></li><li class="d3"><a href="#plot-viewer-web-ui-and-macos-app">Plot viewer (web UI and macOS app)</a></li><li class="d2"><a href="#core-daemon-and-execution-environment">Core daemon and execution environment</a></li><li class="d3"><a href="#boot-image-redistributed-with-the-app">Boot image redistributed with the app</a></li><li class="d3"><a href="#downloaded--built-after-installation">Downloaded / built after installation</a></li><li class="d2"><a href="#documentation-site">Documentation site</a></li><li class="d2"><a href="#external-software">External software</a></li><li class="d2"><a href="#external-data">External data</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="third-party-notices">Third-party notices</h1>
@@ -132,6 +132,12 @@ distributing a standalone daemon or a different container image.</p>
 <h2 id="documentation-site">Documentation site</h2>
 <p>The pages under <code>docs/</code> for GitHub Pages (<code>docs/site/</code>) draw the sketches&#39; handwriting with a font and show an image. The app&#39;s Help &gt; Tsugumi を知る shows the same pages: <code>build-app.sh</code> copies them, with these files and the font&#39;s license text, to <code>Contents/Resources/explainer/</code>.</p>
 <div class="table-wrap"><table><thead><tr><th>Component</th><th>Version / license text</th><th>Use</th></tr></thead><tbody><tr><td>Yusei Magic</td><td><a href="https://github.com/google/fonts/tree/f58dfb9001f31a5eb15b4960b9548b8fd0fa6168/ofl/yuseimagic" rel="noopener">google/fonts <code>f58dfb9</code></a>, <a href="../site/assets/YuseiMagic-OFL.txt">SIL OFL 1.1</a> (Copyright 2020 The Yusei Magic Project Authors; no Reserved Font Name)</td><td><code>docs/site/assets/YuseiMagic-subset.woff</code>, subset to the characters of the figures with fonttools</td></tr><tr><td>Cas A RGB image</td><td>Output of the Cas A demo&#39;s <code>rgb</code> Card (Chandra ObsID 25628)</td><td><code>docs/site/assets/casa-rgb-25628.png</code>, the result in a figure; derived from Chandra observation data (see External data below)</td></tr></tbody></table></div>
+<h2 id="external-software">External software</h2>
+<p>The Cas A demo builds CIAO (Chandra X-ray Center, GPL version 3 or later) from
+source on the first run, with CCfits and libwcs from WCSTools, by the Nix
+expressions in <code>demos/casa/definitions/ciao</code> (a copy from
+<a href="https://github.com/gen740/ciao" rel="noopener">https://github.com/gen740/ciao</a>). Their sources are downloaded from upstream by
+hash and are not included in this repository or in the app.</p>
 <h2 id="external-data">External data</h2>
 <p>The Cas A demo fetches Chandra observation data from HEASARC on demand.
 Its source and hash are recorded in the demo definition. Those observations
