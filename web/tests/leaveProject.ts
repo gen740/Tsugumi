@@ -102,7 +102,7 @@ const session = (dir = '/p', key = 'k') => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-helpers-'))
   const a = Object.create(Agent.prototype) as any
   Object.assign(a, {
-    folders: ['/attached'], storage: path.join(dir, 'c.json'), id: 'c', catalog: {}, rpc: async () => ({}), provider: {}, references: {},
+    folders: ['/attached'], storage: path.join(dir, 'c.json'), id: 'c', catalog: { tools: [] }, rpc: async () => ({}), provider: {}, references: {},
     conversation: { usage: { inputTokens: 0, outputTokens: 0 } }, save() {},
     readValue: async (tool: string) => (tool === 'project_inspect' ? { rev: 1, project: {}, definitions: [] } : { bytes: '' }),
   })

@@ -11,7 +11,7 @@ import { FlatJSON, InvalidArguments } from '../src/shared/flatjson'
 import { AGENT, commentRequest, draftRequest, fill, modelChoices, modelOptions } from '../src/shared/agentShared'
 import os from 'node:os'
 import { ChildProcess, spawn } from 'node:child_process'
-import { Agent, AgentEvent, approvalRequired, CONTEXT_FULL_TEXT, DEMO_SKILL, delegateTasks, helperBrief, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, ToolCatalog } from './agent'
+import { Agent, AgentEvent, approvalRequired, CONTEXT_FULL_TEXT, DEMO_SKILL, delegateTasks, helperBrief, helperOutside, messagesBody, ProviderConfig, readsLatestInstead, referenceDemos, responsesBody, sourcesText, SYSTEM_PROMPT, ToolCatalog, warmBody, warmCache } from './agent'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 interface Fixture {
@@ -68,6 +68,20 @@ for (const c of fixture.modelOptions) {
   const body = (wire === 'openAIResponses' ? responsesBody : messagesBody)(config, 'rules', [], [])
   for (const [k, v] of Object.entries(c.expect.present)) assert.deepEqual(body[k], v, `${label}: ${k}`)
   for (const k of c.expect.absent) assert.ok(!(k in body), `${label}: ${k} must not be sent`)
+}
+// Helpers read the rules they share from one another's cache: the rules end with
+// a breakpoint before what is a helper's own, and that is what is written first.
+{
+  const config: ProviderConfig = { name: 't', baseURL: 'http://127.0.0.1:1', model: 'm', api: 'anthropicMessages', auth: 'apiKey', maxTokens: 32768, contextLimit: 180_000 }
+  const breakpoint = { type: 'ephemeral' }
+  assert.deepEqual(messagesBody(config, SYSTEM_PROMPT + '\n\nyours', [], []).system, [
+    { type: 'text', text: SYSTEM_PROMPT, cache_control: breakpoint }, { type: 'text', text: '\n\nyours' }])
+  assert.deepEqual(messagesBody(config, 'rules', [], []).system, [{ type: 'text', text: 'rules', cache_control: breakpoint }])
+  const warm = warmBody(config, SYSTEM_PROMPT, [])
+  assert.deepEqual(warm.system, [{ type: 'text', text: SYSTEM_PROMPT, cache_control: breakpoint }])
+  assert.equal(warm.max_tokens, 0)
+  assert.ok(!('stream' in warm), 'max_tokens 0 is refused with a stream')
+  assert.ok(!JSON.stringify(warm.messages).includes('cache_control'), 'the placeholder is not cached')
 }
 // The Draft demos are tasks and the finished demo of each is its answer:
 // reference_read neither lists nor reads them (as the Swift Agent).
@@ -191,6 +205,13 @@ for (const c of fixture.modelOptions) {
     const requests = async () => (await (await fetch(`${base}/fixture/requests`)).json()) as { path: string; tools: string[]; include: string[] | null; names_web_search: boolean; eager: boolean; effort: string | null; speed: string | null; output_limit: number }[]
     const catalog = new ToolCatalog(schema)
     const noRpc = async () => { throw new Error('no rpc in this check') }
+    // What a warm request wrote is counted, and one that fails costs nothing else.
+    {
+      const warmConfig: ProviderConfig = { name: 'Test', baseURL: base, model: 'fixture', api: 'anthropicMessages', auth: 'apiKey', apiKey: 'fixture-key', maxTokens: 32768, contextLimit: 180_000 }
+      assert.deepEqual(await warmCache(warmConfig, SYSTEM_PROMPT, []), { cacheRead: 0, cacheWrite: 1000 })
+      assert.equal((await requests()).at(-1)?.output_limit, 0)
+      assert.deepEqual(await warmCache({ ...warmConfig, baseURL: 'http://127.0.0.1:1' }, SYSTEM_PROMPT, []), { cacheRead: 0, cacheWrite: 0 })
+    }
     const provider = (webSearch: boolean, api: ProviderConfig['api'] = 'anthropicMessages'): ProviderConfig => ({
       name: 'Test', baseURL: base, model: 'fixture', api, auth: 'apiKey', apiKey: 'fixture-key', maxTokens: 32768, contextLimit: 180_000, webSearch })
     let serial = 0

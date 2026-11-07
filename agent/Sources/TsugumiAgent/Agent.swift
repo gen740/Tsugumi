@@ -540,8 +540,11 @@ public actor Agent {
     if role == .guide {
       return catalog.tools.filter { Shared.data.guide.tools.contains($0.name) } + reference + [Self.guideShowTool]
     }
-    return (searches ? [Self.webSearchTool] : []) + catalog.tools + reference + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
+    return (searches ? [Self.webSearchTool] : []) + helperTools + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
   }
+
+  /// What a helper is given: only the main Agent has more.
+  var helperTools: [ToolSpec] { catalog.tools + (references.isEmpty ? [] : [Self.referenceTool]) }
 
   /// The main Agent may search, when the setting is on (the helpers work from
   /// what it tells them; the guide explains the app).

@@ -144,6 +144,9 @@ extension Agent {
     }
     let line = ApprovalLine(approverForHelpers)
     let (catalog, transport, config, references, folders) = (self.catalog, self.transport, self.providerConfig, self.references, self.folders)
+    let warmed = await MessagesProvider(config: config).warmCache(system: Self.systemPrompt, tools: helperTools)
+    conversation.usage.cacheReadTokens += warmed.cacheReadTokens
+    conversation.usage.cacheWriteTokens += warmed.cacheWriteTokens
     let reports = await withTaskGroup(of: (Int, HelperReport).self) { group in
       for (i, h) in started.enumerated() {
         let file = dir.appendingPathComponent(h.name + ".json")
