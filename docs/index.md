@@ -250,6 +250,8 @@ Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕�
 | **仕組みを知る** | [主要機能](pages/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](pages/versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](pages/security.md)（どこまでを保証するか・隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
 | **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](pages/licenseaudit.md) |
 
+Claude で開発した記録は **[Tsugumi Chronicle](https://gen740.github.io/Tsugumi-chronicle/)** にあります。
+
 すべての文書の一覧は [docs/README.md](pages/documents.md) にあります。
 
 ### 文書も、人と AI が同じものを読む

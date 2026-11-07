@@ -211,6 +211,8 @@ html.no-figures .ex-fig { display: none; }
 .demo-tile > b { display: block; margin: 12px 14px 2px; color: var(--heading); font-size: 15px; }
 .demo-tile > span:not(.demo-thumb) { display: block; margin: 0 14px; color: var(--secondary); font-size: 12.5px; line-height: 1.6; }
 .demo-thumb { display: block; position: relative; height: 190px; overflow: hidden; background: #1d1e21; }
+.home-chronicle { margin: -24px 0 40px; color: var(--secondary); font-size: 14px; }
+.home-chronicle a { color: var(--text); }
 .home-foot { margin-top: 44px; color: var(--secondary); font-size: 13px; }
 .home-foot a { color: var(--secondary); }
 .player-dialog { width: min(1180px, 94vw); height: min(780px, 90vh); padding: 0; border: 1px solid var(--rule); border-radius: 14px; background: var(--page); color: var(--text); }
