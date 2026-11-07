@@ -385,7 +385,7 @@ final class GuideController {
     answerDemoOffer()
     demosRequested = true
     if scripted {
-      play("interest", asked: text, chat: nil)
+      play(GuideScript.shared.demo(for: text) + "/pick", asked: text, chat: nil)
       return
     }
     ask(text, screen: .demos, session: nil, tab: nil, note: "[Interest] The user answered what interests them; pick a demo for it.")
@@ -618,16 +618,17 @@ final class GuideController {
   @ObservationIgnored private var scriptAt: String?
 
   /// A message without a connection: $demo in a project's chat begins the
-  /// tour; in the tour's chat a tapped choice leads to its step; anything else
-  /// gets the one fixed reply (pointing to Settings and $demo), with the
-  /// step's choices still there to go on with the tour.
+  /// tour; a tapped choice leads to its step (in the tour's chat, or on Home
+  /// after Home's steps); anything else gets the one fixed reply (pointing to
+  /// Settings and $demo), with the step's choices still there to go on.
   func answerScripted(_ text: String, chat: ChatController?) {
     let script = GuideScript.shared
     if let chat, text.split(whereSeparator: \.isWhitespace).contains("$demo") {
       startScriptedTour(asked: text, chat: chat)
       return
     }
-    let current = chat.flatMap { touring($0.session) ? scriptAt.flatMap { script.steps[$0] } : nil }
+    let here = chat.map { touring($0.session) } ?? scriptAt.map { script.homeSteps.contains($0) } ?? false
+    let current = here ? scriptAt.flatMap { script.steps[$0] } : nil
     if let next = current?.next[text] {
       play(next, asked: text, chat: chat)
       return
@@ -636,15 +637,16 @@ final class GuideController {
     reply.show.highlight = current == nil ? nil : highlight
     reply.show.choices = current?.show.choices ?? []
     // In the tour's own chat the tour is already there.
-    if current != nil { reply.show.actions.removeAll { $0.kind == .openDemo } }
+    if chat != nil, current != nil { reply.show.actions.removeAll { $0.kind == .openDemo } }
     present(reply, asked: text, chat: chat)
   }
 
-  /// $demo without a connection: in a copy of the demo the script shows, its
-  /// tour begins there (elsewhere the reply says where it can).
+  /// $demo without a connection: in a copy of a demo the script has a tour
+  /// of (by its name), the tour begins there (elsewhere the reply says where it can).
   private func startScriptedTour(asked: String, chat: ChatController) {
     let s = chat.session
-    guard let demo = AppModel.shared.demos.first(where: { $0.id == "report" }), s.scopeName([]) == demo.title else {
+    let toured = Set(GuideScript.shared.tours.map(\.demo))
+    guard let demo = AppModel.shared.demos.first(where: { toured.contains($0.id) && $0.title == s.scopeName([]) }) else {
       play("otherProject", asked: asked, chat: chat)
       return
     }
@@ -653,7 +655,7 @@ final class GuideController {
     saveTour()
     seen = runKey(s)
     seenActive = s.runActive
-    play("start", asked: asked, chat: chat)
+    play(GuideScript.shared.step("start", of: demo.id), asked: asked, chat: chat)
   }
 
   private func play(_ id: String, asked: String?, chat: ChatController?) {
@@ -804,7 +806,8 @@ final class GuideController {
       seen = runKey(s)
       seenActive = s.runActive
       tell(Agent.guideText("tourStart", ["demo": t.demo, "title": t.title]),
-           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s, script: "start")
+           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s,
+           script: GuideScript.shared.step("start", of: t.demo))
       return
     }
     if resumeAsked, s.connected {
@@ -812,7 +815,7 @@ final class GuideController {
       seen = runKey(s)
       seenActive = s.runActive
       tell(Agent.guideText("tourResume", ["demo": t.demo]), display: String(localized: "デモの案内を続けます"), session: s,
-           script: scriptAt ?? "resume")
+           script: scriptAt.flatMap { $0.hasPrefix(t.demo + "/") ? $0 : nil } ?? GuideScript.shared.step("resume", of: t.demo))
       return
     }
     let now = runKey(s)

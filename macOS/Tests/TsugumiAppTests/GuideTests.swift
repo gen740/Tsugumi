@@ -110,20 +110,31 @@ import TsugumiRPC
 }
 
 /// Without a connection Tsugumi answers from agent/Shared/guide-script.json:
-/// every choice and every run's end leads to a step of it, and the reply to
-/// anything typed offers Settings (web/tests/guideScript.ts checks the same
-/// script and how the web plays it).
+/// every choice and every run's end leads to a step of it, each tour has the
+/// steps of a tour, Home's suggestions find their tours, and the reply to
+/// anything typed offers Settings and $demo (web/tests/guideScript.ts checks
+/// the same script and plays every tour through).
 @MainActor @Test func theScriptWithoutAConnectionIsWhole() {
   let script = GuideScript.shared
-  for id in ["interest", "start", "resume", "otherProject", "run", "farewell"] { #expect(script.steps[id] != nil, "\(id)") }
+  #expect(script.tours.map(\.demo) == ["report", "exoplanet-transit", "pharmacokinetics"])
+  for demo in script.tours.map(\.demo) {
+    for id in ["pick", "about", "start", "resume", "run", "ranOk", "ranFailed", "change", "runAgain", "ranAgain", "next", "farewell"] {
+      #expect(script.steps["\(demo)/\(id)"] != nil, "\(demo)/\(id)")
+    }
+    #expect(script.steps["\(demo)/run"]?.show.actions.map(\.kind) == [.run])
+    #expect(script.steps["\(demo)/farewell"]?.show.endTour == true)
+    #expect(script.homeSteps.contains("\(demo)/pick") && !script.homeSteps.contains("\(demo)/start"))
+  }
   for (id, s) in script.steps {
     #expect(Set(s.next.keys) == Set(s.show.choices), "\(id): every choice leads somewhere")
     for n in Array(s.next.values) + [s.ranOk, s.ranElse].compactMap({ $0 }) { #expect(script.steps[n] != nil, "\(id) → \(n)") }
   }
-  #expect(script.steps["run"]?.show.actions.map(\.kind) == [.run])
-  #expect(script.steps["farewell"]?.show.endTour == true)
+  #expect(script.demo(for: "天文・地震・タンパク質のデータ") == "exoplanet-transit")
+  #expect(script.demo(for: "ライブ表示") == "pharmacokinetics")
+  #expect(script.demo(for: "データの集計とレポート") == "report")
+  #expect(script.demo(for: "なんでも") == "report")
+  #expect(script.step("start", of: "newton") == "otherProject")
   #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings, .openDemo])
   #expect(script.noConnection.text.contains("$demo"))
-  #expect(script.steps["otherProject"]?.show.actions.first?.kind == .openDemo)
-  #expect(script.noConnection.text == script.noConnection.show.say)
+  #expect(script.steps["otherProject"]?.show.actions.compactMap(\.demo) == script.tours.map(\.demo))
 }

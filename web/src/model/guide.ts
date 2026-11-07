@@ -12,7 +12,7 @@ import { get, str } from '../shared/json'
 import { CardKey, cardState, KIND_LABEL, key, ProjectSession, runState } from './session'
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
-import { noConnection, scriptStep, type ScriptStep } from './guideScript'
+import { homeStep, noConnection, scriptDemoFor, scriptDemos, scriptStart, scriptStep, type ScriptStep } from './guideScript'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
 const KINDS: GuideActionKind[] = ['open_demo', 'show_demos', 'run', 'stop', 'open_card', 'open_settings', 'new_project', 'home']
@@ -317,7 +317,7 @@ export class GuideController extends Observable {
     if (!q.trim()) return
     this.answerDemoOffer()
     this.demosRequested = true
-    if (this.scripted) return this.play('interest', q.trim())
+    if (this.scripted) return this.play(scriptDemoFor(q) + '/pick', q.trim())
     this.ask(q, 'demos', undefined, undefined, "[Interest] The user answered what interests them; pick a demo for it.")
   }
 
@@ -596,33 +596,35 @@ export class GuideController extends Observable {
   /** The step of the script shown last (its choices are the ones out). */
   private scriptAt?: string
 
-  /** A message without a connection: in the tour's chat a tapped choice leads
-   *  to its step; anything else gets the one fixed reply (pointing to
-   *  Settings), with the step's choices still there to go on with the tour. */
+  /** A message without a connection: $demo in a project's chat begins the
+   *  tour; a tapped choice leads to its step (in the tour's chat, or on Home
+   *  after Home's steps); anything else gets the one fixed reply (pointing to
+   *  Settings and $demo), with the step's choices still there to go on. */
   answerScripted(t: string, chat?: ChatController) {
     if (chat && t.split(/\s+/).includes('$demo')) return this.startScriptedTour(t, chat)
-    const current = chat && this.touring(chat.session) && this.scriptAt ? scriptStep(this.scriptAt) : undefined
+    const here = chat ? this.touring(chat.session) : !!this.scriptAt && homeStep(this.scriptAt)
+    const current = here && this.scriptAt ? scriptStep(this.scriptAt) : undefined
     const next = current?.next[t]
     if (next) return this.play(next, t, chat)
     const reply = noConnection()
     reply.show = { ...reply.show, highlight: current ? this.highlight : undefined, choices: current?.show.choices ?? [],
       // In the tour's own chat the tour is already there.
-      actions: current ? reply.show.actions.filter((a) => a.kind !== 'open_demo') : reply.show.actions }
+      actions: chat && current ? reply.show.actions.filter((a) => a.kind !== 'open_demo') : reply.show.actions }
     this.answer(reply, t, chat)
   }
 
-  /** $demo without a connection: in a copy of the demo the script shows, its
-   *  tour begins there (elsewhere the reply says where it can). */
+  /** $demo without a connection: in a copy of a demo the script has a tour
+   *  of (by its name), the tour begins there (elsewhere the reply says where it can). */
   private startScriptedTour(asked: string, chat: ChatController) {
     const s = chat.session
-    const demo = app.status?.demos.find((d) => d.id === 'report')
-    if (!demo || s.scopeName([]) !== demo.title) return this.play('otherProject', asked, chat)
+    const demo = app.status?.demos.find((d) => scriptDemos.includes(d.id) && d.title === s.scopeName([]))
+    if (!demo) return this.play('otherProject', asked, chat)
     this.answerDemoOffer()
     this.tour = { demo: demo.id, title: demo.title, path: s.dir, started: true }
     void this.saveState({ tour: this.tour })
     this.seen = this.runKey(s)
     this.seenActive = s.runActive
-    this.play('start', asked, chat)
+    this.play(scriptStart(demo.id, 'start'), asked, chat)
   }
 
   private play(id: string, asked?: string, chat?: ChatController) {
@@ -753,14 +755,15 @@ export class GuideController extends Observable {
       void this.saveState({ tour: t })
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourStart', { demo: t.demo, title: t.title }), `デモ「${t.title}」の案内を始めます`, s, 'start')
+      this.tell(text('tourStart', { demo: t.demo, title: t.title }), `デモ「${t.title}」の案内を始めます`, s, scriptStart(t.demo, 'start'))
       return
     }
     if (this.resumeAsked && s.connected) {
       this.resumeAsked = false
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourResume', { demo: t.demo }), 'デモの案内を続けます', s, this.scriptAt ?? 'resume')
+      this.tell(text('tourResume', { demo: t.demo }), 'デモの案内を続けます', s,
+        this.scriptAt?.startsWith(t.demo + '/') ? this.scriptAt : scriptStart(t.demo, 'resume'))
       return
     }
     const before = this.seen
