@@ -42,7 +42,7 @@
     {
       "id": "n1",
       "scope": "",
-      "text": "Turn on Aggregate's fail_on_purpose to see a failure stop the downstream Cards; turn it off and run Aggregate alone.",
+      "text": "aggregate の fail_on_purpose をオンにすると、失敗で下流の Card が止まる様子を見られます。オフに戻して aggregate だけを実行し直せます。",
       "x": 380.0,
       "y": 536.0,
       "width": 240.0,
