@@ -480,7 +480,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   }
 
   return (
-    <div ref={root} className={`cv-canvas${spaceHeld || panning ? ' cv-grab' : ''}`} tabIndex={0} aria-label="Canvas"
+    <div ref={root} className={`cv-canvas${spaceHeld || panning ? ' cv-grab' : ''}`} tabIndex={0} aria-label="Canvas" data-canvas-zoom={z}
       onKeyDown={onKeyDown}
       onKeyUp={(e) => e.key === ' ' && setSpaceHeld(false)}
       onFocus={() => (cv.focused = true)}
