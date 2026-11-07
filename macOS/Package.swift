@@ -25,6 +25,10 @@ let package = Package(
     .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", exact: "0.23.4"),
     .package(url: "https://github.com/tree-sitter/tree-sitter-json", exact: "0.24.8"),
     .package(url: "https://github.com/tree-sitter/tree-sitter-bash", exact: "0.25.1"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-go", exact: "0.25.0"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-rust", exact: "0.24.2"),
+    .package(url: "https://github.com/tree-sitter/tree-sitter-julia", exact: "0.25.0"),
+    .package(url: "https://github.com/r-lib/tree-sitter-r", exact: "1.3.0"),
     // Terminal emulator of the project terminal (UI only). 1.11.2: later
     // versions need the Metal Toolchain (an Xcode download) for their shaders.
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.2"),
@@ -74,6 +78,13 @@ let package = Package(
       exclude: ["LICENSE"], sources: ["src/parser.c", "src/scanner.c"],
       // (the grammar's scanner as upstream wrote it: its size_t to uint32_t is intended)
       publicHeadersPath: "include", cSettings: [.headerSearchPath("src"), .unsafeFlags(["-Wno-shorten-64-to-32"])]),
+    // tree-sitter-julia's manifest looks for src/scanner.c in the working directory, which
+    // is not its package, so the parser it builds lacks the scanner. Only the scanner is
+    // copied here (the 23 MB parser.c stays in the dependency).
+    .target(
+      name: "TreeSitterJuliaScanner", path: "Sources/Grammars/TreeSitterJuliaScanner",
+      exclude: ["LICENSE"], sources: ["src/scanner.c"],
+      publicHeadersPath: "include", cSettings: [.headerSearchPath("src")]),
     .target(
       name: "TreeSitterFBS", path: "Sources/Grammars/TreeSitterFBS",
       exclude: ["grammar.js", "src/grammar.json", "src/node-types.json"], sources: ["src/parser.c"],
@@ -88,7 +99,11 @@ let package = Package(
         .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
         .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
         .product(name: "TreeSitterBash", package: "tree-sitter-bash"),
-        "TreeSitterNix", "TreeSitterFBS", "TreeSitterPython",
+        .product(name: "TreeSitterGo", package: "tree-sitter-go"),
+        .product(name: "TreeSitterRust", package: "tree-sitter-rust"),
+        .product(name: "TreeSitterJulia", package: "tree-sitter-julia"),
+        .product(name: "TreeSitterR", package: "tree-sitter-r"),
+        "TreeSitterNix", "TreeSitterFBS", "TreeSitterPython", "TreeSitterJuliaScanner",
         .product(name: "SwiftTerm", package: "SwiftTerm"),
         .product(name: "Markdown", package: "swift-markdown"),
         .product(name: "SwiftMath", package: "SwiftMath"),

@@ -28,6 +28,10 @@ SwiftTreeSitter has its own BSD license.
 | tree-sitter-cpp | [0.23.4, MIT](https://github.com/tree-sitter/tree-sitter-cpp/blob/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE) | Linked grammar and copied highlight query (also uses the C query) |
 | tree-sitter-json | [0.24.8, MIT](https://github.com/tree-sitter/tree-sitter-json/blob/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-bash | [0.25.1, MIT](https://github.com/tree-sitter/tree-sitter-bash/blob/a06c2e4415e9bc0346c6b86d401879ffb44058f7/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-go | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-go/blob/1547678a9da59885853f5f5cc8a99cc203fa2e2c/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-rust | [0.24.2, MIT](https://github.com/tree-sitter/tree-sitter-rust/blob/77a3747266f4d621d0757825e6b11edcbf991ca5/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-julia | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-julia/blob/e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3/LICENSE) | Linked grammar and copied highlight query; its external scanner (`src/scanner.c`) is copied into `macOS/Sources/Grammars/TreeSitterJuliaScanner/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE), because the package's manifest leaves it out |
+| tree-sitter-r | [1.3.0, MIT](https://github.com/r-lib/tree-sitter-r/blob/346d3707b8c9301f1051e8f6e32666e67529f7d2/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-nix | e49c2f317e896eb08967717e758a46d6eea038b2, MIT | Copied into `macOS/Sources/Grammars/TreeSitterNix/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterNix/LICENSE), and copied highlight query |
 | tree-sitter-python | 0.25.0, MIT | Copied into `macOS/Sources/Grammars/TreeSitterPython/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterPython/LICENSE), and copied highlight query |
 

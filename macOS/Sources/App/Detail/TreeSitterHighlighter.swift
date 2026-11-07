@@ -4,9 +4,13 @@ import TreeSitterBash
 import TreeSitterC
 import TreeSitterCPP
 import TreeSitterFBS
+import TreeSitterGo
 import TreeSitterJSON
+import TreeSitterJulia
 import TreeSitterNix
 import TreeSitterPython
+import TreeSitterR
+import TreeSitterRust
 
 /// Syntax colors from Tree-sitter grammars and their highlight queries
 /// (Resources/TreeSitter). Part of the app only: Cards and SDKs never use it.
@@ -26,6 +30,10 @@ enum TreeSitterHighlighter {
     case "fbs": return "fbs"
     case "json": return "json"
     case "sh", "bash": return "bash"
+    case "go": return "go"
+    case "rs", "rust": return "rust"
+    case "jl", "julia": return "julia"
+    case "r": return "r"
     default: return nil
     }
   }
@@ -46,6 +54,10 @@ enum TreeSitterHighlighter {
     case "fbs": pointer = tree_sitter_fbs()
     case "json": pointer = tree_sitter_json()
     case "bash": pointer = tree_sitter_bash()
+    case "go": pointer = tree_sitter_go()
+    case "rust": pointer = tree_sitter_rust()
+    case "julia": pointer = tree_sitter_julia()
+    case "r": pointer = tree_sitter_r()
     default: pointer = nil
     }
     var g: Grammar?
