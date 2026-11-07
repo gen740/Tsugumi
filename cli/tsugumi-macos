@@ -1,0 +1,36 @@
+#!/bin/sh
+# The `tsugumi` command on a Mac: serves the Web UI with its projects in the
+# shared Linux VM of the desktop app. The same VM, store, control folders,
+# recent projects and settings as the release app (docs/WebUI.md).
+#
+#   tsugumi [project folder]   opens the Web UI; Ctrl-C stops it and the VM
+set -eu
+
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+root="$(cd "$(dirname "$self")" && pwd -P)"
+
+case "${1:-}" in
+  --version)
+    cat "$root/VERSION"
+    exit 0
+    ;;
+  -h | --help)
+    sed -n '5p' "$0" | cut -c3-
+    exit 0
+    ;;
+esac
+
+support="${TSUGUMI_SUPPORT_DIR:-$HOME/Library/Application Support/Tsugumi}"
+export TSUGUMI_SUPPORT_DIR="$support"
+export TSUGUMI_WEB_DATA="${TSUGUMI_WEB_DATA:-$support/web}"
+export TSUGUMI_VMHOST="$root/bin/tsugumi-vmhost"
+export TSUGUMI_VM_IMAGE="$root/vm"
+export TSUGUMI_VM_SOURCE="$root/vm-source"
+exec "$root/bin/node" "$root/web/dist/server.js" --open --reuse "$@"

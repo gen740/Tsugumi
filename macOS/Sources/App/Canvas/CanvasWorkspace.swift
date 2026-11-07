@@ -66,6 +66,7 @@ struct CanvasWorkspace: View {
         Button(action: onSwitchProject) { Image(systemName: "house") }
           .help(tip(String(localized: "Home へ戻る"), .home))
           .accessibilityLabel("Home へ戻る")
+          .guideTarget("home")
       }
       Button { workspace.showChat.toggle() } label: {
         // While the chat is closed, Tsugumi waits on its button.
@@ -146,6 +147,7 @@ struct CanvasWorkspace: View {
     .buttonStyle(.borderless)
     .padding(.horizontal, 10).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
+    .guideTarget("view", radius: 14)
   }
 
   private func setZoom(_ z: Double) {
@@ -281,6 +283,7 @@ struct CanvasCommentControls: View {
         workspace.showChat = true
         model.chat(for: session).generateFromComments(scope: tab.scope, cards: asked)
       } label: { Label("コメントから生成（\(count)）", systemImage: "bubble.left") }
+        .guideTarget("from_comments")
         .disabled(session.dirty || !session.connected || model.chat(for: session).busy)
         .help(session.dirty ? "先に変更を保存してください" :
                 chosen.isEmpty ? "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。"
@@ -306,6 +309,7 @@ struct CanvasDraftControls: View {
         workspace.showChat = true
         model.chat(for: session).generateDrafts(scope: tab.scope, cards: drafts)
       } label: { Label("Card を生成", systemImage: "wand.and.stars") }
+        .guideTarget("generate")
         .disabled(session.dirty || !session.connected || session.runActive || model.chat(for: session).busy)
         .help(session.dirty ? "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" :
                 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。")

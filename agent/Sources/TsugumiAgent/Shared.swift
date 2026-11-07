@@ -246,41 +246,40 @@ The user can ask you anything about the app; you explain, they act.
 
 How you answer:
 - Concrete and complete enough to act on: what it is, why it matters, how to use it, with the real names on the
-  screen (the ▶ 実行 button at the bottom of the canvas, the Card named "summarize", the log panel) and an example
-  or the next thing to try. A few sentences, or a short list when there are several parts; never vague, never
-  padded. Answer in the user's language (the language of their own messages; the app's bracketed notes are in
-  English whatever the user's language is). Polite and warm; no emoji.
+  screen (the 実行 button at the top of the canvas, the Card named "summarize", the log panel) and an example or
+  the next thing to try. A few sentences, or a short list when there are several parts; never vague, never
+  padded. Answer what was asked, then stop. Answer in the user's language (the language of their own messages;
+  the app's bracketed notes are in English whatever the user's language is). Polite and warm; no emoji.
 - Each user message comes with [Screen]: what is on the screen now (Home, the demo list, or an open project with
   its workflow, the selected Cards, the run and the connection). Answer about what they are looking at. Never
-  invent state: when [Screen] or a tool does not say it, say you cannot see it.
-- You only read. In an open project you may read with project_inspect, project_file_list, project_file_read,
-  run_status, run_history, run_record, log_range, artifact_list and artifact_read (the project of the [Screen]),
-  and the bundled references with reference_read. You never save, run or cancel anything yourself, and answering
-  a question never changes the user's project. To do something, the user presses a button you offer or uses the
-  app's own controls.
+  invent state: when [Screen] or a tool does not say it, say you cannot see it. Say plainly when a run failed,
+  was cancelled or lost its connection; never say a run finished or succeeded unless its state says so.
+- You only read: your tools read the project of the [Screen] (when one is open) and the bundled references. You
+  never save, run or cancel anything, and answering never changes the user's project. To do something, the user
+  presses a button you offer or uses the app's own controls.
 - guide_show is how you move and offer: the bird flies to what you point at and speaks there in a bubble.
   {"highlight": "card:generate", "say": "これが generate です。CSV を作ります。", "choices": ["次へ", "もっと詳しく"]}
-  flies to the Card, says the line and offers two replies the user can tap (the one tapped comes back to you as
+  flies to the Card, says the line and offers replies the user can tap (the one tapped comes back to you as
   their message). {"actions": [{"kind": "run", "label": "実行する"}]} adds a button that does it when pressed.
-  Use it in most replies: point at what you talk about when it is on the screen, keep "say" to one to three short
-  sentences, and offer two to four choices that are natural next steps (a next step, more detail, a related
-  question) and at most three buttons that fit; nothing happens until they press one. Call it at most once per
-  reply, before your text, and keep the text itself short (the bubble carries the line; the full text stays in
-  the panel).
-- Do not keep talking: answer what was asked and stop. You speak first only during a demo tour (below).
-- When a run fails, is cancelled or the connection is lost, say so plainly from what [Event] or the tools report;
-  never say a run finished or succeeded unless the run's state says so.
+  Use it when what you talk about is on the screen or there is a natural next step: point at it, keep "say" to
+  the gist, and offer two to four choices (a next step, more detail, a related question) and the buttons that
+  fit; nothing happens until they press one. At most once per reply, before your text; keep the text short too
+  (the bubble carries the line; the full text stays in the panel).
+- A question about a feature: say what it does and how to use it. When its control is on the screen and seeing
+  it helps, point at it (highlight); only when it is really needed to answer, open what is closed ("open": a
+  panel under the canvas, the versions, a Card's settings). One place per reply.
 
-Choosing a demo. On Home you ask what the user is interested in; their answer comes as a message. Pick the demo
-from [Screen] demos that fits it best (by its description and tags; a "-draft" demo is a task for the Agent to
-implement, so offer it only to someone who wants to try that), fly to it with guide_show {"highlight":
-"demo:<id>", "say": "<why it fits, one sentence>", "actions": [{"kind": "open_demo", "demo": "<id>", "label":
-"このデモを開く"}], "choices": ["ほかのデモ", "もっと詳しく"]}, and say in two or three sentences what it shows. If
-nothing fits well, say so and suggest the closest one.
+Choosing a demo. On Home the app asks the first questions itself: what to try (a working workflow, or a Draft
+for the AI to implement), then a field and a demo, or a Draft; a demo picked there it shows without you. You
+come in when the user types a question, says what interests them ([Interest]) or asks which demo of a field to
+see. Pick the demo from [Screen] demos that fits it best (by its field, description and tags; a "-draft" demo
+is a task for the Agent to implement, so offer it only to someone who wants to try that), fly to it with
+guide_show {"highlight": "demo:<id>", "say": "<why it fits, one sentence>", "actions": [{"kind": "open_demo",
+"demo": "<id>", "label": "このデモを開く"}], "choices": ["ほかのデモ", "もっと詳しく"]}, and say in two or three
+sentences what it shows. If nothing fits well, say so and suggest the closest one.
 
-Demo tours. The user can ask to see a demo (Home → デモを見る lists them; guide_show {"actions": [{"kind":
-"open_demo", "demo": "<id>", "label": "..."}]} opens an editable copy). The copy's chat (Tsugumi there) leads
-the tour; here you choose the demo and explain what it will show.
+Demo tours. Opening a demo (open_demo) makes an editable copy, and the copy's chat (Tsugumi there) leads its
+tour; here you choose the demo and say what it will show. In a project, $demo in its chat starts a tour of it.
 """#
 
   static let versionSummaryPrompt = #"""
@@ -297,17 +296,15 @@ name: demo
 description: ツグミが画面を飛び回って、デモや画面の使い方を案内します
 ---
 Demo mode: you are Tsugumi, the bird of this chat, and now you show the user around the screen: you explain what
-is on it and lead demo tours, warmly and in the user's language. Until the farewell below, use guide_show in
-your replies.
+is on it and lead demo tours, warmly and in the user's language, until the farewell below.
 - guide_show moves the bird: it flies from the chat to what you point at, says a line or two there and offers
   choices and buttons. {"highlight": "card:generate", "say": "generate が売上の CSV を作ります。seed が同じなら毎回同じ
   データです。", "choices": ["次へ", "もっと詳しく"]} flies to the Card, says it and offers replies the user can tap (the
   one tapped comes back as their message); {"actions": [{"kind": "run", "label": "実行する"}]} adds a button that
-  does it when pressed (open_demo, show_demos, run, stop, open_card, open_settings, new_project, home). Use it
-  when you explain something on the screen or the user could pick a next step; not during long work. At most
-  once per reply, before your text. "say" is the point of the step in one to three short sentences; your reply
-  text is the full explanation (when it says more, the bubble sends the user to the chat for it, and the bird
-  turns to the chat), so write "say" as the gist and keep the details in the text. The bird goes anywhere on the screen: into a Card in Card ("card:<outer
+  does it when pressed. Use it when you explain something on the screen or the user could pick a next step; not
+  during long work. At most once per reply, before your text. "say" is the gist of the step in one to three short
+  sentences; your reply text is the full explanation (when it says more, the bubble sends the user to the chat
+  for it), so keep the details in the text. The bird goes anywhere on the screen: into a Card in Card ("card:<outer
   id>/<inner id>"; the app opens it on the canvas), and into a Card's settings: {"open": "card:<id>",
   "highlight": "param:<name>"} opens that Card's settings window (this changes nothing) and points at the
   setting; explain settings there rather than in words alone.
@@ -324,27 +321,36 @@ your replies.
     have changed it but not saved);
   * run: always fly to the run button: {"highlight": "run", "say": "...", "actions": [{"kind": "run", "label":
     "実行する"}], "choices": ["実行した！"]}.
-  When they say a run is done but no [Event] has come, it is still running: say so in a line and wait (the app
-  tells you when it ends); do not doubt them or ask again.
+  The user presses Run and changes settings themselves: offer the buttons, do not run or save for them (the
+  Drafts of step 2 below are theirs to ask you for). When they say a run is done but no [Event] has come, it is
+  still running: say so in a line and wait (the app tells you when it ends); do not doubt them or ask again.
+  Never say a run finished or succeeded unless its state says so.
 - Demo tours: the app sends [Tour] and [Event] notes (the demo copy opened; a run ended, with its state; the
-  connection was lost or came back). Lead one step at a time and wait for the user between steps; each step has a
-  guide_show that flies to its subject, says its point and offers choices such as 「次へ」「もっと詳しく」:
+  connection was lost or came back). Follow this line, one step at a time, and wait for the user between steps;
+  each step has a guide_show that flies to its subject and says its point. Within it, and whenever the user asks
+  something else, answer freely.
   1. What the workflow computes and why, then its Cards from the trigger along the wires, one or two per reply,
-     flying to each (card:<id>; into a Card in Card too: card:<outer id>/<inner id>): what each does, what it
-     takes and gives. Then point at "run" with a run button.
-  2. When a run ends ([Event]): read what it produced and explain the result fully: the key values, how to read
+     flying to each: what each does, what it takes and gives. Choices 「次へ」「もっと詳しく」.
+  2. If Draft Cards are left (a "-draft" demo): say what each Draft is to compute, then fly to "generate"
+     (Card を生成) and ask the user to press it; its request comes to you, and implementing the Drafts as it
+     says (saves and runs included) is what the user asked for. Report what the run produced and go on with
+     step 4's question (the [Event] of a run you started needs no second explanation).
+  3. Otherwise point at "run" with a run button and 「実行した！」.
+  4. When a run ends ([Event]): read what it produced and explain the result fully: the key values, how to read
      each display or artifact, and how they follow from the Cards; or, if it failed or was cancelled, what that
-     means and where the log says why. Do not explain again what the run was going to do.
-  3. Invite them to change a parameter themselves, one action per step (above): the setting, then 適用, then the
-     run button; after their run ends explain what changed and why.
-  4. The next steps: keep editing this copy, another demo (show_demos), their own project (new_project). Then end
-     with a farewell guide_show: "say" such as 「$demo でいつでもお呼びください。わからない機能があれば説明します」 and
-     "endTour": true (no choices needed): the bird says it and flies home, no more notes about runs come, and
-     demo mode ends (the chat goes on as usual).
+     means and where the log says why. Do not explain again what the run was going to do. End with
+     「次に何をしますか？」 and the choices 「さらに踏みこんだ解析」「パラメータを変えてみる」「終わる」
+     「もっと詳しく」:
+     * さらに踏みこんだ解析: go further into this result as fits the demo (the records, logs, artifacts and the
+       Cards' code; comparisons, what it means and its limits, what one could try next), then ask again;
+     * パラメータを変えてみる: one action per step (above): the setting, then 適用, then the run button; after
+       their run ends explain what changed and why, then ask again;
+     * 終わる: the farewell: guide_show with "say" such as
+       「$demo でいつでもお呼びください。わからない機能があれば説明します」, "endTour": true and the buttons
+       show_demos (ほかのデモ) and new_project (新しいプロジェクト): the bird says it and flies home, no more
+       notes about runs come, and demo mode ends (the chat goes on as usual).
 - Without a tour (the user called $demo to be shown something): show it the same way, step by step, and end with
   the same farewell when they are done.
-  During a tour the user presses Run and changes settings themselves: offer the buttons, do not run or save for
-  them, and never say a run finished or succeeded unless its state says so.
 """#
 
   static let agentJSON = #"""
@@ -425,11 +431,11 @@ your replies.
       "inputSchema": {
         "type": "object", "additionalProperties": false,
         "properties": {
-          "highlight": { "type": "string", "description": "where the bird flies and what it points at: run (the run / stop button), chat (the Agent chat button), logs (the log button), demos (Home's demo list button), new_project (Home's new project button), settings, card:<Card id> (a Card of the workflow; card:<outer id>/<inner id> is a Card inside a Card in Card, which the app opens), param:<name> (a setting in the open Card settings window), apply (that window's 適用 button, which saves it) or demo:<demo id> (its card in Home's demo list, which opens)" },
-          "open": { "type": "string", "description": "a window the app opens for the user to look at (opening changes nothing): card:<Card id or outer/inner> opens that Card's settings window, where the bird flies to point at param:<name>" },
+          "highlight": { "type": "string", "description": "where the bird flies and what it points at. Home: new_project, open_project (open an existing project), demos (the demo list button), demo:<demo id> (its card in the demo list, which opens). A project: run (the run / stop button), generate (Card を生成, shown while the workflow has Drafts), from_comments (コメントから生成, shown while Cards have open comments), chat (the chat button), home (back to Home), view (zoom, fit all and arrange), save (the save state), logs, timeline, terminal (the panel buttons under the canvas), versions (版の履歴), project_settings (this project's settings), card:<Card id> (a Card of the workflow; card:<outer id>/<inner id> is a Card inside a Card in Card, which the app opens), param:<name> (a setting in the open Card settings window), apply (that window's 適用 button, which saves it)" },
+          "open": { "type": "string", "description": "what the app opens for the user to look at (opening changes nothing): card:<Card id or outer/inner> opens that Card's settings window, where the bird flies to point at param:<name>; logs, timeline or terminal opens that panel under the canvas; versions opens the versions window" },
           "say": { "type": "string", "description": "what the bird says in its speech bubble: one to three short sentences, the point of this step (your reply text is the full explanation)" },
           "choices": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "short replies the user can tap in the bubble (e.g. 次へ, もっと詳しく); the one tapped comes back to you as the user's message" },
-          "endTour": { "type": "boolean", "description": "true at the last step of a demo tour, with a farewell such as 「いつでも呼んでくださいね。わからない機能があれば説明します」: the bird says it, then flies home, and the app stops telling you about runs" },
+          "endTour": { "type": "boolean", "description": "true with the farewell at the end of a demo tour: the bird says it, then flies home, and the app stops telling you about runs" },
           "actions": {
             "type": "array", "maxItems": 3,
             "items": {
@@ -446,7 +452,7 @@ your replies.
       }
     },
     "shown": "Shown. Nothing has happened yet: the user decides whether to press a button.",
-    "chatNote": "You are Tsugumi, the bird of this chat. guide_show moves the bird about the screen: use it only while the demo skill ([Skill demo]) is active in this conversation (until its farewell); otherwise answer in the chat as usual.",
+    "chatNote": "You are Tsugumi, the bird of this chat. guide_show moves the bird about the screen. While the demo skill ([Skill demo]) is active in this conversation (until its farewell), it leads the user with it. Otherwise answer in the chat as usual; only when the user asks how to use a feature of the app and seeing it on the screen really helps, call guide_show once to point at its control (opening its panel if it is closed). Never call it while you work on the project.",
     "readOnly": "{tool} is not one of the guide's tools: the guide only reads. Offer the user a button with guide_show or tell them how to do it.",
     "noProject": "No project is open on the user's screen, so there is no project to read.",
     "tourStart": "[Tour] The user chose to see the demo \"{demo}\" ({title}). An editable copy is open (the bundled original is untouched). Begin the tour at step 1.",
@@ -497,6 +503,1267 @@ your replies.
   },
   "invalidArguments": "The arguments of this call were not a complete JSON object, so it was not run and nothing was changed. Make the call again with valid JSON (mind the escapes in source files). What you wrote:\n{json}",
   "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
+}
+"""#
+
+  static let guideScript = #"""
+{
+  "_comment": "Tsugumi without a model connection (no API key, no ChatGPT sign-in): it answers from this script and calls nothing. Each step is a guide_show ('show'), the reply the panel or the chat shows ('text', else 'say'), the step each tapped choice leads to ('next') and the step a run's end leads to while it is out ('ran': 'ok' when it succeeded, 'else' otherwise). A step is named by its tour and id ('report/start'); 'next' and 'ran' name a step of the same tour unless they hold a '/'. 'home' steps answer on Home: Home's first question picks the first tour with a keyword in the answer (else the first tour) and shows its 'pick'. A tour begins at 'start' when its demo's copy opens or $demo is typed in its chat, and continues at 'resume'. 'noConnection' is the reply to anything typed (its open_demo button is left out in a tour's own chat); 'otherProject' answers a demo or project that has no tour here. The macOS app (GuideScript.swift) and the web (web/src/model/guideScript.ts) read this file as it is.",
+  "tours": {
+    "report": {
+      "keywords": [
+        "集計",
+        "レポート",
+        "売上",
+        "CSV",
+        "成果物",
+        "Python",
+        "C++"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:report",
+            "say": "「Data to report」は、表を作って集計し、レポートに残すまでを Card でつないだ定番のデモです。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "report",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "「Data to report」は、表を作って集計し、レポートに残すまでを Card でつないだ定番のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
+          "next": {
+            "ほかのデモ": "exoplanet-transit/pick",
+            "もっと詳しく": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:report",
+            "say": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "report",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ"
+            ]
+          },
+          "text": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。保管には Card in Card（中に Workflow を持つ Card）を使い、わざと失敗させるスイッチもあります。",
+          "next": {
+            "ほかのデモ": "exoplanet-transit/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "デモ「Data to report」のコピーを開きました。売上の表を作り、集計し、レポートに残すまでを Card でつないでいます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "デモ「Data to report」のコピーを開きました。売上の表を作り、集計し、レポートに残すまでを Card でつないでいます。\n\nいまはモデルにつながっていないので、決まった順にご案内します（通信も料金もかかりません）。自由に質問したいときは、設定の「API」で Claude か Codex（ChatGPT）とつないでください。",
+          "next": {
+            "次へ": "settings",
+            "もっと詳しく": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "Card はそれぞれ一つの処理で、線が型のついた値を出力ポートから入力ポートへ運びます。実行は trigger の start から始まり、線をたどって進みます。どの Card も隔離された Linux の中で Nix で固定した環境で動き、実行ごとの記録・ログ・成果物が残ります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "Card はそれぞれ一つの処理で、線が型のついた値を出力ポートから入力ポートへ運びます。実行は trigger の start から始まり、線をたどって進みます。どの Card も隔離された Linux の中で Nix で固定した環境で動き、実行ごとの記録・ログ・成果物が残ります。",
+          "next": {
+            "次へ": "settings"
+          }
+        },
+        "settings": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings には、乱数の種（seed: 42）、行数（rows: 500）、見出し（heading）が入っています。この値が下流の Card に流れます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "settings には、乱数の種（seed: 42）、行数（rows: 500）、見出し（heading）が入っています。この値が下流の Card に流れます。",
+          "next": {
+            "次へ": "share",
+            "もっと詳しく": "settingsMore"
+          }
+        },
+        "settingsMore": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings は input Card です。Card をダブルクリックすると設定の画面が開き、値を変えて「適用」すると次の実行から使われます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "settings は input Card です。Card をダブルクリックすると設定の画面が開き、値を変えて「適用」すると次の実行から使われます。",
+          "next": {
+            "次へ": "share"
+          }
+        },
+        "share": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share は settings の値を二つに分けて、generate と render に配ります。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "share は settings の値を二つに分けて、generate と render に配ります。",
+          "next": {
+            "次へ": "generate",
+            "もっと詳しく": "shareMore"
+          }
+        },
+        "shareMore": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share は fork Card です。一つの値を、branches に並べた行き先（generate と render）へ同じものとして送ります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "share は fork Card です。一つの値を、branches に並べた行き先（generate と render）へ同じものとして送ります。",
+          "next": {
+            "次へ": "generate"
+          }
+        },
+        "generate": {
+          "show": {
+            "highlight": "card:generate",
+            "say": "generate は seed から売上の CSV を作ります。seed が同じなら、何度実行しても同じデータです。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "generate は seed から売上の CSV を作ります。seed が同じなら、何度実行しても同じデータです。",
+          "next": {
+            "次へ": "aggregate",
+            "もっと詳しく": "generateMore"
+          }
+        },
+        "generateMore": {
+          "show": {
+            "highlight": "card:generate",
+            "say": "Python の Card です。受け取った config の seed で乱数を初期化し、rows 行の売上（地域・商品・個数・単価）を sales.csv に書いて、そのパスを aggregate へ渡します。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "Python の Card です。受け取った config の seed で乱数を初期化し、rows 行の売上（地域・商品・個数・単価）を sales.csv に書いて、そのパスを aggregate へ渡します。",
+          "next": {
+            "次へ": "aggregate"
+          }
+        },
+        "aggregate": {
+          "show": {
+            "highlight": "card:aggregate",
+            "say": "aggregate は地域ごとの売上と個数を集計します。fail_on_purpose をオンにすると、わざと失敗させることもできます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "aggregate は地域ごとの売上と個数を集計します。fail_on_purpose をオンにすると、わざと失敗させることもできます。",
+          "next": {
+            "次へ": "render",
+            "もっと詳しく": "aggregateMore"
+          }
+        },
+        "aggregateMore": {
+          "show": {
+            "highlight": "card:aggregate",
+            "say": "CSV を読み、地域ごとに個数と売上（個数 × 単価）を合計して render へ渡します。fail_on_purpose がオンだとエラーで止まり、下流の Card は動きません。失敗がどう記録されるかを見るためのスイッチです。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "CSV を読み、地域ごとに個数と売上（個数 × 単価）を合計して render へ渡します。fail_on_purpose がオンだとエラーで止まり、下流の Card は動きません。失敗がどう記録されるかを見るためのスイッチです。",
+          "next": {
+            "次へ": "render"
+          }
+        },
+        "render": {
+          "show": {
+            "highlight": "card:render",
+            "say": "render は集計を report.md と summary.json にまとめ、成果物として残します。表はこの Card に表示されます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "render は集計を report.md と summary.json にまとめ、成果物として残します。表はこの Card に表示されます。",
+          "next": {
+            "次へ": "archive",
+            "もっと詳しく": "renderMore"
+          }
+        },
+        "renderMore": {
+          "show": {
+            "highlight": "card:render",
+            "say": "集計と見出しから Markdown の表を作って Card に表示し、report.md と summary.json をフォルダの成果物として残します。成果物は実行ごとに保存され、あとからたどれます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "集計と見出しから Markdown の表を作って Card に表示し、report.md と summary.json をフォルダの成果物として残します。成果物は実行ごとに保存され、あとからたどれます。",
+          "next": {
+            "次へ": "archive"
+          }
+        },
+        "archive": {
+          "show": {
+            "highlight": "card:archive",
+            "say": "archive は Card in Card です。中の copy がレポートを写し、保管した時刻を添えて残します。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "archive は Card in Card です。中の copy がレポートを写し、保管した時刻を添えて残します。",
+          "next": {
+            "次へ": "run",
+            "もっと詳しく": "archiveMore"
+          }
+        },
+        "archiveMore": {
+          "show": {
+            "highlight": "card:archive",
+            "say": "Card in Card は、中に別の Workflow を持つ Card です。開くと中の Card（copy）が見られ、外の Workflow からは一つの Card として扱えます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "Card in Card は、中に別の Workflow を持つ Card です。開くと中の Card（copy）が見られ、外の Workflow からは一つの Card として扱えます。",
+          "next": {
+            "次へ": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "おかえりなさい。デモ「Data to report」の案内を、はじめからもう一度どうぞ。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "settings"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "では実行してみましょう。上の ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、結果をご案内します。"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:render",
+            "say": "実行が終わりました。render にレポートの表が出ています。500 件の売上を、地域ごとの個数と売上にまとめたものです。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "実行が終わりました。render にレポートの表が出ています。500 件の売上を、地域ごとの個数と売上にまとめたものです。",
+          "next": {
+            "次へ": "change",
+            "もっと詳しく": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:render",
+            "say": "report.md と summary.json は成果物として残り、archive にも保管されています。どの Card が何を受け取り何を出したかは、実行ごとの記録とログでたどれます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "report.md と summary.json は成果物として残り、archive にも保管されています。どの Card が何を受け取り何を出したかは、実行ごとの記録とログでたどれます。",
+          "next": {
+            "次へ": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "実行は最後まで進みませんでした。ログを開くと、どの Card がなぜ止まったかがわかります。",
+            "choices": [
+              "もう一度実行する",
+              "終える"
+            ]
+          },
+          "next": {
+            "もう一度実行する": "run",
+            "終える": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:settings",
+            "highlight": "param:seed",
+            "say": "今度はご自分で変えてみましょう。settings の seed を 7 などに変え、適用で保存してください。",
+            "choices": [
+              "変更して保存した！"
+            ]
+          },
+          "next": {
+            "変更して保存した！": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "保存できたら、もう一度 ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、何が変わったかをご案内します。"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:render",
+            "say": "seed を変えたので CSV の中身が変わり、地域ごとの数字も変わりました。同じ seed に戻せば、前と同じ結果になります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "このコピーは自由に編集できます。ほかのデモを見たり、自分のプロジェクトを作ったりもできます。",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "ほかのデモ"
+              },
+              {
+                "kind": "new_project",
+                "label": "新しいプロジェクト"
+              }
+            ],
+            "choices": [
+              "終える"
+            ]
+          },
+          "next": {
+            "終える": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "$demo でいつでもお呼びください。設定の「API」で Claude か Codex（ChatGPT）とつなぐと、わからないことに何でも答えられます。",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "API の設定を開く"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    },
+    "exoplanet-transit": {
+      "keywords": [
+        "天文",
+        "宇宙",
+        "惑星",
+        "星",
+        "地震",
+        "タンパク",
+        "物理",
+        "観測",
+        "画像"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:exoplanet-transit",
+            "say": "「Kepler-6 b」は、宇宙望遠鏡の観測データから系外惑星の大きさを求める天文のデモです。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "exoplanet-transit",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "「Kepler-6 b」は、宇宙望遠鏡の観測データから系外惑星の大きさを求める天文のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
+          "next": {
+            "ほかのデモ": "pharmacokinetics/pick",
+            "もっと詳しく": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:exoplanet-transit",
+            "say": "Kepler 宇宙望遠鏡が記録した星の明るさ（ライトカーブ）を取り、惑星が星の前を横切るときの小さな減光を探して、その深さから惑星と星の半径の比を求めます。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "exoplanet-transit",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ"
+            ]
+          },
+          "text": "Kepler 宇宙望遠鏡が記録した星の明るさ（ライトカーブ）を取り、惑星が星の前を横切るときの小さな減光を探して、その深さから惑星と星の半径の比を求めます。データは公開アーカイブ（MAST）からネットワーク越しに取ります。",
+          "next": {
+            "ほかのデモ": "pharmacokinetics/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "デモ「Kepler-6 b」のコピーを開きました。星の明るさの記録から、惑星が横切るときの減光を見つけ、惑星の大きさを求めます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "デモ「Kepler-6 b」のコピーを開きました。星の明るさの記録から、惑星が横切るときの減光を見つけ、惑星の大きさを求めます。\n\nいまはモデルにつながっていないので、決まった順にご案内します（通信も料金もかかりません）。自由に質問したいときは、設定の「API」で Claude か Codex（ChatGPT）とつないでください。",
+          "next": {
+            "次へ": "load",
+            "もっと詳しく": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "流れは load → detrend → fold の一本道です。load がデータを取り、detrend が星のゆっくりした明るさの変化を除いて周期を探し、fold がその周期で折り畳んで減光の深さを測ります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "流れは load → detrend → fold の一本道です。load がデータを取り、detrend が星のゆっくりした明るさの変化を除いて周期を探し、fold がその周期で折り畳んで減光の深さを測ります。",
+          "next": {
+            "次へ": "load"
+          }
+        },
+        "load": {
+          "show": {
+            "highlight": "card:load",
+            "say": "load は MAST の Kepler アーカイブから、Kepler-6 の第 3 四半期のライトカーブ（FITS ファイル）を取ってきます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "load は MAST の Kepler アーカイブから、Kepler-6 の第 3 四半期のライトカーブ（FITS ファイル）を取ってきます。",
+          "next": {
+            "次へ": "detrend",
+            "もっと詳しく": "loadMore"
+          }
+        },
+        "loadMore": {
+          "show": {
+            "highlight": "card:load",
+            "say": "Card は既定でネットワークにつながりませんが、この Card はネットワークを許可されているので取得できます。取ったファイルの大きさと SHA-256 が Card に表示され、どのデータを使ったかを後から確かめられます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "Card は既定でネットワークにつながりませんが、この Card はネットワークを許可されているので取得できます。取ったファイルの大きさと SHA-256 が Card に表示され、どのデータを使ったかを後から確かめられます。",
+          "next": {
+            "次へ": "detrend"
+          }
+        },
+        "detrend": {
+          "show": {
+            "highlight": "card:detrend",
+            "say": "detrend は星のゆっくりした明るさの変化を除き、Box Least Squares で惑星の周期を探します。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "detrend は星のゆっくりした明るさの変化を除き、Box Least Squares で惑星の周期を探します。",
+          "next": {
+            "次へ": "fold",
+            "もっと詳しく": "detrendMore"
+          }
+        },
+        "detrendMore": {
+          "show": {
+            "highlight": "card:detrend",
+            "say": "品質フラグが 0 の点だけを使って規格化し、window_days 日（いまは 1 日）の移動中央値で割ってトレンドを除きます。周期は period_min から period_max（1〜10 日）の間で探し、トレンドを除いた光度曲線を Card に描きます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "品質フラグが 0 の点だけを使って規格化し、window_days 日（いまは 1 日）の移動中央値で割ってトレンドを除きます。周期は period_min から period_max（1〜10 日）の間で探し、トレンドを除いた光度曲線を Card に描きます。",
+          "next": {
+            "次へ": "fold"
+          }
+        },
+        "fold": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "fold は見つけた周期で光度曲線を折り畳み、減光の深さ δ から惑星と星の半径比 Rp/R* = √δ を求めます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "fold は見つけた周期で光度曲線を折り畳み、減光の深さ δ から惑星と星の半径比 Rp/R* = √δ を求めます。",
+          "next": {
+            "次へ": "run",
+            "もっと詳しく": "foldMore"
+          }
+        },
+        "foldMore": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "トランジットの中心から window_hours 時間（いまは 8 時間）の範囲を描き、中心付近の core_fraction の点で深さを測ります。結果は数式つきの Markdown で表示され、折り畳んだ図は画像として残ります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "トランジットの中心から window_hours 時間（いまは 8 時間）の範囲を描き、中心付近の core_fraction の点で深さを測ります。結果は数式つきの Markdown で表示され、折り畳んだ図は画像として残ります。",
+          "next": {
+            "次へ": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "おかえりなさい。デモ「Kepler-6 b」の案内を、はじめからもう一度どうぞ。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "load"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "では実行してみましょう。上の ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、結果をご案内します。"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "実行が終わりました。fold に、周期で折り畳んだ減光と、その深さから求めた Rp/R* が出ています。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "実行が終わりました。fold に、周期で折り畳んだ減光と、その深さから求めた Rp/R* が出ています。",
+          "next": {
+            "次へ": "change",
+            "もっと詳しく": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "深さ δ は、惑星が星の円盤のどれだけを隠すかの割合です。面積の比なので、半径の比はその平方根になります。Kepler-6 b は周期が約 3.23 日、減光の深さがおよそ 1%（半径比にしておよそ 0.1）と知られています。fold と detrend の表示で比べてみてください。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "深さ δ は、惑星が星の円盤のどれだけを隠すかの割合です。面積の比なので、半径の比はその平方根になります。Kepler-6 b は周期が約 3.23 日、減光の深さがおよそ 1%（半径比にしておよそ 0.1）と知られています。fold と detrend の表示で比べてみてください。",
+          "next": {
+            "次へ": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "実行は最後まで進みませんでした。ログを開くと、どの Card がなぜ止まったかがわかります。load で止まったときは、ネットワークかアーカイブの不調かもしれません。",
+            "choices": [
+              "もう一度実行する",
+              "終える"
+            ]
+          },
+          "next": {
+            "もう一度実行する": "run",
+            "終える": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:detrend",
+            "highlight": "param:window_days",
+            "say": "今度はご自分で変えてみましょう。detrend の window_days を 0.2 に変え、適用で保存してください。",
+            "choices": [
+              "変更して保存した！"
+            ]
+          },
+          "next": {
+            "変更して保存した！": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "保存できたら、もう一度 ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、何が変わったかをご案内します。"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "トレンド除去の窓を減光の長さ（数時間）に近づけると、減光そのものも一部トレンドとして割られます。fold の深さと Rp/R* が前とどう変わったか比べてみてください。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "このコピーは自由に編集できます。ほかのデモを見たり、自分のプロジェクトを作ったりもできます。",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "ほかのデモ"
+              },
+              {
+                "kind": "new_project",
+                "label": "新しいプロジェクト"
+              }
+            ],
+            "choices": [
+              "終える"
+            ]
+          },
+          "next": {
+            "終える": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "$demo でいつでもお呼びください。設定の「API」で Claude か Codex（ChatGPT）とつなぐと、わからないことに何でも答えられます。",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "API の設定を開く"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    },
+    "pharmacokinetics": {
+      "keywords": [
+        "薬",
+        "医",
+        "生物",
+        "数値",
+        "微分",
+        "シミュ",
+        "グラフ",
+        "ライブ",
+        "統計",
+        "化学"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:pharmacokinetics",
+            "say": "「薬物動態」は、架空の薬の血中濃度を微分方程式で計算し、飲み方を比べる数値計算のデモです。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "pharmacokinetics",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "「薬物動態」は、架空の薬の血中濃度を微分方程式で計算し、飲み方を比べる数値計算のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
+          "next": {
+            "ほかのデモ": "report/pick",
+            "もっと詳しく": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:pharmacokinetics",
+            "say": "1 コンパートメントの経口モデルを数値で解き、四つの投与計画の濃度の推移を、拡大や値の読み取りができるグラフで並べます。",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "pharmacokinetics",
+                "label": "このデモを開く"
+              }
+            ],
+            "choices": [
+              "ほかのデモ"
+            ]
+          },
+          "text": "1 コンパートメントの経口モデルを数値で解き、四つの投与計画の濃度の推移を、拡大や値の読み取りができるグラフで並べます。式との照合、有効域との比較、飲み忘れの影響も見られます。教育用の架空のモデルで、医療上の助言ではありません。",
+          "next": {
+            "ほかのデモ": "report/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "デモ「薬物動態」のコピーを開きました。架空の薬ツグミシンの血中濃度を計算し、飲み方（投与計画）の違いを比べます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "デモ「薬物動態」のコピーを開きました。架空の薬ツグミシンの血中濃度を計算し、飲み方（投与計画）の違いを比べます。\n\nいまはモデルにつながっていないので、決まった順にご案内します（通信も料金もかかりません）。自由に質問したいときは、設定の「API」で Claude か Codex（ChatGPT）とつないでください。",
+          "next": {
+            "次へ": "settings",
+            "もっと詳しく": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "流れは settings → simulate → share で、share から check・window・missed の三つに分かれます。教育用の架空のモデルで、医療上の助言や投与の指針ではありません。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "流れは settings → simulate → share で、share から check・window・missed の三つに分かれます。教育用の架空のモデルで、医療上の助言や投与の指針ではありません。",
+          "next": {
+            "次へ": "settings"
+          }
+        },
+        "settings": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings には、比べる投与計画（400 mg を 24 時間ごと、200 mg を 12 時間ごと、100 mg を 6 時間ごと、200 mg を 24 時間ごと）と、薬の値（半減期 8 時間など）が入っています。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "settings には、比べる投与計画（400 mg を 24 時間ごと、200 mg を 12 時間ごと、100 mg を 6 時間ごと、200 mg を 24 時間ごと）と、薬の値（半減期 8 時間など）が入っています。",
+          "next": {
+            "次へ": "simulate",
+            "もっと詳しく": "settingsMore"
+          }
+        },
+        "settingsMore": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "ほかに吸収速度、分布容積（40 L）、吸収率（0.8）、作り物の有効域（2〜6 mg/L）、計算する日数（5 日）があります。値を変えて「適用」すると、次の実行から使われます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "ほかに吸収速度、分布容積（40 L）、吸収率（0.8）、作り物の有効域（2〜6 mg/L）、計算する日数（5 日）があります。値を変えて「適用」すると、次の実行から使われます。",
+          "next": {
+            "次へ": "simulate"
+          }
+        },
+        "simulate": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "simulate は 1 コンパートメント経口モデルの微分方程式を solve_ivp で解き、投与計画ごとの濃度の推移を描きます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "simulate は 1 コンパートメント経口モデルの微分方程式を solve_ivp で解き、投与計画ごとの濃度の推移を描きます。",
+          "next": {
+            "次へ": "share",
+            "もっと詳しく": "simulateMore"
+          }
+        },
+        "simulateMore": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "投与のたびに区切って解くので、飲んだあとに上がり、半減期に従って下がる様子が出ます。グラフは拡大でき、カーソルで値を読めます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "投与のたびに区切って解くので、飲んだあとに上がり、半減期に従って下がる様子が出ます。グラフは拡大でき、カーソルで値を読めます。",
+          "next": {
+            "次へ": "share"
+          }
+        },
+        "share": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share は濃度の曲線を、check・window・missed の三つに同じものとして配ります。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "share は濃度の曲線を、check・window・missed の三つに同じものとして配ります。",
+          "next": {
+            "次へ": "check",
+            "もっと詳しく": "shareMore"
+          }
+        },
+        "shareMore": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share は fork Card です。三つの Card は互いを待たずに並んで動きます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "share は fork Card です。三つの Card は互いを待たずに並んで動きます。",
+          "next": {
+            "次へ": "check"
+          }
+        },
+        "check": {
+          "show": {
+            "highlight": "card:check",
+            "say": "check は数値解を、単回投与の式を重ね合わせた閉じた式と比べます。差が大きければ失敗します。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "check は数値解を、単回投与の式を重ね合わせた閉じた式と比べます。差が大きければ失敗します。",
+          "next": {
+            "次へ": "window",
+            "もっと詳しく": "checkMore"
+          }
+        },
+        "checkMore": {
+          "show": {
+            "highlight": "card:check",
+            "say": "定常状態の蓄積比 R と平均濃度を、式の値と並べて表にします。答えの分かっている式で、数値計算が正しいかを確かめる Card です。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "定常状態の蓄積比 R と平均濃度を、式の値と並べて表にします。答えの分かっている式で、数値計算が正しいかを確かめる Card です。",
+          "next": {
+            "次へ": "window"
+          }
+        },
+        "window": {
+          "show": {
+            "highlight": "card:window",
+            "say": "window は定常状態の山と谷を、作り物の有効域と比べます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "window は定常状態の山と谷を、作り物の有効域と比べます。",
+          "next": {
+            "次へ": "missed",
+            "もっと詳しく": "windowMore"
+          }
+        },
+        "windowMore": {
+          "show": {
+            "highlight": "card:window",
+            "say": "最後の投与間隔の濃度を投与後の時間で重ね、山・谷と、有効域の中にいる時間の割合を投与計画ごとに比べます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "最後の投与間隔の濃度を投与後の時間で重ね、山・谷と、有効域の中にいる時間の割合を投与計画ごとに比べます。",
+          "next": {
+            "次へ": "missed"
+          }
+        },
+        "missed": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "missed は飲み忘れたとき（いまは 72 時間目から 1 回）の濃度を、投与計画ごとに描きます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "missed は飲み忘れたとき（いまは 72 時間目から 1 回）の濃度を、投与計画ごとに描きます。",
+          "next": {
+            "次へ": "run",
+            "もっと詳しく": "missedMore"
+          }
+        },
+        "missedMore": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "有効域の下にいる時間がどれだけ増え、元に戻るまでどれだけかかるかを比べます。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "有効域の下にいる時間がどれだけ増え、元に戻るまでどれだけかかるかを比べます。",
+          "next": {
+            "次へ": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "おかえりなさい。デモ「薬物動態」の案内を、はじめからもう一度どうぞ。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "settings"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "では実行してみましょう。上の ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、結果をご案内します。"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "実行が終わりました。simulate のグラフで、投与計画ごとに濃度が上がり下がりしながら定常状態へ近づく様子が見られます。",
+            "choices": [
+              "次へ",
+              "もっと詳しく"
+            ]
+          },
+          "text": "実行が終わりました。simulate のグラフで、投与計画ごとに濃度が上がり下がりしながら定常状態へ近づく様子が見られます。",
+          "next": {
+            "次へ": "change",
+            "もっと詳しく": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "check の表では数値解と閉じた式が並び、window では有効域の中にいる時間の割合、missed では飲み忘れの影響が比べられます。同じ 1 日量（400 mg）でも、間隔が短いほど山と谷の差は小さくなります。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "text": "check の表では数値解と閉じた式が並び、window では有効域の中にいる時間の割合、missed では飲み忘れの影響が比べられます。同じ 1 日量（400 mg）でも、間隔が短いほど山と谷の差は小さくなります。",
+          "next": {
+            "次へ": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "実行は最後まで進みませんでした。ログを開くと、どの Card がなぜ止まったかがわかります。",
+            "choices": [
+              "もう一度実行する",
+              "終える"
+            ]
+          },
+          "next": {
+            "もう一度実行する": "run",
+            "終える": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:missed",
+            "highlight": "param:missed_count",
+            "say": "今度はご自分で変えてみましょう。missed の missed_count を 2 に変え、適用で保存してください。",
+            "choices": [
+              "変更して保存した！"
+            ]
+          },
+          "next": {
+            "変更して保存した！": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "保存できたら、もう一度 ▶ 実行 を押してください。",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "実行する"
+              }
+            ],
+            "choices": [
+              "実行した！"
+            ]
+          },
+          "next": {
+            "実行した！": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "実行中です。終わったら、何が変わったかをご案内します。"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "飲み忘れを 2 回にしたので、有効域の下にいる時間が延び、元に戻るまでも長くかかります。missed の図で投与計画ごとに比べてみてください。",
+            "choices": [
+              "次へ"
+            ]
+          },
+          "next": {
+            "次へ": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "このコピーは自由に編集できます。ほかのデモを見たり、自分のプロジェクトを作ったりもできます。",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "ほかのデモ"
+              },
+              {
+                "kind": "new_project",
+                "label": "新しいプロジェクト"
+              }
+            ],
+            "choices": [
+              "終える"
+            ]
+          },
+          "next": {
+            "終える": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "$demo でいつでもお呼びください。設定の「API」で Claude か Codex（ChatGPT）とつなぐと、わからないことに何でも答えられます。",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "API の設定を開く"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    }
+  },
+  "noConnection": {
+    "show": {
+      "say": "ごめんなさい、いまは自由な質問には答えられません。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと答えられます。デモのコピーでは、チャットに $demo と送ると案内を始めます。",
+      "actions": [
+        {
+          "kind": "open_settings",
+          "label": "API の設定を開く"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "report",
+          "label": "デモの案内を始める"
+        }
+      ]
+    }
+  },
+  "otherProject": {
+    "show": {
+      "say": "決まった案内があるのは、この三つのデモのコピーだけです。開くと案内を始めます。",
+      "actions": [
+        {
+          "kind": "open_demo",
+          "demo": "report",
+          "label": "Data to report"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "exoplanet-transit",
+          "label": "Kepler-6 b"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "pharmacokinetics",
+          "label": "薬物動態"
+        }
+      ]
+    },
+    "text": "決まった案内があるのは、この三つのデモのコピーだけです。開くと案内を始めます。\n\n設定の「API」で Claude か Codex（ChatGPT）とつなぐと、どのプロジェクトでも案内したり、質問に答えたりできます。"
+  }
 }
 """#
 }

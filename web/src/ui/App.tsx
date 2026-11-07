@@ -13,7 +13,7 @@ import { errorText } from '../model/session'
 import { Workspace } from '../model/workspace'
 import { runAll } from './actions'
 import { Button, Empty, MenuHost, Sheet, Spinner, TextField } from './controls'
-import { GuideFlyer, GuideSetupSheet, setGuideWindow } from './guide'
+import { GuideFlyer, GuideInvite, GuideSetupSheet, setGuideWindow } from './guide'
 import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
@@ -252,6 +252,7 @@ export function App() {
       <MenuHost />
       {!detached && <GuideFlyer />}
       {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
+      {!detached && <GuideInvite />}
       {app.requestOpenProject && (
         <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject
           onClose={() => app.request('requestOpenProject', false)}

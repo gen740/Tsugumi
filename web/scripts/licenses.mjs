@@ -49,9 +49,11 @@ const writeLicenses = (keys, folder) => {
   fs.writeFileSync(path.join(folder, 'README.md'), `# npm packages\n\nFrom web/package-lock.json.\n\n| Package | Version | License |\n| --- | --- | --- |\n${rows.join('\n')}\n`)
 }
 
-const folder = process.argv[2]
+// --all: also what the web server and page bundle (cli/package-macos.sh).
+const all = process.argv[2] === '--all'
+const folder = process.argv[all ? 3 : 2]
 if (!folder) {
-  console.error('usage: licenses.mjs <folder>')
+  console.error('usage: licenses.mjs [--all] <folder>')
   process.exit(2)
 }
-writeLicenses(withDependencies(VIEWER_PACKAGES), folder)
+writeLicenses(withDependencies(all ? Object.keys(lock[''].dependencies) : VIEWER_PACKAGES), folder)

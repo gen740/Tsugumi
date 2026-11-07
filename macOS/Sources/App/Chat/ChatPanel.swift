@@ -147,7 +147,7 @@ struct ChatPanel: View {
           LazyVStack(alignment: .leading, spacing: 12) {
             if chat.items.isEmpty {
               VStack(alignment: .leading, spacing: 6) {
-                Text(GuideController.shared.available ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
+                Text(GuideController.shared.connected ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
                                                        : String(localized: "Workflow の相談・生成・編集を依頼できます。")).font(.callout)
                 Text("Card を右クリックして参照に追加、$ で Skill を選べます。").font(.caption).foregroundStyle(.secondary)
               }

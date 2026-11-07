@@ -38,6 +38,14 @@ extension AppModel {
     if !mainWindows.contains(where: { $0 === w }) { mainWindows.append(w) }
   }
 
+  /// The main window nearest the front (a question for the whole app is asked there).
+  var frontMainWindow: Workspace? {
+    let order = NSApp.orderedWindows
+    return mainWindows.min { a, b in
+      (order.firstIndex { $0 === a.window } ?? .max) < (order.firstIndex { $0 === b.window } ?? .max)
+    }
+  }
+
   /// The main window showing a project (a detail window's menu commands act there).
   func mainWindow(showing s: ProjectSession) -> Workspace? {
     mainWindows.first { $0.session === s }

@@ -4,7 +4,8 @@
 
 | 対象 | 固定バージョン / リビジョン |
 | --- | --- |
-| 対応環境 | Apple silicon Mac, macOS 26 以降（検証環境：macOS 27.2, M3 Max） |
+| 対応環境 | macOS（Apple silicon, macOS 26 以降。検証環境：macOS 27.2, M3 Max）、Linux（x86_64・aarch64、Nix が必要。検証環境：OrbStack の VM、Ubuntu 26.04、aarch64）、Windows（WSL2 と Nix が必要。**未検証**） |
+| Node.js（Mac の `tsugumi` コマンドに同梱） | `cli/node-version.env`（公式ビルドをチェックサムで確認）。Linux と Windows は固定した nixpkgs の `nodejs` |
 | 共通 VM | Linux カーネル 6.12.115（`macOS/Container/kernel.nix`、SELinux・io_uring 無効、非特権 BPF 無効）+ 読み取り専用 rootfs（erofs、`macOS/Container/vm-boot.nix`、Nix の入った nixpkgs だけの起動ディスクで gen740/tsugumi-vm に公開）。Tsugumi 自身は VM の中で同じ flake.lock の nixpkgs からビルド（`macOS/Container/vm-system.nix`） |
 | VM イメージ生成用ビルダー | `docker.io/nixos/nix:2.31.2` を Apple container 0.6.0 上で実行（開発時の起動ディスクのビルドのみ。アプリ実行時には不使用） |
 | nixpkgs | `1c89083e451e891152365b799595cf7790a43325`（`flake.lock`、Card の既定 `tsugumi:default` も同一リビジョン） |

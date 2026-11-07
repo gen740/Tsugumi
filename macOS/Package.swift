@@ -12,6 +12,7 @@ let package = Package(
   products: [
     .executable(name: "Tsugumi", targets: ["TsugumiApp"]),
     .executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"]),
+    .executable(name: "tsugumi-vmhost", targets: ["TsugumiVMHost"]),
     .library(name: "TsugumiRPC", targets: ["TsugumiRPC"]),
     // For the core tests (CoreTests/, a package of their own without the app).
     .library(name: "TsugumiLauncher", targets: ["TsugumiLauncher"]),
@@ -55,6 +56,13 @@ let package = Package(
       name: "TsugumiVMCtl",
       dependencies: ["TsugumiLauncher"],
       path: "Sources/VMCtl",
+      swiftSettings: [.swiftLanguageMode(.v5)]),
+    // The shared VM for the web server of the `tsugumi` command (cli/, web/server/vm.ts);
+    // needs the virtualization entitlement.
+    .executableTarget(
+      name: "TsugumiVMHost",
+      dependencies: ["TsugumiLauncher"],
+      path: "Sources/VMHost",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Dawn renderer: ui/renderer/build.sh produces build-renderer/ui/renderer/libtsugumi_renderer.dylib.
     .systemLibrary(name: "TsugumiRendererC", path: "Sources/RendererC"),

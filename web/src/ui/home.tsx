@@ -1,7 +1,7 @@
 // Initial setup (the core binaries), Home (new, existing and recent
 // projects) and Demos (opened as editable copies), and the Tsugumi art the
 // home and the loading card share: the bird on its branch on low-poly teal.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, Demo } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
@@ -13,28 +13,16 @@ import { Icon } from './icons'
 import { guide } from '../model/guide'
 import { GuideCorner } from './guide'
 import { FolderPicker } from './sidebar'
+import { birdFeet, drawIdleScene, drawTemariScene, drawProgressScene, drawSpool, drawWorkflowBackdrop, HopWalker, PALETTE, SeededRandom, TsugumiBird } from './tsugumiArt'
 
 // ---- Art ---------------------------------------------------------------------------
 
-export const PALETTE = {
-  tealTop: '#2d5a5c', tealBottom: '#132b33', cream: '#f6ead2', mist: '#a9c4bf', rufous: '#c97d3d',
-  olive: '#a9b77a', oliveDark: '#7d9148', bark: '#7d5834', barkDark: '#5c3e24', barkShade: '#4e341e', thread: '#efe0c3',
-}
-
-/** A small seeded generator, so the facets stay the same between renders. */
-function seeded(seed: number) {
-  let a = seed >>> 0
-  return (lo: number, hi: number) => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return lo + (hi - lo) * (((t ^ (t >>> 14)) >>> 0) / 4294967296)
-  }
-}
+export { PALETTE }
 
 const LOW_POLY = (() => {
-  const rng = seeded(7)
+  // The app's generator and seed, so the facets fall where they do there.
+  const random = new SeededRandom(7)
+  const rng = (lo: number, hi: number) => random.next(lo, hi)
   const cols = 7, rows = 5, w = 700, h = 500
   const pts: [number, number][][] = []
   for (let r = 0; r <= rows; r++) {
@@ -106,48 +94,11 @@ export function useBird() {
   return art
 }
 
-/** The bird on a long low-poly branch, hopping now and then (still when the
- *  settings or the system ask for less motion). */
-export function TsugumiIdleScene({ birdScale = 0.22, className }: { birdScale?: number; className?: string }) {
-  useObserve(prefs)
-  const art = useBird()
-  const still = prefs.tsugumiStill
-  // The scene is drawn in the icon's coordinates: the feet at (505, 706).
-  const w = 150 / birdScale * 1.6, h = 150 / birdScale
-  const x0 = 505 - w / 2 - 40, y0 = 706 + 22 / birdScale - h
-  return (
-    <svg className={`tsugumi-scene ${className ?? ''}`} viewBox={`${x0} ${y0} ${w} ${h}`} preserveAspectRatio="xMidYMax meet" aria-hidden>
-      <g className="tsugumi-branch">
-        <polygon points={`${505 - 520},716 ${505 - 380},700 ${505 - 380},726`} fill={PALETTE.barkDark} />
-        <polygon points={`${505 - 380},700 ${505 + 300},694 ${505 - 380},726`} fill={PALETTE.bark} />
-        <polygon points={`${505 - 380},726 ${505 + 300},694 ${505 + 300},722`} fill={PALETTE.barkShade} />
-        <polygon points={`${505 + 300},694 ${505 + 520},704 ${505 + 300},722`} fill={PALETTE.barkDark} />
-        {art && <g dangerouslySetInnerHTML={{ __html: art.perch }} />}
-      </g>
-      <ellipse cx="505" cy="702" rx="150" ry="14" fill="rgba(0,0,0,0.2)" className={still ? '' : 'tsugumi-shadow'} />
-      {art && <g className={`tsugumi-bird${still ? '' : ' hopping'}`} dangerouslySetInnerHTML={{ __html: art.bird }} />}
-      {/* A loose thread from the bill. */}
-      <path d="M770 404 C 800 470, 760 540, 800 620" fill="none" stroke={PALETTE.thread} strokeWidth={5} strokeLinecap="round" opacity={0.8}
-        className={still ? '' : 'tsugumi-thread'} />
-    </svg>
-  )
-}
-
-/** A ball of thread (temari) unwinding into the card. */
-function Temari({ fraction }: { fraction?: number }) {
-  useObserve(prefs)
-  const r = 15 * (1 - 0.35 * (fraction ?? 0))
-  return (
-    <svg className="temari" width="56" height="92" viewBox="0 0 56 92" aria-hidden>
-      <path d={`M28 ${46 + r} C 28 70, 28 80, 28 92`} stroke={PALETTE.thread} strokeWidth={1.5} fill="none" />
-      <g className={prefs.tsugumiStill || fraction !== undefined ? '' : 'temari-spin'} style={{ transformOrigin: '28px 46px', transform: fraction !== undefined ? `rotate(${fraction * 900}deg)` : undefined }}>
-        <circle cx="28" cy="46" r={r} fill={PALETTE.rufous} />
-        <path d={`M${28 - r} 46 Q 28 ${46 - r * 0.8} ${28 + r} 46`} stroke={PALETTE.cream} strokeWidth={1.6} fill="none" />
-        <path d={`M${28 - r} 46 Q 28 ${46 + r * 0.8} ${28 + r} 46`} stroke={PALETTE.cream} strokeWidth={1.6} fill="none" />
-        <path d={`M28 ${46 - r} Q ${28 + r * 0.8} 46 28 ${46 + r}`} stroke={PALETTE.olive} strokeWidth={1.6} fill="none" />
-      </g>
-    </svg>
-  )
+/** Home's bird with the key visual's temari (TsugumiTemariScene.swift), held
+ *  still with the ball close when the settings or the system ask for less motion. */
+function TsugumiTemariScene() {
+  const scene = useArtCanvas((g, w, h, t) => drawTemariScene(g, w, h, t, 0.19), 0)
+  return <canvas ref={scene.ref} className="fill-abs" aria-hidden />
 }
 
 export interface LoadingContent {
@@ -158,29 +109,104 @@ export interface LoadingContent {
   dirty?: boolean
 }
 
-/** The loading card: a Card of the canvas with its ports and wires, the bird
- *  scene as its picture, and what is happening. */
+/** A canvas drawn every frame (or now and then, when the settings or the
+ *  system ask for less motion: then at the fixed time `stillTime`). */
+function useArtCanvas(draw: (g: CanvasRenderingContext2D, w: number, h: number, t: number) => void, stillTime: number) {
+  useObserve(prefs)
+  const still = prefs.tsugumiStill
+  const ref = useRef<HTMLCanvasElement>(null)
+  const drawRef = useRef(draw)
+  drawRef.current = draw
+  useEffect(() => {
+    const c = ref.current
+    if (!c) return
+    const paint = () => {
+      const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight
+      if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+        c.width = Math.round(w * dpr)
+        c.height = Math.round(h * dpr)
+      }
+      const g = c.getContext('2d')
+      if (!g) return
+      g.setTransform(dpr, 0, 0, dpr, 0, 0)
+      g.clearRect(0, 0, w, h)
+      drawRef.current(g, w, h, still ? stillTime : performance.now() / 1000)
+    }
+    if (still) {
+      paint()
+      const t = setInterval(paint, 250)
+      return () => clearInterval(t)
+    }
+    let frame = 0
+    const loop = () => {
+      paint()
+      frame = requestAnimationFrame(loop)
+    }
+    loop()
+    return () => cancelAnimationFrame(frame)
+  }, [still, stillTime])
+  return { ref, still }
+}
+
+/** The temari's column left of the words, and its centre: its thread runs
+ *  straight up and hooks over the panel's top edge there, into the picture. */
+const SPOOL_WIDTH = 56
+const SPOOL_X = 22 + SPOOL_WIDTH / 2
+const CATCH_X = SPOOL_X
+
+/** The loading card (TsugumiLoadingCard.swift): a Card of the canvas with its
+ *  ports and wires. The bird scene is its picture: the bird holds a thread
+ *  unwound from the temari beside the words below; with a fraction the branch
+ *  grows as the bar and the temari unwinds, without it the bird hops and pecks. */
 export function TsugumiLoadingCard({ content, onCancel }: { content: LoadingContent; onCancel?: () => void }) {
   const f = content.fraction === undefined ? undefined : Math.min(1, Math.max(0, content.fraction))
+  const [walker] = useState(() => new HopWalker())
+  // While the guide's bird flies in, the card has no bird of its own.
+  const hides = () => document.body.classList.contains('guide-handoff')
+  const backdrop = useArtCanvas((g, w, h, t) => drawWorkflowBackdrop(g, w, h, t, f), 0.3)
+  const scene = useArtCanvas((g, w, h, t) => f === undefined
+    ? drawIdleScene(g, w, h, t, CATCH_X, hides())
+    : drawProgressScene(g, w, h, t, f, CATCH_X, walker, !scene.still, hides()), f === undefined ? 2.8 : 0.6)
+  const spool = useArtCanvas((g, w, h, t) => drawSpool(g, w, h, t, f, SPOOL_X, CATCH_X), 2.8)
+  // Where the bird stands, for the guide's bird to land on.
+  const [size, setSize] = useState<{ w: number; h: number }>()
+  const picture = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = picture.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const bird = size && birdFeet(size.w, size.h, f)
   return (
     <div className="loading-card-stack" role="status" aria-label={content.title} aria-valuetext={f !== undefined ? `${Math.floor(f * 100)}%` : content.message}>
       <div className="loading-wire" />
       <div className="loading-port input" />
       <div className="loading-card">
-        <div className="loading-picture">
+        <div className="loading-picture" ref={picture} data-guide-loading="">
           <LowPolyBackground />
+          <canvas ref={backdrop.ref} className="loading-backdrop" aria-hidden />
           <div className="loading-shade" />
-          <div className="fill-abs" data-guide-loading=""><TsugumiIdleScene birdScale={0.22} /></div>
-          {f !== undefined && <div className="loading-progress" style={{ width: `${f * 100}%` }} />}
+          <canvas ref={scene.ref} aria-hidden />
+          {bird && (
+            <div className="tsugumi-bird" aria-hidden style={{
+              left: bird.feet.x + (TsugumiBird.tailTip - TsugumiBird.feet.x) * bird.scale,
+              top: bird.feet.y + (TsugumiBird.top - TsugumiBird.feet.y) * bird.scale,
+              width: (TsugumiBird.beakTip - TsugumiBird.tailTip) * bird.scale,
+              height: (TsugumiBird.feet.y + 2 - TsugumiBird.top) * bird.scale,
+            }} />
+          )}
         </div>
         <div className="loading-text">
-          <Temari fraction={f} />
           {f !== undefined && <div className="loading-percent mono-digits">{Math.floor(f * 100)}%</div>}
           <div className="title3">{content.title}</div>
           {content.message && <div className="callout secondary clamp3">{content.message}</div>}
           {content.detail && <div className="caption mono tertiary ellipsis">{content.detail}</div>}
           {content.dirty && <span className="label callout" style={{ color: PALETTE.rufous }}><Icon name="pencil.circle" />未保存の変更があります（保持しています）</span>}
           {onCancel && <Button onClick={onCancel}>キャンセル</Button>}
+          {/* the temari beside the words; its thread catches on the picture's edge */}
+          <canvas ref={spool.ref} className="loading-spool" aria-hidden />
         </div>
       </div>
       <div className="loading-port output" />
@@ -303,11 +329,11 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
     <div className="home-sidebar">
       <LowPolyBackground className="fill-abs" />
       <div className="home-sidebar-content">
-        <div className="home-scene"><TsugumiIdleScene birdScale={0.19} /></div>
+        <div className="home-scene"><TsugumiTemariScene /></div>
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
           <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>
-          <Button large icon="folder" onClick={onOpen}>既存のプロジェクトを開く…</Button>
+          <Button large icon="folder" guide="open_project" onClick={onOpen}>既存のプロジェクトを開く…</Button>
           <button type="button" className="home-link" data-guide="demos" onClick={onToggleDemos}>
             <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? '最近のプロジェクト' : 'デモを見る'}
           </button>

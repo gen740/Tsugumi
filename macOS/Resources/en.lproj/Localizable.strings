@@ -51,7 +51,7 @@
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
 "API キー" = "API key";
-"API キーが未設定のため表示していません" = "Not shown: no API key is set";
+"API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
@@ -67,7 +67,6 @@
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
-"C++ と Python" = "C++ and Python";
 "C++ の処理" = "C++ step";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
@@ -106,6 +105,7 @@
 "Draft の内容" = "Draft content";
 "Draft の名前" = "Draft name";
 "Draft の実装は、チャットから Agent に頼めるよ" = "Ask the Agent in the chat to implement a Draft.";
+"Draft を AI に実装させる" = "Have the AI implement a Draft";
 "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ" = "Place Drafts and wire them up to sketch the flow before writing any code.";
 "Draft（未実装の計画）" = "Draft (plan, not implemented)";
 "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）" = "Fast mode: not available on the ChatGPT plan (the setting can be refused)";
@@ -214,7 +214,11 @@
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
 "⌥⌘K で、実行環境のコンソールを開けるよ" = "⌥⌘K opens the environment's console.";
+"「%@」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。" = "This is “%@”. Its Cards are only outlined, and the AI writes what they do. Once it is open, let's have it implemented with Tsugumi in the chat.";
+"「%@」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。" = "This is “%@”. Once it is open, Tsugumi in the chat goes through its Cards and results with you.";
 "「%@」と重複しています" = "Conflicts with “%@”";
+"「%@」のおすすめは？" = "Which demo of “%@” do you recommend?";
+"「%@」のデモです。どれを見ますか？" = "Demos in “%@”. Which one would you like to see?";
 "「%@」はすでに使われています。" = "“%@” is already used.";
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。" = "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).";
 "「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
@@ -231,6 +235,7 @@
 "うまくいきませんでした" = "That did not work";
 "うまく答えられませんでした" = "Could not answer";
 "うまく答えられませんでした: %@" = "Could not answer: %@";
+"おすすめを聞く" = "Ask for a Recommendation";
 "くわえている手毬の糸は「紡ぐ」から。この糸が Card をつなぐ配線になるよ" = "The thread from my temari is that spun thread. It becomes the wires between Cards.";
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
@@ -258,6 +263,7 @@
 "このアプリ（この Mac。API キーは macOS のキーチェーン）" = "This app (this Mac; API keys in the macOS Keychain)";
 "このタブで開く" = "Open in This Tab";
 "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。" = "The tokens on this device were removed, but the revocation at OpenAI could not be confirmed. You can disconnect Tsugumi in ChatGPT settings.";
+"このデモを開く" = "Open This Demo";
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
@@ -294,7 +300,7 @@
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
-"こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。" = "Hello, I'm Tsugumi. What are you interested in? I'll find a demo that fits and show you around.";
+"こんにちは、ツグミです。何をしてみますか？" = "Hello, I'm Tsugumi. What would you like to try?";
 "こんにちは、ツグミです。動くデモを一緒に見てみますか？" = "Hello, I'm Tsugumi. Shall we look at a working demo together?";
 "すべて" = "All";
 "すべての入力が揃ったとき" = "When every input has arrived";
@@ -310,7 +316,10 @@
 "つぐみ → つむぐ。試行錯誤をつないで、研究を「紡ぐ」道具でありたいんだ" = "Tsugumi → tsumugu, to spin: a tool for spinning trial and error into research.";
 "できました" = "Done";
 "どうすればよいか" = "What to do";
+"どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。" = "Which Draft should the AI implement? Its Cards are only outlined; the AI writes what they do.";
+"どんな分野に興味がありますか？" = "Which field interests you?";
 "なし" = "None";
+"ほかのデモ" = "Other demos";
 "まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。" = "Shall we look at a working demo together first? It opens as an editable copy, and I'll show you Cards, wires and how to read the results while it actually runs.";
 "まだ出力はありません" = "No output yet";
 "まだ実行していません" = "Not run yet";
@@ -349,12 +358,12 @@
 "ガイドのツグミに聞く（%@）" = "Ask Tsugumi the Guide (%@)";
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
-"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.";
+"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
 "キャンセル" = "Cancel";
 "キー" = "Key";
-"キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。" = "Without a key, everything in Tsugumi still works from the UI (the guide just stays away). Add a key later in Settings > API and it appears.";
+"キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。" = "Without a key, everything in Tsugumi still works from the UI (meanwhile the guide only gives a fixed demo tour). Add a key later in Settings > API and it answers questions too.";
 "キーを保存" = "Save Key";
 "キーを保存できませんでした: %@" = "Could not save the key: %@";
 "キーを削除" = "Delete key";
@@ -457,7 +466,6 @@
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
 "デモを見る…" = "Show Demos…";
-"データの集計とレポート" = "Aggregating data into reports";
 "データベース接続先" = "Database Connections";
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
@@ -530,7 +538,6 @@
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
-"ライブ表示" = "Live display";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
@@ -677,6 +684,7 @@
 "出力表示を戻す" = "Show Output Display Again";
 "分岐" = "Branch";
 "分配" = "Fork";
+"分野を選び直す" = "Choose Another Field";
 "切断" = "Disconnect";
 "初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（最大 %lld GiB、使った分だけ）を作ります。" = "When a project is first opened, the VM image is unpacked and the Nix store's space is made (up to %lld GiB, only what is used).";
 "初回の案内（デモの勧誘）をもう一度表示" = "Show the First Greeting (Demo Offer) Again";
@@ -697,6 +705,7 @@
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
 "動かす" = "Animate";
+"化学・生態" = "Chemistry and ecology";
 "原因（ログより）" = "Cause (from the log)";
 "参照を外す" = "Remove the reference";
 "参照・フォルダを添付" = "Attach references or folders";
@@ -742,6 +751,7 @@
 "型" = "Type";
 "型: " = "Type: ";
 "型がありません: %@" = "Missing type: %@";
+"基本の機能を知る" = "The basics";
 "場所" = "Location";
 "変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。" = "Changing it may leave Cards and lines out of line (“Arrange” lays them out again).";
 "変更" = "Change";
@@ -764,11 +774,11 @@
 "外部ソース" = "External sources";
 "外部接続" = "External Connections";
 "大きく" = "Larger";
-"天文・地震・タンパク質のデータ" = "Astronomy, seismic and protein data";
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
 "失敗したので結果はありません" = "It failed, so there is no result";
 "失敗の種類" = "Failure kind";
+"宇宙・地球" = "Space and Earth";
 "完了" = "Done";
 "定番のデモを見る" = "See the Standard Demo";
 "定義" = "Definition";
@@ -896,6 +906,7 @@
 "控えめ" = "Muted";
 "描く" = "Draw";
 "操作" = "Action";
+"数値計算・最適化" = "Numerics and optimization";
 "整列" = "Arrange";
 "整列（配置だけを変更）" = "Arrange (layout only)";
 "整形" = "Format";
@@ -921,6 +932,7 @@
 "新規プロジェクト" = "New Project";
 "新規プロジェクト…" = "New Project…";
 "新規作成するか、既存のフォルダを開いてください。" = "Create a new project or open an existing folder.";
+"既にある Workflow を見る" = "See a working workflow";
 "既存のプロジェクトを開く…" = "Open Existing Project…";
 "既定" = "Default";
 "既定（%@）" = "Default (%@)";
@@ -1000,6 +1012,7 @@
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
 "環境を停止" = "Stop Environment";
+"生命・医療" = "Life and medicine";
 "生成" = "Generated";
 "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: " = "Could not generate (unsaved changes or unresolved types prevent it): ";
 "用途" = "Purpose";
@@ -1028,6 +1041,7 @@
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";
 "結果を確認しています" = "Checking the result";
+"統計・機械学習" = "Statistics and machine learning";
 "続きは会話に書きました" = "More in the conversation";
 "続きを表示" = "Show more";
 "続ける" = "Continue";
@@ -1069,7 +1083,7 @@
 "記録と成果物" = "Recording and artifacts";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
-"設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you are interested in.";
+"設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you would like to try.";
 "設定の「API」で接続を設定してください" = "Set up a connection in Settings > API";
 "設定を表示するプロジェクト（開いているプロジェクトから選びます）" = "The project whose settings are shown (one of the open projects)";
 "許可しない" = "Don't Allow";
@@ -1087,6 +1101,7 @@
 "読み込んでいます…" = "Reading…";
 "読めませんでした: " = "Could not read: ";
 "質問できる会話を開きます" = "Opens a conversation to ask questions";
+"質問を書く" = "Ask a question";
 "起動" = "Start";
 "起動: python3 tests/fixtures/model_fixture.py --port %lld" = "Start: python3 tests/fixtures/model_fixture.py --port %lld";
 "起動しています" = "Starting";

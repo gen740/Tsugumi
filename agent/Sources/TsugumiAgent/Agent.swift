@@ -173,6 +173,8 @@ public actor Agent {
   public static let versionSummaryPrompt = Shared.versionSummaryPrompt
   /// The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around.
   public static let demoSkill = Shared.demoSkill
+  /// What the guide says without a model connection (agent/Shared/guide-script.json, as JSON).
+  public static let guideScript = Shared.guideScript
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
               references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) throws {

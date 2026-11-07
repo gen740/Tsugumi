@@ -272,13 +272,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     lock.withLock { _state = .starting(.image) }
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      console.open(console: consoleURL)
-      // One VM per support folder: a second app instance does not get it.
+      // One VM per support folder: a second app instance does not get it (and
+      // leaves the console file of the VM that runs alone).
       let hl = try HostLock(path: directory.appendingPathComponent("vm.lock"))
       do { try hl.lock(wait: false) } catch {
         throw LauncherError.startFailed(reason: "another Tsugumi is using the execution environment", log: "")
       }
       lock.withLock { hostLock = hl }
+      console.open(console: consoleURL)
       setState(.starting(.image))
       let files = try installImage(image)
       setState(.starting(.disk))

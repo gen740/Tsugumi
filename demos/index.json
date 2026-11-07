@@ -3,6 +3,7 @@
     {
       "id": "report",
       "title": "Data to report",
+      "field": "基本の機能を知る",
       "description": "データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。",
       "path": "report",
       "tags": [
@@ -15,6 +16,7 @@
     {
       "id": "collatz",
       "title": "Collatz (C++ / Python / Julia / R)",
+      "field": "基本の機能を知る",
       "description": "四つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。",
       "path": "collatz",
       "tags": [
@@ -31,6 +33,7 @@
     {
       "id": "live-stream",
       "title": "Live Stream",
+      "field": "基本の機能を知る",
       "description": "時系列の出力を、実行中にそのままグラフで描く。",
       "path": "live-stream",
       "tags": [
@@ -43,6 +46,7 @@
     {
       "id": "plots",
       "title": "Plots (matplotlib, Plotly, Altair)",
+      "field": "基本の機能を知る",
       "description": "ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。",
       "path": "plots",
       "tags": [
@@ -57,6 +61,7 @@
     {
       "id": "casa",
       "title": "Cas A · Chandra RGB",
+      "field": "宇宙・地球",
       "description": "X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。",
       "path": "casa",
       "tags": [
@@ -82,6 +87,7 @@
     {
       "id": "gw150914",
       "title": "GW150914 · 重力波",
+      "field": "宇宙・地球",
       "description": "公開データから、重力波のチャープを取り出して図にする。",
       "path": "gw150914",
       "tags": [
@@ -107,6 +113,7 @@
     {
       "id": "protein-6lu7",
       "title": "6LU7 · タンパク質と結合ポケット",
+      "field": "生命・医療",
       "description": "タンパク質の立体構造を取得して、結合ポケットを見る。",
       "path": "protein-6lu7",
       "tags": [
@@ -132,6 +139,7 @@
     {
       "id": "exoplanet-transit",
       "title": "Kepler-6 b · 系外惑星トランジット",
+      "field": "宇宙・地球",
       "description": "光度曲線を折りたたんで、系外惑星のトランジットを見る。",
       "path": "exoplanet-transit",
       "tags": [
@@ -157,6 +165,7 @@
     {
       "id": "seismic-trench",
       "title": "日本海溝 · 震源断面と b 値",
+      "field": "宇宙・地球",
       "description": "地震カタログから、震源の断面と b 値を見る。",
       "path": "seismic-trench",
       "tags": [
@@ -182,6 +191,7 @@
     {
       "id": "mnist-classifiers",
       "title": "MNIST · 手書き数字の分類器くらべ",
+      "field": "統計・機械学習",
       "description": "本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べる。",
       "path": "mnist-classifiers",
       "tags": [
@@ -196,6 +206,7 @@
     {
       "id": "newton",
       "title": "Newton 法 · 初期値と収束",
+      "field": "数値計算・最適化",
       "description": "初期値で行き先と収束の速さが変わる様子を、複素平面の地図で見る。",
       "path": "newton",
       "tags": [
@@ -208,6 +219,7 @@
     {
       "id": "pharmacokinetics",
       "title": "薬物動態 · 架空の薬物ツグミシン",
+      "field": "生命・医療",
       "description": "投与間隔で濃度がどう動くかを比べる教材。医療上の助言ではない。",
       "path": "pharmacokinetics",
       "tags": [
@@ -220,6 +232,7 @@
     {
       "id": "max-flow",
       "title": "最大流と最小カット",
+      "field": "数値計算・最適化",
       "description": "架空のネットワークで、どの辺を増やせば流れが増えるかを確かめる。",
       "path": "max-flow",
       "tags": [
@@ -232,6 +245,7 @@
     {
       "id": "dose-response",
       "title": "濃度–反応曲線",
+      "field": "統計・機械学習",
       "description": "真の値が分かるデータで、当てはめと信頼区間を確かめる。",
       "path": "dose-response",
       "tags": [
@@ -244,6 +258,7 @@
     {
       "id": "molecules",
       "title": "分子の物性",
+      "field": "化学・生態",
       "description": "SMILES から RDKit で物性と構造式を求める。",
       "path": "molecules",
       "tags": [
@@ -256,6 +271,7 @@
     {
       "id": "cell-count",
       "title": "細胞画像の計数",
+      "field": "生命・医療",
       "description": "正解のある合成画像で数え方を採点し、実際の核の画像にもかける。",
       "path": "cell-count",
       "tags": [
@@ -268,6 +284,7 @@
     {
       "id": "survival",
       "title": "Survival analysis",
+      "field": "生命・医療",
       "description": "同じハザード比が、対象者と調整でどれだけ動くかを並べる。",
       "path": "survival",
       "tags": [
@@ -282,6 +299,7 @@
     {
       "id": "meta-analysis",
       "title": "Meta-analysis: BCG vaccine",
+      "field": "生命・医療",
       "description": "併合の方法や試験の除外で、結論がどう動くかを比べる。",
       "path": "meta-analysis",
       "tags": [
@@ -296,6 +314,7 @@
     {
       "id": "rna-seq",
       "title": "RNA-seq: airway and dexamethasone",
+      "field": "生命・医療",
       "description": "DESeq2 と edgeR で、発現の動く遺伝子の数が閾値でどう変わるかを見る。",
       "path": "rna-seq",
       "tags": [
@@ -310,6 +329,7 @@
     {
       "id": "simpson",
       "title": "Simpson's paradox",
+      "field": "統計・機械学習",
       "description": "全体と層で向きが逆になる例を、2 つの実データで確かめる。",
       "path": "simpson",
       "tags": [
@@ -323,6 +343,7 @@
     {
       "id": "battery",
       "title": "蓄電池の最適運用",
+      "field": "数値計算・最適化",
       "description": "架空の料金で、充放電を動的計画法で最適化する。",
       "path": "battery",
       "tags": [
@@ -335,6 +356,7 @@
     {
       "id": "gillespie",
       "title": "化学反応のゆらぎ",
+      "field": "化学・生態",
       "description": "Gillespie 法のシミュレーションを理論と照合する。",
       "path": "gillespie",
       "tags": [
@@ -347,6 +369,7 @@
     {
       "id": "heat-inverse",
       "title": "熱伝導の逆問題",
+      "field": "数値計算・最適化",
       "description": "素朴な逆解が破綻し、正則化で復元できることを見る。",
       "path": "heat-inverse",
       "tags": [
@@ -359,6 +382,7 @@
     {
       "id": "ecology-models",
       "title": "生態系のモデル比較",
+      "field": "化学・生態",
       "description": "毛皮の記録に捕食モデルを当てはめて比べる。",
       "path": "ecology-models",
       "tags": [

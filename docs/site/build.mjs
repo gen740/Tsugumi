@@ -33,6 +33,7 @@ const STORY = [
       ['**AI に仕事を任せるには', 'summit', 'AI が登った道を、確かめられる足場として残す。だから人が登っていける。'],
       ['これらに共通しているのは', 'wall', 'AI の出力が積み上がるほど、人と AI の間に壁ができていく。'],
       ['この三つを同じ Workflow', 'thread', 'Tsugumi は、積み上がった壁を越えて、人と AI を一本の糸でつなぐ。'],
+      ['観測データをダウンロードして', 'casaSky', 'たとえば、カシオペヤA。三百年あまり前に、その光が地球に届いた超新星の残骸で、いまも秒速数千キロで広がり続けている。その観測データを、エネルギーで三つに分けて重ねれば、3 色の画像になる。'],
       ['紙に箱を三つ', 'sketch', '紙に描いた、三つの箱。'],
       ['組み立てる macOS アプリ', 'draft', 'もし、書いた通りのものが、そのまま形になったら？　三つの箱が、そのまま Draft になる。'],
       ['**確かめる。** Nix', 'run', 'Agent が Draft を実装し、実行すると、帯域ごとの光子数と RGB 画像がそのまま Canvas に並ぶ（同梱の Cas A · Chandra RGB デモ）。'],
@@ -435,7 +436,7 @@ function homePage(groups, pages, tagline, lead) {
       <a class="cta" href="${DOWNLOAD}">${ICON.download}Mac 版をダウンロード</a>
       <a class="cta quiet" href="#demos">インストールせずにデモを見る</a>
     </div>
-    <p class="home-note">Apple silicon / macOS 26 以降 · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
+    <p class="home-note">macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は未確認。アプリは Apple silicon / macOS 26 以降） · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>

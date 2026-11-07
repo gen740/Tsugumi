@@ -912,6 +912,148 @@ export const Fellows = {
   },
 }
 
+// ---- たとえば、カシオペヤA: the constellation, the star that went, its light reaching the Earth, the remnant still spreading,
+// and the photons a telescope takes in, in three bands laid together again. Drawn in a 1920 x 1080 frame, set in the figure. ----
+
+const CAS = pt(1330, 330), EARTH = pt(330, 860), W_STARS = [pt(560, 300), pt(700, 400), pt(850, 290), pt(1000, 410), pt(1130, 280)]
+const BANDS = [['0.6–1.65 keV', 0xff4a3a, 0xff8a7a], ['1.65–2.25 keV', 0x52e05a, 0x8ff09a], ['2.25–7.5 keV', 0x4f86ff, 0x8fb4ff]]
+let tinted = null
+/** The remnant through each band's colour, to be laid together again ('lighter'). */
+function tintedCasa() {
+  if (tinted || !casaImage.complete || !casaImage.naturalWidth) return tinted
+  tinted = BANDS.map(([, c]) => {
+    const k = document.createElement('canvas')
+    k.width = k.height = 360
+    const o = k.getContext('2d')
+    o.drawImage(casaImage, 0, 0, 360, 360)
+    o.globalCompositeOperation = 'multiply'
+    o.fillStyle = hex(c)
+    o.fillRect(0, 0, 360, 360)
+    return k
+  })
+  return tinted
+}
+function disc(g, image, c, r, o, mode = 'source-over') {
+  if (o <= 0.01 || !image) return
+  g.save()
+  g.globalAlpha *= o
+  g.globalCompositeOperation = mode
+  g.beginPath(); g.arc(c.x, c.y, r, 0, Math.PI * 2); g.clip()
+  g.drawImage(image, c.x - r * 1.2, c.y - r * 1.2, r * 2.4, r * 2.4)
+  g.restore()
+}
+function arrowOut(g, c, a, r0, r1, o) {
+  if (o <= 0.01) return
+  const p0 = pt(c.x + Math.cos(a) * r0, c.y + Math.sin(a) * r0), p1 = pt(c.x + Math.cos(a) * r1, c.y + Math.sin(a) * r1)
+  g.save(); g.globalAlpha *= o; g.strokeStyle = hex(0xf6d79a); g.lineWidth = 4; g.lineCap = 'round'
+  g.beginPath(); g.moveTo(p0.x, p0.y); g.lineTo(p1.x, p1.y)
+  for (const s of [-0.5, 0.5]) { g.moveTo(p1.x, p1.y); g.lineTo(p1.x - Math.cos(a + s) * 16, p1.y - Math.sin(a + s) * 16) }
+  g.stroke(); g.restore()
+}
+/** Where the view is for each `p`: on the constellation, back to take in the Earth, close on the remnant, aside for the telescope. */
+const CAS_VIEW = [[0, 1, 960, 470], [1, 1.18, 1060, 420], [1.15, 1.18, 1060, 420], [1.45, 0.92, 860, 560], [2.05, 0.92, 860, 560], [2.5, 2.4, CAS.x, CAS.y + 10], [3.0, 2.4, CAS.x, CAS.y + 10], [3.35, 1.5, CAS.x - 260, CAS.y + 150]]
+function casView(p) {
+  for (let i = 1; i < CAS_VIEW.length; i++) {
+    if (p > CAS_VIEW[i][0]) continue
+    const [p0, k0, x0, y0] = CAS_VIEW[i - 1], [p1, k1, x1, y1] = CAS_VIEW[i]
+    const u = smooth((p - p0) / (p1 - p0)), k = Math.exp(mix(Math.log(k0), Math.log(k1), u))
+    const w = Math.abs(k1 - k0) < 1e-3 ? u : (1 / k0 - 1 / k) / (1 / k0 - 1 / k1)  // what it goes to moves straight across
+    return [k, mix(x0, x1, w), mix(y0, y1, w)]
+  }
+  return CAS_VIEW[CAS_VIEW.length - 1].slice(1)
+}
+
+export const CasASky = {
+  draw(g, p, t) {
+    g.save()
+    g.translate(0, 158.75)
+    g.scale(1000 / 1920, 1000 / 1920)
+    const [k, cx, cy] = casView(p)
+    g.translate(960 - cx * k, 540 - cy * k)
+    g.scale(k, k)
+    const rng = seeded(91)
+    for (let i = 0; i < 420; i++) {
+      const x = rng(-500, 2400), y = rng(-300, 1400), r = rng(0.5, 1.8) / Math.sqrt(k), ph = rng(0, 6.28)
+      ellipse(g, x, y, r, r, hex(0xf3ede2, 0.2 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.1 + ph))))
+    }
+    // カシオペヤ座, star to star, and where カシオペヤA is
+    const wOut = 1 - span(p, 2.05, 2.4)
+    for (let i = 0; i < 4; i++) {
+      const u = clamp01(lin(p, 0.05, 0.75) * 4 - i)
+      if (u > 0) stroke(g, [W_STARS[i], mixP(W_STARS[i], W_STARS[i + 1], u)], hex(0x9fd3e6, 0.5 * wOut), 2 / k)
+    }
+    for (const q of W_STARS) { glow(g, q.x, q.y, 16, 16, 0xf3ede2, 0.5 * wOut); ellipse(g, q.x, q.y, 4.5, 4.5, hex(0xf8f2e6, wOut)) }
+    text(g, 'カシオペヤ座', pt(845, 480), 40, { weight: 600, color: hex(0x9fd3e6), opacity: 0.85 * span(p, 0.5, 0.8) * wOut })
+    const mark = span(p, 0.75, 0.95) * (1 - span(p, 1.0, 1.1))
+    if (mark > 0.01) {
+      g.save(); g.globalAlpha *= mark; g.strokeStyle = hex(0xf6d79a); g.lineWidth = 2.4 / k; g.setLineDash([6 / k, 6 / k])
+      g.beginPath(); g.arc(CAS.x, CAS.y, 32, 0, Math.PI * 2); g.stroke(); g.restore()
+      text(g, 'カシオペヤA', pt(CAS.x, CAS.y - 64), 40, { weight: 700, color: hex(0xf6d79a), opacity: mark })
+    }
+    // the star, and the moment it went
+    const star = 1 - span(p, 1.05, 1.12)
+    if (star > 0.01) { glow(g, CAS.x, CAS.y, 22, 22, 0xf3ede2, 0.6 * star); ellipse(g, CAS.x, CAS.y, 4, 4, hex(0xffffff, star)) }
+    const blast = span(p, 1.02, 1.12) * (1 - span(p, 1.2, 1.55))
+    if (blast > 0.01) {
+      glow(g, CAS.x, CAS.y, 260 * blast + 40, 260 * blast + 40, 0xfff2d0, 0.95 * blast)
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2, r1 = 60 + 140 * blast
+        stroke(g, [pt(CAS.x + Math.cos(a) * 20, CAS.y + Math.sin(a) * 20), pt(CAS.x + Math.cos(a) * r1, CAS.y + Math.sin(a) * r1)], hex(0xfff6e0, 0.6 * blast), 3)
+      }
+    }
+    // its light, on its way here, and here
+    const far = Math.hypot(EARTH.x - CAS.x, EARTH.y - CAS.y)
+    const go = lin(p, 1.1, 1.75), ring = 1 - span(p, 1.75, 1.9)
+    if (go > 0 && ring > 0.01) { g.save(); g.globalAlpha *= 0.75 * ring; g.strokeStyle = hex(0xfff0c8); g.lineWidth = 5; g.beginPath(); g.arc(CAS.x, CAS.y, far * go, 0, Math.PI * 2); g.stroke(); g.restore() }
+    const earth = span(p, 1.15, 1.35) * (1 - span(p, 2.05, 2.3))
+    if (earth > 0.01) {
+      const hit = span(p, 1.72, 1.76) * (1 - span(p, 1.85, 2.1))
+      faded(g, earth, () => {
+        glow(g, EARTH.x, EARTH.y, 70, 70, 0xfff0c8, 0.8 * hit)
+        ellipse(g, EARTH.x, EARTH.y, 34, 34, hex(0x3f7fb8)); ellipse(g, EARTH.x - 9, EARTH.y - 6, 13, 9, hex(0x5fbf6a)); ellipse(g, EARTH.x + 12, EARTH.y + 10, 9, 6, hex(0x5fbf6a))
+        text(g, '地球', pt(EARTH.x, EARTH.y + 70), 36, { weight: 600, color: hex(0xd7ecef) })
+      })
+    }
+    // what is left of it, still spreading
+    const left = span(p, 1.8, 2.1)
+    const r = 84 * left * (1 + 0.12 * smooth(lin(p, 2.3, 3)))
+    const split = span(p, 3.4, 3.6) * (1 - span(p, 3.75, 3.95))
+    if (left > 0.01) {
+      glow(g, CAS.x, CAS.y, r * 1.8, r * 1.8, 0x8f6fd0, 0.3 * left)
+      disc(g, casaImage, CAS, r, 1 - split)
+    }
+    const spread = span(p, 2.4, 2.55) * (1 - span(p, 2.95, 3.1))
+    for (let i = 0; i < 8; i++) {
+      const d = (t * 0.6 + i * 0.37) % 1
+      arrowOut(g, CAS, (i / 8) * Math.PI * 2 + 0.2, r * (1.05 + 0.1 * d), r * (1.3 + 0.1 * d), spread)
+    }
+    text(g, '秒速 数千 km', pt(CAS.x + r * 1.25, CAS.y - r * 1.15), 26, { weight: 700, color: hex(0xf6d79a), opacity: span(p, 2.55, 2.7) * spread })
+    // the observation: photons into the telescope, in three bands, laid together again
+    const tel = pt(CAS.x - 520, CAS.y + 330), angle = Math.atan2(CAS.y - tel.y, CAS.x - tel.x)
+    const tIn = span(p, 3.0, 3.2)
+    if (tIn > 0.01) {
+      faded(g, tIn, () => telescope(g, tel, angle, 0.62))
+      const mouth = pt(tel.x + Math.cos(angle) * 76, tel.y + Math.sin(angle) * 76)
+      const flow = span(p, 3.1, 3.2) * (1 - span(p, 3.6, 3.75))
+      for (let i = 0; i < 30; i++) {
+        const u = (t * 0.45 + i / 30) % 1
+        const q = mixP(CAS, mouth, u), n = Math.sin(i * 12.9) * 18 * (1 - u)
+        ellipse(g, q.x + n, q.y + n * 0.6, 3, 3, hex([0xff5a48, 0x5fe065, 0x5b8bf0][i % 3], 0.9 * flow * Math.sin(u * Math.PI)))
+      }
+    }
+    const bands = split > 0.01 ? tintedCasa() : null
+    if (bands) {
+      const offs = [pt(-1, -0.6), pt(1, -0.6), pt(0, 1)]
+      bands.forEach((image, i) => {
+        const c = pt(CAS.x + offs[i].x * r * 1.25 * split, CAS.y + offs[i].y * r * 1.25 * split)
+        disc(g, image, c, r, Math.min(1, split * 1.4), 'lighter')
+        text(g, BANDS[i][0], pt(c.x, c.y + (offs[i].y > 0 ? r + 26 : -r - 20)), 20, { weight: 600, color: hex(BANDS[i][2]), opacity: span(split, 0.7, 1) })
+      })
+    }
+    g.restore()
+  },
+}
+
 Object.assign(Figures, {
   asking: { draw: Asking.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
   orbit: { draw: Orbit.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
@@ -920,4 +1062,5 @@ Object.assign(Figures, {
   trials: { draw: Trials.draw, from: 0, to: 1.5, ...plain, route: gutter(120, 760), pace: 1.2, deck: square },
   formed: { draw: Trials.draw, from: 1.5, to: 3, ...plain, route: gutter(120, 760), pace: 1.3, birdAway: [0, 1], deck: square },
   fellows: { draw: Fellows.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 1, deck: square },
+  casaSky: { draw: CasASky.draw, from: 0, to: 4, ...plain, route: gutter(120, 760), pace: 1.1, stops: [1, 2.1, 3, 4], deck: square },
 })

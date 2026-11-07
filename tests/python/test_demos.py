@@ -66,6 +66,13 @@ def stderr(c, run_id, *card):
 DEMOS = json.loads((ROOT / "demos" / "index.json").read_text())["demos"]
 
 
+def test_every_implemented_demo_has_a_field():
+    """The guide's first questions list the demos by field (demos/index.json
+    "field"): each implemented demo is in one; a Draft is listed apart."""
+    bad = [d["id"] for d in DEMOS if bool(d.get("field", "").strip()) == d["id"].endswith("-draft")]
+    assert not bad, bad
+
+
 def test_every_bundled_card_says_what_it_does():
     """Every definition of every demo, inside Cards in Card too, has a summary
     in its _meta.json, which is where the Canvas and Card settings read it."""

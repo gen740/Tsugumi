@@ -109,9 +109,13 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       const r = el.getBoundingClientRect()
       const p = { x: e.clientX - r.left, y: e.clientY - r.top }
       const wd = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY
-      const mouse = e.deltaMode !== 0 || (typeof wd === 'number' && wd !== 0 && Math.abs(wd) % 120 === 0 && e.deltaX === 0)
-      if (e.ctrlKey || e.metaKey) cv.zoomBy(Math.exp(-e.deltaY * 0.01), p)
-      else if (mouse) cv.zoomBy(Math.max(0.5, 1 + (e.deltaMode === 1 ? -e.deltaY : (wd ?? -e.deltaY) / 120) * 0.08), p)
+      // A mouse wheel steps by lines: Firefox says so (deltaMode), Chrome gives 120 per
+      // line. Chrome gives a trackpad's pixels as 3 × deltaY, which is a multiple of 120
+      // when the trackpad moves by 40 px: that one is not a wheel.
+      const mouse = e.deltaMode !== 0 || (typeof wd === 'number' && wd !== 0 && Math.abs(wd) % 120 === 0 && wd !== -3 * e.deltaY && e.deltaX === 0)
+      // As on the Mac, a wheel zooms by the same steps with ⌘ or without.
+      if (mouse) cv.zoomBy(Math.max(0.5, 1 + (e.deltaMode === 1 ? -e.deltaY : (wd ?? -e.deltaY) / 120) * 0.08), p)
+      else if (e.ctrlKey || e.metaKey) cv.zoomBy(Math.exp(-e.deltaY * 0.01), p)
       else {
         const c = cv.camera
         cv.setCamera({ ...c, x: c.x - e.deltaX, y: c.y - e.deltaY })

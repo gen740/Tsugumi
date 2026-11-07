@@ -26,10 +26,14 @@
 
 ## 動く環境
 
-- **アプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。
-- **リリース版は ad-hoc 署名で、公証していません。** ブラウザで入れると Gatekeeper に止められます（[インストール](install.md#リリース版を入れる)）。
+- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](install.md#ブラウザで使うtsugumi-コマンド)）。
+- **Linux で確かめたのは OrbStack の VM（Ubuntu 26.04、aarch64）だけです。** x86_64 は CI のビルドだけで、実際には動かしていません。Linux と Windows には Nix が必要です。
+- **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。Linux と Windows では Web UI を使います。
+- **リリース版は ad-hoc 署名で、公証していません。** ブラウザで入れると Gatekeeper に止められます（[インストール](install.md#デスクトップアプリmacを入れる)）。
 - **v1.0.0 までは版の間の互換性を保ちません。** プロジェクトの文書や設定の移行はしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
-- **Web UI には Mac のフォルダの共有がありません。** Seatbelt ではファイルの存在確認（`stat`）を全体で許可し、uid を分けません。`network: true` の Card は同じ LAN や VPN の他の機器に届き、`ssh` は使えません（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
+- **Mac の共通 VM を使えるのは 1 つのアプリだけです。** `tsugumi` コマンドとデスクトップ版を同時には使えず、後から始めた方がその旨を表示します（[tsugumi コマンド](webui.md#tsugumi-コマンド)）。会話の履歴・Skill のフォルダ・ChatGPT のサインインは両者で別です。
+- **`tsugumi` コマンドは自動で更新しません。** 入れ直して更新します。デスクトップ版と版が違うと、VM は切り替えのたびにその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので 2 回目からは短くなります）。
+- **Mac のホストで直接動かす Web UI には Mac のフォルダの共有がありません。** Seatbelt ではファイルの存在確認（`stat`）を全体で許可し、uid を分けません。`network: true` の Card は同じ LAN や VPN の他の機器に届き、`ssh` は使えません（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
 - **Claude Code の plugin は Mac アプリに対応していません。** Web UI で開いたプロジェクトだけです（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
 
 ## 機能

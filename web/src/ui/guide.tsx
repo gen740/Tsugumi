@@ -52,7 +52,7 @@ export function GuideCorner({ screen }: { screen: GuideScreen }) {
   return (
     <div className="guide-corner">
       {guide.open && <GuidePanel screen={screen} perform={perform} />}
-      {!guide.open && !guide.away && (guide.offersDemo ? <OfferBubble perform={perform} />
+      {!guide.open && !guide.away && (guide.asksDemo ? <OfferBubble screen={screen} perform={perform} />
         : guide.bubble && !guide.speakingChat ? <BubbleView bubble={guide.bubble} perform={perform} />
           : guide.failed ? <span className="guide-bubble material">うまく答えられませんでした</span> : null)}
       <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
@@ -129,22 +129,50 @@ export function ChatChoices({ chat, session, tab }: { chat: ChatController; sess
   )
 }
 
-const SUGGESTIONS = ['データの集計とレポート', 'ライブ表示', 'C++ と Python', '天文・地震・タンパク質のデータ']
+/** A Draft's title without its "（Draft）": the question says it. */
+const shortTitle = (t: string) => t.replace('（Draft）', '').trim()
 
-/** The first greeting: what are you interested in? The answer (typed, or a
- *  suggestion tapped) has Tsugumi pick a demo and fly to it. */
-function OfferBubble({ perform }: { perform: (a: GuideAction) => void }) {
+/** The first questions, written by the app (no model until a question is
+ *  typed or a recommendation asked): what to try, then a field (or the
+ *  Drafts), then a demo, which the bird flies to and offers to open. */
+function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: GuideAction) => void }) {
+  const demos = app.status?.demos ?? []
+  const fields = [...new Set(demos.flatMap((d) => (d.field ? [d.field] : [])))]
+  const step = guide.offerStep
+  const chip = (label: string, onClick: () => void) => <button key={label} type="button" className="guide-choice" onClick={onClick}>{label}</button>
   return (
     <div className="guide-speech material" role="dialog" aria-label="ツグミの吹き出し">
-      <span>こんにちは、ツグミです。何に興味がありますか？ ぴったりのデモを探してご案内します。</span>
-      <div className="row gap6 wrap">
-        {SUGGESTIONS.map((c) => <button key={c} type="button" className="guide-choice" onClick={() => guide.answerInterest(c)}>{c}</button>)}
-      </div>
-      <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
-      <div className="row gap8">
-        <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
-        <Button small onClick={() => guide.answerDemoOffer()}>あとで</Button>
-      </div>
+      {step.kind === 'start' && <>
+        <span>こんにちは、ツグミです。何をしてみますか？</span>
+        <div className="row gap6 wrap">
+          {chip('既にある Workflow を見る', () => guide.setOfferStep({ kind: 'fields' }))}
+          {chip('Draft を AI に実装させる', () => guide.setOfferStep({ kind: 'drafts' }))}
+        </div>
+        <ReplyField placeholder="質問を書く" autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t, screen) }} />
+        <div className="row gap8"><Button small onClick={() => guide.answerDemoOffer()}>あとで</Button></div>
+      </>}
+      {step.kind === 'fields' && <>
+        <span>どんな分野に興味がありますか？</span>
+        <div className="row gap6 wrap">{fields.map((f) => chip(f, () => guide.setOfferStep({ kind: 'field', field: f })))}</div>
+        <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
+        <div className="row gap8">
+          <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button>
+        </div>
+      </>}
+      {step.kind === 'field' && <>
+        <span>「{step.field}」のデモです。どれを見ますか？</span>
+        <div className="row gap6 wrap">{demos.filter((d) => d.field === step.field).map((d) => chip(d.title, () => guide.pickDemo(d)))}</div>
+        <div className="row gap8">
+          <Button small onClick={() => guide.recommend(step.field)}>おすすめを聞く</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'fields' })}>分野を選び直す</Button>
+        </div>
+      </>}
+      {step.kind === 'drafts' && <>
+        <span>どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。</span>
+        <div className="row gap6 wrap">{demos.filter((d) => !d.field).map((d) => chip(shortTitle(d.title), () => guide.pickDemo(d)))}</div>
+        <div className="row gap8"><Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button></div>
+      </>}
     </div>
   )
 }
@@ -230,7 +258,10 @@ export function GuideFlyer() {
   const scrolled = useRef<string>()
   const perchBox = (): Box | undefined => {
     if (!target) return undefined
-    const el = [...document.querySelectorAll(targetSelector(target))].find(visible)
+    const atTarget = [...document.querySelectorAll(targetSelector(target))].find(visible)
+    // A Card still being written is not on the canvas yet: the bird stands by the code it is writing.
+    const panel = !atTarget && writing && target === `card:${writing}` ? document.querySelector(`.cv-writing[data-writing-card="${CSS.escape(writing)}"]`) : null
+    const el = atTarget ?? (visible(panel) ? panel! : undefined)
     // A demo card or a control out of view is brought into view once.
     if (el && scrolled.current !== target) {
       scrolled.current = target
@@ -241,7 +272,8 @@ export function GuideFlyer() {
     if (!r || r.width === 0) return undefined
     const right = r.right + 320 < window.innerWidth
     const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
-    const y = Math.min(Math.max(r.top + 10, 70), window.innerHeight - 10)
+    // The panel of a new Card is up under the toolbar: halfway down it, the bird stays off the toolbar's buttons.
+    const y = Math.min(Math.max(el === atTarget ? r.top + 10 : r.top + r.height / 2, 70), window.innerHeight - 10)
     const k = perchScale(el?.closest<HTMLElement>('[data-canvas-zoom]')?.dataset.canvasZoom)
     return { left: x - (BIRD.w * k) / 2, top: y - BIRD.h * k, width: BIRD.w * k, height: BIRD.h * k, flip: right }
   }
@@ -548,6 +580,34 @@ function Row({ item, perform, enabled }: { item: GuideItem; perform: (a: GuideAc
   )
 }
 
+/** Right after the user's first key (or sign-in): Tsugumi offers to show a
+ *  demo itself. ガイドを見る does what the bubble's 定番のデモを見る does. */
+export function GuideInvite() {
+  useObserve(guide, prefs)
+  if (!guide.demoInvite) return null
+  return (
+    <Sheet onClose={() => guide.closeInvite(true)} width={460}>
+      <div className="sheet-body guide-setup" role="alertdialog" aria-label="ガイドを見てみますか？">
+        <div className="row gap12">
+          <span className={`guide-avatar${prefs.tsugumiStill ? ' still' : ''}`} style={{ flex: 'none' }}><GuideBird /></span>
+          <div className="col gap6">
+            <div className="title2">ガイドを見てみますか？</div>
+            <div>こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。</div>
+          </div>
+        </div>
+        <div className="caption secondary">案内ではモデルの API を使うため、利用料がかかります。</div>
+        <div className="row end gap8">
+          <Button onClick={() => guide.closeInvite(true)}>あとで</Button>
+          <Button kind="prominent" onClick={() => {
+            guide.closeInvite(false)
+            makePerform()({ kind: 'open_demo', label: '', demo: 'report' })
+          }}>ガイドを見る</Button>
+        </div>
+      </div>
+    </Sheet>
+  )
+}
+
 // ---- First start ------------------------------------------------------------------------
 
 /** The first start: choose Anthropic or OpenAI and enter that provider's API
@@ -566,7 +626,7 @@ export function GuideSetupSheet() {
     setMessage(undefined)
     try {
       await api('/api/guide/check', {})
-      await guide.finishSetup()
+      await guide.finishSetup(true)
     } catch (e) {
       setMessage(`接続を確かめられませんでした（${errorText(e)}）。キーを入れ直すか、ネットワークを確かめて再試行してください。`)
     }
@@ -607,7 +667,7 @@ export function GuideSetupSheet() {
           placeholder={provider === 'openai' ? 'OpenAI の API キー' : 'Anthropic の API キー'} aria-label="API キー"
           onChange={(e) => setKey(e.target.value)} />
         {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
-        <div className="caption secondary">キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。</div>
+        <div className="caption secondary">キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。</div>
         <div className="row gap8">
           <Button onClick={() => void guide.finishSetup()}>スキップして始める</Button>
           <span className="spacer" />

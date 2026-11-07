@@ -596,20 +596,20 @@ private struct APISettings: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {
-        LabeledContent("状態", value: GuideController.shared.available
+        LabeledContent("状態", value: GuideController.shared.connected
                        ? String(localized: "右下に表示中（\(AgentSettings.current().name)）")
-                       : String(localized: "API キーが未設定のため表示していません"))
+                       : String(localized: "API キーが未設定のため、決まったデモの案内だけをしています"))
         // Pressed, it says what happens next and waits until it has happened.
         Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
           .disabled(GuideController.shared.offersDemo)
         if GuideController.shared.offersDemo {
-          Label("設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
+          Label("設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
             .font(.callout).foregroundStyle(.green)
         }
       } header: {
         Text("ガイドのツグミ")
       } footer: {
-        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。")
+        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。")
           .font(.caption).foregroundStyle(.secondary)
       }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
@@ -641,7 +641,7 @@ private struct APIKeySection: View {
           do {
             try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
-            refresh()
+            refresh(saved: true)
             message = String(localized: "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
           } catch { message = "\(error)" }
         }
@@ -682,10 +682,10 @@ private struct APIKeySection: View {
     }
   }
 
-  private func refresh() {
+  private func refresh(saved: Bool = false) {
     stored = Keychain.exists(account: config.name)
     // The guide is there while the connection in use works.
-    GuideController.shared.refreshAvailability()
+    if saved { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
   }
 }
 

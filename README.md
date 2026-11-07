@@ -11,7 +11,7 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は未確認）"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
@@ -21,7 +21,7 @@
 
 **AI と描いた解析を、そのまま動かし、自分の手で確かめる。**
 
-Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う macOS の研究ワークベンチです。
+Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認）。
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
@@ -39,7 +39,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
 - **気になった Card だけを、すぐ試す。** 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。
 - **環境ごと固定して、確かめ直せる。** Card ごとの依存関係を Nix で固定し、実行は git の版と結びつけて記録します。
-- **計算は Mac の中の隔離された VM で。** Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](docs/security.md#モデルに送られるもの)しています。
+- **計算は隔離して。** Mac では隔離された VM の中で、Linux では bubblewrap で動かします。Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](docs/security.md#モデルに送られるもの)しています。
 - **完成した Workflow に LLM は要らない。** 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。
 
 ## AI を研究に積極的に活用できていますか？
@@ -88,6 +88,7 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 ## AI に頼みたいことは、本来単純なはずです
 
 観測データをダウンロードして、エネルギーで区切って、描画する。
+
 やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。
 それなのに今は、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直しています。
 
@@ -155,20 +156,40 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ### ツグミに案内してもらう
 
-はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選んで案内します。
+はじめて開くと、右下のツグミが「何をしてみますか？」と尋ねます。動くデモを見るか、Draft を AI に実装させるかを選び、分野からデモを選ぶと、そのデモまで案内します。
 プロジェクトではチャットがツグミです。`$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。
 
 ![ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
 
 ## 使ってみる
 
-Apple silicon Mac / macOS 26 以降に対応しています。[GitHub Releases](https://github.com/gen740/Tsugumi/releases) のアプリを入れると、以後は新しいリリースに自動で更新されます。アプリには計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
+| 環境 | 使い方 | 動作の確認 |
+| --- | --- | --- |
+| macOS（Apple silicon / macOS 26 以降） | デスクトップアプリ、または `tsugumi` コマンド（ブラウザの Web UI） | 確認済み |
+| Linux（x86_64 / aarch64、Nix が必要） | `tsugumi` コマンド | OrbStack の VM（Ubuntu、aarch64）で確認済み |
+| Windows（WSL2 と、その中の Nix が必要） | `tsugumi` コマンド | **未確認** |
+
+**デスクトップアプリ**（Mac）は [GitHub Releases](https://github.com/gen740/Tsugumi/releases) から入れると、以後は新しいリリースに自動で更新されます。計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
 
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](INSTALL.md) を参照してください。
+Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。
+
+**`tsugumi` コマンド**（Mac・Linux）は root なしで入り、実行するだけでブラウザに Web UI が開きます。Mac ではデスクトップ版と同じ VM と設定を使います。
+
+```bash
+curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
+```
+
+**Windows** では PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。
+
+```powershell
+irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
+```
+
+詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](INSTALL.md) を参照してください。
 
 起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。
 

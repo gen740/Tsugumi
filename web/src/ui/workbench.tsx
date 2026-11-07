@@ -13,7 +13,7 @@ import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, Wor
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel, PermissionHost } from './chat'
-import { guide } from '../model/guide'
+import { guide, OPEN_PANELS } from '../model/guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
@@ -79,13 +79,21 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   useEffect(() => {
     if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)
   }, [session])
-  // Tsugumi opens a Card's settings to show it, and points into a Card in Card
+  // Tsugumi opens what it shows (a panel under the canvas, the versions, a Card's settings), and points into a Card in Card
   // (or back at a root Card): the canvas shows that workflow.
   useObserve(guide)
   useEffect(() => {
     const r = guide.openRequest
     if (!onSwitchProject || !r) return
     guide.openRequest = undefined
+    const panel = OPEN_PANELS[r]
+    if (panel) {
+      workspace.set('bottomPanel', panel)
+      workspace.set('showBottom', true)
+      return
+    }
+    if (r === 'versions') return app.openWindow(session, { kind: 'versions' })
+    if (!r.startsWith('card:')) return
     const p = r.slice(5)
     const k = session.instance(p) ? p : key([...(tab?.scope ?? []), ...p.split('/')])
     if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
@@ -187,7 +195,7 @@ export function loadingContent(session: ProjectSession): LoadingContent | undefi
     case 'reconnecting':
       return { title: '再接続しています…', message: '未保存の変更は保持しています。', dirty }
     case 'starting':
-      return { title: '起動しています', message: env.message || 'このプロジェクトの tsugumid を起動しています', detail: 'tsugumid', dirty }
+      return { title: '起動しています', message: env.message || 'このプロジェクトの tsugumid を起動しています', fraction: env.fraction, detail: env.stage ?? 'tsugumid', dirty }
     case 'ready':
       if (session.connectionMessage) return undefined
       return { title: 'プロジェクトを読み込んでいます…', detail: 'project snapshot', dirty }
@@ -343,10 +351,10 @@ const PANEL_SHORTCUT: Record<BottomPanel, ShortcutAction> = { log: 'toggleLog', 
 
 /** A status bar control that looks pressable: a light background, stronger
  *  on hover and when pressed (plain status texts have none). */
-const StatusButton = ({ selected, help, onClick, children, label, buttonRef }: {
-  selected?: boolean; help?: string; onClick: () => void; children: ReactNode; label?: string; buttonRef?: React.Ref<HTMLButtonElement>
+const StatusButton = ({ selected, help, onClick, children, label, buttonRef, guide }: {
+  selected?: boolean; help?: string; onClick: () => void; children: ReactNode; label?: string; buttonRef?: React.Ref<HTMLButtonElement>; guide?: string
 }) => (
-  <button ref={buttonRef} type="button" className={`status-button${selected ? ' selected' : ''}`} title={help} aria-label={label} aria-pressed={selected}
+  <button ref={buttonRef} type="button" className={`status-button${selected ? ' selected' : ''}`} title={help} aria-label={label} aria-pressed={selected} data-guide={guide}
     onClick={(e) => { e.stopPropagation(); onClick() }}>
     {children}
   </button>
@@ -379,7 +387,7 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           )}
         </span>
         <span className="vdivider sb-not-min" />
-        <StatusButton buttonRef={syncRef} help="保存・同期の詳細" onClick={() => setShowSync(!showSync)}>
+        <StatusButton buttonRef={syncRef} help="保存・同期の詳細" guide="save" onClick={() => setShowSync(!showSync)}>
           {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>保存済み</span></>}
           {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">実行が終わったら保存します</span><span className="sb-short">実行後に保存</span></>}
           {sync.kind === 'saving' && <><Spinner small /><span>保存中…</span></>}

@@ -67,3 +67,4 @@ await import("./nixSources")
 await import("./sessionRestore")
 
 await import("./perchScale")
+await import("./guideScript")
