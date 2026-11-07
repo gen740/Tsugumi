@@ -202,7 +202,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: Home から入り直したチャット（開いているセッションにつながること、接続を待って回答を再開し生成中と示すこと、停止してすぐ送った回答が「停止」と示されないこと）、モデルメニュー（開くたびの再取得、失敗・空の答え・遅い接続で保存済みの一覧が残ること）、段階とフロー方向の幾何、整列（Web と同じ fixture）、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出、複数のメインウインドウ（プロジェクトの開き先、ツグミがそのプロジェクトのウインドウにだけ出ること）、自動更新（版の比較、リリースの選び方、チェックサム、入れてよいアプリかの確認、開発版とリリース版のサポートフォルダ） |
 | `macOS/Tests/TsugumiBenchmarks`（`TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks`） | 描画のベンチマーク（3D 点群の 1 フレーム）。通常のテストでは動かない |
 | 実際の API（任意、`cd macOS/CoreTests && TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
-| CI（`.github/workflows/ci.yml`、GitHub Actions） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid と tsugumi-worker をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`）。文書だけの変更では macOS のジョブを省く（アプリが読む `README.md`・`docs/Philosophy.md`・`docs/Name.md`・`docs/Author.md` を除く） |
+| CI（`.github/workflows/ci.yml`。GitHub Actions は止めてあり、同じ検査を手元の `tests/ci-local.sh` で行う。Mac では Linux のジョブを Docker のコンテナで動かす） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid と tsugumi-worker をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`）。文書だけの変更では macOS のジョブを省く（アプリが読む `README.md`・`docs/Philosophy.md`・`docs/Name.md`・`docs/Author.md` を除く） |
 | リリース（`.github/workflows/release.yml`、GitHub Actions） | タグ `v<VERSION>` で macOS のランナーが `build-app.sh --release` を作り、署名と Info.plist（リリース版・版番号）を確かめて `Tsugumi.zip` と `Tsugumi.zip.sha256` を GitHub Release に公開する（[リリース](#リリース)） |
 | `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 
@@ -305,7 +305,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | UI スクリプトとスクリーンショット | アプリ内の操作経路で実ウインドウを操作し、Card・子 Workflow・ソース・タイムライン・ガイドを撮影。公開画像と撮影手順は [README](../index.md) と [macOS/tools/screenshots](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/screenshots/README.md)。実マウスによるクリック・ドラッグの E2E テストとは確認範囲が異なる |
 | Dawn の描画 | 描画ベンチマークは `TSUGUMI_BENCH=1` で実行。Live Stream の折れ線は `live-stream.ui` で実画面を撮影できる。目視確認の結果は本資料には記録していない |
 | Agent と ChatGPT | テスト用モデルでは認証・取消・再試行などの分岐を自動確認。実 Claude API の実行記録は [AgentRun.md](agentrun.md)、実 ChatGPT プランでの修正は上のコミットを参照 |
-| CI と共通 VM | CI の対象とコマンドは [ci.yml](https://github.com/gen740/Tsugumi/blob/main/.github/workflows/ci.yml)、実行結果は [GitHub Actions](https://github.com/gen740/Tsugumi/actions/workflows/ci.yml)。共通 VM のテストは Virtualization.framework を使える Mac で `TSUGUMI_TEST_CONTAINER=1` を指定して行う |
+| CI と共通 VM | CI の対象とコマンドは [ci.yml](https://github.com/gen740/Tsugumi/blob/main/.github/workflows/ci.yml)。GitHub Actions は止めてあり、merge の前に手元で `tests/ci-local.sh` を通す（過去の実行結果は [GitHub Actions](https://github.com/gen740/Tsugumi/actions/workflows/ci.yml)）。共通 VM のテストは Virtualization.framework を使える Mac で `TSUGUMI_TEST_CONTAINER=1` を指定して行う |
 
 ## 解決済みの記録
 

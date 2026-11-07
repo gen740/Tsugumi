@@ -76,6 +76,10 @@ Claude Code、Codex などへの作業の指示です（`CLAUDE.md` はこのフ
 - **起動:** [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) を使います（`open -g` で背面に開き、撮影もそのままできます）。直接起動するなら `open -g -n --env TSUGUMI_UI_SCRIPT=<絶対パス> <Tsugumi.app>` にし、実行ファイルを直接動かしません。
 - **ビルド:** `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh` で署名します。ad-hoc 署名のビルドは再ビルドのたびに別のアプリとして扱われ、API キーを読むときにパスワードのダイアログが出ます（[docs/Development.md](docs/Development.md) の「開発版の署名」）。証明書がない環境（`security find-identity -v -p codesigning`）ではそのままビルドします。
 
+### merge の前の確認
+
+GitHub Actions はリポジトリの設定で止めてあります。CI が確かめていたこと（[.github/workflows/ci.yml](.github/workflows/ci.yml) の Linux と macOS のジョブ）は、手元の [tests/ci-local.sh](tests/ci-local.sh) で同じように確かめ、通ってから merge します。Mac では macOS のジョブをそのまま、Linux のジョブを Docker（OrbStack）のコンテナで動かします。
+
 ### 互換性
 
 - **v1.0.0 になるまでは互換性を気にしない。** プロジェクトの文書（`tsugumi.json`・`layout.json` など）、設定、RPC プロトコル、保存形式、VM・サポートフォルダの中身などは、移行コードや互換レイヤーを書かずに変えてよい。
