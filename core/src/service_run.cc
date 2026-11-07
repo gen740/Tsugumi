@@ -255,6 +255,25 @@ void Service::run_history(RequestIn& req) {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::RunPage, off.Union()));
 }
 
+void Service::run_latest_invocations(RequestIn& req) {
+  const auto* r = req.request()->value_as_RunLatestInvocationsRequest();
+  require_uuid(r->run_id(), "run_id");
+  std::string run_id = r->run_id()->str();
+  auto rows = history_->read([&](sql::Db& db) {
+    if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
+    return History::latest_invocations(db, run_id);
+  });
+  for (auto& s : rows) history_->overlay(s);
+  FBB b;
+  std::vector<flatbuffers::Offset<R::InvocationSummary>> out;
+  for (const auto& s : rows) out.push_back(wire::invocation(b, s));
+  auto v = b.CreateVector(out);
+  R::InvocationPageBuilder pb(b);
+  pb.add_records(v);
+  auto off = pb.Finish();
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage, off.Union()));
+}
+
 void Service::run_invocations(RequestIn& req) {
   const auto* r = req.request()->value_as_RunInvocationsRequest();
   require_uuid(r->run_id(), "run_id");

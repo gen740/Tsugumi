@@ -4,7 +4,7 @@
       "id": "report",
       "title": "Data to report",
       "field": "基本の機能を知る",
-      "description": "Seeded CSV generation, Python aggregation, a Markdown/JSON report kept as a Directory artifact and archived by a nested graph. Includes an intentional failure switch.",
+      "description": "データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。",
       "path": "report",
       "tags": [
         "Python",
@@ -17,7 +17,7 @@
       "id": "collatz",
       "title": "Collatz (C++ / Python / Julia / R)",
       "field": "基本の機能を知る",
-      "description": "The same feedback loop implemented in C++, Python, Julia and R inside four nested graphs, with merge, fork and branch. 27 reaches 1 after 111 steps; the four sequences are compared and kept as a CSV file. The Collatz conjecture is explained on a note with formulas.",
+      "description": "四つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。",
       "path": "collatz",
       "tags": [
         "C++",
@@ -34,7 +34,7 @@
       "id": "live-stream",
       "title": "Live Stream",
       "field": "基本の機能を知る",
-      "description": "A seeded random walk sampled every 100 ms and drawn with Dawn as a live line chart, through a feedback loop that can be cancelled at any time.",
+      "description": "時系列の出力を、実行中にそのままグラフで描く。",
       "path": "live-stream",
       "tags": [
         "Python",
@@ -47,7 +47,7 @@
       "id": "plots",
       "title": "Plots (matplotlib, Plotly, Altair)",
       "field": "基本の機能を知る",
-      "description": "Random walks drawn by plotting code written as it would be anywhere else: matplotlib's plt.show() and a FuncAnimation that plays live, Plotly's fig.show() and Altair's chart.show() as interactive plots (zoom, hover). No Tsugumi-specific plotting calls.",
+      "description": "ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。",
       "path": "plots",
       "tags": [
         "Python",
@@ -62,7 +62,7 @@
       "id": "casa",
       "title": "Cas A · Chandra RGB",
       "field": "宇宙・地球",
-      "description": "Chandra X-ray events of the supernova remnant Cassiopeia A and the CIAO tools, both fixed by Nix (the events fetched once by hash from the HEASARC archive, CIAO built once from source). CIAO's dmcopy splits the photons into three energy bands on a sky grid centred on Cas A, which become an RGB image. ObsID 25628 (13 MB) by default; 114 is the deep 50 ks observation.",
+      "description": "X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。",
       "path": "casa",
       "tags": [
         "Python",
@@ -88,7 +88,7 @@
       "id": "gw150914",
       "title": "GW150914 · 重力波",
       "field": "宇宙・地球",
-      "description": "The first binary black hole merger seen by LIGO: the public H1 and L1 strain data are fetched, whitened and shown as a chirp in a spectrogram. The pass band can be changed and that step rerun alone.",
+      "description": "公開データから、重力波のチャープを取り出して図にする。",
       "path": "gw150914",
       "tags": [
         "Python",
@@ -114,7 +114,7 @@
       "id": "protein-6lu7",
       "title": "6LU7 · タンパク質と結合ポケット",
       "field": "生命・医療",
-      "description": "The SARS-CoV-2 main protease with its inhibitor (PDB 6LU7): the structure is fetched from the PDB, drawn, and the residues within a distance of the ligand are listed.",
+      "description": "タンパク質の立体構造を取得して、結合ポケットを見る。",
       "path": "protein-6lu7",
       "tags": [
         "Python",
@@ -140,7 +140,7 @@
       "id": "exoplanet-transit",
       "title": "Kepler-6 b · 系外惑星トランジット",
       "field": "宇宙・地球",
-      "description": "Kepler light curves of Kepler-6 are detrended and folded at the planet's period; the transit depth gives the planet's size relative to its star.",
+      "description": "光度曲線を折りたたんで、系外惑星のトランジットを見る。",
       "path": "exoplanet-transit",
       "tags": [
         "Python",
@@ -166,7 +166,7 @@
       "id": "seismic-trench",
       "title": "日本海溝 · 震源断面と b 値",
       "field": "宇宙・地球",
-      "description": "USGS earthquakes along the Japan Trench: a depth section across the trench shows the subducting slab, and the Gutenberg–Richter b value is fitted.",
+      "description": "地震カタログから、震源の断面と b 値を見る。",
       "path": "seismic-trench",
       "tags": [
         "Python",
@@ -192,7 +192,7 @@
       "id": "mnist-classifiers",
       "title": "MNIST · 手書き数字の分類器くらべ",
       "field": "統計・機械学習",
-      "description": "The real MNIST, fixed by Nix, sent down seven branches at once: kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a small CNN, each Card in its own Nix environment on one CPU thread. They meet at a comparison: a leaderboard that says whether the gap means anything, accuracy against time, per-digit recall and the digits most models get wrong.",
+      "description": "本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べる。",
       "path": "mnist-classifiers",
       "tags": [
         "Python",
@@ -207,7 +207,7 @@
       "id": "newton",
       "title": "Newton 法 · 初期値と収束",
       "field": "数値計算・最適化",
-      "description": "Newton's method on z^3 - 1 in the complex plane: error against iteration from a list of starts with the order estimated numerically, the fractal basins of attraction with iteration counts, and the cases that lose quadratic convergence or never converge (a start near a critical point, a double root, a 2-cycle). Checked against the exact roots.",
+      "description": "初期値で行き先と収束の速さが変わる様子を、複素平面の地図で見る。",
       "path": "newton",
       "tags": [
         "Python",
@@ -220,7 +220,7 @@
       "id": "pharmacokinetics",
       "title": "薬物動態 · 架空の薬物ツグミシン",
       "field": "生命・医療",
-      "description": "A one-compartment oral model of a fictional drug (a teaching model, not medical advice or dosing guidance): several dosing regimens side by side in an interactive plot, accumulation to steady state, peak and trough against a made-up window and missed doses. The numerical solution is compared with the closed-form superposition and the steady-state accumulation ratio.",
+      "description": "投与間隔で濃度がどう動くかを比べる教材。医療上の助言ではない。",
       "path": "pharmacokinetics",
       "tags": [
         "Python",
@@ -233,7 +233,7 @@
       "id": "max-flow",
       "title": "最大流と最小カット",
       "field": "数値計算・最適化",
-      "description": "A seeded synthetic layered network: the maximum flow by networkx, the minimum cut with max-flow = min-cut asserted, both drawn on the network, verified by scipy and a brute force over all cuts. Raising an edge off the cut changes nothing; a comparison Card and a sweep over every edge show which edges do move the result.",
+      "description": "架空のネットワークで、どの辺を増やせば流れが増えるかを確かめる。",
       "path": "max-flow",
       "tags": [
         "Python",
@@ -246,7 +246,7 @@
       "id": "dose-response",
       "title": "濃度–反応曲線",
       "field": "統計・機械学習",
-      "description": "A four-parameter logistic fit to seeded synthetic plate data for two fictional compounds, with residual-bootstrap intervals on the EC50 and Hill slope and their relative potency. The intervals contain the true values, and blow up with a warning when the concentration range does not bracket the EC50.",
+      "description": "真の値が分かるデータで、当てはめと信頼区間を確かめる。",
       "path": "dose-response",
       "tags": [
         "Python",
@@ -259,7 +259,7 @@
       "id": "molecules",
       "title": "分子の物性",
       "field": "化学・生態",
-      "description": "RDKit computes molecular weight, Crippen logP, TPSA and hydrogen-bond counts for well-known molecules given as SMILES, draws them, checks Lipinski's rule of five, plots weight against logP interactively and compares Morgan fingerprints. Paste a new SMILES and rerun; an invalid one gets a clear message instead of a crash.",
+      "description": "SMILES から RDKit で物性と構造式を求める。",
       "path": "molecules",
       "tags": [
         "Python",
@@ -272,7 +272,7 @@
       "id": "cell-count",
       "title": "細胞画像の計数",
       "field": "生命・医療",
-      "description": "Seeded synthetic fluorescence-like images with known cell centres: background subtraction, Otsu threshold and a distance-transform watershed, scored by matching to the true centres. Threshold alone against watershed, and a sweep over density and noise that shows where the method fails. The same steps also run on a real image of nuclei fixed by Nix.",
+      "description": "正解のある合成画像で数え方を採点し、実際の核の画像にもかける。",
       "path": "cell-count",
       "tags": [
         "Python",
@@ -285,7 +285,7 @@
       "id": "survival",
       "title": "Survival analysis",
       "field": "生命・医療",
-      "description": "Kaplan-Meier curves, the log-rank test and a Cox model on the survival package's lung data (NCCTG advanced lung cancer trial), in R. The hazard ratio is compared across who is included and what is adjusted for in a forest-like figure, with cox.zph as the check of proportional hazards. KM and Cox are checked by hand-written estimates in the test.",
+      "description": "同じハザード比が、対象者と調整でどれだけ動くかを並べる。",
       "path": "survival",
       "tags": [
         "R",
@@ -300,7 +300,7 @@
       "id": "meta-analysis",
       "title": "Meta-analysis: BCG vaccine",
       "field": "生命・医療",
-      "description": "Fixed and random effects pooling of metafor's dat.bcg (13 BCG vaccine trials, Colditz et al. 1994), in R: forest and funnel plots, heterogeneity (I2, tau2), meta-regression on absolute latitude, leave-one-out and a choice of estimators. The pooled estimates are checked by hand-written inverse-variance weighting and DerSimonian-Laird in the test.",
+      "description": "併合の方法や試験の除外で、結論がどう動くかを比べる。",
       "path": "meta-analysis",
       "tags": [
         "R",
@@ -315,7 +315,7 @@
       "id": "rna-seq",
       "title": "RNA-seq: airway and dexamethasone",
       "field": "生命・医療",
-      "description": "Differential expression on the airway data (Himes et al. 2014, airway smooth muscle cells with dexamethasone) in R: normalization, sample PCA, DESeq2 and edgeR on two branches, MA and volcano plots, top genes with known responders, thresholds, and the paired design against the unpaired one. Size factors and fold changes of known responders are checked by hand in the test.",
+      "description": "DESeq2 と edgeR で、発現の動く遺伝子の数が閾値でどう変わるかを見る。",
       "path": "rna-seq",
       "tags": [
         "R",
@@ -330,7 +330,7 @@
       "id": "simpson",
       "title": "Simpson's paradox",
       "field": "統計・機械学習",
-      "description": "A correlation and a rate that reverse when stratified, in R: bill length against depth in palmerpenguins (Gorman et al. 2014), with a param choosing the stratifying variable, and the 1973 Berkeley admissions in UCBAdmissions with the Mantel-Haenszel odds ratio. The note says why the stratified one is not automatically right. Pearson's r and the odds ratio are checked by hand in the test.",
+      "description": "全体と層で向きが逆になる例を、2 つの実データで確かめる。",
       "path": "simpson",
       "tags": [
         "R",
@@ -344,7 +344,7 @@
       "id": "battery",
       "title": "蓄電池の最適運用",
       "field": "数値計算・最適化",
-      "description": "Optimal charge and discharge of a home battery by dynamic programming over state of charge, on a synthetic week. A flat tariff with equal selling price leaves the battery still; savings saturate with capacity. The DP is checked against a brute force on a short horizon. Julia, charts in Vega-Lite.",
+      "description": "架空の料金で、充放電を動的計画法で最適化する。",
       "path": "battery",
       "tags": [
         "Julia",
@@ -357,7 +357,7 @@
       "id": "gillespie",
       "title": "化学反応のゆらぎ",
       "field": "化学・生態",
-      "description": "Gillespie's stochastic simulation of mRNA birth and death against the rate equation: seeded trajectories, a Poisson stationary distribution (Fano factor about 1), noise growing as 1/sqrt(N) when the volume shrinks, and A + B <-> C departing from mass action in small volumes. Each value is compared with its closed form. Julia, charts in Vega-Lite.",
+      "description": "Gillespie 法のシミュレーションを理論と照合する。",
       "path": "gillespie",
       "tags": [
         "Julia",
@@ -370,7 +370,7 @@
       "id": "heat-inverse",
       "title": "熱伝導の逆問題",
       "field": "数値計算・最適化",
-      "description": "Recover a rod's initial temperature from noisy measurements at a later time (synthetic). Singular values decay steeply, naive inversion blows up, Tikhonov regularization with the discrepancy principle and the L-curve recovers what the noise leaves, and a later measurement loses detail. The forward model is checked against heat conservation and analytic mode decay. Julia, charts in Vega-Lite.",
+      "description": "素朴な逆解が破綻し、正則化で復元できることを見る。",
       "path": "heat-inverse",
       "tags": [
         "Julia",
@@ -383,7 +383,7 @@
       "id": "ecology-models",
       "title": "生態系のモデル比較",
       "field": "化学・生態",
-      "description": "Lotka-Volterra, logistic prey and Holling type II fitted to the real Hudson's Bay Company hare and lynx pelt records of 1900-1920 with a hand-written RK4 and Nelder-Mead: residuals, AIC and BIC, a forecast of held-out years, and phase portraits far beyond the data. RK4 is checked with Lotka-Volterra's conserved quantity. Julia, charts in Vega-Lite.",
+      "description": "毛皮の記録に捕食モデルを当てはめて比べる。",
       "path": "ecology-models",
       "tags": [
         "Julia",

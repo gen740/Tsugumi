@@ -100,6 +100,9 @@ struct CanvasWorkspace: View {
         ViewThatFits(in: .horizontal) {
           Text(session.scopeName([])).fontWeight(.semibold).fixedSize()
           Text(session.scopeName([])).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
+            .frame(minWidth: 48)
+          // No room for even part of a name: a mark, not a sliver of a letter.
+          Text(verbatim: "…").fontWeight(.semibold).fixedSize()
         }
       }
         .buttonStyle(.plain)

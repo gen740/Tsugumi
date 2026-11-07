@@ -34,7 +34,7 @@
     {
       "id": "n1",
       "scope": "",
-      "text": "Edit interval_ms, seed and samples on Stream settings and window on Live chart. Cancel stops the stream; the last chart stays.",
+      "text": "Stream settings の interval_ms・seed・samples と、Live chart の window を変えられます。停止するとストリームは止まり、最後のグラフが残ります。",
       "x": -520.0,
       "y": 0.0
     }

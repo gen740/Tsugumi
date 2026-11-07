@@ -187,7 +187,7 @@ struct OutputFrameView: View {
           .buttonStyle(.borderless).help("枠を削除（Card は残ります）")
       }
       .foregroundStyle(.secondary)
-      DisplayContent(display: session.displays[cardKey], zoom: z)
+      DisplayContent(display: session.displays[cardKey], zoom: z, emptyNote: session.noResultNote(cardKey))
     }
     .padding(8 * z)
     .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
@@ -203,6 +203,8 @@ struct DisplayContent: View {
   let display: DisplaySnapshot?
   var large = false
   var zoom: CGFloat = 1
+  /// Why there is no result, when it is not that nothing has run yet.
+  var emptyNote: String?
 
   @State private var tablePage = 0
 
@@ -297,7 +299,7 @@ struct DisplayContent: View {
     case nil where large:
       ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text("実行すると表示されます。"))
     case nil:
-      Text("まだ結果がありません（実行すると表示されます）")
+      Text(emptyNote ?? String(localized: "まだ結果がありません（実行すると表示されます）"))
         .font(.system(size: size(10, 13))).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

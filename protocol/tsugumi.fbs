@@ -489,6 +489,10 @@ table RunInvocationsRequest {
   limit:uint32 = null (id: 3);
 }
 
+/// -> InvocationPage. Each Card's latest invocation of a run, for a client that
+/// opens the project after the run: it did not get RunCardChanged for them.
+table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
+
 /// -> RecordResult. invocation and follow_latest = true are exclusive.
 table RunRecordRequest {
   run_id:string (id: 0, required);
@@ -592,6 +596,7 @@ union RequestPayload {
   VersionDiffRequest = 38,
   VersionSummaryRequest = 39,
   NixSourceResolveRequest = 40,
+  RunLatestInvocationsRequest = 41,
 }
 
 // ---- Replies -----------------------------------------------------------------

@@ -241,7 +241,7 @@ private struct NixSourceSettings: View {
     } header: {
       Text("外部ソース")
     } footer: {
-      Text("ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
+      Text("追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
         .font(.caption).foregroundStyle(.secondary)
     }
   }

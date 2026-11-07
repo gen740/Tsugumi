@@ -232,6 +232,13 @@ public extension RPCClient {
     return res.files.compactMap { $0 }
   }
 
+  /// Each Card's latest invocation of a run.
+  func latestInvocations(runId: String) async throws -> Tsugumi_RPC_InvocationPageT {
+    let r = Tsugumi_RPC_RunLatestInvocationsRequestT()
+    r.runId = runId
+    return try await call(.runlatestinvocationsrequest, r)
+  }
+
   /// Looks a flake up for nixSources (nothing is saved).
   func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
     let r = Tsugumi_RPC_NixSourceResolveRequestT()
