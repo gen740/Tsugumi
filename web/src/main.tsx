@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client'
+import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import './styles/canvas.css'
 import './styles/demoPlayer.css'

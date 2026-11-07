@@ -54,6 +54,8 @@ const server = {
   entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts') },
   outdir: out,
   bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
+  // A native module: loaded from node_modules when a terminal opens.
+  external: ['node-pty'],
   logLevel: 'info',
 }
 const client = {

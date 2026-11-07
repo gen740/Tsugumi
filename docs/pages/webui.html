@@ -53,6 +53,7 @@
 </code></pre>
 <pre><code class="language-bash">cd web &amp;&amp; npm install &amp;&amp; nix develop --command npm run gen &amp;&amp; npm run build
 </code></pre>
+<p>ターミナルの <code>node-pty</code> はネイティブのモジュールです。macOS には配布物に組み込み済みのものがあり、Linux では <code>npm install</code> のときにビルドします（C++ コンパイラと Python が必要）。ビルドできなくても <code>npm install</code> と Web UI は動き、ターミナルを開くと理由を表示します。</p>
 <pre><code class="language-bash">node web/dist/server.js --open
 </code></pre>
 <p>起動時に表示される <code>http://127.0.0.1:8780/?key=…</code> を開きます（<code>--open</code> なら自動で開きます）。<code>key</code> は起動のたびに作る鍵で、このページだけが送る cookie（HttpOnly・SameSite=Strict）に置き換わってアドレスバーから消えます。<code>/api/</code> はすべて（GET とイベントの購読も）この cookie を求めるので、同じマシンの他のユーザーや他のサイトのページからは使えません。変更を伴う呼び出しはさらに専用のヘッダーを求めます。応答には CSP（<code>frame-ancestors &#39;none&#39;</code>）と <code>nosniff</code> を付けます。<code>--port</code> でポートを、引数のプロジェクトフォルダでそのまま開くプロジェクトを指定できます。起動中はデータフォルダに <code>server.json</code>（ポートと Agent 用の鍵、0600）を置き、<a href="claude-code.html">Claude Code の plugin</a> はこれで動いているサーバーを見つけます。この鍵はページの鍵とは別で、plugin が使う口（<code>AGENT_ROUTES</code>）にしか届かず、Card の権限を広げる保存の承認には答えられません（<a href="security.html#agent-の権限境界">セキュリティ §8</a>）。core のバイナリがない場合は、初期設定画面からビルドすることもできます。</p>
