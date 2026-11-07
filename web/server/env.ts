@@ -14,7 +14,8 @@ export interface Binaries {
 
 export type EnvState =
   | { state: 'stopped' }
-  | { state: 'starting'; message: string }
+  // stage: the step of a start in the VM (vm.ts), and how far along it is.
+  | { state: 'starting'; message: string; stage?: string; fraction?: number }
   // unix: the Agent's raw socket; a tsugumid in the VM (vm.ts) has only the endpoint.
   | { state: 'ready'; endpoint: string; token: string; projectId: string; unix?: string; pid?: number; readyFile: string }
   | { state: 'failed'; message: string; recovery: string; log: string }
