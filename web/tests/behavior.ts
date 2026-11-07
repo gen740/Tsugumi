@@ -59,3 +59,5 @@ await import("./freeSpot")
 await import("./deleteCard")
 
 await import("./saveFailure")
+
+await import("./draftDisplays")

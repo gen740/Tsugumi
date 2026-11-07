@@ -770,6 +770,9 @@ export class ProjectSession extends Observable {
       return
     }
     const wasClean = !this.dirty
+    // The Cards that send displays, before this change (definitions and
+    // resolution are replaced below).
+    const shown = [...this.displayedCards].sort().join('|')
     this.rev = d.rev ?? this.rev
     this.executionRev = d.executionRev ?? this.executionRev
     if (d.projectJson !== null) {
@@ -789,7 +792,6 @@ export class ProjectSession extends Observable {
     for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
     this.refreshExternals()
-    const shown = [...this.displayedCards].sort().join('|')
     this.applyResolution(d.resolution, d.diagnostics)
     // A Draft implemented (or any Card that became code or a logger) sends its displays too.
     if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
