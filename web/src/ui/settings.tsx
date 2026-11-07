@@ -536,7 +536,7 @@ function GuideSettings() {
       <Row label="状態"><span className="secondary">{guide.connected ? '右下に表示中' : 'API キーが未設定のため、決まったデモの案内だけをしています'}</span></Row>
       {/* Pressed, it says what happens next and waits until it has happened. */}
       <Row><Button disabled={guide.offersDemo} onClick={() => void guide.resetIntroduction()}>初回の案内（デモの勧誘）をもう一度表示</Button></Row>
-      {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。</span></Row>}
+      {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。</span></Row>}
       <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>ガイドは上の接続先とキーを使います。キーがあると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。</span></Row>
     </Section>
   )

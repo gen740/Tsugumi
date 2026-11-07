@@ -172,7 +172,7 @@ for (const c of fixture.modelOptions) {
   // The chat's Agent is the same Tsugumi: it can fly and offer choices too.
   const chat = new Agent(catalog, async () => { throw new Error('no rpc') },
     { name: 'none', baseURL: 'http://127.0.0.1:1', model: 'none', needsKey: false } as never, path.join(tmp, 'c.json'), 'c', {})
-  assert.ok(chat.tools.some((t) => t.name === 'guide_show') && chat.system.includes('only while the demo skill'))
+  assert.ok(chat.tools.some((t) => t.name === 'guide_show') && chat.system.includes(AGENT.guide.chatNote))
   // Its guiding is the built-in skill $demo, started by a tour or the user.
   assert.ok(DEMO_SKILL.startsWith('---\nname: demo\n') && DEMO_SKILL.includes('"endTour": true'))
   fs.rmSync(tmp, { recursive: true, force: true })

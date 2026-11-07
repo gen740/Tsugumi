@@ -57,7 +57,7 @@ export function ProjectActions({ workspace, session, onSwitchProject }: { worksp
   useObserve(guide)
   return (
     <div className="capsule material cv-actions">
-      {onSwitchProject && <Button kind="borderless" iconOnly icon="house" onClick={onSwitchProject} help={tip('Home へ戻る', 'home')} />}
+      {onSwitchProject && <Button kind="borderless" iconOnly icon="house" guide="home" onClick={onSwitchProject} help={tip('Home へ戻る', 'home')} />}
       {/* Another project beside this one: each browser tab has its own. */}
       {onSwitchProject && <Button kind="borderless" iconOnly icon="plus.square" onClick={() => window.open(location.pathname, '_blank')} help="新しいタブで Home を開く" />}
       {!workspace.showChat && onSwitchProject && guide.present ? (
@@ -194,7 +194,7 @@ export function CanvasDraftControls({ workspace, session, tab }: { workspace: Wo
   if (!drafts.length) return null
   return (
     <div className="capsule material cv-drafts">
-      <Button icon="wand.and.stars" small disabled={session.dirty || !session.connected || session.runActive || chat.busy}
+      <Button icon="wand.and.stars" small guide="generate" disabled={session.dirty || !session.connected || session.runActive || chat.busy}
         help={session.dirty ? '先に変更を保存してください（配線と Draft の内容を確定してから生成します）'
           : 'この階層の Draft をチャットで実装します。進捗はチャットに表示されます。'}
         onClick={() => {
@@ -219,7 +219,7 @@ export function CanvasCommentControls({ workspace, session, tab }: { workspace: 
   const count = asked.reduce((n, k) => n + session.openComments(k).length, 0)
   return (
     <div className="capsule material cv-drafts">
-      <Button icon="bubble.left" small disabled={session.dirty || !session.connected || chat.busy}
+      <Button icon="bubble.left" small guide="from_comments" disabled={session.dirty || !session.connected || chat.busy}
         help={session.dirty ? '先に変更を保存してください'
           : `${chosen.length ? '選択した Card' : 'この階層の Card'}の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。`}
         onClick={() => {
@@ -238,7 +238,7 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
   useObserve(cv, prefs, tab)
   const zoom = cv.camera.zoom
   return (
-    <div className="capsule material cv-view-controls">
+    <div className="capsule material cv-view-controls" data-guide="view">
       <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={tip('縮小', 'zoomOut')} onClick={() => cv.zoomFromControls(zoom / 1.2)} />
       <Button kind="borderless" small help={tip('100% に戻す', 'actualSize')} onClick={() => cv.zoomFromControls(1)}>
         <span className="mono-digits" style={{ display: 'inline-block', minWidth: 34, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>

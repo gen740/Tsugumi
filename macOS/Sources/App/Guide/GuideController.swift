@@ -64,6 +64,9 @@ struct GuideBubble: Equatable {
   var farewell = false
   /// The answer says more than the bubble: it points the user to the chat (or the panel).
   var more = false
+  /// Said by the app (a demo picked from the first questions), not by a model:
+  /// its ほかのデモ asks those questions again.
+  var local = false
 }
 
 /// The guide reads the project on the user's screen; on Home there is none.
@@ -135,8 +138,20 @@ final class GuideController {
   private(set) var highlight: String?
   /// The bird's speech bubble (nil: it sits quietly in its corner).
   private(set) var bubble: GuideBubble?
-  /// A Card settings window to open ("card:<path>"), taken by the main window that shows the project.
+  /// What to open for the user to look at, taken by the main window that shows
+  /// the project: "card:<path>" (that Card's settings), a panel under the canvas
+  /// ("logs", "timeline", "terminal") or "versions".
   var openRequest: String?
+
+  /// The panel under the canvas an `open` names.
+  nonisolated static func panel(_ open: String) -> BottomPanel? {
+    switch open {
+    case "logs": return .log
+    case "timeline": return .timeline
+    case "terminal": return .terminal
+    default: return nil
+    }
+  }
   /// A workflow scope to show (pointing into a Card in Card), taken by the project's window.
   var scopeRequest: [String]?
   /// Windows where the bird is out, by the project they show ("": Home). Its
@@ -173,6 +188,16 @@ final class GuideController {
   /// user's own save of a key (or sign-in) has just made the guide usable.
   var demoInvite: UUID?
   @ObservationIgnored private var inviteOnConnect = false
+
+  /// The first questions on Home, written by the app (no model): what to try,
+  /// then a field or the Drafts, then a demo.
+  enum OfferStep: Equatable { case start, fields, field(String), drafts }
+  var offerStep: OfferStep = .start
+  /// ほかのデモ by a demo the app pointed at: the questions are out again.
+  private(set) var asksAgain = false
+  /// The corner shows the first questions.
+  var asksDemo: Bool { available && !Self.quiet && (!demoAnswered || asksAgain) }
+  static var otherDemos: String { String(localized: "ほかのデモ") }
 
   /// Scripted checks and smoke runs: no first-start questions over the windows.
   static let quiet = ProcessInfo.processInfo.environment["TSUGUMI_UI_SCRIPT"] != nil
@@ -267,6 +292,7 @@ final class GuideController {
   func resetIntroduction() {
     setupDone = false
     demoAnswered = false
+    offerStep = .start
     UserDefaults.standard.set(false, forKey: "guide.setupDone")
     UserDefaults.standard.set(false, forKey: "guide.demoAnswered")
     refreshAvailability()
@@ -287,6 +313,11 @@ final class GuideController {
   /// A choice tapped in the bubble or under a reply: the user's answer, to
   /// whichever Tsugumi offered it (a project's chat, or the guide on Home).
   func choose(_ choice: String) {
+    if bubble?.local == true, choice == Self.otherDemos {
+      dismissBubble()
+      asksAgain = true
+      return
+    }
     if let chat = speakingChat {
       chat.send(choice)
     } else {
@@ -324,7 +355,7 @@ final class GuideController {
   /// A guide_show of either Tsugumi: where the bird goes, what opens, what it says.
   private func show(_ shown: GuideShow) {
     if shown.endTour { endTour() }
-    if let o = shown.open, o.hasPrefix("card:") { openRequest = o }
+    if let o = shown.open, o.hasPrefix("card:") || o == "versions" || Self.panel(o) != nil { openRequest = o }
     point(at: shown.highlight)
     bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight,
                          farewell: shown.endTour)
@@ -365,7 +396,29 @@ final class GuideController {
   /// "デモを見ますか？": either answer is kept, so it is never asked again.
   func answerDemoOffer() {
     demoAnswered = true
+    asksAgain = false
     UserDefaults.standard.set(true, forKey: "guide.demoAnswered")
+  }
+
+  /// A demo picked from the first questions: the bird flies to its card in the
+  /// demo list and offers to open it (the app says it; no model).
+  func pickDemo(_ d: DemoEntry) {
+    answerDemoOffer()
+    speakingChat = nil
+    let say = d.field == nil
+      ? String(localized: "「\(d.title)」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。")
+      : String(localized: "「\(d.title)」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。")
+    show(GuideShow(highlight: "demo:\(d.id)", say: say, choices: [Self.otherDemos],
+                   actions: [GuideAction(kind: .openDemo, label: String(localized: "このデモを開く"), demo: d.id)]))
+    bubble?.local = true
+  }
+
+  /// おすすめを聞く in a field: the guide picks one of its demos.
+  func recommend(in field: String) {
+    answerDemoOffer()
+    demosRequested = true
+    ask(String(localized: "「\(field)」のおすすめは？"), screen: .demos, session: nil, tab: nil,
+        note: "[Interest] The user asks which demo of the field \"\(field)\" to see; pick one of its demos.")
   }
 
   func toggleFromMenu() {
@@ -737,8 +790,10 @@ final class GuideController {
   /// [Screen]: what the user's window shows, for the guide to answer about.
   func screenNote(_ screen: Screen, session: ProjectSession?, tab: WorkflowTab?) -> String {
     var lines = ["[Screen]"]
+    var inProject = false
     switch (screen, session) {
     case (.project, let s?):
+      inProject = true
       lines.append("screen: the project \"\(s.scopeName([]))\" (folder \(s.identity.url.path))")
       if let tab {
         lines.append("workflow shown: " + (tab.scope.isEmpty ? "the root workflow" : "the Card in Card \(tab.scope.joined(separator: "/"))"))
@@ -762,9 +817,14 @@ final class GuideController {
     if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
       lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")
     }
-    lines.append("demos (id, title, tags: description):")
-    for d in AppModel.shared.demos {
-      lines.append("- \(d.id) \"\(d.title)\", \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
+    if inProject {
+      lines.append("demos (ids; their descriptions come on Home): " + AppModel.shared.demos.map(\.id).joined(separator: ", "))
+    } else {
+      lines.append("demos (id, title, field, tags: description):")
+      for d in AppModel.shared.demos {
+        lines.append("- \(d.id) \"\(d.title)\"\(d.field.map { ", field \($0)" } ?? ""), \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+      }
     }
     return lines.joined(separator: "\n")
   }

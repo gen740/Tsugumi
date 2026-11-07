@@ -96,7 +96,8 @@ struct MainWindow: View {
       openProject: { model.openProject($0, from: workspace, openWindow: openWindow) },
       home: { model.leaveProject(in: workspace) },
       newProject: { model.newProject(from: workspace, openWindow: openWindow) },
-      showChat: { workspace.showChat = true })
+      showChat: { workspace.showChat = true },
+      showPanel: { p in workspace.bottomPanel = p; workspace.showBottom = true })
   }
 }
 

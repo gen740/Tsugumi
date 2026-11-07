@@ -439,8 +439,9 @@ final class ChatController {
     }
   }
 
-  /// Demo mode ($demo, or a demo tour): the bird flies about the screen for this
-  /// chat; it ends with the tour's farewell. Otherwise the chat is a chat.
+  /// Demo mode ($demo, or a demo tour): the bird leads the user about the
+  /// screen for this chat; it ends with the tour's farewell. Otherwise the chat
+  /// is a chat, whose bird flies only to show where a feature asked about is.
   private(set) var demoMode = false
 
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
@@ -717,8 +718,9 @@ final class ChatController {
       let shown = GuideAction.parse(args)
       choices = shown.choices
       offered = shown.actions
-      // The bird moves only in demo mode; after the farewell the chat is a chat again.
-      if demoMode { GuideController.shared.chatShow(self, arguments: args) }
+      // The bird flies for it: in demo mode, and outside it to show where a
+      // feature the user asked about is (the rules keep it to that).
+      GuideController.shared.chatShow(self, arguments: args)
       if shown.endTour { demoMode = false }
     case .toolFinished(_, "guide_show", _, _):
       break
@@ -821,10 +823,14 @@ enum AgentSettings {
     return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
   }
 
-  /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.
+  /// The connection of the Home guide: the Agent's, with a small model, as for
+  /// the canvas bird's thoughts: claude-haiku-5-5 on Anthropic, the speech model
+  /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
+  /// chat, with the chat's model.
   static func guide() -> ProviderConfig {
     var c = current()
     if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
+    else if c.auth == .apiKey, c.api == .anthropicMessages { c.model = "claude-haiku-5-5" }
     return c
   }
 

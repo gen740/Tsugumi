@@ -42,7 +42,19 @@ export interface GuideShow { highlight?: string; say?: string; choices: string[]
 
 /** What the bird says in its bubble, where it is (target; undefined: at
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
-export interface GuideBubble { id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean; more?: boolean }
+export interface GuideBubble {
+  id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean; more?: boolean
+  /** Said by the app (a demo picked from the first questions), not by a model: its ほかのデモ asks those questions again. */
+  local?: boolean
+}
+
+/** The first questions on Home, written by the app (no model): what to try,
+ *  then a field or the Drafts, then a demo. */
+export type OfferStep = { kind: 'start' } | { kind: 'fields' } | { kind: 'field'; field: string } | { kind: 'drafts' }
+export const OTHER_DEMOS = 'ほかのデモ'
+
+/** The panels under the canvas a guide_show "open" names. */
+export const OPEN_PANELS: Record<string, 'log' | 'timeline' | 'terminal' | undefined> = { logs: 'log', timeline: 'timeline', terminal: 'terminal' }
 
 /** Whether an answer says more than its bubble (the bubble then points to the chat). */
 export const saysMore = (reply: string, say?: string) => reply.trim().length > (say?.length ?? 0) + 120
@@ -225,8 +237,9 @@ export class GuideController extends Observable {
     else this.open = true
     this.changed()
   }
-  /** A Card settings window to open ("card:<path>"), and a workflow scope to
-   *  show (pointing into a Card in Card): taken by the project's workbench. */
+  /** What to open for the user to look at ("card:<path>": that Card's settings;
+   *  "logs", "timeline", "terminal": a panel under the canvas; "versions"), and a
+   *  workflow scope to show (pointing into a Card in Card): taken by the project's workbench. */
   openRequest?: string
   scopeRequest?: string[]
   /** Home's demo list asked for by the guide (show_demos). */
@@ -265,6 +278,19 @@ export class GuideController extends Observable {
   /** The guide greets and offers the demo once (without a connection, the scripted tour). */
   get offersDemo() {
     return this.available && !this.demoAnswered
+  }
+
+  /** Where the first questions are; ほかのデモ by a demo the app pointed at puts them out again. */
+  offerStep: OfferStep = { kind: 'start' }
+  asksAgain = false
+  /** The corner shows the first questions. */
+  get asksDemo() {
+    return this.available && (!this.demoAnswered || this.asksAgain)
+  }
+
+  setOfferStep(step: OfferStep) {
+    this.offerStep = step
+    this.changed()
   }
 
   /** Reads the guide's state (after Settings or the first start changed the key). */
@@ -328,13 +354,34 @@ export class GuideController extends Observable {
   async resetIntroduction() {
     await this.saveState({ setupDone: false, demoAnswered: false })
     this.demoAnswered = false
+    this.offerStep = { kind: 'start' }
     await this.refresh()
   }
 
   answerDemoOffer() {
     this.demoAnswered = true
+    this.asksAgain = false
     this.changed()
     void this.saveState({ demoAnswered: true })
+  }
+
+  /** A demo picked from the first questions: the bird flies to its card in the
+   *  demo list and offers to open it (the app says it; no model). */
+  pickDemo(d: { id: string; title: string; field?: string }) {
+    this.answerDemoOffer()
+    this.speakingChat = undefined
+    const say = d.field ? `「${d.title}」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。`
+      : `「${d.title}」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。`
+    this.show({ highlight: `demo:${d.id}`, say, choices: [OTHER_DEMOS], actions: [{ kind: 'open_demo', label: 'このデモを開く', demo: d.id }] })
+    if (this.bubble) this.bubble.local = true
+    this.changed()
+  }
+
+  /** おすすめを聞く in a field: the guide picks one of its demos. */
+  recommend(field: string) {
+    this.answerDemoOffer()
+    this.demosRequested = true
+    this.ask(`「${field}」のおすすめは？`, 'demos', undefined, undefined, `[Interest] The user asks which demo of the field "${field}" to see; pick one of its demos.`)
   }
 
   // ---- Conversation ----------------------------------------------------------------
@@ -516,6 +563,12 @@ export class GuideController extends Observable {
 
   /** A choice tapped in a bubble: the user's answer, to whichever Tsugumi offered it. */
   choose(c: string) {
+    if (this.bubble?.local && c === OTHER_DEMOS) {
+      this.dismissBubble()
+      this.asksAgain = true
+      this.changed()
+      return
+    }
     if (this.speakingChat) this.speakingChat.send(c)
     else this.ask(c, this.contextScreen, this.contextSession, this.contextTab)
   }
@@ -538,7 +591,7 @@ export class GuideController extends Observable {
   /** A guide_show of either Tsugumi: where the bird goes, what opens, what it says. */
   private show(shown: GuideShow) {
     if (shown.endTour) this.endTour()
-    if (shown.open?.startsWith('card:')) this.openRequest = shown.open
+    if (shown.open && (shown.open.startsWith('card:') || shown.open === 'versions' || OPEN_PANELS[shown.open])) this.openRequest = shown.open
     this.point(shown.highlight)
     this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight, farewell: shown.endTour }
   }
@@ -726,8 +779,13 @@ export class GuideController extends Observable {
       lines.push('screen: Home (recent projects, new project, open, デモを見る)')
     }
     if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
-    lines.push('demos (id, title, tags: description):')
-    for (const d of app.status?.demos ?? []) lines.push(`- ${d.id} "${d.title}", ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
+    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
+    const demos = app.status?.demos ?? []
+    if (screen === 'project' && s) lines.push('demos (ids; their descriptions come on Home): ' + demos.map((d) => d.id).join(', '))
+    else {
+        lines.push('demos (id, title, field, tags: description):')
+      for (const d of demos) lines.push(`- ${d.id} "${d.title}"${d.field ? `, field ${d.field}` : ''}, ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
+    }
     return lines.join('\n')
   }
 

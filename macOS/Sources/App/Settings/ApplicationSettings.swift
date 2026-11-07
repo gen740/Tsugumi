@@ -603,7 +603,7 @@ private struct APISettings: View {
         Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
           .disabled(GuideController.shared.offersDemo)
         if GuideController.shared.offersDemo {
-          Label("設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
+          Label("設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
             .font(.callout).foregroundStyle(.green)
         }
       } header: {
