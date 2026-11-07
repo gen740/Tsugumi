@@ -1,6 +1,6 @@
 // The guide bird in the bottom-right corner: one conversation for the whole
 // app, run by the host server with the same model connection as the Agent
-// (no key, no guide). It explains what is on the screen and leads demo
+// (without one it answers from a fixed script: guideScript.ts). It explains what is on the screen and leads demo
 // tours; it only reads, and what it offers to do (guide_show) is done by the
 // user's own press of a button. The macOS app's GuideController does the same.
 import { api, onServerEvent } from '../api'
@@ -12,6 +12,7 @@ import { get, str } from '../shared/json'
 import { CardKey, cardState, KIND_LABEL, key, ProjectSession, runState } from './session'
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
+import { noConnection, scriptStep, type ScriptStep } from './guideScript'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
 const KINDS: GuideActionKind[] = ['open_demo', 'show_demos', 'run', 'stop', 'open_card', 'open_settings', 'new_project', 'home']
@@ -125,8 +126,14 @@ const real = (p: string) => p.replace(/\/+$/, '')
 interface Message { role: string; content: { type: string; text?: string; name?: string; input?: string }[]; display?: string }
 
 export class GuideController extends Observable {
-  /** A model connection the guide can use (a key for the chosen provider). */
+  /** The bird is there: with a model connection, or answering from its script. */
   available = false
+  /** A model connection the guide can use (a key for the chosen provider). */
+  connected = false
+  /** No connection: Tsugumi answers from guideScript and calls no model. */
+  get scripted() {
+    return this.available && !this.connected
+  }
   /** The first start's question (provider and key, or skip) was answered. */
   setupDone = true
   /** "デモを見ますか？" was answered (見る or あとで). */
@@ -249,10 +256,10 @@ export class GuideController extends Observable {
 
   /** The first start asks for a model key (or a skip): nothing usable and never answered. */
   get needsSetup() {
-    return this.loaded && !this.setupDone && !this.available
+    return this.loaded && !this.setupDone && !this.connected
   }
 
-  /** The guide greets and offers the demo once, when it first has a connection. */
+  /** The guide greets and offers the demo once (without a connection, the scripted tour). */
   get offersDemo() {
     return this.available && !this.demoAnswered
   }
@@ -262,17 +269,14 @@ export class GuideController extends Observable {
     try {
       const r = await api<{ available: boolean; setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null; busy: boolean; conversation: { archive: Message[]; messages: Message[] } | null }>('/api/guide', {})
       const wasOffered = this.offersDemo
-      this.available = r.available
+      this.available = true
+      this.connected = r.available
       this.setupDone = r.setupDone
       this.demoAnswered = r.demoAnswered
       this.tour = r.tour
       this.busy = r.busy
       this.loaded = true
       if (r.conversation && !this.busy) this.load([...r.conversation.archive, ...r.conversation.messages])
-      if (!this.available) {
-        this.open = false
-        this.highlight = undefined
-      }
       void wasOffered
     } catch {}
     this.changed()
@@ -313,6 +317,7 @@ export class GuideController extends Observable {
     if (!q.trim()) return
     this.answerDemoOffer()
     this.demosRequested = true
+    if (this.scripted) return this.play('interest', q.trim())
     this.ask(q, 'demos', undefined, undefined, "[Interest] The user answered what interests them; pick a demo for it.")
   }
 
@@ -320,14 +325,20 @@ export class GuideController extends Observable {
   ask(q: string, screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab, note?: string) {
     const t = q.trim()
     if (!this.available || this.busy || !t) return
+    if (this.scripted) return this.answerScripted(t)
     this.readSession = session
     this.items.push({ id: ++this.n, role: 'user', text: t })
     void this.send((note ? note + '\n' : '') + t + '\n\n' + this.screenNote(screen, session, tab), t, session)
   }
 
   /** Something the app tells the guide (a tour step, a run that ended); one
-   *  that comes while it answers waits for the answer to end. */
-  private tell(prompt: string, display: string, session?: ProjectSession) {
+   *  that comes while it answers waits for the answer to end. Without a
+   *  connection the chat shows `script`'s step instead (undefined: nothing). */
+  private tell(prompt: string, display: string, session?: ProjectSession, script?: string) {
+    if (this.scripted) {
+      if (script && session) this.play(script, display, app.chat(session))
+      return
+    }
     // In the demo's copy, Tsugumi of its chat leads the tour.
     if (session) {
       app.chat(session).tell(prompt, display)
@@ -366,7 +377,7 @@ export class GuideController extends Observable {
   }
 
   retry() {
-    if (!this.available || this.busy) return
+    if (!this.connected || this.busy) return
     this.begin()
     void api('/api/guide/retry', {})
   }
@@ -580,6 +591,49 @@ export class GuideController extends Observable {
     this.items = out
   }
 
+  // ---- Without a model connection -------------------------------------------------
+
+  /** The step of the script shown last (its choices are the ones out). */
+  private scriptAt?: string
+
+  /** A message without a connection: in the tour's chat a tapped choice leads
+   *  to its step; anything else gets the one fixed reply (pointing to
+   *  Settings), with the step's choices still there to go on with the tour. */
+  answerScripted(t: string, chat?: ChatController) {
+    const current = chat && this.touring(chat.session) && this.scriptAt ? scriptStep(this.scriptAt) : undefined
+    const next = current?.next[t]
+    if (next) return this.play(next, t, chat)
+    const reply = noConnection()
+    reply.show = { ...reply.show, highlight: current ? this.highlight : undefined, choices: current?.show.choices ?? [] }
+    this.answer(reply, t, chat)
+  }
+
+  private play(id: string, asked?: string, chat?: ChatController) {
+    const step = scriptStep(id)
+    if (!step) return
+    this.scriptAt = id
+    this.answer(step, asked, chat)
+  }
+
+  /** A step of the script as an answer: in the chat (its bird speaks only in
+   *  the tour's copy) or in the panel, and in the bubble. */
+  private answer(step: ScriptStep, asked?: string, chat?: ChatController) {
+    if (chat) {
+      chat.showScripted(asked, step.text, step.show)
+      if (!this.touring(chat.session)) return
+      this.speakingChat = chat
+    } else {
+      this.speakingChat = undefined
+      for (const i of this.items) { i.actions = undefined; i.choices = undefined }
+      if (asked) this.items.push({ id: ++this.n, role: 'user', text: asked })
+      this.items.push({ id: ++this.n, role: 'assistant', text: step.text, actions: step.show.actions, choices: step.show.choices })
+    }
+    this.show(step.show)
+    if (this.bubble) this.bubble = { ...this.bubble, more: saysMore(step.text, step.show.say) }
+    this.leaveAfterFarewell()
+    this.changed()
+  }
+
   // ---- Pointing --------------------------------------------------------------------
 
   /** Where the bird flies and the ring is drawn, until the bubble is closed or it moves on. */
@@ -682,14 +736,14 @@ export class GuideController extends Observable {
       void this.saveState({ tour: t })
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourStart', { demo: t.demo, title: t.title }), `デモ「${t.title}」の案内を始めます`, s)
+      this.tell(text('tourStart', { demo: t.demo, title: t.title }), `デモ「${t.title}」の案内を始めます`, s, 'start')
       return
     }
     if (this.resumeAsked && s.connected) {
       this.resumeAsked = false
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourResume', { demo: t.demo }), 'デモの案内を続けます', s)
+      this.tell(text('tourResume', { demo: t.demo }), 'デモの案内を続けます', s, this.scriptAt ?? 'resume')
       return
     }
     const before = this.seen
@@ -711,7 +765,9 @@ export class GuideController extends Observable {
     if (s.runActive) {
       // The bird watches the run; Tsugumi is told only how it ended.
     } else if (s.runStatus && (wasActive || !before.startsWith(run + ':'))) {
-      this.tell(text('event', { event: text('runEnded', { run, state }) }), `実行が終わりました（${runState(s.runStatus.state).label}）`, s)
+      const ran = this.scriptAt ? scriptStep(this.scriptAt)?.ran : undefined
+      this.tell(text('event', { event: text('runEnded', { run, state }) }), `実行が終わりました（${runState(s.runStatus.state).label}）`, s,
+        s.runStatus.state === D.RunState.succeeded ? ran?.ok : ran?.else)
     }
   }
 

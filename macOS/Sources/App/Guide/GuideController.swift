@@ -84,7 +84,8 @@ private struct GuideTransport: ToolTransport {
 
 /// The guide bird in the bottom-right corner of every main window: one
 /// conversation for the whole app with a model of the user's own (the same
-/// connection and key as the Agent; without a key there is no guide at all).
+/// connection and key as the Agent). Without a connection it answers from a
+/// fixed script (GuideScript): one demo's tour, and a pointer to Settings.
 /// It explains what is on the screen and leads demo tours; it only reads,
 /// and what it offers to do is done by the user's own press of a button.
 /// What it points at and says stays in the windows it is about: Home for the
@@ -116,8 +117,12 @@ final class GuideController {
   /// What the window the user asks from shows.
   enum Screen: Equatable { case home, demos, project }
 
-  /// A model connection the guide can use (a key for the chosen provider).
+  /// The bird is there: with a model connection, or answering from its script.
   private(set) var available = false
+  /// A model connection the guide can use (a key for the chosen provider).
+  private(set) var connected = false
+  /// No connection: Tsugumi answers from GuideScript and calls no model.
+  var scripted: Bool { available && !connected }
   private(set) var items: [Item] = []
   private(set) var busy = false
   private(set) var failed = false
@@ -161,8 +166,8 @@ final class GuideController {
   private(set) var demoAnswered: Bool
 
   /// The first start asks for a key: nothing usable is set and it was never answered.
-  var needsSetup: Bool { !setupDone && !available && !Self.quiet }
-  /// The guide greets and offers the demo once, when it first has a connection.
+  var needsSetup: Bool { !setupDone && !connected && !Self.quiet }
+  /// The guide greets and offers the demo once (without a connection, the scripted tour).
   var offersDemo: Bool { available && !demoAnswered && !Self.quiet }
 
   /// Scripted checks and smoke runs: no first-start questions over the windows.
@@ -226,13 +231,10 @@ final class GuideController {
   }
 
   private func apply(_ usable: Bool) {
-    available = catalog != nil && usable
-    if available && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
-    if !available {
-      open = false
-      if busy { cancel() }
-      clearHighlight()
-    }
+    available = catalog != nil
+    connected = available && usable
+    if connected && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
+    if !connected && busy { cancel() }
   }
 
   /// The first start was answered: with a key that connected, or skipped.
@@ -382,13 +384,22 @@ final class GuideController {
     guard !text.isEmpty else { return }
     answerDemoOffer()
     demosRequested = true
+    if scripted {
+      play("interest", asked: text, chat: nil)
+      return
+    }
     ask(text, screen: .demos, session: nil, tab: nil, note: "[Interest] The user answered what interests them; pick a demo for it.")
   }
 
   /// A question of the user, with what their window shows.
   func ask(_ text: String, screen: Screen, session: ProjectSession?, tab: WorkflowTab?, note: String? = nil) {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard available, !busy, !text.isEmpty, let agent = makeAgent() else { return }
+    guard available, !busy, !text.isEmpty else { return }
+    if scripted {
+      answerScripted(text, chat: nil)
+      return
+    }
+    guard let agent = makeAgent() else { return }
     readSession = session
     items.append(Item(role: "user", text: text))
     let prompt = (note.map { $0 + "\n" } ?? "") + text + "\n\n" + screenNote(screen, session: session, tab: tab)
@@ -400,8 +411,13 @@ final class GuideController {
   }
 
   /// Something the app tells the guide (a tour step, a run that ended); one
-  /// that comes while it answers waits for the answer to end.
-  private func tell(_ prompt: String, display: String, session: ProjectSession?) {
+  /// that comes while it answers waits for the answer to end. Without a
+  /// connection the chat shows `script`'s step instead (nil: nothing).
+  private func tell(_ prompt: String, display: String, session: ProjectSession?, script: String? = nil) {
+    if scripted {
+      if let script, let session { play(script, asked: display, chat: AppModel.shared.chat(for: session)) }
+      return
+    }
     // In the demo's copy, Tsugumi of its chat leads the tour.
     if let session {
       AppModel.shared.chat(for: session).tell(prompt: prompt, display: display)
@@ -431,7 +447,7 @@ final class GuideController {
   }
 
   func retry() {
-    guard available, !busy, let agent = makeAgent() else { return }
+    guard connected, !busy, let agent = makeAgent() else { return }
     begin()
     Task {
       await agent.setProvider(AgentSettings.guide())
@@ -596,6 +612,51 @@ final class GuideController {
     items = out
   }
 
+  // MARK: - Without a model connection
+
+  /// The step of the script shown last (its choices are the ones out).
+  @ObservationIgnored private var scriptAt: String?
+
+  /// A message without a connection: in the tour's chat a tapped choice leads
+  /// to its step; anything else gets the one fixed reply (pointing to
+  /// Settings), with the step's choices still there to go on with the tour.
+  func answerScripted(_ text: String, chat: ChatController?) {
+    let script = GuideScript.shared
+    let current = chat.flatMap { touring($0.session) ? scriptAt.flatMap { script.steps[$0] } : nil }
+    if let next = current?.next[text] {
+      play(next, asked: text, chat: chat)
+      return
+    }
+    var reply = script.noConnection
+    reply.show.highlight = current == nil ? nil : highlight
+    reply.show.choices = current?.show.choices ?? []
+    present(reply, asked: text, chat: chat)
+  }
+
+  private func play(_ id: String, asked: String?, chat: ChatController?) {
+    guard let step = GuideScript.shared.steps[id] else { return }
+    scriptAt = id
+    present(step, asked: asked, chat: chat)
+  }
+
+  /// A step of the script as an answer: in the chat (its bird speaks only in
+  /// the tour's copy) or in the panel, and in the bubble.
+  private func present(_ step: GuideScript.Step, asked: String?, chat: ChatController?) {
+    if let chat {
+      chat.showScripted(asked: asked, reply: step.text, shown: step.show)
+      guard touring(chat.session) else { return }
+      speakingChat = chat
+    } else {
+      speakingChat = nil
+      for i in items.indices { items[i].actions = []; items[i].choices = [] }
+      if let asked { items.append(Item(role: "user", text: asked)) }
+      items.append(Item(role: "assistant", text: step.text, actions: step.show.actions, choices: step.show.choices))
+    }
+    show(step.show)
+    bubble?.more = Self.saysMore(step.text, than: step.show.say)
+    leaveAfterFarewell()
+  }
+
   // MARK: - Pointing
 
   /// Where the bird flies and the ring is drawn, until the bubble is closed or it moves on.
@@ -720,14 +781,15 @@ final class GuideController {
       seen = runKey(s)
       seenActive = s.runActive
       tell(Agent.guideText("tourStart", ["demo": t.demo, "title": t.title]),
-           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s)
+           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s, script: "start")
       return
     }
     if resumeAsked, s.connected {
       resumeAsked = false
       seen = runKey(s)
       seenActive = s.runActive
-      tell(Agent.guideText("tourResume", ["demo": t.demo]), display: String(localized: "デモの案内を続けます"), session: s)
+      tell(Agent.guideText("tourResume", ["demo": t.demo]), display: String(localized: "デモの案内を続けます"), session: s,
+           script: scriptAt ?? "resume")
       return
     }
     let now = runKey(s)
@@ -752,8 +814,10 @@ final class GuideController {
     if s.runActive {
       // The bird watches the run; Tsugumi is told only how it ended.
     } else if seenActive || !before.hasPrefix(run + ":"), s.runStatus != nil {
+      let step = scriptAt.flatMap { GuideScript.shared.steps[$0] }
       tell(Agent.guideText("event", ["event": Agent.guideText("runEnded", ["run": run, "state": state])]),
-           display: String(localized: "実行が終わりました（\(s.runStatus?.state.label ?? state)）"), session: s)
+           display: String(localized: "実行が終わりました（\(s.runStatus?.state.label ?? state)）"), session: s,
+           script: s.runStatus?.state == .succeeded ? step?.ranOk : step?.ranElse)
     }
   }
 

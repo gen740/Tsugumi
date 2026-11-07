@@ -1045,7 +1045,7 @@ struct GuideSetupView: View {
         Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
       }
-      Text("キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。")
+      Text("キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("スキップして始める") {

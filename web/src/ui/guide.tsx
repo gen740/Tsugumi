@@ -607,7 +607,7 @@ export function GuideSetupSheet() {
           placeholder={provider === 'openai' ? 'OpenAI の API キー' : 'Anthropic の API キー'} aria-label="API キー"
           onChange={(e) => setKey(e.target.value)} />
         {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
-        <div className="caption secondary">キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。</div>
+        <div className="caption secondary">キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。</div>
         <div className="row gap8">
           <Button onClick={() => void guide.finishSetup()}>スキップして始める</Button>
           <span className="spacer" />

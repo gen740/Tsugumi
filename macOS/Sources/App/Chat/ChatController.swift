@@ -412,7 +412,13 @@ final class ChatController {
   // MARK: - Conversation
 
   func send(_ text: String, selection: [CardKey] = []) {
-    guard let agent, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    // No model connection: Tsugumi answers from its script (a connection of this chat's own, as in tests, is used).
+    if GuideController.shared.scripted, provider.auth != .none, !busy {
+      GuideController.shared.answerScripted(text, chat: self)
+      return
+    }
+    guard let agent else { return }
     var prompt = text
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
@@ -440,6 +446,15 @@ final class ChatController {
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
   private(set) var choices: [String] = []
   private(set) var offered: [GuideAction] = []
+  /// Without a model connection: Tsugumi's fixed reply (GuideScript) to what
+  /// was asked or what the app noted, with its choices and buttons.
+  func showScripted(asked: String?, reply: String, shown: GuideShow) {
+    if let asked { items.append(Item(role: "user", text: asked)) }
+    items.append(Item(role: "assistant", text: reply))
+    choices = shown.choices
+    offered = shown.actions
+  }
+
   /// Notes of the app (a demo tour's runs) that came while it answered.
   @ObservationIgnored private var notes: [(prompt: String, display: String)] = []
 

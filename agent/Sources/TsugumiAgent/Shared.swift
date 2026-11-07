@@ -499,4 +499,176 @@ your replies.
   "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
 }
 """#
+
+  static let guideScript = #"""
+{
+  "_comment": "Tsugumi without a model connection (no API key, no ChatGPT sign-in): it answers from this script and calls nothing. Each step is a guide_show ('show'), the reply the panel or the chat shows ('text', else 'say'), the step each tapped choice leads to ('next') and the step a run's end leads to while it is out ('ran': 'ok' when it succeeded, 'else' otherwise). 'interest' answers Home's first question, 'start' and 'resume' begin and continue the tour of the demo report (the one Home's 定番のデモを見る opens), and 'noConnection' is the reply to anything typed. The macOS app (GuideScript.swift) and the web (web/src/model/guideScript.ts) read this file as it is.",
+  "steps": {
+    "interest": {
+      "show": {
+        "highlight": "demo:report",
+        "say": "いまは決まった案内だけできます。定番のデモ「Data to report」をご案内しますね。",
+        "actions": [{ "kind": "open_demo", "demo": "report", "label": "このデモを開く" }]
+      },
+      "text": "いまは決まった案内だけできます。定番のデモ「Data to report」をご案内しますね。\n\n設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キー、または Sign in with ChatGPT）とつなぐと、興味に合わせてデモを選んだり、質問に答えたりできるようになります。"
+    },
+    "start": {
+      "show": {
+        "highlight": "card:start",
+        "say": "デモ「Data to report」のコピーを開きました。売上の表を作り、集計し、レポートに残すまでを Card でつないでいます。",
+        "choices": ["次へ"]
+      },
+      "text": "デモ「Data to report」のコピーを開きました。売上の表を作り、集計し、レポートに残すまでを Card でつないでいます。実行は start から始まり、線をたどって次の Card へ進みます。\n\nいまはモデルにつながっていないので、決まった順にご案内します（通信も料金もかかりません）。自由に質問したいときは、設定の「API」で Claude か Codex（ChatGPT）とつないでください。",
+      "next": { "次へ": "settings" }
+    },
+    "resume": {
+      "show": {
+        "highlight": "card:start",
+        "say": "おかえりなさい。デモ「Data to report」の案内を、はじめからもう一度どうぞ。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "settings" }
+    },
+    "settings": {
+      "show": {
+        "highlight": "card:settings",
+        "say": "settings には、乱数の種（seed: 42）、行数（rows: 500）、見出し（heading）が入っています。この値が下流の Card に流れます。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "share" }
+    },
+    "share": {
+      "show": {
+        "highlight": "card:share",
+        "say": "share は settings の値を二つに分けて、generate と render に配ります。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "generate" }
+    },
+    "generate": {
+      "show": {
+        "highlight": "card:generate",
+        "say": "generate は seed から売上の CSV を作ります。seed が同じなら、何度実行しても同じデータです。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "aggregate" }
+    },
+    "aggregate": {
+      "show": {
+        "highlight": "card:aggregate",
+        "say": "aggregate は地域ごとの売上と個数を集計します。fail_on_purpose をオンにすると、わざと失敗させることもできます。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "render" }
+    },
+    "render": {
+      "show": {
+        "highlight": "card:render",
+        "say": "render は集計を report.md と summary.json にまとめ、成果物として残します。表はこの Card に表示されます。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "archive" }
+    },
+    "archive": {
+      "show": {
+        "highlight": "card:archive",
+        "say": "archive は Card in Card です。中の copy がレポートを写し、保管した時刻を添えて残します。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "run" }
+    },
+    "run": {
+      "show": {
+        "highlight": "run",
+        "say": "では実行してみましょう。▶ 実行 を押してください。",
+        "actions": [{ "kind": "run", "label": "実行する" }],
+        "choices": ["実行した！"]
+      },
+      "next": { "実行した！": "running" },
+      "ran": { "ok": "ranOk", "else": "ranFailed" }
+    },
+    "running": {
+      "show": {
+        "highlight": "run",
+        "say": "実行中です。終わったら、結果をご案内します。"
+      },
+      "ran": { "ok": "ranOk", "else": "ranFailed" }
+    },
+    "ranOk": {
+      "show": {
+        "highlight": "card:render",
+        "say": "実行が終わりました。render にレポートの表が出ています。500 件の売上を、地域ごとの個数と売上にまとめたものです。",
+        "choices": ["次へ"]
+      },
+      "text": "実行が終わりました。render にレポートの表が出ています。500 件の売上を、地域ごとの個数と売上にまとめたものです。\n\nreport.md と summary.json は成果物として残り、archive にも保管されています。どの Card が何を受け取り何を出したかは、実行ごとの記録とログでたどれます。",
+      "next": { "次へ": "change" }
+    },
+    "ranFailed": {
+      "show": {
+        "highlight": "logs",
+        "say": "実行は最後まで進みませんでした。ログを開くと、どの Card がなぜ止まったかがわかります。",
+        "choices": ["もう一度実行する", "終える"]
+      },
+      "next": { "もう一度実行する": "run", "終える": "farewell" }
+    },
+    "change": {
+      "show": {
+        "open": "card:settings",
+        "highlight": "param:seed",
+        "say": "今度はご自分で変えてみましょう。settings の seed を 7 などに変え、適用で保存してください。",
+        "choices": ["変更して保存した！"]
+      },
+      "next": { "変更して保存した！": "runAgain" }
+    },
+    "runAgain": {
+      "show": {
+        "highlight": "run",
+        "say": "保存できたら、もう一度 ▶ 実行 を押してください。",
+        "actions": [{ "kind": "run", "label": "実行する" }],
+        "choices": ["実行した！"]
+      },
+      "next": { "実行した！": "runningAgain" },
+      "ran": { "ok": "ranAgain", "else": "ranFailed" }
+    },
+    "runningAgain": {
+      "show": {
+        "highlight": "run",
+        "say": "実行中です。終わったら、何が変わったかをご案内します。"
+      },
+      "ran": { "ok": "ranAgain", "else": "ranFailed" }
+    },
+    "ranAgain": {
+      "show": {
+        "highlight": "card:render",
+        "say": "seed を変えたので CSV の中身が変わり、地域ごとの数字も変わりました。同じ seed に戻せば、前と同じ結果になります。",
+        "choices": ["次へ"]
+      },
+      "next": { "次へ": "next" }
+    },
+    "next": {
+      "show": {
+        "highlight": "chat",
+        "say": "このコピーは自由に編集できます。ほかのデモを見たり、自分のプロジェクトを作ったりもできます。",
+        "actions": [{ "kind": "show_demos", "label": "ほかのデモ" }, { "kind": "new_project", "label": "新しいプロジェクト" }],
+        "choices": ["終える"]
+      },
+      "next": { "終える": "farewell" }
+    },
+    "farewell": {
+      "show": {
+        "highlight": "chat",
+        "say": "モデルにつなぐと、わからないことに何でも答えられます。設定の「API」から Claude か Codex（ChatGPT）とつなげます。いつでも呼んでくださいね。",
+        "actions": [{ "kind": "open_settings", "label": "API の設定を開く" }],
+        "endTour": true
+      }
+    }
+  },
+  "noConnection": {
+    "show": {
+      "say": "ごめんなさい、いまは自由な質問には答えられません。設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キー、または Sign in with ChatGPT）とつなぐと、答えられるようになります。",
+      "actions": [{ "kind": "open_settings", "label": "API の設定を開く" }]
+    }
+  }
+}
+"""#
 }
