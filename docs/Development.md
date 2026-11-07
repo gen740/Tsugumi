@@ -272,7 +272,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | 領域 | 状況 |
 | --- | --- |
 | FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
-| tsugumid: [Protocol.md](Protocol.md) の全 RPC（36 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
+| tsugumid: [Protocol.md](Protocol.md) の全 RPC（37 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
 | 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft のポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
 | 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
 | スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |
