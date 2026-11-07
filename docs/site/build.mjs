@@ -443,7 +443,14 @@ function homePage(groups, pages, tagline, lead) {
   <div class="home-perch" aria-hidden="true"></div>
 </header>
 <div class="doors">${doors}</div>
-<p class="home-chronicle">Claude で開発した記録は <a href="${CHRONICLE}" rel="noopener"><b>Tsugumi Chronicle</b></a> にあります。</p>
+<a class="chronicle-card" href="${CHRONICLE}" rel="noopener">
+  <header><i>Build Log</i><h2>Tsugumi Chronicle</h2><small>Claude で開発した記録</small></header>
+  <div class="chronicle-body">
+    <p class="chronicle-lead">人が問い、Claude が積む。</p>
+    <p>ひとりの人と Claude が Tsugumi をどう作ったのかを、開発セッションと Git の履歴からたどれる記録です。何を頼み、どこで止め、何を確かめたか。</p>
+    <span class="chronicle-go">記録をたどる →</span>
+  </div>
+</a>
 <section class="gallery" id="demos">
   <h2>デモを、そのまま動かしてみる</h2>
   <p>同梱のデモです。インストールしなくても、Card のつながりと実行の様子をここで見られます。押すと大きく開きます。一つずつの説明は<a href="${pages.get('docs/Demos.md')}">同梱デモのしくみ</a>にあります。</p>
