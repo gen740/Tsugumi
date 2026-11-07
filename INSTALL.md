@@ -48,6 +48,8 @@ Windows（PowerShell）:
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
+新しい版が出たら、`tsugumi update` で入れ替わります（最新ならそう言って何もしません）。
+
 ```bash
 tsugumi
 ```

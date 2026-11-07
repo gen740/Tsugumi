@@ -2,7 +2,7 @@
 // on this host, and hosts the Agent. The browser talks to tsugumid directly
 // over its WebSocket RPC; this server only does what a page cannot (files,
 // processes, the model API key).
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -28,6 +28,31 @@ const opt = (name: string) => {
   const i = argv.indexOf(name)
   return i >= 0 ? argv[i + 1] : undefined
 }
+// `tsugumi update`: the latest release's install.sh (cli/install.sh) puts the
+// newest version in place. The wrappers put their flags before the user's words.
+if (argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port') === 'update') process.exit(update())
+
+function update(): number {
+  // TSUGUMI_INSTALL_BASE (checks, or another place) and TSUGUMI_VERSION go on to install.sh as they are.
+  const base = process.env.TSUGUMI_INSTALL_BASE ?? 'https://github.com/gen740/Tsugumi/releases/latest/download'
+  let current: string | undefined
+  try {
+    current = fs.readFileSync(path.join(repo, 'VERSION'), 'utf8').trim()
+  } catch {}
+  if (current && !process.env.TSUGUMI_INSTALL_BASE && !process.env.TSUGUMI_VERSION) {
+    // The latest release, from where GitHub sends releases/latest (no download when this is it).
+    const r = spawnSync('curl', ['-fsSI', '-o', '/dev/null', '-w', '%{redirect_url}', 'https://github.com/gen740/Tsugumi/releases/latest'], { encoding: 'utf8' })
+    if (/\/tag\/v([^/\s]+)$/.exec(r.stdout?.trim() ?? '')?.[1] === current) {
+      console.log(`tsugumi ${current} は最新です。`)
+      return 0
+    }
+  }
+  const r = spawnSync('/bin/sh', ['-c', `script="$(curl -fsSL "$1/install.sh")" || { echo "$1/install.sh を取得できませんでした。" >&2; exit 1; }
+printf '%s\\n' "$script" | /bin/sh`, 'sh', base], { stdio: 'inherit' })
+  if (r.status === 0) console.log('動いている tsugumi があれば、Ctrl-C で止めて起動し直すと新しい版で開きます。')
+  return r.status ?? 1
+}
+
 const chosenPort = opt('--port') ?? process.env.TSUGUMI_WEB_PORT
 const port = Number(chosenPort ?? 8780)
 const openBrowser = argv.includes('--open')

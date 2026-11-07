@@ -56,7 +56,7 @@ def machine(tmp_path):
     release = tmp_path / "release"
     release.mkdir()
 
-    def install(system: str, machine: str, macos: str = "26.0", path_extra: str = "", nix: bool = False):
+    def install(system: str, machine: str, macos: str = "26.0", path_extra: str = "", nix: bool = False, command: list[str] | None = None):
         executable(stubs / "uname", f'#!/bin/sh\n[ "$1" = -s ] && echo {system} || echo {machine}\n')
         executable(stubs / "sw_vers", f"#!/bin/sh\necho {macos}\n")
         if nix:
@@ -82,7 +82,7 @@ def machine(tmp_path):
                 (bin_dir / name).symlink_to(found)
         path = f"{stubs}:{bin_dir}" + (f":{path_extra}" if path_extra else "")
         env = {"HOME": str(home), "PATH": path, "TSUGUMI_INSTALL_BASE": release.as_uri()}
-        return subprocess.run(["/bin/sh", str(SCRIPT)], capture_output=True, text=True, env=env)
+        return subprocess.run(command or ["/bin/sh", str(SCRIPT)], capture_output=True, text=True, env=env)
 
     install.home = home
     install.release = release
@@ -124,6 +124,29 @@ def test_a_new_version_replaces_the_old_one(machine):
     assert machine("Darwin", "arm64").returncode == 0
     assert sorted(p.name for p in (machine.home / ".local" / "share" / "tsugumi").iterdir()) == ["1.2.4", "current"]
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.2.4"
+
+
+@needs_server
+def test_update_puts_the_latest_release_in_place(machine):
+    # `tsugumi update` (after the wrapper's own flags) runs the release's install.sh.
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
+    assert machine("Darwin", "arm64").returncode == 0
+    shutil.copy(SCRIPT, machine.release / "install.sh")
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.1")
+    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
+    assert r.returncode == 0, r.stderr
+    assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.1"
+    assert "起動し直す" in r.stdout
+
+
+@needs_server
+def test_update_without_the_release_script_says_so_and_keeps_what_is_there(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
+    assert machine("Darwin", "arm64").returncode == 0
+    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
+    assert r.returncode != 0
+    assert "install.sh を取得できませんでした" in r.stderr
+    assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.0"
 
 
 @pytest.mark.parametrize("arch", ["x86_64", "aarch64"])

@@ -4,7 +4,7 @@
 let
   files = lib.fileset.unions [
     ../web/package.json ../web/package-lock.json ../web/scripts ../web/server ../web/src ../web/tsconfig.json
-    ../agent ../ui/modules ../protocol ../demos ../sdk ../flake.lock
+    ../agent ../ui/modules ../protocol ../demos ../sdk ../flake.lock ../VERSION
     ../docs/site/player-data ../docs/assets/tsugumi-icon.svg
   ];
 in
@@ -30,7 +30,8 @@ buildNpmPackage {
     mkdir -p $share/web/node_modules $share/agent
     # The server finds these from web/dist/server.js, as in the repository.
     cp -R web/dist $share/web/dist
-    cp -R demos flake.lock $share/
+    # VERSION: `tsugumi update` says when this is already the latest.
+    cp -R demos flake.lock VERSION $share/
     cp -R agent/Reference $share/agent/
     cp -R sdk $share/sdk
     # A native module, loaded when a terminal opens.
