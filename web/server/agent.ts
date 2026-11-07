@@ -388,7 +388,9 @@ function stream(c: ProviderConfig, system: string, messages: ChatMessage[], tool
 export function messagesBody(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[]): Record<string, unknown> {
   // Prompt caching: the system prompt and the tools are the same in every
   // step, and each step repeats the conversation before it, so all three end
-  // with a cache breakpoint (at most 4 are allowed).
+  // with a cache breakpoint (at most 4 are allowed). The rules every Agent has
+  // end with theirs, before what is an Agent's own: helpers read them from one
+  // another, which the end of the whole system prompt would not let them.
   const cache = { type: 'ephemeral' }
   // Search blocks go back only with the tool declared, and only whole.
   const replay = tools.some((t) => t.server) ? replayable(messages) : new Set<number>()
@@ -400,7 +402,10 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
   }
   const body: Record<string, unknown> = {
     model: c.model, max_tokens: outputLimit(c), stream: true,
-    system: [{ type: 'text', text: system, cache_control: cache }], messages: wired,
+    system: system.length > SYSTEM_PROMPT.length && system.startsWith(SYSTEM_PROMPT)
+      ? [{ type: 'text', text: SYSTEM_PROMPT, cache_control: cache }, { type: 'text', text: system.slice(SYSTEM_PROMPT.length) }]
+      : [{ type: 'text', text: system, cache_control: cache }],
+    messages: wired,
   }
   if (c.effort) body.output_config = { effort: c.effort }
   if (c.fast) body.speed = 'fast'
@@ -412,6 +417,28 @@ export function messagesBody(c: ProviderConfig, system: string, messages: ChatMe
     }))
   }
   return body
+}
+
+/** A request that writes the cache up to `system` and is answered with nothing. */
+export function warmBody(c: ProviderConfig, system: string, tools: ToolSpec[]): Record<string, unknown> {
+  const { stream: _, ...body } = messagesBody(c, system, [], tools)
+  return { ...body, max_tokens: 0, messages: [{ role: 'user', content: 'warmup' }] }
+}
+
+/** Writes what the helpers of a delegate call share, before they start:
+ *  requests sent at the same time cannot read what the others are writing.
+ *  Failing costs only the saving, so nothing is retried or reported. */
+export async function warmCache(c: ProviderConfig, system: string, tools: ToolSpec[], signal?: AbortSignal): Promise<{ cacheRead: number; cacheWrite: number }> {
+  try {
+    if (c.api !== 'anthropicMessages') return { cacheRead: 0, cacheWrite: 0 }
+    const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(warmBody(c, system, tools)),
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]) })
+    if (r.status !== 200) return { cacheRead: 0, cacheWrite: 0 }
+    const u = ((await r.json()) as { usage?: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }).usage
+    return { cacheRead: u?.cache_read_input_tokens ?? 0, cacheWrite: u?.cache_creation_input_tokens ?? 0 }
+  } catch {
+    return { cacheRead: 0, cacheWrite: 0 }
+  }
 }
 
 /** Anthropic Messages API with SSE streaming. */
@@ -1135,7 +1162,12 @@ export class Agent {
   get tools(): ToolSpec[] {
     const reference = Object.keys(this.references).length ? [REFERENCE_TOOL] : []
     if (this.role === 'guide') return [...this.catalog.tools.filter((t) => GUIDE_TOOLS.has(t.name)), ...reference, GUIDE_SHOW_TOOL]
-    return [...(this.searches ? [WEB_SEARCH_TOOL] : []), ...this.catalog.tools, ...reference, ...(this.helper ? [] : [DELEGATE_TOOL, GUIDE_SHOW_TOOL])]
+    return [...(this.searches ? [WEB_SEARCH_TOOL] : []), ...this.helperTools, ...(this.helper ? [] : [DELEGATE_TOOL, GUIDE_SHOW_TOOL])]
+  }
+
+  /** What a helper is given: only the main Agent has more. */
+  private get helperTools(): ToolSpec[] {
+    return [...this.catalog.tools, ...(Object.keys(this.references).length ? [REFERENCE_TOOL] : [])]
   }
 
   /** The main Agent may search, when the setting is on (the helpers work from
@@ -1205,6 +1237,10 @@ export class Agent {
       line = next.catch(() => {})
       return next
     } : undefined
+    const u = this.conversation.usage
+    const warmed = await warmCache(this.provider, SYSTEM_PROMPT, this.helperTools, signal)
+    u.cacheReadTokens = (u.cacheReadTokens ?? 0) + warmed.cacheRead
+    u.cacheWriteTokens = (u.cacheWriteTokens ?? 0) + warmed.cacheWrite
     const reports = await Promise.all(tasks.map(async (h, i) => {
       const file = path.join(dir, h.name + '.json')
       fs.rmSync(file, { force: true })
@@ -1216,7 +1252,6 @@ export class Agent {
       a.helperRev = rev
       return a.work((e) => events({ kind: 'helper', name: h.name, event: e }), signal)
     }))
-    const u = this.conversation.usage
     for (const r of reports) {
       u.outputTokens += r.usage.outputTokens
       u.cacheReadTokens = (u.cacheReadTokens ?? 0) + (r.usage.cacheReadTokens ?? 0)

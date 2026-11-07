@@ -59,8 +59,9 @@ Like the API it refuses a request that sends the blocks back wrongly: without
 the tool, without encrypted_content or encrypted_index, or with a search left
 without its result. Without the tool it says it cannot search.
 GET /fixture/requests lists every model request it saw (path, tools, include,
-whether its text names web_search, whether it asks for a summary, and the
-effort, speed and output limit it asked for). Like the APIs it refuses an effort
+whether its text names web_search, whether it asks for a summary, the
+effort, speed and output limit it asked for, and its system blocks). max_tokens 0
+writes the cache and answers with nothing, and like the API refuses a stream. Like the APIs it refuses an effort
 or a speed they do not know.
 
 An empty reply: the latest user text "refuse this" gets no content and the stop
@@ -154,6 +155,10 @@ def tool_results(messages):
                     content = {"error": text}
                 out.append((names.get(b["tool_use_id"], "?"), content, b.get("is_error", False)))
     return out
+
+
+# What a request with max_tokens 0 reports writing to the cache.
+WARM_WRITE = 1000
 
 
 def system_text(body):
@@ -972,6 +977,14 @@ class Handler(BaseHTTPRequestHandler):
         if bad := self._refused_option(body):
             self._error(400, bad)
             return
+        if body.get("max_tokens") == 0:
+            # Writes the cache and answers with nothing; the API refuses it with a stream.
+            if body.get("stream"):
+                self._error(400, "max_tokens: 0 cannot be used with stream")
+                return
+            self._json({"id": "msg_warm", "type": "message", "role": "assistant", "content": [], "stop_reason": "max_tokens",
+                        "usage": {"input_tokens": 4, "output_tokens": 0, "cache_creation_input_tokens": WARM_WRITE, "cache_read_input_tokens": 0}})
+            return
         missing = unanswered_tool_uses(body["messages"])
         if missing:
             self._error(400, f"tool_use ids were found without tool_result blocks immediately after: {', '.join(missing)}")
@@ -1107,7 +1120,8 @@ class Handler(BaseHTTPRequestHandler):
                                      "eager": b"eager_input_streaming" in raw,
                                      "effort": body.get("output_config", body.get("reasoning", {})).get("effort"),
                                      "speed": body.get("speed", body.get("service_tier")),
-                                     "output_limit": body.get("max_tokens", body.get("max_output_tokens"))})
+                                     "output_limit": body.get("max_tokens", body.get("max_output_tokens")),
+                                     "system_blocks": [b["text"] for b in body["system"]] if isinstance(body.get("system"), list) else []})
 
     def _refused_option(self, body):
         """An effort or a speed the APIs do not know (a 400 there), and what the

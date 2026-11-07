@@ -420,7 +420,9 @@ public struct MessagesProvider: Sendable {
 
   /// Prompt caching: the system prompt and the tools are the same in every
   /// step, and each step repeats the conversation before it, so all three end
-  /// with a cache breakpoint (at most 4 are allowed).
+  /// with a cache breakpoint (at most 4 are allowed). The rules every Agent has
+  /// end with theirs, before what is an Agent's own: helpers read them from one
+  /// another, which the end of the whole system prompt would not let them.
   static func cachedBody(system: String, messages: [ChatMessage], tools: [ToolSpec]) -> (system: Any, messages: Any, tools: Any) {
     let cache: [String: Any] = ["type": "ephemeral"]
     var wireTools: [[String: Any]] = tools.map {
@@ -442,7 +444,11 @@ public struct MessagesProvider: Sendable {
       last["content"] = content
       wire[wire.count - 1] = last
     }
-    return ([["type": "text", "text": system, "cache_control": cache]], wire, wireTools)
+    let shared = Shared.systemPrompt
+    let blocks: [[String: Any]] = system.count > shared.count && system.hasPrefix(shared)
+      ? [["type": "text", "text": shared, "cache_control": cache], ["type": "text", "text": String(system.dropFirst(shared.count))]]
+      : [["type": "text", "text": system, "cache_control": cache]]
+    return (blocks, wire, wireTools)
   }
 
   /// How long a stream may stay silent at the deep levels, instead of the
@@ -462,6 +468,32 @@ public struct MessagesProvider: Sendable {
     if let effort = config.effort { body["output_config"] = ["effort": effort] }
     if config.fast { body["speed"] = "fast" }
     return body
+  }
+
+  /// A request that writes the cache up to `system` and is answered with nothing.
+  func warmBody(system: String, tools: [ToolSpec]) -> [String: Any] {
+    var body = messagesBody(Self.cachedBody(system: system, messages: [], tools: tools))
+    body["stream"] = nil
+    body["max_tokens"] = 0
+    body["messages"] = [["role": "user", "content": "warmup"]]
+    return body
+  }
+
+  /// Writes what the helpers of a delegate call share, before they start:
+  /// requests sent at the same time cannot read what the others are writing.
+  /// Failing costs only the saving, so nothing is retried or reported.
+  func warmCache(system: String, tools: [ToolSpec]) async -> Usage {
+    var usage = Usage()
+    guard config.api == .anthropicMessages, var r = try? await request(path: "v1/messages"),
+          let payload = try? JSONSerialization.data(withJSONObject: warmBody(system: system, tools: tools)) else { return usage }
+    r.httpMethod = "POST"
+    r.httpBody = payload
+    r.timeoutInterval = 30
+    guard let (data, resp) = try? await session.data(for: r), (resp as? HTTPURLResponse)?.statusCode == 200,
+          let u = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["usage"] as? [String: Any] else { return usage }
+    usage.cacheReadTokens = u["cache_read_input_tokens"] as? Int ?? 0
+    usage.cacheWriteTokens = u["cache_creation_input_tokens"] as? Int ?? 0
+    return usage
   }
 
   public func stream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {

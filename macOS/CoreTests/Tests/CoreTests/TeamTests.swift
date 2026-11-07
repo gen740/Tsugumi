@@ -56,6 +56,22 @@ import TsugumiRPC
     for d in Self.drafts { #expect(log.text.contains("\(d): \(d) implemented, its run succeeded"), "\(log.text)") }
     let helpers = Set(log.all.compactMap { e -> String? in if case .helper(let n, _) = e { return n }; return nil })
     #expect(helpers == Set(Self.drafts))
+    // What they share is written once before they start, and is what each sends first.
+    let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(h.fixturePort)/fixture/requests")!)
+    let requests = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+    let warms = requests.indices.filter { requests[$0]["output_limit"] as? Int == 0 }
+    #expect(warms.count == 1, "\(warms)")
+    let helpersAsked = requests.indices.filter { !(requests[$0]["tools"] as? [String] ?? []).contains("delegate") && !warms.contains($0) }
+    #expect(helpersAsked.count >= Self.drafts.count)
+    let warm = try #require(warms.first.map { requests[$0] })
+    #expect(warm["system_blocks"] as? [String] == [Agent.systemPrompt])
+    for i in helpersAsked {
+      #expect(i > warms[0], "a helper asked before the cache was written")
+      #expect(requests[i]["tools"] as? [String] == warm["tools"] as? [String])
+      let blocks = requests[i]["system_blocks"] as? [String] ?? []
+      #expect(blocks.count == 2 && blocks.first == Agent.systemPrompt)
+    }
+    #expect(await agent.conversation.usage.cacheWriteTokens >= 1000, "the write is counted")
     let after = try await client.inspect()
     for d in Self.drafts {
       let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == d })
