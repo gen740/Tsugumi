@@ -7,6 +7,7 @@ import { api } from '../api'
 import { app } from '../model/app'
 import type { ChatController } from '../model/chat'
 import { guide, GuideAction, GuideBubble, GuideItem, GuideScreen, GuideTour } from '../model/guide'
+import { leadColor } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
@@ -303,6 +304,9 @@ export function GuideFlyer() {
   const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
   const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0
   const feetX = box.left + box.width / 2 + dx, feetY = box.top + box.height + dy
+  // The Agent among its helpers: gold, with its name (it is larger than theirs as it is).
+  const lead = goal === 'perch' && !!guide.team?.out(Date.now() / 1000)
+  const leadStyle = lead ? { ['--bird' as string]: leadColor(prefs.dark) } : undefined
   let bx = box.flip ? feetX - 30 : feetX - bw + 30
   let by = feetY + 12
   if (by + bh > window.innerHeight - 8) by = feetY - 70 - bh
@@ -311,8 +315,8 @@ export function GuideFlyer() {
   return (
     <div className="guide-flyer" aria-live="polite">
       <GuideRings />
-      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}${arrived ? ' draggable' : ''}`}
-        style={{ left: box.left + dx, top: box.top + dy, width: box.width, height: box.height, transition: still || drag ? 'none' : undefined }}
+      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}${arrived ? ' draggable' : ''}${lead ? ' lead' : ''}`}
+        style={{ left: box.left + dx, top: box.top + dy, width: box.width, height: box.height, transition: still || drag ? 'none' : undefined, ...leadStyle }}
         aria-hidden title={arrived ? 'ドラッグで動かせます' : undefined}
         onPointerDown={(e) => {
           if (!arrived) return
@@ -327,7 +331,9 @@ export function GuideFlyer() {
           setBox({ ...box, left: box.left + drag.dx, top: box.top + drag.dy })
           setDrag(undefined)
         }}>
+        {lead && <span className="helper-halo" />}
         <GuideBird />
+        {lead && <span className="helper-name">Agent</span>}
       </div>
       {arrived && goal === 'perch' && guide.bubble && (
         <div ref={bubbleRef} className="guide-flyer-bubble" style={{ left: bx, top: by }}>
@@ -336,7 +342,7 @@ export function GuideFlyer() {
       )}
       {arrived && goal === 'perch' && !guide.bubble && working?.line && (
         // The Agent at work: what it does, in a line beside the bird (nothing to press).
-        <div className="guide-work-line material" style={{ ...(box.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (box.flip ? window.innerWidth - feetX : feetX) + 2) }} aria-live="polite">{working.from ? `${working.from}: ${working.line}` : working.line}</div>
+        <div className={`guide-work-line material${lead ? ' lead' : ''}`} style={{ ...(box.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (box.flip ? window.innerWidth - feetX : feetX) + 2), ...leadStyle }} aria-live="polite">{working.from ? `${working.from}: ${working.line}` : working.line}</div>
       )}
     </div>
   )
@@ -392,7 +398,7 @@ async function openDemo(id: string) {
 }
 
 /** The bird of the app icon, facing the page's content. */
-function GuideBird() {
+export function GuideBird() {
   const art = useBird()
   return (
     <svg viewBox="130 270 680 470" aria-hidden className="guide-bird">

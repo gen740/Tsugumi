@@ -30,7 +30,7 @@
 .cv-cut { position: absolute; transform: translate(-50%, -50%); z-index: 5; }
 /* The file the Agent is writing, by its Card (dark in both themes, as the code it shows). */
 .cv-writing { position: absolute; box-sizing: border-box; padding: calc(var(--s) * 10px); overflow: hidden; pointer-events: none; z-index: 40;
-  border-radius: calc(var(--s) * 8px); border: 1px solid color-mix(in srgb, var(--tsugumi-cream) 55%, transparent); background: #171717; color: rgba(255, 255, 255, 0.88);
+  border-radius: calc(var(--s) * 8px); border: 1px solid color-mix(in srgb, var(--bird, var(--tsugumi-cream)) 55%, transparent); background: #171717; color: rgba(255, 255, 255, 0.88);
   box-shadow: 0 calc(var(--s) * 3px) calc(var(--s) * 12px) rgba(0, 0, 0, 0.3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(var(--s) * 10.5px); }
 .cv-writing-head { display: flex; justify-content: space-between; gap: calc(var(--s) * 8px); height: calc(var(--s) * 12px); margin-bottom: calc(var(--s) * 3px); font-size: calc(var(--s) * 9.5px); line-height: calc(var(--s) * 12px); color: rgba(255, 255, 255, 0.55); }
 .cv-writing-state { flex: none; }
@@ -39,7 +39,7 @@
 .cv-writing-row { height: calc(var(--s) * 13.5px); margin-bottom: calc(var(--s) * 2px); line-height: calc(var(--s) * 13.5px); }
 .cv-writing-file, .cv-writing-row.writing { direction: rtl; text-align: left; }
 .cv-writing-file > span, .cv-writing-row.writing > span { direction: ltr; unicode-bidi: isolate; }
-.cv-writing-line { position: absolute; width: 0; border-left: 1.2px dashed color-mix(in srgb, var(--tsugumi-cream) 60%, transparent); pointer-events: none; z-index: 39; }
+.cv-writing-line { position: absolute; width: 0; border-left: 1.2px dashed color-mix(in srgb, var(--bird, var(--tsugumi-cream)) 60%, transparent); pointer-events: none; z-index: 39; }
 .cv-link-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--purple) 75%, transparent); pointer-events: none; }
 .cv-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cv-center { display: inline-flex; align-items: center; justify-content: center; flex: none; }

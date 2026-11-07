@@ -26,6 +26,12 @@ export function reportPageProject(project?: string) {
   void api('/api/page', { page: page(), project }).catch(() => {})
 }
 
+/** This page left a project: its environment and chat stop unless another page shows it. */
+export function closePageProject(project: string) {
+  reported = undefined
+  return api('/api/project/close', { page: page(), path: project })
+}
+
 /** Events from the host server: environment states, terminals and Agent progress. */
 export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
@@ -94,6 +100,8 @@ export interface Status {
   /** Where demo copies go (~/Documents/Tsugumi or TSUGUMI_PROJECTS_DIR). */
   documents: string
   launchProject: string | null
+  /** Cards can use folders of this host at /host/<name>. */
+  hostFolders: boolean
   /** The nixpkgs this Tsugumi builds with (new projects are pinned to it). */
   nixpkgsPin: string | null
   chatAvailable: boolean

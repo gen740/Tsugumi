@@ -65,7 +65,7 @@
 <li>読み取れるのは <code>/nix/store</code>、実行・入力の領域、システムライブラリ、worker 本体だけです。ホームフォルダやプロジェクトの文書は読めません。</li>
 <li>書き込めるのは worker 自身のフォルダ（スクリプトを除く）と、実行の出力フォルダ（<code>runs/&lt;run&gt;/work/…/out</code>）だけです。Linux では出力フォルダを <code>/proc/self/fd</code> 経由で渡しますが、macOS にはないためパスで渡します。</li>
 <li>bubblewrap と違い、ファイルの存在確認（<code>stat</code>）は全体で許可しています（中身は読めません）。また、uid の分離はしません。</li>
-<li>Mac のフォルダを Card に共有する機能（<code>/host/&lt;name&gt;</code>）は共通 VM が必要なため、Web UI では使えません。</li>
+<li>Mac のフォルダを Card に共有する機能（<code>/host/&lt;name&gt;</code>）は共通 VM が必要なため、macOS 上の Web UI では使えません。Card 設定ではフォルダを追加できず、すでに設定のある Card にはその旨を表示します（実行すると失敗します）。bubblewrap のある Linux では、共通 VM なしで使えるはずです（手元では確かめていません）。</li>
 <li>ネットワークを許可した Card も、このマシン自身には接続できません（tsugumid や Web サーバーに触れないため）。loopback だけでなく、LAN や VPN のアドレス、<code>0.0.0.0</code> 宛ても同じです（Seatbelt の <code>localhost</code> はこのマシンのアドレス全体を指します）。Unix ソケットも閉じています。例外は <code>mDNSResponder</code> のソケット（<code>/var/run/mDNSResponder</code>）だけです。macOS の名前解決はこのソケットを通るので、閉じると名前を引けません。このソケットは DNS-SD の窓口でもあるため、同じ経路で LAN のサービスを探したり公開したりはできます。</li>
 <li>ネットワークを許可した Card が使える Mach サービスは、証明書の検証に使う <code>com.apple.trustd.agent</code> だけです。クリップボードや LaunchServices（アプリや URL を開く）、Apple Event には届きません。名前解決と HTTPS はこれで動きます（Python・curl・Go・NSURLSession で確認）。代わりに、ネットワークなしの Card と同じくユーザー情報（<code>getpwuid</code>）を引けないので、<code>ssh</code> は <code>No user exists for uid</code> で失敗します。システム設定のプロキシも読みません。</li>
 <li>塞げない経路が 3 つあります。これらが問題になるネットワークでは、他人の Card に <code>network: true</code> を与えないでください。<ul>

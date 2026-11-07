@@ -186,12 +186,22 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   }, [session, session.runActive])
   const act = (f: () => Promise<void>) => void f().catch((e) => setError(String(e?.message ?? e)))
   const g = session.versionGraph
+  // What failed is said over any of the views below.
+  const failure = error && <Confirm title="版を操作できませんでした" message={error} confirm="OK" onConfirm={() => setError(undefined)} onCancel={() => setError(undefined)} />
+  if (!g && session.versionGraphError) {
+    return (
+      <Empty title="版を読み込めませんでした" description={session.versionGraphError}>
+        <Button onClick={() => void session.refreshVersions()}>再試行</Button>
+      </Empty>
+    )
+  }
   if (!g) return <Empty title="版を読み込んでいます…" />
   if (!g.enabled) {
     return (
       <Empty title="版管理されていません"
         description="このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。">
         <Button kind="prominent" onClick={() => act(() => session.makeRepository())}>版管理を始める</Button>
+        {failure}
       </Empty>
     )
   }
@@ -346,7 +356,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
           onCancel={() => setConfirmStart(undefined)} />
       )}
       {naming && <NameSheet onClose={() => setNaming(false)} onSave={(n, m) => { setNaming(false); act(() => session.markVersion(n, m)) }} />}
-      {error && <Confirm title="版を操作できませんでした" message={error} confirm="OK" onConfirm={() => setError(undefined)} onCancel={() => setError(undefined)} />}
+      {failure}
     </div>
   )
 }

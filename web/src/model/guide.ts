@@ -166,6 +166,8 @@ export class GuideController extends Observable {
 
   /** The files the chat's Agent is writing: while one plays, the bird is at its Card. */
   writer?: { at(now: number): { card: string } | undefined }
+  /** The chat's helpers: while they are out, this bird stands out among them. */
+  team?: { out(now: number): boolean }
 
   /** The chat's Agent (or Claude Code) called a tool: the bird goes to the Card it looks at. */
   chatWork(tool: string, args: string, from?: string) {
@@ -173,6 +175,16 @@ export class GuideController extends Observable {
     const scene = workScene(tool, args)
     // Without a Card of its own the bird stays by the last one, saying what it does now.
     this.work = { card: scene.card ?? this.work?.card, line: scene.line ?? this.work?.line, from }
+    this.changed()
+  }
+
+  /** The chat's project was left: the bird no longer speaks or works for it. */
+  chatClosed(chat: { }) {
+    this.work = undefined
+    if (this.speakingChat === chat) {
+      this.speakingChat = undefined
+      this.dismissBubble()
+    }
     this.changed()
   }
 

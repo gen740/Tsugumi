@@ -252,10 +252,14 @@ function plotTitle(name: string, json: string): string | undefined {
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
+/** A file's new content: text, or bytes for a file taken in with another project. */
+type SourceEdit = string | Uint8Array
+const sourceBytes = (e: SourceEdit) => (typeof e === 'string' ? new TextEncoder().encode(e) : e)
+
 interface Snapshot {
   project: J
   layout: J
-  sources: Map<string, string>
+  sources: Map<string, SourceEdit>
   removals: Set<string>
   definitions: Map<string, DefinitionDraft>
   externals: Map<string, ExternalProject>
@@ -271,8 +275,8 @@ interface DocState {
 
 /** A source file's content before or after an edit ('confirmed': the
  *  confirmed file, read before the edit is saved, for undo). */
-type SourceValue = { kind: 'absent' } | { kind: 'text'; text: string } | { kind: 'confirmed' }
-const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !== 'text' || a.text === (b as { text: string }).text)
+type SourceValue = { kind: 'absent' } | { kind: 'text'; text: SourceEdit } | { kind: 'confirmed' }
+const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !== 'text' || a.text === (b as { text: SourceEdit }).text)
 
 /** One saved operation: undo applies `before` over what is there now, so
  *  changes made since by the Agent or another window stay. */
@@ -349,7 +353,7 @@ export class ProjectSession extends Observable {
   // Draft
   project: J = obj()
   layout: J = obj()
-  sourceEdits = new Map<string, string>() // path -> new text
+  sourceEdits = new Map<string, SourceEdit>() // path -> new content
   sourceRemovals = new Set<string>()
   definitionEdits = new Map<string, DefinitionDraft>()
   /** The Draft being written on the canvas (geometry opens its Card up). */
@@ -385,6 +389,7 @@ export class ProjectSession extends Observable {
   cameras = new Map<CardKey, { x: number; y: number; zoom: number }>()
   private viewRev = 0n
   private viewSaveTimer?: ReturnType<typeof setTimeout>
+  private closed = false
 
   // Runs
   runStatus?: R.RunStatusT
@@ -535,6 +540,7 @@ export class ProjectSession extends Observable {
   }
 
   private async openConnection() {
+    if (this.closed) return
     this.connectionMessage = undefined
     this.changed()
     try {
@@ -545,6 +551,10 @@ export class ProjectSession extends Observable {
       const c = new RPCClient(await webSocketTransport(env.endpoint!))
       await c.connect(env.token)
       const opened = await c.open(this.viewId)
+      if (this.closed) {
+        c.close()
+        return
+      }
       this.client = c
       this.projectId = env.projectId
       this.endpoint = env.endpoint
@@ -587,6 +597,7 @@ export class ProjectSession extends Observable {
     this.changed()
     void (async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
+        if (this.closed) break
         await this.openConnection()
         if (this.connected) break
         await sleep(Math.min(5000, 250 * (attempt + 1)))
@@ -603,6 +614,17 @@ export class ProjectSession extends Observable {
     this.changed()
     await api('/api/env/stop', { path: this.dir }).catch(() => {})
     await this.openConnection()
+  }
+
+  /** The project was left: no more connections, whatever is under way. */
+  close() {
+    this.closed = true
+    this.offEvents?.()
+    clearTimeout(this.viewSaveTimer)
+    const c = this.client
+    this.client = undefined
+    c?.close()
+    this.connected = false
   }
 
   async stopEnvironment() {
@@ -1192,7 +1214,7 @@ export class ProjectSession extends Observable {
       if (e.removed) out += `\n== ${p} removed ==\n`
       else for (const [rel, text] of externalFiles(e)) out += `\n== ${p}${rel} ==\n${text}\n`
     }
-    for (const [p, t] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) out += `\n== ${p} ==\n${t}\n`
+    for (const [p, t] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) out += `\n== ${p} ==\n${typeof t === 'string' ? t : `(${t.length} bytes)`}\n`
     for (const p of [...this.sourceRemovals].sort()) out += `\n== ${p} removed ==\n`
     return out
   }
@@ -1298,7 +1320,7 @@ export class ProjectSession extends Observable {
         const goesWithItsDefinition = (p: string) => removedFolders.some((f) => p.startsWith(f))
         for (const [p, text] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) {
           if (this.sourceRemovals.has(p) || written.has(p) || goesWithItsDefinition(p)) continue
-          changes.push(Change.putSource(p, new TextEncoder().encode(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
+          changes.push(Change.putSource(p, sourceBytes(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
         }
         for (const p of [...this.sourceRemovals].sort()) {
           if (written.has(p) || goesWithItsDefinition(p)) continue
@@ -1900,7 +1922,7 @@ export class ProjectSession extends Observable {
   /** Source text as the draft sees it. */
   async sourceText(p: string): Promise<string> {
     const e = this.sourceEdits.get(p)
-    if (e !== undefined) return e
+    if (e !== undefined) return typeof e === 'string' ? e : new TextDecoder().decode(e)
     if (!this.client) throw new RPCError('disconnected', '接続していません')
     return new TextDecoder().decode(await this.client.readFile(p, this.rev))
   }
@@ -2067,7 +2089,7 @@ export class ProjectSession extends Observable {
   /** Takes in another Tsugumi project as a Card in Card: its folder (read by
    *  the host server, without hidden folders) goes to externals/<name>/. */
   async importProject(folder: string, scope: string[], at: { x: number; y: number }): Promise<CardKey> {
-    const { name: folderName, files } = await api<{ name: string; files: Record<string, string> }>('/api/import/project', { folder })
+    const { name: folderName, files, binary } = await api<{ name: string; files: Record<string, string>; binary: Record<string, string> }>('/api/import/project', { folder })
     const json = (rel: string) => (files[rel] !== undefined ? tryParse(files[rel]) : undefined)
     // The project and the externals in it, each with its documents.
     const projects = Object.keys(files).filter((rel) => {
@@ -2104,6 +2126,10 @@ export class ProjectSession extends Observable {
         if (projects.some((p) => rel.startsWith(p) && isDocument(rel.slice(p.length)))) continue
         x.sourceRemovals.delete(to + rel)
         x.sourceEdits.set(to + rel, text)
+      }
+      for (const [rel, base64] of Object.entries(binary)) {
+        x.sourceRemovals.delete(to + rel)
+        x.sourceEdits.set(to + rel, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)))
       }
       for (const [p, e] of [...docs].sort(([a], [b]) => a.localeCompare(b))) x.createExternal(p, e)
       x.setCardDefinition(k, { card: obj(), link: obj([['external', name]]) })
@@ -2999,6 +3025,8 @@ auto run(Card::Input& input) -> Card::Output {
 
   /** The project's versions as last read (core/src/versions.cc). */
   versionGraph?: R.VersionGraphT
+  /** Why the last read of it failed. */
+  versionGraphError?: string
   /** Made or copied by this page: it becomes a repository when it connects. */
   makeRepositoryOnConnect = false
 
@@ -3006,7 +3034,10 @@ auto run(Card::Input& input) -> Card::Output {
     if (!this.client) return
     try {
       this.versionGraph = await this.client.versionGraph()
-    } catch {}
+      this.versionGraphError = undefined
+    } catch (e) {
+      this.versionGraphError = errorText(e)
+    }
     this.changed()
   }
 

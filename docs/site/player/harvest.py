@@ -128,7 +128,18 @@ def thin(values, most: int) -> list[float]:
     return [round(float(values[round(i * step)]), 4) for i in range(most)]
 
 
-def module_value(name: str, data: dict) -> dict:
+def vega_image(spec: dict, dest: Path) -> str:
+    """Writes the figure as an image, drawn by Vega (PNG: the Mac's thumbnails read images with ImageIO, which has no SVG); its file name."""
+    drawn = subprocess.run(["node", str(Path(__file__).with_name("vega-svg.mjs"))], input=json.dumps(spec),
+                           check=True, capture_output=True, text=True)
+    with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
+        svg, png = Path(tmp) / "figure.svg", Path(tmp) / "figure.png"
+        svg.write_text(drawn.stdout)
+        subprocess.run(["sips", "-s", "format", "png", str(svg), "--out", str(png)], check=True, capture_output=True)
+        return resized(png.read_bytes(), "image/png", dest)
+
+
+def module_value(name: str, data: dict, dest: Path) -> dict:
     """What can be drawn without the plot libraries: the figure's own points."""
     series = []
     if name == "plotly":
@@ -164,6 +175,8 @@ def module_value(name: str, data: dict) -> dict:
         title = data.get("title", "")
         if isinstance(title, dict):
             title = title.get("text", "")
+        if not series:  # panels with their own axes (concat, facet): the picture, not one set of points
+            return {"type": "image", "src": f"assets/{vega_image(data, dest)}", "alt": title}
         return {"type": "plot", "library": "Altair", "title": title, "xLabel": xf or "", "yLabel": yf or "", "series": series}
     return {"type": "module", "name": name}
 
@@ -188,7 +201,7 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
     if t == 6:
         return {"type": "points", "count": len(v.x)}
     if t == 7:
-        return module_value(text(v.name), json.loads(text(v.dataJson)))
+        return module_value(text(v.name), json.loads(text(v.dataJson)), OUT / f"{demo}-{'-'.join(card)}")
     return None
 
 

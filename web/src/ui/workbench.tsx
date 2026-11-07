@@ -12,7 +12,7 @@ import { canvasFor } from '../model/canvas'
 import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, WorkflowTab } from '../model/workspace'
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
-import { ChatPanel } from './chat'
+import { ChatPanel, PermissionHost } from './chat'
 import { guide } from '../model/guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
@@ -138,6 +138,7 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
         </SidePane>
       )}
       <LoadingOverlay content={loadingContent(session)} />
+      {onSwitchProject && <PermissionHost session={session} />}
     </div>
   )
 }

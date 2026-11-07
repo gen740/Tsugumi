@@ -295,6 +295,11 @@ DELEGATE = re.compile(r"delegate the drafts ((?:[\w-]+ ?)+)", re.I)
 HELPER = re.compile(r'You are the helper "([\w-]+)".*?The Cards you own: ([\w, -]+)\.', re.S)
 
 
+def rev_of(res):
+    """The revision in a result, also when it is the Web server's whole delta or was cut to fit the context."""
+    return str(res["value"]["rev"]) if "rev" in res.get("value", {}) else re.search(r'"rev":(\d+)', str(res)).group(1)
+
+
 def last_delegate_task(messages):
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
@@ -317,7 +322,7 @@ def decide_delegate(messages, cards, start):
         if name == "delegate":
             return ("tool", "project_inspect", {})
         if name == "project_inspect":
-            return ("tool", "run", {"base_rev": str(value["rev"]), "card": {"segments": [trigger_of(value)]}})
+            return ("tool", "run", {"base_rev": rev_of(res), "card": {"segments": [trigger_of(value)]}})
         if name in ("run", "run_status"):
             status = value.get("run", value)
             if status.get("state") not in TERMINAL:

@@ -1247,6 +1247,7 @@ export class Agent {
       const a = new Agent(this.catalog, this.rpc, this.provider, file, `${this.id}.${h.name}`, this.references, h)
       a.maxSteps = HELPER_STEPS
       a.statusWait = this.statusWait
+      a.folders = this.folders
       a.approver = ask
       a.brief = briefs[i]
       a.helperRev = rev
