@@ -596,9 +596,9 @@ private struct APISettings: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {
-        LabeledContent("状態", value: GuideController.shared.available
+        LabeledContent("状態", value: GuideController.shared.connected
                        ? String(localized: "右下に表示中（\(AgentSettings.current().name)）")
-                       : String(localized: "API キーが未設定のため表示していません"))
+                       : String(localized: "API キーが未設定のため、決まったデモの案内だけをしています"))
         // Pressed, it says what happens next and waits until it has happened.
         Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
           .disabled(GuideController.shared.offersDemo)
@@ -609,7 +609,7 @@ private struct APISettings: View {
       } header: {
         Text("ガイドのツグミ")
       } footer: {
-        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。")
+        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。")
           .font(.caption).foregroundStyle(.secondary)
       }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)

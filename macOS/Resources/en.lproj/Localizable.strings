@@ -51,7 +51,7 @@
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
 "API キー" = "API key";
-"API キーが未設定のため表示していません" = "Not shown: no API key is set";
+"API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
@@ -350,12 +350,12 @@
 "ガイドのツグミに聞く（%@）" = "Ask Tsugumi the Guide (%@)";
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
-"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. It appears when that connection works (a key, the ChatGPT sign-in) and goes away when it does not. Answering questions never changes your project.";
+"ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
 "キャンセル" = "Cancel";
 "キー" = "Key";
-"キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは現れません）。あとから設定の「API」でキーを登録すると現れます。" = "Without a key, everything in Tsugumi still works from the UI (the guide just stays away). Add a key later in Settings > API and it appears.";
+"キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。" = "Without a key, everything in Tsugumi still works from the UI (meanwhile the guide only gives a fixed demo tour). Add a key later in Settings > API and it answers questions too.";
 "キーを保存" = "Save Key";
 "キーを保存できませんでした: %@" = "Could not save the key: %@";
 "キーを削除" = "Delete key";

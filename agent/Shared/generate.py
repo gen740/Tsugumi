@@ -1,6 +1,7 @@
 """Writes agent/Sources/TsugumiAgent/Shared.swift from the files of this
 folder, which the web Agent imports as they are: the system prompts (the Agent's and the guide's), the RPC
-requests offered as tools and the Agent's own texts. It also writes the list of
+requests offered as tools, the Agent's own texts and the guide's script without a
+model connection. It also writes the list of
 the Python SDK's methods into the system prompt, so that the model need not read
 the SDK. Run it after changing them or the SDK
 (tests/python/test_agent_contract.py checks that it was)."""
@@ -55,7 +56,8 @@ def swift() -> str:
         f"  static let guidePrompt = {raw('guide-prompt.md')}\n\n"
         f"  static let versionSummaryPrompt = {raw('version-summary-prompt.md')}\n\n"
         f"  static let demoSkill = {raw('demo-skill.md')}\n\n"
-        f"  static let agentJSON = {raw('agent.json')}\n"
+        f"  static let agentJSON = {raw('agent.json')}\n\n"
+        f"  static let guideScript = {raw('guide-script.json')}\n"
         "}\n"
     )
 

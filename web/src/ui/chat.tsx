@@ -216,7 +216,7 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
         <div className="chat-column" ref={column}>
           {chat.items.length === 0 && (
             <div className="chat-intro">
-              <div className="callout">{guide.available ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
+              <div className="callout">{guide.connected ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
               <div className="caption secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</div>
             </div>
           )}
