@@ -548,6 +548,34 @@ function Row({ item, perform, enabled }: { item: GuideItem; perform: (a: GuideAc
   )
 }
 
+/** Right after the user's first key (or sign-in): Tsugumi offers to show a
+ *  demo itself. ガイドを見る does what the bubble's 定番のデモを見る does. */
+export function GuideInvite() {
+  useObserve(guide, prefs)
+  if (!guide.demoInvite) return null
+  return (
+    <Sheet onClose={() => guide.closeInvite(true)} width={460}>
+      <div className="sheet-body guide-setup" role="alertdialog" aria-label="ガイドを見てみますか？">
+        <div className="row gap12">
+          <span className={`guide-avatar${prefs.tsugumiStill ? ' still' : ''}`} style={{ flex: 'none' }}><GuideBird /></span>
+          <div className="col gap6">
+            <div className="title2">ガイドを見てみますか？</div>
+            <div>こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。</div>
+          </div>
+        </div>
+        <div className="caption secondary">案内ではモデルの API を使うため、利用料がかかります。</div>
+        <div className="row end gap8">
+          <Button onClick={() => guide.closeInvite(true)}>あとで</Button>
+          <Button kind="prominent" onClick={() => {
+            guide.closeInvite(false)
+            makePerform()({ kind: 'open_demo', label: '', demo: 'report' })
+          }}>ガイドを見る</Button>
+        </div>
+      </div>
+    </Sheet>
+  )
+}
+
 // ---- First start ------------------------------------------------------------------------
 
 /** The first start: choose Anthropic or OpenAI and enter that provider's API
@@ -566,7 +594,7 @@ export function GuideSetupSheet() {
     setMessage(undefined)
     try {
       await api('/api/guide/check', {})
-      await guide.finishSetup()
+      await guide.finishSetup(true)
     } catch (e) {
       setMessage(`接続を確かめられませんでした（${errorText(e)}）。キーを入れ直すか、ネットワークを確かめて再試行してください。`)
     }

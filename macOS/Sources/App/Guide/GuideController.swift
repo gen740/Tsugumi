@@ -164,6 +164,10 @@ final class GuideController {
   var needsSetup: Bool { !setupDone && !available && !Self.quiet }
   /// The guide greets and offers the demo once, when it first has a connection.
   var offersDemo: Bool { available && !demoAnswered && !Self.quiet }
+  /// The main window (its Workspace id) that asks "ガイドを見てみますか？": the
+  /// user's own save of a key (or sign-in) has just made the guide usable.
+  var demoInvite: UUID?
+  @ObservationIgnored private var inviteOnConnect = false
 
   /// Scripted checks and smoke runs: no first-start questions over the windows.
   static let quiet = ProcessInfo.processInfo.environment["TSUGUMI_UI_SCRIPT"] != nil
@@ -228,6 +232,10 @@ final class GuideController {
   private func apply(_ usable: Bool) {
     available = catalog != nil && usable
     if available && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
+    if inviteOnConnect {
+      inviteOnConnect = false
+      if offersDemo { demoInvite = AppModel.shared.frontMainWindow?.id }
+    }
     if !available {
       open = false
       if busy { cancel() }
@@ -235,8 +243,17 @@ final class GuideController {
     }
   }
 
-  /// The first start was answered: with a key that connected, or skipped.
-  func finishSetup() {
+  /// The user saved a key or signed in (Settings): when that is what makes the
+  /// guide usable, the main window in front asks whether to see the demo.
+  func connectionSaved() {
+    inviteOnConnect = !available
+    refreshAvailability()
+  }
+
+  /// The first start was answered: with a key that connected (the main window
+  /// then asks whether to see the demo), or skipped.
+  func finishSetup(connected: Bool = false) {
+    if connected { inviteOnConnect = true }
     setupDone = true
     UserDefaults.standard.set(true, forKey: "guide.setupDone")
     refreshAvailability()

@@ -1006,6 +1006,39 @@ private struct GuidePanel: View {
   }
 }
 
+// MARK: - The invitation
+
+/// Right after the user's first key (or sign-in): Tsugumi offers to show a
+/// demo itself. ガイドを見る does what the bubble's 定番のデモを見る does.
+struct GuideInviteView: View {
+  let see: () -> Void
+  let later: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      HStack(alignment: .top, spacing: 14) {
+        GuideAvatar(mood: .idle, still: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))
+        VStack(alignment: .leading, spacing: 6) {
+          Text("ガイドを見てみますか？").font(.title2.bold())
+          Text("こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。")
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      Text("案内ではモデルの API を使うため、利用料がかかります。")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("あとで", action: later).keyboardShortcut(.cancelAction)
+        Button("ガイドを見る", action: see).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(24)
+    .frame(width: 460)
+    .tint(TsugumiPalette.rufous)
+  }
+}
+
 // MARK: - First start
 
 /// The first start: choose Anthropic or OpenAI and enter that provider's API
@@ -1090,7 +1123,7 @@ struct GuideSetupView: View {
       do {
         _ = try await MessagesProvider(config: AgentSettings.current()).models()
         working = false
-        GuideController.shared.finishSetup()
+        GuideController.shared.finishSetup(connected: true)
         onDone()
       } catch {
         working = false

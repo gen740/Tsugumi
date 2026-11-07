@@ -131,6 +131,9 @@ export class GuideController extends Observable {
   setupDone = true
   /** "デモを見ますか？" was answered (見る or あとで). */
   demoAnswered = true
+  /** "ガイドを見てみますか？" is asked: the user's own save of a key (or
+   *  sign-in) has just made the guide usable. */
+  demoInvite = false
   tour: GuideTour | null = null
   loaded = false
   items: GuideItem[] = []
@@ -284,12 +287,35 @@ export class GuideController extends Observable {
     } catch {}
   }
 
-  /** The first start was answered: with a key that connected, or skipped. */
-  async finishSetup() {
+  /** The user saved a key or signed in (Settings): when that is what makes
+   *  the guide usable, the page asks whether to see the demo. */
+  async connectionSaved() {
+    const before = this.available
+    await this.refresh()
+    this.invite(!before)
+  }
+
+  /** The first start was answered: with a key that connected (the page then
+   *  asks whether to see the demo), or skipped. */
+  async finishSetup(connected = false) {
     this.setupDone = true
     this.changed()
     await this.saveState({ setupDone: true })
     await this.refresh()
+    this.invite(connected)
+  }
+
+  private invite(newly: boolean) {
+    if (!newly || !this.offersDemo) return
+    this.demoInvite = true
+    this.changed()
+  }
+
+  /** The dialog was answered: あとで is the bubble's あとで (ガイドを見る answers it by starting the tour). */
+  closeInvite(later: boolean) {
+    this.demoInvite = false
+    if (later) this.answerDemoOffer()
+    else this.changed()
   }
 
   /** Asks the first start's questions again (Settings). */

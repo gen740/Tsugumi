@@ -49,11 +49,7 @@ struct MainWindow: View {
     // Tsugumi flies over the whole window (from its corner or the chat).
     .modifier(GuideWindowLayer(project: workspace.session?.identity.url.path))
     // The guide's buttons act in this window.
-    .environment(\.guideWindow, GuideWindowActions(
-      openProject: { model.openProject($0, from: workspace, openWindow: openWindow) },
-      home: { model.leaveProject(in: workspace) },
-      newProject: { model.newProject(from: workspace, openWindow: openWindow) },
-      showChat: { workspace.showChat = true }))
+    .environment(\.guideWindow, guideActions)
     .background(WindowReader { workspace.window = $0 })
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
       guard let closing = n.object as? NSWindow, closing === workspace.window else { return }
@@ -71,6 +67,18 @@ struct MainWindow: View {
         if let url = model.takeLaunchProject() { model.show(url, in: workspace) }
       }
     }
+    // Right after the user's first key (or sign-in): Tsugumi asks once, in one window, whether to show the demo.
+    .sheet(isPresented: Binding(get: { GuideController.shared.demoInvite == workspace.id },
+                                set: { if !$0, GuideController.shared.demoInvite == workspace.id { GuideController.shared.demoInvite = nil } })) {
+      GuideInviteView(see: {
+        GuideController.shared.demoInvite = nil
+        GuidePerformer(model: model, window: guideActions, session: workspace.session, tab: workspace.active,
+                       openWindow: openWindow, openSettings: openSettings)(GuideAction(kind: .openDemo, label: "", demo: "report"))
+      }, later: {
+        GuideController.shared.demoInvite = nil
+        GuideController.shared.answerDemoOffer()
+      })
+    }
     .alert("この操作はできません", isPresented: Binding(get: { workspace.alert != nil }, set: { if !$0 { workspace.alert = nil } })) {
       Button("OK") { workspace.alert = nil }
     } message: { Text(workspace.alert ?? "") }
@@ -80,6 +88,15 @@ struct MainWindow: View {
     } message: {
       Text("Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: \(workspace.unsavedReason ?? "")")
     }
+  }
+
+  /// What the guide's buttons do in this window.
+  private var guideActions: GuideWindowActions {
+    GuideWindowActions(
+      openProject: { model.openProject($0, from: workspace, openWindow: openWindow) },
+      home: { model.leaveProject(in: workspace) },
+      newProject: { model.newProject(from: workspace, openWindow: openWindow) },
+      showChat: { workspace.showChat = true })
   }
 }
 
