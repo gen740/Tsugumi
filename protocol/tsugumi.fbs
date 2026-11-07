@@ -318,6 +318,11 @@ table ProjectImportRequest {
 /// -> ProjectCacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
+/// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
+/// its current commit and hash, and the packages it has for this system. Slow
+/// the first time: it evaluates them, fetching what they need.
+table NixSourceResolveRequest { ref:string (id: 0, required); }
+
 /// -> RunHistoryDeleteResult. Deletes finished runs (all, or those that ended
 /// before ended_before, Unix ms) with their records, values, logs and files,
 /// here and in the project's copy. Only while no run is active.
@@ -586,6 +591,7 @@ union RequestPayload {
   VersionCanvasRequest = 37,
   VersionDiffRequest = 38,
   VersionSummaryRequest = 39,
+  NixSourceResolveRequest = 40,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -728,6 +734,14 @@ table FileContent {
 table ProjectFileFormatResult {
   text:string (id: 0, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 1, required);
+}
+
+table NixSourceResolved {
+  /// Locked: what goes into nixSources.
+  ref:string (id: 0, required);
+  rev:string (id: 1);
+  nar_hash:string (id: 2);
+  packages:[string] (id: 3);
 }
 
 table OutputTypesResult {
@@ -912,6 +926,7 @@ union ReplyPayload {
   VersionGraph = 28,
   VersionCanvas = 29,
   VersionDiff = 30,
+  NixSourceResolved = 31,
 }
 
 // ---- Notifications -----------------------------------------------------------

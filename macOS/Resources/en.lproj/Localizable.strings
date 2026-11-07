@@ -235,6 +235,7 @@
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
 "ここです" = "Here";
+"ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here as inputs.sources.<name>.packages.<package>. It is fixed by its commit and hash. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。" = "After this Card runs, each invocation's inputs, outputs, logs and details are kept here.";
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
@@ -288,6 +289,7 @@
 "この版から始める" = "Start from This Version";
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
+"この環境の package はありません" = "No packages for this system";
 "この返事を送ります" = "Sends this reply";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
@@ -378,6 +380,7 @@
 "コピー" = "Copy";
 "コピーしました" = "Copied";
 "コピーを開く" = "Open a Copy";
+"コミット" = "Commit";
 "コメント" = "Comments";
 "コメント %lld 件に従って Card を生成します" = "Generating Cards from %lld comments";
 "コメント: %@" = "Comment: %@";
@@ -701,6 +704,8 @@
 "取り込む" = "Import";
 "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。" = "Choose a Tsugumi project to import (a folder with tsugumi.json). It is copied into externals and does not follow the original folder.";
 "取り込めませんでした" = "Could not import";
+"取得" = "Fetch";
+"取得できませんでした: %@" = "Could not fetch: %@";
 "受け側の入力: 必須" = "Receiving input: required";
 "受け側の入力: 省略可" = "Receiving input: optional";
 "可視化" = "Display";
@@ -708,6 +713,7 @@
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "合流" = "Merge";
+"同じ名前があります" = "That name is taken";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -755,6 +761,7 @@
 "外観" = "Appearance";
 "外部の Nix ソースを読む" = "Read a Nix source from outside";
 "外部の変更を再読込" = "Reload External Changes";
+"外部ソース" = "External sources";
 "外部接続" = "External Connections";
 "大きく" = "Larger";
 "天文・地震・タンパク質のデータ" = "Astronomy, seismic and protein data";
@@ -918,6 +925,7 @@
 "既定（%@）" = "Default (%@)";
 "日時" = "Date";
 "日本語" = "日本語";
+"更新" = "Update";
 "書き出す…" = "Export…";
 "書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";

@@ -45,6 +45,8 @@ await import("./thumbnails")
 await import("./liveCode")
 
 await import("./helperBirds")
+await import("./leaveProject")
+await import("./terminalInput")
 
 await import("./portGrid")
 
@@ -57,3 +59,5 @@ await import("./freeSpot")
 await import("./deleteCard")
 
 await import("./saveFailure")
+
+await import("./nixSources")

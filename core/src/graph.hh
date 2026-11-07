@@ -66,7 +66,7 @@ struct InputDef {
 };
 
 struct NixSourceRef {
-  std::string name, url, hash;
+  std::string name, type, ref;
 };
 
 struct Node {

@@ -372,7 +372,7 @@ class Builder {
     std::vector<NixSourceRef> sources;
     if (project.nix_sources->has_value())
       for (const auto& s : project.nix_sources->value())
-        sources.push_back({s.name->value(), s.url->value(), s.hash->value()});
+        sources.push_back({s.name->value(), s.type->value(), s.ref->value()});
     for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
       n.path = scope_path;

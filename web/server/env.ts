@@ -27,6 +27,7 @@ interface Env {
   log: string
   state: EnvState
   starting?: Promise<EnvState>
+  stopping?: Promise<void>
 }
 
 /** Stable identity of a project folder: its real path (aliases share it). */
@@ -80,6 +81,8 @@ export class EnvironmentManager {
   /** Starts (or reuses) the project's tsugumid and waits for server.ready. */
   start(dir: string): Promise<EnvState> {
     const e = this.env(dir)
+    // Opened again while it stops: a new one starts once the old one has gone.
+    if (e.stopping) return e.stopping.then(() => this.start(dir))
     if (e.state.state === 'ready' && e.proc && e.proc.exitCode === null) return Promise.resolve(e.state)
     if (e.starting) return e.starting
     e.starting = this.launch(e).finally(() => (e.starting = undefined))
@@ -166,14 +169,15 @@ export class EnvironmentManager {
       this.set(e, { state: 'stopped' })
       return
     }
-    await new Promise<void>((resolve) => {
+    e.stopping ??= new Promise<void>((resolve) => {
       const t = setTimeout(() => p.kill('SIGKILL'), 20_000)
       p.once('exit', () => {
         clearTimeout(t)
         resolve()
       })
       p.kill('SIGTERM')
-    })
+    }).finally(() => (e.stopping = undefined))
+    await e.stopping
     this.set(e, { state: 'stopped' })
   }
 

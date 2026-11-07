@@ -1,6 +1,7 @@
 // The Card database and the project's settings panes.
 import { useEffect, useState } from 'react'
 import { app } from '../model/app'
+import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
@@ -181,6 +182,79 @@ const setProject = (x: ProjectSession, k: string, v: J) => {
   ;(x.project as JObj).set(k, v)
 }
 
+/** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
+function NixSourceSettings({ session }: { session: ProjectSession }) {
+  useObserve(session)
+  const sources = arr(get(session.project, 'nixSources')) ?? []
+  const [address, setAddress] = useState('')
+  const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
+  const [working, setWorking] = useState(false)
+  const [message, setMessage] = useState<string>()
+  const resolve = async (ref: string) => {
+    setWorking(true)
+    setMessage(undefined)
+    try {
+      const r = await session.resolveNixSource(ref)
+      return { ref: String(r.ref), packages: r.packages.map(String) }
+    } catch (e) {
+      setMessage(`取得できませんでした: ${errorText(e)}`)
+      return undefined
+    } finally {
+      setWorking(false)
+    }
+  }
+  const save = async (list: J[]) => {
+    session.edit((x) => setProject(x, 'nixSources', list))
+    await session.save()
+    setMessage(session.saveError ? `保存できませんでした: ${session.saveError}` : undefined)
+  }
+  const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
+  const look = async () => {
+    const r = await resolve(address.trim())
+    if (r) setFound({ name: sourceName(address.trim()), ...r })
+  }
+  const add = async () => {
+    if (!found) return
+    await save([...sources, entry(found.name, found.ref)])
+    setFound(undefined)
+    setAddress('')
+  }
+  const update = async (name: string, ref: string) => {
+    const r = await resolve(unlockedRef(ref))
+    if (r) await save(sources.map((s) => (str(get(s, 'name')) === name ? entry(name, r.ref) : s)))
+  }
+  const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
+  return (
+    <Section title="外部ソース" footer="ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。">
+      {sources.map((s) => {
+        const name = str(get(s, 'name')) ?? ''
+        const ref = str(get(s, 'ref')) ?? ''
+        return (
+          <Row key={name} label={name}>
+            <code className="secondary" title={ref}>{unlockedRef(ref)} {shortCommit(ref)}</code>
+            <Button disabled={working || !session.isEditable} onClick={() => void update(name, ref)}>更新</Button>
+            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => void save(sources.filter((x) => x !== s))}>削除</Button>
+          </Row>
+        )
+      })}
+      <Row label="flake">
+        <TextField value={address} onChange={(v) => { setAddress(v); setFound(undefined) }} placeholder="github:owner/repo" mono style={{ width: 260 }} disabled={working || !session.isEditable} />
+        <Button disabled={working || !address.trim() || !session.isEditable} onClick={() => void look()}>取得</Button>
+        {working && <Spinner small />}
+      </Row>
+      {found && (
+        <>
+          <Row label="名前"><TextField value={found.name} onChange={(name) => setFound({ ...found, name })} mono style={{ width: 160 }} /></Row>
+          <Row label="コミット"><code className="secondary" title={found.ref}>{shortCommit(found.ref) ?? found.ref}</code></Row>
+          <Row label="package"><code className="secondary">{found.packages.join(', ') || 'この環境の package はありません'}</code></Row>
+          <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>追加</Button>{taken && <span className="secondary caption">同じ名前があります</span>}</Row>
+        </>
+      )}
+      {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}
+    </Section>
+  )
+}
+
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
@@ -212,6 +286,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
               <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? 'この Tsugumi の Nixpkgs に固定' : 'この Tsugumi の Nixpkgs に更新'}</Button></Row>
             )}
           </Section>
+          <NixSourceSettings session={session} />
           <Section>
             <Value label="場所" value={session.dir} />
           </Section>
