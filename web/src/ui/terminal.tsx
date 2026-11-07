@@ -1,18 +1,15 @@
 // A terminal in the open project's folder: a shell on this host (the web UI
-// runs the core here, without the VM). There is no pseudo terminal, so
-// commands are sent a line at a time and full-screen programs do not work.
+// runs the core here, without the VM), on a pseudo terminal, drawn by xterm.js.
+import type { FitAddon } from '@xterm/addon-fit'
+import type { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 import { api, onServerEvent, TerminalEvent } from '../api'
 import { useObserve } from '../model/observable'
-import { isMac, prefs } from '../model/prefs'
+import { prefs } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
+import { TerminalInput } from '../model/terminalInput'
 import { Button } from './controls'
 import { Icon } from './icons'
-
-const MAX_OUTPUT = 512 * 1024
-// Colors and cursor movement of programs that ignore TERM=dumb.
-// eslint-disable-next-line no-control-regex
-const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\r(?!\n)/g
 
 export function ProjectTerminalPanel({ session, onClose }: { session: ProjectSession; onClose?: () => void }) {
   useObserve(session)
@@ -37,113 +34,106 @@ export function ProjectTerminalPanel({ session, onClose }: { session: ProjectSes
   )
 }
 
-function TerminalHost({ session, onEnd }: { session: ProjectSession; onEnd: (m: string) => void }) {
-  const [out, setOut] = useState('')
-  const [line, setLine] = useState('')
-  const [id, setId] = useState<string>()
-  const [alive, setAlive] = useState(false)
-  const history = useRef<{ list: string[]; at: number }>({ list: [], at: 0 })
-  const scroller = useRef<HTMLDivElement>(null)
-  const input = useRef<HTMLInputElement>(null)
-  const follow = useRef(true)
-
-  const feed = (t: string) => setOut((o) => {
-    const n = o + t.replace(ANSI, '')
-    return n.length > MAX_OUTPUT ? n.slice(n.length - MAX_OUTPUT) : n
+/** Draws a terminal in the element and connects it; returns how to end it. */
+function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fitAddon: typeof import('@xterm/addon-fit'),
+  session: ProjectSession, onEnd: (m: string) => void, shown: { current?: { term: Terminal; fit: FitAddon } }) {
+  const css = getComputedStyle(el)
+  const term = new xterm.Terminal({
+    fontFamily: css.getPropertyValue('--mono').trim() || 'monospace',
+    fontSize: prefs.editorFontSize,
+    scrollback: 5000,
+    theme: {
+      background: css.getPropertyValue('--text-bg').trim(),
+      foreground: css.getPropertyValue('--label').trim(),
+      cursor: css.getPropertyValue('--label').trim(),
+    },
   })
+  const fit = new fitAddon.FitAddon()
+  term.loadAddon(fit)
+  shown.current = { term, fit }
+  term.open(el)
+  fit.fit()
+  term.focus()
+
+  let mine: string | undefined
+  let closed = false
+  // What it prints before its id is known (the first prompt) waits here.
+  const early: TerminalEvent[] = []
+  const onEvent = (e: TerminalEvent) => {
+    if (e.type === 'terminal') term.write(e.data)
+    else if (e.type === 'terminal-exit') {
+      term.write('\r\n[ターミナルは終了しました]\r\n')
+      onEnd('終了しました')
+    }
+  }
+  const off = onServerEvent((e: TerminalEvent) => {
+    if (e.type !== 'terminal' && e.type !== 'terminal-exit') return
+    if (!mine) early.push(e)
+    else if (e.id === mine) onEvent(e)
+  })
+  const input = new TerminalInput(
+    (data) => api('/api/terminal/input', { id: mine, data }),
+    (e) => term.write(`\r\n${errorText(e)}\r\n`),
+  )
+  term.onData((data) => {
+    if (mine) input.write(data)
+  })
+  term.onResize(({ cols, rows }) => {
+    if (mine) void api('/api/terminal/resize', { id: mine, cols, rows }).catch(() => {})
+  })
+  const seen = new ResizeObserver(() => {
+    // Hidden, it has no size to fit.
+    if (el.offsetWidth) fit.fit()
+  })
+  seen.observe(el)
+  void (async () => {
+    try {
+      const r = await api<{ id: string }>('/api/terminal/start', { path: session.dir, cols: term.cols, rows: term.rows })
+      if (closed) {
+        void api('/api/terminal/stop', { id: r.id }).catch(() => {})
+        return
+      }
+      mine = r.id
+      for (const e of early.splice(0)) if (e.id === mine) onEvent(e)
+    } catch (e) {
+      term.write(`ターミナルを開けませんでした: ${errorText(e)}\r\n`)
+      onEnd('開けませんでした')
+    }
+  })()
+  return () => {
+    closed = true
+    seen.disconnect()
+    off()
+    if (mine) void api('/api/terminal/stop', { id: mine }).catch(() => {})
+    term.dispose()
+  }
+}
+
+function TerminalHost({ session, onEnd }: { session: ProjectSession; onEnd: (m: string) => void }) {
+  const box = useRef<HTMLDivElement>(null)
+  const shown = useRef<{ term: Terminal; fit: FitAddon }>()
+  useObserve(prefs)
+  // The size set in the settings applies at once.
+  useEffect(() => {
+    const s = shown.current
+    if (!s || s.term.options.fontSize === prefs.editorFontSize) return
+    s.term.options.fontSize = prefs.editorFontSize
+    s.fit.fit()
+  }, [prefs.editorFontSize])
 
   useEffect(() => {
-    let mine: string | undefined
-    let closed = false
-    const off = onServerEvent((e: TerminalEvent) => {
-      if (!mine || e.id !== mine) return
-      if (e.type === 'terminal') feed(e.data)
-      else if (e.type === 'terminal-exit') {
-        feed('\n[ターミナルは終了しました]\n')
-        setAlive(false)
-        onEnd('終了しました')
-      }
+    // Loaded here: xterm.js needs a page as soon as it is imported.
+    let gone = false
+    let end: (() => void) | undefined
+    void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]).then(([xterm, fitAddon]) => {
+      if (!gone && box.current) end = openTerminal(box.current, xterm, fitAddon, session, onEnd, shown)
     })
-    void (async () => {
-      try {
-        const r = await api<{ id: string; cwd: string; shell: string }>('/api/terminal/start', { path: session.dir })
-        if (closed) {
-          void api('/api/terminal/stop', { id: r.id }).catch(() => {})
-          return
-        }
-        mine = r.id
-        setId(r.id)
-        setAlive(true)
-        feed(`${r.shell} — ${r.cwd}\n`)
-      } catch (e) {
-        feed(`\nターミナルを開けませんでした: ${errorText(e)}\n`)
-        onEnd('開けませんでした')
-      }
-    })()
     return () => {
-      closed = true
-      off()
-      if (mine) void api('/api/terminal/stop', { id: mine }).catch(() => {})
+      gone = true
+      end?.()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.dir])
 
-  useEffect(() => {
-    const el = scroller.current
-    if (el && follow.current) el.scrollTop = el.scrollHeight
-  }, [out])
-
-  const send = (text: string) => {
-    if (!id || !alive) return
-    void api('/api/terminal/input', { id, data: text }).catch((e) => feed(`\n${errorText(e)}\n`))
-  }
-
-  const keyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const h = history.current
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      feed(`$ ${line}\n`)
-      send(line + '\n')
-      if (line.trim() && h.list[h.list.length - 1] !== line) h.list.push(line)
-      h.at = h.list.length
-      setLine('')
-      follow.current = true
-    } else if (e.key === 'ArrowUp' && h.list.length) {
-      e.preventDefault()
-      h.at = Math.max(0, h.at - 1)
-      setLine(h.list[h.at] ?? '')
-    } else if (e.key === 'ArrowDown' && h.list.length) {
-      e.preventDefault()
-      h.at = Math.min(h.list.length, h.at + 1)
-      setLine(h.list[h.at] ?? '')
-    } else if (e.ctrlKey && !e.metaKey && e.key === 'c' && (isMac || input.current?.selectionStart === input.current?.selectionEnd)) {
-      e.preventDefault()
-      feed(`$ ${line}^C\n`)
-      setLine('')
-      if (id && alive) void api('/api/terminal/interrupt', { id }).catch(() => {})
-    } else if (e.ctrlKey && !e.metaKey && e.key === 'l') {
-      e.preventDefault()
-      setOut('')
-    } else if (e.ctrlKey && !e.metaKey && e.key === 'd' && !line) {
-      e.preventDefault()
-      if (id && alive) void api('/api/terminal/stop', { id }).catch(() => {})
-    }
-  }
-
-  return (
-    <div className="terminal" onMouseUp={() => { if (!window.getSelection()?.toString()) input.current?.focus() }}>
-      <div className="terminal-out" ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget
-          follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-        }}>
-        <pre className="selectable" style={{ fontSize: prefs.editorFontSize }}>{out}</pre>
-      </div>
-      <form className="terminal-line" onSubmit={(e) => e.preventDefault()}>
-        <span className="mono secondary">$</span>
-        <input ref={input} className="terminal-input mono" value={line} disabled={!alive} autoFocus spellCheck={false} autoComplete="off" autoCapitalize="off"
-          aria-label="コマンド" placeholder={alive ? 'コマンドを入力して Return（⌃C で中断、⌃L で消去）' : ''}
-          style={{ fontSize: prefs.editorFontSize }} onChange={(e) => setLine(e.target.value)} onKeyDown={keyDown} />
-      </form>
-    </div>
-  )
+  return <div className="terminal" ref={box} />
 }

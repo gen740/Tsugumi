@@ -46,6 +46,7 @@ await import("./liveCode")
 
 await import("./helperBirds")
 await import("./leaveProject")
+await import("./terminalInput")
 
 await import("./portGrid")
 

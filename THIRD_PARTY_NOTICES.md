@@ -84,6 +84,8 @@ only code reachable from the server and browser entry points.
 | KaTeX | 0.19.0 | MIT; Tsugumi requests MathML output and does not copy KaTeX fonts |
 | commander | 15.0.0 | MIT; KaTeX CLI dependency, not an app import |
 | FlatBuffers | 25.9.23 | Apache-2.0 |
+| xterm.js (`@xterm/xterm`, `@xterm/addon-fit`) | 5.5.0, 0.10.0 | MIT |
+| node-pty | 1.1.0 | MIT; a native module, loaded from `web/node_modules` and not bundled |
 
 ### Plot viewer (web UI and macOS app)
 

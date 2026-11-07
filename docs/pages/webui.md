@@ -30,6 +30,8 @@ nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build ts
 cd web && npm install && nix develop --command npm run gen && npm run build
 ```
 
+ターミナルの `node-pty` はネイティブのモジュールです。macOS には配布物に組み込み済みのものがあり、Linux では `npm install` のときにビルドします（C++ コンパイラと Python が必要）。ビルドできなくても `npm install` と Web UI は動き、ターミナルを開くと理由を表示します。
+
 ```bash
 node web/dist/server.js --open
 ```

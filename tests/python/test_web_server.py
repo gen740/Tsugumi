@@ -164,3 +164,51 @@ def test_the_page_is_told_whether_host_folders_can_be_used(web):
     r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
     assert r.status == 200
     assert json.loads(data)["hostFolders"] is (sys.platform != "darwin")
+
+
+def test_a_terminal_is_a_real_terminal(web, tmp_path):
+    from test_claude_code_plugin import Events
+    from conftest import write_project
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    project = tmp_path / "proj"
+    write_project(project)
+    page = Events(port, cookie, "a")
+    page.start()
+    t = post(port, cookie, "/api/terminal/start", {"path": str(project), "cols": 91, "rows": 17})
+
+    def printed() -> str:
+        return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
+
+    def until(text: str):
+        for _ in range(100):
+            if text in printed():
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"no {text!r} in {printed()!r}")
+
+    def send(data: str):
+        post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
+
+    # It has a terminal, of the size the page draws, and programs may use it.
+    send('tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語\n')
+    until("/dev/")
+    until("size=17 91 term=xterm-256color")
+    until("日本語")
+    post(port, cookie, "/api/terminal/resize", {"id": t["id"], "cols": 100, "rows": 30})
+    send('echo "now=$(stty size)"\n')
+    until("now=30 100")
+    # A key: ⌃C stops what runs, not the shell.
+    send("sleep 100\n")
+    time.sleep(0.3)
+    send("\x03")
+    send("echo after-interrupt-$((1 + 1))\n")
+    until("after-interrupt-2")
+    post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
+    for _ in range(100):
+        if [e for e in list(page.events) if e.get("type") == "terminal-exit" and e["id"] == t["id"]]:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("the terminal did not end")
