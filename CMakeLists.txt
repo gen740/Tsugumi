@@ -81,7 +81,7 @@ if(TSUGUMI_BUILD_CORE)
   # A project's versions are a git repository (core/src/versions.cc).
   pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
   # The embedded Nix evaluator: the same Nix version as the environment's daemon.
-  pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-util)
+  pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-flake nix-util)
   # Hashing: CommonCrypto on macOS, OpenSSL's libcrypto elsewhere.
   if(NOT APPLE)
     pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)

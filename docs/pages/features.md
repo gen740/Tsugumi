@@ -93,21 +93,24 @@ in
 
 ### 外部の Nix ソース（`inputs.sources`）
 
-- 評価中に取得できるのは、既定では nixpkgs だけです。プロジェクトは `tsugumi.json` の `nixSources` で、nixpkgs の外にある tarball を名前・URL・hash で宣言できます。`tsugumi.json` を手で書くか、Agent に頼みます（Agent の保存は承認を待ちます）。アプリに編集する画面はありません。
+- プロジェクトの設定の「一般」にある「外部ソース」で、flake を追加できます。アドレス（`github:owner/repo` や GitHub のページの URL）を入れて「取得」を押すと、コミット、hash、この環境の package の一覧が出ます。「更新」で新しいコミットを取り直します。
+- 追加すると、`tsugumi.json` にコミットと hash で固定した形で残ります。`type` は今は `flake` だけです。
 
 ```json
-"nixSources": [{ "name": "ciao", "url": "https://github.com/gen740/ciao/archive/<commit>.tar.gz", "hash": "sha256-..." }]
+"nixSources": [{ "name": "ciao", "type": "flake", "ref": "github:gen740/ciao/<commit>?narHash=sha256-..." }]
 ```
 
-- `default.nix` からは `inputs.sources.<name>` で読みます。実際に参照されたときに、hash で固定して取得します。
+- `default.nix` からは package をそのまま使えます。Card を実行するときにビルドされます。
 
 ```nix
 { pkgs, inputs, params }:
-let ciao = import "${inputs.sources.ciao}/src/package.nix" { inherit pkgs; };
+let ciao = inputs.sources.ciao.packages.ciao;
 in { run = "${ciao}/bin/dmlist ..."; }
 ```
 
-- 宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。許可するのは宣言した URL そのものなので、同じリポジトリの別のコミットも取得できません。
+- flake は `tsugumid` が Card とは別の評価器で評価し、Card には package の derivation だけを渡します。Card の評価器は今までどおり nixpkgs しか取得できず、`builtins.getFlake` もありません。別の評価器は `nix build` と同じ pure 評価で、IFD は使えません。
+- package はその flake の `flake.lock` の nixpkgs でビルドされます（プロジェクトの Nixpkgs ではありません）。
+- 宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。`default.nix` に名前が書かれていない外部ソースは、評価も取得もしません。
 
 ### 評価器の組み込み
 

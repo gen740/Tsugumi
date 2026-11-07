@@ -232,6 +232,13 @@ public extension RPCClient {
     return res.files.compactMap { $0 }
   }
 
+  /// Looks a flake up for nixSources (nothing is saved).
+  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
+    let r = Tsugumi_RPC_NixSourceResolveRequestT()
+    r.ref = ref
+    return try await call(.nixsourceresolverequest, r, timeout: .seconds(300))
+  }
+
   /// Deletes the project's build caches; documents and history are kept.
   func clearCache(opId: UUID) async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()

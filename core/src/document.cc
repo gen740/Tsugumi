@@ -131,16 +131,16 @@ schema::Project parse_project_json(const std::string& text) {
   }
   if (p.nix_sources->has_value()) {
     static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
-    static const std::regex url_re(R"(^https://[^\s#?"\\$]+$)");
-    static const std::regex hash_re(R"(^sha256-[A-Za-z0-9+/=]{44}$)");
+    static const std::regex ref_re(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
     std::set<std::string> sources;
     for (const auto& s : p.nix_sources->value()) {
-      if (!s.name->has_value() || !s.url->has_value() || !s.hash->has_value())
-        invalid("nixSources entries need name, url and hash");
+      if (!s.name->has_value() || !s.type->has_value() || !s.ref->has_value())
+        invalid("nixSources entries need name, type and ref");
       const auto& name = s.name->value();
       if (!std::regex_match(name, name_re)) invalid("nixSources: \"" + name + "\" is not a name");
-      if (!std::regex_match(s.url->value(), url_re)) invalid("nixSources: " + name + ": url must be https, with no query");
-      if (!std::regex_match(s.hash->value(), hash_re)) invalid("nixSources: " + name + ": hash must be sha256-<base64>");
+      if (s.type->value() != "flake") invalid("nixSources: " + name + ": type must be flake");
+      if (!std::regex_match(s.ref->value(), ref_re))
+        invalid("nixSources: " + name + ": ref must be a locked flake reference with a narHash");
       if (!sources.insert(name).second) invalid("nixSources: duplicate name " + name);
     }
   }

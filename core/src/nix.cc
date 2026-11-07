@@ -45,9 +45,25 @@ let
   # upstream.json is read here only: it names folders of this evaluator, so it
   # is kept out of `gen`, which builds take in by content.
   up = builtins.fromJSON (builtins.readFile upstream);
+  # What Tsugumi evaluated apart from this evaluator: built when a Card uses it.
+  sourceReaders.flake = v: {
+    inherit (v) ref rev narHash;
+    packages = builtins.mapAttrs (_: p:
+      let
+        package = {
+          type = "derivation";
+          inherit (p) name;
+          outputName = p.output;
+          outputs = [ p.output ];
+          drvPath = builtins.appendContext p.drv { ${p.drv} = { allOutputs = true; }; };
+          outPath = builtins.appendContext p.out { ${p.drv} = { outputs = [ p.output ]; }; };
+          ${p.output} = package;
+        };
+      in package) v.packages;
+  };
   sourcesOf = g: builtins.listToAttrs (map (s: {
     name = s.name;
-    value = builtins.fetchTarball { url = s.url; sha256 = s.hash; };
+    value = sourceReaders.${s.type} s.value;
   }) (builtins.fromJSON (builtins.readFile (g + "/sources.json"))));
   inputsFor = tsugumi: g: deps: {
     inherit tsugumi;
@@ -152,6 +168,24 @@ NixRunner::~NixRunner() {
   for (auto& t : sdk_threads_)
     if (t.joinable()) t.join();
   evaluator_.reset();
+}
+
+FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
+  static const std::regex page(R"(^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$)");
+  static const std::regex allowed(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]+$)");
+  std::smatch m;
+  std::string flake = std::regex_match(ref, m, page) ? "github:" + m[1].str() + "/" + m[2].str() : ref;
+  if (!std::regex_match(flake, allowed))
+    throw Failed(FailureKind::validation_failed, "not a flake reference Tsugumi reads: " + ref);
+  NixCall call;
+  call.deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+  try {
+    return evaluator().flake(call, flake);
+  } catch (const NixInterrupted& e) {
+    throw Failed(FailureKind::timeout, e.what());
+  } catch (const std::runtime_error& e) {
+    throw Failed(FailureKind::nix_failed, e.what());
+  }
 }
 
 NixEvaluator& NixRunner::evaluator() {
@@ -329,12 +363,6 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   }
   files["params.json"] = params_json(node, false);
   files["params-nix.json"] = params_json(node, true);
-  std::string sources = "[";
-  for (const auto& s : node.nix_sources) {
-    auto name = schema::string_value(s.name), url = schema::string_value(s.url), hash = schema::string_value(s.hash);
-    sources += (sources.size() > 1 ? "," : "") + schema::object_text({{"name", &name}, {"url", &url}, {"hash", &hash}});
-  }
-  files["sources.json"] = sources + "]";
   return files;
 }
 
@@ -411,7 +439,31 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     }
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
-  auto files = generate(node);
+  // The sources a Card names, evaluated apart from it; nothing is fetched for a Card that names none.
+  auto with_sources = [&](const Node& n) {
+    auto generated = generate(n);
+    std::string sources = "[";
+    auto nix = req.doc->sources.count(n.def_dir + "default.nix") ? svc_.store().read_source(*req.doc, n.def_dir + "default.nix") : std::string();
+    for (const auto& s : n.nix_sources) {
+      if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
+      NixCall lookup;
+      lookup.cancel = req.cancel;
+      if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
+      lookup.log = req.log;
+      if (req.on_phase) req.on_phase(Phase::evaluate);
+      try {
+        auto info = evaluator().flake(lookup, s.ref);
+        sources += std::string(sources.size() > 1 ? "," : "") + "{\"name\":\"" + s.name + "\",\"type\":\"" + s.type + "\",\"value\":" + info.json + "}";  // a name and a type are checked when the project is read
+      } catch (const NixInterrupted& e) {
+        throw Failed(e.timed_out ? FailureKind::timeout : FailureKind::cancelled, e.what());
+      } catch (const std::runtime_error& e) {
+        throw Failed(FailureKind::nix_failed, "nixSources " + s.name + ": " + e.what());
+      }
+    }
+    generated["sources.json"] = sources + "]";
+    return generated;
+  };
+  auto files = with_sources(node);
   files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
   // Upstream code Cards this definition may reference (see entry.nix).
   const auto& graph = *req.doc->resolution;
@@ -423,7 +475,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   std::string deps_json = "[";
   for (size_t i = 0; i < allowed.size(); ++i) {
     const Node& u = graph.nodes[allowed[i]];
-    auto ugen = schema::string_value(generated_dir(generate(u)).string());
+    auto ugen = schema::string_value(generated_dir(with_sources(u)).string());
     auto udef = schema::string_value(definition_dir(u.def_dir).string());
     std::string udeps = "[";
     for (size_t d : graph.nix_upstream(allowed[i]))
@@ -458,7 +510,6 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
-  for (const auto& s : node.nix_sources) call.allowed_uris.push_back(s.url);
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";

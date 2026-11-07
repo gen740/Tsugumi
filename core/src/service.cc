@@ -264,7 +264,7 @@ std::vector<std::string> Service::capabilities() {
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
-      "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
+      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
@@ -362,6 +362,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
+    case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
     case P::RunPlanRequest: return on_lane(r, std::move(req), &Service::run_plan);
@@ -1715,6 +1716,18 @@ void Service::attached_folder_read(RequestIn& req) {
   uint64_t offset = r->offset().value_or(0);
   reply(req, wire::file_page(req.request_id, target.filename().string(), wire::page_of(bytes, offset, limit), offset,
                              bytes.size(), crypto::sha256_hex(bytes)));
+}
+
+void Service::nix_source_resolve(RequestIn& req) {
+  auto info = nix_->resolve_flake(req.request()->value_as_NixSourceResolveRequest()->ref()->str());
+  FBB b;
+  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
+  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
+  auto ref = b.CreateString(info.ref);
+  auto rev = b.CreateString(info.rev);
+  auto hash = b.CreateString(info.nar_hash);
+  auto res = R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved, res.Union()));
 }
 
 void Service::output_types(RequestIn& req) {

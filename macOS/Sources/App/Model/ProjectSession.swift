@@ -1260,6 +1260,12 @@ final class ProjectSession {
     cardStates[k] = nil
   }
 
+  /// Looks a flake up for nixSources (nothing is saved).
+  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
+    guard let client else { throw RPCError.disconnected }
+    return try await client.resolveNixSource(ref: ref)
+  }
+
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
     try? await client.setVisible(subscription: subscription, cards: displayedCards.sorted().map(path), enabled: true)

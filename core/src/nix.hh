@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "nix_eval.hh"
 #include "graph.hh"
 #include "model.hh"
 
@@ -83,6 +84,8 @@ class NixRunner {
   std::optional<std::string> sdk_file(const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
+  // A flake to opt in to, as the settings ask for it: a flake reference or a GitHub page's URL.
+  FlakeInfo resolve_flake(const std::string& ref);
   bool available() const { return true; }
 
  private:

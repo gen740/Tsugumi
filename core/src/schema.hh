@@ -70,12 +70,13 @@ struct DatabaseConnection {
   Opt<"url", v::String> url;
 };
 
-// A Nix source outside nixpkgs that this project opts in to: a tarball, fixed
-// by its hash. Its Cards read it as inputs.sources.<name>.
+// A Nix source outside nixpkgs that this project opts in to. Its Cards read it
+// as inputs.sources.<name>. `type` says how it is read: "flake" for now, whose
+// `ref` is locked (a commit and its narHash).
 struct NixSource {
   Opt<"name", v::String> name;
-  Opt<"url", v::String> url;
-  Opt<"hash", v::String> hash;
+  Opt<"type", v::String> type;
+  Opt<"ref", v::String> ref;
 };
 
 struct Project {

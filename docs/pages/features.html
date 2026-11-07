@@ -103,19 +103,22 @@ in
 </ul>
 <h3 id="外部の-nix-ソースinputssources">外部の Nix ソース（<code>inputs.sources</code>）</h3>
 <ul>
-<li>評価中に取得できるのは、既定では nixpkgs だけです。プロジェクトは <code>tsugumi.json</code> の <code>nixSources</code> で、nixpkgs の外にある tarball を名前・URL・hash で宣言できます。<code>tsugumi.json</code> を手で書くか、Agent に頼みます（Agent の保存は承認を待ちます）。アプリに編集する画面はありません。</li>
+<li>プロジェクトの設定の「一般」にある「外部ソース」で、flake を追加できます。アドレス（<code>github:owner/repo</code> や GitHub のページの URL）を入れて「取得」を押すと、コミット、hash、この環境の package の一覧が出ます。「更新」で新しいコミットを取り直します。</li>
+<li>追加すると、<code>tsugumi.json</code> にコミットと hash で固定した形で残ります。<code>type</code> は今は <code>flake</code> だけです。</li>
 </ul>
-<pre><code class="language-json">&quot;nixSources&quot;: [{ &quot;name&quot;: &quot;ciao&quot;, &quot;url&quot;: &quot;https://github.com/gen740/ciao/archive/&lt;commit&gt;.tar.gz&quot;, &quot;hash&quot;: &quot;sha256-...&quot; }]
+<pre><code class="language-json">&quot;nixSources&quot;: [{ &quot;name&quot;: &quot;ciao&quot;, &quot;type&quot;: &quot;flake&quot;, &quot;ref&quot;: &quot;github:gen740/ciao/&lt;commit&gt;?narHash=sha256-...&quot; }]
 </code></pre>
 <ul>
-<li><code>default.nix</code> からは <code>inputs.sources.&lt;name&gt;</code> で読みます。実際に参照されたときに、hash で固定して取得します。</li>
+<li><code>default.nix</code> からは package をそのまま使えます。Card を実行するときにビルドされます。</li>
 </ul>
 <pre><code class="language-nix">{ pkgs, inputs, params }:
-let ciao = import &quot;${inputs.sources.ciao}/src/package.nix&quot; { inherit pkgs; };
+let ciao = inputs.sources.ciao.packages.ciao;
 in { run = &quot;${ciao}/bin/dmlist ...&quot;; }
 </code></pre>
 <ul>
-<li>宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。許可するのは宣言した URL そのものなので、同じリポジトリの別のコミットも取得できません。</li>
+<li>flake は <code>tsugumid</code> が Card とは別の評価器で評価し、Card には package の derivation だけを渡します。Card の評価器は今までどおり nixpkgs しか取得できず、<code>builtins.getFlake</code> もありません。別の評価器は <code>nix build</code> と同じ pure 評価で、IFD は使えません。</li>
+<li>package はその flake の <code>flake.lock</code> の nixpkgs でビルドされます（プロジェクトの Nixpkgs ではありません）。</li>
+<li>宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。<code>default.nix</code> に名前が書かれていない外部ソースは、評価も取得もしません。</li>
 </ul>
 <h3 id="評価器の組み込み">評価器の組み込み</h3>
 <ul>

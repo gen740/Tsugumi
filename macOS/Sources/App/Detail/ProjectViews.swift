@@ -148,6 +148,105 @@ struct ProjectSettingsContent: View {
   }
 }
 
+/// Flakes this project opts in to: an address gives its commit, hash and
+/// packages, which Cards read as inputs.
+private struct NixSourceSettings: View {
+  let session: ProjectSession
+  private struct Found { var name: String; let ref: String; let packages: [String] }
+  @State private var address = ""
+  @State private var found: Found?
+  @State private var working = false
+  @State private var message: String?
+
+  private var sources: [JSONValue] { session.project["nixSources"]?.array ?? [] }
+  private func entry(_ name: String, _ ref: String) -> JSONValue {
+    .object([("name", .string(name)), ("type", .string("flake")), ("ref", .string(ref))])
+  }
+
+  private func resolve(_ ref: String) async -> (ref: String, packages: [String])? {
+    working = true
+    message = nil
+    defer { working = false }
+    do {
+      let r = try await session.resolveNixSource(ref: ref)
+      return (r.ref, r.packages.compactMap { $0 })
+    } catch {
+      message = String(localized: "取得できませんでした: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
+  private func save(_ list: [JSONValue]) async {
+    session.edit { $0.project["nixSources"] = .array(list) }
+    await session.save()
+    message = session.saveError.map { String(localized: "保存できませんでした: \($0)") }
+  }
+
+  private var taken: Bool { found.map { f in sources.contains { $0["name"]?.string == f.name } } ?? false }
+
+  var body: some View {
+    Section {
+      ForEach(sources.indices, id: \.self) { i in
+        let name = sources[i]["name"]?.string ?? ""
+        let ref = sources[i]["ref"]?.string ?? ""
+        LabeledContent(name) {
+          HStack {
+            Text("\(NixSources.unlockedRef(ref)) \(NixSources.shortCommit(ref) ?? "")")
+              .font(.caption.monospaced()).foregroundStyle(.secondary).help(ref)
+            Button("更新") {
+              Task {
+                guard let r = await resolve(NixSources.unlockedRef(ref)) else { return }
+                await save(sources.map { $0["name"]?.string == name ? entry(name, r.ref) : $0 })
+              }
+            }
+            Button("削除", role: .destructive) {
+              Task { await save(sources.filter { $0["name"]?.string != name }) }
+            }
+          }
+          .disabled(working || !session.isEditable)
+        }
+      }
+      HStack {
+        TextField("flake", text: $address, prompt: Text(verbatim: "github:owner/repo"))
+          .onChange(of: address) { found = nil }
+        Button("取得") {
+          let ref = address.trimmingCharacters(in: .whitespaces)
+          Task {
+            if let r = await resolve(ref) { found = Found(name: NixSources.sourceName(ref), ref: r.ref, packages: r.packages) }
+          }
+        }
+        .disabled(working || address.trimmingCharacters(in: .whitespaces).isEmpty || !session.isEditable)
+        if working { ProgressView().controlSize(.small) }
+      }
+      if let f = found {
+        TextField("名前", text: Binding(get: { found?.name ?? "" }, set: { found?.name = $0 }))
+        LabeledContent("コミット") { Text(NixSources.shortCommit(f.ref) ?? f.ref).font(.caption.monospaced()).help(f.ref) }
+        LabeledContent("package") {
+          Text(f.packages.isEmpty ? String(localized: "この環境の package はありません") : f.packages.joined(separator: ", "))
+            .font(.caption.monospaced())
+        }
+        HStack {
+          Button("追加") {
+            Task {
+              await save(sources + [entry(f.name, f.ref)])
+              found = nil
+              address = ""
+            }
+          }
+          .disabled(taken || f.name.wholeMatch(of: #/[A-Za-z_][A-Za-z0-9_-]*/#) == nil)
+          if taken { Text("同じ名前があります").font(.caption).foregroundStyle(.secondary) }
+        }
+      }
+      if let message { Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+    } header: {
+      Text("外部ソース")
+    } footer: {
+      Text("ここに追加した flake の package を、Card の default.nix から inputs.sources.<名前>.packages.<package> で使えます。コミットと hash で固定します。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
+        .font(.caption).foregroundStyle(.secondary)
+    }
+  }
+}
+
 private struct GeneralProjectSettings: View {
   let session: ProjectSession
   @State private var name = ""
@@ -171,6 +270,7 @@ private struct GeneralProjectSettings: View {
         Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)
         LabeledContent("場所", value: session.identity.url.path)
+        NixSourceSettings(session: session)
       }
       .formStyle(.grouped)
       HStack {

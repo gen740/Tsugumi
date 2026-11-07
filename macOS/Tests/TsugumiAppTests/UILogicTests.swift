@@ -6,6 +6,18 @@ import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
+@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() throws {
+  struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/nix-source-refs.json")))
+  #expect(!cases.isEmpty)
+  for c in cases {
+    #expect(NixSources.sourceName(c.ref) == c.name, "\(c.ref)")
+    #expect(NixSources.unlockedRef(c.ref) == c.unlocked, "\(c.ref)")
+    #expect(NixSources.shortCommit(c.ref) == c.commit, "\(c.ref)")
+  }
+}
+
 @Test func aVersionHoverIsWrittenFromItsChangeAndFitsItsCards() {
   #expect(VersionSummarizer.input(message: "実行: bands\n", changed: ["bands", ""], diff: "+x\n", truncated: true)
     == "Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n")
