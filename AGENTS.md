@@ -37,6 +37,7 @@
 | [ui/](ui/) | Dawn の描画層、グラフ表示（Plotly・Vega-Lite）の viewer |
 | [agent/](agent/) | Agent（モデル接続・会話・RPC 由来の tool）。契約は [agent/Shared/](agent/Shared/) で Web と共通 |
 | [web/](web/) | ブラウザ UI とホストサーバー |
+| [cli/](cli/) | `tsugumi` コマンド（Mac・Linux の `install.sh`、Windows の `install.ps1`、配布物の作成） |
 | [demos/](demos/) | 同梱デモと、その Draft 版（実装前の処理の形だけ） |
 | [tests/](tests/) | 契約・スケジューラー・履歴・隔離・デモ・fuzz などのテスト |
 | [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md)。Web 版と AI 向けの [docs/llms.txt](docs/llms.txt) の生成は `node docs/site/build.mjs` |
@@ -59,6 +60,7 @@
 | UI と Agent は同じ契約の対等なクライアント | [protocol/tsugumi.fbs](protocol/tsugumi.fbs)、[tests/python/test_agent_contract.py](tests/python/test_agent_contract.py) |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | [docs/AgentRun.md](docs/AgentRun.md)（うまくいかなかった試行と、それを受けて直したことも含む） |
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
+| macOS・Linux・Windows に対応する（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認） | [INSTALL.md](INSTALL.md)「ブラウザで使う」、[docs/Limitations.md](docs/Limitations.md)「動く環境」、[tests/python/test_cli.py](tests/python/test_cli.py)（インストーラーと WSL の処理。実機ではない） |
 | 何をハッカソン前に用意し、何をこの期間に作ったか | [docs/Provenance.md](docs/Provenance.md)、Git の履歴 |
 
 コマンドと最後に確認した環境まで含む表は [docs/Evidence.md](docs/Evidence.md)、テストの一覧は [docs/Development.md](docs/Development.md) の「テスト」「確認範囲」、CI は [.github/workflows/ci.yml](.github/workflows/ci.yml) にあります。

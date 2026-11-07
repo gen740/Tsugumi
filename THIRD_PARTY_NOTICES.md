@@ -74,6 +74,14 @@ Tsugumi app product dependency. A lock file entry alone is not proof that
 its code is present in the final executable. Apple's system frameworks are
 used from the operating system, not copied into the app.
 
+## The `tsugumi` command
+
+The Mac's `tsugumi-macos-arm64.tar.gz` also contains the official Node.js build
+(version and checksum in `cli/node-version.env`; MIT and the notices in its
+`LICENSE`, included as `licenses/node.LICENSE`), the Web UI below with the license files of its
+npm packages (`licenses/npm`), the boot image below, and FlatBuffers in
+`tsugumi-vmhost`. On Linux and in WSL on Windows, Nix builds the same from source (`nix/cli.nix`).
+
 ## Web UI
 
 `web/package-lock.json` pins this runtime package tree. esbuild bundles
