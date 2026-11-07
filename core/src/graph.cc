@@ -369,6 +369,10 @@ class Builder {
   // ("externals/<p>/", nested further inside its own externals).
   void scope(const schema::Project& project, const std::string& prefix, const CardPath& scope_path, int depth) {
     std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
+    std::vector<NixSourceRef> sources;
+    if (project.nix_sources->has_value())
+      for (const auto& s : project.nix_sources->value())
+        sources.push_back({s.name->value(), s.url->value(), s.hash->value()});
     for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
       n.path = scope_path;
@@ -376,6 +380,7 @@ class Builder {
       n.def_dir = prefix + "definitions/" + card.id->value() + "/";
       n.project_dir = prefix;
       n.pkgs_path = pkgs;
+      n.nix_sources = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
         auto it = doc_.definitions.find(card.id->value());

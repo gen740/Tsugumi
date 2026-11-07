@@ -187,6 +187,7 @@ EN = {
 "隔離（sandbox）なしで実行": "Run without isolation (sandbox)",
 "Mac のフォルダを読む": "Read folders of the Mac",
 "Mac のフォルダに書く": "Write to folders of the Mac",
+"外部の Nix ソースを読む": "Read a Nix source from outside",
 "タブを閉じる（内容は保持されます）": "Close the tab (its contents are kept)",
 "接続から生成されるファイルです（手で編集しません）": "A file generated from the connections (not edited by hand)",
 "未適用": "Not applied",

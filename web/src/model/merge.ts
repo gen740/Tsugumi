@@ -24,7 +24,7 @@ export function merge3(base: J | undefined, ours: J | undefined, theirs: J | und
     return out
   }
   if (Array.isArray(base) && Array.isArray(ours) && Array.isArray(theirs)) {
-    const identity = ['params', 'inputs', 'hostFolders'].includes(field) ? 'name' : 'id'
+    const identity = ['params', 'inputs', 'hostFolders', 'nixSources'].includes(field) ? 'name' : 'id'
     const ids = (a: J[]): string[] | undefined => {
       const list = a.map((x) => str(get(x, identity))).filter((x): x is string => x !== undefined)
       return list.length === a.length && new Set(list).size === list.length ? list : undefined

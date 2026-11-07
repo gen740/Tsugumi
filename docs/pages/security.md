@@ -13,7 +13,7 @@
 | プロジェクトどうしは、uid・名前空間・cgroup で分かれている（§3） | [test_shared_vm.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_shared_vm.py) |
 | Mac のファイルで VM から見えるのは、開いているプロジェクトと、明示的に指定したフォルダだけ（§2） | [test_workers.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)（`test_mac_folders_are_read_only_unless_written`） |
 | RPC は `127.0.0.1` だけで待ち受け、token がなければ切断し、ブラウザのページからはつながらない（§6） | [test_transport.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_transport.py)、[test_frame_fuzz.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_frame_fuzz.py) |
-| Agent が Card の権限（ネットワーク・隔離なし・Mac のフォルダ）を広げる保存は、利用者の承認なしには通らない（§8） | [test_permissions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py) |
+| Agent が Card の権限（ネットワーク・隔離なし・Mac のフォルダ・外部の Nix ソース）を広げる保存は、利用者の承認なしには通らない（§8） | [test_permissions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py) |
 | Web 検索は既定でオフで、オフの間はモデルにツールを見せず、要求にも載せない（§8） | [WebSearchTests.swift](https://github.com/gen740/Tsugumi/blob/main/macOS/CoreTests/Tests/CoreTests/WebSearchTests.swift)、[contract.ts](https://github.com/gen740/Tsugumi/blob/main/web/server/contract.ts) |
 | API キーとトークンは Keychain に置き、`tsugumid`・VM・Card には渡さない（§8） | [agent/Sources/TsugumiAgent/Provider.swift](https://github.com/gen740/Tsugumi/blob/main/agent/Sources/TsugumiAgent/Provider.swift)、[test_release.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_release.py)（アプリと Web UI が同じ Keychain 項目を使う） |
 | 他人から来たプロジェクトの `.tsugumi/` は、使う前に検査する | [test_untrusted_project.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_untrusted_project.py) |
@@ -22,7 +22,7 @@
 | --- | --- |
 | Agent を使うと、Agent が読んだコード・ログ・入出力値はモデルのプロバイダへ送られる | [モデルに送られるもの](#モデルに送られるもの) |
 | Web 検索をオンにすると、検索語が検索サービスへ出る。未公開のデータが検索語に載らないことは保証できない（既定はオフ） | [Web 検索](#web-検索) |
-| 他人のプロジェクトを開くとき、`_card.json` に書かれた `network`・`sandbox: false`・`hostFolders` に確認は出ない | [§10](#10-既知の制限と注意事項) |
+| 他人のプロジェクトを開くとき、`_card.json` に書かれた `network`・`sandbox: false`・`hostFolders` と、`tsugumi.json` の `nixSources` に確認は出ない | [§10](#10-既知の制限と注意事項) |
 | プロジェクト間の隔離は 1 つの Linux カーネルの上で、カーネルの脆弱性までは防げない | [§10](#10-既知の制限と注意事項) |
 | `network: false` でも、Nix の固定出力 derivation はビルド時に通信できる | [§5](#5-nix-評価の制限) |
 
@@ -158,7 +158,7 @@ Card の `default.nix` には任意の Nix 式を書けますが、評価時に�
 
 - `restrictEval = true`：許可されたパス（Card のソース・SDK・参照が許可された上流定義）以外のファイルを読み取れません。
 - `enableImportFromDerivation = false`：Nix 式の評価中にビルドやコマンド実行を走らせる（IFD）ことを禁止しています。
-- `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`：ネットワーク経由で取得できる URL を公式 nixpkgs のアーカイブのみに限定しています（`NIX_PATH` も空です）。
+- `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`：ネットワーク経由で取得できる URL を公式 nixpkgs のアーカイブのみに限定しています（`NIX_PATH` も空です）。プロジェクトが `tsugumi.json` の `nixSources` で宣言した URL だけは、そのプロジェクトの Card の評価に限って加わります（[機能](features.md)の「外部の Nix ソース」、[test_nix_sources.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_nix_sources.py)）。宣言は `https` で hash が必須です。取得した式は評価器の中で、つまり Card の隔離の外で評価されます。
 - ビルドは `nix-daemon` のサンドボックス（`sandbox = true`、`build-users-group = nixbld`）内で行われ、`trusted-users = root` のみとしているため、プロジェクト側の uid から substituter や Nix 設定を書き換えることはできません。
 - バイナリキャッシュの取得先は `https://cache.nixos.org` のみとし、署名検証鍵を固定しています。
 - **固定出力 derivation（`fetchurl` など、内容を hash で固定したもの）は、ビルドのときに外部と通信できます**。これは Nix の仕様で、Card の `network` 設定とは別です（`network: false` の Card の `default.nix` でもデータを取得できます）。取得したものは hash と一致しなければ捨てられますが、取得先への通信そのもの（URL に含めた値など）は外へ出ます。
@@ -266,6 +266,7 @@ Agent が自分の判断で Web を検索できる設定です（設定の「API
   - ネットワーク（`network: true`）
   - 隔離なしの実行（`sandbox: false`）
   - Mac のフォルダ（`hostFolders`、読み取りと書き込み）
+  - 外部の Nix ソース（`tsugumi.json` の `nixSources`）
 
   承認の流れは次のとおりです。
   - アプリ（Mac・Web）は、設定の「API」の「Agent が確認なしに Card に与えてよい権限」に入れた種類だけをそのまま承認し、それ以外は利用者に確認します。既定ではすべて確認し、確認の画面で「以後は確認しない」を選ぶこともできます。
@@ -304,6 +305,7 @@ Agent が自分の判断で Web を検索できる設定です（設定の「API
 - VM 自体には NAT による外部ネットワーク接続があります。`tsugumid` や `nix-daemon` は外部と通信可能であり、Card も `network: true` を設定したものは外部と通信できます。
 - Mac 上の `tsugumid`（Web UI）で `network: true` の Card は、同じ LAN や VPN の他の機器に届き、UDP のブロードキャストとマルチキャストはこのマシンにも届きます。Seatbelt では宛先のアドレスを指定して拒否できないためです（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
 - `network: true` と `hostFolders`（特に `write: true`）は Experimental 機能であり、Card に対して外部通信や Mac 側フォルダへのアクセスを許可します。これらはプロジェクト内の `_card.json` に記述されていれば有効になり、プロジェクトを開く際や実行時に確認ダイアログは表示されません（Agent が与えようとする場合は §8 のとおり確認します）。外部から受け取ったプロジェクトを動かす前には、Card のアイコンと Card 設定の Experimental 項目を必ず確認してください。
+- `nixSources` もプロジェクト内のファイル（`tsugumi.json`）に書かれ、開くときに確認は出ません。プロジェクトを開くことは、その中身を信頼するという判断です。Agent が追加する保存だけは承認を待ちます（§8）。
 - `sandbox: false` の Card はプロジェクトの uid で動作するため、VM 内のプロジェクト領域（そのプロジェクトに共有されたすべての Mac 側フォルダを含む）へアクセスできます（control フォルダと `.tsugumi` は隠蔽されます）。内容を確認した信頼できる Card にのみ使用してください。
 - Mac 上で直接 `tsugumid` を動かすとき（[Web UI](webui.md)）、`sandbox: true` の Card は Seatbelt で隔離し、`sandbox-exec` がなければ実行を拒否します。一方、`sandbox: false` の Card は bubblewrap がないため隔離なしで、利用者の権限のまま動きます（`network: false` も効きません）。Web UI で受け取ったプロジェクトを動かすときは、`sandbox: false` の Card がないかを先に確かめてください（`core/src/worker_proc.cc`）。
 - リリース版もソースからビルドしたアプリも、既定では ad-hoc 署名です（開発版は、環境変数 `TSUGUMI_CODESIGN_IDENTITY` で、作った人自身の証明書で署名することもできます。[開発資料](development.md)。リリース版は常に ad-hoc です）。Developer ID による署名と Apple による公証（Notarization）はしていません。リリース版は GitHub Actions がこのリポジトリのタグからビルドしたもので（`.github/workflows/release.yml`）、自動更新は GitHub の最新リリースの `Tsugumi.zip` を、同じリリースの `Tsugumi.zip.sha256`・コード署名の検証・bundle id・リリース版であること・版番号を確かめてから入れます。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています（Apple の公証や独自の署名鍵による検証はしていません）。

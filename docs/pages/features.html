@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-全体構成">1. 全体構成</a></li><li class="d2"><a href="#2-card-と-workflow">2. Card と Workflow</a></li><li class="d3"><a href="#card-の種類">Card の種類</a></li><li class="d3"><a href="#型付きのポート">型付きのポート</a></li><li class="d3"><a href="#実行の意味論スケジューラー">実行の意味論（スケジューラー）</a></li><li class="d2"><a href="#3-nix-による再現可能な実行環境">3. Nix による再現可能な実行環境</a></li><li class="d3"><a href="#card-ごとの環境定義">Card ごとの環境定義</a></li><li class="d3"><a href="#上流定義の参照inputsupstream">上流定義の参照（<code>inputs.upstream</code>）</a></li><li class="d3"><a href="#評価器の組み込み">評価器の組み込み</a></li><li class="d3"><a href="#ビルド結果の保持">ビルド結果の保持</a></li><li class="d2"><a href="#4-card-sdk-と-worker">4. Card SDK と worker</a></li><li class="d3"><a href="#実行段階">実行段階</a></li><li class="d3"><a href="#言語-sdk">言語 SDK</a></li><li class="d3"><a href="#常駐-worker">常駐 worker</a></li><li class="d3"><a href="#外部へのアクセスexperimental">外部へのアクセス（Experimental）</a></li><li class="d2"><a href="#5-文書と保存">5. 文書と保存</a></li><li class="d2"><a href="#6-実行履歴と成果物">6. 実行履歴と成果物</a></li><li class="d2"><a href="#7-可視化">7. 可視化</a></li><li class="d2"><a href="#8-uiワークベンチ">8. UI（ワークベンチ）</a></li><li class="d2"><a href="#9-agent">9. Agent</a></li><li class="d3"><a href="#モデルとの接続">モデルとの接続</a></li><li class="d3"><a href="#tool-と-rpc">tool と RPC</a></li><li class="d3"><a href="#web-検索">Web 検索</a></li><li class="d3"><a href="#draft-から-card-を生成">Draft から Card を生成</a></li><li class="d3"><a href="#コメントから-card-を生成">コメントから Card を生成</a></li><li class="d3"><a href="#手分けdelegate">手分け（delegate）</a></li><li class="d3"><a href="#skill-と会話">Skill と会話</a></li><li class="d3"><a href="#ツグミチャットとガイド">ツグミ（チャットとガイド）</a></li><li class="d2"><a href="#10-デモ">10. デモ</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#1-全体構成">1. 全体構成</a></li><li class="d2"><a href="#2-card-と-workflow">2. Card と Workflow</a></li><li class="d3"><a href="#card-の種類">Card の種類</a></li><li class="d3"><a href="#型付きのポート">型付きのポート</a></li><li class="d3"><a href="#実行の意味論スケジューラー">実行の意味論（スケジューラー）</a></li><li class="d2"><a href="#3-nix-による再現可能な実行環境">3. Nix による再現可能な実行環境</a></li><li class="d3"><a href="#card-ごとの環境定義">Card ごとの環境定義</a></li><li class="d3"><a href="#上流定義の参照inputsupstream">上流定義の参照（<code>inputs.upstream</code>）</a></li><li class="d3"><a href="#外部の-nix-ソースinputssources">外部の Nix ソース（<code>inputs.sources</code>）</a></li><li class="d3"><a href="#評価器の組み込み">評価器の組み込み</a></li><li class="d3"><a href="#ビルド結果の保持">ビルド結果の保持</a></li><li class="d2"><a href="#4-card-sdk-と-worker">4. Card SDK と worker</a></li><li class="d3"><a href="#実行段階">実行段階</a></li><li class="d3"><a href="#言語-sdk">言語 SDK</a></li><li class="d3"><a href="#常駐-worker">常駐 worker</a></li><li class="d3"><a href="#外部へのアクセスexperimental">外部へのアクセス（Experimental）</a></li><li class="d2"><a href="#5-文書と保存">5. 文書と保存</a></li><li class="d2"><a href="#6-実行履歴と成果物">6. 実行履歴と成果物</a></li><li class="d2"><a href="#7-可視化">7. 可視化</a></li><li class="d2"><a href="#8-uiワークベンチ">8. UI（ワークベンチ）</a></li><li class="d2"><a href="#9-agent">9. Agent</a></li><li class="d3"><a href="#モデルとの接続">モデルとの接続</a></li><li class="d3"><a href="#tool-と-rpc">tool と RPC</a></li><li class="d3"><a href="#web-検索">Web 検索</a></li><li class="d3"><a href="#draft-から-card-を生成">Draft から Card を生成</a></li><li class="d3"><a href="#コメントから-card-を生成">コメントから Card を生成</a></li><li class="d3"><a href="#手分けdelegate">手分け（delegate）</a></li><li class="d3"><a href="#skill-と会話">Skill と会話</a></li><li class="d3"><a href="#ツグミチャットとガイド">ツグミ（チャットとガイド）</a></li><li class="d2"><a href="#10-デモ">10. デモ</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="tsugumi-の主要機能">Tsugumi の主要機能</h1>
@@ -100,6 +100,22 @@ in
 <li>「必ず先に実行されるか」の判定は、<code>all</code> / <code>any</code>・複数経路・ループ（最大不動点）・入れ子構造を考慮した静的解析で行います。分岐の片側にしか存在しない Card や下流、自分自身は参照できず、静的な診断エラー（<code>nix_reference_*</code>）となります。<code>inputs.local.&lt;id&gt;</code> は同じ階層の Card だけを指します。</li>
 <li>静的な診断は書かれた参照（<code>inputs.upstream.&quot;&lt;path&gt;&quot;</code>・<code>inputs.local.&lt;id&gt;</code>）を評価前に知らせるためのもので、コメントと文字列の本文（<code>&#39;&#39;…&#39;&#39;</code> の中のシェルスクリプトなど）は読みません（文字列の中の <code>${…}</code> は読みます）。別名や <code>${…}</code> で組み立てた名前などの間接的な参照は静的には調べず、評価時に判明します。参照できる範囲そのものは、評価器が <code>inputs.upstream</code> に必ず先に実行される Card だけを渡すことで保証しています。</li>
 <li>実際に参照された定義だけが遅延評価され、実行時に選ばれなかった分岐はビルドされません。</li>
+</ul>
+<h3 id="外部の-nix-ソースinputssources">外部の Nix ソース（<code>inputs.sources</code>）</h3>
+<ul>
+<li>評価中に取得できるのは、既定では nixpkgs だけです。プロジェクトは <code>tsugumi.json</code> の <code>nixSources</code> で、nixpkgs の外にある tarball を名前・URL・hash で宣言できます。<code>tsugumi.json</code> を手で書くか、Agent に頼みます（Agent の保存は承認を待ちます）。アプリに編集する画面はありません。</li>
+</ul>
+<pre><code class="language-json">&quot;nixSources&quot;: [{ &quot;name&quot;: &quot;ciao&quot;, &quot;url&quot;: &quot;https://github.com/gen740/ciao/archive/&lt;commit&gt;.tar.gz&quot;, &quot;hash&quot;: &quot;sha256-...&quot; }]
+</code></pre>
+<ul>
+<li><code>default.nix</code> からは <code>inputs.sources.&lt;name&gt;</code> で読みます。実際に参照されたときに、hash で固定して取得します。</li>
+</ul>
+<pre><code class="language-nix">{ pkgs, inputs, params }:
+let ciao = import &quot;${inputs.sources.ciao}/src/package.nix&quot; { inherit pkgs; };
+in { run = &quot;${ciao}/bin/dmlist ...&quot;; }
+</code></pre>
+<ul>
+<li>宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。許可するのは宣言した URL そのものなので、同じリポジトリの別のコミットも取得できません。</li>
 </ul>
 <h3 id="評価器の組み込み">評価器の組み込み</h3>
 <ul>

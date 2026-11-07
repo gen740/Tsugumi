@@ -91,6 +91,24 @@ in
 - 静的な診断は書かれた参照（`inputs.upstream."<path>"`・`inputs.local.<id>`）を評価前に知らせるためのもので、コメントと文字列の本文（`''…''` の中のシェルスクリプトなど）は読みません（文字列の中の `${…}` は読みます）。別名や `${…}` で組み立てた名前などの間接的な参照は静的には調べず、評価時に判明します。参照できる範囲そのものは、評価器が `inputs.upstream` に必ず先に実行される Card だけを渡すことで保証しています。
 - 実際に参照された定義だけが遅延評価され、実行時に選ばれなかった分岐はビルドされません。
 
+### 外部の Nix ソース（`inputs.sources`）
+
+- 評価中に取得できるのは、既定では nixpkgs だけです。プロジェクトは `tsugumi.json` の `nixSources` で、nixpkgs の外にある tarball を名前・URL・hash で宣言できます。`tsugumi.json` を手で書くか、Agent に頼みます（Agent の保存は承認を待ちます）。アプリに編集する画面はありません。
+
+```json
+"nixSources": [{ "name": "ciao", "url": "https://github.com/gen740/ciao/archive/<commit>.tar.gz", "hash": "sha256-..." }]
+```
+
+- `default.nix` からは `inputs.sources.<name>` で読みます。実際に参照されたときに、hash で固定して取得します。
+
+```nix
+{ pkgs, inputs, params }:
+let ciao = import "${inputs.sources.ciao}/src/package.nix" { inherit pkgs; };
+in { run = "${ciao}/bin/dmlist ..."; }
+```
+
+- 宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。許可するのは宣言した URL そのものなので、同じリポジトリの別のコミットも取得できません。
+
 ### 評価器の組み込み
 
 - `tsugumid` は `libnixexpr` / `libnixstore` をプロセス内に組み込んでおり、nixpkgs の読み込み・評価状態・daemon 接続を Card 間および複数回の実行をまたいで再利用します。これにより、2 回目以降の準備段階は 9 Card 合計で約 20 ms に収まります（[開発資料の計測](Development.md)）。

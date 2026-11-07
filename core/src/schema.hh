@@ -70,9 +70,18 @@ struct DatabaseConnection {
   Opt<"url", v::String> url;
 };
 
+// A Nix source outside nixpkgs that this project opts in to: a tarball, fixed
+// by its hash. Its Cards read it as inputs.sources.<name>.
+struct NixSource {
+  Opt<"name", v::String> name;
+  Opt<"url", v::String> url;
+  Opt<"hash", v::String> hash;
+};
+
 struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
+  Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
   Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;

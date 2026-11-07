@@ -22,7 +22,7 @@ func merge3(base: JSONValue?, ours: JSONValue?, theirs: JSONValue?, field: Strin
     }
     return .object(out)
   case (.array(let b), .array(let o), .array(let t)):
-    let identity = ["params", "inputs", "hostFolders"].contains(field) ? "name" : "id"
+    let identity = ["params", "inputs", "hostFolders", "nixSources"].contains(field) ? "name" : "id"
     func ids(_ a: [JSONValue]) -> [String]? {
       let list = a.compactMap { $0[identity]?.string }
       return list.count == a.count && Set(list).count == list.count ? list : nil

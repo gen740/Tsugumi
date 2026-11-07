@@ -753,6 +753,7 @@
 "変更を破棄して Home へ戻る" = "Discard Changes and Go Back to Home";
 "変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
+"外部の Nix ソースを読む" = "Read a Nix source from outside";
 "外部の変更を再読込" = "Reload External Changes";
 "外部接続" = "External Connections";
 "大きく" = "Larger";

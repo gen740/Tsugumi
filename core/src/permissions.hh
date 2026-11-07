@@ -1,6 +1,7 @@
 // What a Card may do beyond computing: reach the network, run without the
-// sandbox, see folders of the host. A save that widens these for any Card
-// (a new Card counts from nothing) lists them, so a client can ask the user.
+// sandbox, see folders of the host, have Nix read a source outside nixpkgs.
+// A save that widens these for any Card (a new Card counts from nothing) lists
+// them, so a client can ask the user.
 // And what a model's save must leave behind when it implements a Draft.
 #pragma once
 
@@ -13,7 +14,8 @@ namespace tsugumi::permissions {
 
 // "network <card>", "sandbox_off <card>", "host_folder_read <card> <path>",
 // "host_folder_write <card> <path>" for each widening from `before` (null:
-// nothing) to `after`, in node order.
+// nothing) to `after`, in node order, after "nix_source <name> <url>#<hash>"
+// for each source of a project that `before` did not have.
 std::vector<std::string> widenings(const Resolution* before, const Resolution& after);
 
 // A model implementing a Draft leaves its intent complete in _meta.json. What is

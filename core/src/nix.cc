@@ -37,13 +37,21 @@ std::string entry_nix() {
 # (run, preRun, extra attributes, functions) of the code Cards that have
 # always run before this one; paths are relative to the Card's own project. They are imported lazily: only what is
 # referenced is evaluated, and branches that may not run are never offered.
+#
+# inputs.sources.<name> is a tarball the Card's project opts in to (tsugumi.json
+# nixSources), fetched by its hash when it is referenced.
 pkgs: { sdk, gen, upstream, card }:
 let
   # upstream.json is read here only: it names folders of this evaluator, so it
   # is kept out of `gen`, which builds take in by content.
   up = builtins.fromJSON (builtins.readFile upstream);
-  inputsFor = tsugumi: deps: {
+  sourcesOf = g: builtins.listToAttrs (map (s: {
+    name = s.name;
+    value = builtins.fetchTarball { url = s.url; sha256 = s.hash; };
+  }) (builtins.fromJSON (builtins.readFile (g + "/sources.json"))));
+  inputsFor = tsugumi: g: deps: {
     inherit tsugumi;
+    sources = sourcesOf g;
     upstream = builtins.listToAttrs (map (d: { name = d.name; value = cards.${d.key}; }) deps);
     local = builtins.listToAttrs (map (d: { name = d.local; value = cards.${d.key}; })
       (builtins.filter (d: d.local != null) deps));
@@ -56,12 +64,12 @@ let
     import (/. + u.def + "/default.nix") {
       inherit pkgs;
       params = builtins.fromJSON (builtins.readFile (ugen + "/params-nix.json"));
-      inputs = inputsFor usdk u.deps;
+      inputs = inputsFor usdk ugen u.deps;
     };
   cards = builtins.listToAttrs (map (u: { name = u.key; value = importCard u; }) up.cards);
   tsugumi = import (sdk + "/nix") { inherit pkgs; generated = gen; };
   params = builtins.fromJSON (builtins.readFile (gen + "/params-nix.json"));
-  self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi up.deps; };
+  self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi gen up.deps; };
 in
 tsugumi.manifest self
 )NIX";
@@ -321,6 +329,12 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   }
   files["params.json"] = params_json(node, false);
   files["params-nix.json"] = params_json(node, true);
+  std::string sources = "[";
+  for (const auto& s : node.nix_sources) {
+    auto name = schema::string_value(s.name), url = schema::string_value(s.url), hash = schema::string_value(s.hash);
+    sources += (sources.size() > 1 ? "," : "") + schema::object_text({{"name", &name}, {"url", &url}, {"hash", &hash}});
+  }
+  files["sources.json"] = sources + "]";
   return files;
 }
 
@@ -444,6 +458,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
+  for (const auto& s : node.nix_sources) call.allowed_uris.push_back(s.url);
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";

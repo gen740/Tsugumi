@@ -91,6 +91,8 @@ void NixEvaluator::init_process() {
   ::sigaction(SIGUSR1, &sa, nullptr);
 }
 
+constexpr const char* kNixpkgsArchives = "https://github.com/NixOS/nixpkgs/archive/";
+
 struct NixEvaluator::Impl {
   std::string entry_text;
   std::vector<std::string> allowed;
@@ -168,7 +170,7 @@ struct NixEvaluator::Impl {
     nix::loadConfFile(*eval_settings);
     eval_settings->restrictEval = true;
     eval_settings->enableImportFromDerivation = false;
-    eval_settings->allowedUris = nix::Strings{"https://github.com/NixOS/nixpkgs/archive/"};
+    eval_settings->allowedUris = nix::Strings{kNixpkgsArchives};
     eval_settings->nixPath = nix::Strings{};
     fetch_settings = std::make_unique<nix::fetchers::Settings>();
     nix::loadConfFile(*fetch_settings);
@@ -210,6 +212,10 @@ struct NixEvaluator::Impl {
       }
     } done{this};
     if (!state) open();
+    // One evaluator serves every Card: a Card may fetch what its own project opted in to.
+    auto uris = nix::Strings{kNixpkgsArchives};
+    uris.insert(uris.end(), c.allowed_uris.begin(), c.allowed_uris.end());
+    eval_settings->allowedUris = uris;
     if (c.on_phase) c.on_phase(false);
     auto& vpkgs = pkgs_for(c);
     auto* vargs = state->allocValue();
