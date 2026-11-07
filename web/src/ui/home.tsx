@@ -13,7 +13,7 @@ import { Icon } from './icons'
 import { guide } from '../model/guide'
 import { GuideCorner } from './guide'
 import { FolderPicker } from './sidebar'
-import { birdFeet, drawIdleScene, drawProgressScene, drawSpool, drawWorkflowBackdrop, HopWalker, PALETTE, SeededRandom, TsugumiBird } from './tsugumiArt'
+import { birdFeet, drawIdleScene, drawTemariScene, drawProgressScene, drawSpool, drawWorkflowBackdrop, HopWalker, PALETTE, SeededRandom, TsugumiBird } from './tsugumiArt'
 
 // ---- Art ---------------------------------------------------------------------------
 
@@ -94,31 +94,11 @@ export function useBird() {
   return art
 }
 
-/** The bird on a long low-poly branch, hopping now and then (still when the
- *  settings or the system ask for less motion). */
-export function TsugumiIdleScene({ birdScale = 0.22, className }: { birdScale?: number; className?: string }) {
-  useObserve(prefs)
-  const art = useBird()
-  const still = prefs.tsugumiStill
-  // The scene is drawn in the icon's coordinates: the feet at (505, 706).
-  const w = 150 / birdScale * 1.6, h = 150 / birdScale
-  const x0 = 505 - w / 2 - 40, y0 = 706 + 22 / birdScale - h
-  return (
-    <svg className={`tsugumi-scene ${className ?? ''}`} viewBox={`${x0} ${y0} ${w} ${h}`} preserveAspectRatio="xMidYMax meet" aria-hidden>
-      <g className="tsugumi-branch">
-        <polygon points={`${505 - 520},716 ${505 - 380},700 ${505 - 380},726`} fill={PALETTE.barkDark} />
-        <polygon points={`${505 - 380},700 ${505 + 300},694 ${505 - 380},726`} fill={PALETTE.bark} />
-        <polygon points={`${505 - 380},726 ${505 + 300},694 ${505 + 300},722`} fill={PALETTE.barkShade} />
-        <polygon points={`${505 + 300},694 ${505 + 520},704 ${505 + 300},722`} fill={PALETTE.barkDark} />
-        {art && <g dangerouslySetInnerHTML={{ __html: art.perch }} />}
-      </g>
-      <ellipse cx="505" cy="702" rx="150" ry="14" fill="rgba(0,0,0,0.2)" className={still ? '' : 'tsugumi-shadow'} />
-      {art && <g className={`tsugumi-bird${still ? '' : ' hopping'}`} dangerouslySetInnerHTML={{ __html: art.bird }} />}
-      {/* A loose thread from the bill. */}
-      <path d="M770 404 C 800 470, 760 540, 800 620" fill="none" stroke={PALETTE.thread} strokeWidth={5} strokeLinecap="round" opacity={0.8}
-        className={still ? '' : 'tsugumi-thread'} />
-    </svg>
-  )
+/** Home's bird with the key visual's temari (TsugumiTemariScene.swift), held
+ *  still with the ball close when the settings or the system ask for less motion. */
+function TsugumiTemariScene() {
+  const scene = useArtCanvas((g, w, h, t) => drawTemariScene(g, w, h, t, 0.19), 0)
+  return <canvas ref={scene.ref} className="fill-abs" aria-hidden />
 }
 
 export interface LoadingContent {
@@ -349,7 +329,7 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
     <div className="home-sidebar">
       <LowPolyBackground className="fill-abs" />
       <div className="home-sidebar-content">
-        <div className="home-scene"><TsugumiIdleScene birdScale={0.19} /></div>
+        <div className="home-scene"><TsugumiTemariScene /></div>
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
           <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>

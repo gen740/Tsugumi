@@ -346,6 +346,38 @@ export const TsugumiThread = {
     g.restore()
   },
 
+  /** From the ball's top `a` up to the bill `b`, bowing out a little toward
+   *  the beak's side (the key visual's thread). */
+  up(g: G, a: Pt, b: Pt) {
+    g.save()
+    g.beginPath()
+    g.moveTo(a.x, a.y)
+    g.bezierCurveTo(a.x + 3, a.y + (b.y - a.y) * 0.3, b.x + 1, a.y + (b.y - a.y) * 0.7, b.x, b.y)
+    g.strokeStyle = PALETTE.thread
+    g.lineWidth = 2
+    g.lineCap = 'round'
+    g.stroke()
+    g.restore()
+  },
+
+  /** A let-go thread: from the ball's top `a`, sagging to its end `e`, then a
+   *  short tail curling down. */
+  slack(g: G, a: Pt, e: Pt, time: number) {
+    const d = Math.hypot(e.x - a.x, e.y - a.y)
+    const w = Math.sin(time * 1.3) * 1.2
+    g.save()
+    g.beginPath()
+    g.moveTo(a.x, a.y)
+    g.bezierCurveTo(a.x + (e.x - a.x) * 0.3, a.y - Math.min(6, d * 0.2), a.x + (e.x - a.x) * 0.8, e.y - Math.min(5, d * 0.15), e.x, e.y)
+    g.bezierCurveTo(e.x + 5, e.y - 2, e.x + 7, e.y + 6, e.x + 6 + w, e.y + 12)
+    g.strokeStyle = PALETTE.thread
+    g.lineWidth = 2
+    g.lineCap = 'round'
+    g.lineJoin = 'round'
+    g.stroke()
+    g.restore()
+  },
+
   /** A short loose end out of the bill `s`, swaying lightly. */
   loose(g: G, s: Pt, time: number) {
     const w = Math.sin(time * 1.3) * 3
@@ -658,4 +690,83 @@ export function drawSpool(g: G, w: number, h: number, t: number, fraction: numbe
   const spin = fraction !== undefined ? fraction * 5 * Math.PI : 0.25 * Math.sin((t * 2 * Math.PI) / 3.2)
   TsugumiTemari.draw(g, ball, r, spin)
   TsugumiThread.near(g, TsugumiTemari.lead(ball, r), catchX, w, h)
+}
+
+/** Home's bird with the key visual's temari (TsugumiTemariScene.swift). One
+ *  cycle: the ball rolls away along the perch, paying out thread; the bird
+ *  lets go and the end curls up over the ball; it hops about, pecks the end up
+ *  again and winds the ball back in, leaning back. The ball turns as it rolls. */
+export function drawTemariScene(g: G, w: number, h: number, t: number, birdScale = 0.19, distance = 30, period = 8) {
+  const B = TsugumiBird, s = birdScale
+  const smooth = (x: number) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x) }
+  const span = (u: number, a: number, b: number) => Math.min(1, Math.max(0, (u - a) / (b - a)))
+  const y = h - 22, mid = w / 2
+  drawBranch(g, mid - 110, mid + 110, y, 1, t)
+  // centre the body (tail…beak) over the perch
+  const fx = mid + (B.feet.x - (B.tailTip + B.beakTip) / 2) * s
+  const feet = { x: fx, y: y - 3 }
+  const u = (t / period) % 1
+
+  // the ball: out while the end is let go, back while winding in
+  const out = distance * (u < 0.30 ? smooth(u / 0.30) : u < 0.76 ? 1 : 1 - smooth((u - 0.76) / 0.24))
+  const r = 70 * s
+  const ball = { x: fx + 199 * s + out, y: y - 3 - r }
+  const lead = TsugumiTemari.lead(ball, r)
+  // wound thread keeps its curl: the let-go end stands in a small loop over
+  // the top of the ball, a little forward, within reach of the bill
+  const rest = { x: lead.x + r * 0.35, y: lead.y - r * 0.5 }
+  // the tilt (with a little crouch) that brings the bill to that end
+  const billAt = (tilt: number) => birdPoint(B.gape, feet, s, { ...still(), tilt, squash: 0.1 })
+  let reach = 0, best = Infinity
+  for (let i = 0; i <= 90; i++) {
+    const p = billAt(i / 100), d = Math.hypot(p.x - rest.x, p.y - rest.y)
+    if (d < best) { best = d; reach = i / 100 }
+  }
+
+  let pose = still()
+  let holding = true
+  if (u < 0.30) {                         // paying out, a small hop midway
+    pose = BirdMotion.hop(span(u, 0.12, 0.22), 8)
+  } else if (u < 0.37) {                  // let go: a little toss of the head
+    pose.tilt = -0.14 * Math.sin(span(u, 0.30, 0.37) * Math.PI)
+    holding = false
+  } else if (u < 0.58) {                  // free: two hops, a look about
+    holding = false
+    if (u < 0.45) pose = BirdMotion.hop(span(u, 0.37, 0.45), 12)
+    else if (u < 0.53) pose = BirdMotion.hop(span(u, 0.45, 0.53), 12)
+    else pose.tilt = -0.08 * Math.sin(span(u, 0.53, 0.58) * Math.PI)
+  } else if (u < 0.66) {                  // peck down to the end
+    holding = false
+    const k = smooth(span(u, 0.58, 0.66))
+    pose.tilt = reach * k
+    pose.squash = 0.1 * k
+  } else if (u < 0.70) {                  // got it
+    pose.tilt = reach
+    pose.squash = 0.1
+  } else if (u < 0.76) {                  // head up with it
+    const k = 1 - smooth(span(u, 0.70, 0.76))
+    pose.tilt = reach * k
+    pose.squash = 0.1 * k
+  } else {                                // winding in, leaning back
+    pose.tilt = -0.10 * Math.sin(span(u, 0.76, 1) * Math.PI)
+  }
+  pose.blink = Math.max(pose.blink, BirdMotion.blink(t, period / 2, 0.4))
+  const bill = birdPoint(B.gape, feet, s, pose)
+  // the let-go end falls from where the bill let it go to its curl
+  const from = birdPoint(B.gape, feet, s, still())
+  const f = smooth(span(u, 0.30, 0.36))
+  const dropped = { x: from.x + (rest.x - from.x) * f, y: from.y + (rest.y - from.y) * f }
+
+  const k = 1 - pose.hop / 40 // the shadow shrinks in the air
+  g.beginPath()
+  g.ellipse(fx, y - 3, 30 * k, 3, 0, 0, 2 * Math.PI)
+  g.fillStyle = 'rgba(0,0,0,0.2)'
+  g.fill()
+  drawBird(g, feet, s, pose, (g) => {
+    if (!holding) return
+    TsugumiThread.up(g, lead, bill)
+    TsugumiThread.loose(g, bill, t)
+  })
+  TsugumiTemari.draw(g, ball, r, out / r)
+  if (!holding) TsugumiThread.slack(g, lead, dropped, t)
 }
