@@ -14,6 +14,8 @@
 # Shell configuration is left alone.
 #
 #   TSUGUMI_VERSION    a version to install (e.g. 0.6.0) instead of the latest
+#
+# `tsugumi update` runs the latest release's copy of this script.
 #   TSUGUMI_INSTALL_BASE  where the files are, instead of the GitHub release
 set -eu
 
@@ -63,7 +65,9 @@ fi
 mkdir -p "$data" "$bin"
 # Next to where it goes, so that moving it into place is a rename.
 work="$(mktemp -d "$data/.install.XXXXXX")"
-trap 'rm -rf "$work"' EXIT INT TERM
+trap 'rm -rf "$work"' EXIT
+# Ctrl-C: sh runs a trap and goes on, so stop here (the EXIT trap cleans up).
+trap 'echo >&2; echo "tsugumi のインストールを中止しました。何も入れていません。" >&2; exit 130' INT TERM
 
 echo "$base/$artifact を取得しています…"
 curl -fL --progress-bar -o "$work/$artifact" "$base/$artifact" || fail "$base/$artifact を取得できませんでした。"
