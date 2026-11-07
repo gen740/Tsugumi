@@ -641,7 +641,7 @@ private struct APIKeySection: View {
           do {
             try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
-            refresh()
+            refresh(saved: true)
             message = String(localized: "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
           } catch { message = "\(error)" }
         }
@@ -682,10 +682,10 @@ private struct APIKeySection: View {
     }
   }
 
-  private func refresh() {
+  private func refresh(saved: Bool = false) {
     stored = Keychain.exists(account: config.name)
     // The guide is there while the connection in use works.
-    GuideController.shared.refreshAvailability()
+    if saved { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
   }
 }
 

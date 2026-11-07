@@ -458,11 +458,12 @@ interface APIState {
   webSearch: boolean
 }
 
-/** Re-reads the connection of every open chat (after it changed here). */
-function refreshChats() {
+/** Re-reads the connection of every open chat (after it changed here);
+ *  `saved`: the user's own save of a key or sign-in (the guide may then ask to show the demo). */
+function refreshChats(saved = false) {
   for (const s of app.sessions.values()) void app.chat(s).refreshProvider()
   // The guide is there exactly while the chosen provider has a key.
-  void guide.refresh()
+  void (saved ? guide.connectionSaved() : guide.refresh())
 }
 
 /** Model connections. API keys stay on this host (the macOS Keychain); they are
@@ -571,7 +572,7 @@ function ChatGPTSettings({ model, setModel, inUse }: { model: string; setModel: 
       if (v.signingIn) return
       setUrl(undefined)
       if (v.outcome) setMessage(v.outcome.message)
-      refreshChats()
+      refreshChats(!!v.outcome?.ok)
     }), 1000)
     return () => clearInterval(t)
   }, [st?.signingIn])
@@ -704,7 +705,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
             const r = await api<{ message: string }>('/api/settings/key', { provider: id, key })
             setKey('')
             await reload()
-            refreshChats()
+            refreshChats(true)
             return r.message
           })}>キーを保存</Button>
           <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {

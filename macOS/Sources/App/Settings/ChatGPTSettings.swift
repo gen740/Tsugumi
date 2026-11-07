@@ -128,6 +128,7 @@ struct ChatGPTSettings: View {
   private func signIn(clientId: String?, consent: Bool = false) {
     message = nil
     signingIn = Task {
+      var signedIn = false
       do {
         let r = try await auth.signIn(clientId: clientId, consent: consent) { url in
           await MainActor.run { _ = NSWorkspace.shared.open(url) }
@@ -136,19 +137,20 @@ struct ChatGPTSettings: View {
           ? String(localized: "\(r.account.email ?? r.account.clientId) でサインインしました。")
           : String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。")
         if r.welcome { welcome = r.account.clientId }
+        signedIn = true
       } catch is CancellationError {
         message = String(localized: "サインインを中止しました。")
       } catch {
         message = "\(error)"
       }
       signingIn = nil
-      await refresh()
+      await refresh(signedIn: signedIn)
     }
   }
 
-  private func refresh() async {
+  private func refresh(signedIn: Bool = false) async {
     accounts = await auth.accounts()
     // The guide is there while the active account may use the plan.
-    GuideController.shared.refreshAvailability()
+    if signedIn { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
   }
 }
