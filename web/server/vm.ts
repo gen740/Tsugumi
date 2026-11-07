@@ -101,7 +101,10 @@ export class VMEnvironmentManager implements Environments {
       else w?.resolve(m.result)
     } else if (m.event === 'progress') {
       const e = this.envs.get(m.key)
-      if (e) this.set(e, { state: 'starting', message: STAGES[m.stage] ?? m.stage })
+      // The steps are known, so the card shows how far along the start is (WorkflowTabs.stageFraction).
+      const i = Object.keys(STAGES).indexOf(m.stage)
+      const fraction = i < 0 ? undefined : i / Object.keys(STAGES).length
+      if (e) this.set(e, { state: 'starting', message: STAGES[m.stage] ?? m.stage, stage: m.stage, fraction })
     } else if (m.event === 'terminal') {
       let d = this.decoders.get(m.session)
       if (!d) this.decoders.set(m.session, (d = new TextDecoder()))

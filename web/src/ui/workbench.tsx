@@ -187,7 +187,7 @@ export function loadingContent(session: ProjectSession): LoadingContent | undefi
     case 'reconnecting':
       return { title: '再接続しています…', message: '未保存の変更は保持しています。', dirty }
     case 'starting':
-      return { title: '起動しています', message: env.message || 'このプロジェクトの tsugumid を起動しています', detail: 'tsugumid', dirty }
+      return { title: '起動しています', message: env.message || 'このプロジェクトの tsugumid を起動しています', fraction: env.fraction, detail: env.stage ?? 'tsugumid', dirty }
     case 'ready':
       if (session.connectionMessage) return undefined
       return { title: 'プロジェクトを読み込んでいます…', detail: 'project snapshot', dirty }

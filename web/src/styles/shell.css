@@ -75,14 +75,15 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 :root[data-theme="dark"] .loading-card { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
 .loading-picture { position: relative; height: 150px; overflow: hidden; }
 .loading-picture .low-poly { position: absolute; inset: 0; width: 100%; height: 100%; }
-.loading-picture .tsugumi-scene { position: absolute; inset: 0; width: 100%; height: 100%; }
 .loading-shade { position: absolute; left: 0; right: 0; bottom: 0; height: 14px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.45)); }
-.loading-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--tsugumi-cream); transition: width 0.3s; }
+.loading-picture canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* the faint workflow behind the bird, fading toward the bottom */
+.loading-picture .loading-backdrop { opacity: 0.5; mask-image: linear-gradient(#000 50%, transparent); }
+/* where the bird stands, for the guide's bird to land on (drawn on the canvas) */
+.loading-picture .tsugumi-bird { position: absolute; pointer-events: none; }
 .loading-text { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 16px 70px; }
-.loading-percent { font-size: 26px; font-weight: 700; }
-.temari { position: absolute; left: 22px; top: 0; pointer-events: none; }
-.temari-spin { animation: temari-sway 3.2s ease-in-out infinite; }
-@keyframes temari-sway { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(14deg); } }
+.loading-percent { font-size: 26px; font-weight: 700; font-family: ui-rounded, system-ui, sans-serif; }
+.loading-spool { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 /* ---- the bird ---- */
 .low-poly { display: block; }
@@ -103,7 +104,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 @keyframes tsugumi-shadow { 0%, 56%, 68%, 100% { transform: scaleX(1); opacity: 1; } 62% { transform: scaleX(0.7); opacity: 0.6; } }
 @keyframes tsugumi-thread { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(4deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .tsugumi-bird.hopping, .tsugumi-shadow, .tsugumi-thread, .temari-spin { animation: none; }
+  .tsugumi-bird.hopping, .tsugumi-shadow, .tsugumi-thread { animation: none; }
 }
 
 /* ---- problem page ---- */

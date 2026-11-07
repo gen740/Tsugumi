@@ -67,6 +67,9 @@ export function onServerEvent(fn: Listener): () => void {
 export interface EnvPublicState {
   state: 'stopped' | 'starting' | 'ready' | 'failed'
   message?: string
+  /** While starting in the VM: the step, and how far along the start is. */
+  stage?: string
+  fraction?: number
   recovery?: string
   log?: string
   endpoint?: string
