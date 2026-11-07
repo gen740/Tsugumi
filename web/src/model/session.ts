@@ -3018,6 +3018,11 @@ auto run(Card::Input& input) -> Card::Output {
     }
   }
 
+  async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
+    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    return this.client.resolveNixSource(ref)
+  }
+
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
     if (!this.client) throw new RPCError('disconnected', '接続していません')
     return this.client.clearCache(uuid())

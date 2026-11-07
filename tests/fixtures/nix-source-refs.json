@@ -1,0 +1,8 @@
+[
+  { "ref": "github:gen740/ciao", "name": "ciao", "unlocked": "github:gen740/ciao", "commit": null },
+  { "ref": "https://github.com/gen740/ciao.git", "name": "ciao", "unlocked": "https://github.com/gen740/ciao.git", "commit": null },
+  { "ref": "https://github.com/gen740/ciao/", "name": "ciao", "unlocked": "https://github.com/gen740/ciao/", "commit": null },
+  { "ref": "github:gen740/ciao/0bf0f8bf67a1ffc03ad0234a7aef1eab8681cddb?narHash=sha256-abc%3D", "name": "ciao", "unlocked": "github:gen740/ciao", "commit": "0bf0f8b" },
+  { "ref": "github:someone/my.flake", "name": "my-flake", "unlocked": "github:someone/my.flake", "commit": null },
+  { "ref": "github:someone/3body", "name": "_3body", "unlocked": "github:someone/3body", "commit": null }
+]

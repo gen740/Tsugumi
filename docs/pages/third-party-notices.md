@@ -120,7 +120,7 @@ user's VM on first boot. These are different distribution boundaries.
 | Component used by core | License / source |
 | --- | --- |
 | hosq, `1eb894224b0feffbb5b81d075d3e2c76160f99a1` | [MIT](https://github.com/CLI20-dev/hosq/blob/1eb894224b0feffbb5b81d075d3e2c76160f99a1/LICENSE); pre-existing author library, included as headers |
-| Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
+| Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-flake`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
 | Boehm–Demers–Weiser GC | Its MIT-style license; transitive Nix dependency |
 | FlatBuffers | Apache-2.0 |
 | SQLite | Public domain |

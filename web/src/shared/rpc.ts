@@ -357,6 +357,10 @@ export class RPCClient {
       Object.assign(new R.ProjectImportRequestT(), { baseRev, opId, origin, sourceGrant, definitions }),
     )
   }
+  /** Looks a flake up for nixSources (nothing is saved). */
+  resolveNixSource(ref: string) {
+    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)
+  }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)

@@ -61,3 +61,5 @@ await import("./deleteCard")
 await import("./saveFailure")
 
 await import("./draftDisplays")
+
+await import("./nixSources")

@@ -53,6 +53,7 @@
             nix.libs.nix-expr
             nix.libs.nix-store
             nix.libs.nix-fetchers
+            nix.libs.nix-flake
             nix.libs.nix-util
             git
             (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ps.matplotlib ps.plotly ps.altair ]))

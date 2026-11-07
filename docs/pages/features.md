@@ -91,6 +91,27 @@ in
 - 静的な診断は書かれた参照（`inputs.upstream."<path>"`・`inputs.local.<id>`）を評価前に知らせるためのもので、コメントと文字列の本文（`''…''` の中のシェルスクリプトなど）は読みません（文字列の中の `${…}` は読みます）。別名や `${…}` で組み立てた名前などの間接的な参照は静的には調べず、評価時に判明します。参照できる範囲そのものは、評価器が `inputs.upstream` に必ず先に実行される Card だけを渡すことで保証しています。
 - 実際に参照された定義だけが遅延評価され、実行時に選ばれなかった分岐はビルドされません。
 
+### 外部の Nix ソース（`inputs.sources`）
+
+- プロジェクトの設定の「一般」にある「外部ソース」で、flake を追加できます。アドレス（`github:owner/repo` や GitHub のページの URL）を入れて「取得」を押すと、コミット、hash、この環境の package の一覧が出ます。「更新」で新しいコミットを取り直します。
+- 追加すると、`tsugumi.json` にコミットと hash で固定した形で残ります。`type` は今は `flake` だけです。
+
+```json
+"nixSources": [{ "name": "ciao", "type": "flake", "ref": "github:gen740/ciao/<commit>?narHash=sha256-..." }]
+```
+
+- `default.nix` からは package をそのまま使えます。Card を実行するときにビルドされます。
+
+```nix
+{ pkgs, inputs, params }:
+let ciao = inputs.sources.ciao.packages.ciao;
+in { run = "${ciao}/bin/dmlist ..."; }
+```
+
+- flake は `tsugumid` が Card とは別の評価器で評価し、Card には package の derivation だけを渡します。Card の評価器は今までどおり nixpkgs しか取得できず、`builtins.getFlake` もありません。別の評価器は `nix build` と同じ pure 評価で、IFD は使えません。
+- package はその flake の `flake.lock` の nixpkgs でビルドされます（プロジェクトの Nixpkgs ではありません）。
+- 宣言が効くのは、そのプロジェクトの Card だけです（Card in Card は別のプロジェクトです）。`default.nix` に名前が書かれていない外部ソースは、評価も取得もしません。
+
 ### 評価器の組み込み
 
 - `tsugumid` は `libnixexpr` / `libnixstore` をプロセス内に組み込んでおり、nixpkgs の読み込み・評価状態・daemon 接続を Card 間および複数回の実行をまたいで再利用します。これにより、2 回目以降の準備段階は 9 Card 合計で約 20 ms に収まります（[開発資料の計測](development.md)）。

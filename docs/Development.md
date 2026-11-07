@@ -174,6 +174,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_definitions.py` | 定義は Card ごとに 1 つ（名前 = ID = 定義フォルダ）、改名でフォルダと実行履歴が移ること、Card in Card は `externals/` の単独でも開けるプロジェクトで外側から編集すること、trigger |
 | `tests/python/test_versions.py` | 版の管理: プロジェクトは git のリポジトリで、実行は保存内容を（変わっていれば）commit してその commit を記録し、結果と実行した Card の概要は commit の note に、名前を付けた版は annotated tag に、版の要約は別の note に、版の差分は要約に読ませてよいファイルだけに、古い版から始めると branch になること、デモの履歴ファイルが版になること |
 | `tests/python/test_permissions.py` | モデル（origin `agent`）の保存が Card の権限（ネットワーク・sandbox off・ホストのフォルダ、Card in Card の中も）を広げるときは `approval_required` で拒否され、その広がりを承認として付けたときだけ通ること。利用者自身の保存には承認が要らないこと |
+| `tests/python/test_nix_sources.py` | プロジェクトが宣言した flake の package を Card が `inputs.sources` で使えること。Card 自身は `getFlake` も `fetchTree` も使えず、宣言は Card in Card に及ばず、名前を書かない Card は読まず、Agent の追加は承認を待つこと（flake の取得にネットワークが要る） |
 | `tests/python/test_untrusted_project.py` | 他人から来たプロジェクトの `.tsugumi/`（保存 journal・実行履歴のコピー）を使う前に検査し、プロジェクトの外を書き・読み・消しできないこと |
 | `tests/python/test_host_isolation.py` | ホストの tsugumid（Linux は bubblewrap、Mac は Seatbelt）で sandbox の Card が、このホストのループバックのポートにつながらず、自分の領域の外のファイルを読めず、ホストのファイルを書き換えられないこと（CI の Linux・macOS ジョブ。文書だけの変更では macOS を省く） |
 | `tests/python/test_host_sandbox.py` | Mac 上の tsugumid（Web UI）が sandbox の Card を Seatbelt で隔離し、ネットワークを許した Card は名前を解決できるが、このホストのどのアドレス（loopback・LAN・`0.0.0.0`）にも、`mDNSResponder` 以外の Unix ソケットにも、`trustd` 以外の Mach サービス（クリップボード・LaunchServices など）にも届かないこと。自分の出力フォルダにだけ書けること。Python の Card が sandbox の中でも読み込み中に現在のディレクトリを尋ねられ、`main` に環境変数が届くこと |
@@ -271,7 +272,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | 領域 | 状況 |
 | --- | --- |
 | FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
-| tsugumid: [Protocol.md](Protocol.md) の全 RPC（36 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
+| tsugumid: [Protocol.md](Protocol.md) の全 RPC（37 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
 | 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft のポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
 | 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
 | スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |

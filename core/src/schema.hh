@@ -70,9 +70,19 @@ struct DatabaseConnection {
   Opt<"url", v::String> url;
 };
 
+// A Nix source outside nixpkgs that this project opts in to. Its Cards read it
+// as inputs.sources.<name>. `type` says how it is read: "flake" for now, whose
+// `ref` is locked (a commit and its narHash).
+struct NixSource {
+  Opt<"name", v::String> name;
+  Opt<"type", v::String> type;
+  Opt<"ref", v::String> ref;
+};
+
 struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
+  Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
   Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
