@@ -6,6 +6,7 @@ import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, parseShow } from './guide'
+import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
@@ -470,6 +471,9 @@ export class ChatController extends Observable {
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */
   readonly writers = new Map<string, LiveCodePlayer>()
 
+  /** The helpers of the last delegate call, a bird each. */
+  readonly team = new HelperTeam((who) => this.writers.get(who))
+
   private writer(who = '') {
     let w = this.writers.get(who)
     if (!w) this.writers.set(who, (w = new LiveCodePlayer()))
@@ -579,6 +583,7 @@ export class ChatController extends Observable {
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll(e.message === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
         if (e.message === 'cancelled') this.notes = []
         this.busy = false
         this.failed = e.message !== 'cancelled'
@@ -594,6 +599,7 @@ export class ChatController extends Observable {
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll('done', Date.now() / 1000)
         this.busy = false
         // A note left by a retry (e.g. a reply cut at the output limit) or the compaction is no longer current.
         if (this.status?.startsWith('再試行中') || this.status === COMPACTING) this.status = undefined
@@ -604,6 +610,7 @@ export class ChatController extends Observable {
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll('limit', Date.now() / 1000)
         this.busy = false
         this.stoppedAtLimit = true
         this.status = `${e.steps} 手の上限で中断しました。「続ける」で続きから再開できます。`
@@ -614,17 +621,24 @@ export class ChatController extends Observable {
     this.changed()
   }
 
-  /** A delegate call: a row per helper. */
+  /** A delegate call: a bird and a row per helper. */
   private startHelpers(args: string) {
-    let tasks: { name?: string }[] = []
+    let tasks: { name?: string; cards?: unknown }[] = []
     try {
       tasks = JSON.parse(args)?.tasks ?? []
     } catch {}
-    this.items = [...this.items, ...tasks.filter((t) => t?.name).map((t) => ({ id: uuid(), role: 'helper', text: '', helper: String(t.name) }))]
+    const named = tasks.filter((t) => t?.name).map((t) => ({
+      name: String(t.name),
+      cards: Array.isArray(t.cards) ? t.cards.filter((c): c is string => typeof c === 'string') : [],
+    }))
+    this.team.start(named, Date.now() / 1000)
+    guide.team = this.team
+    this.items = [...this.items, ...named.map((t) => ({ id: uuid(), role: 'helper', text: '', helper: t.name }))]
   }
 
-  /** What a helper does, in its row. */
+  /** What a helper does: its bird and its row. */
   private handleHelper(name: string, e: any) {
+    this.team.note(name, e, Date.now() / 1000)
     const i = this.items.map((x) => x.role === 'helper' && x.helper === name).lastIndexOf(true)
     if (i < 0) return
     const it = this.items[i]

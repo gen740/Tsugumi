@@ -7,6 +7,7 @@ import { canvasFor } from '../model/canvas'
 import { ModelListRefresher } from '../model/modelLists'
 import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
 import { chatFollowsAfterScroll } from '../model/chatFollow'
+import { birdColor } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
@@ -247,7 +248,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
     case 'tool':
       return <div style={{ opacity: op }}><ToolRow item={item} session={session} tab={tab} /></div>
     case 'helper':
-      return <HelperRow item={item} />
+      return <HelperRow item={item} color={birdColor(app.chat(session).team.tint(item.helper ?? ''), prefs.dark)} />
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
@@ -524,13 +525,14 @@ export function toolStep(name: string, args: string) {
 
 /** A helper at work (delegate): its name and what it does now, or how its
  *  work ended. */
-function HelperRow({ item }: { item: ChatItem }) {
+function HelperRow({ item, color }: { item: ChatItem; color: string }) {
   const step = item.tool ? toolStep(item.tool.name, item.text) : undefined
   const ok = item.tool?.ok
   const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : '：失敗')) : '考えています…')
   return (
-    <div className="chat-tool row gap6 center" style={{ paddingLeft: 10 }}>
-      <span className="caption" style={{ fontWeight: 600 }}>{item.helper}</span>
+    <div className="helper-row">
+      <span className="helper-dot" style={{ background: color }} />
+      <span className="caption" style={{ fontWeight: 600, color }}>{item.helper}</span>
       <span className="caption ellipsis" style={{ color: ok === false && !item.ended ? 'var(--red)' : 'var(--secondary)' }}>{text}</span>
       <span className="spacer" />
       {!item.ended && <Spinner small />}
