@@ -49,7 +49,7 @@
 
 **Linux では**、Nix でビルドした `tsugumid` をこのホストで直接動かし、Card は bubblewrap で隔離します（`nix/cli.nix`）。ターミナルの `node-pty` も一緒にビルドします。データは `~/.local/share/tsugumi-web`、API キーはその中の 0600 のファイルです。OrbStack の VM（Ubuntu 26.04、aarch64）で、インストール、ブラウザからの接続、デモの実行を確かめました。x86_64 の Ubuntu（友人の環境）でも動かしてもらいました。
 
-**Windows では**、`tsugumi.cmd` が WSL2 の中の Linux 版を動かします（`cli/install.ps1`）。`tsugumid` が Nix と bubblewrap を必要とするので、ネイティブの Windows では動きません。サーバーは環境変数 `WSL_DISTRO_NAME` で WSL を見分けて Windows のブラウザを開き、ページと `tsugumid` のポートには WSL の localhost 転送で届きます。友人の Windows で、デモを開いて実行するところまで確かめました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。
+**Windows では**、`tsugumi.cmd` が WSL2 の中の Linux 版を動かします（`cli/install.ps1`）。`tsugumid` が Nix と bubblewrap を必要とするので、ネイティブの Windows では動きません。サーバーは環境変数 `WSL_DISTRO_NAME` で WSL を見分けて Windows のブラウザを開き、ページと `tsugumid` のポートには WSL の localhost 転送で届きます。デモを開いて実行するところまで検証しました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。
 
 ### 別のマシンで動かして、SSH 越しに使う
 

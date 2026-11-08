@@ -16,7 +16,7 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS・Linux・Windows に対応（macOS と Linux、Windows の WSL2 で確認）"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は WSL2 で検証済み）"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
@@ -26,7 +26,7 @@
 
 **AI と描いた解析を、そのまま動かし、自分の手で確かめる。**
 
-Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 でデモを実行するところまで確認）。
+Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 で検証済み）。
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
@@ -201,7 +201,7 @@ WSL の Linux のシェルを開いて、上の Mac・Linux と同じ `curl … 
 3. **ツグミに案内してもらう。** チャットに `$demo` と送ると、ツグミが画面を指しながら一歩ずつ案内します。API キーがなくても、Data to report・Kepler-6 b・薬物動態の 3 つのデモは決まった台本で案内します。
 4. **Agent とつなぐ（任意）。** 設定の「API」で Anthropic か OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインすると、Agent が Card を作り、ツグミがどのデモでも質問に答えます。Agent には会話内容やツールが読み取ったソース・ログなどが送られます（[モデルに送られるもの](docs/security.md#モデルに送られるもの)）。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
 
-Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（Mac と Windows の WSL2 で確認。[Claude Code から使う](docs/claude-code.md)）。
+Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（Windows の WSL2 で検証済み。[Claude Code から使う](docs/claude-code.md)）。
 
 ### 同梱デモ
 

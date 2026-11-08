@@ -2,7 +2,7 @@
 
 ## 入手のしかた
 
-**macOS・Linux・Windows に対応しています**（macOS と Linux（Ubuntu・NixOS）、Windows の WSL2 で確認）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
+**macOS・Linux・Windows に対応しています**（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 で検証済み）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
 
 初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。
 
@@ -65,7 +65,7 @@ tsugumi update
 - **入るもの**: コマンド（`~/.local/bin/tsugumi`）と、その中身（`~/.local/share/tsugumi/<版>/`）だけです。`~/.local/bin` が `PATH` にないときはそう表示し、シェルの設定は変更しません。`tsugumi update` か入れ直しで新しい版に置き換わります（自動では更新しません）。消すときは `rm ~/.local/bin/tsugumi` と `rm -r ~/.local/share/tsugumi` です。
 - **Mac（Apple silicon / macOS 26 以降）**: Node.js と VM の起動ディスクを含む `tsugumi-macos-arm64.tar.gz` を取得します。Card はデスクトップ版と同じ共通 Linux VM で動くので、Nix を別に入れる必要はありません。初回は VM の中で Tsugumi を組み立てるので数分かかります。デスクトップ版と共有する設定や、同時に使えない場合は [Web UI](webui.md#tsugumi-コマンド) にあります。
 - **Linux（x86_64 / aarch64）**: [Nix](https://nixos.org/download) が必要です。ソースの `tsugumi-linux.tar.gz` を取得して Nix でビルドします（初回は数分かかります。動き方は [Web UI](webui.md#tsugumi-コマンド)）。
-- **Windows**: WSL2 と、その中の Linux に入れた [Nix](https://nixos.org/download) が必要です。`install.ps1` は既定の WSL の Linux で `install.sh` を実行し、`%USERPROFILE%\.local\bin\tsugumi.cmd` を作ります（`PATH` は変更しません）。`tsugumi` は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。友人の Windows で、WSL2（Nix は daemon なし）に入れてデモを開き、実行するところまで確かめました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。WSL の Linux のシェルで、Linux と同じ `curl … | sh` で入れることもできます（`tsugumi.cmd` は作られませんが、ページは同じく Windows のブラウザに開きます）。
+- **Windows**: WSL2 と、その中の Linux に入れた [Nix](https://nixos.org/download) が必要です。`install.ps1` は既定の WSL の Linux で `install.sh` を実行し、`%USERPROFILE%\.local\bin\tsugumi.cmd` を作ります（`PATH` は変更しません）。`tsugumi` は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。WSL2（Nix は daemon なし）に入れて、デモを開き、実行するところまで検証しました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。WSL の Linux のシェルで、Linux と同じ `curl … | sh` で入れることもできます（`tsugumi.cmd` は作られませんが、ページは同じく Windows のブラウザに開きます）。
 - 取得したファイルはチェックサム（`.sha256`）を確かめてから入れます。版を指定するときは環境変数 `TSUGUMI_VERSION` を使います。
 
 ## ソースからビルドする
