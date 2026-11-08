@@ -30,6 +30,18 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
+**作った人と、その背景**
+
+作者は、宇宙物理学のための AI を研究している博士課程の学生です。X 線天文学の解析は、NASA の HEASOFT のような長大なソフトウェアと、検出器ごとの細かな処理の積み重ねで成り立っています。作者はその解析環境を Nix で固定して公開してきました（[gen740/heasoft](https://github.com/gen740/heasoft)）。けれども、環境が動くだけでは、解析の過程を理解し、条件を変えて自分で試せるところまでは届きませんでした。
+
+この期間中に、東京大学の理学・工学・医学の研究科で、研究者に話を聞きました。
+
+- 「見えないまま、結論だけを議論するのは、やっぱり怖くて」（理学系研究科 准教授）
+- 「AI の出したものとやってるものっていうのが本当に一致してるかっていうのがわからない」（工学系研究科 博士 1 年）
+- 「患者さんの情報を AI に渡すのは、やっぱり恐ろしいなと思います」（医学系研究科 修士 1 年）
+
+分野は違っても、根は同じでした。**AI がしたことを、人があとから追って確かめる手立てがない。** 宇宙物理で感じていた壁は、計算を使う研究に共通する壁でした。Tsugumi は、それに対する作者の答えです（[デモ動画の冒頭](https://www.youtube.com/watch?v=NW2nFnOwDxI)、作者自身の言葉による経緯は[私にしかない深さ](docs/Origin.md)）。
+
 ![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
 
 <p align="center">
@@ -62,7 +74,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 
 AI は、数学や科学の長年の難問に挑み始めています。
 2026 年 8 月から 9 月にかけて、OpenAI は [10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)を、Anthropic の Claude は[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)と[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)を発表しました。どれも議論を証明支援系 Lean などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開しています。
-10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
+10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、それまで計算されていなかった素粒子物理の Feynman 積分 15 件を数週間で計算しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
 
 人間が成果を吟味し、意味を理解して、次の問いを立てられるのは、AI の議論や計算を独立した仕組みで確かめられるからです。
 
