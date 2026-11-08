@@ -190,6 +190,8 @@ curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
+WSL の Linux のシェルを開いて、上の Mac・Linux と同じ `curl … | sh` で入れることもできます。その場合も、`tsugumi` を実行するとページは Windows のブラウザに開きます。
+
 初回は準備に数分かかります。署名（ad-hoc）、確認した環境、ソースからのビルドは [INSTALL.md](pages/install.md) にあります。
 
 ### 最初の一歩

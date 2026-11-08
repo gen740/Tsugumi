@@ -139,6 +139,7 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <p><strong>Windows</strong>（未確認）：PowerShell で実行します（管理者権限は要りません）。先に WSL2（PowerShell で <code>wsl --install</code>）と、その中の Linux に <a href="https://nixos.org/download" rel="noopener">Nix</a> を入れておいてください。</p>
 <pre><code class="language-powershell">irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 </code></pre>
+<p>WSL の Linux のシェルを開いて、上の Mac・Linux と同じ <code>curl … | sh</code> で入れることもできます。その場合も、<code>tsugumi</code> を実行するとページは Windows のブラウザに開きます。</p>
 <p>初回は準備に数分かかります。署名（ad-hoc）、確認した環境、ソースからのビルドは <a href="install.html">INSTALL.md</a> にあります。</p>
 <h3 id="最初の一歩">最初の一歩</h3>
 <ol>
