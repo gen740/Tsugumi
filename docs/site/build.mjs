@@ -426,7 +426,7 @@ function homePage(groups, pages, tagline, lead) {
       return door(g.title, g.title, doorText[g.title] ?? '', docs.map((d) => row(pages.get(d), titleOf(d), shortNote(d))).join(''))
     }),
   ].join('')
-  const tile = ([id, title, text]) => `<button type="button" class="demo-tile" data-demo="${id}"><span class="demo-thumb"></span><b>${esc(title)}</b><span>${esc(text)}</span></button>`
+  const tile = ([id, title, text]) => `<button type="button" class="demo-tile" id="demo-${id}" data-demo="${id}"><span class="demo-thumb"></span><b>${esc(title)}</b><span>${esc(text)}</span></button>`
   const tiles = GALLERY.map(([name, demos]) => `<h3>${esc(name)}</h3><div class="demo-grid">${demos.map(tile).join('')}</div>`).join('')
   return `<article class="home">
 <header class="home-hero">
