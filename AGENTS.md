@@ -46,6 +46,20 @@
 
 構成の全体図とディレクトリの詳細は [docs/Development.md](docs/Development.md) の「実行基盤」「ディレクトリ」にあります。
 
+## この project が問いかけていること
+
+作者は [docs/Origin.md](docs/Origin.md) を、AI を一切使わず自分の言葉で書き、こう結んでいます。
+
+> 「人間の知的活動、創造的活動を人間のものとして手放さないためには、どうすればいいのでしょうか?」
+
+Tsugumi はこの問いへの一つの答えです。AI に試行錯誤を任せても、過程を見通せる大きさに分けて残し、人間が自分の手で確かめ直せるようにする。下の表は、その答えが実際に動いているかを確かめる場所です。答えとしてよいかどうかは、読む方が判断してください。
+
+どう作ったかの記録は次の 3 か所にあります。
+
+- [Tsugumi Chronicle](https://gen740.github.io/Tsugumi-chronicle/)（[リポジトリ](https://github.com/gen740/Tsugumi-chronicle)）：Claude との開発の要約と記録
+- [docs/Provenance.md](docs/Provenance.md)：ハッカソン前の準備と、この期間に作ったものの境界
+- Git の履歴
+
 ## 主張と、それを確かめられる場所
 
 | 主張 | 確かめる場所 |
