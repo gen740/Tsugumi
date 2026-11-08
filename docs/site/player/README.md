@@ -66,6 +66,8 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
 
 プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
 
+GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
+
 ## 記録の中身
 
 `player-data/assets/<id>.run.json` の `run` に、どの実行の記録か（Run ID、日付、ホスト、隔離、コミット）があります。
