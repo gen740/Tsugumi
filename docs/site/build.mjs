@@ -25,7 +25,7 @@ const STORY = [
     // A section, or its beginning: upTo names the first block left out.
     sections: [
       { title: 'AI を研究に積極的に活用できていますか？' },
-      { title: '処理の流れそのものを、人と AI の共通言語にする', upTo: 'この仕組みは、研究を出発点に' },
+      { title: '処理の流れそのものを、人と AI の共通言語にする', upTo: 'この仕組みは研究を出発点に' },
       { title: 'AI に頼みたいことは、本来単純なはずです' },
       { title: '処理の形を描く。AI と実装する。実行して確かめる。' },
     ],
