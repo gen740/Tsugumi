@@ -53,7 +53,7 @@ node docs/site/player/build.mjs
 
 ## 動く SVG
 
-GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を SVG にします。`player-data/` を作り直してから、Mac で実行します（タイルの画像を `sips` で縮めます）。
+GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を SVG にします。`player-data/` を作り直してから、Mac で実行し、できた SVG をコミットします（Chrome を画面なしで使い、タイルの画像を `sips` で縮めます）。
 
 ```sh
 node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並べればそれだけ
@@ -68,11 +68,11 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
   - `casa-guide.svg`: ツグミがチャットから spectrum の Card へ飛び、吹き出しを出します。飛び方と置き場所は `guide.tsx`、文は README の画像（`guide.png`）に写る実際の応答の書き写しです。
 - `docs/assets/demos/<id>.svg`: 記録のある各デモを、ギャラリーの縮小表示（`compact`）のまま 440 × 264 のタイルに。小さい Canvas で CSS が隠す文字（`.tp-small` など）と Card の説明の行の中身は省き、画像は長辺 200 px にします。
 
-再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が描く HTML のまま `<foreignObject>` に入れ、`site/player.css` のうち使う規則だけを入れます。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、それが出ている段階でだけ CSS のアニメーションで見せます。アイコンは `<defs>` に 1 回だけ置きます。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
+再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が `site/player.css` で描く HTML にします。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、その HTML を Chrome（ヘッドレス）でレイアウトし、[dom-to-svg](https://github.com/felixfbecker/dom-to-svg) で四角・線・文字・画像の SVG に変えます。それが出ている段階でだけ CSS のアニメーションで見せます（要素の class が SVG のグループに残ります）。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
 
 プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
 
-Safari は、SVG が `<img>` の大きさに合わせて縮められると、`<foreignObject>` の中の位置を持つ要素（`position: absolute` など）を縮めずに描きます（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）。また、描き直す範囲を `<foreignObject>` の枠を 2 度縮めた大きさで切ります。そのため Safari のときだけ（`@supports (hanging-punctuation: first)`）、画像の幅をメディアクエリで受け取り、中の HTML を CSS の `zoom` で表示の大きさに組み直し、`<foreignObject>` は絵の 16 倍の大きさにします（`svg.mjs` の `safariZoom`・`svgDoc`）。`transform` で縮めると、右側が描き直されずに残りました。ほかのブラウザは viewBox で縮めます。
+SVG の中に HTML を入れる `<foreignObject>` は使いません。Safari は、`<img>` の大きさに縮められた SVG の `<foreignObject>` の中の位置を持つ要素を縮めずに描き（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）、動くと一部しか描き直さないためです。dom-to-svg が描かないもの（Canvas の点のグリッドの `radial-gradient`、リストの記号）は、変える前に SVG の模様や文字に置き換えます。
 
 GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
 

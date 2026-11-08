@@ -7,13 +7,14 @@
 //   node docs/site/player/svg.mjs [<id> …]        (default: all of them)
 // Every frame of the player's replay (framesOf in web/src/ui/demoPlayer.tsx) is drawn
 // by the player's own Canvas and RunControl with React's static renderer, from the same
-// player-data/<id>.json; the SVG holds that HTML in a <foreignObject> with the
-// player's own stylesheet (site/player.css). The Cards, wires, output frames and the
-// run control are kept once per distinct drawing, each shown during the frames that
-// drew it. Images come from player-data/assets/ as data: URIs (a tile's shrunk with
-// sips, macOS, as harvest.py does). The stylesheet keeps only the rules the drawing uses.
-// Needs what build.mjs needs (web/node_modules, web/src/gen), and its outputs up to date.
-import { execFileSync } from 'node:child_process'
+// player-data/<id>.json, with the player's own stylesheet (site/player.css). The Cards,
+// wires, output frames and the run control are kept once per distinct drawing, each shown
+// during the frames that drew it. Chrome (headless) lays that HTML out and dom-to-svg turns
+// it into plain SVG (`render`), the animations staying on its elements' classes. Images come
+// from player-data/assets/ as data: URIs (a tile's shrunk with sips, macOS, as harvest.py does).
+// Needs what build.mjs needs (web/node_modules, web/src/gen), its outputs up to date, and
+// Chrome (/Applications/Google Chrome.app, or TSUGUMI_CHROME). Run on a Mac; the SVGs are committed.
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -126,7 +127,7 @@ fs.writeFileSync(tmp, bundle.outputFiles[0].text)
 const player = await import(pathToFileURL(tmp).href)
 fs.rmSync(path.dirname(tmp), { recursive: true, force: true })
 
-// ---- HTML to the XML a foreignObject needs, and its top-level elements ---------------------
+// ---- The player's HTML as XML, and its top-level elements --------------------------------
 
 const VOID = /<(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)\b((?:[^>"']|"[^"]*"|'[^']*')*?)\s*\/?>/g
 // React writes <svg> without its namespace, which HTML implies and XML does not.
@@ -225,16 +226,6 @@ function inlineImages(xml, base, sideOf = () => undefined) {
     const type = file.endsWith('.svg') ? 'image/svg+xml' : bytes[0] === 0x89 ? 'image/png' : 'image/jpeg'
     return `src="data:${type};base64,${bytes.toString('base64')}"`
   })
-}
-
-/** Each distinct icon (16 × 16, web/src/ui/icons.tsx) once, in <defs>, and <use> where it is drawn. */
-function sharedIcons(xml) {
-  const ids = new Map()
-  const body = xml.replace(/(<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^>]*viewBox="0 0 16 16"[^>]*>)((?:(?!<svg)[\s\S])*?)<\/svg>/g, (_, open, inner) => {
-    if (!ids.has(inner)) ids.set(inner, `i${ids.size}`)
-    return `${open}<use href="#${ids.get(inner)}"/></svg>`
-  })
-  return { body, defs: [...ids].map(([inner, id]) => `<g id="${id}">${inner}</g>`).join('') }
 }
 
 /** The rules of a minified stylesheet that can match the markup: each class a selector names is in it. */
@@ -366,31 +357,125 @@ const FONT = `-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP'
 const readDemo = (id) => JSON.parse(fs.readFileSync(path.join(DATA, `${id}.json`), 'utf8'))
 const titleOf = (data) => `${data.title} — Tsugumi のデモ（${data.run ? `${data.run.date} の実行の記録を再生` : '線のつながりから順序を再生'}）`
 
-/** Safari draws the HTML of a <foreignObject> that sits in a positioned box (here: all of it) at its own size when the SVG is
- *  scaled to fit an <img> (WebKit bug 23113), and paints and repaints it only inside the <foreignObject>'s box scaled down
- *  twice. Safari alone (the browser that supports `hanging-punctuation`) gets the scale from the image's width, set by
- *  media queries (the SVG's viewport is the image's box), and applies it with CSS `zoom`: laid out at the size it is shown,
- *  so what it repaints is where it is drawn (a `transform` left the right part unrepainted). The <foreignObject> is made 16
- *  times the drawing (svgDoc) so that its box, so scaled, still covers it down to a quarter of its size. Others scale it with the viewBox. */
-function safariZoom(width) {
-  const steps = []
-  // About 4 px apart up to the drawing's own width, then coarser (an image is rarely shown larger).
-  const fine = Math.min(0.02, Math.max(0.005, 4 / width))
-  for (let z = 0.15; z <= 2.0001; z += z < 1.05 ? fine : 0.05) steps.push(`@media (min-width:${(z * width).toFixed(1)}px){:root{--z:${z.toFixed(3)}}}`)
-  return `@supports (hanging-punctuation:first) and (font:-apple-system-body){.svg-zoom{transform:scale(var(--z,1))}${steps.join('')}}`
+/** One SVG for an <img>, as a spec that `render` turns into plain SVG: its HTML and stylesheet (laid out by Chrome), the
+ *  animations that show its drawings in turn (`anim`, on the classes the HTML carries), and <defs> its <use>s point at. */
+function svgDoc(spec) {
+  return spec
 }
 
-/** One SVG for an <img>: its HTML at the top left of a <foreignObject> larger than the viewBox (see safariZoom), in a box that Safari scales itself. */
-function svgDoc({ width, height, title, css, defs = '', html }) {
-  const icons = sharedIcons(html)
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="t">
+// ---- Plain SVG: the HTML laid out and painted by Chrome, then turned into SVG elements (dom-to-svg) ----------
+// No <foreignObject> is left: Safari repaints the HTML of an animated <foreignObject> only in pieces (and draws it
+// unscaled in an <img>), so the drawing becomes rectangles, paths, text and images that every browser scales and
+// repaints alike. The animations stay on the classes of the HTML's elements, which dom-to-svg keeps on their groups.
+
+const CHROME = process.env.TSUGUMI_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const domToSvg = (await esbuild.build({
+  stdin: { contents: "import { elementToSVG, inlineResources } from 'dom-to-svg'; window.domToSvg = { elementToSVG, inlineResources }", resolveDir: WEB, loader: 'js' },
+  bundle: true, platform: 'browser', format: 'iife', write: false, nodePaths: [path.join(WEB, 'node_modules')], logLevel: 'warning',
+})).outputFiles[0].text
+
+/** Headless Chrome, driven over its DevTools protocol (Node's WebSocket): one page, reused. */
+async function chrome() {
+  if (chrome.page) return chrome.page
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-svg-chrome-'))
+  const proc = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check',
+    '--hide-scrollbars', '--force-device-scale-factor=1', '--allow-file-access-from-files', 'about:blank'], { stdio: 'ignore' })
+  process.on('exit', () => {
+    proc.kill('SIGKILL')
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
+    } catch {
+      // Chrome may still be writing its profile as it goes: the temporary folder stays.
+    }
+  })
+  const portFile = path.join(dir, 'DevToolsActivePort')
+  for (let i = 0; !fs.existsSync(portFile) || !fs.readFileSync(portFile, 'utf8').includes('\n'); i++) {
+    if (i > 200) throw new Error(`Chrome did not start (${CHROME}; TSUGUMI_CHROME names another)`)
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  const port = fs.readFileSync(portFile, 'utf8').split('\n')[0]
+  const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page')
+  const ws = new WebSocket(target.webSocketDebuggerUrl)
+  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
+  let next = 0
+  const waiting = new Map()
+  ws.onmessage = (m) => {
+    const d = JSON.parse(m.data)
+    if (!d.id || !waiting.has(d.id)) return
+    waiting.get(d.id)(d)
+    waiting.delete(d.id)
+  }
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const id = ++next
+    waiting.set(id, (d) => (d.error ? reject(new Error(`${method}: ${d.error.message}`)) : resolve(d.result)))
+    ws.send(JSON.stringify({ id, method, params }))
+  })
+  chrome.page = { send, dir, close: () => ws.close() }
+  return chrome.page
+}
+
+/** While Chrome lays it out: every drawing shown at once, nothing moving (each keeps its own place). */
+const CAPTURE = '*{animation:none!important;transition:none!important}.tp-l{position:absolute;inset:0;opacity:1!important}'
+/** What keeps moving on its own in the SVG (from canvas.css and guide.css): moving wire dashes, the guide bird. */
+const CONTINUOUS = `.cv-wire-moving{animation:cv-dash .467s linear infinite}@keyframes cv-dash{from{stroke-dashoffset:0}to{stroke-dashoffset:-14}}
+.guide-flying-bird{animation:guide-hop 2.6s ease-in-out infinite}@keyframes guide-hop{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.guide-nest.thinking .guide-bird:not(.svg-content){animation:guide-tilt .9s ease-in-out infinite;transform-origin:50% 90%}@keyframes guide-tilt{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(5deg)}}
+/* What moves with a transform turns around its own box, as the HTML did (the window, the bird, the bubble). An inline
+   SVG becomes a group placed with its own transform: animations go on the elements around it. */
+.g-fly,.s-open,.g-pop,.guide-flying-bird,.guide-nest .guide-bird:not(.svg-content){transform-box:fill-box}.g-fly,.s-open{transform-origin:0 0}.g-pop{transform-origin:100% 0}
+@media (prefers-reduced-motion:reduce){.cv-wire-moving,.guide-flying-bird,.guide-bird{animation:none!important}}`
+
+/** The spec's HTML in Chrome at its size, turned into one SVG. */
+async function render({ width, height, title, css, anim, defs = '', html }) {
+  const page = await chrome()
+  const file = path.join(page.dir, 'page.html')
+  fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><style>body{margin:0}${css}
+.svg-zoom{position:absolute;left:0;top:0;width:${width}px;height:${height}px}${CAPTURE}</style>
+<svg width="0" height="0" style="position:absolute"><defs>${defs}</defs></svg><div class="svg-zoom">${html}</div><script>${domToSvg}</script>`)
+  await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+  await page.send('Page.navigate', { url: pathToFileURL(file).href })
+  const { result } = await page.send('Runtime.evaluate', {
+    awaitPromise: true, returnByValue: true,
+    expression: `(async () => {
+      while (document.readyState !== 'complete' || !window.domToSvg) await new Promise((r) => setTimeout(r, 20))
+      await document.fonts.ready
+      await Promise.all([...document.images].map((i) => i.decode().catch(() => undefined)))
+      // The Canvas's dot grid (gridStyle in cardNode.tsx: a radial-gradient, which dom-to-svg does not draw) as an SVG
+      // pattern of the same dots, step and offset, under the Canvas's content.
+      let grids = 0
+      for (const el of document.querySelectorAll('[style*="radial-gradient"]')) {
+        const cs = getComputedStyle(el)
+        const [w, h] = cs.backgroundSize.split(' ').map(parseFloat)
+        const [x, y] = cs.backgroundPosition.split(' ').map(parseFloat)
+        const color = cs.getPropertyValue('--grid-dot').trim()
+        const id = 'grid-dots-' + grids++
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        svg.setAttribute('width', el.clientWidth)
+        svg.setAttribute('height', el.clientHeight)
+        svg.setAttribute('style', 'position:absolute;left:0;top:0;pointer-events:none')
+        svg.innerHTML = '<defs><pattern id="' + id + '" patternUnits="userSpaceOnUse" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"><circle cx="0.8" cy="0.8" r="0.9" fill="' + color + '"/></pattern></defs><rect width="100%" height="100%" fill="url(#' + id + ')"/>'
+        el.style.backgroundImage = 'none'
+        el.prepend(svg)
+      }
+      // Inline styles that use CSS variables (bars' fill:var(--indigo)) to the values they have here: the SVG has no variables.
+      for (const el of document.querySelectorAll('[style*="var("]')) {
+        const cs = getComputedStyle(el)
+        for (const p of [...el.style]) if (el.style.getPropertyValue(p).includes('var(')) el.style.setProperty(p, cs.getPropertyValue(p))
+      }
+      const doc = domToSvg.elementToSVG(document.querySelector('.svg-zoom'), { captureArea: new DOMRect(0, 0, ${width}, ${height}), keepLinks: false })
+      return new XMLSerializer().serializeToString(doc.documentElement)
+    })()`,
+  })
+  if (typeof result.value !== 'string') throw new Error(`dom-to-svg gave no SVG: ${JSON.stringify(result).slice(0, 300)}`)
+  const inner = result.value.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '')
+    // dom-to-svg prefixes the ids an inline <svg> points at; the guide bird is in this SVG's own <defs>.
+    .replace(/href="#[^"]*?tsg-bird"/g, 'href="#tsg-bird"')
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="t">
 <title id="t">${esc(title)}</title>
-<style>${css}
-.svg-zoom{position:absolute;left:0;top:0;width:${width}px;height:${height}px;transform-origin:0 0}
-.svg-zoom .material{backdrop-filter:none;-webkit-backdrop-filter:none}
-${safariZoom(width)}</style>
-<defs>${defs}${icons.defs}</defs>
-<foreignObject width="${width}" height="${height}"><div xmlns="http://www.w3.org/1999/xhtml" class="svg-zoom">${icons.body}</div></foreignObject>
+<style>${anim ?? ''}
+${CONTINUOUS}</style>
+<defs>${defs}</defs>
+${inner}
 </svg>
 `
 }
@@ -422,8 +507,8 @@ function largeSvg(id) {
 .svg-canvas>.tp-surface{height:100%;border:0.5px solid var(--separator-strong)}
 .svg-say{position:absolute;left:0;top:${CANVAS_H + 8}px;width:${view.width}px;height:${SAY - 8}px}
 .svg-say .tp-say{color:${CREAM}}
-.svg-foot{position:absolute;left:4px;top:${CANVAS_H + SAY}px;font-size:11.5px;color:${MUTED};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:${view.width - 8}px}
-${r.anim()}`,
+.svg-foot{position:absolute;left:4px;top:${CANVAS_H + SAY}px;font-size:11.5px;color:${MUTED};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:${view.width - 8}px}`,
+    anim: r.anim(),
   })
 }
 
@@ -436,8 +521,8 @@ function tileSvg(id) {
     width: TILE.width, height: TILE.height, title: titleOf(data), html,
     css: `${usedCss(playerCss, html)}
 .svg-tile{position:absolute;inset:0;display:block;border-radius:12px;overflow:hidden;background:#1c1c1e}
-.svg-tile>.tp-surface{border-radius:0}
-${r.anim()}`,
+.svg-tile>.tp-surface{border-radius:0}`,
+    anim: r.anim(),
   })
 }
 
@@ -565,8 +650,8 @@ ${usedCss(webCss, html)}
 .w-input-row{display:flex;align-items:center;gap:8px}
 .w-a{position:absolute}
 .w-caption{position:absolute;left:4px;top:${WIN.height + 8}px;font:12px ${FONT};color:#8b949e;white-space:nowrap}
-${o.css ?? ''}
-${r.anim()}`,
+${o.css ?? ''}`,
+    anim: r.anim(),
   })
 }
 
@@ -629,7 +714,7 @@ function timelineSvg() {
 <div class="timeline"><div class="timeline-head"><span class="caption2 secondary mono-digits" style="width:${TIMELINE.label}px;text-align:right">${player.formatDuration(0)}</span><span class="spacer" style="flex:1"></span><span class="caption2 tertiary">ドラッグで範囲を拡大・横スクロールで移動</span><span class="w-tl-all">全体</span><span class="caption2 secondary mono-digits">${player.formatDuration(total / 1000)}</span></div>
 <div class="w-tl-rows"><div class="timeline-labels" style="width:${TIMELINE.label}px">${rows.map((k) => `<div class="timeline-label caption" style="height:${TIMELINE.row}px">${k}</div>`).join('')}</div>
 <div class="w-tl-chart" style="width:${chartW}px;height:${rows.length * TIMELINE.row}px"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${stripes}</svg>
-<div class="w-tl-clip ${reveal}" style="height:${rows.length * TIMELINE.row}px;width:${chartW}px"><svg xmlns="http://www.w3.org/2000/svg" class="${back}" width="${chartW}" height="${rows.length * TIMELINE.row}">${bars}</svg></div></div></div></div>
+<div class="w-tl-clip ${reveal}" style="height:${rows.length * TIMELINE.row}px;width:${chartW}px"><div class="${back}"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${bars}</svg></div></div></div></div></div>
 </div>`
   }
   return appWindow({
@@ -662,6 +747,15 @@ const GUIDE = {
     `<p>直近の実行は成功しているので、画面右上にグラフが出ているはずです。次は、パラメータの変更か表示の見方のどちらかをご案内できます。</p>`,
   ],
 }
+/** Lists with their markers as text (dom-to-svg draws no list markers): 1. 2. … and • in the chat's indents. */
+function listsAsText(html, depth = 0) {
+  return html.replace(/<(ol|ul)>((?:(?!<\/?(?:ol|ul)>)[\s\S]|<(ol|ul)>[\s\S]*?<\/\3>)*?)<\/\1>/g, (_, kind, items) => {
+    let n = 0
+    return `<div class="w-list">${items.replace(/<li>([\s\S]*?)<\/li>(?=<li>|$)/g, (__, item) =>
+      `<div class="w-li"><span class="w-mk">${kind === 'ol' ? `${++n}.` : '•'}</span><div>${listsAsText(item, depth + 1)}</div></div>`)}</div>`
+  })
+}
+
 /** The scene's moments in ms: asked, the flight, the bubble, each part of the answer in the chat. */
 const GUIDE_T = { total: 16000, ask: 1200, fly: 3000, land: 3900, parts: [4300, 5100, 5900, 6700] }
 
@@ -682,7 +776,7 @@ function guideSvg() {
       [T.ask, T.fly, column(chatHead(title, nest(' thinking')), asked + thinking, '1k')],
       [T.fly, T.parts[0], column(chatHead(title, nest(' away')), asked + thinking, '1k')],
       ...GUIDE.answer.map((_, i) => [T.parts[i], T.parts[i + 1] ?? T.total,
-        column(chatHead(title, nest(' away')), `${asked}<div class="w-answer">${GUIDE.answer.slice(0, i + 1).join('')}</div>${i === GUIDE.answer.length - 1 ? choices : ''}`, i === GUIDE.answer.length - 1 ? '22k' : '18k')]),
+        column(chatHead(title, nest(' away')), `${asked}<div class="w-answer">${listsAsText(GUIDE.answer.slice(0, i + 1).join(''))}</div>${i === GUIDE.answer.length - 1 ? choices : ''}`, i === GUIDE.answer.length - 1 ? '22k' : '18k')]),
     ]
     return views.map(([from, to, html], i) => `<div class="w-view ${during(r, `cv${i}`, from, to)}">${html}</div>`).join('')
   }
@@ -722,11 +816,11 @@ function guideSvg() {
 .w-ask{align-self:flex-end;max-width:85%;padding:6px 10px;border-radius:10px;background:rgba(255,255,255,.09)}
 .w-thinking{margin:0}
 .w-answer h4{margin:6px 0 2px;font-size:13px;font-weight:700;color:var(--label)}
-.w-answer ol,.w-answer ul{margin:0;padding-left:20px;list-style:revert}.w-answer ul ul{margin:0}
+.w-li{display:flex;gap:6px}.w-mk{flex:none;min-width:12px;text-align:right}.w-li .w-li .w-mk{color:var(--secondary)}
 .w-answer p{margin:6px 0}
 .w-answer code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.08);padding:0 3px;border-radius:3px}
 .w-ring{position:absolute;inset:0;outline:2.5px solid var(--tsugumi-rufous);outline-offset:4px;border-radius:8px;animation:guide-ring 1.6s ease-in-out infinite}
-.w-fly{transform-origin:0 0;z-index:30}
+.w-fly{transform-origin:0 0}
 .w-fly .guide-flying-bird{position:absolute;inset:0;width:100%;height:100%;transition:none;filter:none}
 .guide-speech{background:color-mix(in srgb,var(--window-bg) 92%,transparent)}
 .guide-choice{display:inline-block}
@@ -775,8 +869,8 @@ function sourceSvg() {
   const lines = highlighted(code)
   // The call that puts the figure in the Card's display (the docstring names it too: the last one).
   const show = code.split('\n').findLastIndex((l) => l.trim() === 'plt.show()')
-  const view = Z.height - Z.header - 26 - 48
-  const visible = Math.floor(view / Z.line)
+  const viewH = Z.height - Z.header - 26 - 48
+  const visible = Math.floor(viewH / Z.line)
   const scrollTo = Math.max(0, Math.min(lines.length - visible, show - Math.floor(visible / 2))) * Z.line
   const files = [['folder.fill', 'src', 0, 'var(--accent)'], ['chevron.left.forwardslash.chevron.right', 'main.py', 1, '', true],
     ...fs.readdirSync(dir).filter((f) => !f.startsWith('_card') && !f.startsWith('_meta') && f !== 'src').sort().map((f) => [f.endsWith('.nix') ? 'snowflake' : 'tablecells', f, 0])]
@@ -786,8 +880,17 @@ function sourceSvg() {
       [0, `opacity:0;transform:translate(${b.left - Z.left}px,${b.top - Z.top}px) scale(${(b.width / Z.width).toFixed(3)})`],
       [T.open, `opacity:0;transform:translate(${b.left - Z.left}px,${b.top - Z.top}px) scale(${(b.width / Z.width).toFixed(3)});animation-timing-function:ease-out`],
       [T.opened, 'opacity:1;transform:none'], [T.total - 400, 'opacity:1;transform:none;animation-timing-function:ease-in'], [T.total, 'opacity:0;transform:none']])
-    const scroll = r.custom('s-scroll', [[0, 'transform:none'], [T.scroll, 'transform:none;animation-timing-function:ease-in-out'], [T.scrolled, `transform:translateY(-${scrollTo}px)`], [T.total, `transform:translateY(-${scrollTo}px)`]])
+    // The scroll in steps, each the lines then in view (what is out of view is not drawn into the SVG), eased.
+    const STEPS = 6
+    const at = Array.from({ length: STEPS }, (_, i) => Math.round(scrollTo * (0.5 - 0.5 * Math.cos((Math.PI * i) / (STEPS - 1)))))
+    const when = at.map((_, i) => (i === 0 ? 0 : T.scroll + ((T.scrolled - T.scroll) * i) / (STEPS - 1)))
+    const shown = (i) => r.custom(`s-at${i}`, [[0, `opacity:${i === 0 ? 1 : 0}`], ...(i ? [[when[i], 'opacity:1']] : []), ...(i < STEPS - 1 ? [[when[i + 1], 'opacity:0']] : []), [T.total, `opacity:${i === STEPS - 1 ? 1 : 0}`]], 'step-end')
     const mark = r.custom('s-mark', [[0, 'opacity:0'], [T.scrolled + 200, 'opacity:0'], [T.scrolled + 500, 'opacity:1'], [T.total, 'opacity:1']])
+    const view = (i) => {
+      const first = Math.floor(at[i] / Z.line), last = Math.min(lines.length, Math.ceil((at[i] + viewH) / Z.line))
+      return `<div class="s-lines ${shown(i)}" style="top:${first * Z.line - at[i]}px">${i === STEPS - 1 ? `<div class="s-mark ${mark}" style="top:${(show - first) * Z.line}px"></div>` : ''}
+${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no">${first + j + 1}</span><span class="s-text">${l || ' '}</span></div>`).join('')}</div>`
+    }
     const ring = r.custom('s-ring', [[0, 'opacity:0'], [T.open - 600, 'opacity:0'], [T.open - 550, 'opacity:1'], [T.total - 400, 'opacity:1'], [T.total - 350, 'opacity:0'], [T.total, 'opacity:0']], 'step-end')
     const categories = [['general', '一般', 'slider.horizontal.3'], ['nix', 'Nix 定義', 'snowflake'], ['source', 'ソース', 'doc.text'], ['ports', '入出力', 'arrow.left.arrow.right'],
       ['executions', '実行履歴', 'clock.arrow.circlepath'], ['artifacts', '成果物', 'shippingbox'], ['context', '追加コンテキスト', 'text.bubble']]
@@ -800,10 +903,7 @@ function sourceSvg() {
 <div class="s-plus secondary">${chromeIcon('plus', 12)}${chromeIcon('minus', 12)}</div></div>
 <div class="s-code">
 <div class="s-head">${chromeIcon('chevron.left.forwardslash.chevron.right', 13)}<b>main.py</b><span class="secondary caption">spectrum › src</span><span style="flex:1"></span><span class="s-btn">整形</span></div>
-<div class="s-view" style="height:${view}px"><div class="s-lines ${scroll}">
-<div class="s-mark ${mark}" style="top:${show * Z.line}px"></div>
-${lines.map((l, i) => `<div class="s-line"><span class="s-no">${i + 1}</span><span class="s-text">${l || ' '}</span></div>`).join('')}
-</div></div>
+<div class="s-view" style="height:${viewH}px">${at.map((_, i) => view(i)).join('')}</div>
 <div class="s-foot"><span class="s-btn">再読込</span><span class="s-btn off">適用</span><span class="s-btn">閉じる</span></div></div>
 </div>`
   }
@@ -812,7 +912,7 @@ ${lines.map((l, i) => `<div class="s-line"><span class="s-no">${i + 1}</span><sp
     frames: [{ ...player.DONE, ms: T.total }],
     title: `${data.title} — spectrum の Card 設定でソースを読む`,
     caption: `ソースは demos/casa の spectrum の main.py そのもの。設定の窓と色分けはアプリ（CardSettingsEditor・CodeEditor）に合わせた絵です。値を変えてその Card だけ再実行する動きは、記録がないので入れていません。`,
-    css: `.s-win{transform-origin:0 0;z-index:40;border-radius:12px;overflow:hidden;background:#1e1e1e;box-shadow:0 22px 70px rgba(0,0,0,.55),0 0 0 1px #4a4a4c;font-size:13px}
+    css: `.s-win{transform-origin:0 0;border-radius:12px;overflow:hidden;background:#1e1e1e;box-shadow:0 22px 70px rgba(0,0,0,.55),0 0 0 1px #4a4a4c;font-size:13px}
 .s-title{position:absolute;left:0;right:0;top:0;height:${Z.header}px;display:flex;align-items:center;gap:14px;padding:0 20px;background:#2a2a2c;font-size:13px}
 .s-side{position:absolute;left:0;top:${Z.header}px;bottom:0;width:${Z.side}px;padding:8px;background:#2a2a2c;border-right:0.5px solid var(--separator)}
 .s-cat{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:7px}.s-cat.on{background:rgba(255,255,255,.1)}
@@ -824,7 +924,7 @@ ${lines.map((l, i) => `<div class="s-line"><span class="s-no">${i + 1}</span><sp
 .s-head{display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-bottom:0.5px solid var(--separator)}
 .s-btn{display:inline-flex;padding:2px 10px;border-radius:6px;background:rgba(255,255,255,.12);font-size:12px}.s-btn.off{opacity:.45}
 .s-view{position:relative;overflow:hidden}
-.s-lines{position:relative;font:12.5px/${Z.line}px var(--mono)}
+.s-lines{position:absolute;left:0;right:0;font:12.5px/${Z.line}px var(--mono)}
 .s-line{display:flex;height:${Z.line}px;white-space:pre}
 .s-no{flex:none;width:44px;padding-right:12px;text-align:right;color:var(--tertiary);background:rgba(255,255,255,.03)}
 .s-text{padding-left:12px;color:var(--label)}
@@ -900,7 +1000,8 @@ ${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : '
 const shipped = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'demos', 'index.json'), 'utf8')).demos.map((d) => d.id))
 const recorded = JSON.parse(fs.readFileSync(path.join(DATA, 'index.json'), 'utf8')).demos.filter((d) => d.recorded && shipped.has(d.id)).map((d) => d.id)
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : recorded
-const write = (file, svg) => {
+const write = async (file, spec) => {
+  const svg = await render(spec)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, svg)
   return Buffer.byteLength(svg)
@@ -909,15 +1010,14 @@ const kb = (n) => `${(n / 1024).toFixed(0)} KB`
 let tiles = 0
 for (const id of ids) {
   if (id === LARGE) {
-    console.log(`docs/assets/${id}-demo.svg ${kb(write(path.join(OUT, `${id}-demo.svg`), largeSvg(id)))}`)
-    console.log(`docs/assets/${id}-window.svg ${kb(write(path.join(OUT, `${id}-window.svg`), windowSvg()))}`)
-    console.log(`docs/assets/${id}-timeline.svg ${kb(write(path.join(OUT, `${id}-timeline.svg`), timelineSvg()))}`)
-    console.log(`docs/assets/${id}-guide.svg ${kb(write(path.join(OUT, `${id}-guide.svg`), guideSvg()))}`)
-    console.log(`docs/assets/${id}-source.svg ${kb(write(path.join(OUT, `${id}-source.svg`), sourceSvg()))}`)
-    console.log(`docs/assets/collatz-subworkflow.svg ${kb(write(path.join(OUT, 'collatz-subworkflow.svg'), subworkflowSvg()))}`)
+    for (const [name, spec] of [[`${id}-demo`, () => largeSvg(id)], [`${id}-window`, windowSvg], [`${id}-timeline`, timelineSvg], [`${id}-guide`, guideSvg], [`${id}-source`, sourceSvg], ['collatz-subworkflow', subworkflowSvg]]) {
+      console.log(`docs/assets/${name}.svg ${kb(await write(path.join(OUT, `${name}.svg`), spec()))}`)
+    }
   }
-  const n = write(path.join(OUT, 'demos', `${id}.svg`), tileSvg(id))
+  const n = await write(path.join(OUT, 'demos', `${id}.svg`), tileSvg(id))
   tiles += n
   console.log(`docs/assets/demos/${id}.svg ${kb(n)}`)
 }
 console.log(`${ids.length} tiles, ${kb(tiles)} in all`)
+chrome.page?.close()
+process.exit(0)
