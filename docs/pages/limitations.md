@@ -32,7 +32,6 @@
 - **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。Linux と Windows では Web UI を使います。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](install.md#デスクトップアプリmacを入れる)）。
 - **安定版は v1.0.0 からです。** いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
-- **Mac の共通 VM を使えるのは 1 つのアプリだけです。** `tsugumi` コマンドとデスクトップ版を同時には使えず、後から始めた方がその旨を表示します（[tsugumi コマンド](webui.md#tsugumi-コマンド)）。会話の履歴・Skill のフォルダ・ChatGPT のサインインは両者で別です。
 - **`tsugumi` コマンドは自動では更新しません。** `tsugumi update` で最新版に入れ替えます。デスクトップ版と版が違うと、VM は切り替えのたびにその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので 2 回目からは短くなります）。
 - **Mac のホストで直接動かす Web UI には Mac のフォルダの共有がありません。** Seatbelt ではファイルの存在確認（`stat`）を全体で許可し、uid を分けません。`network: true` の Card は同じ LAN や VPN の他の機器に届き、`ssh` は使えません（[Web UI の隔離](webui.md#隔離macos-ホスト)）。
 - **Claude Code の plugin は Mac アプリに対応していません。** Web UI で開いたプロジェクトだけです（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
