@@ -53,6 +53,15 @@
 </p><h1 id="tsugumi">Tsugumi</h1>
 <p><strong>AI と描いた解析を、そのまま動かし、自分の手で確かめる。</strong></p>
 <p>Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 でデモを開くところまで確認）。計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。</p>
+<p><strong>作った人と、その背景</strong></p>
+<p>作者は、宇宙物理学のための AI を研究している博士課程の学生です。X 線天文学の解析は、NASA の HEASOFT のような長大なソフトウェアと、検出器ごとの細かな処理の積み重ねで成り立っています。作者はその解析環境を Nix で固定して公開してきました（<a href="https://github.com/gen740/heasoft" rel="noopener">gen740/heasoft</a>）。けれども、環境が動くだけでは、解析の過程を理解し、条件を変えて自分で試せるところまでは届きませんでした。</p>
+<p>この期間中に、東京大学の理学・工学・医学の研究科で、研究者に話を聞きました。</p>
+<ul>
+<li>「見えないまま、結論だけを議論するのは、やっぱり怖くて」（理学系研究科 准教授）</li>
+<li>「AI の出したものとやってるものっていうのが本当に一致してるかっていうのがわからない」（工学系研究科 博士 1 年）</li>
+<li>「患者さんの情報を AI に渡すのは、やっぱり恐ろしいなと思います」（医学系研究科 修士 1 年）</li>
+</ul>
+<p>分野は違っても、根は同じでした。<strong>AI がしたことを、人があとから追って確かめる手立てがない。</strong> 宇宙物理で感じていた壁は、計算を使う研究に共通する壁でした。Tsugumi は、それに対する作者の答えです（<a href="https://www.youtube.com/watch?v=NW2nFnOwDxI" rel="noopener">デモ動画の冒頭</a>、作者自身の言葉による経緯は<a href="origin.html">私にしかない深さ</a>）。</p>
 <p><img src="../assets/screenshots/workflow.png" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas" loading="lazy"></p>
 <p align="center">
   <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
