@@ -367,9 +367,11 @@ const readDemo = (id) => JSON.parse(fs.readFileSync(path.join(DATA, `${id}.json`
 const titleOf = (data) => `${data.title} — Tsugumi のデモ（${data.run ? `${data.run.date} の実行の記録を再生` : '線のつながりから順序を再生'}）`
 
 /** Safari draws the HTML of a <foreignObject> that sits in a positioned box (here: all of it) at its own size when the SVG is
- *  scaled to fit an <img> (WebKit bug 23113): Safari alone gets the scale from the image's width, set by media queries
- *  (the SVG's viewport is the image's box) and applied as a CSS transform. Others scale it with the viewBox. Safari is the
- *  browser that supports `hanging-punctuation`. */
+ *  scaled to fit an <img> (WebKit bug 23113), and paints and repaints it only inside the <foreignObject>'s box scaled down
+ *  twice. Safari alone (the browser that supports `hanging-punctuation`) gets the scale from the image's width, set by
+ *  media queries (the SVG's viewport is the image's box), and applies it with CSS `zoom`: laid out at the size it is shown,
+ *  so what it repaints is where it is drawn (a `transform` left the right part unrepainted). The <foreignObject> is made 16
+ *  times the drawing (svgDoc) so that its box, so scaled, still covers it down to a quarter of its size. Others scale it with the viewBox. */
 function safariZoom(width) {
   const steps = []
   // About 4 px apart up to the drawing's own width, then coarser (an image is rarely shown larger).
@@ -378,7 +380,7 @@ function safariZoom(width) {
   return `@supports (hanging-punctuation:first) and (font:-apple-system-body){.svg-zoom{transform:scale(var(--z,1))}${steps.join('')}}`
 }
 
-/** One SVG for an <img>: its HTML in a <foreignObject> the size of the viewBox, in a box that Safari scales itself. */
+/** One SVG for an <img>: its HTML at the top left of a <foreignObject> larger than the viewBox (see safariZoom), in a box that Safari scales itself. */
 function svgDoc({ width, height, title, css, defs = '', html }) {
   const icons = sharedIcons(html)
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="t">

@@ -72,7 +72,7 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
 
 プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
 
-Safari は、SVG が `<img>` の大きさに合わせて縮められると、`<foreignObject>` の中の位置を持つ要素（`position: absolute` など）を縮めずに描きます（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）。そのため Safari のときだけ（`@supports (hanging-punctuation: first)`）、画像の幅をメディアクエリで受け取り、中の HTML を CSS の `transform` で縮めます（`svg.mjs` の `safariZoom`）。ほかのブラウザは viewBox で縮めます。
+Safari は、SVG が `<img>` の大きさに合わせて縮められると、`<foreignObject>` の中の位置を持つ要素（`position: absolute` など）を縮めずに描きます（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）。また、描き直す範囲を `<foreignObject>` の枠を 2 度縮めた大きさで切ります。そのため Safari のときだけ（`@supports (hanging-punctuation: first)`）、画像の幅をメディアクエリで受け取り、中の HTML を CSS の `zoom` で表示の大きさに組み直し、`<foreignObject>` は絵の 16 倍の大きさにします（`svg.mjs` の `safariZoom`・`svgDoc`）。`transform` で縮めると、右側が描き直されずに残りました。ほかのブラウザは viewBox で縮めます。
 
 GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
 
