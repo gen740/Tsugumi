@@ -3,11 +3,12 @@
 </p>
 
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi/"><img src="assets/docs-card.svg" alt="ドキュメントを読む: 動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説" width="100%"></a>
+  <a href="https://gen740.github.io/Tsugumi/"><img src="assets/docs-card.svg" alt="ドキュメントを読む: 動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説" width="49%"></a>
+  <a href="https://gen740.github.io/Tsugumi-chronicle/"><img src="assets/chronicle-card.svg" alt="Claude で開発した記録: Tsugumi Chronicle。人が問い、Claude が積む。Tsugumi がどう作られたかをたどる" width="49%"></a>
 </p>
 
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi-chronicle/"><img src="assets/chronicle-card.svg" alt="Claude で開発した記録: Tsugumi Chronicle。人が問い、Claude が積む。Tsugumi がどう作られたかをたどる" width="100%"></a>
+  <a href="#インストール"><img src="assets/install-card.svg" alt="入れて、動かしてみる: Mac はアプリ、Linux・Windows はブラウザで使うコマンド。インストールと最初の一歩へ" width="100%"></a>
 </p>
 
 <p align="center">
