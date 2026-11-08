@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#ai-を研究に積極的に活用できていますか">AI を研究に積極的に活用できていますか？</a></li><li class="d2"><a href="#確かめるたびに次の問いが生まれる">確かめるたびに、次の問いが生まれる</a></li><li class="d2"><a href="#ai-に頼みたいことは本来単純なはずです">AI に頼みたいことは、本来単純なはずです</a></li><li class="d2"><a href="#処理の形を描くai-と実装する実行して確かめる">処理の形を描く。AI と実装する。実行して確かめる。</a></li><li class="d2"><a href="#処理を細かく分けても試行錯誤を重くしない">処理を細かく分けても、試行錯誤を重くしない</a></li><li class="d2"><a href="#画面でたどる実験と検証">画面でたどる、実験と検証</a></li><li class="d3"><a href="#全体の流れを見渡す">全体の流れを見渡す</a></li><li class="d3"><a href="#コードを読み条件を変えて試す">コードを読み、条件を変えて試す</a></li><li class="d3"><a href="#実際に何が動いたかを振り返る">実際に何が動いたかを振り返る</a></li><li class="d3"><a href="#気になる処理の中へ入る">気になる処理の中へ入る</a></li><li class="d3"><a href="#ツグミに案内してもらう">ツグミに案内してもらう</a></li><li class="d2"><a href="#使ってみる">使ってみる</a></li><li class="d2"><a href="#処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</a></li><li class="d2"><a href="#ドキュメント">ドキュメント</a></li><li class="d3"><a href="#文書も人と-ai-が同じものを読む">文書も、人と AI が同じものを読む</a></li><li class="d2"><a href="#ライセンス">ライセンス</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#ai-を研究に積極的に活用できていますか">AI を研究に積極的に活用できていますか？</a></li><li class="d2"><a href="#確かめるたびに次の問いが生まれる">確かめるたびに、次の問いが生まれる</a></li><li class="d2"><a href="#ai-に頼みたいことは本来単純なはずです">AI に頼みたいことは、本来単純なはずです</a></li><li class="d2"><a href="#処理の形を描くai-と実装する実行して確かめる">処理の形を描く。AI と実装する。実行して確かめる。</a></li><li class="d2"><a href="#処理を細かく分けても試行錯誤を重くしない">処理を細かく分けても、試行錯誤を重くしない</a></li><li class="d2"><a href="#画面でたどる実験と検証">画面でたどる、実験と検証</a></li><li class="d3"><a href="#全体の流れを見渡す">全体の流れを見渡す</a></li><li class="d3"><a href="#コードを読み条件を変えて試す">コードを読み、条件を変えて試す</a></li><li class="d3"><a href="#実際に何が動いたかを振り返る">実際に何が動いたかを振り返る</a></li><li class="d3"><a href="#気になる処理の中へ入る">気になる処理の中へ入る</a></li><li class="d3"><a href="#ツグミに案内してもらう">ツグミに案内してもらう</a></li><li class="d2"><a href="#使ってみる">使ってみる</a></li><li class="d3"><a href="#インストール">インストール</a></li><li class="d3"><a href="#最初の一歩">最初の一歩</a></li><li class="d3"><a href="#同梱デモ">同梱デモ</a></li><li class="d2"><a href="#処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</a></li><li class="d2"><a href="#ドキュメント">ドキュメント</a></li><li class="d3"><a href="#文書も人と-ai-が同じものを読む">文書も、人と AI が同じものを読む</a></li><li class="d2"><a href="#ライセンス">ライセンス</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <p align="center">
@@ -54,9 +54,13 @@
 <p>Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認）。計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。</p>
 <p><img src="../assets/screenshots/workflow.png" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas" loading="lazy"></p>
 <p align="center">
-  <a href="#使ってみる"><b>使ってみる</b></a> ·
+  <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
-  <a href="#ドキュメント">ドキュメント</a> ·
+  <a href="#インストール"><b>インストール</b></a> ·
+  <a href="#最初の一歩">最初の一歩</a> ·
+  <a href="#同梱デモ">デモ</a> ·
+  <a href="#ドキュメント">ドキュメント</a>
+  ｜
   <a href="philosophy.html">なぜ作ったか</a> ·
   <a href="name.html">名前の由来</a> ·
   <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
@@ -121,20 +125,29 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <p>はじめて開くと、右下のツグミが「何をしてみますか？」と尋ねます。動くデモを見るか、Draft を AI に実装させるかを選び、分野からデモを選ぶと、そのデモまで案内します。プロジェクトではチャットがツグミです。<code>$demo</code> と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます。キーがなくても、3 つのデモでは決まった台本で案内します）。</p>
 <p><img src="../assets/screenshots/guide.png" alt="ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面" loading="lazy"></p>
 <h2 id="使ってみる">使ってみる</h2>
-<div class="table-wrap"><table><thead><tr><th>環境</th><th>使い方</th><th>動作の確認</th></tr></thead><tbody><tr><td>macOS（Apple silicon / macOS 26 以降）</td><td>デスクトップアプリ、または <code>tsugumi</code> コマンド（ブラウザの Web UI）</td><td>確認済み</td></tr><tr><td>Linux（x86_64 / aarch64、Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td>OrbStack の VM（Ubuntu、aarch64）で確認済み</td></tr><tr><td>Windows（WSL2 と、その中の Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td><strong>未確認</strong></td></tr></tbody></table></div>
-<p><strong>デスクトップアプリ</strong>（Mac）は <a href="https://github.com/gen740/Tsugumi/releases" rel="noopener">GitHub Releases</a> から入れると、以後は新しいリリースに自動で更新されます。計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。</p>
+<h3 id="インストール">インストール</h3>
+<div class="table-wrap"><table><thead><tr><th>環境</th><th>入れるもの</th><th>動作の確認</th></tr></thead><tbody><tr><td>macOS（Apple silicon / macOS 26 以降）</td><td>デスクトップアプリ（おすすめ）、または <code>tsugumi</code> コマンド</td><td>確認済み</td></tr><tr><td>Linux（x86_64 / aarch64、Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td>OrbStack の VM（Ubuntu、aarch64）で確認済み</td></tr><tr><td>Windows（WSL2 と、その中の Nix が必要）</td><td><code>tsugumi</code> コマンド</td><td><strong>未確認</strong></td></tr></tbody></table></div>
+<p><strong>Mac：デスクトップアプリ。</strong> 計算の実行環境とデモが入っていて、ほかに用意するものはありません。次のコマンドで <code>/Applications</code> に入れて起動します。以後は、新しいリリースに自動で更新されます。</p>
 <pre><code class="language-bash">curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip &amp;&amp; ditto -x -k /tmp/Tsugumi.zip /Applications &amp;&amp; open /Applications/Tsugumi.app
 </code></pre>
-<p>Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。</p>
-<p><strong><code>tsugumi</code> コマンド</strong>（Mac・Linux）は root なしで入り、実行するだけでブラウザに Web UI が開きます。Mac ではデスクトップ版と同じ VM と設定を使います。</p>
+<p>Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。上のコマンドで入れれば止められません。</p>
+<p><strong>Mac・Linux：<code>tsugumi</code> コマンド。</strong> ブラウザで同じ画面（Web UI）を使います。root は要りません。Mac ではデスクトップ版と同じ VM と設定を使うので、両方を同時には使えません。</p>
 <pre><code class="language-bash">curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 </code></pre>
-<p><strong>Windows</strong> では PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。</p>
+<p><code>tsugumi</code> を実行するとブラウザに Web UI が開きます。新しい版は <code>tsugumi update</code> で入れ替えます。</p>
+<p><strong>Windows（未確認）。</strong> PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。</p>
 <pre><code class="language-powershell">irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 </code></pre>
-<p>詳しい手順・自動更新・ソースからのビルドは <a href="install.html">INSTALL.md</a> を参照してください。</p>
-<p>起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。</p>
-<p>Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。Claude Code を使っているなら、plugin <code>tsugumi</code> で Claude Code に Web UI のプロジェクトを任せることもできます（<a href="claude-code.html">Claude Code から使う</a>）。なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>にあります。</p>
+<p>初回は、実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）に数分かかり、インターネット接続が必要です。詳しい手順・自動更新・ソースからのビルドは <a href="install.html">INSTALL.md</a> にあります。</p>
+<h3 id="最初の一歩">最初の一歩</h3>
+<ol>
+<li><strong>デモを開く。</strong> ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選びます。手元に編集できるコピーが作られ、同梱の元は変わりません。</li>
+<li><strong>実行する。</strong> 初回の準備が終わったら、画面上部の「実行」を押します。Card を開いてコードや条件を変え、その Card だけを再実行できます。</li>
+<li><strong>ツグミに案内してもらう。</strong> チャットに <code>$demo</code> と送ると、ツグミが画面を指しながら一歩ずつ案内します。API キーがなくても、Data to report・Kepler-6 b・薬物動態の 3 つのデモは決まった台本で案内します。</li>
+<li><strong>Agent とつなぐ（任意）。</strong> 設定の「API」で Anthropic か OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインすると、Agent が Card を作り、ツグミがどのデモでも質問に答えます。Agent には会話内容やツールが読み取ったソース・ログなどが送られます（<a href="security.html#モデルに送られるもの">モデルに送られるもの</a>）。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。</li>
+</ol>
+<p>Claude Code を使っているなら、plugin <code>tsugumi</code> で Claude Code に Web UI のプロジェクトを任せることもできます（<a href="claude-code.html">Claude Code から使う</a>）。</p>
+<h3 id="同梱デモ">同梱デモ</h3>
 <p>各デモの Card のつながりと動きは<a href="demos.html">同梱デモのしくみ</a>にまとめています。</p>
 <div class="table-wrap"><table><thead><tr><th>デモ</th><th>試せること</th></tr></thead><tbody><tr><td>データからレポートへ</td><td>データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する</td></tr><tr><td>Collatz (C++ / Python / Julia / R)</td><td>四つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する</td></tr><tr><td>Live Stream</td><td>時系列の出力をリアルタイムにグラフで描画し、停止・再実行する</td></tr><tr><td>Plots</td><td>ウィンドウ向けに書いた matplotlib のコード（<code>plt.show()</code>・<code>FuncAnimation</code>）が、そのまま Card の表示に描かれる。Plotly の <code>fig.show()</code> と Altair の <code>chart.show()</code> は対話できるグラフになる</td></tr><tr><td>Cas A · Chandra RGB</td><td>Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する</td></tr><tr><td>GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面</td><td>公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する</td></tr><tr><td>MNIST · 手書き数字の分類器くらべ</td><td>同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す</td></tr><tr><td>Newton 法／薬物動態／最大流と最小カット</td><td>初期値・投与間隔・枝の容量といった条件を変えて、収束・濃度・流量がどう変わるかを、理論値と照らして確かめる</td></tr><tr><td>濃度–反応曲線／分子の物性／細胞画像の計数</td><td>実験室の解析を、合成データの正解や既知の値と照らしながら試し、手法が破綻する条件を探す</td></tr><tr><td>生存時間解析／メタ解析／RNA-seq／集計と層別で逆転する相関（R）</td><td>公開データを R で解析し、対象者・調整変数・手法を変えると結論がどう動くかを並べて見る</td></tr><tr><td>蓄電池の最適運用／化学反応のゆらぎ／熱伝導の逆問題／生態系のモデル比較（Julia）</td><td>標準ライブラリだけの Julia で最適化・確率シミュレーション・逆問題・モデル比較を動かし、条件を変えて結果を操作できるグラフで見比べる</td></tr><tr><td>各科学デモの Draft 版</td><td>計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる</td></tr><tr><td>力学系ギャラリー（Draft）</td><td>互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する</td></tr><tr><td>MNIST · 分類器くらべ（Draft）</td><td>7 つの分類器の Draft を helper が同時に実装し、Agent が 1 つの比較に合流させる</td></tr></tbody></table></div>
 <h2 id="処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</h2>

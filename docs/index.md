@@ -32,9 +32,13 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 ![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](assets/screenshots/workflow.png)
 
 <p align="center">
-  <a href="#使ってみる"><b>使ってみる</b></a> ·
+  <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
-  <a href="#ドキュメント">ドキュメント</a> ·
+  <a href="#インストール"><b>インストール</b></a> ·
+  <a href="#最初の一歩">最初の一歩</a> ·
+  <a href="#同梱デモ">デモ</a> ·
+  <a href="#ドキュメント">ドキュメント</a>
+  ｜
   <a href="pages/philosophy.md">なぜ作ったか</a> ·
   <a href="pages/name.md">名前の由来</a> ·
   <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
@@ -167,39 +171,48 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ## 使ってみる
 
-| 環境 | 使い方 | 動作の確認 |
+### インストール
+
+| 環境 | 入れるもの | 動作の確認 |
 | --- | --- | --- |
-| macOS（Apple silicon / macOS 26 以降） | デスクトップアプリ、または `tsugumi` コマンド（ブラウザの Web UI） | 確認済み |
+| macOS（Apple silicon / macOS 26 以降） | デスクトップアプリ（おすすめ）、または `tsugumi` コマンド | 確認済み |
 | Linux（x86_64 / aarch64、Nix が必要） | `tsugumi` コマンド | OrbStack の VM（Ubuntu、aarch64）で確認済み |
 | Windows（WSL2 と、その中の Nix が必要） | `tsugumi` コマンド | **未確認** |
 
-**デスクトップアプリ**（Mac）は [GitHub Releases](https://github.com/gen740/Tsugumi/releases) から入れると、以後は新しいリリースに自動で更新されます。計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
+**Mac：デスクトップアプリ。** 計算の実行環境とデモが入っていて、ほかに用意するものはありません。次のコマンドで `/Applications` に入れて起動します。以後は、新しいリリースに自動で更新されます。
 
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。
+Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。上のコマンドで入れれば止められません。
 
-**`tsugumi` コマンド**（Mac・Linux）は root なしで入り、実行するだけでブラウザに Web UI が開きます。Mac ではデスクトップ版と同じ VM と設定を使います。
+**Mac・Linux：`tsugumi` コマンド。** ブラウザで同じ画面（Web UI）を使います。root は要りません。Mac ではデスクトップ版と同じ VM と設定を使うので、両方を同時には使えません。
 
 ```bash
 curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 ```
 
-**Windows** では PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。
+`tsugumi` を実行するとブラウザに Web UI が開きます。新しい版は `tsugumi update` で入れ替えます。
+
+**Windows（未確認）。** PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。
 
 ```powershell
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
-詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](pages/install.md) を参照してください。
+初回は、実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）に数分かかり、インターネット接続が必要です。詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](pages/install.md) にあります。
 
-起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。
+### 最初の一歩
 
-Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
+1. **デモを開く。** ホーム画面の「デモを見る」から、試したいデモの「コピーを開く」を選びます。手元に編集できるコピーが作られ、同梱の元は変わりません。
+2. **実行する。** 初回の準備が終わったら、画面上部の「実行」を押します。Card を開いてコードや条件を変え、その Card だけを再実行できます。
+3. **ツグミに案内してもらう。** チャットに `$demo` と送ると、ツグミが画面を指しながら一歩ずつ案内します。API キーがなくても、Data to report・Kepler-6 b・薬物動態の 3 つのデモは決まった台本で案内します。
+4. **Agent とつなぐ（任意）。** 設定の「API」で Anthropic か OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインすると、Agent が Card を作り、ツグミがどのデモでも質問に答えます。Agent には会話内容やツールが読み取ったソース・ログなどが送られます（[モデルに送られるもの](pages/security.md#モデルに送られるもの)）。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
+
 Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](pages/claude-code.md)）。
-なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](pages/security.md#モデルに送られるもの)にあります。
+
+### 同梱デモ
 
 各デモの Card のつながりと動きは[同梱デモのしくみ](pages/demos.md)にまとめています。
 

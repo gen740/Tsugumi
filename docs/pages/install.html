@@ -62,12 +62,15 @@
 <p>Windows（PowerShell）:</p>
 <pre><code class="language-powershell">irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 </code></pre>
-<p>新しい版が出たら、<code>tsugumi update</code> で入れ替わります（最新ならそう言って何もしません）。</p>
+<p><code>~/.local/bin/tsugumi</code> が入ります。実行するとサーバーが起動してブラウザが開きます。</p>
 <pre><code class="language-bash">tsugumi
 </code></pre>
-<p><code>~/.local/bin/tsugumi</code> が入り、実行するとサーバーが起動してブラウザが開きます。止めるときは Ctrl-C です。すでに動いていれば、新しいページを開くだけです。<code>tsugumi &lt;プロジェクトのフォルダ&gt;</code> でそのプロジェクトを開きます。</p>
+<p>止めるときは Ctrl-C です。すでに動いていれば、新しいページを開くだけです。<code>tsugumi &lt;プロジェクトのフォルダ&gt;</code> でそのプロジェクトを開きます。</p>
+<p>新しい版が出たら、次のコマンドで入れ替えます（すでに最新ならそう伝えて、何もしません）。動いている <code>tsugumi</code> は、止めて起動し直すと新しい版で開きます。</p>
+<pre><code class="language-bash">tsugumi update
+</code></pre>
 <ul>
-<li><strong>入るもの</strong>: コマンド（<code>~/.local/bin/tsugumi</code>）と、その中身（<code>~/.local/share/tsugumi/&lt;版&gt;/</code>）だけです。<code>~/.local/bin</code> が <code>PATH</code> にないときはそう表示し、シェルの設定は変更しません。入れ直すと新しい版に置き換わります（自動更新はしません）。消すときは <code>rm ~/.local/bin/tsugumi</code> と <code>rm -r ~/.local/share/tsugumi</code> です。</li>
+<li><strong>入るもの</strong>: コマンド（<code>~/.local/bin/tsugumi</code>）と、その中身（<code>~/.local/share/tsugumi/&lt;版&gt;/</code>）だけです。<code>~/.local/bin</code> が <code>PATH</code> にないときはそう表示し、シェルの設定は変更しません。<code>tsugumi update</code> か入れ直しで新しい版に置き換わります（自動では更新しません）。消すときは <code>rm ~/.local/bin/tsugumi</code> と <code>rm -r ~/.local/share/tsugumi</code> です。</li>
 <li><strong>Mac（Apple silicon / macOS 26 以降）</strong>: Node.js と VM の起動ディスクを含む <code>tsugumi-macos-arm64.tar.gz</code> を取得します。Card はデスクトップ版と同じ共通 Linux VM で動くので、Nix を別に入れる必要はありません。初回は VM の中で Tsugumi を組み立てるので数分かかります。設定はデスクトップ版のものを読み書きします（<a href="webui.html#tsugumi-コマンド">Web UI</a>）。VM は同時に 1 つのアプリしか使えないので、デスクトップ版でプロジェクトを開いている間は使えません。</li>
 <li><strong>Linux（x86_64 / aarch64）</strong>: <a href="https://nixos.org/download" rel="noopener">Nix</a> が必要です。ソースの <code>tsugumi-linux.tar.gz</code> を取得して Nix でビルドします（初回は数分かかります）。<code>tsugumid</code> はこのホストで直接動き、Card は bubblewrap で隔離します。</li>
 <li><strong>Windows（未確認）</strong>: WSL2 と、その中の Linux に入れた <a href="https://nixos.org/download" rel="noopener">Nix</a> が必要です。<code>install.ps1</code> は既定の WSL の Linux で <code>install.sh</code> を実行し、<code>%USERPROFILE%\.local\bin\tsugumi.cmd</code> を作ります（<code>PATH</code> は変更しません）。<code>tsugumi</code> は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。<strong>Windows の実機ではまだ一度も動かしていません</strong>（確かめたのは PowerShell の構文と、WSL でブラウザを開く処理の代役を使ったテストだけです）。</li>

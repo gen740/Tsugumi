@@ -48,15 +48,21 @@ Windows（PowerShell）:
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
-新しい版が出たら、`tsugumi update` で入れ替わります（最新ならそう言って何もしません）。
+`~/.local/bin/tsugumi` が入ります。実行するとサーバーが起動してブラウザが開きます。
 
 ```bash
 tsugumi
 ```
 
-`~/.local/bin/tsugumi` が入り、実行するとサーバーが起動してブラウザが開きます。止めるときは Ctrl-C です。すでに動いていれば、新しいページを開くだけです。`tsugumi <プロジェクトのフォルダ>` でそのプロジェクトを開きます。
+止めるときは Ctrl-C です。すでに動いていれば、新しいページを開くだけです。`tsugumi <プロジェクトのフォルダ>` でそのプロジェクトを開きます。
 
-- **入るもの**: コマンド（`~/.local/bin/tsugumi`）と、その中身（`~/.local/share/tsugumi/<版>/`）だけです。`~/.local/bin` が `PATH` にないときはそう表示し、シェルの設定は変更しません。入れ直すと新しい版に置き換わります（自動更新はしません）。消すときは `rm ~/.local/bin/tsugumi` と `rm -r ~/.local/share/tsugumi` です。
+新しい版が出たら、次のコマンドで入れ替えます（すでに最新ならそう伝えて、何もしません）。動いている `tsugumi` は、止めて起動し直すと新しい版で開きます。
+
+```bash
+tsugumi update
+```
+
+- **入るもの**: コマンド（`~/.local/bin/tsugumi`）と、その中身（`~/.local/share/tsugumi/<版>/`）だけです。`~/.local/bin` が `PATH` にないときはそう表示し、シェルの設定は変更しません。`tsugumi update` か入れ直しで新しい版に置き換わります（自動では更新しません）。消すときは `rm ~/.local/bin/tsugumi` と `rm -r ~/.local/share/tsugumi` です。
 - **Mac（Apple silicon / macOS 26 以降）**: Node.js と VM の起動ディスクを含む `tsugumi-macos-arm64.tar.gz` を取得します。Card はデスクトップ版と同じ共通 Linux VM で動くので、Nix を別に入れる必要はありません。初回は VM の中で Tsugumi を組み立てるので数分かかります。設定はデスクトップ版のものを読み書きします（[Web UI](webui.md#tsugumi-コマンド)）。VM は同時に 1 つのアプリしか使えないので、デスクトップ版でプロジェクトを開いている間は使えません。
 - **Linux（x86_64 / aarch64）**: [Nix](https://nixos.org/download) が必要です。ソースの `tsugumi-linux.tar.gz` を取得して Nix でビルドします（初回は数分かかります）。`tsugumid` はこのホストで直接動き、Card は bubblewrap で隔離します。
 - **Windows（未確認）**: WSL2 と、その中の Linux に入れた [Nix](https://nixos.org/download) が必要です。`install.ps1` は既定の WSL の Linux で `install.sh` を実行し、`%USERPROFILE%\.local\bin\tsugumi.cmd` を作ります（`PATH` は変更しません）。`tsugumi` は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。**Windows の実機ではまだ一度も動かしていません**（確かめたのは PowerShell の構文と、WSL でブラウザを開く処理の代役を使ったテストだけです）。
