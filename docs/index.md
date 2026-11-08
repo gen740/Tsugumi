@@ -32,6 +32,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 ![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](assets/screenshots/workflow.png)
 
 <p align="center">
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
   <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
   <a href="#インストール"><b>インストール</b></a> ·
@@ -42,6 +43,11 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
   <a href="pages/philosophy.md">なぜ作ったか</a> ·
   <a href="pages/name.md">名前の由来</a> ·
   <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><img src="https://i.ytimg.com/vi/NW2nFnOwDxI/hqdefault.jpg" alt="デモ動画: Tsugumi – AI と描いた解析を、そのまま動かし、自分の手で確かめる" width="560"></a><br>
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI">▶ デモ動画を見る（YouTube）</a>
 </p>
 
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
@@ -195,7 +201,9 @@ Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web 
 
 ### 同梱デモ
 
-Draft 版を含めて 31 個のデモが入っています。たとえば次のものです。全部の一覧と各デモの Card のつながりは[同梱デモのしくみ](pages/demos.md)に、インストールせずに動きを見られるものは[文書サイトのデモ](https://gen740.github.io/Tsugumi/#demos)にあります。
+**インストールせずに見る：[動く図つきの Web 版でデモを開く](https://gen740.github.io/Tsugumi/#demos)**（Card のつながりと実行の様子をブラウザで見られます）
+
+Draft 版を含めて 31 個のデモが入っています。たとえば次のものです。全部の一覧と各デモの Card のつながりは[同梱デモのしくみ](pages/demos.md)にあります。
 
 | デモ | 試せること |
 | --- | --- |
@@ -214,8 +222,6 @@ Tsugumi は、この三つを同じ Workflow の上で共有します。意図�
 **AI に任せる仕事が増えるほど、人間がその過程を理解し、次の判断を下せる環境が必要になります。**
 
 ## ドキュメント
-
-動く図つきの Web 版を **<https://gen740.github.io/Tsugumi/>** で公開しています。正本はこのリポジトリの Markdown 1 つで、人は Web 版や GitHub から、AI は [llms.txt](llms.txt) と [AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md) から同じものを読みます。主張の隣には、確かめる場所（コード・テスト・コマンド）を書いています。
 
 問題意識とハッカソンでの制作体験は **[AI に使われないために、何を作るか](pages/philosophy.md)**、事前に用意したものと今回作ったものの境界は **[制作範囲と事前準備](pages/provenance.md)**、Claude で開発した記録は **[Tsugumi Chronicle](https://gen740.github.io/Tsugumi-chronicle/)** にあります。
 

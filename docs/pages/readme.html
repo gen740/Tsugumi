@@ -54,6 +54,7 @@
 <p>Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認）。計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。</p>
 <p><img src="../assets/screenshots/workflow.png" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas" loading="lazy"></p>
 <p align="center">
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
   <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
   <a href="#インストール"><b>インストール</b></a> ·
@@ -64,6 +65,9 @@
   <a href="philosophy.html">なぜ作ったか</a> ·
   <a href="name.html">名前の由来</a> ·
   <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
+</p><p align="center">
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><img src="https://i.ytimg.com/vi/NW2nFnOwDxI/hqdefault.jpg" alt="デモ動画: Tsugumi – AI と描いた解析を、そのまま動かし、自分の手で確かめる" width="560"></a><br>
+  <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI">▶ デモ動画を見る（YouTube）</a>
 </p><ul>
 <li><strong>描いた図が、そのまま動く。</strong> Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。</li>
 <li><strong>気になった Card だけを、すぐ試す。</strong> 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。</li>
@@ -143,14 +147,14 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 </ol>
 <p>Claude Code を使っているなら、plugin <code>tsugumi</code> で Claude Code に Web UI のプロジェクトを任せることもできます（<a href="claude-code.html">Claude Code から使う</a>）。</p>
 <h3 id="同梱デモ">同梱デモ</h3>
-<p>Draft 版を含めて 31 個のデモが入っています。たとえば次のものです。全部の一覧と各デモの Card のつながりは<a href="demos.html">同梱デモのしくみ</a>に、インストールせずに動きを見られるものは<a href="https://gen740.github.io/Tsugumi/#demos" rel="noopener">文書サイトのデモ</a>にあります。</p>
+<p><strong>インストールせずに見る：<a href="https://gen740.github.io/Tsugumi/#demos" rel="noopener">動く図つきの Web 版でデモを開く</a></strong>（Card のつながりと実行の様子をブラウザで見られます）</p>
+<p>Draft 版を含めて 31 個のデモが入っています。たとえば次のものです。全部の一覧と各デモの Card のつながりは<a href="demos.html">同梱デモのしくみ</a>にあります。</p>
 <div class="table-wrap"><table><thead><tr><th>デモ</th><th>試せること</th></tr></thead><tbody><tr><td>データからレポートへ</td><td>データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する</td></tr><tr><td>Cas A · Chandra RGB</td><td>Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する</td></tr><tr><td>MNIST · 手書き数字の分類器くらべ</td><td>同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す</td></tr><tr><td>各科学デモの Draft 版</td><td>計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる</td></tr></tbody></table></div>
 <h2 id="処理の流れそのものを人と-ai-の共通言語にする">処理の流れそのものを、人と AI の共通言語にする</h2>
 <p>「何をしてほしいか」「何を実行したか」「次にどこを変えるか」。Tsugumi は、この三つを同じ Workflow の上で共有します。意図を伝えるところから、結果を吟味して次の問いを立てるところまで、同じ構造を使って仕事を進められます。</p>
 <p>この仕組みは研究を出発点に、研究の判断を動かして学べる教材にすること、AI と作ったツールを理解して育て続けること、次の人が動かして確かめられる形で仕事を渡すことへ広がります（<a href="vision.html">Tsugumi の構想と応用</a>）。</p>
 <p><strong>AI に任せる仕事が増えるほど、人間がその過程を理解し、次の判断を下せる環境が必要になります。</strong></p>
 <h2 id="ドキュメント">ドキュメント</h2>
-<p>動く図つきの Web 版を <strong><a href="https://gen740.github.io/Tsugumi/" rel="noopener">https://gen740.github.io/Tsugumi/</a></strong> で公開しています。正本はこのリポジトリの Markdown 1 つで、人は Web 版や GitHub から、AI は <a href="../llms.txt">llms.txt</a> と <a href="https://github.com/gen740/Tsugumi/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a> から同じものを読みます。主張の隣には、確かめる場所（コード・テスト・コマンド）を書いています。</p>
 <p>問題意識とハッカソンでの制作体験は <strong><a href="philosophy.html">AI に使われないために、何を作るか</a></strong>、事前に用意したものと今回作ったものの境界は <strong><a href="provenance.html">制作範囲と事前準備</a></strong>、Claude で開発した記録は <strong><a href="https://gen740.github.io/Tsugumi-chronicle/" rel="noopener">Tsugumi Chronicle</a></strong> にあります。</p>
 <div class="table-wrap"><table><thead><tr><th>目的</th><th>文書</th></tr></thead><tbody><tr><td><strong>はじめる</strong></td><td><a href="install.html">インストール</a> · <a href="usage.html">操作ガイド</a> · <a href="cardguide.html">はじめての Card</a> · <a href="demos.html">同梱デモのしくみ</a> · <a href="webui.html">Web UI</a> · <a href="claude-code.html">Claude Code から使う</a></td></tr><tr><td><strong>考え方を知る</strong></td><td><a href="qa.html">Q&amp;A</a> · <a href="novelty.html">設計の独自性</a> · <a href="vision.html">構想と応用</a> · <a href="philosophy.html">AI に使われないために、何を作るか</a> · <a href="name.html">名前の由来</a> · <a href="author.html">作った人</a> · <a href="origin.html">私にしかない深さ</a> · <a href="limitations.html">まだできないこと</a></td></tr><tr><td><strong>仕組みを知る</strong></td><td><a href="features.html">主要機能</a> · <a href="versions.html">版の管理</a> · <a href="security.html">セキュリティと隔離</a> · <a href="protocol.html">RPC 契約</a> · <a href="glossary.html">用語集</a></td></tr><tr><td><strong>記録と開発</strong></td><td><a href="evidence.html">主張と、それを確かめる方法</a> · <a href="agentrun.html">実際の Claude API での実行記録</a> · <a href="development.html">開発資料</a> · <a href="lock.html">固定しているバージョン</a> · <a href="provenance.html">制作範囲と事前準備</a> · <a href="licenseaudit.html">ライセンス調査</a></td></tr></tbody></table></div>
 <p>すべての文書の一覧は <a href="documents.html">docs/README.md</a> にあります。</p>
