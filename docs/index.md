@@ -201,16 +201,47 @@ Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web 
 
 ### 同梱デモ
 
-**インストールせずに見る：[動く図つきの Web 版でデモを開く](https://gen740.github.io/Tsugumi/#demos)**（Card のつながりと実行の様子をブラウザで見られます）
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="assets/casa-demo.svg" alt="Cas A · Chandra RGB の実行の様子" width="100%"></a>
 
-Draft 版を含めて 31 個のデモが入っています。たとえば次のものです。全部の一覧と各デモの Card のつながりは[同梱デモのしくみ](pages/demos.md)にあります。
+どれも実際に動かした実行の記録を再生しています。押すと [Web 版](https://gen740.github.io/Tsugumi/#demos)でそのデモを開き、Card の中身とソースを読めます。Draft 版を含めて 31 個のデモが入っていて、各デモのしくみは[同梱デモのしくみ](pages/demos.md)にあります。
 
-| デモ | 試せること |
-| --- | --- |
-| データからレポートへ | データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する |
-| Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する |
-| MNIST · 手書き数字の分類器くらべ | 同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す |
-| 各科学デモの Draft 版 | 計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる |
+#### 基本のデモ
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-report"><img src="assets/demos/report.svg" alt="データからレポートへ の実行の様子" width="100%"></a><br><b>データからレポートへ</b><br><sub>データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="assets/demos/collatz.svg" alt="Collatz (C++ / Python / Julia / R) の実行の様子" width="100%"></a><br><b>Collatz (C++ / Python / Julia / R)</b><br><sub>四つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-plots"><img src="assets/demos/plots.svg" alt="Plots の実行の様子" width="100%"></a><br><b>Plots</b><br><sub>ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-live-stream"><img src="assets/demos/live-stream.svg" alt="Live Stream の実行の様子" width="100%"></a><br><b>Live Stream</b><br><sub>時系列の出力を、実行中にそのままグラフで描く。</sub></td></tr>
+</table>
+
+#### 公開データの解析
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="assets/demos/casa.svg" alt="Cas A · Chandra RGB の実行の様子" width="100%"></a><br><b>Cas A · Chandra RGB</b><br><sub>X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gw150914"><img src="assets/demos/gw150914.svg" alt="GW150914 の実行の様子" width="100%"></a><br><b>GW150914</b><br><sub>公開データから、重力波のチャープを取り出して図にする。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-protein-6lu7"><img src="assets/demos/protein-6lu7.svg" alt="6LU7 の実行の様子" width="100%"></a><br><b>6LU7</b><br><sub>タンパク質の立体構造を取得して、結合ポケットを見る。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-exoplanet-transit"><img src="assets/demos/exoplanet-transit.svg" alt="Kepler-6 b の実行の様子" width="100%"></a><br><b>Kepler-6 b</b><br><sub>光度曲線を折りたたんで、系外惑星のトランジットを見る。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-seismic-trench"><img src="assets/demos/seismic-trench.svg" alt="日本海溝 の実行の様子" width="100%"></a><br><b>日本海溝</b><br><sub>地震カタログから、震源の断面と b 値を見る。</sub></td></tr>
+</table>
+
+#### 機械学習と計算
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-mnist-classifiers"><img src="assets/demos/mnist-classifiers.svg" alt="MNIST · 分類器くらべ の実行の様子" width="100%"></a><br><b>MNIST · 分類器くらべ</b><br><sub>本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べる。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-newton"><img src="assets/demos/newton.svg" alt="Newton 法 の実行の様子" width="100%"></a><br><b>Newton 法</b><br><sub>初期値で行き先と収束の速さが変わる様子を、複素平面の地図で見る。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-max-flow"><img src="assets/demos/max-flow.svg" alt="最大流と最小カット の実行の様子" width="100%"></a><br><b>最大流と最小カット</b><br><sub>架空のネットワークで、どの辺を増やせば流れが増えるかを確かめる。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-pharmacokinetics"><img src="assets/demos/pharmacokinetics.svg" alt="薬物動態（架空の薬物） の実行の様子" width="100%"></a><br><b>薬物動態（架空の薬物）</b><br><sub>投与間隔で濃度がどう動くかを比べる教材。医療上の助言ではない。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-dose-response"><img src="assets/demos/dose-response.svg" alt="濃度–反応曲線（合成データ） の実行の様子" width="100%"></a><br><b>濃度–反応曲線（合成データ）</b><br><sub>真の値が分かるデータで、当てはめと信頼区間を確かめる。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-molecules"><img src="assets/demos/molecules.svg" alt="分子の物性 の実行の様子" width="100%"></a><br><b>分子の物性</b><br><sub>SMILES から RDKit で物性と構造式を求める。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-cell-count"><img src="assets/demos/cell-count.svg" alt="細胞画像の計数 の実行の様子" width="100%"></a><br><b>細胞画像の計数</b><br><sub>正解のある合成画像で数え方を採点し、実際の核の画像にもかける。</sub></td></tr>
+</table>
+
+#### R の統計
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-survival"><img src="assets/demos/survival.svg" alt="生存時間解析 の実行の様子" width="100%"></a><br><b>生存時間解析</b><br><sub>同じハザード比が、対象者と調整でどれだけ動くかを並べる。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-meta-analysis"><img src="assets/demos/meta-analysis.svg" alt="メタ解析: BCG ワクチン の実行の様子" width="100%"></a><br><b>メタ解析: BCG ワクチン</b><br><sub>併合の方法や試験の除外で、結論がどう動くかを比べる。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-rna-seq"><img src="assets/demos/rna-seq.svg" alt="RNA-seq: airway の実行の様子" width="100%"></a><br><b>RNA-seq: airway</b><br><sub>DESeq2 と edgeR で、発現の動く遺伝子の数が閾値でどう変わるかを見る。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-simpson"><img src="assets/demos/simpson.svg" alt="集計と層別で逆転する相関 の実行の様子" width="100%"></a><br><b>集計と層別で逆転する相関</b><br><sub>全体と層で向きが逆になる例を、2 つの実データで確かめる。</sub></td></tr>
+</table>
+
+#### Julia のシミュレーション
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-battery"><img src="assets/demos/battery.svg" alt="蓄電池の最適運用 の実行の様子" width="100%"></a><br><b>蓄電池の最適運用</b><br><sub>架空の料金で、充放電を動的計画法で最適化する。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gillespie"><img src="assets/demos/gillespie.svg" alt="化学反応のゆらぎ の実行の様子" width="100%"></a><br><b>化学反応のゆらぎ</b><br><sub>Gillespie 法のシミュレーションを理論と照合する。</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-heat-inverse"><img src="assets/demos/heat-inverse.svg" alt="熱伝導の逆問題 の実行の様子" width="100%"></a><br><b>熱伝導の逆問題</b><br><sub>素朴な逆解が破綻し、正則化で復元できることを見る。</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-ecology-models"><img src="assets/demos/ecology-models.svg" alt="生態系のモデル比較 の実行の様子" width="100%"></a><br><b>生態系のモデル比較</b><br><sub>毛皮の記録に捕食モデルを当てはめて比べる。</sub></td></tr>
+</table>
+
+Draft 版のデモは Card の形（名前と説明と接続）だけを用意したプロジェクトで、Agent の「Card を生成」で実装させて試します（[同梱デモのしくみ](pages/demos.md)）。
 
 ## 処理の流れそのものを、人と AI の共通言語にする
 
