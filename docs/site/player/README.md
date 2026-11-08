@@ -61,7 +61,7 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
 
 - `docs/assets/casa-demo.svg`: Cas A を、通常の表示（実行ボタンと経過時間、説明文、メモ）のまま大きく。
 - `docs/assets/casa-window.svg`: Cas A を Mac アプリの窓の形で。Card・出力の枠・メモの置き場所は README のスクリーンショット（`docs/assets/screenshots/workflow.png`）にならい（`svg.mjs` の `WINDOW_LAYOUT`）、実行ボタンと経過時間はタイトルバー、実行の状態はステータスバーに出ます。窓の枠とチャット欄は動かない絵で、Canvas の中身だけが記録した実行です。
-- README の「画面でたどる、実験と検証」の画面も、同じ窓の形で動かします（実データの部分と絵の部分は、各 SVG の下の 1 行に書いています）。
+- README の「画面でたどる、実験と検証」の画面も、同じ窓の形で動かします。
   - `casa-source.svg`: spectrum の Card 設定が開き、`main.py`（demos/casa のファイルそのもの）が `plt.show()` までスクロールします。色分けは `CodeEditor.swift` の規則と標準の配色です。
   - `casa-timeline.svg`: 下のタイムライン（`logs.tsx` の `RunTimelineView` と同じ行・色）が、記録した各 Card の開始・終了と段階の時間で、再生に合わせて伸びます。
   - `collatz-subworkflow.svg`: collatz-cpp の中の Workflow を、記録した回数（loop 112 回など）で再生します。境界のバーと線は `model/canvas.ts` と同じ置き方です。
