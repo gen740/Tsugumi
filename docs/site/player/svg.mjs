@@ -2,6 +2,7 @@
 // as the README on GitHub: no script runs there, but CSS animation does.
 //   docs/assets/casa-demo.svg      Cas A, large: the full player with its run control and narration
 //   docs/assets/demos/<id>.svg     every recorded demo as a tile: the gallery's compact player
+//   docs/assets/casa-window.svg    Cas A in a drawing of the Mac app's window, laid out as the README's screenshot
 //   node docs/site/player/svg.mjs [<id> …]        (default: all of them)
 // Every frame of the player's replay (framesOf in web/src/ui/demoPlayer.tsx) is drawn
 // by the player's own Canvas and RunControl with React's static renderer, from the same
@@ -32,7 +33,7 @@ const H = PAD + HEAD + CANVAS_H + SAY + FOOT + PAD
 /** A tile's size (two or three to a row of the README), and the long side of its images in pixels. */
 const TILE = { width: 440, height: 264 }, TILE_IMAGE = 200
 /** How long a replay holds before it starts and after it ends, in ms. */
-const HOLD = { large: [1600, 5200], tile: [900, 3400] }
+const HOLD = { large: [1600, 5200], tile: [900, 3400], window: [1800, 5600] }
 /** The demo shown large. */
 const LARGE = 'casa'
 /** The README cards' colors (docs/assets/docs-card.svg). */
@@ -44,12 +45,16 @@ const entry = `
 import { createElement as h } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { Canvas, RunControl, framesOf, IDLE, DONE, provenance } from './demoPlayer'
+import { Icon } from './icons'
 export { framesOf, IDLE, DONE, provenance }
-export function surface(data, frame, base, view, compact) {
-  const playing = frame.mode === 'playing'
+const control = (data, frame) => h(RunControl, { data, frame, playing: frame.mode === 'playing', onRun: () => undefined, onStop: () => undefined })
+/** The canvas, with the run control on it unless \`control\` is false (a tile, or the window, which has it in its title bar). */
+export function surface(data, frame, base, view, compact, withControl = !compact) {
   return renderToStaticMarkup(h(Canvas, { data, frame, base, compact, onSelect: () => undefined, motion: true, view },
-    compact ? null : h('div', { className: 'tp-top' }, h(RunControl, { data, frame, playing, onRun: () => undefined, onStop: () => undefined }))))
+    withControl ? h('div', { className: 'tp-top' }, control(data, frame)) : null))
 }
+export const runControl = (data, frame) => renderToStaticMarkup(control(data, frame))
+export const icon = (name, size, color) => renderToStaticMarkup(h(Icon, { name, size, style: color ? { color } : undefined }))
 `
 const bundle = await esbuild.build({
   stdin: { contents: entry, resolveDir: path.join(WEB, 'src', 'ui'), loader: 'tsx', sourcefile: 'svg-entry.tsx' },
@@ -222,9 +227,9 @@ function keyframes(name, shown, starts, total) {
 }
 
 /** The replay drawn frame by frame, as the distinct drawings with the frames each is in, and the CSS that shows them so. */
-function replay(data, view, compact) {
+function replay(data, view, compact, kind = compact ? 'tile' : 'large') {
   if (data.draftOnly) throw new Error(`${data.id} is a Draft: there is no run to replay`)
-  const [first, end] = HOLD[compact ? 'tile' : 'large']
+  const [first, end] = HOLD[kind]
   // The compact player replays at 0.6 of the full one's pace (demoPlayer.tsx).
   const frames = [{ ...player.IDLE, ms: first }, ...player.framesOf(data, compact ? 0.6 : 1), { ...player.DONE, ms: end }]
   const starts = []
@@ -239,7 +244,7 @@ function replay(data, view, compact) {
   const pieces = [] // { xml, layer, shown: Set<frame> }
   let shell
   frames.forEach((f, i) => {
-    const drawn = xhtml(player.surface(data, f, base, view, compact))
+    const drawn = xhtml(player.surface(data, f, base, view, compact, kind === 'large'))
     const { open, children, close } = split(rounded(compact ? unseen(drawn) : drawn, compact ? 1 : 2))
     shell ??= { open, close }
     let after = -1
@@ -271,7 +276,14 @@ function replay(data, view, compact) {
   const surface = `${shell.open}${pieces.map((p, i) => layer(p.shown, `k${i}`, inlineImages(p.xml, base, compact), `z-index:${p.layer}`)).join('')}${shell.close}`
   const anim = () => `.tp-l{position:absolute;inset:0;opacity:0;animation:${total}ms step-end infinite both}.tp-l.tp-fin{opacity:1}${css.join('')}`
     + '@media (prefers-reduced-motion:reduce){.tp-l{animation:none!important}}'
-  return { frames, surface, layer, anim }
+  /** What a function of the frame draws, each distinct drawing as one layer. */
+  const perFrame = (name, draw, style = '') => {
+    const drawn = frames.map(draw)
+    return [...new Set(drawn)].map((xml, i) => layer(new Set(drawn.flatMap((d, j) => (d === xml ? [j] : []))), `${name}${i}`, xml, style)).join('')
+  }
+  // The Canvas's zoom, from its dot grid (gridStyle in cardNode.tsx: 20 units apart).
+  const zoom = Number(shell.open.match(/background-size:([\d.]+)px/)?.[1] ?? 0) / 20
+  return { frames, surface, layer, anim, perFrame, zoom }
 }
 
 const playerCss = fs.readFileSync(path.join(SITE, 'player.css'), 'utf8')
@@ -284,8 +296,7 @@ function largeSvg(id) {
   const data = readDemo(id)
   const view = { width: W - 2 * PAD, height: CANVAS_H }
   const r = replay(data, view, false)
-  const say = r.frames.map((f) => (f.mode === 'playing' ? data.steps[f.step].say : f.mode === 'done' ? data.finale : data.intro))
-  const sayLine = [...new Set(say)].map((text, i) => r.layer(new Set(say.flatMap((s, j) => (s === text ? [j] : []))), `s${i}`, `<p class="tp-say">${esc(text)}</p>`)).join('')
+  const sayLine = r.perFrame('s', (f) => `<p class="tp-say">${esc(f.mode === 'playing' ? data.steps[f.step].say : f.mode === 'done' ? data.finale : data.intro)}</p>`)
   const body = `<div xmlns="http://www.w3.org/1999/xhtml" class="tp-root tp-full svg-root">
 <div class="svg-canvas">${r.surface}</div>
 <div class="svg-say">${sayLine}</div>
@@ -341,6 +352,109 @@ ${icons.body}
 `
 }
 
+// ---- The Mac app's window -----------------------------------------------------------------
+
+/** The window of docs/assets/screenshots/workflow.png (macOS/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
+const WIN = { width: 1440, height: 900, bar: 52, chat: 344, caption: 30 }
+/** Where its Canvas has the Cards, output frames and the note: the screenshot's arrangement (Cards in one row, the spectrum
+ *  above, the band table and the RGB image below), with the Cards the demo has now (ciao, and the forks begin and share). */
+const WINDOW_LAYOUT = {
+  cards: { start: [0, 484], begin: [150, 495], load: [230, 484], ciao: [230, 640], bands: [500, 484], share: [770, 495], rgb: [850, 484], spectrum: [1110, 484] },
+  displays: { spectrum: [760, 0, 680, 400], bands: [500, 650, 340, 150], rgb: [880, 650, 420, 440] },
+  note: [0, 0, 700, 430],
+}
+
+const chromeIcon = (name, size, color) => xhtml(player.icon(name, size, color))
+
+function windowSvg(id) {
+  const base = readDemo(id)
+  const L = WINDOW_LAYOUT
+  const data = {
+    ...base,
+    cards: base.cards.map((c) => ({ ...c, x: L.cards[c.id]?.[0] ?? c.x, y: L.cards[c.id]?.[1] ?? c.y })),
+    frames: Object.fromEntries(Object.entries(L.displays).map(([k, [x, y, width, height]]) => [k, { x, y, width, height }])),
+    notes: base.notes.slice(0, 1).map((n) => ({ ...n, x: L.note[0], y: L.note[1], width: L.note[2], height: L.note[3] })),
+  }
+  const canvas = { width: WIN.width - WIN.chat, height: WIN.height - WIN.bar }
+  const r = replay(data, canvas, false, 'window')
+  const run = data.run
+  // The status bar's run state (StatusBar.swift: 実行: <label>), with the run control's icon for it.
+  const state = (f) => (f.mode === 'playing' ? ['play.circle.fill', 'var(--orange)', '実行中'] : f.mode === 'done' ? ['checkmark.circle.fill', 'var(--green)', '成功'] : ['circle', 'var(--secondary)', '待機中'])
+  const status = r.perFrame('st', (f) => {
+    const [name, color, label] = state(f)
+    return `<span class="w-item">${chromeIcon(name, 12, color)}<span>実行: ${label}</span></span>`
+  })
+  const control = r.perFrame('rc', (f) => xhtml(player.runControl(data, f)))
+  const bird = fs.readFileSync(path.join(OUT, 'tsugumi-icon.svg'), 'utf8').replace(/<title>[^<]*<\/title>/, '').replace(/width="1024" height="1024"/, 'width="26" height="26"')
+  const body = `<div xmlns="http://www.w3.org/1999/xhtml" class="tp-root svg-root w-root">
+<div class="w-canvas">${r.surface}</div>
+<div class="w-bar">
+  <span class="w-lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+  <span class="w-round">${chromeIcon('sidebar.left', 16)}</span>
+  <span class="w-tab">${esc(data.title)}</span>
+  <span class="w-runbox"><span class="w-run">${control}</span><span class="w-item secondary">${chromeIcon('checkmark.seal', 13)}<span>0</span></span><span class="w-sep"></span>${chromeIcon('plus', 14)}</span>
+  <span class="w-glass w-right">${chromeIcon('folder', 15)}${chromeIcon('bubble.left.and.bubble.right.fill', 16)}</span>
+</div>
+<div class="w-zoom w-glass">${chromeIcon('minus.magnifyingglass', 14)}<span class="mono-digits">${Math.round(r.zoom * 100)}%</span>${chromeIcon('plus.magnifyingglass', 14)}${chromeIcon('arrow.up.left.and.down.right.magnifyingglass', 14)}${chromeIcon('square.grid.2x2', 14)}${chromeIcon('number', 14, 'var(--accent)')}</div>
+<div class="w-status w-glass">
+  <span class="w-slot">${status}</span>
+  <span class="w-item">${chromeIcon('checkmark.icloud', 13, 'var(--green)')}<span>保存済み</span></span>
+  <span class="w-item">${chromeIcon('point.3.connected.trianglepath.dotted', 13, 'var(--secondary)')}<span class="mono-digits">rev 0</span></span>
+  <span class="w-item">${chromeIcon('xmark.circle', 12)}<span>0</span>${chromeIcon('exclamationmark.triangle', 12)}<span>0</span></span>
+  <span class="w-item">${chromeIcon('text.alignleft', 14)}${chromeIcon('chart.bar.xaxis', 14)}${chromeIcon('terminal', 14)}</span>
+</div>
+<div class="w-chat">
+  <div class="w-chat-head">${bird}${chromeIcon('list.bullet', 14, 'var(--secondary)')}<b>新しい会話</b><span style="flex:1"></span>${chromeIcon('square.and.pencil', 14, 'var(--secondary)')}${chromeIcon('ellipsis.circle', 14, 'var(--secondary)')}</div>
+  <div class="w-chat-hello"><p>ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。</p><p class="secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</p></div>
+  <div class="w-input"><span class="secondary">メッセージ（Return で送信）</span><span class="w-input-row">${chromeIcon('paperclip', 14, 'var(--secondary)')}${chromeIcon('chevron.down', 11, 'var(--secondary)')}<span>claude-sonnet-5-5</span><span style="flex:1"></span>${chromeIcon('arrow.up.circle.fill', 18, 'var(--secondary)')}</span></div>
+</div>
+</div>`
+  const icons = sharedIcons(body)
+  const caption = `${run.date} に実際に動かした Cas A の実行の記録（ObsID ${base.cards.find((c) => c.id === 'load').allParams.find((p) => p.name === 'obsid').value}）を、アプリの画面の形で再生しています。窓の枠とチャット欄は静止した絵です。`
+  const H = WIN.height + WIN.caption
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${WIN.width} ${H}" width="${WIN.width}" height="${H}" role="img" aria-labelledby="t">
+<title id="t">${esc(`${data.title} — Tsugumi のアプリでの実行（${run.date} の実行の記録を再生）`)}</title>
+<style>${usedCss(playerCss, body)}
+.svg-root{position:absolute;inset:0;display:block}
+.w-root{background:#1e1e1e;font-size:12px}
+.w-root .icon{vertical-align:middle}
+.w-canvas{position:absolute;left:0;top:${WIN.bar}px;width:${canvas.width}px;height:${canvas.height}px}
+.w-canvas>.tp-surface{height:100%;border-radius:0}
+.w-bar{position:absolute;left:0;top:0;width:${canvas.width}px;height:${WIN.bar}px;display:flex;align-items:center;gap:12px;padding:0 10px 0 20px;background:var(--text-bg)}
+.w-lights{display:flex;gap:9px;margin-right:6px}.w-lights i{width:12px;height:12px;border-radius:50%}
+.w-glass{background:rgba(58,58,60,.72);border:0.5px solid rgba(255,255,255,.1);border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.w-round{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:rgba(58,58,60,.72);border:0.5px solid rgba(255,255,255,.1)}
+.w-tab{width:380px;height:28px;display:flex;align-items:center;padding:0 12px;border-radius:999px;background:rgba(58,58,60,.55);font-weight:600;font-size:12.5px}
+.w-runbox{position:relative;margin-left:auto;display:flex;align-items:center;gap:10px;height:34px;padding:0 12px 0 0;border-radius:999px;background:rgba(58,58,60,.72);border:0.5px solid rgba(255,255,255,.1)}
+.w-run{position:relative;display:block;width:232px;height:32px}
+.w-run .cv-run{background:none!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important}
+.w-sep{width:1px;height:16px;background:var(--separator-strong)}
+.w-right{display:flex;align-items:center;gap:12px;height:34px;padding:0 12px;margin-left:72px}
+.w-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.w-zoom{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:8px;height:28px;padding:0 10px}
+.w-status{position:absolute;right:${WIN.chat + 10}px;bottom:10px;display:flex;align-items:center;gap:22px;height:30px;padding:0 14px;font-weight:600}
+.w-status .w-item:last-child{gap:12px;font-weight:400}
+.w-slot{position:relative;display:inline-block;width:92px;height:16px}
+.w-chat{position:absolute;right:0;top:0;width:${WIN.chat}px;height:${WIN.height}px;background:#262628;border-left:0.5px solid rgba(255,255,255,.12)}
+.w-chat-head{display:flex;align-items:center;gap:10px;height:52px;margin-top:18px;padding:0 14px;font-size:13px}
+.w-chat-hello{padding:10px 14px;border-top:0.5px solid var(--separator)}
+.w-chat-hello p{margin:6px 0;font-weight:600;line-height:1.45}.w-chat-hello p.secondary{font-weight:400;font-size:11px}
+.w-input{position:absolute;left:10px;right:10px;bottom:10px;height:58px;display:flex;flex-direction:column;justify-content:space-between;padding:8px 12px;border-radius:12px;background:#2f2f31;border:0.5px solid rgba(255,255,255,.12);font-size:13px}
+.w-input-row{display:flex;align-items:center;gap:8px}
+.w-caption{font:12px ${FONT};fill:#8b949e}
+${r.anim()}</style>
+<defs><clipPath id="win"><rect width="${WIN.width}" height="${WIN.height}" rx="12"/></clipPath>${icons.defs}</defs>
+<g clip-path="url(#win)">
+<foreignObject width="${WIN.width}" height="${WIN.height}">
+${icons.body}
+</foreignObject>
+</g>
+<rect x="0.5" y="0.5" width="${WIN.width - 1}" height="${WIN.height - 1}" rx="12" fill="none" stroke="#4a4a4c"/>
+<text class="w-caption" x="4" y="${WIN.height + 21}">${esc(caption)}</text>
+</svg>
+`
+}
+
 // The demos of demos/index.json with a recorded run (player-data/index.json says which).
 const shipped = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'demos', 'index.json'), 'utf8')).demos.map((d) => d.id))
 const recorded = JSON.parse(fs.readFileSync(path.join(DATA, 'index.json'), 'utf8')).demos.filter((d) => d.recorded && shipped.has(d.id)).map((d) => d.id)
@@ -353,7 +467,10 @@ const write = (file, svg) => {
 const kb = (n) => `${(n / 1024).toFixed(0)} KB`
 let tiles = 0
 for (const id of ids) {
-  if (id === LARGE) console.log(`docs/assets/${id}-demo.svg ${kb(write(path.join(OUT, `${id}-demo.svg`), largeSvg(id)))}`)
+  if (id === LARGE) {
+    console.log(`docs/assets/${id}-demo.svg ${kb(write(path.join(OUT, `${id}-demo.svg`), largeSvg(id)))}`)
+    console.log(`docs/assets/${id}-window.svg ${kb(write(path.join(OUT, `${id}-window.svg`), windowSvg(id)))}`)
+  }
   const n = write(path.join(OUT, 'demos', `${id}.svg`), tileSvg(id))
   tiles += n
   console.log(`docs/assets/demos/${id}.svg ${kb(n)}`)

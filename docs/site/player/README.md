@@ -25,7 +25,7 @@ player.destroy()
 | `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
 | `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する（`--check` は調べるだけ） |
 | `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |
-| `svg.mjs` | 再生を動く SVG にする（Cas A の大きいもの `docs/assets/casa-demo.svg` と、各デモのタイル `docs/assets/demos/<id>.svg`）。README のように画像しか置けない場所のため |
+| `svg.mjs` | 再生を動く SVG にする（Cas A の大きいもの `docs/assets/casa-demo.svg`、アプリの窓の形の `docs/assets/casa-window.svg`、各デモのタイル `docs/assets/demos/<id>.svg`）。README のように画像しか置けない場所のため |
 | `demo.html` | 開発用のページ（全デモのサムネイルと通常表示） |
 
 ## 作り直す
@@ -60,6 +60,7 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
 ```
 
 - `docs/assets/casa-demo.svg`: Cas A を、通常の表示（実行ボタンと経過時間、説明文、メモ）のまま大きく。
+- `docs/assets/casa-window.svg`: Cas A を Mac アプリの窓の形で。Card・出力の枠・メモの置き場所は README のスクリーンショット（`docs/assets/screenshots/workflow.png`）にならい（`svg.mjs` の `WINDOW_LAYOUT`）、実行ボタンと経過時間はタイトルバー、実行の状態はステータスバーに出ます。窓の枠とチャット欄は動かない絵で、Canvas の中身だけが記録した実行です。
 - `docs/assets/demos/<id>.svg`: 記録のある各デモを、ギャラリーの縮小表示（`compact`）のまま 440 × 264 のタイルに。小さい Canvas で CSS が隠す文字（`.tp-small` など）と Card の説明の行の中身は省き、画像は長辺 200 px にします。
 
 再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が描く HTML のまま `<foreignObject>` に入れ、`site/player.css` のうち使う規則だけを入れます。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、それが出ている段階でだけ CSS のアニメーションで見せます。アイコンは `<defs>` に 1 回だけ置きます。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
