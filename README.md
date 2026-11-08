@@ -42,12 +42,12 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 - 工学（博士1年）：「AI の出したものとやってるものっていうのが本当に一致してるかっていうのがわからない」
 - 医学（修士1年）：「患者さんの情報を AI に渡すのは、やっぱり恐ろしいなと思います」
 
-分野は違っても、立ち尽くしている場所は同じでした。**AI が何をしたのかを、人があとから追って確かめる手立てがない。** 私が宇宙物理でぶつかっていた壁は、いま計算を使うすべての研究者が直面している壁でした。Tsugumi は、その壁に対する私の答えです（[デモ動画の冒頭](https://youtu.be/Y_qgiH1Cs-g) ／ 詳しい経緯：[私にしかない深さ](docs/Origin.md)）。
+分野は違っても、立ち尽くしている場所は同じでした。**AI が何をしたのかを、人があとから追って確かめる手立てがない。** 私が宇宙物理でぶつかっていた壁は、いま計算を使うすべての研究者が直面している壁でした。Tsugumi は、その壁に対する私の答えです（[デモ動画の冒頭](https://www.youtube.com/watch?v=-GhD9vI6_Dg) ／ 詳しい経緯：[私にしかない深さ](docs/Origin.md)）。
 
 ![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
 
 <p align="center">
-  <a href="https://youtu.be/Y_qgiH1Cs-g"><b>デモ動画</b></a> ·
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg"><b>デモ動画</b></a> ·
   <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
   <a href="#画面でたどる実験と検証">画面でたどる</a> ·
   <a href="#インストール"><b>インストール</b></a> ·
@@ -61,8 +61,8 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/Y_qgiH1Cs-g"><img src="https://i.ytimg.com/vi/Y_qgiH1Cs-g/hqdefault.jpg" alt="デモ動画: Tsugumi – AI と描いた解析を、そのまま動かし、自分の手で確かめる" width="560"></a><br>
-  <a href="https://youtu.be/Y_qgiH1Cs-g">▶ デモ動画を見る（YouTube）</a>
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg"><img src="https://i.ytimg.com/vi/-GhD9vI6_Dg/hqdefault.jpg" alt="デモ動画: Tsugumi – AI と描いた解析を、そのまま動かし、自分の手で確かめる" width="560"></a><br>
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg">▶ デモ動画を見る（YouTube）</a>
 </p>
 
 - **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
