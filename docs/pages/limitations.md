@@ -1,60 +1,51 @@
-# まだできないこと
+# 今後の予定と、保証の範囲
 
-今の Tsugumi にできないこと、保証していないことの一覧です。各文書に書いたものをここに集めています。
+今の Tsugumi でできることの範囲と、これから加わる予定のものをまとめています。各文書に書いたものをここに集めています。
 
-ここには 2 種類のものが並んでいます。「考え方として保証しないこと」と「データと権限」の多くは、まだ作っていないものではなく、Tsugumi が何を保証し、何を人間やプロジェクトの作者に委ねるかという設計上の線引きです（[Philosophy](philosophy.md)、[セキュリティの要点](security.md#どこまでを-tsugumi-が引き受けるか)）。それ以外は、これからの作業です。
+「考え方として保証しないこと」と「データと権限」は、まだ作っていないものではなく、Tsugumi が何を保証し、何を人間やプロジェクトの作者に委ねるかという設計上の線引きです（[Philosophy](philosophy.md)、[セキュリティの要点](security.md#どこまでを-tsugumi-が引き受けるか)）。それ以外は、今の範囲と今後の開発予定です。
 
 ## 考え方として保証しないこと
 
-- **科学的な妥当性は保証しません。** Tsugumi が用意するのは、判断の材料に手が届き、別の可能性をすぐに試せる足場までです（[Philosophy](philosophy.md#きれいな結果だけでは確かめられない)）。
-- **環境は固定しますが、計算の中の偶然までは固定しません。** Nix で実行環境を、版でコードと定義を固定するので、プロジェクトさえ共有すれば、一度やった解析は違う Mac でも同じように動きます。ただ、乱数・外部データ・到着順・保持した状態に結果が依存する処理で seed などの条件を決めるのは、計算を書く側です（[Q&A の Q3](qa.md#q3-解析の再現性をどのように確保するのですか)）。
-- **過去の版に戻っても、当時の状態は戻りません。** 戻るのはコードと定義で、worker の状態や全データは復元しません（[Q&A の Q6](qa.md#q6-git-と実行履歴はそれぞれ何を記録するのですか)）。
+- **科学的な妥当性は、人間が判断します。** Tsugumi が用意するのは、判断の材料に手が届き、別の可能性をすぐに試せる足場までです（[Philosophy](philosophy.md#きれいな結果だけでは確かめられない)）。
+- **環境は固定しますが、計算の中の偶然までは固定しません。** Nix で実行環境を、版でコードと定義を固定するので、プロジェクトさえ共有すれば、一度やった解析は違う Mac でも同じように動きます。乱数・外部データ・到着順・保持した状態に結果が依存する処理で seed などの条件を決めるのは、計算を書く側です（[Q&A の Q3](qa.md#q3-解析の再現性をどのように確保するのですか)）。
+- **過去の版に戻ると、コードと定義が戻ります。** worker の状態や全データまでは戻しません（[Q&A の Q6](qa.md#q6-git-と実行履歴はそれぞれ何を記録するのですか)）。
 
 ## 結果をたどること
 
-- **2 つの実行を並べて比べる画面はありません。** 実行履歴はそれぞれ開いて見ます（[#156](https://github.com/gen740/Tsugumi/issues/156) で開発予定）。
-- **Agent の報告から、根拠の Card や実行へのリンクはありません。** チャットの文章の中で Card を指すリンクは開けません（[#157](https://github.com/gen740/Tsugumi/issues/157) で開発予定）。
-- **実行の記録に、ビルド結果の store パスはありません。** 環境は実行の commit（`pkgsPath` と `default.nix` を含む）からたどります（[#158](https://github.com/gen740/Tsugumi/issues/158) で開発予定）。
-- **上流を変えたあとの部分実行は、古い入力を使います。** 最後は Workflow 全体を通して確かめます（[Q&A の Q5](qa.md#q5-解析の途中からやり直せることにはどんな意味がありますか)）。
-- **`recordIO` を入れていない Card の過去の入出力値は残りません。** 既定は off です（[Q&A の Q4](qa.md#q4-なぜすべての実行データを保存しないのですか)）。
+- **2 つの実行を並べて比べる画面は、[#156](https://github.com/gen740/Tsugumi/issues/156) で開発予定です。** 今は実行履歴をそれぞれ開いて比べます。
+- **Agent の報告から根拠の Card や実行へ飛べるリンクは、[#157](https://github.com/gen740/Tsugumi/issues/157) で開発予定です。**
+- **実行の記録に各 Card のビルド結果（store パス）を残すことは、[#158](https://github.com/gen740/Tsugumi/issues/158) で開発予定です。** 今は実行の commit（`pkgsPath` と `default.nix` を含む）から環境をたどれます。
+- **部分実行は、保存済みの入力で動きます。** 上流を変えたあとは、最後に Workflow 全体を通して確かめます（[Q&A の Q5](qa.md#q5-解析の途中からやり直せることにはどんな意味がありますか)）。
+- **過去の入出力値を残すかどうかは、Card ごとに選べます。** `recordIO` を入れた Card の値が残ります（既定は off。[Q&A の Q4](qa.md#q4-なぜすべての実行データを保存しないのですか)）。
 
 ## データと権限
 
-- **Agent に送る内容を自動で伏せる仕組みはありません。** Agent が読んだソース・ログ・入出力値はモデルのプロバイダへ送られます。送るのは Agent が読んだものだけで、Agent を使わなくてもすべての操作は UI からできます（[モデルに送られるもの](security.md#モデルに送られるもの)、[業務自動化とデータの境界](vision.md#業務自動化とデータの境界)）。Web 検索をオンにすると検索語も検索サービスへ出て、そこに未公開のデータが載らないことは保証できません（[Web 検索](security.md#web-検索)、既定はオフ）。
-- **プロジェクトを開くことは、その中身を信頼するという判断です。** 他人のプロジェクトの `_card.json` に書かれた `hostFolders` は開くときに共有され、`network` と `sandbox: false`、`tsugumi.json` の `nixSources` は実行時に有効になり、確認は出ません。`make` や notebook を動かすのと同じく、作者が書いたとおりに動かすのが Tsugumi の役目で、作者を信頼するかどうかは利用者が決めます。Tsugumi は、書かれた権限を Card のアイコンと Experimental の項目に出し、`.tsugumi/` を使う前に検査し、Agent が権限を広げる保存には承認を求めます。受け取ったプロジェクトは、それらを確かめてから動かしてください（[どこまでを Tsugumi が引き受けるか](security.md#どこまでを-tsugumi-が引き受けるか)、[既知の制限](security.md#10-既知の制限と注意事項)）。
-- **プロジェクト間の隔離は 1 つの Linux カーネルの上です。** コンテナと同じ隔離のしかたで、カーネルの脆弱性までは防げません（Mac との間は VM で分けています）。共通の `/nix/store` は全プロジェクトから読めます（[既知の制限](security.md#10-既知の制限と注意事項)）。
-- **`network: false` でも、Nix の固定出力 derivation はビルド時に通信できます。** Nix の仕様です。取得した中身は hash で照合されるので変わりません（[Nix 評価の制限](security.md#5-nix-評価の制限)）。
+- **Agent に送られるのは、Agent が読んだものだけです。** ソース・ログ・入出力値のうち Agent が読んだものはモデルのプロバイダへ送られ、自動で伏せる仕組みはありません。Agent を使わなくても、すべての操作は UI からできます（[モデルに送られるもの](security.md#モデルに送られるもの)、[業務自動化とデータの境界](vision.md#業務自動化とデータの境界)）。Web 検索は既定でオフで、オンにすると検索語も検索サービスへ出ます（[Web 検索](security.md#web-検索)）。
+- **プロジェクトを開くことは、その中身を信頼するという判断です。** 他人のプロジェクトの `_card.json` に書かれた `hostFolders` は開くときに共有され、`network` と `sandbox: false`、`tsugumi.json` の `nixSources` は実行時に有効になり、確認は出ません。`make` や notebook を動かすのと同じく、作者が書いたとおりに動かすのが Tsugumi の役目で、作者を信頼するかどうかは利用者が決めます。Tsugumi は、書かれた権限を Card のアイコンと Experimental の項目に出し、`.tsugumi/` を使う前に検査し、Agent が権限を広げる保存には承認を求めます（[どこまでを Tsugumi が引き受けるか](security.md#どこまでを-tsugumi-が引き受けるか)、[既知の制限](security.md#10-既知の制限と注意事項)）。
+- **プロジェクトどうしは、コンテナと同じ方法で分けています。** 1 つの Linux カーネルの上なので、カーネルの脆弱性までは防げません（Mac との間は VM で分けています）。共通の `/nix/store` は全プロジェクトから読めます（[既知の制限](security.md#10-既知の制限と注意事項)）。
+- **Nix の固定出力 derivation は、`network: false` でもビルド時に取得できます。** Nix の仕様で、取得した中身は hash で照合されるので変わりません（[Nix 評価の制限](security.md#5-nix-評価の制限)）。
 
 ## 動く環境
 
-- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](install.md#ブラウザで使うtsugumi-コマンド)。実機での検証は [#159](https://github.com/gen740/Tsugumi/issues/159) で予定しています）。
-- **Linux で確かめたのは Ubuntu です。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu の環境で動かしました。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
-- **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。Linux と Windows では Web UI を使います。
+- **デスクトップアプリは、Apple silicon の macOS 26 以降で動きます。** Linux と Windows ではブラウザの Web UI（`tsugumi` コマンド）を使います（[インストール](install.md)）。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](install.md#デスクトップアプリmacを入れる)）。
+- **Linux は Ubuntu で確かめています。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu の環境で動かしました。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
+- **Windows（WSL2）は、実機での検証を [#159](https://github.com/gen740/Tsugumi/issues/159) で予定しています。** `cli/install.ps1` と WSL 向けの処理はあり、PowerShell の構文と代役を使ったテストで確かめています（[インストール](install.md#ブラウザで使うtsugumi-コマンド)）。
 - **安定版は v1.0.0 からです。** いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
 - **Claude Code の plugin は Web UI で使います。** `tsugumi` コマンドなどで開いた Web UI のプロジェクトを、Claude Code に任せられます（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
 
 ## 機能
 
-- **Card の言語は C++・Python・bash・R・Julia です。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で開発予定です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます。常駐 worker の状態保持とライブ表示はなく、R の 2^63 以上の整数は丸められます）。残りは [#12](https://github.com/gen740/Tsugumi/issues/12) にあります。
-- **marimo と R Markdown / Quarto の専用 Card はありません**（[#15](https://github.com/gen740/Tsugumi/issues/15)、[#16](https://github.com/gen740/Tsugumi/issues/16)）。
-- **図の雛形を選んで作る専用の Visualization Card はありません。** matplotlib・Plotly・Altair はふつうの Python の Card で描けます（[#19](https://github.com/gen740/Tsugumi/issues/19)）。
-- **外部 Logger の DB は `sqlite:<name>` だけです**（[実装状況](development.md#実装状況)）。
-- **アプリで同時に開けるプロジェクトは 16 個までです。** 共通 VM の共有デバイスの数で決まります（`SharedVM.slotCount`）。
-- **開いていたプロジェクトは、次の起動で開き直しません。** 起動すると Home のウインドウが 1 つ開きます。
-- **Web UI では、同じプロジェクトを開いた別のタブを前面に出せません。** ブラウザにその手段がないので、もう 1 つのタブで開きます。
-- **FBS の自動整形はありません**（[実装状況](development.md#実装状況)）。
-- **大規模デモ（200 Card）と WASM の表示はありません**（[今後の拡張](development.md#今後の拡張)）。
-- **科学デモの `load` は実行のたびに取得します。** 公開元の内容が変われば結果も変わります。hash で固定しているのは Cas A だけです（[同梱デモのしくみ](demos.md#科学デモ公開データの取得と解析)）。
+- **Card は C++・Python・bash・R・Julia で書けます。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で開発予定です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます）。常駐 worker での状態保持とライブ表示は [#161](https://github.com/gen740/Tsugumi/issues/161) で開発予定です。
+- **図は、ふつうの Python の Card で描けます。** matplotlib・Plotly・Altair のコードをそのまま書けば、Card の表示になります。雛形を選んで図を作る専用の Visualization Card は [#19](https://github.com/gen740/Tsugumi/issues/19) で登場予定です。
+- **marimo と R Markdown / Quarto の専用 Card は、[#15](https://github.com/gen740/Tsugumi/issues/15)・[#16](https://github.com/gen740/Tsugumi/issues/16) で登場予定です。**
+- **logger Card は、受け取った値を Card のログと表示に出します。** 外部 DB（SQLite・PostgreSQL など）への記録は [#160](https://github.com/gen740/Tsugumi/issues/160) で開発予定です。
+- **アプリでは、16 個のプロジェクトを同時に開けます。** 共通 VM の共有デバイスの数で決まります（`SharedVM.slotCount`）。
+- **大規模デモ（200 Card）と WASM の表示は、今後の拡張です**（[今後の拡張](development.md#今後の拡張)）。
+- **科学デモの `load` は、実行のたびに公開元から取得します。** 公開元の内容が変われば結果も変わります。hash で固定しているのは Cas A です（[同梱デモのしくみ](demos.md#科学デモ公開データの取得と解析)）。
 
 ## 確認の範囲
 
-- **共通 VM のテストは CI で動きません。** Virtualization.framework を使える Mac で `TSUGUMI_TEST_CONTAINER=1` を付けて行います（[確認範囲](development.md#確認範囲)、[Evidence](evidence.md)）。
-- **実マウスでの E2E テストはありません。** UI の確認はアプリ内の操作経路で行います（[確認範囲](development.md#確認範囲)）。
-- **Dawn の描画の目視結果は記録していません**（[確認範囲](development.md#確認範囲)）。
-- **実際の Claude API の記録は 1 題材です**（[AgentRun.md](agentrun.md)）。自動テストはテスト用モデルで行います。
-- **Web 検索は、実際の API と ChatGPT プランではまだ確かめていません。** テスト用モデルに対する自動テストだけです（[実装状況](development.md#実装状況)）。
-
-## 配布
-
-- **v0.2.0 までの配布物にはライセンス全文が入っていません。** v0.3.0 からは同梱しています（[配布経路で残っている対応](licenseaudit.md#配布経路で残っている対応)）。
+- **共通 VM のテストは、Virtualization.framework を使える Mac で行います**（`TSUGUMI_TEST_CONTAINER=1`）。GitHub Actions の runner では動かせないためです（[確認範囲](development.md#確認範囲)、[Evidence](evidence.md)）。
+- **実際の Claude API や ChatGPT のプランでも、多くの場面で試しています。** それでも、試していない組み合わせが残っているかもしれません。自動テストはテスト用モデルで行い、実際の API で通した記録の一例は [AgentRun.md](agentrun.md) にあります。
+- **Web 検索は、テスト用モデルで自動テストしています。** 実際の API と ChatGPT プランでは、これから確かめます（[実装状況](development.md#実装状況)）。

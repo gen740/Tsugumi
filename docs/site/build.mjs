@@ -456,7 +456,7 @@ function homePage(groups, pages, tagline, lead) {
   <p>同梱のデモです。インストールしなくても、Card のつながりと実行の様子をここで見られます。押すと大きく開きます。一つずつの説明は<a href="${pages.get('docs/Demos.md')}">同梱デモのしくみ</a>にあります。</p>
   ${tiles}
 </section>
-<p class="home-foot"><a href="${pages.get('README.md')}">README</a> · <a href="${pages.get('docs/README.md')}">すべての文書</a> · <a href="${pages.get('docs/Limitations.md')}">まだできないこと</a> · <a href="llms.txt">AI 向けの案内（llms.txt）</a></p>
+<p class="home-foot"><a href="${pages.get('README.md')}">README</a> · <a href="${pages.get('docs/README.md')}">すべての文書</a> · <a href="${pages.get('docs/Limitations.md')}">今後の予定</a> · <a href="llms.txt">AI 向けの案内（llms.txt）</a></p>
 </article>
 `
 }

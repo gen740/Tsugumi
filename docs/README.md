@@ -25,7 +25,7 @@
 | [Name.md](Name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
 | [Author.md](Author.md) | この道具を作った人 |
 | [Origin.md](Origin.md) | 作者が自分の言葉で書いた、この道具の出発点 |
-| [Limitations.md](Limitations.md) | まだできないこと、保証していないことの一覧 |
+| [Limitations.md](Limitations.md) | 今の範囲と今後の開発予定、保証の範囲 |
 
 ## 仕組みを知る
 

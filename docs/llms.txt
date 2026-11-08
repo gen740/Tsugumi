@@ -28,7 +28,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 - [Tsugumi の構想と応用](https://gen740.github.io/Tsugumi/pages/vision.md): 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想
 - [AI に使われないために、何を作るか](https://gen740.github.io/Tsugumi/pages/philosophy.md): 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験
 - [私にしかない深さ](https://gen740.github.io/Tsugumi/pages/origin.md): 作者が自分の言葉で書いた、この道具の出発点
-- [まだできないこと](https://gen740.github.io/Tsugumi/pages/limitations.md): まだできないこと、保証していないことの一覧
+- [今後の予定と、保証の範囲](https://gen740.github.io/Tsugumi/pages/limitations.md): 今の範囲と今後の開発予定、保証の範囲
 
 ## 仕組みを知る
 

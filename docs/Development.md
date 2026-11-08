@@ -211,7 +211,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮、プロンプトキャッシュ） | 実装済み。テスト用モデル（`tests/fixtures/model_fixture.py`）で読取→変更→実行→説明、Draft の実装、取消、取消後の再試行（未回答の tool_use を閉じる）、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録を自動テスト。実際の API（claude-sonnet-5-5）での Draft から実行までの記録は [AgentRun.md](AgentRun.md) |
 | Web 検索（プロバイダの `web_search`、設定でオンとオフ、既定はオフ） | 実装済み（アプリと Web UI）。テスト用モデルに対する自動テストだけで（`macOS/CoreTests` の `WebSearchTests`、`npm run contract`）、**実際の API と ChatGPT プランではまだ確かめていません** |
 | ChatGPT プラン（Sign in with ChatGPT: ループバックでのサインイン、ID トークンの検査、Keychain / 0600 の記録、トークンの更新と取り消し、プランの規則、利用上限、「Manage usage」） | 実装済み（アプリと Web UI）。認証フローはテスト用モデルを OAuth の発行者とした自動テスト（`macOS/CoreTests`、`npm run check:chatgpt`）。実際のプランで判明したモデル指定の問題は[修正済み](https://github.com/gen740/Tsugumi/commit/8c107a9)。API キーと ChatGPT の併用・接続ごとのモデル選択も[実装済み](https://github.com/gen740/Tsugumi/commit/14ff8fa) |
-| 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
+| 外部 Logger DB | 未実装（logger は Card のログと表示に出す）。`databaseConnections` への記録は [#160](https://github.com/gen740/Tsugumi/issues/160) で開発予定 |
 | 版の管理（git・実行ごとの版と結果・版のツリー、`VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`・`VersionCanvas`・`VersionDiff`・`VersionSummary`） | 実装済み（[Versions.md](Versions.md)、`test_versions.py`） |
 | Agent の権限の承認（Card の権限を広げる保存は `approval_required`） | 実装済み（[security.md](security.md#agent-の権限境界)、`test_permissions.py`） |
 | ツグミのガイド（`guide_show`・`$demo`）、helper への手分け（`delegate`） | 実装済み（[features.md](features.md#9-agent)、`macOS/CoreTests`・`macOS/Tests` の Guide のテスト、Web の helper の鶫は `web/tests/helperBirds.ts`、キーのないときの台本はアプリと Web で共通の `agent/Shared/guide-script.json`、そのテストは `web/tests/guideScript.ts`） |

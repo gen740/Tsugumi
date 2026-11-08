@@ -54,11 +54,11 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 | Card のコメントは人間と Agent のどちらも書け、誰が何をしたかが記録される（Agent の分はモデルの申告によらない）。各版でどう変わったかをたどれる | `test_card_comments.py::test_a_model_resolving_a_comment_is_recorded_with_what_it_changed`、`test_card_comments.py::test_what_a_model_says_about_who_did_it_does_not_count`、`test_card_comments.py::test_each_version_says_what_it_did_to_the_comments` | [主要機能](features.md#コメントから-card-を生成)、[版の管理](Versions.md#コメント)、[core/src/comments.cc](../core/src/comments.cc) |
 | UI と Agent は同じ契約の対等なクライアント | `test_agent_contract.py::test_web_agent_keeps_the_contract`、`test_agent_contract.py::test_swift_copy_of_the_shared_files_is_current` | [protocol/tsugumi.fbs](../protocol/tsugumi.fbs)、[RPC 契約](Protocol.md) |
 | 常駐 worker などで、試行錯誤を重くしない | `test_workers.py::test_resident_worker_serves_later_runs`（VM）、`tests/python/measure_stages.py collatz`（計測は C++ と Python の 2 言語だった Collatz。いまは Julia・R を含む） | [計測](Development.md#計測2026-11-03高速化後共通-vm) |
-| 実際の Claude API で、Draft から Card を作って実行・検証できる | 記録のみ（1 題材）。実 API のテストは `TSUGUMI_LIVE_API=1` で `macOS/CoreTests` の `liveModelChangesRunsAndReports` | [実行記録](AgentRun.md)。テスト用モデルでの自動テストは [Development.md](Development.md#テスト) |
+| 実際の Claude API で、Draft から Card を作って実行・検証できる | 実 API のテストは `TSUGUMI_LIVE_API=1` で `macOS/CoreTests` の `liveModelChangesRunsAndReports`。通した記録の一例は [AgentRun.md](AgentRun.md) | [実行記録](AgentRun.md)。テスト用モデルでの自動テストは [Development.md](Development.md#テスト) |
 | 文書のとおりに Card を作って動かせる | `test_docs.py::test_card_guide_runs_as_written` | [はじめての Card](CardGuide.md) |
 | AI にも同じ文書を渡せる（Markdown 版と `llms.txt`） | `test_docs.py::test_llms_txt_guides_agents_to_every_document`、`test_docs.py::test_markdown_pages_have_links_that_work_on_the_site`、`test_docs.py::test_pages_point_to_their_markdown_and_the_guide` | [llms.txt](llms.txt) |
 | 文書のリンク・パス・一覧が実物と合っている | `test_docs.py::test_links_and_anchors_exist`、`test_docs.py::test_paths_named_in_backticks_exist`、`test_docs.py::test_protocol_page_is_generated_from_the_schema` | [test_docs.py](../tests/python/test_docs.py) |
 | macOS・Linux・Windows に対応する（macOS と Linux（Ubuntu）で確認。Windows で動かすのは未確認） | `test_cli.py::test_a_mac_gets_the_command_in_local_bin_and_nothing_else`、`test_cli.py::test_linux_builds_the_source_with_nix`、`test_cli.py::test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there`（インストーラーと WSL の処理。実機ではない） | [インストール](../INSTALL.md)、[動く環境](Limitations.md#動く環境) |
 | 何をハッカソン前に用意し、何を期間中に作ったか | テストなし。Git の履歴を見る | [制作範囲と事前準備](Provenance.md) |
 
-できないことは[まだできないこと](Limitations.md)に分けています。
+今後の予定と保証の範囲は[今後の予定と、保証の範囲](Limitations.md)にまとめています。

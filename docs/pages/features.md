@@ -9,7 +9,7 @@ Tsugumi は、Card をポートで接続したグラフ（Workflow）を Nix で
 | 導入・ビルド | [INSTALL.md](install.md) |
 | テストの一覧と計測値 | [Development.md](development.md) |
 | 隔離と秘密情報の扱い | [security.md](security.md) |
-| まだできないこと | [Limitations.md](limitations.md) |
+| 今後の予定と、保証の範囲 | [Limitations.md](limitations.md) |
 
 ## 1. 全体構成
 
@@ -41,7 +41,7 @@ macOS（ホスト）                                   共通 Linux VM（アプ�
 | trigger | Workflow の実行起点（出力ポート `out`） |
 | input | `_outputs.fbs` の型に沿った入力値を Canvas 上で直接編集して流す（File 型は選択したファイルを run にコピー） |
 | fork / branch / merge | 分配・条件分岐（`condition` に応じて `a` / `b` の片側のみ発火）・合流（入力ポート名付きの union 型）。有限のフィードバックループ専用の Card はなく、merge で値を戻して作り、ループ上の Card の `maxRuns` で反復の上限を決めます |
-| logger | 受け取った値を外部 DB に記録する（現在は `.tsugumi/logger/` 配下の `sqlite:<name>` に対応） |
+| logger | 受け取った値を Card のログと表示に出す（Markdown でも表示できる。外部 DB への記録は [#160](https://github.com/gen740/Tsugumi/issues/160) で開発予定） |
 | subgraph（Card in Card） | 子 Workflow を 1 つの Card として扱う。`boundary` で外側のポートを内部の Card に対応づける |
 | Draft | 名前と内容をカードに直接書き、線を落とすだけでつなげる「未実装の Card」（ポートは線に合わせて作られ、型はない）。後から Agent に実装を生成させられる |
 
