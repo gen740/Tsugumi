@@ -429,8 +429,11 @@ const CONTINUOUS = `.cv-wire-moving{animation:cv-dash .467s linear infinite}@key
 async function render({ width, height, title, css, anim, defs = '', html }) {
   const page = await chrome()
   const file = path.join(page.dir, 'page.html')
+  // Every element an animation shows, moves or hides is made its own stacking context, so that dom-to-svg keeps all
+  // that is drawn in it inside its group (it moves positioned content to the nearest stacking context's layers).
+  const animated = [...new Set(['tp-l', 'guide-flying-bird', 'guide-bird', ...[...(anim ?? '').matchAll(/\.([\w-]+)\{animation/g)].map((m) => m[1])])]
   fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><style>body{margin:0}${css}
-.svg-zoom{position:absolute;left:0;top:0;width:${width}px;height:${height}px}${CAPTURE}</style>
+.svg-zoom{position:absolute;left:0;top:0;width:${width}px;height:${height}px}${CAPTURE}${animated.map((c) => `.${c}`).join(',')}{isolation:isolate}</style>
 <svg width="0" height="0" style="position:absolute"><defs>${defs}</defs></svg><div class="svg-zoom">${html}</div><script>${domToSvg}</script>`)
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
   await page.send('Page.navigate', { url: pathToFileURL(file).href })
@@ -452,7 +455,8 @@ async function render({ width, height, title, css, anim, defs = '', html }) {
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
         svg.setAttribute('width', el.clientWidth)
         svg.setAttribute('height', el.clientHeight)
-        svg.setAttribute('style', 'position:absolute;left:0;top:0;pointer-events:none')
+        // z-index 0, first: below the Canvas's layers (dom-to-svg puts an auto z-index after them).
+        svg.setAttribute('style', 'position:absolute;left:0;top:0;z-index:0;pointer-events:none')
         svg.innerHTML = '<defs><pattern id="' + id + '" patternUnits="userSpaceOnUse" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"><circle cx="0.8" cy="0.8" r="0.9" fill="' + color + '"/></pattern></defs><rect width="100%" height="100%" fill="url(#' + id + ')"/>'
         el.style.backgroundImage = 'none'
         el.prepend(svg)
