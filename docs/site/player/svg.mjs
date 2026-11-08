@@ -32,8 +32,8 @@ const esbuild = require('esbuild')
 /** The large drawing's size: the canvas as the docs site shows it, and the card around it. */
 const W = 1200, CANVAS_H = 700, PAD = 24, HEAD = 64, SAY = 66, FOOT = 26
 const H = PAD + HEAD + CANVAS_H + SAY + FOOT + PAD
-/** A tile's size (two or three to a row of the README), and the long side of its images in pixels. */
-const TILE = { width: 440, height: 264 }, TILE_IMAGE = 200
+/** A tile's size (two or three to a row of the README). */
+const TILE = { width: 440, height: 264 }
 /** How long a replay holds before it starts and after it ends, in ms. */
 const HOLD = { large: [1600, 5200], tile: [900, 3400], window: [1800, 5600] }
 /** The demo shown large. */
@@ -205,25 +205,22 @@ function layerOf(child) {
 const SHRUNK = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-svg-img-'))
 process.on('exit', () => fs.rmSync(SHRUNK, { recursive: true, force: true }))
 
-/** An image for a tile: at most TILE_IMAGE pixels on the long side, JPEG unless the PNG stays small. */
-function shrunk(file) {
-  if (file.endsWith('.svg')) return file
-  const out = path.join(SHRUNK, path.basename(file))
-  if (!fs.existsSync(out)) {
-    execFileSync('sips', ['-Z', String(TILE_IMAGE), file, '--out', out], { stdio: 'ignore' })
-    if (out.endsWith('.png') && fs.statSync(out).size > 16_000) {
-      execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '60', out, '--out', `${out}.jpg`], { stdio: 'ignore' })
-      fs.renameSync(`${out}.jpg`, out)
-    }
-  }
+/** An image at most `side` pixels on its long side (sips, as harvest.py), in its own format: no other compression. */
+function shrunk(file, side) {
+  if (file.endsWith('.svg') || !side) return file
+  const dims = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file], { encoding: 'utf8' }).match(/\d+/g).slice(-2).map(Number)
+  if (Math.max(...dims) <= side) return file
+  const out = path.join(SHRUNK, `${side}-${path.basename(file)}`)
+  if (!fs.existsSync(out)) execFileSync('sips', ['-Z', String(side), file, '--out', out], { stdio: 'ignore' })
   return out
 }
 
-/** Images of the output frames as data: URIs (the SVG loads nothing). */
-function inlineImages(xml, base, small) {
+/** Images of the output frames as data: URIs (the SVG loads nothing), each `sideOf(file)` pixels at most. */
+function inlineImages(xml, base, sideOf = () => undefined) {
   return xml.replace(/src="([^"]+)"/g, (all, url) => {
     if (!url.startsWith(base)) return all
-    const file = (small ? shrunk : (f) => f)(path.join(DATA, decodeURIComponent(url.slice(base.length))))
+    const source = path.join(DATA, decodeURIComponent(url.slice(base.length)))
+    const file = shrunk(source, sideOf(source))
     const bytes = fs.readFileSync(file)
     const type = file.endsWith('.svg') ? 'image/svg+xml' : bytes[0] === 0x89 ? 'image/png' : 'image/jpeg'
     return `src="data:${type};base64,${bytes.toString('base64')}"`
@@ -329,7 +326,17 @@ function replay(data, view, compact, kind = compact ? 'tile' : 'large', only, dr
     css.push(keyframes(name, shown, starts, total), `.${name}{animation-name:${name}}`)
     return `<div class="tp-l ${name}${shown.has(last) ? ' tp-fin' : ''}" style="${style}">${body}</div>`
   }
-  const surface = `${shell.open}${pieces.map((p, i) => layer(p.shown, `k${i}`, inlineImages(p.xml, base, compact), `z-index:${p.layer}`)).join('')}${shell.close}`
+  // A tile's images at twice the size its output frame has in it (a Retina screen at the tile's own size), no larger.
+  // The zoom, from a Card's header (CardGeometry.header: 32 units): a small Canvas has no dot grid to read it from.
+  const header = Number(pieces.map((p) => p.xml.match(/class="cv-card-header" style="height:([\d.]+)px/)?.[1]).find(Boolean) ?? 0)
+  const zoomed = header / 32
+  const sideOf = (file) => {
+    if (!compact) return undefined
+    const id = Object.keys(data.outputs).find((k) => data.outputs[k].src && file.endsWith(data.outputs[k].src.replace(/^assets\//, '')))
+    const f = data.frames[id] ?? {}
+    return Math.max(160, Math.ceil(2 * Math.max(f.width ?? 320, f.height ?? 170) * (zoomed || 1)))
+  }
+  const surface = `${shell.open}${pieces.map((p, i) => layer(p.shown, `k${i}`, inlineImages(p.xml, base, sideOf), `z-index:${p.layer}`)).join('')}${shell.close}`
   const anim = () => `.tp-l{position:absolute;inset:0;opacity:0;animation:${total}ms step-end infinite both}.tp-l.tp-fin{opacity:1}${css.join('')}`
     + '@media (prefers-reduced-motion:reduce){.tp-l{animation:none!important}}'
   /** What a function of the frame draws, each distinct drawing as one layer. */
@@ -378,6 +385,7 @@ function svgDoc({ width, height, title, css, defs = '', html }) {
 <title id="t">${esc(title)}</title>
 <style>${css}
 .svg-zoom{position:absolute;left:0;top:0;width:${width}px;height:${height}px;transform-origin:0 0}
+.svg-zoom .material{backdrop-filter:none;-webkit-backdrop-filter:none}
 ${safariZoom(width)}</style>
 <defs>${defs}${icons.defs}</defs>
 <foreignObject width="${width}" height="${height}"><div xmlns="http://www.w3.org/1999/xhtml" class="svg-zoom">${icons.body}</div></foreignObject>
@@ -588,16 +596,18 @@ function timelineSvg() {
   const x = (ms) => (ms / total) * chartW
   const rows = Object.keys(recorded.timeline).sort()
   const bottom = (r) => {
-    // Real time at the start and the end of each step's frames, and the chart's width then.
-    const stops = [[0, 'width:0px'], [r.starts[1], 'width:0px']]
+    // Real time at the start and the end of each step's frames, and how far the chart is shown then. Shown by moving a
+    // clipping box and moving its content back (transforms only: nothing is laid out again while it plays).
+    const shown = [[0, 0], [r.starts[1], 0]]
     data.steps.forEach((st, i) => {
       const at = r.frames.map((f, j) => (f.mode === 'playing' && f.step === i ? j : -1)).filter((j) => j >= 0)
-      stops.push([r.starts[at[0]], `width:${x(st.startMs).toFixed(1)}px`])
+      shown.push([r.starts[at[0]], x(st.startMs)])
       const j = at.at(-1)
-      stops.push([r.starts[j] + r.frames[j].ms, `width:${x(st.endMs).toFixed(1)}px`])
+      shown.push([r.starts[j] + r.frames[j].ms, x(st.endMs)])
     })
-    stops.push([r.total, `width:${chartW}px`])
-    const reveal = r.custom('tl-reveal', stops)
+    shown.push([r.total, chartW])
+    const reveal = r.custom('tl-reveal', shown.map(([t, w]) => [t, `transform:translateX(${(w - chartW).toFixed(1)}px)`]))
+    const back = r.custom('tl-back', shown.map(([t, w]) => [t, `transform:translateX(${(chartW - w).toFixed(1)}px)`]))
     const bars = rows.map((k, i) => {
       const e = recorded.timeline[k]
       const y = i * TIMELINE.row + 3, h = TIMELINE.row - 6
@@ -617,7 +627,7 @@ function timelineSvg() {
 <div class="timeline"><div class="timeline-head"><span class="caption2 secondary mono-digits" style="width:${TIMELINE.label}px;text-align:right">${player.formatDuration(0)}</span><span class="spacer" style="flex:1"></span><span class="caption2 tertiary">ドラッグで範囲を拡大・横スクロールで移動</span><span class="w-tl-all">全体</span><span class="caption2 secondary mono-digits">${player.formatDuration(total / 1000)}</span></div>
 <div class="w-tl-rows"><div class="timeline-labels" style="width:${TIMELINE.label}px">${rows.map((k) => `<div class="timeline-label caption" style="height:${TIMELINE.row}px">${k}</div>`).join('')}</div>
 <div class="w-tl-chart" style="width:${chartW}px;height:${rows.length * TIMELINE.row}px"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${stripes}</svg>
-<div class="w-tl-clip ${reveal}" style="height:${rows.length * TIMELINE.row}px;width:${chartW}px"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${bars}</svg></div></div></div></div>
+<div class="w-tl-clip ${reveal}" style="height:${rows.length * TIMELINE.row}px;width:${chartW}px"><svg xmlns="http://www.w3.org/2000/svg" class="${back}" width="${chartW}" height="${rows.length * TIMELINE.row}">${bars}</svg></div></div></div></div>
 </div>`
   }
   return appWindow({
@@ -715,7 +725,7 @@ function guideSvg() {
 .w-answer code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.08);padding:0 3px;border-radius:3px}
 .w-ring{position:absolute;inset:0;outline:2.5px solid var(--tsugumi-rufous);outline-offset:4px;border-radius:8px;animation:guide-ring 1.6s ease-in-out infinite}
 .w-fly{transform-origin:0 0;z-index:30}
-.w-fly .guide-flying-bird{position:absolute;inset:0;width:100%;height:100%;transition:none}
+.w-fly .guide-flying-bird{position:absolute;inset:0;width:100%;height:100%;transition:none;filter:none}
 .guide-speech{background:color-mix(in srgb,var(--window-bg) 92%,transparent)}
 .guide-choice{display:inline-block}
 .w-field{flex:1;padding:3px 7px;border-radius:6px;background:var(--text-bg);border:0.5px solid var(--separator-strong);font-size:12.5px}
