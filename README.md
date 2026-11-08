@@ -29,7 +29,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
-<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-window.svg" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas。実際の実行の記録を、アプリの画面の形で再生している" width="100%"></a>
+![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
@@ -129,7 +129,7 @@ Tsugumi は、計算やデータ処理を **Card のグラフ（Workflow）と�
 
 ### 全体の流れを見渡す
 
-ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に、解析ツールを固定する `ciao` と観測を固定する `load` から `bands` → `rgb` / `spectrum` へ続く流れが並んでいます。
+ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に `load` → `bands` → `rgb` / `spectrum` の流れが並んでいます。
 実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。
 スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。
 右側のチャットからは、Agent に実装や変更を依頼できます。
