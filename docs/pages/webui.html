@@ -31,7 +31,7 @@
 <main class="main">
 
 <div class="reading">
-<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#構成">構成</a></li><li class="d2"><a href="#tsugumi-コマンド">tsugumi コマンド</a></li><li class="d2"><a href="#ビルドと起動">ビルドと起動</a></li><li class="d2"><a href="#隔離macos-ホスト">隔離（macOS ホスト）</a></li><li class="d2"><a href="#複数のプロジェクト">複数のプロジェクト</a></li><li class="d2"><a href="#ショートカット">ショートカット</a></li></ul></details>
+<details class="toc" open><summary>目次</summary><ul><li class="d2"><a href="#構成">構成</a></li><li class="d2"><a href="#tsugumi-コマンド">tsugumi コマンド</a></li><li class="d3"><a href="#別のマシンで動かしてssh-越しに使う">別のマシンで動かして、SSH 越しに使う</a></li><li class="d2"><a href="#ビルドと起動">ビルドと起動</a></li><li class="d2"><a href="#隔離macos-ホスト">隔離（macOS ホスト）</a></li><li class="d2"><a href="#複数のプロジェクト">複数のプロジェクト</a></li><li class="d2"><a href="#ショートカット">ショートカット</a></li></ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 <article class="doc">
 <h1 id="web-ui">Web UI</h1>
@@ -63,6 +63,11 @@
 <p><code>vm.lock</code> のとおり VM を使えるのは 1 つのアプリだけです。デスクトップ版がプロジェクトを開いていると、ページはその旨を表示します。逆も同じです。サーバーを止めると VM も止まります。デスクトップ版と <code>tsugumi</code> コマンドの版が違うと、切り替えたときに VM がその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので、2 回目からは短くなります）。</p>
 <p><strong>Linux では</strong>、Nix でビルドした <code>tsugumid</code> をこのホストで直接動かし、Card は bubblewrap で隔離します（<code>nix/cli.nix</code>）。ターミナルの <code>node-pty</code> も一緒にビルドします。データは <code>~/.local/share/tsugumi-web</code>、API キーはその中の 0600 のファイルです。OrbStack の VM（Ubuntu 26.04、aarch64）で、インストール、ブラウザからの接続、デモの実行を確かめました。x86_64 の Ubuntu（友人の環境）でも動かしてもらいました。</p>
 <p><strong>Windows では</strong>、<code>tsugumi.cmd</code> が WSL2 の中の Linux 版を動かします（<code>cli/install.ps1</code>）。<code>tsugumid</code> が Nix と bubblewrap を必要とするので、ネイティブの Windows では動きません。サーバーは環境変数 <code>WSL_DISTRO_NAME</code> で WSL を見分けて Windows のブラウザを開き、ページと <code>tsugumid</code> のポートには WSL の localhost 転送で届きます。<strong>実機ではまだ確かめていません。</strong></p>
+<h3 id="別のマシンで動かしてssh-越しに使う">別のマシンで動かして、SSH 越しに使う</h3>
+<p>Linux のマシンで <code>tsugumi</code> を動かし、手元のブラウザから SSH の port forwarding で使えます。x86_64 の NixOS のマシンで、デモの全体の実行、意図的な失敗、部分実行、再読み込みのあとの結果の復元、ターミナルまで、この形で確かめました。</p>
+<p>ページは、サーバー（8780 番）のほかに、開いたプロジェクトの <code>tsugumid</code> へ WebSocket で直接つながります。<code>tsugumid</code> はそのマシンの <code>127.0.0.1</code> の空いているポートで待ち受け、その番号はプロジェクトを開くたびに変わります。そのため、8780 番だけを転送すると、プロジェクトに接続できません。画面に表示される、そのプロジェクトのポートも一緒に転送してください。</p>
+<pre><code class="language-bash">ssh -L 8780:127.0.0.1:8780 -L &lt;表示されたポート&gt;:127.0.0.1:&lt;表示されたポート&gt; &lt;マシン&gt;
+</code></pre>
 <h2 id="ビルドと起動">ビルドと起動</h2>
 <p>リポジトリから動かす手順です（このホストの <code>tsugumid</code> を使います）。</p>
 <p>前提: Nix（flakes 有効）、Node.js 22 以降、WebGPU が使えるブラウザ（Chrome / Edge / Safari 26 以降）。</p>
