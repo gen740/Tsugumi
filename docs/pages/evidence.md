@@ -31,8 +31,8 @@ nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 | 環境 | commit | 結果 |
 | --- | --- | --- |
 | Linux・macOS（GitHub Actions） | [6887c37](https://github.com/gen740/Tsugumi/actions/runs/42436895180) | main で成功（2026-11-08）。C++、Python（276 件成功・55 件スキップ）、Swift（`macOS/CoreTests`・`macOS/Tests`）。範囲は [ci.yml](https://github.com/gen740/Tsugumi/blob/main/.github/workflows/ci.yml) |
-| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | dd3dd0c に文書の変更を加えたもの | C++ は全件成功。Python は 155 件成功・26 件スキップ（2026-11-05）。スキップはすべて VM のテスト |
-| 共通 VM | | **この commit では未確認。** 上の 26 件はこの環境で流していません |
+| Mac 上の `tsugumid`（M3 Max, macOS 27.2、Seatbelt） | 6a7ef73 | C++ は全件成功。Python は 282 件成功・49 件スキップ（2026-11-08）。スキップは、共通 VM のテスト 29 件、デモを丸ごと動かすテスト 19 件、Mac には当てはまらないテスト 1 件 |
+| 共通 VM（同じ Mac、`TSUGUMI_TEST_CONTAINER=1`） | 6a7ef73 | Python は 311 件成功・20 件スキップ（2026-11-08）。上の 29 件の VM のテストもすべて成功。スキップは、デモを丸ごと動かすテスト 19 件（Nix の取得が大きいので `TSUGUMI_TEST_DEMO_RUNS=1` のときだけ）と、Mac には当てはまらないテスト 1 件 |
 
 同じ検査は手元の `tests/ci-local.sh` でも流せます（Mac では Linux のジョブを Docker のコンテナで動かします）。
 
