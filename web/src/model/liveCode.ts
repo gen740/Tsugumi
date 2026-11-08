@@ -97,7 +97,7 @@ export function fileOfCard(path: string): { card: string; file: string } | undef
 export interface LiveCode { card: string; file: string; text: string; saved: boolean }
 
 /** The API sends a file in lumps of about 200 characters, about every 0.43 s
- *  (measured: docs/ui-view.md), which at once would replace the panel's lines each
+ *  (measured with claude-sonnet-5-5), which at once would replace the panel's lines each
  *  time: what arrives is written out over `ease`, up to the next lump. A short file
  *  is seen `shortest` at the least; its last lines stay `hold` when no other file
  *  comes after it; a pause in what arrives may last `stalled` before its scene ends

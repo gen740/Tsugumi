@@ -13,6 +13,8 @@
 | hosq（C++ JSON） | `CLI20-dev/hosq@1eb8942`（flake input） |
 | Dawn（WebGPU） | `v20261023.194543`（`ui/renderer/CMakeLists.txt`、Metal バックエンド） |
 | SwiftTerm（ターミナル表示、MIT） | 1.11.2（以降のバージョンはシェーダーコンパイルに Xcode Metal Toolchain の追加取得が必要となるため固定） |
+| Swift Markdown / SwiftMath（チャット・付箋・Card の Markdown と数式） | 0.7.3 / 1.7.3（`macOS/Package.swift`） |
+| SwiftTreeSitter と各言語の grammar（エディターの構文強調） | SwiftTreeSitter 0.25.0、grammar はそれぞれの版（`macOS/Package.swift`） |
 | xterm.js / addon-fit / node-pty（Web UI のターミナル、MIT） | 5.5.0 / 0.10.0 / 1.1.0（`web/package-lock.json`） |
 | libgit2（版の管理） | 1.9.7（固定した nixpkgs の `libgit2`） |
 | plotly.js / Vega / Vega-Lite / Vega-Embed（Card のグラフの表示部品） | 3.6.0 / 6.4.0 / 6.4.3 / 7.3.0（`web/package-lock.json`。Mac アプリも同じファイルを `build-app.sh` でコピー） |

@@ -18,15 +18,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 
 ## 準備
 
-1. Tsugumi のリポジトリを手元に置き、core と Web UI をビルドします（[Web UI のビルド](WebUI.md#ビルドと起動)と同じです）。
-
-   ```bash
-   nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker'
-   ```
-
-   ```bash
-   cd web && npm install && nix develop --command npm run gen && npm run build
-   ```
+1. Tsugumi のリポジトリを手元に置き、core と Web UI を [Web UI のビルドと起動](WebUI.md#ビルドと起動)の手順でビルドします。
 
 2. Claude Code で、このリポジトリを marketplace として加え、plugin を入れます。
 
@@ -40,7 +32,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 ## 使い方
 
 - `/tsugumi:open <プロジェクトのフォルダ>` か、「この Tsugumi のプロジェクトで…して」と頼みます。Claude Code は `tsugumi_open` でプロジェクトを開いてから作業します。
-- `tsugumi_open` は、動いている Web UI のサーバー（データフォルダの `server.json`）を探し、なければ起動します（Claude Code を閉じても動き続けます。止めるときはそのプロセスを止めます）。そのプロジェクトを表示中のページか Home のページがあればそこに表示し（別のプロジェクトを表示中のページは切り替えません）、なければサーバーがブラウザで開きます（`server.json` の鍵はページの鍵ではなく、Card の権限を広げる保存の承認に答えられないためです）。
+- `tsugumi_open` は、動いている Web UI のサーバー（データフォルダの `server.json`）を探し、なければ起動します（Claude Code を閉じても動き続けます。止めるときはそのプロセスを止めます）。そのプロジェクトを表示中のページか Home のページがあればそこに表示し（別のプロジェクトを表示中のページは切り替えません）、なければサーバーがブラウザで開きます（`server.json` の鍵はページの鍵ではないためです。[セキュリティ §8](security.md#agent-の権限境界)）。
 - 新しいプロジェクトは `tsugumi_open` の `create: true` で作れます（まだないフォルダに限ります）。
 - 最初の `tsugumi_open` は、道具を使うときの決まり（チャットの Agent と同じ `agent/Shared/system-prompt.md`）を返します。
 
@@ -52,4 +44,4 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 ## 対応していないこと
 
 - macOS アプリには対応していません。Claude Code が作業するプロジェクトは Web UI で開きます。
-- Card の実行は、Web UI で実行できる環境（このホストの `tsugumid` と worker）に限られます。
+- Card は、`tsugumi_open` が見つけた Web UI のサーバーが動かす環境で実行されます（Mac で `tsugumi` コマンドのサーバーが動いていれば共通 VM の中）。動いているサーバーがなければ、ビルドしたリポジトリからサーバーを起動し、`tsugumid` はこのホストで直接動きます。

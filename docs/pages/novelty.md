@@ -135,7 +135,7 @@ Card から上流の Nix 定義を参照するとき、線を逆にたどって�
 
 Tsugumi は、入力の待ち合わせ方、分岐・合流、ループ、子 Workflow を解析し、どの経路でも必ず先行する Card を求めます。`all` は必須入力が保証する集合の和、`any` や同じポートへの複数経路は共通部分を使い、ループは最大不動点で求めます。この条件を満たすコード Card の定義だけを Nix 評価器へ渡し、参照されたものを遅延評価します。
 
-ソースに直接書かれた参照には、保存・検査時に早期診断も行います。別名や動的な属性名など、早期診断の対象にならない書き方でも、評価器に渡す参照範囲は同じです。
+直接書かれた参照は保存時にも診断しますが、どんな書き方でも評価器に渡す参照範囲は同じです。
 
 **Workflow の接続関係を、実行順だけでなく、環境定義の依存関係にも反映できます。**
 
@@ -144,7 +144,7 @@ Tsugumi は、入力の待ち合わせ方、分岐・合流、ループ、子 Wo
 - 実装: [必ず先行する Card の解析](https://github.com/gen740/Tsugumi/blob/main/core/src/graph.cc)（`compute_guarantees`）
 - 実装: [Nix へ渡す上流定義](https://github.com/gen740/Tsugumi/blob/main/core/src/nix.cc)（`entry_nix`）
 - テスト: [分岐・合流・ループ・子 Workflow のテスト](https://github.com/gen740/Tsugumi/blob/main/tests/cpp/core_tests.cc)（`upstream_branch_sides_do_not_survive_any_merge` など）
-- テスト: [早期診断の範囲（Q&A の補足）](qa.md)
+- 仕組み: [保存時の診断の範囲（主要機能の上流定義の参照）](features.md#上流定義の参照inputsupstream)
 
 ## 一つの結果から、別の仮説へ進める
 

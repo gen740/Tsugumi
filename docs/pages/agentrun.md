@@ -33,7 +33,7 @@ Draft だけのプロジェクトから、アプリ内の Agent に「Card を�
 
 Agent の進め方は、Agent への指示（Draft を上流から 1 枚ずつ、書く → 検証 → 保存 → 実行 → 結果を確かめる）のとおりでした。
 
-1. `project_inspect` で現状を読み、`reference_read` で card-guide・Python SDK・同梱デモ（report の File/Directory 出力の Card）を読む（Agent が読める同梱デモは report・collatz・live-stream だけです。Draft のデモと、その完成形である casa などのデモは読めません。読めると答えを写せてしまい、この記録が検証になりません）
+1. `project_inspect` で現状を読み、`reference_read` で card-guide・Python SDK・同梱デモ（report の File/Directory 出力の Card）を読む（記録の時点で Agent が読めた同梱デモは report・collatz・live-stream でした。今は Draft 版のないデモはすべて読めますが、Draft のデモと、その完成形である casa などのデモは今も読めません。読めると答えを写せてしまい、この記録が検証になりません）
 2. `load` を書き、`project_validate` で保存前に検証してから `project_save`、`run` で実行し `run_status`・`run_record`・`log_range` で確かめる
 3. `bands`、`rgb` も同じ手順で 1 枚ずつ
 4. 最後に何をどう実装したかを日本語で報告する

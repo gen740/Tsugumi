@@ -3,7 +3,7 @@
 Tsugumi の実行基盤・設計上の意思決定・テストスイート・パフォーマンス計測・実装状況をまとめた開発者向け資料です。
 アプリの導入とビルド手順は [INSTALL.md](../INSTALL.md)、依存ライブラリの固定バージョンは [Lock.md](Lock.md)、利用者向けの全体像は [README](../README.md) を参照してください。
 本文中のファイルパスとコマンドは、リポジトリのルートを基準としています。
-現在の機能は[実装状況](#実装状況)、確認方法は[確認範囲](#確認範囲)、以前の構成で直した不具合は[解決済みの記録](#解決済みの記録)に分けて記載します。計測は各見出しの日付・構成での記録です。
+現在の機能は[実装状況](#実装状況)、確認方法は[確認範囲](#確認範囲)に分けて記載します。計測は見出しの日付・構成での記録です（以前の構成での計測と不具合の記録は Git の履歴にあります）。
 
 ## 実行基盤
 
@@ -15,7 +15,7 @@ macOS アプリの計算は Mac 上の隔離された Linux VM 内で実行さ�
 
 グラフの実行エンジンは、条件分岐（branch）・合流（merge）・有限のフィードバックループ・入れ子の子 Workflow（Card in Card）をサポートします。
 macOS アプリでは、アプリ全体で 1 台の共通 Linux VM（`Virtualization.framework` を直接使用）の中で、開いているプロジェクトごとに独立した `tsugumid` プロセスが実行を担います。
-メインウインドウは 1 つのプロジェクトを表示し、複数のウインドウで同時に開けます（[UI の仕様](ui-view.md#複数のプロジェクト)）。Web UI はブラウザのタブごとです。
+メインウインドウは 1 つのプロジェクトを表示し、複数のウインドウで同時に開けます（[複数のプロジェクト](features.md#複数のプロジェクト)）。Web UI はブラウザのタブごとです。
 macOS 側の SwiftUI アプリと Agent は、どちらも同じ FlatBuffers RPC 契約を介して `tsugumid` と通信する対等なクライアントです。
 
 ```text
@@ -61,15 +61,9 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 - **実行中の保存**: 計算定義（execution fingerprint）を変える保存は run 中 `busy` で拒否し、配置などの変更は受け付けます（ドラッグを止めないため）。
 - **pkgsPath**: `tsugumi:default`（同梱 pin）または `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`。Card の Nix 評価は restricted eval・IFD 禁止・allowed-uris 限定です。
 - **組み込み Card のポート**: trigger `out` / input（`_outputs.fbs` の各メッセージを同名 params から構築、File は選んだプロジェクトファイルを run にコピー）/ fork `in`→params `branches` / branch `value`,`condition`(value:bool)→`a`,`b` / merge 宣言 inputs→`out`（入力ポート名付き union `tsugumi.merge.Merged`）/ logger `in` / subgraph は `boundary`。
-- **隔離**（全体は[セキュリティと隔離](security.md)）
-  - **VM と共有するもの**: 開いているプロジェクトのフォルダと、その 0700 の control フォルダ（server.ready と import grant）、そして Card 定義やチャットで指定された Mac のフォルダ（Card の `hostFolders` は `host-<tag>`、チャットの添付は `chat-<tag>` として同じスロットに。`write: true` 以外は読み取り専用）だけです。virtiofs で共有し、プロジェクトを閉じると共有から外します。
-  - **VM の中のプロジェクト**: tsugumi-vmd がプロジェクトごとに専用の uid・mount/PID/IPC/UTS 名前空間・cgroup で tsugumid を起動します。そのプロジェクトの `/project`・`/control`・`/history` と、そのプロジェクトに共有した Mac のフォルダ（`/run/tsugumi/host/`・`/run/tsugumi/chat/`）以外（他のプロジェクト、共有の全体、store ディスク）は見えません。あるプロジェクトの停止はその cgroup だけを終わらせます。
-  - **RPC**: VM の vsock から Mac の 127.0.0.1 にだけ中継し、token は control ファイルにだけ置いて URL・ログに出しません。
-  - **`sandbox: false` の Card**: virtiofs は全ファイルを見る側の所有として見せるため、control フォルダと `.tsugumi` を空の tmpfs で隠します（ファイルの mode に頼らない）。
-  - **Card**: bubblewrap（全 namespace 分離・ネットワークなし・`/nix/store` 読取専用・自分の作業領域だけ書込可・環境変数は空から構成、nobody に対応づけた uid）で実行します。Experimental の `network: true` の Card は network 名前空間を分けず（`--share-net`、名前解決と CA のファイルを読取専用で見せる）、`hostFolders` で指定した Mac のフォルダは worker の `/host/<name>` に bind します。
-  - **bubblewrap がないとき**: Linux で使えない環境では `sandbox: true` の Card を拒否します。Mac 上の tsugumid は Seatbelt を使います（[Web UI](WebUI.md)）。
+- **隔離**: VM と共有するのは開いているプロジェクトとその control フォルダ、指定した Mac のフォルダだけで、VM の中ではプロジェクトごとに uid・名前空間・cgroup を分け、Card は bubblewrap（Mac 上の tsugumid では Seatbelt）で動かします。経路ごとの詳細は[セキュリティと隔離](security.md)の §2〜§4 にあります。
 - **永続化と実行環境の置き場所**
-  - **データの場所**: `~/Library/Application Support/Tsugumi/`（リリース版。ソースからビルドした開発版は `Tsugumi-dev/`、`AppChannel.swift`。`TSUGUMI_SUPPORT_DIR` で VM と store の置き場所だけを別にもできる）。
+  - **データの場所**: `~/Library/Application Support/Tsugumi/`（開発版は別のフォルダ。[開発版とリリース版](#リリース)。`TSUGUMI_SUPPORT_DIR` で VM と store の置き場所だけを別にもできる）。
   - **`vm/` の中身**: VM の起動ディスクの展開先（`image/`、アプリ同梱から APFS clone）、VM に読み取り専用で渡す Tsugumi のソース（`source/`、`macOS/Container/vm-source.txt` に挙げたもの。起動ごとにコピー）、全プロジェクト共通の Nix store の sparse なディスクイメージ `store.img`（既定で最大 64 GiB、使った分だけ）、コンソールログ（`console.log`・前回分の `console.prev.log`・アプリ側の記録 `launcher.log`）。`environments/<id>/control/` に各プロジェクトの control フォルダを置きます。
   - **store**: VM は store ディスクを `/persist` にし、`/nix` は rootfs の store（下層）＋ `/persist`（上層）の overlay で、nix-daemon 1 つを全プロジェクトが使います。
   - **Tsugumi 自身のビルド**: tsugumid・tsugumi-vmd・ターミナルの道具・整形ツールは、VM の `/init` が共有されたソースの flake（`packages.<system>.vm-system`）を VM の中の Nix でビルドして起動します。依存は cache.nixos.org から取り、tsugumid はソースからコンパイルします。ソースの内容の hash ごとに結果を `/persist/system/<hash>` に記録して GC root にするので、作り直すのは初回とソースが変わったとき（アプリの更新、開発中の core の変更）だけです。Mac 側には何もダウンロードしません。
@@ -85,40 +79,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
   - **削除**: 「実行履歴を削除」（`RunHistoryDelete`、全部か指定日時より前に終わったもの、実行中は不可）は VM・`.tsugumi/runs.sqlite`・実行ごとのファイルの 3 か所から消します。VM 内の履歴は自動では消さず、アプリ設定の「VM 内の実行履歴」で容量を見て、フォルダがもうないプロジェクトの分も消せます（vmd の `histories`・`forget`）。
 - **二重起動防止**: VM は `vm/vm.lock` の flock を持つアプリ 1 つだけが起動します（2 つ目のアプリは「別の Tsugumi が実行環境を使っています」で止まる）。core は `.tsugumi/tsugumid.lock` に非待機 flock を取得し、さらに同じファイルへの 2 本目の flock が拒否されること（ロックが実際に効く保存先か）を確認してから文書を開きます。
 - **Card の実行段階**: 入力待ち → SDK 準備（入出力・params の契約生成）→ Nix 評価（tsugumid に組み込んだ評価器）→ build（daemon。store に結果があれば何もしない）→ 実行（`preRun → run → postRun`）→ 出力検証 → 保存 → 完了。core は呼び出しごとに通った段階を開始・終了時刻と結果（完了・キャッシュ利用・この Run で準備済みの再利用・失敗・停止）つきで `InvocationSummary.stages` に記録し、通知と履歴の両方で返します。worker の再利用（`worker_reused`）、実際に値を送った出力ポート（`outputs_sent`、branch は選んだ側だけ）、入力が揃った時刻（`ready_at`）も持ちます。UI はこの記録だけから段階表示・配線の強調を作り、最終状態から推測しません。期限は呼び出し全体で 1 つ、各段階の開始前に取消・期限を確認します。preRun / postRun は worker を再利用しても invocation ごとに、その作業ディレクトリの中で動き、Card の入力は受け取りません（preRun は準備、postRun は成果物と後始末: `TSUGUMI_OUTPUT_DIR`・送った出力ポート `TSUGUMI_OUTPUTS`・`TSUGUMI_FAILED`）。preRun の環境変数と `cd` は後段に引き継ぎ、postRun は失敗後も後始末として動きます（`TSUGUMI_FAILED=1`、前段の失敗は消さない）。停止・期限切れの後は postRun を含めて何も始めません。
-- **Card SDK**: `default.nix` で契約から SDK を作り、Card 本体を `run` に書きます。derivation（package）なら worker がその `lib/main.so` を読み込んでメモリ経由で呼び、文字列なら bash として実行します（どちらか一方）。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。
-
-  ```nix
-  { pkgs, inputs, params }:
-  let
-    sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };   # inputs / outputs / params を明示して渡すこともできる
-  in
-  {
-    run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };   # package
-    preRun = "mkdir -p scratch";                                  # 任意。postRun も同様
-  }
-  ```
-
-  ```nix
-  { pkgs, inputs, params }: {
-    run = ''
-      jq '{out: {value: (.value + 1)}}' "$JSON_IN" > "$TSUGUMI_OUTPUT"
-    '';                                                           # bash
-  }
-  ```
-
-  ```cpp
-  #include <card.hh>
-
-  static std::vector<uint64_t> seen;               // worker は実行をまたいで常駐する
-  auto onRunStart() -> void { seen.clear(); }      // 任意: 各実行の最初の呼び出しの前
-
-  auto run(Card::Input& input) -> Card::Output {
-    Card::Output out;
-    out.next.emplace().value = input.number.value / 2;   // ポート名がそのまま member
-    tsugumi::visualization::text("halved");
-    return out;
-  }
-  ```
+- **Card SDK**: `default.nix` で契約から SDK を作り、Card 本体を `run` に書きます。derivation（package）なら worker がその `lib/main.so` を読み込んでメモリ経由で呼び、文字列なら bash として実行します（どちらか一方）。SDK は `languages` に挙げた言語の分だけ生成・build し、visualization・context・ログなど契約に依存しない部分は環境ごとに 1 度だけ build する共通の `libtsugumi_card.so` にしています（Card ごとに作るのは型と薄い adapter だけ）。`sdk { languages = [ … ]; }` には inputs / outputs / params を明示して渡すこともできます。`default.nix` と各言語のコードの例は[はじめての Card](CardGuide.md)（テストがそのまま実行する）と[主要機能 §3・§4](features.md#3-nix-による再現可能な実行環境)にあります。
 
   `Card::Input` は入力ポートごとの member（任意入力は `std::optional`、merge は入力ポート名付き union）、`Card::Output` は出力ポートごとの `std::optional`（設定したものだけ送る）、`Card::params()` が params です（数値・bool は未設定を表せる `flatbuffers::Optional` なので `.value()` / `.value_or(x)` で読む）。File / Directory は `.value` のパスで、出力先は `tsugumi::context().output_directory`。失敗は `throw tsugumi::Failure(kind, message)`、停止の確認は `tsugumi::cancelled()`。Python は `main(ctx)` と任意の `on_run_start(ctx)` です。生成ヘッダー（`_inputs_generated.h` など）を Card が include する必要はありません。
 - **worker**: プロジェクトの worker プールが Card ごとの worker を持ちます。`reuseWorker`（既定 true）の worker は実行をまたいで常駐し（static な状態も残る。各実行の最初に `onRunStart` / `on_run_start`）、ビルド・実行条件の変更、失敗・取消・期限切れ、プロジェクトの停止、10 分の未使用、2 GiB を超えるメモリ、常駐数 32 を超えた古いもので終わります。`reuseWorker = false` の Card には、使うたびに次の新しい worker を先に起動しておきます（sandbox・worker の起動・`lib/main.so` の読み込み・Python の import まで。preRun は呼び出しごと）。読み込みは worker 自身の `work/` で行います。本体の環境変数は、弱い順に worker の起動時の値、呼び出しの値、読み込み中に Card が設定した値（`main.py` の先頭。常駐のあいだ続く）、preRun の export で、Python の `os.environ` も呼び出しごとにこれに揃えます。preRun より読み込みが先なので、ライブラリが読み込み時に読む設定（OpenBLAS や libgomp のスレッド数など）は `main.py` の先頭で import の前に設定します。SDK は numpy を読み込む `flatbuffers` を先に import しないので、これに間に合います。worker の起動はプールの長命なスレッドで行います（bubblewrap の `--die-with-parent` は起動したスレッドの終了で worker を止めるため）。`filesystem: false` の Card の `work`・`tmp` と、preRun / bash の run / postRun のファイルは worker ごとの VM 内の一時領域（プロジェクトの共有フォルダではない）にあり、呼び出しの間に空にします。`out` は File / Directory の出力を持つ Card にだけ作り、下流と成果物のために残します。sandbox の中から見えるのは、プロジェクトの `runs`・保存済み入力（読み取り専用、起動時に 1 度だけ bind）と自分の一時領域で、呼び出しの出力フォルダは `SCM_RIGHTS` の FD で渡して `/proc/self/fd/900` として見せ、core が本来のパスに戻して検証します。作業フォルダは FD で渡しません（sandbox の外を指すカレントフォルダには `getcwd` が失敗する）。`filesystem: true` の Card も一時領域で動き、呼び出しの後で `work`・`tmp` を run のフォルダへ写します。入力を FD で渡さないのは、`/proc/self/fd/N` から開き直すと読み取り専用を破れるためです（入力は読み取り専用の mount で守る）。Mac の開発環境（bubblewrap なし）は本来のパスをそのまま使います。
@@ -170,7 +131,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_demos.py` | 一覧（`demos/index.json`）のすべてのデモが開いて解決できること（実装済みは診断なし、Draft 版は Draft だけ）、Plots デモの図がライブと最後の画像で表示に届くこと・Plotly と Altair の図が module 表示（図の JSON・データ込みの Vega-Lite）で届くこと、3 デモの完成条件（Collatz は C++ と Python だけの写しで独立実装の参照値と照合、子 Workflow の単体実行、反復上限と整数あふれを含む。Julia と R のビルドは走らせない）、異常終了後の interrupted と再起動、Nix 準備中の状態取得・取消。`TSUGUMI_TEST_CONTAINER=1` で実コンテナ環境に対して実行 |
 | `tests/python/test_draft_intent.py` | Agent が Draft を実装する保存: `description`・`context` が空なら拒否し（空白だけも空、材料がなければ `context` は空のまま）、Draft にあった内容の変更も拒否して何も保存しないこと、埋めれば通ること、Card in Card の中も同じこと、承認を求める前に拒否すること、Draft のままの保存・他の Card・人間の保存は対象外であること |
 | `tests/python/test_card_comments.py` | Card のコメント: Agent の保存は追加・編集・解決・削除ができ、誰が何をしたかが origin から記録される（モデルの申告は使わない。Card in Card の中も）、名前を変えてもついていく、実行に関わらない、版の履歴に変化が出る |
-| `tests/python/test_agent_contract.py` | Swift と Web の Agent が共有する `agent/Shared/`（system prompt・tool にする RPC・Agent 自身の tool と Draft 依頼文）から Swift 側の `Shared.swift` が生成済みであること、Web 側が契約（`tests/fixtures/agent-tools.json` の tool 一覧、`agent-contract.json` の FlatJSON 境界値と Draft 依頼文）を満たすこと（`web/scripts/contract.mjs`。node・`web/node_modules`・`web/src/gen` がなければ skip。tool 一覧のスナップショットは RPC を変えたら `cd web && npm run contract -- --update`）、Web UI のサーバーが ChatGPT にサインインしてプランを使うこと（`web/server/chatgptCheck.ts`、`npm run check:chatgpt`: テスト用モデルが OAuth の発行者も務め、ループバックの受け口・ID トークンの検査・0600 の記録・プランの規則・トークンの更新・利用上限・サインアウト） |
+| `tests/python/test_agent_contract.py` | Swift と Web の Agent が共有する `agent/Shared/` のファイル（system prompt・tool にする RPC・Agent 自身の tool・Draft 依頼文・ガイドなど）から Swift 側の `Shared.swift` が生成済みであること、Web 側が契約（`tests/fixtures/agent-tools.json` の tool 一覧、`agent-contract.json` の FlatJSON 境界値と Draft 依頼文）を満たすこと（`web/scripts/contract.mjs`。node・`web/node_modules`・`web/src/gen` がなければ skip。tool 一覧のスナップショットは RPC を変えたら `cd web && npm run contract -- --update`）、Web UI のサーバーが ChatGPT にサインインしてプランを使うこと（`web/server/chatgptCheck.ts`、`npm run check:chatgpt`: テスト用モデルが OAuth の発行者も務め、ループバックの受け口・ID トークンの検査・0600 の記録・プランの規則・トークンの更新・利用上限・サインアウト） |
 | `tests/python/test_claude_code_plugin.py` | Claude Code の plugin の MCP サーバー（`web/dist/mcp.js`）: Web UI のサーバーがなければ起動して `server.json` で見つけ直すこと、プロジェクトを開いてチャットの Agent と同じ道具を実行し、ページが各呼び出しを受け取ること（鳥が Card へ飛ぶ）、開く前は何も動かないこと、`server.json` の鍵は plugin の使う口にしか届かず承認に答えられないこと（node・`web/dist`・tsugumid が必要） |
 | `tests/python/test_agent_tools.py` | Agent が頼る RPC の振る舞い: `at_rev` なしの読み取りは最新、`""` はプロジェクトのフォルダ、`project_validate` は保存せずに検証、入力 Card がプロジェクトのファイルを File として渡すこと |
 | `tests/python/test_definitions.py` | 定義は Card ごとに 1 つ（名前 = ID = 定義フォルダ）、改名でフォルダと実行履歴が移ること、Card in Card は `externals/` の単独でも開けるプロジェクトで外側から編集すること、trigger |
@@ -184,7 +145,6 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_frame_fuzz.py` | 固定 seed の fuzz: Unix と WebSocket のフレーム（任意のバイト列・偽の長さ・任意のヘッダー bit・マスクなし・順不同の fragment と制御フレーム・Hello の前後でバイトを書き換えた要求）で tsugumid が落ちず止まらず、ほかの接続に正しく答え続けること（`TSUGUMI_FUZZ_CASES` で件数、既定 300） |
 | `tests/python/test_en_strings.py` | 英語 UI の訳が原文と同じ引数を同じ順に取ること（順を変える訳は `%2$llu` のような位置指定）、同梱の `Localizable.strings` が生成済みであること。ビルドが出す文字列のうち訳のないものは `en_strings.py --check <stringsdata のフォルダ>` で一覧できる |
 | `tests/python/test_demo_mnist.py` | MNIST のデモ（`TSUGUMI_TEST_DEMO_RUNS=1` のときだけ実行。Nix の取得が大きいため CI では動かしません）: 公表されている数字ごとの枚数、numpy だけの kNN と Card の一致、再実行で正解率が変わらないこと、1 つの分岐だけの実行と、そこから `compare` へ進めての比べ直し。`mnist-classifiers-draft` に完成版の Card を保存すると実行でき、Draft に書いた正解率の下限を超えること |
-| `tests/python/test_demo_mnist.py` | MNIST のデモ（`TSUGUMI_TEST_DEMO_RUNS=1` のときだけ実行。Nix の取得が大きいため CI では動かしません）: 公表されている数字ごとの枚数、numpy だけの kNN と Card の一致、再実行で正解率が変わらないこと、1 つの分岐だけの実行 |
 | `tests/python/test_demo_python_numerics.py` | Newton 法・薬物動態・最大流のデモ（`TSUGUMI_TEST_DEMO_RUNS=1`）: 厳密な根、閉じた式、総当たりのカットとの照合、1 つの Card だけの再実行 |
 | `tests/python/test_demo_python_lab.py` | 濃度–反応曲線・分子の物性・細胞画像の計数のデモ（`TSUGUMI_TEST_DEMO_RUNS=1`）: 合成データの真の値、分子式から求めた分子量、正解の位置との照合、1 つの Card だけの再実行 |
 | `tests/python/test_language_cards.py` | R と Julia の Card（`rCard`・`juliaCard`）: params・値・File 出力が言語をまたいで型のとおりに渡ること、各種の表示が記録に届くこと、スクリプトの失敗が Card の失敗になること。bash Card の `$TSUGUMI_DISPLAY`（不正な内容は理由つきで失敗） |
@@ -194,7 +154,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `tests/python/test_licenses.py` | アプリが同梱する唯一の数式フォントだけを使っていること |
 | `tests/python/test_docs.py` | 文書の検査: リンク・アンカー・パスの実在、文書・テスト・デモの一覧の漏れ、`Protocol.md` と静的サイトが生成元と一致すること、[Evidence.md](Evidence.md) のテスト名の実在、[CardGuide.md](CardGuide.md) のコードをそのページから取り出して Python・bash・C++ で実行すること |
 | `tests/python/test_cli.py` | `tsugumi` コマンド: `cli/install.sh` が各環境（`uname` と Nix は代役）で `~/.local/bin` だけに入れ、シェルの設定を変えず、チェックサムが違えば何も入れず、対応しない環境を断ること、Windows のスクリプトが WSL の中でそれを動かすこと（文面の検査で、実機ではない）、リリースの workflow がスクリプトの取得するファイルを公開すること、`tsugumi update` がリリースの `install.sh` で新しい版に入れ替え、取得できなければ今の版を残すこと、読み取り専用のデモのコピーを編集できること。Web サーバーが `tsugumi-vmhost` の代役に対して、アプリの設定（変えたものだけ書く）と `recent-projects.json`（アプリの形式）を使い、ページのオリジンを渡し、VM が使用中なら言葉で伝えること。2 回目の実行が動いているサーバーにページを開かせること、8780 が使用中なら別のポートを使うこと、WSL では Windows のブラウザを開くこと（代役）。本物の VM と Linux の実機での確認は手元で行う（node と `web/dist` が必要な部分は skip） |
-| `tests/python/test_release.py` | 版番号が `VERSION` 1 つから core・Nix・CMake・アプリに入ること、アプリが Swift Build でビルドされ、ビルドしたマシンのパス（パッケージのリソースの場所）を含まないこと、ビルドしたマシンのパス（`#filePath`）が debug ビルドの中にしかないこと、アプリと Web UI が API キーに同じ Keychain 項目を使うこと |
+| `tests/python/test_release.py` | 版番号が `VERSION` 1 つから core・Nix・CMake・アプリに入ること、アプリが Swift Build でビルドされ、ビルドしたマシンのパス（パッケージのリソースの場所）を含まないこと、ビルドしたマシンのパス（`#filePath`）が debug ビルドの中にしかないこと、開発版は自分の証明書で署名でき、リリース版は常に ad-hoc 署名であること、アプリと Web UI が API キーに同じ Keychain 項目を使うこと |
 | `tests/cpp`（`tsugumi_core_tests`） | 出力をリンクを辿らずに読むこと、型（catalog・構造的互換・merge union）、型の伝播、Nix 上流参照（直線・分岐+any・all と optional・同一ポート複数経路・feedback loop・入れ子・到達不能な循環・診断）、run plan（全体・単体・子 Workflow）、履歴の状態選択と障害注入、送信キュー（順序・seq・遅い peer の隔離）、型付き JSON schema（前方一致する名前・似た名前・エスケープした名前・未知キーのキー照合、重複キー・不正な UTF-8・非有限数・型違反・null、64 bit 整数と数値表記・encode と decode の往復） |
 | アプリ smoke（`TSUGUMI_SMOKE_DEMO=<id> TSUGUMI_SMOKE_OUT=<json>`、`TSUGUMI_SMOKE_RERUN=1` で 2 回目の実行も） | アプリ自身のコード経路で デモのコピー→環境起動→接続→配置編集の保存→実行→Display→Undo、付箋・グループ・折りたたみ・出力枠の保存、Draft の仮出力、古い基準の下書きが競合になり上書きしないこと |
 | UI スクリプト（`TSUGUMI_UI_SCRIPT=<file>`） | 実ウインドウを操作してウインドウ単位で撮影: 長い日本語名と title/sidebar、sidebar 開閉、ウインドウ縮小、Card 設定（ソース・プレビュー）、未保存編集のままカテゴリ移動と外部更新→競合で内容保持、Draft、設定の Skills→一般、エディター、外観プレビュー、Workflow 設定 |
@@ -202,25 +162,24 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | `macOS/Tests/TsugumiAppTests`（`cd macOS && swift test`） | アプリのロジック: Home から入り直したチャット（開いているセッションにつながること、接続を待って回答を再開し生成中と示すこと、停止してすぐ送った回答が「停止」と示されないこと）、モデルメニュー（開くたびの再取得、失敗・空の答え・遅い接続で保存済みの一覧が残ること）、段階とフロー方向の幾何、整列（Web と同じ fixture）、ファイル階層、params の整数表記、Skill の読込、ショートカット、同期、Agent の演出、複数のメインウインドウ（プロジェクトの開き先、ツグミがそのプロジェクトのウインドウにだけ出ること）、自動更新（版の比較、リリースの選び方、チェックサム、入れてよいアプリかの確認、開発版とリリース版のサポートフォルダ） |
 | `macOS/Tests/TsugumiBenchmarks`（`TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks`） | 描画のベンチマーク（3D 点群の 1 フレーム）。通常のテストでは動かない |
 | 実際の API（任意、`cd macOS/CoreTests && TSUGUMI_LIVE_API=1 swift test --filter liveModelChangesRunsAndReports`） | アプリと同じ Keychain の Anthropic のキーで、本物のモデルに値の変更・実行・報告を頼み、ツールのエラーがないことを確かめる（数セント程度かかるため既定では動かない） |
-| CI（`.github/workflows/ci.yml`、GitHub Actions。Actions を止めている間は、同じ検査を手元の `tests/ci-local.sh` で行う。Mac では Linux のジョブを Docker のコンテナで動かす） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid と tsugumi-worker をビルドし、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`）。文書だけの変更では macOS のジョブを省く（アプリが読む `README.md`・`docs/Philosophy.md`・`docs/Name.md`・`docs/Author.md` を除く） |
-| リリース（`.github/workflows/release.yml`、GitHub Actions） | タグ `v<VERSION>` で macOS のランナーが `build-app.sh --release` を作り、署名と Info.plist（リリース版・版番号）を確かめて `Tsugumi.zip` と `Tsugumi.zip.sha256` を GitHub Release に公開する（[リリース](#リリース)） |
+| CI（`.github/workflows/ci.yml`、GitHub Actions。同じ検査は手元の `tests/ci-local.sh` でも流せる。Mac では Linux のジョブを Docker のコンテナで動かす） | Linux: 開発シェルで tsugumid をビルドし、C++ のテスト、Web UI の型検査とビルド、`tsugumi` コマンドのビルド、文書サイトのプレイヤーの `--check`、ホストの tsugumid に対する Python のテスト（Agent 契約・Web サーバー・fuzz を含む）を流す（Card は bubblewrap で隔離）。macOS（`macos-26`）: ホストの tsugumid と tsugumi-worker をビルドし、Seatbelt の隔離のテスト、`macOS/CoreTests` と `macOS/Tests`（Dawn の renderer はキャッシュ）を流す。共通 VM は hosted runner で Virtualization.framework を使えないため Mac で確認する（`TSUGUMI_TEST_CONTAINER=1`）。文書だけの変更では macOS のジョブを省く（アプリが読む `README.md`・`docs/Philosophy.md`・`docs/Name.md`・`docs/Author.md` を除く） |
+| リリース（`.github/workflows/release.yml`、GitHub Actions） | タグ `v<VERSION>` で macOS のランナーが `build-app.sh --release` を作り、署名と Info.plist（リリース版・版番号）を確かめて `Tsugumi.zip`・`Tsugumi.zip.sha256`・`Tsugumi.dmg` と、`tsugumi` コマンドの `install.sh`・`install.ps1`・配布物を GitHub Release に公開する（[リリース](#リリース)） |
 | `tests/python/measure_stages.py` | 段階ごとの時間の計測（下記） |
 
 ## 計測（2026-11-03、高速化後・共通 VM）
 
-> **Collatz のデモについて。** この節と次の節の「Collatz」は、C++ と Python の 2 言語だった時点のデモ（約 1,340 回の呼び出し）の値です。いまの `collatz` は Julia と R が加わって 2,685 回になり、Julia と R の Card は呼び出しごとにプロセスを起こすので、常駐 worker の効果はこの 2 言語に及びません。1 回の Run は Mac 上の tsugumid・Seatbelt で 270 秒（`docs/site/player/harvest.py`）、隔離なしの 4 言語のテスト（`test_demo_collatz.py::test_collatz_27_in_four_languages`）は 368 秒かかります（共通 VM では測っていません）。CI で動く `test_demos.py` の Collatz は C++ と Python だけの写しなので、数秒のままです（`test_collatz_27` 4.9 s、`test_collatz_limit_overflow_and_skipped` 2.3 s）。`measure_stages.py collatz` は現在のデモを測るので、下の表と同じ条件では比べられません。
+> **Collatz のデモについて。** この節の「Collatz」は、C++ と Python の 2 言語だった時点のデモ（1,344 回の呼び出し）の値です。いまの `collatz` は Julia と R が加わって 2,685 回になり、この 2 言語の Card は呼び出しごとにプロセスを起こすので常駐 worker の効果が及ばず、1 回の Run に数分かかります。CI で動く `test_demos.py` の Collatz は C++ と Python だけの写しで、数秒のままです（`test_collatz_27` 4.9 s）。`measure_stages.py collatz` は現在のデモを測るので、下の表とは比べられません。
 
-条件は下の節と同じ（M3 Max、共通 VM 8 vCPU / 16 GiB、Collatz 1344 invocation、3 回目の実行）。
-変更: 履歴の書き込み削減、worker の常駐・待機 worker、VM 内の一時領域、bash 以外で入力の変換をしない、評価器の組み込み。
+条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1,344 invocation）。`tests/python/measure_stages.py collatz`（VM、`--host` で Mac 上の tsugumid）と、アプリの smoke モード（`TSUGUMI_SMOKE_RERUN=1`）で計測し、ビルド済み・worker 再利用の実行の値です。
+変更: 履歴の書き込み削減、worker の常駐・待機 worker、VM 内の一時領域、bash 以外で入力の変換をしない、評価器の組み込み、履歴用ディスクの分離。「変更前」は同じ日に同じ条件で測った値です。
 
 | 指標 | 変更前 | 変更後 | 読み方 |
 | --- | --- | --- | --- |
 | Run の所要時間（共通 VM、履歴を実行履歴用ディスクに置いた現在の構成。2〜5 回目） | 4.5〜5.0 s | 0.92〜1.0 s（1 回目 7.9 s） | 同期書き込み 1 回 0.34 ms（`dd oflag=dsync`） |
 | 同（履歴をまだプロジェクト内に置いていた段階） | 4.5〜5.0 s | 2.6〜2.9 s | 残りの大半は virtiofs 上の履歴 SQLite の確定待ちだった |
-| 同（履歴だけ VM 内の tmpfs に置いた試験） | 1.8 s | 0.8 s | 履歴を VM 内に置けばさらに 3 倍強 |
 | 同（試験: 履歴を store ディスクに置いた場合） | | 6.4〜6.6 s | store ディスクは `.full`（確定ごとに F_FULLFSYNC）で、同期書き込み 1 回 9.9 ms（virtiofs は 0.14 ms）。そのため履歴用のディスクを分けた |
 | 同（Mac 上の tsugumid、参考） | 1.35 s | 0.43 s | |
-| 1 回の受け渡し（C++ 側の直列 670 回） | 6.5 ms | 3.9 ms（tmpfs の試験で 0.55 ms） | |
+| 1 回の受け渡し（C++ 側の直列 670 回） | 6.5 ms | 3.9 ms（履歴を VM 内の tmpfs に置いた試験で 0.55 ms） | |
 | C++ Card の実行段階（平均） | 4.6 ms | 0.26 ms | 共有フォルダ上のフォルダ作成・削除と入力ファイルがなくなった |
 | 2 回目以降の準備段階（9 Card の合計） | 約 470 ms | 20 ms | 評価器の再利用（評価 1 Card 中央値 2 ms）、`nix-store` 起動とファイル書き出しなし |
 | 1 回目（プロジェクトを開いて最初） | 7.8 s | 9.4 s | nixpkgs の読み込みを含む評価（tsugumid ごとに 1 回） |
@@ -228,45 +187,8 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | 共有 store の掃除 | — | 1203 → 712 MiB | root のある Card のコンパイラ・nixpkgs のソースは残る（`keep-outputs`） |
 
 保存段階の記録は確定（commit）の直前で閉じるので、確定待ちは段階の外（終了から通知まで）に現れます。
-入力を FD で渡さない理由は実測で確認しました: 読み取り専用で開いた FD を bubblewrap に渡すと、中から
-`/proc/self/fd/3` に書き込めて元のファイルが変わり、パスでは読み取り専用の bind で拒否されます。
 
-## 計測（2026-11-03、共通 VM、高速化前）
-
-高速化前の比較用記録です。ここで調べていた履歴保存の待ち時間には、常駐 worker・VM 内の一時領域・履歴用ディスクの分離などで対処しています。変更後の値と条件は[高速化後の計測](#計測2026-11-03高速化後共通-vm)にあります。
-
-条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, 共通 VM 8 vCPU / 16 GiB、Collatz デモ（1344 invocation）。
-`tests/python/measure_stages.py collatz`（VM、`--host` で Mac 上の tsugumid）と、アプリの smoke モード
-（`TSUGUMI_SMOKE_RERUN=1`）で計測。いずれも 2 回目（ビルド済み・worker 再利用）の値です。
-
-| 指標 | 共通 VM | Mac 上の tsugumid | 読み方 |
-| --- | --- | --- | --- |
-| Run の所要時間（core の記録） | 4.6〜4.8 s | 1.3 s | 差の大半は下の「保存」 |
-| 保存段階（履歴 SQLite・成果物の記録） | 合計 7.9〜8.1 s、中央値 6 ms | 合計 0.64 s、中央値 0 ms | VM ではプロジェクトフォルダが virtiofs 越し。同期書き込み自体は 1 回 0.14 ms（`dd oflag=dsync`）で、fsync が主因ではない。SQLite の WAL・ロックとファイル操作の往復が候補（未断定） |
-| 実行段階 | 合計 2.9〜3.2 s、中央値 1 ms | 合計 1.0 s、中央値 1 ms | worker は再利用（`build/reused`・`evaluate/reused` 662 回、0 ms） |
-| 評価・ビルド | キャッシュ（0 ms） | キャッシュ（0 ms） | 実行のたびに SDK 準備・build を繰り返していない |
-| 終了から通知まで | 中央値 8.3 ms、最大 22 ms | 中央値 3.8 ms、最大 6 ms | VM の時計は 30 秒ごとに Mac に合わせる（合わせる前は 0.38 s 進んでいた） |
-| core の終了 → アプリが終了を表示 | 20〜60 ms（Collatz 4.63 s → 4.68 s） | — | core は UI を待たない。アプリは 1.3 万件の通知を 262〜325 回にまとめて反映 |
-| アプリ起動 → 操作可能（VM 起動を含む） | 6.2〜9.8 s | — | VM の起動・store の mount・nix-daemon・DHCP・tsugumid |
-
-## 計測（2026-11-02、Apple container 時代）
-
-現在の共通 VM に移る前の記録です。下表のイメージ・プロジェクトごとの store・起動時間は当時の構成に対する値です。
-
-条件: MacBook Pro M3 Max（36 GB）, macOS 27.2, Apple container 0.6.0, 環境 2 vCPU / 4 GiB / store volume 20 GiB,
-デモは各 1 回（Live Stream の継続利用は 10 回）。アプリの smoke モード（`TSUGUMI_SMOKE_DEMO`）と
-`tests/python` のスクリプトで、実コンテナ環境に対して計測しました。
-
-| 指標 | 実測 | 目標との比較 |
-| --- | --- | --- |
-| 基本イメージ | OCI 圧縮 93.5 MB / 展開後 `/nix/store` 272 MB（整形ツール astyle・ruff・nixfmt・shfmt を加えた当時の版は圧縮 103 MB。clang-format は LLVM 全体で約 540 MB 増えるため入れていない） | 大きい依存: glibc 47 MB, ICU 42 MB と Boost 18 MB（Nix 本体の依存）, util-linux 29 MB（overlay の mount だけに使用。静的 mount に置換可能）, bash 9.5 MB, OpenSSL 9 MB, SQLite 6 MB, tsugumid 一式 6 MB |
-| Nix 依存取得後の store（プロジェクトごとの volume 上層） | 約 816 MB | gcc 280 MB（C++ Card）, 固定 nixpkgs ソース 200 MB（Card の Nix 評価）, Python 146 MB, perl 59 MB・binutils 38 MB（stdenv）。10 回実行での増加 0 |
-| 履歴・成果物 | Live Stream 1 回で SQLite 約 5 MB（WAL 込み）、10 回で +8.8 MB。Report の成果物 29 KB | ログと I/O 記録量に比例 |
-| 起動（キャッシュ済みイメージ, 新規コピーのデモを開く→操作可能） | 1.5〜3.1 s（コンテナ起動・store volume 作成・Hello・Open を含む） | 目標 10 s 以内を達成 |
-| 初回準備（新しい store へのツールチェーン取得＋ビルド＋実行） | Collatz 22.5 s, Report 13.4 s, Live Stream 36.7 s（うち標本間隔の待機 20 s） | 回線速度に依存（cache.nixos.org） |
-| 応答（Live Stream 実行中の別接続からの RunStatus、100 回） | p50 2.1 ms / p99 10.0 ms | RPC は 100 ms 以内。この計測に SwiftUI の画面での入力応答時間は含めていない |
-| 取消 | RunCancel 応答 8.3 ms、Live Stream の worker 停止→cancelled まで 0.12 s。Nix 準備中の取消 0.11 s（別計測、実コンテナ） | 目標（100 ms / 2 s）を達成 |
-| 継続利用（Live Stream 10 回、各 24.2〜24.8 s） | 残存 worker/sandbox プロセス 0→0、store 増加 0、履歴 +8.9 MB（WAL 込み）、tsugumid RSS 12.2→15.0 MB | 当初は終了済み sandbox helper の zombie が 1 回あたり 2 個残っていた（tsugumid が PID 1 で reap しなかった）。tini を PID 1 にして解消し、再計測で 0 を確認 |
+高速化前の同じ条件では、core の終了からアプリが終了を表示するまで 20〜60 ms（core は UI を待たず、アプリは 1.3 万件の通知を 262〜325 回にまとめて反映）、アプリの起動から操作できるまで（VM の起動を含む）6.2〜9.8 s でした。
 
 ## 実装状況
 
@@ -275,7 +197,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | 領域 | 状況 |
 | --- | --- |
 | FBS 契約（全要求・成功型・Failure・通知・worker.fbs）、flatc による C++/Python/Swift binding 生成 | 実装済み |
-| tsugumid: [Protocol.md](Protocol.md) の全 RPC（41 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、イメージでは astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
+| tsugumid: [Protocol.md](Protocol.md) の全 RPC（41 種。SessionHello、Project*、OperationGet、CardSDK*、Run*、Artifact*、LogRange、View*、OutputTypes、AttachedFolderRead、Version*） | 実装済み（契約テスト）。Format は JSON・C++（clang-format、VM では astyle）・Python（ruff）・Nix（nixfmt）・shell（shfmt）、FBS は `unsupported` |
 | 実行段階の通知・キャッシュ表示、Nix 上流参照、Card in Card の実行、Draft のポートと blocked 理由、表示（text・scalar・折れ線・表・画像・3D 点群・Canvas module） | 実装済み（C++/Python/コンテナのテスト） |
 | 保存 transaction・journal・receipt・障害復旧・二重起動防止 | 実装済み |
 | スケジューラー（all/any、有界 queue、背圧、maxRuns、skipped/blocked、並列 1〜64、取消、期限、再起動時 interrupted） | 実装済み |
@@ -284,15 +206,15 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | bubblewrap による Card 隔離、環境変数の非継承、`sandbox:false` の扱い | 実装済み（共通 VM） |
 | 共通 VM（Virtualization.framework、読み取り専用 rootfs、共通 Nix store、実行履歴ディスク、プロジェクトごとの uid・名前空間・cgroup、ローカル限定公開） | 実装済み |
 | Card ごとのネットワーク・Mac のフォルダ（`network`・`hostFolders`）、チャットへのフォルダ添付 | Experimental（`test_workers.py`・`test_definitions.py`） |
-| SwiftUI アプリ（[ui-view.md](ui-view.md) の構成、split view の sidebar と、Workbench の横のチャット欄、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。アプリのロジックテスト、smoke、UI スクリプトで確認。[README の実画面](../README.md#画面でたどる実験と検証)と[撮影スクリプト](../macOS/tools/screenshots/readme.ui)を公開 |
+| SwiftUI アプリ（[画面の構成](features.md#8-uiワークベンチ)、split view の sidebar と、Workbench の横のチャット欄、上から下へ流れる Canvas〔共通の Card 表現・段階表示・グループ・付箋・出力枠・Card in Card の作成〕、Card 設定〔実 Card と同じプレビュー・既定値と上書きの区別・構文強調/整形/エラー位置/生成 _inputs.fbs・外部更新との競合保持・境界ポート〕、Draft 編集と生成、定義 tree、表示 7 種、設定〔Skills の非同期読込・エディター見本・操作できる外観プレビュー〕） | 実装済み。アプリのロジックテスト、smoke、UI スクリプトで確認。[README の実画面](../README.md#画面でたどる実験と検証)と[撮影スクリプト](../macOS/tools/screenshots/readme.ui)を公開 |
 | Dawn 描画層（Metal、サイズ変更・高 DPI・フレーム単位の集約・資源解放） | 実装・ビルド済み。点群の描画ベンチマークと [Live Stream の撮影スクリプト](../macOS/tools/screenshots/live-stream.ui)を用意（[確認範囲](#確認範囲)） |
 | Agent（provider 設定・Keychain・モデル一覧、streaming、BFBS 由来 tool、引数検証、実 RPC、取消、再試行、会話と証跡の永続化・再開、文脈圧縮、プロンプトキャッシュ） | 実装済み。テスト用モデル（`tests/fixtures/model_fixture.py`）で読取→変更→実行→説明、Draft の実装、取消、取消後の再試行（未回答の tool_use を閉じる）、切断・出力上限での再試行、手数の上限と続行、文脈圧縮、キャッシュの記録を自動テスト。実際の API（claude-sonnet-5-5）での Draft から実行までの記録は [AgentRun.md](AgentRun.md) |
 | Web 検索（プロバイダの `web_search`、設定でオンとオフ、既定はオフ） | 実装済み（アプリと Web UI）。テスト用モデルに対する自動テストだけで（`macOS/CoreTests` の `WebSearchTests`、`npm run contract`）、**実際の API と ChatGPT プランではまだ確かめていません** |
 | ChatGPT プラン（Sign in with ChatGPT: ループバックでのサインイン、ID トークンの検査、Keychain / 0600 の記録、トークンの更新と取り消し、プランの規則、利用上限、「Manage usage」） | 実装済み（アプリと Web UI）。認証フローはテスト用モデルを OAuth の発行者とした自動テスト（`macOS/CoreTests`、`npm run check:chatgpt`）。実際のプランで判明したモデル指定の問題は[修正済み](https://github.com/gen740/Tsugumi/commit/8c107a9)。API キーと ChatGPT の併用・接続ごとのモデル選択も[実装済み](https://github.com/gen740/Tsugumi/commit/14ff8fa) |
 | 外部 Logger DB | `sqlite:<name>` のみ（`.tsugumi/logger/`）。他の DB は `unsupported` |
-| 版の管理（git・実行ごとの版と結果・版のツリー、`VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`） | 実装済み（[Versions.md](Versions.md)、`test_versions.py`） |
+| 版の管理（git・実行ごとの版と結果・版のツリー、`VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`・`VersionCanvas`・`VersionDiff`・`VersionSummary`） | 実装済み（[Versions.md](Versions.md)、`test_versions.py`） |
 | Agent の権限の承認（Card の権限を広げる保存は `approval_required`） | 実装済み（[security.md](security.md#agent-の権限境界)、`test_permissions.py`） |
-| ツグミのガイド（`guide_show`・`$demo`）、helper への手分け（`delegate`） | 実装済み（[features.md](features.md#9-agent)、`macOS/CoreTests`・`macOS/Tests` の Guide のテスト、Web の helper の鶫は `web/tests/helperBirds.ts`、キーのないときの台本は `web/tests/guideScript.ts`） |
+| ツグミのガイド（`guide_show`・`$demo`）、helper への手分け（`delegate`） | 実装済み（[features.md](features.md#9-agent)、`macOS/CoreTests`・`macOS/Tests` の Guide のテスト、Web の helper の鶫は `web/tests/helperBirds.ts`、キーのないときの台本はアプリと Web で共通の `agent/Shared/guide-script.json`、そのテストは `web/tests/guideScript.ts`） |
 | Claude Code の plugin | 実装済み（[claude-code.md](claude-code.md)、`test_claude_code_plugin.py`） |
 | Web UI（同じ画面・操作・ショートカットをブラウザで。Mac 上の tsugumid、Seatbelt による Card の隔離） | 実装済み（[WebUI.md](WebUI.md)）。型検査・ビルドに加え、UI の振る舞い、Agent の共通契約、ホストサーバー、Seatbelt の隔離を対象とするテストあり（上のテスト一覧） |
 
@@ -305,14 +227,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 | UI スクリプトとスクリーンショット | アプリ内の操作経路で実ウインドウを操作し、Card・子 Workflow・ソース・タイムライン・ガイドを撮影。公開画像と撮影手順は [README](../README.md) と [macOS/tools/screenshots](../macOS/tools/screenshots/README.md)。実マウスによるクリック・ドラッグの E2E テストとは確認範囲が異なる |
 | Dawn の描画 | 描画ベンチマークは `TSUGUMI_BENCH=1` で実行。Live Stream の折れ線は `live-stream.ui` で実画面を撮影できる。目視確認の結果は本資料には記録していない |
 | Agent と ChatGPT | テスト用モデルでは認証・取消・再試行などの分岐を自動確認。実 Claude API の実行記録は [AgentRun.md](AgentRun.md)、実 ChatGPT プランでの修正は上のコミットを参照 |
-| CI と共通 VM | CI の対象とコマンドは [ci.yml](../.github/workflows/ci.yml)、実行結果は [GitHub Actions](https://github.com/gen740/Tsugumi/actions/workflows/ci.yml)。Actions を止めている間は、merge の前に手元で `tests/ci-local.sh` を通す。共通 VM のテストは Virtualization.framework を使える Mac で `TSUGUMI_TEST_CONTAINER=1` を指定して行う |
-
-## 解決済みの記録
-
-以下は Apple container を使っていた構成で発生し、対処した問題の記録です。現在の実行基盤は上の[共通 VM](#実行基盤)です。
-
-- **VM が終了できず残る問題（Apple container 時代）**: Apple container 0.6.0 の推奨カーネル（6.12.28）では、マウント名前空間が片付けられるとき（Nix のビルド sandbox・bubblewrap・コンテナの終了）に SELinux の inode 解放処理 `selinux_inode_free_security` が NULL を参照して kernel oops になり、そのプロセスが終わらず VM が終了処理に進めませんでした。Tsugumi は SELinux を使わない（Card の隔離は bubblewrap の名前空間）ので、同じ設定から SELinux だけを外した専用カーネル（`macOS/Container/kernel.nix`）を作りました。現在の共通 VM もこのカーネルを使います。変更後、起動→Collatz 実行→停止→削除の 8 回の繰り返し（当時の `tests/python/stress_shutdown.py`）で oops 0 件・残存 0 でした。
-- CacheClear の Nix GC が環境自身の実行時パスまで回収し、次の起動で entrypoint が壊れる問題がありました（Apple container 時代の、プロジェクトごとの store）。イメージの実行時 closure を GC root にし、起動時に上層の whiteout を取り除くよう修正しました。現在は全プロジェクトで 1 つの store を共有し、GC root は vmd が管理します（[実行環境の置き場所](#主な設計上の決定)）。
+| CI と共通 VM | CI の対象とコマンドは [ci.yml](../.github/workflows/ci.yml)、実行結果は [GitHub Actions](https://github.com/gen740/Tsugumi/actions/workflows/ci.yml)。同じ検査は手元の `tests/ci-local.sh` でも流せる（Mac では Linux のジョブを Docker のコンテナで動かす）。共通 VM のテストは Virtualization.framework を使える Mac で `TSUGUMI_TEST_CONTAINER=1` を指定して行う |
 
 ## 今後の拡張
 

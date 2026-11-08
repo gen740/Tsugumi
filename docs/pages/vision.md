@@ -44,7 +44,7 @@ Vibe coding で素早く作った便利なツールが、いつの間にかブ�
 **一度作った処理を、確かめながら次の用途へ育てる。**
 変更する箇所と、その影響が届く先を同じ Workflow で見渡し、必要な部品を組み替えて使い続けることが、エンジニアリングにおける Tsugumi の狙いです。
 
-関連する機能：[Card の編集と結果の確認](ui-view.md#card-の編集と結果の確認)、[Card と Workflow](features.md#2-card-と-workflow)
+関連する機能：[UI（ワークベンチ）](features.md#8-uiワークベンチ)、[Card と Workflow](features.md#2-card-と-workflow)
 
 ## 業務自動化とデータの境界
 

@@ -54,7 +54,7 @@ final class AgentPresence {
     static let threadStart = 0.35, threadLength = 1.1
     static let run = 1.4
     /// The API sends a file in lumps of about 200 characters, about every 0.43 s
-    /// (measured: docs/ui-view.md), which at once would replace the panel's lines
+    /// (measured with claude-sonnet-5-5), which at once would replace the panel's lines
     /// each time. What arrives is written out over this long, up to the next lump.
     static let codeEase = 0.45
     /// A short file is seen this long at the least.

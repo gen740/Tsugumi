@@ -1,11 +1,8 @@
-# README 用スクリーンショット
+# 撮影スクリプト
 
 `macOS/tools/run-ui.sh` で、デモのコピーを開いて撮影します（他の Tsugumi が起動していないこと）。
-`workflow.ui` は Keychain の Anthropic キーで実際に Claude に依頼します（API 料金がかかります）。
 
-```bash
-cp -R demos/collatz /tmp/shot-collatz && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/workflow.ui /tmp/shots /tmp/shot-collatz
-```
+Live Stream の Dawn の折れ線（`live-stream.ui`、実画面での確認用）:
 
 ```bash
 cp -R demos/live-stream /tmp/shot-live && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live

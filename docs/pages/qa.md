@@ -39,7 +39,7 @@ AI の報告を読んで信じるのではなく、気になったところへ�
 
 **処理のつながりは、文章よりも図のほうが正確に渡せるからです。**
 
-観測データをダウンロードして、エネルギーで区切って、描画する。やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。それなのに文章で頼むと、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直すことになります。10 段の処理に分岐と合流が入れば、どの出力をどの入力へ渡すかを文章で書き切るのは、さらに難しくなります。書いた本人も、抜けや食い違いに気づけません。
+[README](../index.md#ai-に頼みたいことは本来単純なはずです) の例のように、やりたいことは箱を三つ描けば伝わるくらい単純でも、文章で頼むと長い指示と長いレポートの往復になります。10 段の処理に分岐と合流が入れば、どの出力をどの入力へ渡すかを文章で書き切るのは、さらに難しくなります。書いた本人も、抜けや食い違いに気づけません。
 
 - **Draft** は、名前と「何をするか」だけを書いた、まだ実装のない Card です。`E` で置いて書き、線でつなぐと、ポートは線に合わせてできます。
 - 並べた Draft の図を仕様にして、右上の「Card を生成」で Agent に実装を頼みます。
@@ -68,7 +68,7 @@ AI の報告を読んで信じるのではなく、気になったところへ�
 
 **確かめる場所**
 
-- デモ「Cas A · Chandra RGB」: Chandra の観測を hash で固定して取得します。520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります（[README](../index.md#画面でたどる実験と検証)）。
+- デモ「Cas A · Chandra RGB」: Chandra の観測を hash で固定して取得します。観測（既定の ObsID 25628 は 13 MB、ObsID 114 に変えると 520 MB）は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります（[README](../index.md#画面でたどる実験と検証)）。
 - デモ「Collatz」: C++・Python・Julia・R で別々に書いた同じループが、27 から同じ 112 個の数列を返すことを確かめます（[test_demo_collatz.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_collatz.py)）。
 - Card の環境の定義: [sdk/nix/default.nix](https://github.com/gen740/Tsugumi/blob/main/sdk/nix/default.nix)、[主要機能 §3](features.md)
 - 常駐 worker と、実行ごとの初期化: [test_workers.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)
@@ -164,11 +164,8 @@ Tsugumi では、保存された最新入力を使って、選んだ Card だけ
 
 **保存の時点で軽く確かめ、最後は Nix の評価で決まります。**
 
-- Card の `default.nix` からは、必ず先に実行される上流の Card の定義を `inputs.upstream.<id>` で参照できます。`inputs.local.<id>` は、そのうち同じ階層の Card だけです。
-- 保存や検査のときに、ソースに直接書かれた参照をスキャナで確かめます。自分自身、存在しない Card、先に実行されるとは限らない Card（分岐の片側にしかない Card など）への参照は、`nix_reference_*` の診断としてすぐに出ます。コメントと文字列の本文は対象外で、文字列に埋め込んだ式は対象です。
-- 別名や、動的に組み立てた属性名は事前には確かめません。評価器には参照してよい Card の定義しか渡さないので、それ以外を参照すると Nix の評価エラーになります。
+Card の `default.nix` から参照できるのは、必ず先に実行される上流の Card の定義だけです。ソースに直接書かれた参照は保存のときに `nix_reference_*` の診断として出し、別名などの間接的な参照も、評価器にその範囲の定義しか渡さないので評価エラーになります。規則の詳細は[主要機能の上流定義の参照](features.md#上流定義の参照inputsupstream)、理由は[設計の独自性](novelty.md#分岐を含む-workflow-とnix-の依存関係を整合させる)にあります。
 
 **確かめる場所**
 
 - 必ず先行する Card の解析（直線・分岐と `any`・`all` と optional・同じポートへの複数経路・ループ・入れ子・到達できない循環）: [tests/cpp](https://github.com/gen740/Tsugumi/tree/main/tests/cpp)、[core/src/graph.cc](https://github.com/gen740/Tsugumi/blob/main/core/src/graph.cc)（`compute_guarantees`）
-- 仕組みの説明: [主要機能の上流定義の参照](features.md#上流定義の参照inputsupstream)

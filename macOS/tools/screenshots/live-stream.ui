@@ -1,4 +1,4 @@
-# README の live-stream.png: 乱数歩行を Dawn の折れ線で逐次表示している画面
+# Dawn の折れ線の確認用: 乱数歩行を逐次表示している途中と、終わった後の画面
 size 1440 900
 chat hide
 wait 2

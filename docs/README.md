@@ -7,11 +7,11 @@
 
 | 文書 | 内容 |
 | --- | --- |
-| [INSTALL.md](../INSTALL.md) | GitHub Releases のアプリの導入・自動更新と、ソースからのビルド手順 |
+| [INSTALL.md](../INSTALL.md) | デスクトップアプリと `tsugumi` コマンド（Mac・Linux・Windows）の導入と更新、ソースからのビルド手順 |
 | [Usage.md](Usage.md) | デモの案内に沿って始める手順と、よく使う操作 |
 | [CardGuide.md](CardGuide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する） |
 | [Demos.md](Demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
-| [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（Mac 上の tsugumid、Seatbelt での隔離） |
+| [WebUI.md](WebUI.md) | ブラウザで同じ画面を使う Web UI（`tsugumi` コマンド: Mac は共通 VM、Linux は bubblewrap、Windows は WSL） |
 | [claude-code.md](claude-code.md) | Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう |
 
 ## 考え方を知る
@@ -34,7 +34,6 @@
 | [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
 | [Versions.md](Versions.md) | 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」 |
 | [security.md](security.md) | 守っていること・守っていないことの要点と、4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
-| [ui-view.md](ui-view.md) | macOS アプリの画面構成と操作の仕様 |
 | [Protocol.md](Protocol.md) | RPC 契約: 41 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成） |
 | [Glossary.md](Glossary.md) | Card・Draft・Run・invocation・版などの用語集 |
 
@@ -44,7 +43,7 @@
 | --- | --- |
 | [Evidence.md](Evidence.md) | 主張ごとの確かめ方: テスト名・コマンド・最後に確認した環境 |
 | [AgentRun.md](AgentRun.md) | 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録 |
-| [Development.md](Development.md) | 実行基盤の設計決定、テストと確認範囲、構成ごとの計測、現在の実装状況と解決済みの記録 |
+| [Development.md](Development.md) | 実行基盤の設計決定、テストと確認範囲、計測、現在の実装状況 |
 | [Lock.md](Lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
 | [Provenance.md](Provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
 | [LicenseAudit.md](LicenseAudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |

@@ -223,7 +223,7 @@ Tsugumi は、この三つを同じ Workflow の上で共有します。意図�
 | --- | --- |
 | **はじめる** | [インストール](pages/install.md) · [操作ガイド](pages/usage.md) · [はじめての Card](pages/cardguide.md) · [同梱デモのしくみ](pages/demos.md) · [Web UI](pages/webui.md) · [Claude Code から使う](pages/claude-code.md) |
 | **考え方を知る** | [Q&A](pages/qa.md) · [設計の独自性](pages/novelty.md) · [構想と応用](pages/vision.md) · [AI に使われないために、何を作るか](pages/philosophy.md) · [名前の由来](pages/name.md) · [作った人](pages/author.md) · [私にしかない深さ](pages/origin.md) · [まだできないこと](pages/limitations.md) |
-| **仕組みを知る** | [主要機能](pages/features.md) · [版の管理](pages/versions.md) · [セキュリティと隔離](pages/security.md) · [画面の仕様](pages/ui-view.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
+| **仕組みを知る** | [主要機能](pages/features.md) · [版の管理](pages/versions.md) · [セキュリティと隔離](pages/security.md) · [RPC 契約](pages/protocol.md) · [用語集](pages/glossary.md) |
 | **記録と開発** | [主張と、それを確かめる方法](pages/evidence.md) · [実際の Claude API での実行記録](pages/agentrun.md) · [開発資料](pages/development.md) · [固定しているバージョン](pages/lock.md) · [制作範囲と事前準備](pages/provenance.md) · [ライセンス調査](pages/licenseaudit.md) |
 
 すべての文書の一覧は [docs/README.md](pages/documents.md) にあります。

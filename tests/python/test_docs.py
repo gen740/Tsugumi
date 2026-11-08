@@ -23,7 +23,7 @@ DOCS = ROOT / "docs"
 PAGES = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "INSTALL.md", ROOT / "THIRD_PARTY_NOTICES.md", *sorted(p for p in DOCS.glob("*.md") if p.name != "index.md")]
 
 # Paths made by a build or at run time, and files of an earlier setup named as history.
-NOT_IN_GIT = {"web/src/gen", "web/dist", "web/node_modules", "agent/guide/", "tests/python/stress_shutdown.py"}
+NOT_IN_GIT = {"web/src/gen", "web/dist", "web/node_modules", "agent/guide/"}
 
 
 def strip_code(s: str) -> str:

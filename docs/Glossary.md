@@ -43,10 +43,10 @@ Tsugumi の文書と画面で使う言葉です。詳しくは各行のリンク
 | **RPC** | UI・Web・Agent が `tsugumid` と話す契約（[Protocol.md](Protocol.md)） |
 | **`op_id`** | 変更を伴う要求の ID。同じ ID の再送は 1 回だけ適用される |
 | **rev** | 文書のリビジョン。保存の基準にし、古い基準の保存は競合として拒否する |
-| **共通 VM** | Mac アプリが 1 台だけ起動する Linux VM（[セキュリティと隔離](security.md)） |
+| **共通 VM** | Mac アプリと Mac の `tsugumi` コマンドが共有する 1 台の Linux VM。同時に使えるのはどちらか一方（`vm.lock`、[セキュリティと隔離](security.md)） |
 | **`tsugumi-vmd`** | VM の中の管理プロセス。プロジェクトごとに uid・名前空間・cgroup を分けて `tsugumid` を起動する |
 | **worker** | Card のコードを動かすプロセス。実行をまたいで常駐できる（[常駐 worker](features.md#常駐-worker)） |
-| **bubblewrap / Seatbelt** | Card の隔離の仕組み。VM の中では bubblewrap、Mac 上の `tsugumid`（Web UI）では Seatbelt |
+| **bubblewrap / Seatbelt** | Card の隔離の仕組み。VM の中と Linux では bubblewrap、リポジトリから Mac で直接動かす Web UI では Seatbelt |
 | **pkgsPath** | Card が使う nixpkgs の固定先（`tsugumi.json`） |
 
 ## Agent

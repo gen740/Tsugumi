@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the checks of .github/workflows/ci.yml on this machine. GitHub Actions
-# is turned off for the repository, so a change is merged once this passes.
+# Runs the checks of .github/workflows/ci.yml on this machine, as a local
+# stand-in for GitHub Actions.
 #
 #   tests/ci-local.sh          both jobs (on a Mac: macOS here, Linux in Docker)
 #   tests/ci-local.sh mac      the macOS job: Swift tests and Seatbelt isolation

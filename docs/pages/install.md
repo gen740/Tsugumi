@@ -2,7 +2,7 @@
 
 ## 入手のしかた
 
-**macOS・Linux・Windows に対応しています**（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
+**macOS・Linux・Windows に対応しています**（macOS と Linux（OrbStack の VM）で確認）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
 
 初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。
 
@@ -63,22 +63,22 @@ tsugumi update
 ```
 
 - **入るもの**: コマンド（`~/.local/bin/tsugumi`）と、その中身（`~/.local/share/tsugumi/<版>/`）だけです。`~/.local/bin` が `PATH` にないときはそう表示し、シェルの設定は変更しません。`tsugumi update` か入れ直しで新しい版に置き換わります（自動では更新しません）。消すときは `rm ~/.local/bin/tsugumi` と `rm -r ~/.local/share/tsugumi` です。
-- **Mac（Apple silicon / macOS 26 以降）**: Node.js と VM の起動ディスクを含む `tsugumi-macos-arm64.tar.gz` を取得します。Card はデスクトップ版と同じ共通 Linux VM で動くので、Nix を別に入れる必要はありません。初回は VM の中で Tsugumi を組み立てるので数分かかります。設定はデスクトップ版のものを読み書きします（[Web UI](webui.md#tsugumi-コマンド)）。VM は同時に 1 つのアプリしか使えないので、デスクトップ版でプロジェクトを開いている間は使えません。
-- **Linux（x86_64 / aarch64）**: [Nix](https://nixos.org/download) が必要です。ソースの `tsugumi-linux.tar.gz` を取得して Nix でビルドします（初回は数分かかります）。`tsugumid` はこのホストで直接動き、Card は bubblewrap で隔離します。
-- **Windows（未確認）**: WSL2 と、その中の Linux に入れた [Nix](https://nixos.org/download) が必要です。`install.ps1` は既定の WSL の Linux で `install.sh` を実行し、`%USERPROFILE%\.local\bin\tsugumi.cmd` を作ります（`PATH` は変更しません）。`tsugumi` は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。**Windows の実機ではまだ一度も動かしていません**（確かめたのは PowerShell の構文と、WSL でブラウザを開く処理の代役を使ったテストだけです）。
+- **Mac（Apple silicon / macOS 26 以降）**: Node.js と VM の起動ディスクを含む `tsugumi-macos-arm64.tar.gz` を取得します。Card はデスクトップ版と同じ共通 Linux VM で動くので、Nix を別に入れる必要はありません。初回は VM の中で Tsugumi を組み立てるので数分かかります。デスクトップ版と共有する設定や、同時に使えない場合は [Web UI](webui.md#tsugumi-コマンド) にあります。
+- **Linux（x86_64 / aarch64）**: [Nix](https://nixos.org/download) が必要です。ソースの `tsugumi-linux.tar.gz` を取得して Nix でビルドします（初回は数分かかります。動き方は [Web UI](webui.md#tsugumi-コマンド)）。
+- **Windows**: WSL2 と、その中の Linux に入れた [Nix](https://nixos.org/download) が必要です。`install.ps1` は既定の WSL の Linux で `install.sh` を実行し、`%USERPROFILE%\.local\bin\tsugumi.cmd` を作ります（`PATH` は変更しません）。`tsugumi` は WSL の中で Linux と同じように動き、ページは Windows のブラウザに開きます。プロジェクトは WSL のファイルシステムに置き、フォルダは WSL から見た絶対パスで渡します。**Windows の実機ではまだ動かしていません**（確かめたのは PowerShell の構文と、WSL でブラウザを開く処理の代役を使ったテストだけです）。
 - 取得したファイルはチェックサム（`.sha256`）を確かめてから入れます。版を指定するときは環境変数 `TSUGUMI_VERSION` を使います。
 
 ## ソースからビルドする
 
 以下はアプリを作る手順と、Tsugumi 本体や実行基盤を開発・変更する場合の手順です。コマンドは特記のない限りリポジトリのルートで実行します。
 
-ソースからビルドしたアプリは**開発版**（Tsugumi Dev）です。リリース版とは別のアプリとして扱われ（bundle id `app.tsugumi.Tsugumi.dev`）、VM・Nix store・control フォルダ・会話履歴を `~/Library/Application Support/Tsugumi-dev/` に置きます（リリース版は `Tsugumi/`）。そのため、開発版や開発版で回すテストがリリース版の VM を止めたり初期化したりすることはなく、両方を同時に起動できます。開発版は自動更新しません。
+ソースからビルドしたアプリは**開発版**（Tsugumi Dev）です。リリース版とは別のアプリとしてサポートフォルダ（`~/Library/Application Support/Tsugumi-dev/`）を分けるので、リリース版の VM に触れず、両方を同時に起動できます。開発版は自動更新しません（[開発資料](development.md#リリース)の「開発版とリリース版」）。
 
 ### 前提環境
 
 - Nix（flakes 有効）
 - Xcode または Command Line Tools
-- VM の起動ディスクをビルドするとき（[公開版](https://github.com/gen740/tsugumi-vm)がないとき）のみ、Apple container 0.6.0（`container system start` 済み）
+- VM の起動ディスクをビルドするとき（[公開版](https://github.com/gen740/tsugumi-vm)がないとき）のみ、Apple container（版は [macOS/Container/versions.env](https://github.com/gen740/Tsugumi/blob/main/macOS/Container/versions.env) の `TSUGUMI_CONTAINER_VERSION`。`container system start` 済み）
 
 依存ライブラリの固定バージョンは [docs/Lock.md](lock.md) にまとめています。
 
@@ -116,21 +116,9 @@ macOS/Container/build-image.sh --vm
 
 ビルダーのリソースは環境変数 `TSUGUMI_BUILDER_CPUS`（既定 `8`）、`TSUGUMI_BUILDER_MEMORY`（既定 `16G`）、`TSUGUMI_BUILDER_VOLUME`（Nix キャッシュ用 volume、既定 `tsugumi-builder-nix`）で調整できます。
 
-Dawn 描画層のビルド（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）：
+[最小の手順](#最小の手順)の `ui/renderer/build.sh` は Dawn 描画層をビルドします（初回のみ Dawn と依存ライブラリの取得・ビルドで数分かかります）。
 
-```bash
-ui/renderer/build.sh
-```
-
-アプリ本体のパッケージング（`dist/Tsugumi.app` を生成。`--release` をつけるとリリース版として作ります（リリースの workflow が使う。[開発資料](development.md#リリース)）。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、このマシン用の ad-hoc 署名を付与。起動ディスクがなければ `build-image.sh --vm` を先に実行します）：
-
-```bash
-macOS/build-app.sh
-```
-
-```bash
-open dist/Tsugumi.app
-```
+`macOS/build-app.sh` はアプリ本体をパッケージングし、`dist/Tsugumi.app` を生成します。描画 dylib・デモ・VM の起動ディスクと、VM が Tsugumi を組み立てるためのソース（`macOS/Container/vm-source.txt`）を同梱し、このマシン用の ad-hoc 署名を付与します。起動ディスクがなければ `build-image.sh --vm` を先に実行します。`--release` をつけるとリリース版として作ります（リリースの workflow が使う。[開発資料](development.md#リリース)）。
 
 VM の起動には virtualization entitlement 付きのコード署名が必要なため、開発中も `macOS/build-app.sh` で生成した `dist/Tsugumi.app` を使用します（`swift run` で直接起動したバイナリには署名がなく、VM を起動できません）。テストスクリプトが VM を操作するための `tsugumi-vmctl` は `macOS/tools/build-vmctl.sh` でビルドします。
 
@@ -142,4 +130,4 @@ VM の起動には virtualization entitlement 付きのコード署名が必要�
 (cd tests/python && python -m pytest -q test_contract.py)
 ```
 
-テストスイートと確認範囲は[開発資料のテスト](development.md#テスト)、パフォーマンスの計測結果は[計測](development.md#計測2026-11-03高速化後共通-vm)、以前の構成で直した不具合は[解決済みの記録](development.md#解決済みの記録)にあります。
+テストスイートと確認範囲は[開発資料のテスト](development.md#テスト)にあります。

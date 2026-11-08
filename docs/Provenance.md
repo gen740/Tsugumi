@@ -23,8 +23,11 @@ Tsugumi は、Claude のハッカソンで制作を始めた研究ワークベ�
 | `core/`、`protocol/` | Card と Workflow の文書モデル、グラフ実行、RPC 契約、履歴・成果物の管理 | hosq、FlatBuffers、Nix、SQLite、libgit2 |
 | `sdk/`、`demos/` | Card 用 SDK、worker との連携、デモのグラフと処理コード | 各言語の処理系、Nix のパッケージ、デモで読む外部データ |
 | `macOS/`、`ui/renderer/` | Canvas、編集・検証 UI、描画層との接続、VM の起動とアプリへの統合 | SwiftUI、Virtualization.framework、Dawn、Tree-sitter、SwiftTerm、Swift Markdown、SwiftMath |
+| `ui/modules/` | Card のグラフ（Plotly・Vega-Lite）を隔離して描く表示部品 | plotly.js、Vega、Vega-Lite、vega-embed |
 | `agent/` | モデル接続、ツール呼び出し、Draft の実装・実行支援、共通の行動契約 | 外部のモデル API。モデル自体は開発成果に含めません。 |
-| `web/` | 同じ RPC 契約を使う Web クライアントとホスト側サーバー | React、marked、KaTeX、FlatBuffers |
+| `web/` | 同じ RPC 契約を使う Web クライアントとホスト側サーバー | React、marked、KaTeX、FlatBuffers、xterm.js、plotly.js、Vega-Lite |
+| `cli/`、`plugins/` | `tsugumi` コマンドのインストールと配布物の組み立て、Claude Code の plugin | Node.js、Claude Code の plugin の仕組み（MCP） |
+| `docs/site/` | 文書サイトの生成と、ページに埋め込む動く Canvas | marked |
 | `nix/`、`macOS/Container/`、テスト・ビルドスクリプト | 環境の固定、隔離の設定、VM とアプリの組み立て、実行・UI・契約の検証 | nixpkgs、Linux、bubblewrap、既存のビルド・テストツール |
 
 実装は、人間が仕様・判断・レビューを担い、AI エージェントと往復しながら進めました。開発中に AI を使って実装・修正したことも制作過程に含めています。
