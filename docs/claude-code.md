@@ -2,6 +2,7 @@
 
 Tsugumi のプロジェクトを Claude Code から開き、Card の作成・編集・実行・結果の確認を任せられます（Claude Code の plugin `tsugumi`、`plugins/tsugumi/`）。
 作業の様子は [Web UI](WebUI.md) にそのまま出ます。Claude Code が保存した Card は Canvas で変わり、実行は進み具合ごと表示され、ツグミが Claude Code の作業している Card のそばへ飛んでいきます。利用者は同じ画面を見ながら、自分でも触れます。
+Mac と Windows（WSL2）で、plugin からプロジェクトを開き、Card を作って実行するところまで確かめました。
 
 ## 仕組み
 

@@ -33,7 +33,7 @@
 <div class="reading">
 <article class="doc">
 <h1 id="claude-code-から使う">Claude Code から使う</h1>
-<p>Tsugumi のプロジェクトを Claude Code から開き、Card の作成・編集・実行・結果の確認を任せられます（Claude Code の plugin <code>tsugumi</code>、<code>plugins/tsugumi/</code>）。作業の様子は <a href="webui.html">Web UI</a> にそのまま出ます。Claude Code が保存した Card は Canvas で変わり、実行は進み具合ごと表示され、ツグミが Claude Code の作業している Card のそばへ飛んでいきます。利用者は同じ画面を見ながら、自分でも触れます。</p>
+<p>Tsugumi のプロジェクトを Claude Code から開き、Card の作成・編集・実行・結果の確認を任せられます（Claude Code の plugin <code>tsugumi</code>、<code>plugins/tsugumi/</code>）。作業の様子は <a href="webui.html">Web UI</a> にそのまま出ます。Claude Code が保存した Card は Canvas で変わり、実行は進み具合ごと表示され、ツグミが Claude Code の作業している Card のそばへ飛んでいきます。利用者は同じ画面を見ながら、自分でも触れます。Mac と Windows（WSL2）で、plugin からプロジェクトを開き、Card を作って実行するところまで確かめました。</p>
 <h2 id="仕組み">仕組み</h2>
 <pre><code class="language-text">Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI <span class="wide">の</span><span class="wide">サ</span><span class="wide">ー</span><span class="wide">バ</span><span class="wide">ー</span> ── tsugumid
                                                                        └─ <span class="wide">イ</span><span class="wide">ベ</span><span class="wide">ン</span><span class="wide">ト</span> ── <span class="wide">ブ</span><span class="wide">ラ</span><span class="wide">ウ</span><span class="wide">ザ</span><span class="wide">（</span>Canvas<span class="wide">・</span><span class="wide">ツ</span><span class="wide">グ</span><span class="wide">ミ</span><span class="wide">・</span><span class="wide">承</span><span class="wide">認</span><span class="wide">）</span>
