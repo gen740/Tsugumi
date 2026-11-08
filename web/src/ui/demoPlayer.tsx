@@ -73,13 +73,13 @@ export interface DemoData {
 
 // ---- Replay: a list of frames walked by a timer ---------------------------------------
 
-interface Frame { mode: 'idle' | 'playing' | 'done'; step: number; sub: number; tick: number; ms: number }
-const IDLE: Frame = { mode: 'idle', step: -1, sub: 0, tick: 0, ms: 0 }
-const DONE: Frame = { mode: 'done', step: Infinity, sub: 0, tick: 0, ms: 0 }
+export interface Frame { mode: 'idle' | 'playing' | 'done'; step: number; sub: number; tick: number; ms: number }
+export const IDLE: Frame = { mode: 'idle', step: -1, sub: 0, tick: 0, ms: 0 }
+export const DONE: Frame = { mode: 'done', step: Infinity, sub: 0, tick: 0, ms: 0 }
 /** Invocation counts shown while a Card that ran many times (a loop) is replayed. */
 const LOOP_TICKS = 8
 
-function framesOf(data: DemoData, speed: number): Frame[] {
+export function framesOf(data: DemoData, speed: number): Frame[] {
   const kinds = new Map(data.cards.map((c) => [c.id, c.kind]))
   const out: Frame[] = []
   data.steps.forEach((st, step) => {
@@ -291,12 +291,14 @@ function OutputView({ output, base, zoom, large = false }: { output: Output; bas
 
 interface Placed { doc: CardDoc; node: CardNodeData; geometry: CardGeometry }
 
-function Canvas({ data, frame, base, compact, selected, onSelect, motion, children }: {
-  data: DemoData; frame: Frame; base: string; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean; children?: React.ReactNode
+/** `view` draws a still at that size, fitted and without the zoom controls (player/svg.mjs renders one per frame). */
+export function Canvas({ data, frame, base, compact, selected, onSelect, motion, view, children }: {
+  data: DemoData; frame: Frame; base: string; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
+  view?: { width: number; height: number }; children?: React.ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 0, height: 0 })
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 0.5 })
+  const [size, setSize] = useState(view ?? { width: 0, height: 0 })
+  const [moved, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 0.5 })
   const adjusted = useRef(false)
   const stepOf = useMemo(() => {
     const m = new Map<string, number>()
@@ -337,18 +339,21 @@ function Canvas({ data, frame, base, compact, selected, onSelect, motion, childr
     return u ? union(u, rect) : rect
   }, null)
   const boxKey = box ? `${box.x},${box.y},${box.width},${box.height}` : ''
-  const fit = () => {
-    if (!box || size.width <= 0) return
+  const fitted = (): Camera | undefined => {
+    if (!box || size.width <= 0) return undefined
     if (compact) {
       // A thumbnail shows the whole graph, smaller than a canvas ever zooms out.
       const margin = 34, r = { x: box.x - margin, y: box.y - margin, width: box.width + 2 * margin, height: box.height + 2 * margin }
       const zoom = Math.min(0.85, size.width / r.width, size.height / r.height)
-      setCamera({ zoom, x: size.width / 2 - (r.x + r.width / 2) * zoom, y: size.height / 2 - (r.y + r.height / 2) * zoom })
-      return
+      return { zoom, x: size.width / 2 - (r.x + r.width / 2) * zoom, y: size.height / 2 - (r.y + r.height / 2) * zoom }
     }
-    const c = fitCamera(box, size, { top: 44, left: 0, bottom: 0, right: 0 }, 1, 54)
+    return fitCamera(box, size, { top: 44, left: 0, bottom: 0, right: 0 }, 1, 54) ?? undefined
+  }
+  const fit = () => {
+    const c = fitted()
     if (c) setCamera(c)
   }
+  const camera = (view && fitted()) || moved
   useEffect(() => {
     if (!adjusted.current) fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -430,7 +435,7 @@ function Canvas({ data, frame, base, compact, selected, onSelect, motion, childr
             }, (_ev, moved) => { if (!moved) onSelect(doc.id) })
           }} />
       ))}
-      {!compact && (
+      {!compact && !view && (
         <div className="cv-surface-zoom material" onPointerDown={(e) => e.stopPropagation()}>
           <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help="縮小" onClick={() => zoomTo(z / 1.2)} />
           <span className="caption mono-digits" style={{ minWidth: 36, textAlign: 'center' }}>{Math.round(z * 100)}%</span>
@@ -528,7 +533,7 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
 
 // ---- The player -------------------------------------------------------------------------------
 
-function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
+export function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
   const step = frame.mode === 'playing' ? data.steps[frame.step] : undefined
   const label = frame.mode === 'playing' ? '実行中' : frame.mode === 'done' ? (data.run?.state === 'failed' ? '失敗' : '成功') : '待機中'
   const icon = frame.mode === 'playing' ? 'play.circle.fill' : frame.mode === 'done' ? 'checkmark.circle.fill' : 'circle'
@@ -647,7 +652,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
   )
 }
 
-function provenance(d: DemoData): string {
+export function provenance(d: DemoData): string {
   if (d.draftOnly) return 'Draft は処理の形だけで、まだコードがありません。Card をクリックすると、書かれた計画を読めます。'
   const parts = d.run?.realOrder
     ? `${d.run.date} に実際に動かした実行の記録（順序・時間・表示）を再生しています。`
