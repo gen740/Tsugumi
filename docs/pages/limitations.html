@@ -46,9 +46,8 @@
 <h2 id="結果をたどること">結果をたどること</h2>
 <ul>
 <li><strong>2 つの実行を並べて比べる画面はありません。</strong> 実行履歴はそれぞれ開いて見ます（<a href="https://github.com/gen740/Tsugumi/issues/156" rel="noopener">#156</a> で検討中）。</li>
-<li><strong>版に戻らずに、その版の Canvas と結果を見ることはできません。</strong> 「この版から始める」で戻って見ます（<a href="versions.html#まだできないこと">版の管理</a>）。</li>
-<li><strong>Agent の報告から、根拠の Card や実行へのリンクはありません。</strong> チャットの文章の中で Card を指すリンクは開けません。</li>
-<li><strong>実行の記録に、ビルド結果の store パスはありません。</strong> 環境は実行の commit（<code>pkgsPath</code> と <code>default.nix</code> を含む）からたどります。</li>
+<li><strong>Agent の報告から、根拠の Card や実行へのリンクはありません。</strong> チャットの文章の中で Card を指すリンクは開けません（<a href="https://github.com/gen740/Tsugumi/issues/157" rel="noopener">#157</a> で検討中）。</li>
+<li><strong>実行の記録に、ビルド結果の store パスはありません。</strong> 環境は実行の commit（<code>pkgsPath</code> と <code>default.nix</code> を含む）からたどります（<a href="https://github.com/gen740/Tsugumi/issues/158" rel="noopener">#158</a> で検討中）。</li>
 <li><strong>上流を変えたあとの部分実行は、古い入力を使います。</strong> 最後は Workflow 全体を通して確かめます（<a href="qa.html#q5-解析の途中からやり直せることにはどんな意味がありますか">Q&amp;A の Q5</a>）。</li>
 <li><strong><code>recordIO</code> を入れていない Card の過去の入出力値は残りません。</strong> 既定は off です（<a href="qa.html#q4-なぜすべての実行データを保存しないのですか">Q&amp;A の Q4</a>）。</li>
 </ul>
