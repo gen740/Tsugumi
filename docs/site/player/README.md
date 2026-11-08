@@ -25,6 +25,7 @@ player.destroy()
 | `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
 | `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する（`--check` は調べるだけ） |
 | `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |
+| `svg.mjs` | 再生を 1 枚の動く SVG（`docs/assets/<id>-demo.svg`）にする。README のように画像しか置けない場所のため |
 | `demo.html` | 開発用のページ（全デモのサムネイルと通常表示） |
 
 ## 作り直す
@@ -49,6 +50,18 @@ nix develop --command python3 docs/site/player/harvest.py --ports \
   survival meta-analysis rna-seq simpson battery gillespie heat-inverse ecology-models
 node docs/site/player/build.mjs
 ```
+
+## 動く SVG
+
+GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を 1 枚の SVG にします。`player-data/` を作り直してから実行します。
+
+```sh
+node docs/site/player/svg.mjs casa   # docs/assets/casa-demo.svg
+```
+
+再生の各段階（`framesOf`）を、プレイヤーの `Canvas` と `RunControl` が描く HTML のまま `<foreignObject>` に入れ、`site/player.css` をそのまま使います。同じ描画は 1 回だけ持ち、それが出ている段階でだけ CSS のアニメーションで見せます（ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります）。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
+
+プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 回だけなことです。
 
 ## 記録の中身
 
