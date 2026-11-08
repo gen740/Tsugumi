@@ -128,11 +128,11 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <p><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="../assets/casa-guide.svg" alt="ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出す画面" width="100%"></a></p>
 <h2 id="使ってみる">使ってみる</h2>
 <h3 id="インストール">インストール</h3>
-<p><strong>macOS 版（デスクトップアプリ）をおすすめします。</strong> いちばん確かめてある使い方で、計算の実行環境もアプリに入っているので、ほかに用意するものがありません。</p>
+<p><strong>macOS 版（デスクトップアプリ）をおすすめします。</strong> 開発を macOS で行っているので、いちばん確かめてある使い方です。計算の実行環境もアプリに入っていて、ほかに用意するものがありません。</p>
 <p><strong>Mac（Apple silicon / macOS 26 以降）</strong>：デスクトップアプリ。実行環境とデモが入っていて、以後は自動で更新されます。</p>
 <pre><code class="language-bash">curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip &amp;&amp; ditto -x -k /tmp/Tsugumi.zip /Applications &amp;&amp; open /Applications/Tsugumi.app
 </code></pre>
-<p><strong>Mac・Linux</strong>：ブラウザで使う <code>tsugumi</code> コマンド（Linux は Nix が必要）。<code>tsugumi</code> で開き、<code>tsugumi update</code> で更新します。</p>
+<p><strong>Mac・Linux</strong>：ブラウザで使う <code>tsugumi</code> コマンド（Linux は Nix が必要）。<code>tsugumi</code> で開き、<code>tsugumi update</code> で更新します。Linux でも動作を確かめています（Ubuntu の aarch64・x86_64、NixOS の x86_64。NixOS では別のマシンから <a href="webui.html#別のマシンで動かしてssh-越しに使う">SSH 越しに使う</a>形でも）。</p>
 <pre><code class="language-bash">curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 </code></pre>
 <p><strong>Windows</strong>（WSL2 と Nix が必要。未確認）：</p>

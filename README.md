@@ -169,7 +169,7 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ### インストール
 
-**macOS 版（デスクトップアプリ）をおすすめします。** いちばん確かめてある使い方で、計算の実行環境もアプリに入っているので、ほかに用意するものがありません。
+**macOS 版（デスクトップアプリ）をおすすめします。** 開発を macOS で行っているので、いちばん確かめてある使い方です。計算の実行環境もアプリに入っていて、ほかに用意するものがありません。
 
 **Mac（Apple silicon / macOS 26 以降）**：デスクトップアプリ。実行環境とデモが入っていて、以後は自動で更新されます。
 
@@ -177,7 +177,7 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-**Mac・Linux**：ブラウザで使う `tsugumi` コマンド（Linux は Nix が必要）。`tsugumi` で開き、`tsugumi update` で更新します。
+**Mac・Linux**：ブラウザで使う `tsugumi` コマンド（Linux は Nix が必要）。`tsugumi` で開き、`tsugumi update` で更新します。Linux でも動作を確かめています（Ubuntu の aarch64・x86_64、NixOS の x86_64。NixOS では別のマシンから [SSH 越しに使う](docs/WebUI.md#別のマシンで動かしてssh-越しに使う)形でも）。
 
 ```bash
 curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
