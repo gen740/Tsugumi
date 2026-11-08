@@ -12,9 +12,9 @@
 
 ## 結果をたどること
 
-- **2 つの実行を並べて比べる画面はありません。** 実行履歴はそれぞれ開いて見ます（[#156](https://github.com/gen740/Tsugumi/issues/156) で検討中）。
-- **Agent の報告から、根拠の Card や実行へのリンクはありません。** チャットの文章の中で Card を指すリンクは開けません（[#157](https://github.com/gen740/Tsugumi/issues/157) で検討中）。
-- **実行の記録に、ビルド結果の store パスはありません。** 環境は実行の commit（`pkgsPath` と `default.nix` を含む）からたどります（[#158](https://github.com/gen740/Tsugumi/issues/158) で検討中）。
+- **2 つの実行を並べて比べる画面はありません。** 実行履歴はそれぞれ開いて見ます（[#156](https://github.com/gen740/Tsugumi/issues/156) で開発予定）。
+- **Agent の報告から、根拠の Card や実行へのリンクはありません。** チャットの文章の中で Card を指すリンクは開けません（[#157](https://github.com/gen740/Tsugumi/issues/157) で開発予定）。
+- **実行の記録に、ビルド結果の store パスはありません。** 環境は実行の commit（`pkgsPath` と `default.nix` を含む）からたどります（[#158](https://github.com/gen740/Tsugumi/issues/158) で開発予定）。
 - **上流を変えたあとの部分実行は、古い入力を使います。** 最後は Workflow 全体を通して確かめます（[Q&A の Q5](QA.md#q5-解析の途中からやり直せることにはどんな意味がありますか)）。
 - **`recordIO` を入れていない Card の過去の入出力値は残りません。** 既定は off です（[Q&A の Q4](QA.md#q4-なぜすべての実行データを保存しないのですか)）。
 
@@ -27,7 +27,7 @@
 
 ## 動く環境
 
-- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](../INSTALL.md#ブラウザで使うtsugumi-コマンド)。実機での検証は [#159](https://github.com/gen740/Tsugumi/issues/159) で行う予定）。
+- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](../INSTALL.md#ブラウザで使うtsugumi-コマンド)。実機での検証は [#159](https://github.com/gen740/Tsugumi/issues/159) で予定しています）。
 - **Linux で確かめたのは Ubuntu です。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu の環境で動かしました。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
 - **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](../INSTALL.md)）。Linux と Windows では Web UI を使います。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](../INSTALL.md#デスクトップアプリmacを入れる)）。
@@ -39,7 +39,7 @@
 
 ## 機能
 
-- **Card の言語は C++・Python・bash・R・Julia です。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で検討中です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます。常駐 worker の状態保持とライブ表示はなく、R の 2^63 以上の整数は丸められます）。残りは [#12](https://github.com/gen740/Tsugumi/issues/12) にあります。
+- **Card の言語は C++・Python・bash・R・Julia です。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で開発予定です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます。常駐 worker の状態保持とライブ表示はなく、R の 2^63 以上の整数は丸められます）。残りは [#12](https://github.com/gen740/Tsugumi/issues/12) にあります。
 - **marimo と R Markdown / Quarto の専用 Card はありません**（[#15](https://github.com/gen740/Tsugumi/issues/15)、[#16](https://github.com/gen740/Tsugumi/issues/16)）。
 - **図の雛形を選んで作る専用の Visualization Card はありません。** matplotlib・Plotly・Altair はふつうの Python の Card で描けます（[#19](https://github.com/gen740/Tsugumi/issues/19)）。
 - **外部 Logger の DB は `sqlite:<name>` だけです**（[実装状況](Development.md#実装状況)）。
