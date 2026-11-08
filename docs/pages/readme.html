@@ -52,7 +52,7 @@
 </p><h1 id="tsugumi">Tsugumi</h1>
 <p><strong>AI と描いた解析を、そのまま動かし、自分の手で確かめる。</strong></p>
 <p>Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認）。計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。</p>
-<p><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="../assets/casa-window.svg" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas。実際の実行の記録を、アプリの画面の形で再生している" width="100%"></a></p>
+<p><img src="../assets/screenshots/workflow.png" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas" loading="lazy"></p>
 <p align="center">
   <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
   <a href="#ai-を研究に積極的に活用できていますか">課題</a> ·
@@ -112,7 +112,7 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <h2 id="画面でたどる実験と検証">画面でたどる、実験と検証</h2>
 <p>同梱の「Cas A · Chandra RGB」デモでは、超新星残骸カシオペヤ座 A の X 線観測（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。同じ光子のエネルギースペクトルも matplotlib で描き、どの元素の輝線がどの色になったのかを確かめます。このページの画面は、2026-11-07 に実際に動かした実行の記録（ObsID 25628、2 ks）を、アプリの画面の形で再生しています。観測を深い ObsID 114（50 ks。3 帯域で約 1,500 万個の光子）に変えると、スペクトルの輝線がよりはっきり見えます。</p>
 <h3 id="全体の流れを見渡す">全体の流れを見渡す</h3>
-<p>ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に、解析ツールを固定する <code>ciao</code> と観測を固定する <code>load</code> から <code>bands</code> → <code>rgb</code> / <code>spectrum</code> へ続く流れが並んでいます。実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。右側のチャットからは、Agent に実装や変更を依頼できます。</p>
+<p>ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に <code>load</code> → <code>bands</code> → <code>rgb</code> / <code>spectrum</code> の流れが並んでいます。実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。右側のチャットからは、Agent に実装や変更を依頼できます。</p>
 <h3 id="コードを読み条件を変えて試す">コードを読み、条件を変えて試す</h3>
 <p>Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義（<code>default.nix</code>）を確認できます。<code>spectrum</code> は、ウィンドウ向けに書くのと同じ matplotlib のコードです。<code>plt.show()</code> で描いた図が、そのまま Card の表示に出ます。帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。</p>
 <p><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="../assets/casa-source.svg" alt="spectrum の Card 設定を開き、matplotlib のソースコードを plt.show() までたどる画面" width="100%"></a></p>
