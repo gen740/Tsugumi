@@ -27,8 +27,8 @@
 
 ## 動く環境
 
-- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](install.md#ブラウザで使うtsugumi-コマンド)）。
-- **Linux で確かめたのは OrbStack の VM（Ubuntu 26.04、aarch64）だけです。** x86_64 は CI のビルドだけで、実際には動かしていません。Linux と Windows には Nix が必要です。
+- **Windows ではまだ一度も動かしていません。** `cli/install.ps1` と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（[インストール](install.md#ブラウザで使うtsugumi-コマンド)。実機での検証は [#159](https://github.com/gen740/Tsugumi/issues/159) で行う予定）。
+- **Linux で確かめたのは Ubuntu です。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu の環境で動かしました。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
 - **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](install.md)）。Linux と Windows では Web UI を使います。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](install.md#デスクトップアプリmacを入れる)）。
 - **v1.0.0 までは版の間の互換性を保ちません。** プロジェクトの文書や設定の移行はしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。

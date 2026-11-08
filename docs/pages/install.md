@@ -2,7 +2,7 @@
 
 ## 入手のしかた
 
-**macOS・Linux・Windows に対応しています**（macOS と Linux（OrbStack の VM）で確認）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
+**macOS・Linux・Windows に対応しています**（macOS と Linux（Ubuntu）で確認）。デスクトップアプリは Apple silicon Mac / macOS 26 以降だけで、Linux と Windows では [`tsugumi` コマンド](#ブラウザで使うtsugumi-コマンド)の Web UI を使います。
 
 初回の実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）にはインターネット接続が必要です。
 
