@@ -93,6 +93,20 @@ import Testing
     #expect(s.connected, "\(s.connectionMessage ?? "")")
   }
 
+  /// A tsugumid that cannot be reached is tried again for a moment and then
+  /// told as a connection failure, not as a project that could not be read.
+  @Test func anUnreachableTsugumidIsToldAsAConnectionFailure() async throws {
+    let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.connectRetryDelays = [0.01, 0.01]
+    s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
+    s.start()
+    for _ in 0..<400 where s.connectionMessage == nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(!s.connected)
+    #expect(s.connectionFailed, "\(s.connectionMessage ?? "")")
+  }
+
   /// The Agent's rename and delete send no layout: the Card stays where it was
   /// under its new name, and the frame of a deleted Card does not come back on
   /// a new Card of that name.

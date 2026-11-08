@@ -16,7 +16,7 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は未確認）"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は WSL2 で確認）"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
   <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
@@ -26,7 +26,7 @@
 
 **AI と描いた解析を、そのまま動かし、自分の手で確かめる。**
 
-Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows で動かすのは未確認）。
+Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 でデモを開くところまで確認）。
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
@@ -184,7 +184,7 @@ curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/d
 curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 ```
 
-**Windows**（未確認）：PowerShell で実行します（管理者権限は要りません）。先に WSL2（PowerShell で `wsl --install`）と、その中の Linux に [Nix](https://nixos.org/download) を入れておいてください。
+**Windows**（WSL2）：PowerShell で実行します（管理者権限は要りません）。先に WSL2（PowerShell で `wsl --install`）と、その中の Linux に [Nix](https://nixos.org/download) を入れておいてください。
 
 ```powershell
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex

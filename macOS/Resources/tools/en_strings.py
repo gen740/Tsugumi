@@ -712,6 +712,8 @@ EN = {
 "新しいウインドウ": "New Window",
 "プロジェクトを読み込んでいます…": "Loading the project…",
 "プロジェクトを読み込めませんでした": "Could not load the project",
+"実行環境に接続できませんでした": "Could not connect to the environment",
+"再試行してください。": "Please try again.",
 "プロジェクトを開けません": "Cannot open the project",
 "プロジェクト名": "Project name",
 "ホーム": "Home",

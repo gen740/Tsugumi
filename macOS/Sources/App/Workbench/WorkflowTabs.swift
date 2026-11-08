@@ -306,6 +306,11 @@ struct EnvironmentProblemView: View {
                      message: String(localized: "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。"),
                      recovery: nil, log: "", canStop: false)
     default:
+      if session.connectionFailed {
+        return Problem(symbol: "exclamationmark.triangle.fill", color: .orange, title: String(localized: "実行環境に接続できませんでした"),
+                       message: session.connectionMessage ?? "",
+                       recovery: String(localized: "再試行してください。"), log: "")
+      }
       return Problem(symbol: "exclamationmark.triangle.fill", color: .orange, title: String(localized: "プロジェクトを読み込めませんでした"),
                      message: session.connectionMessage ?? "",
                      recovery: String(localized: "tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。"), log: "")

@@ -5,7 +5,7 @@
 // saved (a run in progress, a lost connection).
 import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
-import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, uuid, webSocketTransport } from '../shared/rpc'
+import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../shared/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
@@ -311,6 +311,12 @@ export const errorText = (e: unknown): string => {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** A failure to reach the tsugumid, as opposed to one while reading the project. */
+class Unreached extends Error {
+  constructor(readonly cause: unknown) {
+    super(errorText(cause))
+  }
+}
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
 /** What a version's summary is written from: its message and what it changed. */
@@ -327,6 +333,12 @@ export class ProjectSession extends Observable {
   environment: EnvironmentState = { state: 'stopped' }
   connected = false
   connectionMessage?: string
+  /** The last connection failed before the project could be read (tsugumid was not reached), not while reading it. */
+  connectionFailed = false
+  /** Opens the transport to a tsugumid (the tests give their own). */
+  openTransport: (url: string) => Promise<Transport> = webSocketTransport
+  /** The waits between tries to reach a tsugumid that has just started (ms). */
+  connectRetryDelays = [200, 400, 800, 1600, 2000]
   private client?: RPCClient
   private subscription?: string
   private lastSeq = 0n
@@ -548,8 +560,7 @@ export class ProjectSession extends Observable {
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
-      const c = new RPCClient(await webSocketTransport(env.endpoint!))
-      await c.connect(env.token)
+      const c = await this.reach(env.endpoint!, env.token)
       const opened = await c.open(this.viewId)
       if (this.closed) {
         c.close()
@@ -579,9 +590,27 @@ export class ProjectSession extends Observable {
       await Promise.all([this.refreshVisibleDisplays(), this.restoreCardStates(c)])
     } catch (e) {
       this.connected = false
-      this.connectionMessage = errorText(e)
+      this.connectionFailed = e instanceof Unreached
+      this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
       this.changed()
+    }
+  }
+
+  /** Connects to a tsugumid that has just started. Its port may not be
+   *  reachable at once (WSL2 forwards a new port to Windows a moment later),
+   *  so a connection that cannot be made is tried again for a few seconds. */
+  private async reach(endpoint: string, token: string | undefined): Promise<RPCClient> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const c = new RPCClient(await this.openTransport(endpoint))
+        await c.connect(token)
+        return c
+      } catch (e) {
+        if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
+        if (this.closed || attempt >= this.connectRetryDelays.length) throw new Unreached(e)
+        await sleep(this.connectRetryDelays[attempt])
+      }
     }
   }
 
