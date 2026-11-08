@@ -132,10 +132,10 @@ AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説�
 <p><strong>Mac（Apple silicon / macOS 26 以降）</strong>：デスクトップアプリ。実行環境とデモが入っていて、以後は自動で更新されます。</p>
 <pre><code class="language-bash">curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip &amp;&amp; ditto -x -k /tmp/Tsugumi.zip /Applications &amp;&amp; open /Applications/Tsugumi.app
 </code></pre>
-<p><strong>Mac・Linux</strong>：ブラウザで使う <code>tsugumi</code> コマンド（Linux は Nix が必要）。<code>tsugumi</code> で開き、<code>tsugumi update</code> で更新します。Linux でも動作を確かめています（Ubuntu の aarch64・x86_64、NixOS の x86_64。NixOS では別のマシンから <a href="webui.html#別のマシンで動かしてssh-越しに使う">SSH 越しに使う</a>形でも）。</p>
+<p><strong>Mac・Linux</strong>：ブラウザで使う <code>tsugumi</code> コマンド（Linux は先に <a href="https://nixos.org/download" rel="noopener">Nix</a> を入れておいてください）。<code>tsugumi</code> で開き、<code>tsugumi update</code> で更新します。Linux でも動作を確かめています（Ubuntu の aarch64・x86_64、NixOS の x86_64。NixOS では別のマシンから <a href="webui.html#別のマシンで動かしてssh-越しに使う">SSH 越しに使う</a>形でも）。</p>
 <pre><code class="language-bash">curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 </code></pre>
-<p><strong>Windows</strong>（WSL2 と Nix が必要。未確認）：</p>
+<p><strong>Windows</strong>（未確認）：PowerShell で実行します（管理者権限は要りません）。先に WSL2（PowerShell で <code>wsl --install</code>）と、その中の Linux に <a href="https://nixos.org/download" rel="noopener">Nix</a> を入れておいてください。</p>
 <pre><code class="language-powershell">irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 </code></pre>
 <p>初回は準備に数分かかります。署名（ad-hoc）、確認した環境、ソースからのビルドは <a href="install.html">INSTALL.md</a> にあります。</p>
