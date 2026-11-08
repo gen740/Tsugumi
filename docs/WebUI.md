@@ -45,7 +45,7 @@
 | プロバイダ・モデル・effort・Fast・Web 検索・権限の自動許可・版の要約 | アプリの UserDefaults（`app.tsugumi.Tsugumi`） | 共有（`tsugumi-vmhost` が読み書き） |
 | 会話の履歴、Skill のフォルダ、ChatGPT のサインイン、ガイドの状態 | `~/Library/Application Support/Tsugumi/web/` | 共有しない |
 
-`vm.lock` のとおり VM を使えるのは 1 つのアプリだけです。デスクトップ版がプロジェクトを開いていると、ページはその旨を表示します。逆も同じです。サーバーを止めると VM も止まります。
+`vm.lock` のとおり VM を使えるのは 1 つのアプリだけです。デスクトップ版がプロジェクトを開いていると、ページはその旨を表示します。逆も同じです。サーバーを止めると VM も止まります。デスクトップ版と `tsugumi` コマンドの版が違うと、切り替えたときに VM がその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので、2 回目からは短くなります）。
 
 **Linux では**、Nix でビルドした `tsugumid` をこのホストで直接動かし、Card は bubblewrap で隔離します（`nix/cli.nix`）。ターミナルの `node-pty` も一緒にビルドします。データは `~/.local/share/tsugumi-web`、API キーはその中の 0600 のファイルです。OrbStack の VM（Ubuntu 26.04、aarch64）で、インストール、ブラウザからの接続、デモの実行を確かめました。x86_64 の Ubuntu（友人の環境）でも動かしてもらいました。
 
