@@ -170,7 +170,7 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
   return idx === fr.step ? 'running' : 'before'
 }
 
-function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
+export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
   const out = data.outputs[c.id]
   const base: CardNodeData = {
     title: c.id, kind: c.kind, symbol: c.symbol, summary: c.summary, inputs: c.inputs, outputs: c.outputs, params: c.params, invocation: 0n,
@@ -291,13 +291,13 @@ function OutputView({ output, base, zoom, large = false }: { output: Output; bas
 
 interface Placed { doc: CardDoc; node: CardNodeData; geometry: CardGeometry }
 
-/** `view` draws a still at that size, fitted and without the zoom controls (player/svg.mjs renders one per frame). */
+/** `view` draws a still at that size, fitted (or with its camera) and without the zoom controls (player/svg.mjs renders one per frame). */
 export function Canvas({ data, frame, base, compact, selected, onSelect, motion, view, children }: {
   data: DemoData; frame: Frame; base: string; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
-  view?: { width: number; height: number }; children?: React.ReactNode
+  view?: { width: number; height: number; camera?: Camera }; children?: React.ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState(view ?? { width: 0, height: 0 })
+  const [size, setSize] = useState(view ? { width: view.width, height: view.height } : { width: 0, height: 0 })
   const [moved, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 0.5 })
   const adjusted = useRef(false)
   const stepOf = useMemo(() => {
@@ -353,7 +353,7 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
     const c = fitted()
     if (c) setCamera(c)
   }
-  const camera = (view && fitted()) || moved
+  const camera = (view && (view.camera ?? fitted())) || moved
   useEffect(() => {
     if (!adjusted.current) fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps

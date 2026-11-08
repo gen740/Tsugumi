@@ -8,7 +8,7 @@ import {
   Camera, CardGeometry, CardNodeData, currentStage, fitCamera, isRouting, ParamData, PortData, Pt, Rect, snapToGrid, Stage, STAGE_INFO,
   NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
-import { pathToScreen, WireStyle } from '../model/canvas'
+import { BoundaryPort, pathToScreen, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
 import { cardState, formatDuration, InlineDraft, KIND_ICON, KIND_LABEL } from '../model/session'
 import { D } from '../shared/rpc'
@@ -724,4 +724,36 @@ export const PreviewSamples = {
     { from: 'gate', fromPort: 'a', to: 'out', toPort: 'in' },
     { from: 'gate', fromPort: 'b', to: 'step', toPort: 'number' },
   ] as CanvasWire[],
+}
+
+// ---- Card in Card boundary -------------------------------------------------------------------
+
+/** A bar standing for the outer Card's inputs (above) or outputs (below)
+ *  inside a Card in Card: public name, type and the inner port it maps to. */
+export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPointerDown }: {
+  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; onPointerDown: (e: React.PointerEvent) => void
+}) {
+  const mark = Math.max(6, 8 * zoom)
+  return (
+    <div className="cv-boundary" style={{ ...style, borderRadius: 8 * zoom }} title="ドラッグで移動できます" onPointerDown={onPointerDown}
+      aria-label={title + ': ' + ports.map((p) => p.name).join(', ')}>
+      <span className="cv-boundary-title" style={{ fontSize: Math.max(6, 9.5 * zoom), left: 8 * zoom, top: 3 * zoom, gap: 4 * zoom }}>
+        <Icon name={input ? 'arrow.down.to.line' : 'arrow.down.to.line.compact'} size={Math.max(6, 9.5 * zoom)} />{title}
+      </span>
+      {ports.map((p, i) => {
+        const x = (p.point.x - rect.x) * zoom
+        return (
+          <span key={i}>
+            <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
+              title={p.inner ? `内部の接続先: ${p.inner[0].split('/').pop()}.${p.inner[1]}` : '内部の接続先が未設定です'}>
+              <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
+              {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
+            </span>
+            <span className={input ? 'cv-boundary-dot in' : 'cv-boundary-dot out'}
+              style={{ left: x - mark / 2, top: (input ? rect.height * zoom : 0) - mark / 2, width: mark, height: mark }} />
+          </span>
+        )
+      })}
+    </div>
+  )
 }

@@ -61,11 +61,18 @@ node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並�
 
 - `docs/assets/casa-demo.svg`: Cas A を、通常の表示（実行ボタンと経過時間、説明文、メモ）のまま大きく。
 - `docs/assets/casa-window.svg`: Cas A を Mac アプリの窓の形で。Card・出力の枠・メモの置き場所は README のスクリーンショット（`docs/assets/screenshots/workflow.png`）にならい（`svg.mjs` の `WINDOW_LAYOUT`）、実行ボタンと経過時間はタイトルバー、実行の状態はステータスバーに出ます。窓の枠とチャット欄は動かない絵で、Canvas の中身だけが記録した実行です。
+- README の「画面でたどる、実験と検証」の画面も、同じ窓の形で動かします（実データの部分と絵の部分は、各 SVG の下の 1 行に書いています）。
+  - `casa-source.svg`: spectrum の Card 設定が開き、`main.py`（demos/casa のファイルそのもの）が `plt.show()` までスクロールします。色分けは `CodeEditor.swift` の規則と標準の配色です。
+  - `casa-timeline.svg`: 下のタイムライン（`logs.tsx` の `RunTimelineView` と同じ行・色）が、記録した各 Card の開始・終了と段階の時間で、再生に合わせて伸びます。
+  - `collatz-subworkflow.svg`: collatz-cpp の中の Workflow を、記録した回数（loop 112 回など）で再生します。境界のバーと線は `model/canvas.ts` と同じ置き方です。
+  - `casa-guide.svg`: ツグミがチャットから spectrum の Card へ飛び、吹き出しを出します。飛び方と置き場所は `guide.tsx`、文は README の画像（`guide.png`）に写る実際の応答の書き写しです。
 - `docs/assets/demos/<id>.svg`: 記録のある各デモを、ギャラリーの縮小表示（`compact`）のまま 440 × 264 のタイルに。小さい Canvas で CSS が隠す文字（`.tp-small` など）と Card の説明の行の中身は省き、画像は長辺 200 px にします。
 
 再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が描く HTML のまま `<foreignObject>` に入れ、`site/player.css` のうち使う規則だけを入れます。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、それが出ている段階でだけ CSS のアニメーションで見せます。アイコンは `<defs>` に 1 回だけ置きます。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
 
 プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
+
+Safari は、SVG が `<img>` の大きさに合わせて縮められると、`<foreignObject>` の中の位置を持つ要素（`position: absolute` など）を縮めずに描きます（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）。そのため Safari のときだけ（`@supports (hanging-punctuation: first)`）、画像の幅をメディアクエリで受け取り、中の HTML を CSS の `transform` で縮めます（`svg.mjs` の `safariZoom`）。ほかのブラウザは viewBox で縮めます。
 
 GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
 
