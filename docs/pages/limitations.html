@@ -65,7 +65,7 @@
 <li><strong>デスクトップアプリは Apple silicon の macOS 26 以降だけです</strong>（<a href="install.html">インストール</a>）。Linux と Windows では Web UI を使います。</li>
 <li><strong>Mac 版は、README のコマンド 1 行で入れます。</strong> リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。<code>curl</code> で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（<a href="install.html#デスクトップアプリmacを入れる">インストール</a>）。</li>
 <li><strong>安定版は v1.0.0 からです。</strong> いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（<a href="https://github.com/gen740/Tsugumi/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a>）。</li>
-<li><strong>Claude Code の plugin は Mac アプリに対応していません。</strong> Web UI で開いたプロジェクトだけです（<a href="claude-code.html#対応していないこと">Claude Code から使う</a>）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。</li>
+<li><strong>Claude Code の plugin は Web UI で使います。</strong> <code>tsugumi</code> コマンドなどで開いた Web UI のプロジェクトを、Claude Code に任せられます（<a href="claude-code.html#対応していないこと">Claude Code から使う</a>）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。</li>
 </ul>
 <h2 id="機能">機能</h2>
 <ul>

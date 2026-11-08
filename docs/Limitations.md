@@ -32,7 +32,7 @@
 - **デスクトップアプリは Apple silicon の macOS 26 以降だけです**（[インストール](../INSTALL.md)）。Linux と Windows では Web UI を使います。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](../INSTALL.md#デスクトップアプリmacを入れる)）。
 - **安定版は v1.0.0 からです。** いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](../AGENTS.md)）。
-- **Claude Code の plugin は Mac アプリに対応していません。** Web UI で開いたプロジェクトだけです（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
+- **Claude Code の plugin は Web UI で使います。** `tsugumi` コマンドなどで開いた Web UI のプロジェクトを、Claude Code に任せられます（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
 
 ## 機能
 
