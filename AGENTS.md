@@ -38,6 +38,8 @@
 | [agent/](agent/) | Agent（モデル接続・会話・RPC 由来の tool）。契約は [agent/Shared/](agent/Shared/) で Web と共通 |
 | [web/](web/) | ブラウザ UI とホストサーバー |
 | [cli/](cli/) | `tsugumi` コマンド（Mac・Linux の `install.sh`、Windows の `install.ps1`、配布物の作成） |
+| [plugins/](plugins/) | Claude Code の plugin（`.claude-plugin/marketplace.json` から入れる。[docs/claude-code.md](docs/claude-code.md)） |
+| [nix/](nix/) | `tsugumid`・worker・Card SDK と `tsugumi` コマンドのパッケージ定義 |
 | [demos/](demos/) | 同梱デモと、その Draft 版（実装前の処理の形だけ） |
 | [tests/](tests/) | 契約・スケジューラー・履歴・隔離・デモ・fuzz などのテスト |
 | [docs/](docs/) | 文書の一覧は [docs/README.md](docs/README.md)。Web 版と AI 向けの [docs/llms.txt](docs/llms.txt) の生成は `node docs/site/build.mjs` |
@@ -48,20 +50,22 @@
 
 | 主張 | 確かめる場所 |
 | --- | --- |
-| Card ごとの実行環境を Nix で固定する | [sdk/nix/default.nix](sdk/nix/default.nix)、[docs/features.md](docs/features.md) §3、[tests/cpp](tests/cpp)（Nix 上流参照） |
+| Card ごとの環境を Nix で固定し、ビルド結果を再利用する | [sdk/nix/default.nix](sdk/nix/default.nix)、[docs/features.md](docs/features.md) §3、[tests/cpp](tests/cpp)（Nix 上流参照） |
 | ポートの型で配線の整合性を検査する | [docs/features.md](docs/features.md) §2「型付きのポート」、[tests/cpp](tests/cpp)（型・構造的互換・merge union） |
 | 分岐・合流・有限ループ・Card in Card を実行できる | [tests/python/test_scheduler.py](tests/python/test_scheduler.py)（ループは [tests/python/test_demos.py](tests/python/test_demos.py) の Collatz） |
 | 「完了した」と表示されたものには保存済みの記録が伴う | [docs/novelty.md](docs/novelty.md)、[tests/python/test_regressions.py](tests/python/test_regressions.py)（履歴保存に失敗した run は成功にならない）、[tests/python/test_contract.py](tests/python/test_contract.py)（障害注入） |
 | 実行ごとの版と結果をたどり、古い版から始め直せる | [docs/Versions.md](docs/Versions.md)、[tests/python/test_versions.py](tests/python/test_versions.py)、[tests/python/test_history.py](tests/python/test_history.py) |
 | 途中から部分実行できる（保存済みの入力で） | [docs/novelty.md](docs/novelty.md)「部分実行」、[tests/python/test_regressions.py](tests/python/test_regressions.py) |
-| Card は隔離され、ネットワークは既定で遮断される（Nix の固定出力 derivation はビルド時に通信できる: [docs/security.md](docs/security.md) §5） | [docs/security.md](docs/security.md)、[tests/python/test_host_isolation.py](tests/python/test_host_isolation.py)（CI の Linux と macOS。文書だけの変更では macOS を省く）、[tests/python/test_host_sandbox.py](tests/python/test_host_sandbox.py)、VM では [tests/python/test_cards_container.py](tests/python/test_cards_container.py)（`TSUGUMI_TEST_CONTAINER=1`、手元の Mac）、[tests/python/test_untrusted_project.py](tests/python/test_untrusted_project.py) |
+| Card は隔離され、ネットワークは既定で遮断される（Nix の固定出力 derivation はビルド時に通信できる: [docs/security.md](docs/security.md) §5） | [docs/security.md](docs/security.md)、[tests/python/test_host_isolation.py](tests/python/test_host_isolation.py)（CI の Linux と macOS。文書だけの変更では macOS を省く）、[tests/python/test_host_sandbox.py](tests/python/test_host_sandbox.py)、VM では [tests/python/test_cards_container.py](tests/python/test_cards_container.py)（`TSUGUMI_TEST_CONTAINER=1`、手元の Mac） |
+| 他人のプロジェクトの `.tsugumi/` を読んでも、外を書き換えられない | [tests/python/test_untrusted_project.py](tests/python/test_untrusted_project.py)、[docs/Limitations.md](docs/Limitations.md)「データと権限」 |
 | Agent（アプリ・Web のチャット、Claude Code の plugin）が Tsugumi の道具で Card の権限を広げる保存は、人間の承認なしでは通らない（Claude Code 自身のシェル・ファイル操作はこの外） | [tests/python/test_permissions.py](tests/python/test_permissions.py)、[tests/python/test_claude_code_plugin.py](tests/python/test_claude_code_plugin.py)（plugin の鍵は承認に答えられない）、[docs/security.md](docs/security.md) §8「Agent の権限境界」 |
-| Card のコメントは人間と Agent のどちらも書け、誰が何をしたかが記録される（Agent の分はモデルの申告によらない）。版の履歴でたどれる | [docs/features.md](docs/features.md)「コメントから Card を生成」、[tests/python/test_card_comments.py](tests/python/test_card_comments.py) |
+| Card のコメントは人間と Agent のどちらも書け、誰が何をしたかが記録される（Agent の分はモデルの申告によらない）。各版でどう変わったかをたどれる | [docs/features.md](docs/features.md)「コメントから Card を生成」、[tests/python/test_card_comments.py](tests/python/test_card_comments.py) |
 | UI と Agent は同じ契約の対等なクライアント | [protocol/tsugumi.fbs](protocol/tsugumi.fbs)、[tests/python/test_agent_contract.py](tests/python/test_agent_contract.py) |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | [docs/AgentRun.md](docs/AgentRun.md)（うまくいかなかった試行と、それを受けて直したことも含む） |
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
 | macOS・Linux・Windows に対応する（macOS と Linux（OrbStack の VM）で確認。Windows で動かすのは未確認） | [INSTALL.md](INSTALL.md)「ブラウザで使う」、[docs/Limitations.md](docs/Limitations.md)「動く環境」、[tests/python/test_cli.py](tests/python/test_cli.py)（インストーラーと WSL の処理。実機ではない） |
-| 何をハッカソン前に用意し、何をこの期間に作ったか | [docs/Provenance.md](docs/Provenance.md)、Git の履歴 |
+| 文書のとおりに Card を作って動かせ、AI にも同じ文書を渡せる。文書のリンク・パス・一覧は実物と合っている | [tests/python/test_docs.py](tests/python/test_docs.py)（[docs/CardGuide.md](docs/CardGuide.md) のコードを実行し、[docs/llms.txt](docs/llms.txt) と各ページのリンク・パスを確かめる） |
+| 何をハッカソン前に用意し、何を期間中に作ったか | [docs/Provenance.md](docs/Provenance.md)、Git の履歴 |
 
 コマンドと最後に確認した環境まで含む表は [docs/Evidence.md](docs/Evidence.md)、テストの一覧は [docs/Development.md](docs/Development.md) の「テスト」「確認範囲」、CI は [.github/workflows/ci.yml](.github/workflows/ci.yml) にあります。
 
