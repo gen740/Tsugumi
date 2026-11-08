@@ -63,27 +63,32 @@ export function LowPolyBackground({ className }: { className?: string }) {
   )
 }
 
-/** The bird of the app icon, split into the bird and the branch it sits on. */
-let birdArt: Promise<{ bird: string; perch: string }> | undefined
+/** The bird of the app icon, split into the bird, its wing (to flap around
+ *  the shoulder, as the app's TsugumiBird does) and the branch it sits on. */
+type BirdArt = { bird: string; wing: string; perch: string }
+let birdArt: Promise<BirdArt> | undefined
 function loadBird() {
   birdArt ??= fetch('/icon.svg').then((r) => r.text()).then((text) => {
     const doc = new DOMParser().parseFromString(text, 'image/svg+xml')
     const ser = new XMLSerializer()
-    const perch: string[] = [], bird: string[] = []
-    // The icon's perch group also holds the wing: polygons low enough are the branch.
+    const perch: string[] = [], bird: string[] = [], wing: string[] = []
+    // The icon's perch group also holds leaves above the branch: polygons low enough are the branch.
     for (const p of [...(doc.querySelector('#perch')?.children ?? [])]) {
       const ys = (p.getAttribute('points') ?? '').trim().split(/\s+/).map((xy) => Number(xy.split(',')[1]))
       ;(ys.length && Math.min(...ys) >= 690 ? perch : bird).push(ser.serializeToString(p))
     }
-    const b = doc.querySelector('#tsugumi-bird')
-    if (b) bird.push(ser.serializeToString(b))
-    return { bird: bird.join(''), perch: perch.join('') }
-  }).catch(() => ({ bird: '', perch: '' }))
+    const wingPoints = new Set(TsugumiBird.facets.filter((f) => f.part === 'wing').map((f) => f.points.map((q) => `${q.x},${q.y}`).join(' ')))
+    for (const p of [...(doc.querySelector('#tsugumi-bird')?.children ?? [])]) {
+      const pts = (p.getAttribute('points') ?? '').trim().split(/\s+/).join(' ')
+      ;(wingPoints.has(pts) ? wing : bird).push(ser.serializeToString(p))
+    }
+    return { bird: bird.join(''), wing: wing.join(''), perch: perch.join('') }
+  }).catch(() => ({ bird: '', wing: '', perch: '' }))
   return birdArt
 }
 
 export function useBird() {
-  const [art, setArt] = useState<{ bird: string; perch: string }>()
+  const [art, setArt] = useState<BirdArt>()
   useEffect(() => {
     let alive = true
     void loadBird().then((a) => alive && setArt(a))
