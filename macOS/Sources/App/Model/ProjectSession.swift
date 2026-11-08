@@ -442,14 +442,17 @@ final class ProjectSession {
 
   /// A tsugumid to use instead of starting the environment (tests).
   @ObservationIgnored var endpointOverride: Endpoint?
+  /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
+  var connectionFailed = false
+  /// The waits between tries to reach a tsugumid that has just started (seconds).
+  @ObservationIgnored var connectRetryDelays: [Double] = [0.2, 0.4, 0.8, 1.6, 2.0]
 
   private func connect() async {
     connectionMessage = nil
     do {
       let ep: Endpoint
       if let o = endpointOverride { ep = o } else { ep = try await environments.start(identity) }
-      let c = RPCClient(endpoint: ep.url)
-      _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+      let c = try await reach(ep)
       let opened = try await c.open(viewId: viewId)
       client = c
       projectId = ep.projectId
@@ -467,8 +470,42 @@ final class ProjectSession {
       await restoreCardStates(c)
     } catch {
       connected = false
+      connectionFailed = error is Unreached
       connectionMessage = "\(error)"
     }
+  }
+
+  /// A failure to reach the tsugumid, as opposed to one while reading the project.
+  struct Unreached: Error, CustomStringConvertible {
+    let underlying: Error
+    var description: String { "\(underlying)" }
+  }
+
+  /// Connects to a tsugumid that has just started. Its port may not be
+  /// reachable at once, so a connection that cannot be made is tried again for
+  /// a few seconds (the web page does the same: WSL2 forwards a new port late).
+  private func reach(_ ep: Endpoint) async throws -> RPCClient {
+    var attempt = 0
+    while true {
+      let c = RPCClient(endpoint: ep.url)
+      do {
+        _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+        return c
+      } catch where Self.unreachable(error) {
+        await c.close()
+        guard !closed, attempt < connectRetryDelays.count else { throw Unreached(underlying: error) }
+        try? await Task.sleep(for: .seconds(connectRetryDelays[attempt]))
+        attempt += 1
+      }
+    }
+  }
+
+  /// The tsugumid was not reached: the connection could not be made or ended
+  /// before the hello was answered.
+  nonisolated static func unreachable(_ error: Error) -> Bool {
+    if case RPCError.disconnected = error { return true }
+    guard let e = error as? URLError else { return false }
+    return [.cannotConnectToHost, .networkConnectionLost, .timedOut, .cannotFindHost, .notConnectedToInternet].contains(e.code)
   }
 
   /// Reconnects after a lost connection: Hello -> Open -> re-read state.

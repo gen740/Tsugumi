@@ -30,7 +30,7 @@
 - **デスクトップアプリは、Apple silicon の macOS 26 以降で動きます。** Linux と Windows ではブラウザの Web UI（`tsugumi` コマンド）を使います（[インストール](../INSTALL.md)）。
 - **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](../INSTALL.md#デスクトップアプリmacを入れる)）。
 - **Linux は Ubuntu と NixOS で確かめています。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu と、SSH 越しに Web UI を使う NixOS のマシンで動かしました（[SSH 越しに使う](WebUI.md#別のマシンで動かしてssh-越しに使う)）。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
-- **Windows（WSL2）は、実機での検証を [#159](https://github.com/gen740/Tsugumi/issues/159) で予定しています。** `cli/install.ps1` と WSL 向けの処理はあり、PowerShell の構文と代役を使ったテストで確かめています（[インストール](../INSTALL.md#ブラウザで使うtsugumi-コマンド)）。
+- **Windows は WSL2 で動きます。** 友人の Windows で、WSL2 の中に Nix を daemon なしで入れ、`tsugumi` を入れてデモを開くところまで確かめました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。`install.ps1` のほか、WSL の Linux のシェルで Linux と同じ手順でも入れられます（[インストール](../INSTALL.md#ブラウザで使うtsugumi-コマンド)）。
 - **安定版は v1.0.0 からです。** いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](../AGENTS.md)）。
 - **Claude Code の plugin は Web UI で使います。** `tsugumi` コマンドなどで開いた Web UI のプロジェクトを、Claude Code に任せられます（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
 

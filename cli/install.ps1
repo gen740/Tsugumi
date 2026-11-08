@@ -7,7 +7,7 @@
 # %USERPROFILE%\.local\bin\tsugumi.cmd here, which starts it there. WSL forwards
 # 127.0.0.1 to Windows, so the page opens in the browser of Windows.
 #
-# NOT TESTED ON WINDOWS YET (docs/Limitations.md).
+# Checked on Windows with WSL2 up to opening a demo (#159).
 #
 # wsl.exe --exec runs no shell of its own, so nothing is expanded twice. ASCII
 # only, with no double quote inside an argument: `irm | iex` does not read this

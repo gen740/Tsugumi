@@ -661,6 +661,7 @@
 "再接続しています…" = "Reconnecting…";
 "再確認" = "Check Again";
 "再試行" = "Retry";
+"再試行してください。" = "Please try again.";
 "再試行中: %@" = "Retrying: %@";
 "再読込" = "Reload";
 "再起動して %@ に更新" = "Restart to Update to %@";
@@ -836,6 +837,7 @@
 "実行環境との接続が切れました" = "Lost the connection to the environment";
 "実行環境に再接続しました" = "Reconnected to the environment";
 "実行環境に接続していません" = "Not connected to the environment";
+"実行環境に接続できませんでした" = "Could not connect to the environment";
 "実行環境の VM イメージがある" = "The environment's VM image is here";
 "実行環境のコンソール" = "Environment Console";
 "実行環境のデータ" = "Environment data";

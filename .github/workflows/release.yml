@@ -105,7 +105,7 @@ jobs:
           curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
           ```
 
-          ブラウザの Web UI で使う場合（Linux は Nix が必要。Windows は WSL2 と Nix が必要で、動作は未確認）:
+          ブラウザの Web UI で使う場合（Linux は Nix が必要。Windows は WSL2 と Nix が必要）:
 
           ```bash
           curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh

@@ -438,7 +438,7 @@ function homePage(groups, pages, tagline, lead) {
       <a class="cta" href="${DOWNLOAD}">${ICON.download}Mac 版をダウンロード</a>
       <a class="cta quiet" href="#demos">インストールせずにデモを見る</a>
     </div>
-    <p class="home-note">macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は未確認。アプリは Apple silicon / macOS 26 以降） · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
+    <p class="home-note">macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は WSL2 で確認。アプリは Apple silicon / macOS 26 以降） · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>

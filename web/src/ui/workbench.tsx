@@ -284,8 +284,11 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   } else if (env.state === 'stopped') {
     p = { icon: 'pause.circle.fill', color: 'secondary', title: '実行環境は停止しています', message: 'このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。', log: '', canStop: false }
   } else {
-    p = { icon: 'exclamationmark.triangle.fill', color: 'orange', title: 'プロジェクトを読み込めませんでした', message: session.connectionMessage ?? '',
-      recovery: 'tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。', log: '', canStop: true }
+    p = session.connectionFailed
+      ? { icon: 'exclamationmark.triangle.fill', color: 'orange', title: '実行環境に接続できませんでした', message: session.connectionMessage ?? '',
+          recovery: '再試行してください。WSL や SSH 越しに使っているときは、このプロジェクトのポートがブラウザから届くかを確かめてください（Web UI の文書の「SSH 越しに使う」）。', log: '', canStop: true }
+      : { icon: 'exclamationmark.triangle.fill', color: 'orange', title: 'プロジェクトを読み込めませんでした', message: session.connectionMessage ?? '',
+          recovery: 'tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。', log: '', canStop: true }
   }
   return (
     <div className="problem-page scroll">
