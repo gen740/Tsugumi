@@ -92,7 +92,7 @@ docs/              文書（一覧は docs/README.md）。docs/assets/ にアイ
 
 ## リリース
 
-- **版番号**は `VERSION` だけにあり（core・Nix・CMake・アプリが読む）、v1.0.0 までは 0.x で、版の間の互換性は保ちません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
+- **版番号**は `VERSION` だけにあり（core・Nix・CMake・アプリが読む）、安定版は v1.0.0 からで、それまでの 0.x の版の間では互換性を保ちません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
 - **リリースの作り方**: origin/main を取り出したチェックアウトで `macOS/tools/release.sh 0.2.0` を実行すると、`VERSION` を書き換えて commit し、タグ `v0.2.0` とともに main へ push します。チェックアウトなしなら `gh workflow run release.yml -f version=0.2.0`（Actions が同じことをする）。どちらもリリースの workflow（`.github/workflows/release.yml`）がアプリをビルドして GitHub Release を作り、インストール済みのリリース版はそれを見つけて自動で更新します（`macOS/Sources/App/Model/Updater.swift`）。
 - **`tsugumi` コマンド**: 同じ workflow が `cli/install.sh`・`cli/install.ps1` と、`cli/package-macos.sh`・`cli/package-linux.sh` の作る `tsugumi-macos-arm64.tar.gz`・`tsugumi-linux.tar.gz`（それぞれ `.sha256` つき）をリリースに載せます。スクリプトはドキュメントのサイトではなくリリースの添付にしています。サイトは main への push で更新されるので、まだ配布物のない版のスクリプトが見えてしまいますが、添付ならスクリプトと配布物が必ず同じ版になり、`releases/latest/download/` でそのまま届きます。Node.js の版とチェックサムは `cli/node-version.env` です。手元で試すときは、配布物を置いたフォルダを `TSUGUMI_INSTALL_BASE=file://…` で渡し、`TSUGUMI_SUPPORT_DIR` で VM を分けます。
 - **VM の起動ディスク**（`vm-boot.nix`・nixpkgs の固定）を変えたときは、リリースの前に `macOS/Container/build-image.sh --vm` と `macOS/tools/publish-vm.sh`（ディスクと一緒にライセンスの一覧と対応ソースも公開します）で [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm) に公開します。ランナーは Apple container を使えないので、公開版がないとリリースのビルドは失敗します。

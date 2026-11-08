@@ -30,7 +30,7 @@ xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 
 - アプリを置いたフォルダ（通常は `/Applications`）に書き込めることが必要です。隔離属性がついたまま開いたアプリ（App Translocation で別の場所から動いている）は更新できないので、`/Applications` に移して隔離属性を外してください。
 - ad-hoc 署名は版ごとに変わるため、更新後に初めて API キーを使うとき、macOS がキーチェーンへのアクセスを一度確認します（「常に許可」を選べば、その版では以後確認されません）。
-- v1.0.0 になるまでは、版の間でプロジェクトの文書や設定の互換性を保ちません（[AGENTS.md](AGENTS.md)）。
+- 安定版は v1.0.0 からです。いまの 0.x の版の間では、プロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](AGENTS.md)）。
 
 ### ブラウザで使う（tsugumi コマンド）
 
