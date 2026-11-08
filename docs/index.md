@@ -202,7 +202,7 @@ Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web 
 
 ### 同梱デモ
 
-押すと [Web 版](https://gen740.github.io/Tsugumi/#demos)でそのデモを開き、Card の中身とソースを読めます。Draft 版を含めて 31 個のデモが入っていて、各デモのしくみは[同梱デモのしくみ](pages/demos.md)にあります。
+どれも実際に動かした実行の記録を再生しています。押すと [Web 版](https://gen740.github.io/Tsugumi/#demos)でそのデモを開き、Card の中身とソースを読めます。Draft 版を含めて 31 個のデモが入っていて、各デモのしくみは[同梱デモのしくみ](pages/demos.md)にあります。
 
 #### 基本のデモ
 
