@@ -74,7 +74,7 @@ span[data-guide] { display: inline-flex; }
 @keyframes guide-wing { 50% { transform: rotate(-26deg); } }
 .guide-flyer-bubble { position: fixed; pointer-events: auto; animation: guide-pop 0.2s ease-out; }
 @keyframes guide-pop { from { opacity: 0; transform: scale(0.92); } }
-@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble, .guide-wing { transition: none !important; animation: none !important; } }
 .guide-reply-field { display: flex; align-items: center; gap: 4px; }
 .guide-reply-field .field { flex: 1; min-width: 0; font-size: 12.5px; padding: 3px 7px; }
 
