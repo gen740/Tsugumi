@@ -173,35 +173,25 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 
 ### インストール
 
-| 環境 | 入れるもの | 動作の確認 |
-| --- | --- | --- |
-| macOS（Apple silicon / macOS 26 以降） | デスクトップアプリ（おすすめ）、または `tsugumi` コマンド | 確認済み |
-| Linux（x86_64 / aarch64、Nix が必要） | `tsugumi` コマンド | OrbStack の VM（Ubuntu、aarch64）で確認済み |
-| Windows（WSL2 と、その中の Nix が必要） | `tsugumi` コマンド | **未確認** |
-
-**Mac：デスクトップアプリ。** 計算の実行環境とデモが入っていて、ほかに用意するものはありません。次のコマンドで `/Applications` に入れて起動します。以後は、新しいリリースに自動で更新されます。
+**Mac（Apple silicon / macOS 26 以降）**：デスクトップアプリ。実行環境とデモが入っていて、以後は自動で更新されます。
 
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。上のコマンドで入れれば止められません。
-
-**Mac・Linux：`tsugumi` コマンド。** ブラウザで同じ画面（Web UI）を使います。root は要りません。Mac ではデスクトップ版と同じ VM と設定を使うので、両方を同時には使えません。
+**Mac・Linux**：ブラウザで使う `tsugumi` コマンド（Linux は Nix が必要）。`tsugumi` で開き、`tsugumi update` で更新します。
 
 ```bash
 curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 ```
 
-`tsugumi` を実行するとブラウザに Web UI が開きます。新しい版は `tsugumi update` で入れ替えます。
-
-**Windows（未確認）。** PowerShell から入れます。Tsugumi は WSL2 の中で動き、ページは Windows のブラウザに開きます。
+**Windows**（WSL2 と Nix が必要。未確認）：
 
 ```powershell
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
-初回は、実行環境の準備（VM の中での Tsugumi の組み立てと、Card の依存パッケージの取得）に数分かかり、インターネット接続が必要です。詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](INSTALL.md) にあります。
+初回は準備に数分かかります。署名（ad-hoc）、確認した環境、ソースからのビルドは [INSTALL.md](INSTALL.md) にあります。
 
 ### 最初の一歩
 
