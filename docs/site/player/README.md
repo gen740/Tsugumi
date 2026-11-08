@@ -25,7 +25,7 @@ player.destroy()
 | `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
 | `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する（`--check` は調べるだけ） |
 | `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |
-| `svg.mjs` | 再生を動く SVG にする（Cas A の大きいもの `docs/assets/casa-demo.svg` と、各デモのタイル `docs/assets/demos/<id>.svg`）。README のように画像しか置けない場所のため |
+| `svg.mjs` | 再生を動く SVG にする（Cas A の大きいもの `docs/assets/casa-demo.svg`、アプリの窓の形の `docs/assets/casa-window.svg`、各デモのタイル `docs/assets/demos/<id>.svg`）。README のように画像しか置けない場所のため |
 | `demo.html` | 開発用のページ（全デモのサムネイルと通常表示） |
 
 ## 作り直す
@@ -53,18 +53,26 @@ node docs/site/player/build.mjs
 
 ## 動く SVG
 
-GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を SVG にします。`player-data/` を作り直してから、Mac で実行します（タイルの画像を `sips` で縮めます）。
+GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を SVG にします。`player-data/` を作り直してから、Mac で実行し、できた SVG をコミットします（Chrome を画面なしで使い、タイルの画像を `sips` で縮めます）。
 
 ```sh
 node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並べればそれだけ
 ```
 
 - `docs/assets/casa-demo.svg`: Cas A を、通常の表示（実行ボタンと経過時間、説明文、メモ）のまま大きく。
+- `docs/assets/casa-window.svg`: Cas A を Mac アプリの窓の形で。Card・出力の枠・メモの置き場所は README のスクリーンショット（`docs/assets/screenshots/workflow.png`）にならい（`svg.mjs` の `WINDOW_LAYOUT`）、実行ボタンと経過時間はタイトルバー、実行の状態はステータスバーに出ます。窓の枠とチャット欄は動かない絵で、Canvas の中身だけが記録した実行です。
+- README の「画面でたどる、実験と検証」の画面も、同じ窓の形で動かします（実データの部分と絵の部分は、各 SVG の下の 1 行に書いています）。
+  - `casa-source.svg`: spectrum の Card 設定が開き、`main.py`（demos/casa のファイルそのもの）が `plt.show()` までスクロールします。色分けは `CodeEditor.swift` の規則と標準の配色です。
+  - `casa-timeline.svg`: 下のタイムライン（`logs.tsx` の `RunTimelineView` と同じ行・色）が、記録した各 Card の開始・終了と段階の時間で、再生に合わせて伸びます。
+  - `collatz-subworkflow.svg`: collatz-cpp の中の Workflow を、記録した回数（loop 112 回など）で再生します。境界のバーと線は `model/canvas.ts` と同じ置き方です。
+  - `casa-guide.svg`: ツグミがチャットから spectrum の Card へ飛び、吹き出しを出します。飛び方と置き場所は `guide.tsx`、文は README の画像（`guide.png`）に写る実際の応答の書き写しです。
 - `docs/assets/demos/<id>.svg`: 記録のある各デモを、ギャラリーの縮小表示（`compact`）のまま 440 × 264 のタイルに。小さい Canvas で CSS が隠す文字（`.tp-small` など）と Card の説明の行の中身は省き、画像は長辺 200 px にします。
 
-再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が描く HTML のまま `<foreignObject>` に入れ、`site/player.css` のうち使う規則だけを入れます。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、それが出ている段階でだけ CSS のアニメーションで見せます。アイコンは `<defs>` に 1 回だけ置きます。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
+再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が `site/player.css` で描く HTML にします。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、その HTML を Chrome（ヘッドレス）でレイアウトし、[dom-to-svg](https://github.com/felixfbecker/dom-to-svg) で四角・線・文字・画像の SVG に変えます。それが出ている段階でだけ CSS のアニメーションで見せます（要素の class が SVG のグループに残ります）。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
 
 プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
+
+SVG の中に HTML を入れる `<foreignObject>` は使いません。Safari は、`<img>` の大きさに縮められた SVG の `<foreignObject>` の中の位置を持つ要素を縮めずに描き（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）、動くと一部しか描き直さないためです。dom-to-svg が描かないもの（Canvas の点のグリッドの `radial-gradient`、リストの記号）は、変える前に SVG の模様や文字に置き換えます。
 
 GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
 

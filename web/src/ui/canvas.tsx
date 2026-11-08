@@ -6,7 +6,7 @@ import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState 
 import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
-import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
+import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
@@ -18,7 +18,7 @@ import { arr, dbl, get, J, JObj, obj, real, str } from '../shared/json'
 import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
-import { CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
+import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
@@ -858,36 +858,6 @@ function BoundaryBars({ b, zoom, screen, drag, onDown }: {
           onPointerDown={(e) => onDown(input, undragged(rect, input), e)} />
       ))}
     </>
-  )
-}
-
-/** A bar standing for the outer Card's inputs (above) or outputs (below)
- *  inside a Card in Card: public name, type and the inner port it maps to. */
-function BoundaryBarView({ title, ports, input, zoom, rect, style, onPointerDown }: {
-  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; onPointerDown: (e: React.PointerEvent) => void
-}) {
-  const mark = Math.max(6, 8 * zoom)
-  return (
-    <div className="cv-boundary" style={{ ...style, borderRadius: 8 * zoom }} title="ドラッグで移動できます" onPointerDown={onPointerDown}
-      aria-label={title + ': ' + ports.map((p) => p.name).join(', ')}>
-      <span className="cv-boundary-title" style={{ fontSize: Math.max(6, 9.5 * zoom), left: 8 * zoom, top: 3 * zoom, gap: 4 * zoom }}>
-        <Icon name={input ? 'arrow.down.to.line' : 'arrow.down.to.line.compact'} size={Math.max(6, 9.5 * zoom)} />{title}
-      </span>
-      {ports.map((p, i) => {
-        const x = (p.point.x - rect.x) * zoom
-        return (
-          <span key={i}>
-            <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
-              title={p.inner ? `内部の接続先: ${p.inner[0].split('/').pop()}.${p.inner[1]}` : '内部の接続先が未設定です'}>
-              <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
-              {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
-            </span>
-            <span className={input ? 'cv-boundary-dot in' : 'cv-boundary-dot out'}
-              style={{ left: x - mark / 2, top: (input ? rect.height * zoom : 0) - mark / 2, width: mark, height: mark }} />
-          </span>
-        )
-      })}
-    </div>
   )
 }
 

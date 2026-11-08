@@ -35,6 +35,7 @@
     "@types/react": "18.3.27",
     "@types/react-dom": "18.3.7",
     "@webgpu/types": "^0.1.66",
+    "dom-to-svg": "^0.12.2",
     "esbuild": "0.25.12",
     "typescript": "5.9.3"
   },
