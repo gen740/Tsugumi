@@ -229,6 +229,25 @@ in { run = "${ciao}/bin/dmlist ..."; }
 
 `agent/` として分離した独立パッケージです。Agent は UI と同じ RPC を使う 1 つのクライアントで、Agent を使わなくても Card の作成・編集・実行はすべて画面から行えます。
 
+### 目的に応じた Claude の機能の使い分け
+
+Tsugumi は、Claude のモデルと機能を、それぞれの仕事に合うものを選んで使っています。各行の「確かめる場所」はコードとテストです。
+
+| 目的 | 使う機能 | 確かめる場所 |
+| --- | --- | --- |
+| Card を作り、直し、実行して確かめる | Messages API の tool use。tool は RPC の契約（`protocol/tsugumi.fbs`）から生成するので、Agent は画面と同じ操作だけを持ちます | [tool と RPC](#tool-と-rpc)、`test_agent_contract.py` |
+| 仕事の重さに合ったモデル | Card の実装は利用者が選ぶモデル（既定 `claude-sonnet-5-5`、effort と Fast mode も選べる）。ガイドの会話、Canvas の鳥の思考の要約、版の要約は小さな `claude-haiku-5-5` | [モデルとの接続](#モデルとの接続)、`agent/Shared/agent.json` の `modelOptions`、[版の要約](Versions.md) |
+| 結果の図を見て判断する（マルチモーダル） | Card が表示した画像（グラフ、RGB 画像など）を、`run_record` が画像のままモデルに渡します。アプリ・Web UI・Claude Code の plugin のどれでも同じです | `agent/Sources/TsugumiAgent/Provider.swift`、`web/server/agent.ts`、`web/server/mcp.ts`、`macOS/CoreTests` の `ToolImageTests` |
+| 互いに依存しない Draft を同時に実装する（サブエージェント） | `delegate` で 2〜8 の helper を同時に動かし、Card を分担させて、最後に 1 つの比較へ合流させます | [手分け](#手分けdelegate)、`macOS/CoreTests` の `TeamTests` |
+| 決まった手順で案内する（Skills） | 組み込みの Skill `$demo`（`agent/Shared/demo-skill.md`）でデモを案内し、利用者が置いた Skill も読み込みます | [Skill と会話](#skill-と会話)、[ガイド](#ツグミチャットとガイド) |
+| 書いている途中を見せる | tool の引数をストリーミングで受け取り（`eager_input_streaming`）、Card のコードが書かれていく様子を Canvas に出します | [Canvas の上の Agent](#canvas-の上の-agent)、`BrokenArgumentsTests` |
+| 長い作業を速く、安く | システムプロンプト・tool の定義・会話に prompt caching をかけます | `agent/Sources/TsugumiAgent/Provider.swift` |
+| 最新の情報が要るとき | Web 検索のサーバー tool（既定はオフ。利用者がオンにしたときだけ） | [Web 検索](#web-検索)、`WebSearchTests` |
+| 外のエージェントと組む（MCP） | Claude Code の plugin が MCP サーバーとして Tsugumi の道具を渡し、作業は Web UI に出ます。Card の権限を広げる保存は、人間の承認を待ちます | [Claude Code から使う](claude-code.md)、`test_claude_code_plugin.py` |
+| API キーがなくても案内する | モデルを使わない台本のガイド（`agent/Shared/guide-script.json`）。どこにも送らず、利用料もかかりません | [ツグミのガイド](#ツグミチャットとガイド) |
+
+接続先は Anthropic の Messages API のほか、OpenAI の API と ChatGPT プランにも対応しています（[モデルとの接続](#モデルとの接続)）。
+
 ### モデルとの接続
 
 - Anthropic Messages API と OpenAI Responses API に対応し、ストリーミングで応答します。OpenAI は API キーのほか、利用者の ChatGPT プラン（Sign in with ChatGPT、オープンソースのツール向けの手順）でも使えます（[セキュリティ](security.md#chatgpt-プランsign-in-with-chatgpt)）。

@@ -75,6 +75,7 @@ Tsugumi はこの問いへの一つの答えです。AI に試行錯誤を任せ
 | Agent（アプリ・Web のチャット、Claude Code の plugin）が Tsugumi の道具で Card の権限を広げる保存は、人間の承認なしでは通らない（Claude Code 自身のシェル・ファイル操作はこの外） | [tests/python/test_permissions.py](tests/python/test_permissions.py)、[tests/python/test_claude_code_plugin.py](tests/python/test_claude_code_plugin.py)（plugin の鍵は承認に答えられない）、[docs/security.md](docs/security.md) §8「Agent の権限境界」 |
 | Card のコメントは人間と Agent のどちらも書け、誰が何をしたかが記録される（Agent の分はモデルの申告によらない）。各版でどう変わったかをたどれる | [docs/features.md](docs/features.md)「コメントから Card を生成」、[tests/python/test_card_comments.py](tests/python/test_card_comments.py) |
 | UI と Agent は同じ契約の対等なクライアント | [protocol/tsugumi.fbs](protocol/tsugumi.fbs)、[tests/python/test_agent_contract.py](tests/python/test_agent_contract.py) |
+| 目的に応じて Claude の機能（モデル、Skills、サブエージェント、MCP、画像、Web 検索）を使い分ける | [docs/features.md](docs/features.md) §9「目的に応じた Claude の機能の使い分け」、`macOS/CoreTests` の `ToolImageTests`（画像）・`TeamTests`（helper）、[tests/python/test_claude_code_plugin.py](tests/python/test_claude_code_plugin.py)（MCP） |
 | 実際の Claude API で、Draft から Card を作って実行・検証できる | [docs/AgentRun.md](docs/AgentRun.md)（うまくいかなかった試行と、それを受けて直したことも含む） |
 | 常駐 worker などで、試行錯誤を重くしない | [docs/novelty.md](docs/novelty.md)「試行錯誤を支える実装上の工夫」、[docs/Development.md](docs/Development.md) の計測 |
 | macOS・Linux・Windows に対応する（macOS と Linux（Ubuntu・NixOS）で確認。Windows で動かすのは未確認） | [INSTALL.md](INSTALL.md)「ブラウザで使う」、[docs/Limitations.md](docs/Limitations.md)「動く環境」、[tests/python/test_cli.py](tests/python/test_cli.py)（インストーラーと WSL の処理。実機ではない） |
