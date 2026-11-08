@@ -647,19 +647,8 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
         {data.cards.map((c) => <button key={c.id} type="button" onClick={() => setSelected(c.id)}>{`Card ${c.id} の中身を開く`}</button>)}
       </div>
       <p className="tp-say" aria-live="polite">{say}</p>
-      <p className="tp-note-line">{provenance(data)}</p>
     </div>
   )
-}
-
-export function provenance(d: DemoData): string {
-  if (d.draftOnly) return 'Draft は処理の形だけで、まだコードがありません。Card をクリックすると、書かれた計画を読めます。'
-  const parts = d.run?.realOrder
-    ? `${d.run.date} に実際に動かした実行の記録（順序・時間・表示）を再生しています。`
-    : '動かしたときの順序だけを、Card のつながりから再生しています。結果はここには含まれません。'
-  // Recorded without the Card sandbox: the page must not read as if the isolation had been on.
-  const bare = d.run?.sandbox === 'off' ? 'この記録は、Card の隔離を外して（--no-sandbox）実行したものです。' : ''
-  return `${parts}${bare}計算はブラウザの中では行いません。Card をクリックすると、説明とソースを読めます。`
 }
 
 // ---- API --------------------------------------------------------------------------------------
