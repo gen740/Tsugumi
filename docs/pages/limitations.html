@@ -64,7 +64,7 @@
 <li><strong>Windows ではまだ一度も動かしていません。</strong> <code>cli/install.ps1</code> と WSL 向けの処理は書いてありますが、確かめたのは PowerShell の構文と代役を使ったテストだけです（<a href="install.html#ブラウザで使うtsugumi-コマンド">インストール</a>）。</li>
 <li><strong>Linux で確かめたのは OrbStack の VM（Ubuntu 26.04、aarch64）だけです。</strong> x86_64 は CI のビルドだけで、実際には動かしていません。Linux と Windows には Nix が必要です。</li>
 <li><strong>デスクトップアプリは Apple silicon の macOS 26 以降だけです</strong>（<a href="install.html">インストール</a>）。Linux と Windows では Web UI を使います。</li>
-<li><strong>リリース版は ad-hoc 署名で、公証していません。</strong> ブラウザで入れると Gatekeeper に止められます（<a href="install.html#デスクトップアプリmacを入れる">インストール</a>）。</li>
+<li><strong>Mac 版は、README のコマンド 1 行で入れます。</strong> リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。<code>curl</code> で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（<a href="install.html#デスクトップアプリmacを入れる">インストール</a>）。</li>
 <li><strong>v1.0.0 までは版の間の互換性を保ちません。</strong> プロジェクトの文書や設定の移行はしません（<a href="https://github.com/gen740/Tsugumi/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a>）。</li>
 <li><strong>Mac の共通 VM を使えるのは 1 つのアプリだけです。</strong> <code>tsugumi</code> コマンドとデスクトップ版を同時には使えず、後から始めた方がその旨を表示します（<a href="webui.html#tsugumi-コマンド">tsugumi コマンド</a>）。会話の履歴・Skill のフォルダ・ChatGPT のサインインは両者で別です。</li>
 <li><strong><code>tsugumi</code> コマンドは自動では更新しません。</strong> <code>tsugumi update</code> で最新版に入れ替えます。デスクトップ版と版が違うと、VM は切り替えのたびにその版の Tsugumi を組み立て直します（Nix のキャッシュが効くので 2 回目からは短くなります）。</li>

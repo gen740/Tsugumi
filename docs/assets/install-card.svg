@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 216" width="1280" height="216" role="img" aria-labelledby="t">
+  <title id="t">Tsugumi を入れて、動かす: インストールと最初の一歩</title>
+  <defs>
+    <clipPath id="card"><rect width="1280" height="216" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="1280" height="216" fill="#16282d"/>
+    <polygon points="0,0 210,0 96,126" fill="#1d3a3e"/>
+    <polygon points="0,0 96,126 0,216" fill="#1a3338"/>
+    <polygon points="0,216 96,126 262,216" fill="#173136"/>
+    <polygon points="96,126 210,0 262,216" fill="#1b363a"/>
+    <polygon points="1280,0 1050,0 1190,112" fill="#1d3a3e"/>
+    <polygon points="1280,0 1190,112 1280,216" fill="#1a3338"/>
+    <polygon points="1050,0 1190,112 1010,216" fill="#173136"/>
+    <polygon points="1190,112 1280,216 1010,216" fill="#1b363a"/>
+    <rect x="2" y="2" width="1276" height="212" rx="22" fill="none" stroke="#c97d3d" stroke-opacity="0.75" stroke-width="3"/>
+
+    <!-- into the app: a download into the Mac -->
+    <rect x="62" y="132" width="168" height="40" rx="8" fill="none" stroke="#efe0c3" stroke-width="4"/>
+    <path d="M62 152 H230" stroke="#efe0c3" stroke-width="4" stroke-opacity="0.35"/>
+    <path d="M146 40 V118 M114 88 L146 120 L178 88" fill="none" stroke="#c97d3d" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <text x="288" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="52" font-weight="700" fill="#f3ede2">入れて、動かしてみる</text>
+    <text x="290" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="22" fill="#c3cbc8">Mac はアプリ、Linux・Windows はブラウザで使うコマンド</text>
+    <text x="290" y="186" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9fb070">README · インストール → 最初の一歩</text>
+
+    <!-- the way in -->
+    <rect x="1088" y="66" width="128" height="84" rx="42" fill="#c97d3d"/>
+    <path d="M1124 108 H1180 M1160 88 L1182 108 L1160 128" fill="none" stroke="#1b1d1f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
