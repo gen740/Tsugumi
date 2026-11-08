@@ -29,7 +29,7 @@ Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く
 計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
 気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
 
-![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-window.svg" alt="Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas。実際の実行の記録を、アプリの画面の形で再生している" width="100%"></a>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=NW2nFnOwDxI"><b>デモ動画</b></a> ·
@@ -125,11 +125,11 @@ Tsugumi は、計算やデータ処理を **Card のグラフ（Workflow）と�
 
 同梱の「Cas A · Chandra RGB」デモでは、超新星残骸カシオペヤ座 A の X 線観測（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
 同じ光子のエネルギースペクトルも matplotlib で描き、どの元素の輝線がどの色になったのかを確かめます。
-このページの画像は、観測を深い ObsID 114（50 ks。3 帯域で約 1,500 万個の光子）に変えて実行したものです。
+このページの画面は、2026-11-07 に実際に動かした実行の記録（ObsID 25628、2 ks）を、アプリの画面の形で再生しています。観測を深い ObsID 114（50 ks。3 帯域で約 1,500 万個の光子）に変えると、スペクトルの輝線がよりはっきり見えます。
 
 ### 全体の流れを見渡す
 
-ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に `load` → `bands` → `rgb` / `spectrum` の流れが並んでいます。
+ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に、解析ツールを固定する `ciao` と観測を固定する `load` から `bands` → `rgb` / `spectrum` へ続く流れが並んでいます。
 実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。
 スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。
 右側のチャットからは、Agent に実装や変更を依頼できます。
@@ -140,29 +140,29 @@ Card の設定を開くと、その処理のソースコードや入出力ポー
 `spectrum` は、ウィンドウ向けに書くのと同じ matplotlib のコードです。`plt.show()` で描いた図が、そのまま Card の表示に出ます。
 帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。
 
-![spectrum の Card 設定で、matplotlib のソースコードを確認する画面](docs/assets/screenshots/card-source.png)
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="spectrum の Card 設定を開き、matplotlib のソースコードを plt.show() までたどる画面" width="100%"></a>
 
 ### 実際に何が動いたかを振り返る
 
 画面下部のタイムラインでは、どの Card がいつ、どれだけの時間をかけて動いたかを時間軸で追えます。
-520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります。
+観測と解析ツールは最初の実行で 1 度だけ取得・ビルドされ、2 回目以降は Nix store のものを使うので、この記録の Run 全体は 12 秒ほどで終わります。
 さらに各 Card の実行履歴やログ、成果物を開き、結論に至るまでの過程を隅々まで確かめられます。
 
-![各 Card の実行を時間軸で確認するタイムライン](docs/assets/screenshots/timeline.png)
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-timeline.svg" alt="各 Card がいつ、どれだけ動いたかが、実行に合わせてタイムラインに描かれていく画面" width="100%"></a>
 
 ### 気になる処理の中へ入る
 
 大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python / Julia / R)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
 普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。
 
-![子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面](docs/assets/screenshots/subworkflow.png)
+<a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/collatz-subworkflow.svg" alt="collatz-cpp の中の Workflow で、条件分岐と反復が 112 回まわる様子" width="100%"></a>
 
 ### ツグミに案内してもらう
 
 はじめて開くと、右下のツグミが「何をしてみますか？」と尋ねます。動くデモを見るか、Draft を AI に実装させるかを選び、分野からデモを選ぶと、そのデモまで案内します。
 プロジェクトではチャットがツグミです。`$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます。キーがなくても、3 つのデモでは決まった台本で案内します）。
 
-![ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-guide.svg" alt="ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出す画面" width="100%"></a>
 
 ## 使ってみる
 
@@ -200,8 +200,6 @@ irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](docs/claude-code.md)）。
 
 ### 同梱デモ
-
-<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-demo.svg" alt="Cas A · Chandra RGB の実行の様子" width="100%"></a>
 
 どれも実際に動かした実行の記録を再生しています。押すと [Web 版](https://gen740.github.io/Tsugumi/#demos)でそのデモを開き、Card の中身とソースを読めます。Draft 版を含めて 31 個のデモが入っていて、各デモのしくみは[同梱デモのしくみ](docs/Demos.md)にあります。
 
