@@ -169,7 +169,7 @@ struct CardExecutionView: View {
           LabeledContent("失敗の種類", value: String(describing: f.kind))
           Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
         }
-        LabeledContent("集計", value: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)")
+        LabeledContent("集計", value: String(localized: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)"))
         if let srcs = r.record?.inputSources, !srcs.isEmpty {
           Section("入力元") {
             ForEach(Array(srcs.compactMap { $0 }.enumerated()), id: \.offset) { _, s in

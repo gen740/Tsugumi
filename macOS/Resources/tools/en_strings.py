@@ -941,6 +941,7 @@ EN = {
 "開けません": "Cannot open",
 "開始": "Start",
 "集計": "Totals",
+"呼び出し %llu · 成功 %llu · 失敗 %llu": "Invocations %llu · succeeded %llu · failed %llu",
 "青": "Blue",
 "黄": "Yellow",
 "（省略可）": " (optional)",

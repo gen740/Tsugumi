@@ -741,6 +741,7 @@
 "名前（例: thin-bands）" = "Name (e.g. thin-bands)";
 "呼び出し" = "Invocation";
 "呼び出し #%llu" = "Invocation #%llu";
+"呼び出し %llu · 成功 %llu · 失敗 %llu" = "Invocations %llu · succeeded %llu · failed %llu";
 "呼び出しなし" = "No invocations";
 "問題 %lld 件" = "%lld issues";
 "問題 %lld 件（一覧から対象の Card やログへ移動できます）" = "%lld problems (go to their Card or log from the list)";

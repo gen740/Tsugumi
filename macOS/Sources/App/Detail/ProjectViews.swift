@@ -460,8 +460,8 @@ private struct CacheSettings: View {
       if let r = result {
         GroupBox("結果") {
           VStack(alignment: .leading, spacing: 4) {
-            LabeledContent("削除", value: "\(r.deleted.count) 件")
-            LabeledContent("保持", value: "\(r.retained.count) 件")
+            LabeledContent("削除", value: String(localized: "\(r.deleted.count) 件"))
+            LabeledContent("保持", value: String(localized: "\(r.retained.count) 件"))
             if let b = r.freedBytes { LabeledContent("解放", value: ByteCountFormatter.string(fromByteCount: Int64(b), countStyle: .file)) }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
