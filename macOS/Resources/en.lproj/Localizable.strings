@@ -294,6 +294,7 @@
 "この版から始める" = "Start from This Version";
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
+"この環境と同じ" = "Same as this environment";
 "この環境の package はありません" = "No packages for this system";
 "この返事を送ります" = "Sends this reply";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
@@ -341,6 +342,7 @@
 "インデントガイドを表示" = "Show indent guides";
 "インデント幅" = "Indent width";
 "エディター" = "Editor";
+"エミュレーター" = "Emulator";
 "エラー: %@" = "Error: %@";
 "オフ" = "Off";
 "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。" = "When the Agent gives a Card a permission that is off here, you are asked before it is saved. Changes you make yourself in Card settings are not asked.";
@@ -408,6 +410,7 @@
 "サインイン中" = "Signed in";
 "サインイン中（プランの利用は未許可）" = "Signed in (plan use not allowed)";
 "サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。" = "You can edit the sample to try the settings (not saved). Tab inserts spaces of the indent width.";
+"システム" = "System";
 "システムに従う" = "System";
 "システムに従う（視差効果を減らす）" = "Follow the system (Reduce motion)";
 "ショートカット" = "Shortcuts";
@@ -696,6 +699,7 @@
 "初期化を完了できませんでした（残りは保持しています。再試行できます）: " = "Could not finish resetting (the rest is kept; you can retry): ";
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
+"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。" = "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). C++ and Python Cards cannot run this way yet.";
 "別のプロジェクトを開く…" = "Open Another Project…";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
 "別ウインドウで開く" = "Open in New Window";

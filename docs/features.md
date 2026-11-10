@@ -161,6 +161,15 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - It ends automatically when its build conditions change, on failure or cancellation, after 10 minutes unused, above 2 GiB of memory, or when more than 32 are resident.
 - For a Card with `reuseWorker = false`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done) and kept waiting.
 
+### Another system (x86_64-linux)
+
+- A Card can be built and run for another Nix system: "System" in its settings (`"system": "x86_64-linux"` in `_card.json`), for software with no aarch64 build. nixpkgs is imported for that system, and the kernel runs its binaries with an emulator registered with binfmt_misc.
+  - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
+  - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
+- Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
+- For now this is for bash, R and Julia Cards, whose programs the kernel hands to the emulator. C++ and Python Cards are loaded into the worker, which is built for the machine's own system: they get a diagnostic (`unsupported_system`).
+- Without an emulator, the run stops before building, saying what is missing.
+
 ### Outside access (Experimental)
 
 - By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).

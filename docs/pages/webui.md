@@ -90,6 +90,7 @@ The [Claude Code plugin](claude-code.md) finds a running server through the `ser
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | Where the binaries and the SDK are (by default `build/` and `sdk/`) |
+| `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
 | `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_VM_SOURCE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the boot disk, the source and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
 | `TSUGUMI_WEB_DATA` | Where settings, recent projects, conversations and control folders are kept (default on macOS: `~/Library/Application Support/Tsugumi/web`) |
 | `ANTHROPIC_API_KEY` | If set, used as the API key (otherwise, on macOS, the same Keychain item as the app; elsewhere, a 0600 file in the data folder) |

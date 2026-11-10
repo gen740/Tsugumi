@@ -813,6 +813,10 @@ table InvocationSummary {
   /// When the inputs were all there; started_at - ready_at is the wait for
   /// a free lane (parallel limit, serial Card).
   ready_at:int64 = null (id: 14);
+  /// The program the kernel ran the Card's binaries with (binfmt_misc), for a
+  /// Card built for another system (its `system` setting); absent when it ran
+  /// natively.
+  emulator:string (id: 15);
 }
 
 table StageTime {

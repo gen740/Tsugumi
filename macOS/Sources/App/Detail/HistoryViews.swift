@@ -159,6 +159,8 @@ struct CardExecutionView: View {
           LabeledContent("開始", value: formatMillis(s.startedAt))
           LabeledContent("終了", value: formatMillis(s.endedAt))
           if let d = s.durationMs { LabeledContent("所要時間", value: formatDuration(Double(d) / 1000)) }
+          // A Card built for another system (its `system` setting): what ran it.
+          if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
           if !s.waitingInputs.isEmpty {
             LabeledContent("待っていた入力", value: s.waitingInputs.compactMap { $0?.port }.joined(separator: ", "))
           }

@@ -56,9 +56,24 @@ struct Settings {
   bool reuse_worker = true;
   bool network = false;
   bool markdown = false;  // logger: shows the text it receives as Markdown
+  std::string system;     // "" = native_system(); another one runs emulated (binfmt)
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data
 };
+
+// The Nix system of this machine: what a Card is built for unless its
+// settings name another.
+constexpr const char* native_system() {
+#if defined(__aarch64__) && defined(__APPLE__)
+  return "aarch64-darwin";
+#elif defined(__aarch64__)
+  return "aarch64-linux";
+#elif defined(__x86_64__) && defined(__APPLE__)
+  return "x86_64-darwin";
+#else
+  return "x86_64-linux";
+#endif
+}
 
 struct InputDef {
   std::string name;

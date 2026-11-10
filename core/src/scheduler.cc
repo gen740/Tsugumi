@@ -791,6 +791,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.stages = done.stages;
       rec.summary.outputs_sent = done.outputs_sent;
       rec.summary.worker_reused = done.worker_reused;
+      rec.summary.emulator = done.emulator;
       try {
         History& h = svc_.history();
         h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
@@ -1157,6 +1158,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       stage_begin(s, Phase::build, StageOutcome::reused);
     }
     s.build_cached = rt.build->cached;
+    s.emulator = rt.build->emulator;
     stage_begin(s, Phase::execute);
     card_status(s);
     set_state(RunState::running);
@@ -1174,6 +1176,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Every File / Directory input lives in these trees: one set of binds
     // serves any input, so the worker is reused whatever the paths.
     sp.ro_paths = {(svc_.store().state_dir() / "runs").string(), (svc_.store().state_dir() / "inputs").string()};
+    // Another system's binaries run with the emulator the kernel opened when it
+    // was registered; Rosetta also reads its own folder while it runs.
+    if (const auto& e = rt.build->emulator; !e.empty() && !e.starts_with("/nix/store/"))
+      sp.ro_paths.push_back(stdfs::path(e).parent_path().string());
     if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
     sp.hidden_paths.push_back(svc_.store().state_dir().string());
     sp.network = node.settings.network;

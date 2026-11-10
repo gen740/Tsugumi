@@ -197,6 +197,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   std::vector<Off<flatbuffers::String>> sent;
   for (const auto& p : s.outputs_sent) sent.push_back(b.CreateString(p));
   auto ov = b.CreateVector(sent);
+  auto em = s.emulator.empty() ? Off<flatbuffers::String>() : b.CreateString(s.emulator);
   R::InvocationSummaryBuilder ib(b);
   ib.add_run_id(run);
   ib.add_card(card);
@@ -213,6 +214,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.worker_reused) ib.add_worker_reused(*s.worker_reused);
   ib.add_outputs_sent(ov);
   if (s.ready_at) ib.add_ready_at(*s.ready_at);
+  if (!s.emulator.empty()) ib.add_emulator(em);
   return ib.Finish();
 }
 

@@ -79,6 +79,7 @@ There are four boundaries, from the innermost outwards.
 | Run-history disk | `~/Library/Application Support/Tsugumi/vm/history.img` (all projects' run histories, one directory per project) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
 | virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
+| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`macOS/Container/vm-system.nix`) | Read-only |
 | vsock | The control channel (1024) and the RPC relay (1025) | — |
 | Network | NAT (`VZNATNetworkDeviceAttachment`) | — |
 
@@ -135,7 +136,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 - **All namespaces are separated** (user, mount, PID, network, IPC, UTS, cgroup). The only network interface is loopback (`lo`). Only for a Card with `network: true` is the network namespace left shared (`--share-net`), with the name-resolution settings and the CA certificate file mounted read-only.
 - **All Linux capabilities are dropped** (`--cap-drop ALL`).
-- **Visible files** are limited to `/nix/store` (read-only), the worker's executable (when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
+- **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
 - **The environment variables are rebuilt from empty** (`PATH=/var/empty`, `LANG=C.UTF-8` and only the variables Tsugumi passes); nothing is inherited from `tsugumid` or the host.
 - **Passing outputs**: each invocation's output directory is passed as a file descriptor (FD) with `SCM_RIGHTS` and accessed inside the worker as `/proc/self/fd/900`. After the run, the core maps it back to its real path and validates it.
 - **Why inputs are not passed as FDs**: measurement showed that on Linux, even an FD opened read-only can in some cases be reopened for writing through `/proc/self/fd/N`. Inputs are therefore protected with read-only bind mounts.

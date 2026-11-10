@@ -58,6 +58,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
   for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
   *d.ready_at = s.ready_at.value_or(-1);
+  *d.emulator = s.emulator;
   return schema::encode(d);
 }
 
@@ -75,6 +76,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   if (*d.worker_reused >= 0) s.worker_reused = *d.worker_reused == 1;
   for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
   if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
+  s.emulator = *d.emulator;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {

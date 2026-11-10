@@ -133,6 +133,9 @@ struct CardDefinition {
   Opt<"sandbox", v::Bool> sandbox;
   Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
   Opt<"network", v::Bool> network;           // Experimental, default false
+  // The Nix system the Card is built for and runs as: "x86_64-linux" or
+  // "aarch64-linux". Default: this machine's. Another one runs emulated.
+  Opt<"system", v::String> system;
   Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
@@ -305,6 +308,7 @@ struct InvocationDetailJson {
   t::Int64<"worker_reused"> worker_reused;
   t::Array<"outputs_sent", v::String> outputs_sent;
   t::Int64<"ready_at"> ready_at;
+  t::String<"emulator"> emulator;  // "" = ran natively
 };
 
 struct InputSourceJson {

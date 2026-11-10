@@ -631,6 +631,11 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
+              <Row label={L('システム')} help={L('別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。')}>
+                <Select {...string('system', '')} options={[
+                  { value: '', label: L('この環境と同じ') }, { value: 'x86_64-linux', label: 'x86_64-linux' }, { value: 'aarch64-linux', label: 'aarch64-linux' },
+                ]} />
+              </Row>
               {toggle('reuseWorker', L('worker の状態を残す'), true,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'))}
               {toggle('filesystem', L('作業・出力領域を使う'), false)}

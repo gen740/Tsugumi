@@ -28,6 +28,34 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+// The interpreter the kernel runs ELF executables of a Linux system with
+// (binfmt_misc: a static qemu-user in the shared VM, boot.binfmt.emulatedSystems
+// on NixOS), or "" when none is registered. Matched by the ELF header the
+// entry's magic names, whatever the entry is called.
+std::string binfmt_interpreter(const std::string& system) {
+  std::string machine = system == "x86_64-linux" ? "3e00" : system == "aarch64-linux" ? "b700" : "";
+  const stdfs::path dir = "/proc/sys/fs/binfmt_misc";
+  std::error_code ec;
+  if (machine.empty() || !stdfs::is_directory(dir, ec)) return "";
+  for (const auto& e : stdfs::directory_iterator(dir, ec)) {
+    auto name = e.path().filename().string();
+    if (name == "register" || name == "status") continue;
+    std::ifstream f(e.path());
+    std::string line, interpreter, magic;
+    bool enabled = false;
+    while (std::getline(f, line)) {
+      if (line == "enabled") enabled = true;
+      else if (line.starts_with("interpreter ")) interpreter = line.substr(12);
+      else if (line.starts_with("magic ")) magic = line.substr(6);
+    }
+    // 7f 'E' 'L' 'F', 64-bit, little-endian, ..., e_machine at byte 18.
+    if (enabled && !interpreter.empty() && magic.starts_with("7f454c4602") && magic.size() >= 40 &&
+        magic.substr(36, 4) == machine)
+      return interpreter;
+  }
+  return "";
+}
+
 // The evaluator's entry: a function of the nixpkgs package set (read once
 // per pin and reused) and of the Card's folders.
 std::string entry_nix() {
@@ -447,6 +475,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     for (const auto& s : n.nix_sources) {
       if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
       NixCall lookup;
+      lookup.system = n.settings.system;
       lookup.cancel = req.cancel;
       if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
       lookup.log = req.log;
@@ -463,6 +492,18 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     generated["sources.json"] = sources + "]";
     return generated;
   };
+  // Another system's binaries run through the kernel's binfmt_misc: without
+  // an entry for it, Nix would refuse the build with a less helpful message.
+  std::string emulator;
+  if (!node.settings.system.empty()) {
+    emulator = binfmt_interpreter(node.settings.system);
+    if (emulator.empty())
+      throw Failed(FailureKind::unsupported,
+                   "system " + node.settings.system + " needs an emulator registered with the kernel (binfmt_misc), " +
+                       "and Nix's extra-platforms to include it: the shared VM on a Mac has qemu-x86_64; " +
+                       "on NixOS, set boot.binfmt.emulatedSystems",
+                   {{"system", node.settings.system}});
+  }
   auto files = with_sources(node);
   files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
   // Upstream code Cards this definition may reference (see entry.nix).
@@ -510,6 +551,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
+  call.system = node.settings.system;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";
@@ -549,6 +591,12 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   }
   if (b.package.has_value() == b.bash.has_value())
     throw Failed(FailureKind::nix_failed, "the Card manifest needs exactly one body: run.package or run.bash");
+  if (b.package && !node.settings.system.empty())
+    throw Failed(FailureKind::unsupported,
+                 "system " + node.settings.system + " runs Cards whose body is bash (bash, R, Julia); run.package " +
+                     "is loaded into the worker, which is built for " + native_system(),
+                 {{"system", node.settings.system}});
+  b.emulator = emulator;
   if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
   if (const auto* p = schema::get(m.post_run)) b.post_run = *p;
   b.key = res.out;

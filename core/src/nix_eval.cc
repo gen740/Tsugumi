@@ -211,7 +211,7 @@ struct NixEvaluator::Impl {
   }
 
   nix::Value& pkgs_for(const NixCall& c) {
-    std::string key = c.pin_url + "#" + c.pin_hash;
+    std::string key = c.pin_url + "#" + c.pin_hash + "#" + c.system;
     if (auto it = pkgs.find(key); it != pkgs.end()) return **it->second;
     auto quote = [](const std::string& s) {
       std::string q = "\"";
@@ -222,7 +222,9 @@ struct NixEvaluator::Impl {
       return q + "\"";
     };
     std::string expr = "import (builtins.fetchTarball { url = " + quote(c.pin_url) + "; sha256 = " +
-                       quote(c.pin_hash) + "; }) { system = builtins.currentSystem; config = { }; overlays = [ ]; }";
+                       quote(c.pin_hash) + "; }) { system = " +
+                       (c.system.empty() ? std::string("builtins.currentSystem") : quote(c.system)) +
+                       "; config = { }; overlays = [ ]; }";
     auto* v = state->allocValue();
     state->eval(state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))), *v);
     state->forceValue(*v, nix::noPos);
@@ -264,7 +266,8 @@ struct NixEvaluator::Impl {
       }
     } done{this};
     if (!flake_state) open_flakes();
-    if (auto it = flakes.find(ref); it != flakes.end()) {
+    std::string system = c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
+    if (auto it = flakes.find(ref + "|" + system); it != flakes.end()) {
       if (hold(it->second)) return it->second;
       // Collected since: this state remembers derivations it would not write again.
       flakes.clear();
@@ -280,7 +283,6 @@ struct NixEvaluator::Impl {
     };
     auto input = nix::parseFlakeRef(*fetch_settings, ref);
     auto locked = nix::flake::getFlake(*flake_state, input, nix::fetchers::UseRegistries::No).lockedRef.to_string();
-    std::string system = flake_eval_settings->getCurrentSystem();
     std::string expr = R"(
       let
         f = builtins.getFlake )" + quote(locked) + R"(;
@@ -312,8 +314,8 @@ struct NixEvaluator::Impl {
     for (const auto& [attr, p] : json.at("packages").items()) info.packages.push_back(attr);
     info.json = json.dump();
     hold(info);
-    flakes[ref] = info;
-    flakes[locked] = info;
+    flakes[ref + "|" + system] = info;
+    flakes[locked + "|" + system] = info;
     return info;
   }
 

@@ -149,6 +149,8 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                             <Value label={L('開始')} value={formatMillis(rec.summary.startedAt)} />
                             <Value label={L('終了')} value={formatMillis(rec.summary.endedAt)} />
                             {rec.summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(rec.summary.durationMs) / 1000)} />}
+                            {/* A Card built for another system (its `system` setting): what ran it. */}
+                            {rec.summary.emulator && <Value label={L('エミュレーター')} value={s(rec.summary.emulator)} />}
                             {rec.summary.waitingInputs.length > 0 && <Value label={L('待っていた入力')} value={rec.summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
                           </>
                         )}

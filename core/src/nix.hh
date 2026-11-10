@@ -28,6 +28,9 @@ struct CardBuild {
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
+  // The program the kernel runs the Card's binaries with (binfmt_misc), for a
+  // Card built for another system; "" when it runs natively.
+  std::string emulator;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };

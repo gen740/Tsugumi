@@ -395,6 +395,11 @@ int project_main(void* arg) {
   enter_project_view(a->view);
   // A fresh /proc for this PID namespace.
   if (::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr) != 0) die("mount /proc");
+  // The emulators the VM registered (binfmt_misc, global): seen read-only, so
+  // tsugumid can name the one a Card built for another system runs with.
+  if (::mount("binfmt_misc", "/proc/sys/fs/binfmt_misc", "binfmt_misc", MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY,
+              nullptr) != 0)
+    ::dprintf(2, "vmd child: binfmt_misc: %s\n", std::strerror(errno));
   ::sethostname(a->name.c_str(), a->name.size());
   ::chown("/tmp/home", a->uid, a->uid);
   drop_to(a->uid);
