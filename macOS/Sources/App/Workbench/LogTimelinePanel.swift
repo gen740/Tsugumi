@@ -120,7 +120,7 @@ struct RunLogView: View {
       .padding(.horizontal, 6)
       ScrollViewReader { proxy in
         ScrollView {
-          Text(log.isEmpty ? emptyReason : log)
+          Text(log.isEmpty ? emptyReason : terminalText(log))
             .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: .monospaced))
             .foregroundStyle(log.isEmpty ? .secondary : .primary)
             .textSelection(.enabled)

@@ -1,7 +1,8 @@
 import CoreGraphics
 
-/// Whether the chat keeps showing its newest message. Only the reader leaves the
-/// end, by scrolling up: content growing never does, however much it adds at once.
+/// Whether the chat (or a Card's log) keeps showing its newest message. Only the
+/// reader leaves the end, by scrolling up: content growing never does, however
+/// much it adds at once.
 struct ChatFollow {
   /// This close to the end (points) counts as at the end.
   static let endMargin: CGFloat = 32
