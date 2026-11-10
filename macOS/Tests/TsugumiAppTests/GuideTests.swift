@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import TsugumiApp
+import TsugumiAgent
 import TsugumiLauncher
 import TsugumiRPC
 
@@ -122,26 +123,35 @@ import TsugumiRPC
 /// anything typed offers Settings and $demo (web/tests/guideScript.ts checks
 /// the same script and plays every tour through).
 @MainActor @Test func theScriptWithoutAConnectionIsWhole() {
-  let script = GuideScript.shared
-  #expect(script.tours.map(\.demo) == ["report", "exoplanet-transit", "pharmacokinetics"])
-  for demo in script.tours.map(\.demo) {
-    for id in ["pick", "about", "start", "resume", "run", "ranOk", "ranFailed", "change", "runAgain", "ranAgain", "next", "farewell"] {
-      #expect(script.steps["\(demo)/\(id)"] != nil, "\(demo)/\(id)")
+  // Both languages' scripts, whatever language this Mac runs the app in.
+  for script in [GuideScript(json: Agent.guideScript), GuideScript(json: Agent.guideScriptEnglish)] {
+    #expect(script.tours.map(\.demo) == ["report", "exoplanet-transit", "pharmacokinetics"])
+    for demo in script.tours.map(\.demo) {
+      for id in ["pick", "about", "start", "resume", "run", "ranOk", "ranFailed", "change", "runAgain", "ranAgain", "next", "farewell"] {
+        #expect(script.steps["\(demo)/\(id)"] != nil, "\(demo)/\(id)")
+      }
+      #expect(script.steps["\(demo)/run"]?.show.actions.map(\.kind) == [.run])
+      #expect(script.steps["\(demo)/farewell"]?.show.endTour == true)
+      #expect(script.homeSteps.contains("\(demo)/pick") && !script.homeSteps.contains("\(demo)/start"))
     }
-    #expect(script.steps["\(demo)/run"]?.show.actions.map(\.kind) == [.run])
-    #expect(script.steps["\(demo)/farewell"]?.show.endTour == true)
-    #expect(script.homeSteps.contains("\(demo)/pick") && !script.homeSteps.contains("\(demo)/start"))
+    for (id, s) in script.steps {
+      #expect(Set(s.next.keys) == Set(s.show.choices), "\(id): every choice leads somewhere")
+      for n in Array(s.next.values) + [s.ranOk, s.ranElse].compactMap({ $0 }) { #expect(script.steps[n] != nil, "\(id) → \(n)") }
+    }
+    #expect(script.step("start", of: "newton") == "otherProject")
+    #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings, .openDemo])
+    #expect(script.noConnection.text.contains("$demo"))
+    #expect(script.steps["otherProject"]?.show.actions.compactMap(\.demo) == script.tours.map(\.demo))
   }
-  for (id, s) in script.steps {
-    #expect(Set(s.next.keys) == Set(s.show.choices), "\(id): every choice leads somewhere")
-    for n in Array(s.next.values) + [s.ranOk, s.ranElse].compactMap({ $0 }) { #expect(script.steps[n] != nil, "\(id) → \(n)") }
-  }
-  #expect(script.demo(for: "天文・地震・タンパク質のデータ") == "exoplanet-transit")
-  #expect(script.demo(for: "ライブ表示") == "pharmacokinetics")
-  #expect(script.demo(for: "データの集計とレポート") == "report")
-  #expect(script.demo(for: "なんでも") == "report")
-  #expect(script.step("start", of: "newton") == "otherProject")
-  #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings, .openDemo])
-  #expect(script.noConnection.text.contains("$demo"))
-  #expect(script.steps["otherProject"]?.show.actions.compactMap(\.demo) == script.tours.map(\.demo))
+  // Home's first question, answered in each language.
+  let ja = GuideScript(json: Agent.guideScript)
+  #expect(ja.demo(for: "天文・地震・タンパク質のデータ") == "exoplanet-transit")
+  #expect(ja.demo(for: "ライブ表示") == "pharmacokinetics")
+  #expect(ja.demo(for: "データの集計とレポート") == "report")
+  #expect(ja.demo(for: "なんでも") == "report")
+  let en = GuideScript(json: Agent.guideScriptEnglish)
+  #expect(en.demo(for: "Astronomy, earthquakes and protein data") == "exoplanet-transit")
+  #expect(en.demo(for: "Live display") == "pharmacokinetics")
+  #expect(en.demo(for: "Aggregating data and reports") == "report")
+  #expect(en.demo(for: "Anything") == "report")
 }
