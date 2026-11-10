@@ -1,0 +1,5 @@
+{
+  "description": "Check against closed forms",
+  "content": "Compares the closed form, a superposition of single-dose formulas, with the numerical solution, and tables the steady-state accumulation ratio R and the mean concentration next to their formulas. Fails if they differ much.",
+  "outputs": []
+}

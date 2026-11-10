@@ -1,0 +1,10 @@
+{
+  "description": "Compute the 13 trials' effect sizes",
+  "content": "From the counts in dat.bcg, finds each trial's log risk ratio and variance with metafor::escalc, as a table and a CSV.",
+  "outputs": [
+    {
+      "name": "trials",
+      "description": "CSV of each trial's counts, latitude, yi and vi"
+    }
+  ]
+}

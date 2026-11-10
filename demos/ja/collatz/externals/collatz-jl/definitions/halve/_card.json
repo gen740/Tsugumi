@@ -1,0 +1,9 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "maxRuns": 100000
+}

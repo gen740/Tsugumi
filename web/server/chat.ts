@@ -262,7 +262,7 @@ function references(): Record<string, string> {
     if (fs.existsSync(p)) out[name] = p
   }
   // Not the Draft demos nor their answers (referenceDemos).
-  Object.assign(out, referenceDemos(path.join(repo, 'demos')))
+  Object.assign(out, referenceDemos(path.join(repo, 'demos', language())))
   add('sdk/python/tsugumi/__init__.py', path.join(repo, 'sdk', 'python', 'tsugumi', '__init__.py'))
   add('card-guide.md', path.join(repo, 'agent', 'Reference', 'card-guide.md'))
   return out

@@ -1,0 +1,10 @@
+{
+  "description": "Split into energy bands",
+  "content": "Use x, y and energy (eV) of EVENTS and split them into three non-overlapping bands, 600–1650 / 1650–2250 / 2250–7500 eV (only the last band includes its upper edge). The grid is 360×360 at a step of 2 pixels, centred on the centre of Cas A (RA 350.8584°, Dec +58.8113°) converted to sky pixels with the coordinates of the event file's x, y columns (TCRVL, TCRPX, TCDLT, a tangent-plane projection; the centre differs by observation). Save each band as FITS. Make the band edges and the grid size parameters. Assert that the number of photons counted equals the number of events selected, and show the photons per band as a table.",
+  "outputs": [
+    {
+      "name": "images",
+      "description": "The result of splitting into energy bands"
+    }
+  ]
+}

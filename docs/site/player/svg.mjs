@@ -105,7 +105,7 @@ export function innerSurface(data, frame, base, view, boundary) {
     ...bars.inputs.map((p) => ({ d: pathToScreen(router.route(p.point, port(p.inner[0], p.inner[1], false)).d, camera), style: 'normal' })),
     ...bars.outputs.map((p) => ({ d: pathToScreen(router.route(port(p.inner[0], p.inner[1], true), p.point).d, camera), style: out })),
   ]
-  const bar = (r, list, input) => h(BoundaryBarView, { key: input ? 'in' : 'out', title: input ? 'この Card の入力' : 'この Card の出力', ports: list.map((p) => ({ ...p, inner: [p.inner[0], p.inner[1]] })), input, zoom: z, rect: r,
+  const bar = (r, list, input) => h(BoundaryBarView, { key: input ? 'in' : 'out', title: input ? "This Card's inputs" : "This Card's outputs", ports: list.map((p) => ({ ...p, inner: [p.inner[0], p.inner[1]] })), input, zoom: z, rect: r,
     style: { position: 'absolute', left: screen(r).x, top: screen(r).y, width: r.width * z, height: r.height * z }, onPointerDown: () => undefined })
   return renderToStaticMarkup(h(Canvas, { data, frame, base, compact: false, onSelect: () => undefined, motion: true, view: { ...view, camera } },
     h(WireLayer, { wires: draws, animate: true, zoom: z, width: view.width, height: view.height }), bar(top, bars.inputs, true), bar(bottom, bars.outputs, false)))
@@ -118,8 +118,8 @@ const bundle = await esbuild.build({
   bundle: true, platform: 'node', format: 'esm', target: 'node22', write: false, jsx: 'automatic',
   nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
   define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning',
-  // The Web UI's settings (model/prefs.ts) are read when its modules load: the browser globals they touch.
-  banner: { js: `globalThis.window ??= globalThis; globalThis.document ??= { documentElement: { dataset: {} } };
+  // The Web UI's settings (model/prefs.ts) are read when its modules load: the browser globals they touch. The figures are in English (i18n.ts).
+  banner: { js: `globalThis.TSUGUMI_LANGUAGE = 'en'; globalThis.window ??= globalThis; globalThis.document ??= { documentElement: { dataset: {} } };
 Object.defineProperty(globalThis, 'localStorage', { value: { getItem: () => null, setItem() {}, removeItem() {} }, configurable: true });` },
 })
 const tmp = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-svg-')), 'entry.mjs')
@@ -353,9 +353,9 @@ function replay(data, view, compact, kind = compact ? 'tile' : 'large', only, dr
 }
 
 const playerCss = fs.readFileSync(path.join(SITE, 'player.css'), 'utf8')
-const FONT = `-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif`
+const FONT = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif`
 const readDemo = (id) => JSON.parse(fs.readFileSync(path.join(DATA, `${id}.json`), 'utf8'))
-const titleOf = (data) => `${data.title} — Tsugumi のデモ（${data.run ? `${data.run.date} の実行の記録を再生` : '線のつながりから順序を再生'}）`
+const titleOf = (data) => `${data.title} — a Tsugumi demo (${data.run ? `replaying the record of a run on ${data.run.date}` : 'replayed in the order of its wires'})`
 
 /** One SVG for an <img>, as a spec that `render` turns into plain SVG: its HTML and stylesheet (laid out by Chrome), the
  *  animations that show its drawings in turn (`anim`, on the classes the HTML carries), and <defs> its <use>s point at. */
@@ -564,8 +564,8 @@ const guideBird = () => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="130 27
 /** The chat column's head: the guide in its nest (GuideNest), the conversation's title and its buttons (ChatPanel.swift). */
 const chatHead = (title, nest = '<span class="guide-nest">' + guideBird() + '</span>') =>
   `<div class="w-chat-head">${nest}${chromeIcon('list.bullet', 14, 'var(--secondary)')}<b class="cv-ellipsis">${esc(title)}</b><span style="flex:1"></span>${chromeIcon('square.and.pencil', 14, 'var(--secondary)')}${chromeIcon('ellipsis.circle', 14, 'var(--secondary)')}</div>`
-const CHAT_HELLO = '<div class="w-chat-hello"><p>ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。</p><p class="secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</p></div>'
-const chatInput = (tokens = '0k') => `<div class="w-input"><span class="secondary">メッセージ（Return で送信）</span><span class="w-input-row">${chromeIcon('paperclip', 14, 'var(--secondary)')}${chromeIcon('chevron.down', 11, 'var(--secondary)')}<span>claude-sonnet-5-5</span><span style="flex:1"></span><span class="secondary caption">${tokens}</span>${chromeIcon('arrow.up.circle.fill', 18, 'var(--secondary)')}</span></div>`
+const CHAT_HELLO = '<div class="w-chat-hello"><p>I’m Tsugumi. Ask me about designing, generating or editing your Workflow, or how to use the app.</p><p class="secondary">Right-click a Card to add it as a reference; type $ to choose a Skill.</p></div>'
+const chatInput = (tokens = '0k') => `<div class="w-input"><span class="secondary">Message (Return to send)</span><span class="w-input-row">${chromeIcon('paperclip', 14, 'var(--secondary)')}${chromeIcon('chevron.down', 11, 'var(--secondary)')}<span>claude-sonnet-5-5</span><span style="flex:1"></span><span class="secondary caption">${tokens}</span>${chromeIcon('arrow.up.circle.fill', 18, 'var(--secondary)')}</span></div>`
 
 /** Cas A with the screenshots' arrangement. */
 function casaInWindow() {
@@ -586,11 +586,11 @@ function appWindow(o) {
   const data = o.data
   const r = replay(data, { width: canvas.width, height: canvas.height }, false, 'window', o.frames, o.draw && ((f, base) => o.draw(f, base, { width: canvas.width, height: canvas.height })))
   const place = (b) => ({ left: b.left + canvas.left, top: b.top + canvas.top, width: b.width, height: b.height })
-  // The status bar's run state (StatusBar.swift: 実行: <label>), with the run control's icon for it.
-  const state = (f) => (f.mode === 'playing' ? ['play.circle.fill', 'var(--orange)', '実行中'] : f.mode === 'done' ? ['checkmark.circle.fill', 'var(--green)', '成功'] : ['circle', 'var(--secondary)', '待機中'])
+  // The status bar's run state (StatusBar.swift: "Run: <label>"), with the run control's icon for it.
+  const state = (f) => (f.mode === 'playing' ? ['play.circle.fill', 'var(--orange)', 'Running'] : f.mode === 'done' ? ['checkmark.circle.fill', 'var(--green)', 'Succeeded'] : ['circle', 'var(--secondary)', 'Idle'])
   const status = r.perFrame('st', (f) => {
     const [name, color, label] = state(f)
-    return `<span class="w-item">${chromeIcon(name, 12, color)}<span>実行: ${label}</span></span>`
+    return `<span class="w-item">${chromeIcon(name, 12, color)}<span>Run: ${label}</span></span>`
   })
   const control = r.perFrame('rc', (f) => xhtml(player.runControl(data, f)))
   // The zoom bar and the status bar float over the Canvas's bottom, above a bottom panel when one is open.
@@ -609,13 +609,13 @@ ${o.sidebar ?? ''}
 <div class="w-zoom w-glass" style="left:${canvas.left + 10}px;bottom:${floor}px">${chromeIcon('minus.magnifyingglass', 14)}<span class="mono-digits">${Math.round(r.zoom * 100)}%</span>${chromeIcon('plus.magnifyingglass', 14)}${chromeIcon('arrow.up.left.and.down.right.magnifyingglass', 14)}${chromeIcon('square.grid.2x2', 14)}${chromeIcon('number', 14, 'var(--accent)')}</div>
 <div class="w-status w-glass" style="right:${WIN.chat + 10}px;bottom:${floor}px">
   <span class="w-slot">${status}</span>
-  <span class="w-item">${chromeIcon('checkmark.icloud', 13, 'var(--green)')}<span>保存済み</span></span>
+  <span class="w-item">${chromeIcon('checkmark.icloud', 13, 'var(--green)')}<span>Saved</span></span>
   <span class="w-item">${chromeIcon('point.3.connected.trianglepath.dotted', 13, 'var(--secondary)')}<span class="mono-digits">rev 0</span></span>
   <span class="w-item">${chromeIcon('xmark.circle', 12)}<span>0</span>${chromeIcon('exclamationmark.triangle', 12)}<span>0</span></span>
   <span class="w-item w-panels">${['text.alignleft', 'chart.bar.xaxis', 'terminal'].map((n) => `<span class="${o.panel === n ? 'w-on' : ''}">${chromeIcon(n, 14)}</span>`).join('')}</span>
 </div>
 ${o.bottom ? o.bottom(r) : ''}
-<div class="w-chat">${o.chat ? o.chat(r) : `${chatHead('新しい会話')}${CHAT_HELLO}${chatInput()}`}</div>
+<div class="w-chat">${o.chat ? o.chat(r) : `${chatHead('New conversation')}${CHAT_HELLO}${chatInput()}`}</div>
 ${o.over ? o.over(r, place) : ''}
 </div>`
   const H = WIN.height
@@ -662,7 +662,7 @@ function windowSvg() {
   const data = casaInWindow()
   return appWindow({
     data,
-    title: `${data.title} — Tsugumi のアプリでの実行（${data.run.date} の実行の記録を再生）`,
+    title: `${data.title} — run in the Tsugumi app (replaying the record of a run on ${data.run.date})`,
   })
 }
 
@@ -709,10 +709,9 @@ function timelineSvg() {
       return `<rect x="${x0.toFixed(1)}" y="${y}" width="${(x1 - x0).toFixed(1)}" height="${h}" rx="2" style="fill:var(--green);opacity:0.35"/>${parts}`
     }).join('')
     const stripes = rows.map((_, i) => (i % 2 ? `<rect x="0" y="${i * TIMELINE.row}" width="${chartW}" height="${TIMELINE.row}" class="timeline-stripe"/>` : '')).join('')
-    const date = recorded.run.date.split('-').map(Number)
     return `<div class="w-timeline" style="top:${TIMELINE.top}px;width:${canvas.width}px;height:${height}px">
-<div class="w-tl-bar">${chromeIcon('chart.bar.xaxis', 14)}<b>タイムライン</b><span class="secondary" style="margin-left:24px">実行</span><span class="w-tl-pick">${date[0]}年${date[1]}月${date[2]}日 · 成功 ${chromeIcon('chevron.up.chevron.down', 10)}</span><span style="flex:1"></span>${chromeIcon('xmark', 12, 'var(--secondary)')}</div>
-<div class="timeline"><div class="timeline-head"><span class="caption2 secondary mono-digits" style="width:${TIMELINE.label}px;text-align:right">${player.formatDuration(0)}</span><span class="spacer" style="flex:1"></span><span class="caption2 tertiary">ドラッグで範囲を拡大・横スクロールで移動</span><span class="w-tl-all">全体</span><span class="caption2 secondary mono-digits">${player.formatDuration(total / 1000)}</span></div>
+<div class="w-tl-bar">${chromeIcon('chart.bar.xaxis', 14)}<b>Timeline</b><span class="secondary" style="margin-left:24px">Run</span><span class="w-tl-pick">${recorded.run.date} · Succeeded ${chromeIcon('chevron.up.chevron.down', 10)}</span><span style="flex:1"></span>${chromeIcon('xmark', 12, 'var(--secondary)')}</div>
+<div class="timeline"><div class="timeline-head"><span class="caption2 secondary mono-digits" style="width:${TIMELINE.label}px;text-align:right">${player.formatDuration(0)}</span><span class="spacer" style="flex:1"></span><span class="caption2 tertiary">Drag to zoom into a range, scroll sideways to move</span><span class="w-tl-all">All</span><span class="caption2 secondary mono-digits">${player.formatDuration(total / 1000)}</span></div>
 <div class="w-tl-rows"><div class="timeline-labels" style="width:${TIMELINE.label}px">${rows.map((k) => `<div class="timeline-label caption" style="height:${TIMELINE.row}px">${k}</div>`).join('')}</div>
 <div class="w-tl-chart" style="width:${chartW}px;height:${rows.length * TIMELINE.row}px"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${stripes}</svg>
 <div class="w-tl-clip ${reveal}" style="height:${rows.length * TIMELINE.row}px;width:${chartW}px"><div class="${back}"><svg xmlns="http://www.w3.org/2000/svg" width="${chartW}" height="${rows.length * TIMELINE.row}">${bars}</svg></div></div></div></div></div>
@@ -720,7 +719,7 @@ function timelineSvg() {
   }
   return appWindow({
     data, canvas, bottom, panel: 'chart.bar.xaxis', panelTop: TIMELINE.top,
-    title: `${data.title} — タイムライン（${data.run.date} の実行の記録）`,
+    title: `${data.title} — timeline (the record of a run on ${data.run.date})`,
     css: `.w-timeline{position:absolute;left:0;background:var(--window-bg);border-top:0.5px solid var(--separator-strong);display:flex;flex-direction:column}
 .w-tl-bar{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;flex:none;border-bottom:0.5px solid var(--separator)}
 .w-tl-pick{display:inline-flex;align-items:center;gap:8px;margin-left:8px;padding:3px 10px;border-radius:6px;background:var(--control-bg);font-weight:500}
@@ -734,17 +733,17 @@ function timelineSvg() {
 
 // ---- The guide: Tsugumi flies to the Card it explains ----------------------------------------
 
-/** What Tsugumi answered in the README's screenshot (docs/assets/screenshots/guide.png: Cas A, `$demo spectrum の Card が何を
- *  示しているか、画面で指しながら教えて`), written out from it: the bubble by the Card and the answer in the chat. */
+/** What Tsugumi answered in the README's screenshot (docs/assets/screenshots/guide.png: Cas A, `$demo what does the spectrum Card
+ *  show? Point at the screen as you explain`), written out from it in English: the bubble by the Card and the answer in the chat. */
 const GUIDE = {
-  ask: '$demo spectrum の Card が何を示しているか、画面で指しながら教えて',
-  say: 'spectrum は光子のエネルギー分布（スペクトル）を描きます。赤・緑・青の帯域と元素の輝線が一目でわかります。',
-  choices: ['パラメータを見せて', '表示の見方を教えて', 'ありがとう、もう大丈夫'],
+  ask: '$demo what does the spectrum Card show? Point at the screen as you explain',
+  say: 'spectrum draws the distribution of the photons\' energies (the spectrum). You can see the red, green and blue bands and the elements\' lines at a glance.',
+  choices: ['Show me the parameters', 'How do I read the display?', 'Thanks, that\'s all'],
   answer: [
-    `<h4>処理</h4><ol><li><code>provenance.json</code> に書かれたイベントファイルを開きます。</li><li><b>bands</b> と同じ範囲（中心から 2 ピクセル刻み × 360 ピクセルの正方形）の光子だけを選びます。</li><li>エネルギー（eV）のヒストグラムを作ります。</li><li>縦軸を対数にして描きます。</li></ol>`,
-    `<h4>グラフの見方</h4><ul><li>黒い階段状の線が光子数です。横軸は keV です。</li><li>赤・緑・青の帯は、<b>bands</b> の 3 帯域です。<ul><li>赤は 600–1650 eV です。</li><li>緑は 1650–2250 eV です。</li><li>青は 2250–7500 eV です。</li></ul></li><li>左下の凡例に、色ごとの光子数が出ます。</li><li>点線と元素名は、残骸の輝線の位置です。<ul><li>Mg は 1.35 keV です。</li><li>Si は 1.86 keV です。</li><li>S は 2.45 keV です。</li><li>Ar は 3.12 keV です。</li><li>Ca は 3.90 keV です。</li><li>Fe は 6.68 keV です。</li></ul></li><li>どの元素がどの色に入るかがわかります。Mg は赤、Si は緑、S 以降は青です。</li><li>タイトルには ObsID と露光時間が出ます。</li></ul>`,
-    `<h4>パラメータ</h4><ul><li><code>min_ev</code> は 300 で、描く範囲の下限です。</li><li><code>max_ev</code> は 8000 で、描く範囲の上限です。</li><li><code>bin_ev</code> は 20 で、1 ビンの幅です。</li><li>この 3 つは見た目を変えるだけで、帯域の境界は変わりません。帯域の境界は <b>bands</b> のパラメータです。</li></ul>`,
-    `<p>直近の実行は成功しているので、画面右上にグラフが出ているはずです。次は、パラメータの変更か表示の見方のどちらかをご案内できます。</p>`,
+    `<h4>Processing</h4><ol><li>Opens the event file named in <code>provenance.json</code>.</li><li>Selects only the photons in the same range as <b>bands</b> (a square of 360 pixels at a step of 2 around the centre).</li><li>Makes a histogram of their energies (eV).</li><li>Draws it with a log vertical axis.</li></ol>`,
+    `<h4>Reading the chart</h4><ul><li>The black stepped line is the photon count. The horizontal axis is keV.</li><li>The red, green and blue bands are the three bands of <b>bands</b>.<ul><li>Red is 600–1650 eV.</li><li>Green is 1650–2250 eV.</li><li>Blue is 2250–7500 eV.</li></ul></li><li>The legend at the bottom left gives the photons per colour.</li><li>The dotted lines and element names are where the remnant's lines are.<ul><li>Mg is 1.35 keV.</li><li>Si is 1.86 keV.</li><li>S is 2.45 keV.</li><li>Ar is 3.12 keV.</li><li>Ca is 3.90 keV.</li><li>Fe is 6.68 keV.</li></ul></li><li>You can see which element falls in which colour: Mg in red, Si in green, S and above in blue.</li><li>The title gives the ObsID and the exposure time.</li></ul>`,
+    `<h4>Parameters</h4><ul><li><code>min_ev</code> is 300, the lower end of the range drawn.</li><li><code>max_ev</code> is 8000, the upper end of the range drawn.</li><li><code>bin_ev</code> is 20, the width of one bin.</li><li>These three change only how it looks, not the band edges. The band edges are parameters of <b>bands</b>.</li></ul>`,
+    `<p>The latest run succeeded, so the chart should be at the top right of the screen. Next I can guide you through changing the parameters or reading the display.</p>`,
   ],
 }
 /** Lists with their markers as text (dom-to-svg draws no list markers): 1. 2. … and • in the chat's indents. */
@@ -766,13 +765,13 @@ function guideSvg() {
   /** Shown from `from` to `to` (ms), in steps as the app's views appear. */
   const during = (r, name, from, to = T.total) => r.custom(name, [[0, `opacity:${from === 0 ? 1 : 0}`], ...(from ? [[from, 'opacity:1']] : []), ...(to < T.total ? [[to, 'opacity:0']] : []), [T.total, `opacity:${to < T.total ? 0 : 1}`]], 'step-end')
   const chat = (r) => {
-    const thinking = '<p class="secondary w-thinking">考えています…</p>'
+    const thinking = '<p class="secondary w-thinking">Thinking…</p>'
     const asked = `<div class="w-ask">${esc(GUIDE.ask)}</div>`
     const title = GUIDE.ask.slice(0, 22) + '…'
     const column = (head, body, tokens = '0k') => `${head}<div class="w-msgs">${body}</div>${chatInput(tokens)}`
     const nest = (cls) => `<span class="guide-nest${cls}">${guideBird()}</span>`
     const views = [
-      [0, T.ask, `${chatHead('新しい会話')}${CHAT_HELLO}${chatInput()}`],
+      [0, T.ask, `${chatHead('New conversation')}${CHAT_HELLO}${chatInput()}`],
       [T.ask, T.fly, column(chatHead(title, nest(' thinking')), asked + thinking, '1k')],
       [T.fly, T.parts[0], column(chatHead(title, nest(' away')), asked + thinking, '1k')],
       ...GUIDE.answer.map((_, i) => [T.parts[i], T.parts[i + 1] ?? T.total,
@@ -802,14 +801,14 @@ function guideSvg() {
 <div class="w-a w-fly ${fly}" style="left:${perch.left}px;top:${perch.top}px;width:${bird.w}px;height:${bird.h}px"><div class="guide-flying-bird">${guideBird()}</div></div>
 <div class="w-a ${pop}" style="left:${bubble.left}px;top:${bubble.top}px;transform-origin:100% 0">
 <div class="guide-speech material"><div class="row gap6"><span class="flex1">${esc(GUIDE.say)}</span>${chromeIcon('xmark', 12, 'var(--secondary)')}</div>
-<span class="guide-more">詳しくはチャットに書きました →</span>
+<span class="guide-more">More in the chat →</span>
 <div class="col gap6">${choices}</div>
-<div class="guide-reply-field"><span class="w-field secondary">ツグミに返事</span>${chromeIcon('arrow.up.circle.fill', 16, 'var(--secondary)')}</div></div></div>`
+<div class="guide-reply-field"><span class="w-field secondary">Reply to Tsugumi</span>${chromeIcon('arrow.up.circle.fill', 16, 'var(--secondary)')}</div></div></div>`
   }
   return appWindow({
     data, chat, over,
     frames: [{ ...player.DONE, ms: T.total }],
-    title: `${data.title} — ツグミが spectrum の Card を案内する`,
+    title: `${data.title} — Tsugumi guides you through the spectrum Card`,
     css: `.w-view{position:absolute;inset:0}
 .w-msgs{position:absolute;left:0;right:0;top:92px;bottom:80px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;padding:0 14px 8px;overflow:hidden;font-size:13px;line-height:1.5;border-top:0.5px solid var(--separator)}
 .w-ask{align-self:flex-end;max-width:85%;padding:6px 10px;border-radius:10px;background:rgba(255,255,255,.09)}
@@ -863,7 +862,7 @@ const SETTINGS = { left: 120, top: 70, width: 1200, height: 760, side: 160, file
 function sourceSvg() {
   const data = casaInWindow()
   const T = SOURCE_T, Z = SETTINGS
-  const dir = path.join(ROOT, 'demos', 'casa', 'definitions', 'spectrum')
+  const dir = path.join(ROOT, 'demos', 'en', 'casa', 'definitions', 'spectrum')
   const code = fs.readFileSync(path.join(dir, 'src', 'main.py'), 'utf8').replace(/\n$/, '')
   const lines = highlighted(code)
   // The call that puts the figure in the Card's display (the docstring names it too: the last one).
@@ -891,25 +890,25 @@ function sourceSvg() {
 ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no">${first + j + 1}</span><span class="s-text">${l || ' '}</span></div>`).join('')}</div>`
     }
     const ring = r.custom('s-ring', [[0, 'opacity:0'], [T.open - 600, 'opacity:0'], [T.open - 550, 'opacity:1'], [T.total - 400, 'opacity:1'], [T.total - 350, 'opacity:0'], [T.total, 'opacity:0']], 'step-end')
-    const categories = [['general', '一般', 'slider.horizontal.3'], ['nix', 'Nix 定義', 'snowflake'], ['source', 'ソース', 'doc.text'], ['ports', '入出力', 'arrow.left.arrow.right'],
-      ['executions', '実行履歴', 'clock.arrow.circlepath'], ['artifacts', '成果物', 'shippingbox'], ['context', '追加コンテキスト', 'text.bubble']]
+    const categories = [['general', 'General', 'slider.horizontal.3'], ['nix', 'Nix Definition', 'snowflake'], ['source', 'Source', 'doc.text'], ['ports', 'Ports', 'arrow.left.arrow.right'],
+      ['executions', 'Run History', 'clock.arrow.circlepath'], ['artifacts', 'Artifacts', 'shippingbox'], ['context', 'Extra Context', 'text.bubble']]
     return `<div class="w-a ${ring}" style="left:${b.left - 4}px;top:${b.top - 4}px;width:${b.width + 8}px;height:${b.height + 8}px;border:2px solid var(--accent);border-radius:10px"></div>
 <div class="w-a s-win ${open}" style="left:${Z.left}px;top:${Z.top}px;width:${Z.width}px;height:${Z.height}px">
 <div class="s-title"><span class="w-lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><b>spectrum — ${esc(data.title)}</b></div>
 <div class="s-side">${categories.map(([k, t, icon]) => `<div class="s-cat${k === 'source' ? ' on' : ''}">${chromeIcon(icon, 15)}<span>${t}</span></div>`).join('')}</div>
 <div class="s-files">${files.map(([icon, name, depth, color, on]) => `<div class="s-file${on ? ' on' : ''}" style="padding-left:${12 + depth * 18}px">${depth ? '' : chromeIcon('chevron.down', 9, 'var(--secondary)')}${chromeIcon(icon, 13, color || 'var(--secondary)')}<span>${esc(name)}</span></div>`).join('')}
-<div class="s-gen secondary">生成</div>${['_inputs.fbs', '_params.fbs'].map((f) => `<div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>${f}</span><span class="s-ro">RO</span></div>`).join('')}
+<div class="s-gen secondary">Generated</div>${['_inputs.fbs', '_params.fbs'].map((f) => `<div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>${f}</span><span class="s-ro">RO</span></div>`).join('')}
 <div class="s-plus secondary">${chromeIcon('plus', 12)}${chromeIcon('minus', 12)}</div></div>
 <div class="s-code">
-<div class="s-head">${chromeIcon('chevron.left.forwardslash.chevron.right', 13)}<b>main.py</b><span class="secondary caption">spectrum › src</span><span style="flex:1"></span><span class="s-btn">整形</span></div>
+<div class="s-head">${chromeIcon('chevron.left.forwardslash.chevron.right', 13)}<b>main.py</b><span class="secondary caption">spectrum › src</span><span style="flex:1"></span><span class="s-btn">Format</span></div>
 <div class="s-view" style="height:${viewH}px">${at.map((_, i) => view(i)).join('')}</div>
-<div class="s-foot"><span class="s-btn">再読込</span><span class="s-btn off">適用</span><span class="s-btn">閉じる</span></div></div>
+<div class="s-foot"><span class="s-btn">Reload</span><span class="s-btn off">Apply</span><span class="s-btn">Close</span></div></div>
 </div>`
   }
   return appWindow({
     data, over,
     frames: [{ ...player.DONE, ms: T.total }],
-    title: `${data.title} — spectrum の Card 設定でソースを読む`,
+    title: `${data.title} — reading the source in the spectrum Card's settings`,
     css: `.s-win{transform-origin:0 0;border-radius:12px;overflow:hidden;background:#1e1e1e;box-shadow:0 22px 70px rgba(0,0,0,.55),0 0 0 1px #4a4a4c;font-size:13px}
 .s-title{position:absolute;left:0;right:0;top:0;height:${Z.header}px;display:flex;align-items:center;gap:14px;padding:0 20px;background:#2a2a2c;font-size:13px}
 .s-side{position:absolute;left:0;top:${Z.header}px;bottom:0;width:${Z.side}px;padding:8px;background:#2a2a2c;border-right:0.5px solid var(--separator)}
@@ -936,7 +935,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
 /** A Card in Card's inner Workflow as player data: its Cards, wires and layout (read as build.mjs reads a demo), and its
  *  part of the demo's recorded run (the timeline's `<card>/<inner>` entries). */
 function innerDemo(demo, card) {
-  const root = path.join(ROOT, 'demos', demo)
+  const root = path.join(ROOT, 'demos', 'en', demo)
   const ext = readJson(path.join(root, 'definitions', card, '_link.json')).external
   const inner = path.join(root, 'externals', ext)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
@@ -969,11 +968,11 @@ function subworkflowSvg() {
     const list = r.perFrame('sb', (f) => player.cardStates(data, f).map((c) => `<div class="b-row">${chromeIcon(c.icon, 13, 'var(--secondary)')}<span class="flex1">${esc(c.id)}</span>${c.state ? `${chromeIcon(c.state.icon, 13, `var(--${c.state.color})`)}<span class="mono-digits secondary">#${c.invocation}</span>` : ''}</div>`).join(''))
     return `<div class="b-side" style="width:${SIDEBAR}px">
 <span class="w-lights" style="position:absolute;left:20px;top:20px"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
-<div class="b-head">Workflow 階層</div>
+<div class="b-head">Workflow Hierarchy</div>
 <div class="b-row b-root">${chromeIcon('chevron.down', 10, 'var(--secondary)')}${chromeIcon('square.stack.3d.up', 14, 'var(--secondary)')}<b>${esc(data.title)}</b></div>
-${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : ''}">${chromeIcon('square.stack.3d.up', 14, id === data.card ? 'var(--accent)' : 'var(--secondary)')}<span class="flex1">${esc(id)}</span>${id === data.card ? '<span class="caption secondary">表示中</span>' : ''}</div>`).join('')}
-<div class="b-head" style="margin-top:18px">Card を追加</div><div class="b-search secondary">検索</div>
-<div class="b-head" style="margin-top:18px">表示中の Card</div>
+${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : ''}">${chromeIcon('square.stack.3d.up', 14, id === data.card ? 'var(--accent)' : 'var(--secondary)')}<span class="flex1">${esc(id)}</span>${id === data.card ? '<span class="caption secondary">Shown</span>' : ''}</div>`).join('')}
+<div class="b-head" style="margin-top:18px">Add Card</div><div class="b-search secondary">Search</div>
+<div class="b-head" style="margin-top:18px">Cards Shown</div>
 <div class="b-list">${list}</div></div>`
   }
   return appWindow({
@@ -982,7 +981,7 @@ ${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : '
     sidebarWidth: SIDEBAR,
     over: (r) => sidebar(r),
     tab: `${chromeIcon('chevron.left', 11)}<span>${esc(data.title)}</span>${chromeIcon('chevron.right', 10, 'var(--secondary)')}<span style="color:var(--accent);font-weight:500">${esc(data.card)}</span>`,
-    title: `${data.title} — Card in Card（${data.card}）の中の Workflow`,
+    title: `${data.title} — the Workflow inside a Card in Card (${data.card})`,
     css: `.b-side{position:absolute;left:0;top:0;bottom:0;padding:56px 10px 10px;background:#2a2a2c;border-right:0.5px solid var(--separator);font-size:13px;z-index:5}
 .b-head{font-size:11px;font-weight:600;color:var(--secondary);margin:6px 4px}
 .b-row{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px}
@@ -994,7 +993,7 @@ ${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : '
 }
 
 // The demos of demos/index.json with a recorded run (player-data/index.json says which).
-const shipped = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'demos', 'index.json'), 'utf8')).demos.map((d) => d.id))
+const shipped = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'demos', 'en', 'index.json'), 'utf8')).demos.map((d) => d.id))
 const recorded = JSON.parse(fs.readFileSync(path.join(DATA, 'index.json'), 'utf8')).demos.filter((d) => d.recorded && shipped.has(d.id)).map((d) => d.id)
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : recorded
 const write = async (file, spec) => {

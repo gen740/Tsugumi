@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace simpson;
+table Penguins { value:string; }
+table Outputs { penguins:Penguins (required, tsugumi: "file"); }
+root_type Outputs;

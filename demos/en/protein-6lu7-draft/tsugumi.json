@@ -1,0 +1,53 @@
+{
+  "name": "6LU7 · a protein and its binding pocket",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "structure"
+      },
+      {
+        "id": "pocket"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "data"
+        },
+        "to": {
+          "card": "structure",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "structure",
+          "port": "atoms"
+        },
+        "to": {
+          "card": "pocket",
+          "port": "atoms"
+        }
+      }
+    ]
+  }
+}

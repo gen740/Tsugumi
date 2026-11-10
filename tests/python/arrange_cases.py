@@ -113,7 +113,7 @@ def demo_flow(demo: Path) -> str:
 
 def all_cases() -> list:
     out = []
-    for demo in sorted((ROOT / "demos").iterdir()):
+    for demo in sorted((ROOT / "demos" / "ja").iterdir()):
         if (demo / "tsugumi.json").exists():
             out += scope_cases(demo, [], demo.name, demo_flow(demo), ports(demo))
     return out

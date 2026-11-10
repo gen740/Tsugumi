@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace casa;
+table BandDir { value:string; }
+table Outputs { images:BandDir (required, tsugumi: "directory"); }
+root_type Outputs;

@@ -1,0 +1,12 @@
+namespace flow;
+table Cut {
+  nodes:string;
+  tail:[ulong];
+  head:[ulong];
+  capacity:[ulong];
+  flow:[ulong];
+  value:ulong;
+  source_side:string;
+}
+table Outputs { cut:Cut (required); }
+root_type Outputs;

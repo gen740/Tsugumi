@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "scene"
+    }
+  ],
+  "params": [
+    {
+      "name": "background_radius",
+      "type": "uint64",
+      "data": 30
+    },
+    {
+      "name": "sigma",
+      "type": "double",
+      "data": 1.5
+    }
+  ]
+}

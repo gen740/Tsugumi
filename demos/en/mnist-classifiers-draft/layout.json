@@ -1,0 +1,124 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 160,
+      "y": 0
+    },
+    "prepare": {
+      "x": 500,
+      "y": 0
+    },
+    "share": {
+      "x": 860,
+      "y": 0
+    },
+    "knn": {
+      "x": 1040,
+      "y": -600
+    },
+    "logistic": {
+      "x": 1460,
+      "y": -400
+    },
+    "svm": {
+      "x": 1040,
+      "y": -200
+    },
+    "forest": {
+      "x": 1460,
+      "y": 0
+    },
+    "boosting": {
+      "x": 1040,
+      "y": 200
+    },
+    "mlp": {
+      "x": 1460,
+      "y": 400
+    },
+    "cnn": {
+      "x": 1040,
+      "y": 600
+    },
+    "compare": {
+      "x": 1920,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "plan",
+      "scope": "",
+      "text": "Comparing MNIST classifiers\nload and prepare are implemented. The seven classifiers depend on no other, so the Agent can split them up and write them at the same time (delegate). When they are all there, write compare",
+      "x": 160,
+      "y": -260
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 160,
+      "y": 140,
+      "width": 300,
+      "height": 220
+    },
+    "prepare": {
+      "x": 500,
+      "y": 140,
+      "width": 300,
+      "height": 280
+    },
+    "knn": {
+      "x": 1040,
+      "y": -460,
+      "width": 360,
+      "height": 210
+    },
+    "logistic": {
+      "x": 1460,
+      "y": -260,
+      "width": 360,
+      "height": 210
+    },
+    "svm": {
+      "x": 1040,
+      "y": -60,
+      "width": 360,
+      "height": 210
+    },
+    "forest": {
+      "x": 1460,
+      "y": 140,
+      "width": 360,
+      "height": 210
+    },
+    "boosting": {
+      "x": 1040,
+      "y": 340,
+      "width": 360,
+      "height": 210
+    },
+    "mlp": {
+      "x": 1460,
+      "y": 540,
+      "width": 360,
+      "height": 210
+    },
+    "cnn": {
+      "x": 1040,
+      "y": 740,
+      "width": 360,
+      "height": 210
+    },
+    "compare": {
+      "x": 1920,
+      "y": 360,
+      "width": 420,
+      "height": 320
+    }
+  }
+}

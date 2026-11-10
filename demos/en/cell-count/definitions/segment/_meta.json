@@ -1,0 +1,10 @@
+{
+  "description": "Separate with a threshold and watershed",
+  "content": "Finds the foreground with Otsu's threshold and numbers its connected regions (threshold only). Then applies watershed seeded at maxima of the distance transform to separate touching cells.",
+  "outputs": [
+    {
+      "name": "labels",
+      "description": "Label images of threshold only and watershed"
+    }
+  ]
+}

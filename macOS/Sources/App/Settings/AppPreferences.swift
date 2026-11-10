@@ -147,6 +147,9 @@ final class AppPreferences {
     case ja, en
     var id: String { rawValue }
     var label: String { self == .ja ? "日本語" : "English" }
+    /// The language this process shows (the one at launch: a change waits
+    /// for the next one). The demos are in demos/<it>.
+    static var running: Language { Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true ? .en : .ja }
   }
 
   enum Theme: String, CaseIterable, Identifiable {

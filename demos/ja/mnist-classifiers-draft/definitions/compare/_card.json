@@ -1,0 +1,29 @@
+{
+  "template": "draft",
+  "inputs": [
+    {
+      "name": "data"
+    },
+    {
+      "name": "knn"
+    },
+    {
+      "name": "logistic"
+    },
+    {
+      "name": "svm"
+    },
+    {
+      "name": "forest"
+    },
+    {
+      "name": "boosting"
+    },
+    {
+      "name": "mlp"
+    },
+    {
+      "name": "cnn"
+    }
+  ]
+}

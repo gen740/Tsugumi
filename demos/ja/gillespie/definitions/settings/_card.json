@@ -1,0 +1,30 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 1
+    },
+    {
+      "name": "synthesis",
+      "type": "double",
+      "data": 2.0
+    },
+    {
+      "name": "degradation",
+      "type": "double",
+      "data": 0.1
+    },
+    {
+      "name": "volume",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "runs",
+      "type": "uint64",
+      "data": 2000
+    }
+  ]
+}

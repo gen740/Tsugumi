@@ -1,0 +1,25 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "params": [
+    {
+      "name": "trees",
+      "type": "uint64",
+      "data": 100
+    },
+    {
+      "name": "max_depth",
+      "type": "uint64",
+      "data": 20
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 0
+    }
+  ]
+}

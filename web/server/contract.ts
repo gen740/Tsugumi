@@ -86,7 +86,7 @@ for (const c of fixture.modelOptions) {
 // The Draft demos are tasks and the finished demo of each is its answer:
 // reference_read neither lists nor reads them (as the Swift Agent).
 {
-  const refs = referenceDemos(path.join(root, 'demos'))
+  const refs = referenceDemos(path.join(root, 'demos', 'ja'))
   const listed = Object.keys(refs).sort()
   for (const example of ['demos/collatz', 'demos/live-stream', 'demos/plots', 'demos/report']) assert.ok(listed.includes(example), example)
   for (const task of ['demos/casa', 'demos/casa-draft', 'demos/gw150914', 'demos/dynamics-draft', 'demos/mnist-classifiers', 'demos/mnist-classifiers-draft']) assert.ok(!listed.includes(task), task)

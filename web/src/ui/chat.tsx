@@ -84,8 +84,8 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> {who} が Card の権限を広げようとしています</div>
-        <p className="secondary">許可すると、この保存が行われます。許可しなければ何も保存されず、{who} には理由を説明するよう伝えます。</p>
+        <div className="title2"><Icon name="hand.raised" /> {L('{0} が Card の権限を広げようとしています', who)}</div>
+        <p className="secondary">{L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
         <ul className="permission-list">
           {requests.map((r) => (
             <li key={r.raw}>
@@ -425,7 +425,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
       <div className={`composer-box${focused ? ' focused' : ''}`}>
         <div className="composer-input">
           {/* Gone while typing (and while an input method composes). */}
-          {!input && !focused && <span className="composer-placeholder">メッセージ（{prefs.sendKey === 'returnKey' ? 'Return' : `${cmd}Return`} で送信）</span>}
+          {!input && !focused && <span className="composer-placeholder">{L('メッセージ（{0} で送信）', prefs.sendKey === 'returnKey' ? 'Return' : `${cmd}Return`)}</span>}
           <textarea ref={inputRef} className="chat-input" rows={1} value={input} aria-label={L('メッセージ')}
             onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             onChange={(e) => { setInput(e.target.value); updateSkillQuery(e.target.value) }}
@@ -492,7 +492,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
         <Sheet onClose={() => setToAttach(undefined)} width={440}>
           <div className="confirm">
             <div className="confirm-title">{L('フォルダを添付しますか？')}</div>
-            <div className="secondary">「{toAttach.split('/').pop()}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{chat.provider.name}）に送られます。</div>
+            <div className="secondary">{L('「{0}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{1}）に送られます。', toAttach.split('/').pop(), chat.provider.name)}</div>
             {attachError && <div className="callout selectable" style={{ color: 'var(--red)' }}>{attachError}</div>}
             <div className="row end gap8">
               <Button onClick={() => setToAttach(undefined)}>{L('キャンセル')}</Button>
@@ -592,7 +592,7 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
       </div>
       {savedComments(item.text).map((c, i) => (
         <div key={i} className="chat-tool-comment caption secondary selectable">
-          {c.card} · コメントを{commentChange(c.change, c.by)}: {c.text}
+          {L('{0} · コメントを{1}: {2}', c.card, commentChange(c.change, c.by), c.text)}
           {c.resolution && ` — ${c.resolution}`}
           {!!c.cards?.length && L('（変更した Card: {0}）', c.cards.join('、'))}
         </div>
@@ -656,7 +656,7 @@ function ChatCodeBlock({ code, language }: { code: string; language: string }) {
         <button type="button" className="chat-code-copy caption2" onClick={() => void copyText(code).then(() => setCopied(true))}>{copied ? L('コピーしました') : L('コピー')}</button>
       </div>
       <pre className="chat-code-text selectable">{folded ? lines.slice(0, 30).join('\n') : code}</pre>
-      {folded && <button type="button" className="link caption chat-code-more" onClick={() => setExpanded(true)}>残り {lines.length - 30} 行を表示</button>}
+      {folded && <button type="button" className="link caption chat-code-more" onClick={() => setExpanded(true)}>{L('残り {0} 行を表示', lines.length - 30)}</button>}
     </div>
   )
 }

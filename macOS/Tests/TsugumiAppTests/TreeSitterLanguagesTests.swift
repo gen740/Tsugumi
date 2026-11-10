@@ -50,7 +50,7 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 
 /// The demos' own Julia and R Cards: every one gets keywords and functions from its grammar.
 @Test func treeSitterColorsTheDemoCards() throws {
-  let demos = repoRoot.appendingPathComponent("demos")
+  let demos = repoRoot.appendingPathComponent("demos/ja")
   var seen: [String: Int] = [:]
   for case let url as URL in FileManager.default.enumerator(at: demos, includingPropertiesForKeys: nil)! {
     let lang = ["main.jl": "julia", "main.R": "r"][url.lastPathComponent]
@@ -65,7 +65,7 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 }
 
 @Test func treeSitterColorsTheGillespieCheckCard() throws {
-  let url = repoRoot.appendingPathComponent("demos/gillespie/definitions/check/src/main.jl")
+  let url = repoRoot.appendingPathComponent("demos/ja/gillespie/definitions/check/src/main.jl")
   let text = try String(contentsOf: url, encoding: .utf8)
   let t = tokens(text, "jl")
   #expect(t.contains("keyword:using") && t.contains("keyword:function") && t.contains("keyword:end") && t.contains("function:main"))
@@ -73,7 +73,7 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 }
 
 @Test func treeSitterColorsTheRnaSeqPcaCard() throws {
-  let url = repoRoot.appendingPathComponent("demos/rna-seq/definitions/pca/src/main.R")
+  let url = repoRoot.appendingPathComponent("demos/ja/rna-seq/definitions/pca/src/main.R")
   let text = try String(contentsOf: url, encoding: .utf8)
   let t = tokens(text, "R")
   #expect(t.contains("keyword:function") && t.contains("function:library") && t.contains("function:readRDS") && t.contains("constant:TRUE"))

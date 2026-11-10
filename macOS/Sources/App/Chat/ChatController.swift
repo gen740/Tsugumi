@@ -176,14 +176,14 @@ final class ChatController {
   static let references: [String: URL] = {
     let fm = FileManager.default
     if let res = Bundle.main.resourceURL, fm.fileExists(atPath: res.appendingPathComponent("reference/card-guide.md").path) {
-      return Agent.referenceDemos(in: res.appendingPathComponent("demos", isDirectory: true)).merging([
+      return Agent.referenceDemos(in: res.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
         "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
         "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]) { a, _ in a }
     }
     #if DEBUG
     // A development build run from the source tree reads the repository.
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
-    return Agent.referenceDemos(in: repo.appendingPathComponent("demos", isDirectory: true)).merging([
+    return Agent.referenceDemos(in: repo.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
       "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
       "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     #else

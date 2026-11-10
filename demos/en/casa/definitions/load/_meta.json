@@ -1,0 +1,10 @@
+{
+  "description": "Pin the observation with Nix",
+  "content": "Fetch the primary-processed event file of a Chandra observation of Cas A, pinned with Nix, and pass the unpacked FITS to the next Card. The file is taken from HEASARC's mirror ftp://heasarc.gsfc.nasa.gov/chandra/data/byobsid/<last digit of the ObsID>/<ObsID>/primary/<file> over explicit FTPS (ftp:// with --ssl-reqd), with its content pinned by hash. Nix does the fetching and unpacking in the Card's default.nix; the download happens only the first time, and later runs use the file in the store as it is (no network while running). ObsID, file name and hash are parameters read from default.nix, with ObsID 25628 as the default. Available observations: ObsID 25628 (acisf25628N002_evt2.fits.gz, sha256-MYAMIQXv/cwAV6L30N5+XODCrCSYk6NTqpMV+VSDwp4=, 2.1 ks, 13 MB), ObsID 114 (acisf00114N006_evt2.fits.gz, sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y=, 2000, 50 ks, 520 MB), ObsID 19606 (acisf19606N002_evt2.fits.gz, sha256-FPE5ByrHvbx0Cxk5wVu/N8kjZCrsiFy5snxV1Ypcvtc=, 2019, 49 ks, 349 MB). Pass the path of the file in the store, the ObsID and the hash to the next Card. Log the source URL, the hash and the size after unpacking.",
+  "outputs": [
+    {
+      "name": "events",
+      "description": "The result of pinning the observation with Nix"
+    }
+  ]
+}

@@ -235,7 +235,7 @@ export function SetupView() {
   )
   return (
     <div className="setup">
-      <h1><Icon name="shippingbox" size={28} /> Tsugumi の実行環境を準備します</h1>
+      <h1><Icon name="shippingbox" size={28} /> {L('Tsugumi の実行環境を準備します')}</h1>
       <div className="secondary">{L('Web UI では core（tsugumid）をこのホストで直接動かします（VM は使いません）。次の項目を確認してください。')}</div>
       <div className="groupbox">
         {step(L('Nix がインストールされている'), s.nix.ok, s.nix.ok ? L('/nix/store があります。Card の環境は Nix で作ります。') : L('https://nixos.org/download からインストールしてください（flakes を有効に）。'))}
@@ -254,12 +254,12 @@ export function SetupView() {
       {s.building && (
         <div className="col gap6">
           <div className="row gap8 center">
-            {s.building.running ? <><Spinner small />{L('ビルドしています（初回は数分かかります）…')}</> : s.building.code === 0 ? 'ビルドが完了しました。' : <span style={{ color: 'var(--red)' }}>ビルドに失敗しました（{s.building.code}）。</span>}
+            {s.building.running ? <><Spinner small />{L('ビルドしています（初回は数分かかります）…')}</> : s.building.code === 0 ? L('ビルドが完了しました。') : <span style={{ color: 'var(--red)' }}>{L('ビルドに失敗しました（{0}）。', s.building.code)}</span>}
           </div>
           <pre className="env-log selectable">{s.building.log}</pre>
         </div>
       )}
-      <div className="caption secondary mono selectable">手動でビルドする場合: cd {s.repo} &amp;&amp; nix develop --command bash -c 'cmake -S . -B build -G Ninja &amp;&amp; ninja -C build'</div>
+      <div className="caption secondary mono selectable">{L('手動でビルドする場合:')} cd {s.repo} &amp;&amp; nix develop --command bash -c 'cmake -S . -B build -G Ninja &amp;&amp; ninja -C build'</div>
       <div className="row gap8 center">
         {message && <span className="label" style={{ color: 'var(--red)' }}><Icon name="exclamationmark.triangle.fill" />{message}</span>}
         <span className="spacer" />

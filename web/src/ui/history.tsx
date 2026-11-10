@@ -348,7 +348,7 @@ export function VisualizationWindow({ session, cardKey }: { session: ProjectSess
     <div className="col fill pad16 gap8">
       <div className="row gap8 center">
         <span className="title2">{session.displayName(cardKey)}</span>
-        {d && <span className="secondary">呼び出し #{String(d.invocation)}</span>}
+        {d && <span className="secondary">{L('呼び出し #{0}', String(d.invocation))}</span>}
         <span className="spacer" />
         <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
       </div>

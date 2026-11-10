@@ -1,0 +1,26 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "window_days",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "period_min",
+      "type": "double",
+      "data": 1.0
+    },
+    {
+      "name": "period_max",
+      "type": "double",
+      "data": 10.0
+    }
+  ]
+}

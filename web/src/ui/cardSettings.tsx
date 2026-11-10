@@ -438,7 +438,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
         {model.conflicts.length > 0 && (
           <div className="cse-conflicts">
             <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--orange)' }} />
-            <span className="callout flex1">別の場所でも変更されました: {model.conflicts.join(', ')}。適用するとここでの編集が残ります。</span>
+            <span className="callout flex1">{L('別の場所でも変更されました: {0}。適用するとここでの編集が残ります。', model.conflicts.join(', '))}</span>
             <Button onClick={() => setConfirmReload(true)}>{L('最新を読み込む')}</Button>
           </div>
         )}
@@ -490,7 +490,7 @@ export function CardPreview({ session, model, height }: { session: ProjectSessio
   }, [])
   let notice: ReactNode = null
   if (edited && 'error' in edited) {
-    notice = <span className="cse-notice" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle.fill" />_outputs.fbs を読めません: {edited.error}（出力ポートは表示していません）</span>
+    notice = <span className="cse-notice" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle.fill" />{L('_outputs.fbs を読めません: {0}（出力ポートは表示していません）', edited.error)}</span>
   } else if (edited) {
     notice = <span className="cse-notice secondary"><Icon name="pencil.circle" />{L('編集中の _outputs.fbs（未適用・型は適用後に解決）')}</span>
   } else if (session.saving) {

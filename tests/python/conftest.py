@@ -238,12 +238,12 @@ def real_environment(project: Path, name: str):
     return VMEnv(project, name).start()
 
 
-def demo_environment(tmp_path: Path, demo: str, edit=None):
-    """A fresh copy of a demo served by the shared VM (TSUGUMI_TEST_CONTAINER=1)
-    or by a host tsugumid with sandboxing disabled for development. `edit(copy)`
-    changes the copy before it is served."""
+def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja"):
+    """A fresh copy of a demo (of demos/<language>) served by the shared VM
+    (TSUGUMI_TEST_CONTAINER=1) or by a host tsugumid with sandboxing disabled
+    for development. `edit(copy)` changes the copy before it is served."""
     dst = tmp_path / demo
-    shutil.copytree(ROOT / "demos" / demo, dst)
+    shutil.copytree(ROOT / "demos" / language / demo, dst)
     if edit:
         edit(dst)
     if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":

@@ -1,0 +1,11 @@
+{
+  "description": "Compare the chaos of double pendulums",
+  "content": "Takes size from settings. Solves a double pendulum of length 1, mass 1 and gravity 9.81 for 20 seconds with RK4 at dt=0.001, twice: from θ1=120°, θ2=−10° (at rest), and with θ1 alone shifted by 1e−6 radians. Overlays the paths of the two tips in different colours on a size×size image and shows it as a PNG. The initial angles and the time are parameters. Asserts that the relative error of the first one's mechanical energy is below 1e−4, and logs the time at which the two tips are first more than 0.1 apart.",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size and seed"
+    }
+  ],
+  "outputs": []
+}

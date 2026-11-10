@@ -1,0 +1,10 @@
+{
+  "description": "Find the maximum flow",
+  "content": "Finds the maximum flow from s to t with networkx and draws each edge's flow and capacity on the network. Fails if capacities or conservation are not respected.",
+  "outputs": [
+    {
+      "name": "flow",
+      "description": "The network, the flow on each edge, and the value of the maximum flow"
+    }
+  ]
+}

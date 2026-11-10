@@ -1,0 +1,10 @@
+{
+  "description": "Answer the same question with edgeR",
+  "content": "Tests the same counts with edgeR's quasi-likelihood F test (~ cell + dex), writes the results for every gene as CSV, and tables the numbers of genes and the BCV.",
+  "outputs": [
+    {
+      "name": "results",
+      "description": "CSV of each gene's log2FC, p-value and FDR"
+    }
+  ]
+}

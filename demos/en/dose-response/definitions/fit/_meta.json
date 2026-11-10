@@ -1,0 +1,10 @@
+{
+  "description": "Fit a 4PL curve",
+  "content": "Finds bottom, top, log10 EC50 and the Hill slope of each compound by least squares with scipy's curve_fit, and plots the data and the curves.",
+  "outputs": [
+    {
+      "name": "fit",
+      "description": "Estimates per compound, and the residual standard deviation"
+    }
+  ]
+}

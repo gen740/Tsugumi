@@ -392,10 +392,10 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         </span>
         <span className="vdivider sb-not-min" />
         <StatusButton buttonRef={syncRef} help={L('保存・同期の詳細')} guide="save" onClick={() => setShowSync(!showSync)}>
-          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>保存済み</span></>}
-          {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">実行が終わったら保存します</span><span className="sb-short">{L('実行後に保存')}</span></>}
+          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>{L('保存済み')}</span></>}
+          {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">{L('実行が終わったら保存します')}</span><span className="sb-short">{L('実行後に保存')}</span></>}
           {sync.kind === 'saving' && <><Spinner small /><span>{L('保存中…')}</span></>}
-          {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>同期できません</span></>}
+          {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>{L('同期できません')}</span></>}
           {sync.kind === 'offline' && <><Icon name="icloud.slash" className="secondary" /><span>{L('未接続')}</span></>}
         </StatusButton>
         {/* The saved revision; the project's versions (git) open from it. */}

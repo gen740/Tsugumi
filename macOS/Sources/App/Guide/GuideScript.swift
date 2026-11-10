@@ -26,7 +26,8 @@ struct GuideScript {
   let tours: [(demo: String, keywords: [String])]
   var noConnection: Step { steps["noConnection"]! }
 
-  static let shared = GuideScript(json: Agent.guideScript)
+  /// In the app's language.
+  static let shared = GuideScript(json: AppPreferences.Language.running == .en ? Agent.guideScriptEnglish : Agent.guideScript)
 
   init(json: String) {
     let v = (try? JSONValue.parse(json)) ?? .object([])

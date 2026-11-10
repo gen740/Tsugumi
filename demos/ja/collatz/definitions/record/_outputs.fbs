@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace collatz;
+table CsvFile { value:string; }
+table Outputs { table:CsvFile (required, tsugumi: "file"); }
+root_type Outputs;

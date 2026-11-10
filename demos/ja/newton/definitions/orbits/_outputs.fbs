@@ -1,0 +1,16 @@
+namespace newton;
+table Orbits {
+  label:string;
+  coeffs:[double];
+  damping:double;
+  start_re:[double];
+  start_im:[double];
+  root_re:[double];
+  root_im:[double];
+  multiplicity:[ulong];
+  status:string;
+  lengths:[ulong];
+  errors:[double];
+}
+table Outputs { errors:Orbits (required); }
+root_type Outputs;

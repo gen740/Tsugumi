@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace report;
+table CsvFile { value:string; }
+table Outputs { csv:CsvFile (required, tsugumi: "file"); }
+root_type Outputs;

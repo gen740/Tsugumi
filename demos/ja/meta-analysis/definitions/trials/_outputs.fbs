@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace bcg;
+table Trials { value:string; }
+table Outputs { trials:Trials (required, tsugumi: "file"); }
+root_type Outputs;

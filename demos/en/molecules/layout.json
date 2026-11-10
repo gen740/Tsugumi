@@ -1,0 +1,81 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "paste": {
+      "x": 200,
+      "y": 0
+    },
+    "properties": {
+      "x": 500,
+      "y": 0
+    },
+    "share": {
+      "x": 1200,
+      "y": 0
+    },
+    "lipinski": {
+      "x": 1420,
+      "y": 0
+    },
+    "chemspace": {
+      "x": 2080,
+      "y": 0
+    },
+    "similarity": {
+      "x": 1420,
+      "y": 780
+    },
+    "structures": {
+      "x": 1420,
+      "y": 1600
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Molecular properties and the Rule of Five\n\nFrom SMILES, which writes a molecule as a string, RDKit computes properties. The molecular weight is the sum of the atomic weights.\n\n$$M = \\sum_i n_i\\, A_i$$\n\n**Lipinski's Rule of Five** is a rule of thumb for molecules readily absorbed when taken orally: violating two or more of the following is said to make absorption poor.\n\n$$M \\le 500,\\quad \\log P \\le 5,\\quad \\mathrm{NH{+}OH} \\le 5,\\quad \\mathrm{N{+}O} \\le 10$$\n\nPaste a SMILES into smiles of **paste** and run, and that molecule joins every Card. A SMILES that cannot be read shows the reason instead of crashing.\n\nlogP is an estimate by summing atomic contributions (Crippen), not a measurement. A rule of thumb has exceptions, and it does not decide whether a drug is good.",
+      "x": 160,
+      "y": -560,
+      "width": 620,
+      "height": 500
+    }
+  ],
+  "displays": {
+    "properties": {
+      "x": 460,
+      "y": 200,
+      "width": 700,
+      "height": 540
+    },
+    "lipinski": {
+      "x": 1380,
+      "y": 200,
+      "width": 620,
+      "height": 540
+    },
+    "chemspace": {
+      "x": 2040,
+      "y": 200,
+      "width": 640,
+      "height": 460
+    },
+    "similarity": {
+      "x": 1380,
+      "y": 980,
+      "width": 640,
+      "height": 540
+    },
+    "structures": {
+      "x": 1380,
+      "y": 1800,
+      "width": 880,
+      "height": 510
+    }
+  }
+}

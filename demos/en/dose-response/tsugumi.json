@@ -1,0 +1,102 @@
+{
+  "name": "Dose–response curve",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "generate"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "fit"
+      },
+      {
+        "id": "bootstrap"
+      },
+      {
+        "id": "compare"
+      },
+      {
+        "id": "range"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "generate",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "plate"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "fit"
+        },
+        "to": {
+          "card": "fit",
+          "port": "plate"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "bootstrap"
+        },
+        "to": {
+          "card": "bootstrap",
+          "port": "plate"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "range"
+        },
+        "to": {
+          "card": "range",
+          "port": "plate"
+        }
+      },
+      {
+        "from": {
+          "card": "fit",
+          "port": "fit"
+        },
+        "to": {
+          "card": "bootstrap",
+          "port": "fit"
+        }
+      },
+      {
+        "from": {
+          "card": "bootstrap",
+          "port": "intervals"
+        },
+        "to": {
+          "card": "compare",
+          "port": "intervals"
+        }
+      }
+    ]
+  }
+}

@@ -66,7 +66,7 @@ const list = (v: (string | Uint8Array | null)[] | undefined) => (v ?? []).map(st
 
 function changedText(changed: string[]) {
   const names = changed.map((k) => k || 'Workflow')
-  return L('変更: {0}{1}', names.slice(0, 4).join('、'), names.length > 4 ? ` ほか ${names.length - 4}` : '')
+  return L('変更: {0}{1}', names.slice(0, 4).join('、'), names.length > 4 ? L(' ほか {0}', names.length - 4) : '')
 }
 
 export interface MiniMapCard { id: string; x: number; y: number; kind: CardKind; fan: number; collapsed: boolean }
@@ -143,7 +143,7 @@ function VersionHover({ session, commit, top }: { session: ProjectSession; commi
       {commit.changeSummary ? <div>{str(commit.changeSummary)}</div>
         : session.versionSummaryBusy.has(id) ? <div className="secondary">{L('要約しています…')}</div>
           : <div>{str(commit.summary)}</div>}
-      {error && <div className="caption" style={{ color: 'var(--red)' }}>要約を作れませんでした: {error}</div>}
+      {error && <div className="caption" style={{ color: 'var(--red)' }}>{L('要約を作れませんでした: {0}', error)}</div>}
       {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} />}
     </div>
   )
@@ -284,7 +284,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                       <span className="caption secondary">{ago(Number(c.time ?? 0n))}</span>
                     </div>
                     <div className="row gap8 caption">
-                      {last && <span style={{ color: stateColor(str(last.state)) }}>実行 {runs.length} 回（成功 {ok}・失敗 {ng}）· 最後: {stateLabel(str(last.state))}</span>}
+                      {last && <span style={{ color: stateColor(str(last.state)) }}>{L('実行 {0} 回（成功 {1}・失敗 {2}）· 最後: {3}', runs.length, ok, ng, stateLabel(str(last.state)))}</span>}
                       {list(c.changed).length > 0 && <span className="secondary ellipsis">{changedText(list(c.changed))}</span>}
                     </div>
                   </div>
@@ -315,7 +315,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                       <div className="secondary">{str(c.card)} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
                       <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(c.text)}</div>
                       {str(c.resolution) && <div className="secondary selectable">{str(c.resolution)}</div>}
-                      {list(c.cards).length > 0 && <div className="secondary selectable">変更した Card: {list(c.cards).join(L('、'))}</div>}
+                      {list(c.cards).length > 0 && <div className="secondary selectable">{L('変更した Card: {0}', list(c.cards).join(L('、')))}</div>}
                     </div>
                   ))}
                 </>

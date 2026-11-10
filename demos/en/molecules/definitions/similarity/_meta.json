@@ -1,0 +1,5 @@
+{
+  "description": "How alike the structures are",
+  "content": "Finds the Tanimoto coefficient of Morgan fingerprints (radius radius) for each pair of molecules, as a heat map.",
+  "outputs": []
+}

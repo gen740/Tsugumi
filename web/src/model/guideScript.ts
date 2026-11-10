@@ -3,7 +3,9 @@
 // each step a guide_show with the step every choice leads to, what Home's
 // first question is answered with, and one reply to anything typed. Nothing
 // is sent anywhere.
-import script from '../../../agent/Shared/guide-script.json'
+import japanese from '../../../agent/Shared/guide-script.json'
+import english from '../../../agent/Shared/guide-script.en.json'
+import { language } from '../i18n'
 import { type GuideShow, parseShow } from './guide'
 
 export interface ScriptStep {
@@ -19,6 +21,8 @@ export interface ScriptStep {
 interface Raw { show?: unknown; text?: string; next?: Record<string, string>; ran?: { ok?: string; else?: string } }
 interface RawTour { keywords: string[]; home: Record<string, Raw>; steps: Record<string, Raw> }
 
+// In the UI's language (the same steps and choices in both files).
+const script = language() === 'en' ? english : japanese
 const tours = script.tours as unknown as Record<string, RawTour>
 
 function step(r: Raw, demo?: string): ScriptStep {

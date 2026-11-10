@@ -20,7 +20,7 @@ const { app } = await import('../src/model/app')
 const { noConnection, scriptDemoFor, scriptDemos, scriptStep } = await import('../src/model/guideScript')
 const { D } = await import('../src/shared/rpc')
 const root = process.argv[2]
-const demos = JSON.parse(fs.readFileSync(path.join(root, 'demos/index.json'), 'utf8')).demos as { id: string; title: string; path: string }[]
+const demos = JSON.parse(fs.readFileSync(path.join(root, 'demos/ja/index.json'), 'utf8')).demos as { id: string; title: string; path: string }[]
 
 // The script is whole.
 {
@@ -29,7 +29,7 @@ const demos = JSON.parse(fs.readFileSync(path.join(root, 'demos/index.json'), 'u
   assert.deepEqual(scriptDemos, ['report', 'exoplanet-transit', 'pharmacokinetics'])
   for (const [demo, t] of Object.entries(tours)) {
     const entry = demos.find((d) => d.id === demo)!
-    const dir = path.join(root, 'demos', entry.path)
+    const dir = path.join(root, 'demos', 'ja', entry.path)
     const cards = new Set(JSON.parse(fs.readFileSync(path.join(dir, 'tsugumi.json'), 'utf8')).canvas.cards.map((c: { id: string }) => c.id))
     for (const id of ['start', 'resume', 'run', 'ranOk', 'ranFailed', 'change', 'runAgain', 'ranAgain', 'next', 'farewell']) assert.ok(t.steps[id], `${demo}/${id}`)
     for (const id of ['pick', 'about']) assert.ok(t.home[id], `${demo}/${id}`)

@@ -1422,7 +1422,7 @@ export class ProjectSession extends Observable {
               this.savingAfterRun = true
               break
             case D.FailureKind.external_change:
-              this.saveError = L('{0} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。', e.args.path ?? 'ファイル')
+              this.saveError = L('{0} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。', e.args.path ?? L('ファイル'))
               break
             default:
               this.saveError = errorText(e)
@@ -3256,7 +3256,7 @@ auto run(Card::Input& input) -> Card::Output {
   cardDetails(k: CardKey): string[] {
     const desc = this.cardDescription(k)
     const content = this.kind(k) === 'draft' ? str(get(this.cardMeta(k), 'content')) : undefined
-    return [desc, content, ...this.openComments(k).map((c) => L('{0}: {1}', c.author === 'agent' ? 'コメント（Agent）' : 'コメント', c.text))].filter((x): x is string => !!x)
+    return [desc, content, ...this.openComments(k).map((c) => L('{0}: {1}', c.author === 'agent' ? L('コメント（Agent）') : L('コメント'), c.text))].filter((x): x is string => !!x)
   }
 
   /** Whether a Card does not run because it needs a Draft's output. */

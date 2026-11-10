@@ -1,0 +1,4 @@
+namespace casa;
+table Events { path:string; obsid:string; }
+table Outputs { events:Events (required); }
+root_type Outputs;

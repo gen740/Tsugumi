@@ -94,7 +94,9 @@ final class AppModel {
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
     environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
-    demosRoot = bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos()
+    // The demos in the app's language (demos/ja, demos/en: each a set of its own).
+    demosRoot = (bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos())?
+      .appendingPathComponent(AppPreferences.Language.running.rawValue, isDirectory: true)
     loadDemos()
     loadRecents()
   }
@@ -105,7 +107,7 @@ final class AppModel {
     var dir = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { dir.deleteLastPathComponent() }
     let candidate = dir.appendingPathComponent("demos")
-    return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("index.json").path) ? candidate : nil
+    return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("ja/index.json").path) ? candidate : nil
     #else
     return nil  // a release build has its demos in the bundle only
     #endif

@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "params": [
+    {
+      "name": "c",
+      "type": "double",
+      "data": 0.1
+    },
+    {
+      "name": "max_iter",
+      "type": "uint64",
+      "data": 300
+    }
+  ]
+}

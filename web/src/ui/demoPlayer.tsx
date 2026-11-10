@@ -274,7 +274,7 @@ function OutputView({ output, base, zoom, large = false }: { output: Output; bas
             <thead><tr>{output.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
             <tbody>{output.rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j}>{v}</td>)}</tr>)}</tbody>
           </table>
-          {large && output.totalRows > output.rows.length && <p className="secondary caption">全 {output.totalRows} 行のうち先頭 {output.rows.length} 行</p>}
+          {large && output.totalRows > output.rows.length && <p className="secondary caption">{L('全 {0} 行のうち先頭 {1} 行', output.totalRows, output.rows.length)}</p>}
         </div>
       )
     case 'image':
@@ -282,9 +282,9 @@ function OutputView({ output, base, zoom, large = false }: { output: Output; bas
     case 'plot':
       return <div className="display-center"><PlotView plot={output} /></div>
     case 'points':
-      return <div className="display-center secondary" style={{ fontSize: size(11) }}>3D 点群 {output.count} 点（アプリでは回して見られます）</div>
+      return <div className="display-center secondary" style={{ fontSize: size(11) }}>{L('3D 点群 {0} 点（アプリでは回して見られます）', output.count)}</div>
     default:
-      return <div className="display-center secondary" style={{ fontSize: size(11) }}>モジュール {output.name}</div>
+      return <div className="display-center secondary" style={{ fontSize: size(11) }}>{L('モジュール {0}', output.name)}</div>
   }
 }
 
@@ -458,7 +458,7 @@ function Sources({ files, open = true }: { files: SourceFile[]; open?: boolean }
         <details key={f.path} className="tp-file" open={open && i === 0}>
           <summary className="mono">{f.path}</summary>
           <pre className="tp-source mono selectable">{f.text}</pre>
-          {f.cut !== undefined && <p className="secondary caption">長いので先頭だけを載せています（全 {f.cut} 文字）。</p>}
+          {f.cut !== undefined && <p className="secondary caption">{L('長いので先頭だけを載せています（全 {0} 文字）。', f.cut)}</p>}
         </details>
       ))}
     </>
@@ -621,7 +621,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
     return () => window.removeEventListener('keydown', key)
   }, [compact, selected])
 
-  if (failure) return <div className="tp-root tp-message">デモのデータを読み込めませんでした（{failure}）</div>
+  if (failure) return <div className="tp-root tp-message">{L('デモのデータを読み込めませんでした（{0}）', failure)}</div>
   if (!data) return <div className={`tp-root ${compact ? 'tp-compact' : 'tp-full'} tp-message`}>{compact ? '' : L('読み込み中…')}</div>
 
   const { frame } = replay

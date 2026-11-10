@@ -1,0 +1,10 @@
+{
+  "description": "Volume and the size of fluctuations",
+  "content": "Measures the coefficient of variation (standard deviation / mean) at different volumes and compares it with the theoretical 1/√N. Trajectories converted to concentrations are overlaid by volume too.",
+  "outputs": [
+    {
+      "name": "scaling",
+      "description": "Mean and coefficient of variation by volume, with theory"
+    }
+  ]
+}

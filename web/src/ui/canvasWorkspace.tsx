@@ -222,12 +222,12 @@ export function CanvasCommentControls({ workspace, session, tab }: { workspace: 
     <div className="capsule material cv-drafts">
       <Button icon="bubble.left" small guide="from_comments" disabled={session.dirty || !session.connected || chat.busy}
         help={session.dirty ? L('先に変更を保存してください')
-          : L('{0}の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。', chosen.length ? '選択した Card' : 'この階層の Card')}
+          : L('{0}の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。', chosen.length ? L('選択した Card') : L('この階層の Card'))}
         onClick={() => {
           workspace.set('showChat', true)
           chat.generateFromComments(tab.scope, asked)
         }}>
-        コメントから生成（{count}）
+        {L('コメントから生成（{0}）', count)}
       </Button>
     </div>
   )

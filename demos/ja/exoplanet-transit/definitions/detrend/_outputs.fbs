@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace exo;
+table DetrendedDir { value:string; }
+table Outputs { detrended:DetrendedDir (required, tsugumi: "directory"); }
+root_type Outputs;

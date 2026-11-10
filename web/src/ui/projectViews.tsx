@@ -79,7 +79,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
           <span className="spacer" />
           {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
-        <div className="callout secondary">Card「{id}」の定義（definitions/{id}/）です。</div>
+        <div className="callout secondary">{L('Card「{0}」の定義（definitions/{0}/）です。', id)}</div>
         <div className="headline">{L('_card.json（設定・params・入力）')}</div>
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
         <div className="headline">{L('_meta.json（説明・計画・追加コンテキスト、任意）')}</div>
@@ -248,7 +248,7 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
           <Row label={L('名前')}><TextField value={found.name} onChange={(name) => setFound({ ...found, name })} mono style={{ width: 160 }} /></Row>
           <Row label={L('コミット')}><code className="secondary" title={found.ref}>{shortCommit(found.ref) ?? found.ref}</code></Row>
           <Row label="package"><code className="secondary">{found.packages.join(', ') || L('この環境の package はありません')}</code></Row>
-          <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">同じ名前があります</span>}</Row>
+          <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">{L('同じ名前があります')}</span>}</Row>
         </>
       )}
       {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}

@@ -1,0 +1,26 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "filesystem": true,
+  "network": true,
+  "params": [
+    {
+      "name": "urls",
+      "type": "string[]",
+      "data": [
+        "https://archive.stsci.edu/missions/kepler/lightcurves/0108/010874614/kplr010874614-2009350155506_llc.fits"
+      ]
+    },
+    {
+      "name": "names",
+      "type": "string[]",
+      "data": [
+        "kplr010874614-2009350155506_llc.fits"
+      ]
+    }
+  ]
+}

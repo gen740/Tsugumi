@@ -1,0 +1,1258 @@
+{
+  "_comment": "Tsugumi without a model connection (no API key, no ChatGPT sign-in): it answers from this script and calls nothing. Each step is a guide_show ('show'), the reply the panel or the chat shows ('text', else 'say'), the step each tapped choice leads to ('next') and the step a run's end leads to while it is out ('ran': 'ok' when it succeeded, 'else' otherwise). A step is named by its tour and id ('report/start'); 'next' and 'ran' name a step of the same tour unless they hold a '/'. 'home' steps answer on Home: Home's first question picks the first tour with a keyword in the answer (else the first tour) and shows its 'pick'. A tour begins at 'start' when its demo's copy opens or $demo is typed in its chat, and continues at 'resume'. 'noConnection' is the reply to anything typed (its open_demo button is left out in a tour's own chat); 'otherProject' answers a demo or project that has no tour here. The macOS app (GuideScript.swift) and the web (web/src/model/guideScript.ts) read this file as it is: guide-script.json in Japanese, guide-script.en.json in English (the same steps and choices, their words translated).",
+  "tours": {
+    "report": {
+      "keywords": [
+        "aggregate",
+        "report",
+        "sales",
+        "CSV",
+        "artifact",
+        "Python",
+        "C++"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:report",
+            "say": "\"Data to report\" is the classic demo that connects, with Cards, making a table, aggregating it and keeping a report.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "report",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos",
+              "Tell me more"
+            ]
+          },
+          "text": "\"Data to report\" is the classic demo that connects, with Cards, making a table, aggregating it and keeping a report.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "next": {
+            "Other demos": "exoplanet-transit/pick",
+            "Tell me more": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:report",
+            "say": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "report",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos"
+            ]
+          },
+          "text": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts. It files them with a Card in Card (a Card with a Workflow inside), and has a switch to make it fail on purpose.",
+          "next": {
+            "Other demos": "exoplanet-transit/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "I've opened a copy of the demo \"Data to report\". It connects, with Cards, making a sales table, aggregating it and keeping a report.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "I've opened a copy of the demo \"Data to report\". It connects, with Cards, making a sales table, aggregating it and keeping a report.\n\nI'm not connected to a model now, so I'll guide you in a fixed order (no communication, no charge). To ask anything you like, connect Claude or Codex (ChatGPT) under \"API\" in the settings.",
+          "next": {
+            "Next": "settings",
+            "Tell me more": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "Each Card is one step of processing, and the wires carry typed values from output ports to input ports. A run begins at the trigger, start, and follows the wires. Every Card runs in an isolated Linux, in an environment pinned with Nix, and each run leaves its record, logs and artifacts.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "Each Card is one step of processing, and the wires carry typed values from output ports to input ports. A run begins at the trigger, start, and follows the wires. Every Card runs in an isolated Linux, in an environment pinned with Nix, and each run leaves its record, logs and artifacts.",
+          "next": {
+            "Next": "settings"
+          }
+        },
+        "settings": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings holds the random seed (seed: 42), the number of rows (rows: 500) and the heading (heading). These values flow to the Cards downstream.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "settings holds the random seed (seed: 42), the number of rows (rows: 500) and the heading (heading). These values flow to the Cards downstream.",
+          "next": {
+            "Next": "share",
+            "Tell me more": "settingsMore"
+          }
+        },
+        "settingsMore": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings is an input Card. Double-click a Card to open its settings; change a value and \"Apply\", and it is used from the next run.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "settings is an input Card. Double-click a Card to open its settings; change a value and \"Apply\", and it is used from the next run.",
+          "next": {
+            "Next": "share"
+          }
+        },
+        "share": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share splits settings' values in two and hands them to generate and render.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "share splits settings' values in two and hands them to generate and render.",
+          "next": {
+            "Next": "generate",
+            "Tell me more": "shareMore"
+          }
+        },
+        "shareMore": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share is a fork Card. It sends one value, the same, to each destination listed in branches (generate and render).",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "share is a fork Card. It sends one value, the same, to each destination listed in branches (generate and render).",
+          "next": {
+            "Next": "generate"
+          }
+        },
+        "generate": {
+          "show": {
+            "highlight": "card:generate",
+            "say": "generate makes a sales CSV from the seed. With the same seed, it is the same data however many times it runs.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "generate makes a sales CSV from the seed. With the same seed, it is the same data however many times it runs.",
+          "next": {
+            "Next": "aggregate",
+            "Tell me more": "generateMore"
+          }
+        },
+        "generateMore": {
+          "show": {
+            "highlight": "card:generate",
+            "say": "A Python Card. It seeds the random numbers with seed from the config it receives, writes rows rows of sales (region, product, quantity, unit price) to sales.csv, and passes the path to aggregate.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "A Python Card. It seeds the random numbers with seed from the config it receives, writes rows rows of sales (region, product, quantity, unit price) to sales.csv, and passes the path to aggregate.",
+          "next": {
+            "Next": "aggregate"
+          }
+        },
+        "aggregate": {
+          "show": {
+            "highlight": "card:aggregate",
+            "say": "aggregate totals sales and quantity per region. Turn on fail_on_purpose and it can fail on purpose.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "aggregate totals sales and quantity per region. Turn on fail_on_purpose and it can fail on purpose.",
+          "next": {
+            "Next": "render",
+            "Tell me more": "aggregateMore"
+          }
+        },
+        "aggregateMore": {
+          "show": {
+            "highlight": "card:aggregate",
+            "say": "It reads the CSV, totals quantity and sales (quantity × unit price) per region and passes them to render. With fail_on_purpose on, it stops with an error and the Cards downstream do not run. It is a switch for seeing how a failure is recorded.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It reads the CSV, totals quantity and sales (quantity × unit price) per region and passes them to render. With fail_on_purpose on, it stops with an error and the Cards downstream do not run. It is a switch for seeing how a failure is recorded.",
+          "next": {
+            "Next": "render"
+          }
+        },
+        "render": {
+          "show": {
+            "highlight": "card:render",
+            "say": "render puts the aggregate into report.md and summary.json and keeps them as artifacts. The table shows on this Card.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "render puts the aggregate into report.md and summary.json and keeps them as artifacts. The table shows on this Card.",
+          "next": {
+            "Next": "archive",
+            "Tell me more": "renderMore"
+          }
+        },
+        "renderMore": {
+          "show": {
+            "highlight": "card:render",
+            "say": "It makes a Markdown table from the aggregate and the heading, shows it on the Card, and keeps report.md and summary.json as a folder artifact. Artifacts are saved for every run and can be followed later.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It makes a Markdown table from the aggregate and the heading, shows it on the Card, and keeps report.md and summary.json as a folder artifact. Artifacts are saved for every run and can be followed later.",
+          "next": {
+            "Next": "archive"
+          }
+        },
+        "archive": {
+          "show": {
+            "highlight": "card:archive",
+            "say": "archive is a Card in Card. The copy inside copies the report and keeps it with the time it was filed.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "archive is a Card in Card. The copy inside copies the report and keeps it with the time it was filed.",
+          "next": {
+            "Next": "run",
+            "Tell me more": "archiveMore"
+          }
+        },
+        "archiveMore": {
+          "show": {
+            "highlight": "card:archive",
+            "say": "A Card in Card is a Card with another Workflow inside. Open it to see the Card inside (copy); from the outer Workflow it is handled as one Card.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "A Card in Card is a Card with another Workflow inside. Open it to see the Card inside (copy); from the outer Workflow it is handled as one Card.",
+          "next": {
+            "Next": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "Welcome back. Here is the guide to the demo \"Data to report\" again, from the beginning.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "settings"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "Now let's run it. Press ▶ Run at the top.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you the results."
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:render",
+            "say": "The run finished. render shows the report's table: 500 sales summarised as quantity and sales per region.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "The run finished. render shows the report's table: 500 sales summarised as quantity and sales per region.",
+          "next": {
+            "Next": "change",
+            "Tell me more": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:render",
+            "say": "report.md and summary.json remain as artifacts, and are filed in archive too. What each Card received and output can be followed in each run's record and logs.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "report.md and summary.json remain as artifacts, and are filed in archive too. What each Card received and output can be followed in each run's record and logs.",
+          "next": {
+            "Next": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "The run did not go all the way. Open the log to see which Card stopped and why.",
+            "choices": [
+              "Run it again",
+              "Finish"
+            ]
+          },
+          "next": {
+            "Run it again": "run",
+            "Finish": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:settings",
+            "highlight": "param:seed",
+            "say": "Now try changing something yourself. Change seed of settings to, say, 7, and save with Apply.",
+            "choices": [
+              "I changed and saved it!"
+            ]
+          },
+          "next": {
+            "I changed and saved it!": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "Once it's saved, press ▶ Run again.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you what changed."
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:render",
+            "say": "Changing the seed changed the CSV, and the numbers per region changed too. Set the same seed back and you get the same result as before.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "You can edit this copy freely. You can also look at other demos, or make a project of your own.",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "Other demos"
+              },
+              {
+                "kind": "new_project",
+                "label": "New Project"
+              }
+            ],
+            "choices": [
+              "Finish"
+            ]
+          },
+          "next": {
+            "Finish": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "Call me any time with $demo. Connect Claude or Codex (ChatGPT) under \"API\" in the settings, and I can answer anything you're unsure of.",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "Open the API settings"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    },
+    "exoplanet-transit": {
+      "keywords": [
+        "astronomy",
+        "space",
+        "planet",
+        "star",
+        "earthquake",
+        "protein",
+        "physics",
+        "observation",
+        "image"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:exoplanet-transit",
+            "say": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "exoplanet-transit",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos",
+              "Tell me more"
+            ]
+          },
+          "text": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "next": {
+            "Other demos": "pharmacokinetics/pick",
+            "Tell me more": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:exoplanet-transit",
+            "say": "It takes the brightness of a star recorded by the Kepler space telescope (a light curve), looks for the small dip when a planet crosses in front of the star, and from its depth finds the ratio of the planet's radius to the star's.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "exoplanet-transit",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos"
+            ]
+          },
+          "text": "It takes the brightness of a star recorded by the Kepler space telescope (a light curve), looks for the small dip when a planet crosses in front of the star, and from its depth finds the ratio of the planet's radius to the star's. The data is fetched over the network from a public archive (MAST).",
+          "next": {
+            "Other demos": "pharmacokinetics/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "I've opened a copy of the demo \"Kepler-6 b\". From a record of a star's brightness, it finds the dip as a planet crosses and works out the planet's size.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "I've opened a copy of the demo \"Kepler-6 b\". From a record of a star's brightness, it finds the dip as a planet crosses and works out the planet's size.\n\nI'm not connected to a model now, so I'll guide you in a fixed order (no communication, no charge). To ask anything you like, connect Claude or Codex (ChatGPT) under \"API\" in the settings.",
+          "next": {
+            "Next": "load",
+            "Tell me more": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "The flow is a single line, load → detrend → fold. load fetches the data, detrend removes the star's slow changes in brightness and searches for the period, and fold folds by that period and measures the depth of the dip.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "The flow is a single line, load → detrend → fold. load fetches the data, detrend removes the star's slow changes in brightness and searches for the period, and fold folds by that period and measures the depth of the dip.",
+          "next": {
+            "Next": "load"
+          }
+        },
+        "load": {
+          "show": {
+            "highlight": "card:load",
+            "say": "load fetches the quarter-3 light curve (a FITS file) of Kepler-6 from MAST's Kepler archive.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "load fetches the quarter-3 light curve (a FITS file) of Kepler-6 from MAST's Kepler archive.",
+          "next": {
+            "Next": "detrend",
+            "Tell me more": "loadMore"
+          }
+        },
+        "loadMore": {
+          "show": {
+            "highlight": "card:load",
+            "say": "By default Cards have no network, but this Card is allowed it, so it can fetch. The size and SHA-256 of the file fetched show on the Card, so you can later check which data was used.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "By default Cards have no network, but this Card is allowed it, so it can fetch. The size and SHA-256 of the file fetched show on the Card, so you can later check which data was used.",
+          "next": {
+            "Next": "detrend"
+          }
+        },
+        "detrend": {
+          "show": {
+            "highlight": "card:detrend",
+            "say": "detrend removes the star's slow changes in brightness and searches for the planet's period with Box Least Squares.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "detrend removes the star's slow changes in brightness and searches for the planet's period with Box Least Squares.",
+          "next": {
+            "Next": "fold",
+            "Tell me more": "detrendMore"
+          }
+        },
+        "detrendMore": {
+          "show": {
+            "highlight": "card:detrend",
+            "say": "It normalises using only points with quality flag 0, and removes the trend by dividing by a moving median of window_days days (1 day now). It searches for the period between period_min and period_max (1–10 days), and draws the detrended light curve on the Card.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It normalises using only points with quality flag 0, and removes the trend by dividing by a moving median of window_days days (1 day now). It searches for the period between period_min and period_max (1–10 days), and draws the detrended light curve on the Card.",
+          "next": {
+            "Next": "fold"
+          }
+        },
+        "fold": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "fold folds the light curve by the period found, and from the depth δ of the dip finds the planet-to-star radius ratio Rp/R* = √δ.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "fold folds the light curve by the period found, and from the depth δ of the dip finds the planet-to-star radius ratio Rp/R* = √δ.",
+          "next": {
+            "Next": "run",
+            "Tell me more": "foldMore"
+          }
+        },
+        "foldMore": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "It draws window_hours hours (8 hours now) around the centre of the transit, and measures the depth from the core_fraction of points near the centre. The result is shown as Markdown with formulas, and the folded figure is kept as an image.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It draws window_hours hours (8 hours now) around the centre of the transit, and measures the depth from the core_fraction of points near the centre. The result is shown as Markdown with formulas, and the folded figure is kept as an image.",
+          "next": {
+            "Next": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "Welcome back. Here is the guide to the demo \"Kepler-6 b\" again, from the beginning.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "load"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "Now let's run it. Press ▶ Run at the top.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you the results."
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "The run finished. fold shows the dip folded by the period, and the Rp/R* found from its depth.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "The run finished. fold shows the dip folded by the period, and the Rp/R* found from its depth.",
+          "next": {
+            "Next": "change",
+            "Tell me more": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "The depth δ is the fraction of the star's disc the planet hides. It is a ratio of areas, so the ratio of radii is its square root. Kepler-6 b is known to have a period of about 3.23 days and a depth of about 1% (a radius ratio of about 0.1). Compare them with the displays of fold and detrend.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "The depth δ is the fraction of the star's disc the planet hides. It is a ratio of areas, so the ratio of radii is its square root. Kepler-6 b is known to have a period of about 3.23 days and a depth of about 1% (a radius ratio of about 0.1). Compare them with the displays of fold and detrend.",
+          "next": {
+            "Next": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "The run did not go all the way. Open the log to see which Card stopped and why. If it stopped at load, the network or the archive may be having trouble.",
+            "choices": [
+              "Run it again",
+              "Finish"
+            ]
+          },
+          "next": {
+            "Run it again": "run",
+            "Finish": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:detrend",
+            "highlight": "param:window_days",
+            "say": "Now try changing something yourself. Change window_days of detrend to 0.2, and save with Apply.",
+            "choices": [
+              "I changed and saved it!"
+            ]
+          },
+          "next": {
+            "I changed and saved it!": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "Once it's saved, press ▶ Run again.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you what changed."
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:fold",
+            "say": "Bringing the detrending window close to the length of the dip (a few hours) divides part of the dip itself out as trend. Compare how the depth and Rp/R* of fold changed from before.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "You can edit this copy freely. You can also look at other demos, or make a project of your own.",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "Other demos"
+              },
+              {
+                "kind": "new_project",
+                "label": "New Project"
+              }
+            ],
+            "choices": [
+              "Finish"
+            ]
+          },
+          "next": {
+            "Finish": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "Call me any time with $demo. Connect Claude or Codex (ChatGPT) under \"API\" in the settings, and I can answer anything you're unsure of.",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "Open the API settings"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    },
+    "pharmacokinetics": {
+      "keywords": [
+        "drug",
+        "medic",
+        "biology",
+        "numeric",
+        "differential",
+        "simulat",
+        "graph",
+        "live",
+        "statistic",
+        "chemi"
+      ],
+      "home": {
+        "pick": {
+          "show": {
+            "highlight": "demo:pharmacokinetics",
+            "say": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "pharmacokinetics",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos",
+              "Tell me more"
+            ]
+          },
+          "text": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "next": {
+            "Other demos": "report/pick",
+            "Tell me more": "about"
+          }
+        },
+        "about": {
+          "show": {
+            "highlight": "demo:pharmacokinetics",
+            "say": "It solves a one-compartment oral model numerically and lays out the concentration over time for four dosing plans, in charts you can zoom and read values from.",
+            "actions": [
+              {
+                "kind": "open_demo",
+                "demo": "pharmacokinetics",
+                "label": "Open this demo"
+              }
+            ],
+            "choices": [
+              "Other demos"
+            ]
+          },
+          "text": "It solves a one-compartment oral model numerically and lays out the concentration over time for four dosing plans, in charts you can zoom and read values from. You can also see it checked against closed forms, compared with a therapeutic range, and the effect of missed doses. A made-up model for teaching, not medical advice.",
+          "next": {
+            "Other demos": "report/pick"
+          }
+        }
+      },
+      "steps": {
+        "start": {
+          "show": {
+            "highlight": "card:start",
+            "say": "I've opened a copy of the demo \"Pharmacokinetics\". It computes the blood concentration of Tsugumicin, a made-up drug, and compares ways of taking it (dosing plans).",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "I've opened a copy of the demo \"Pharmacokinetics\". It computes the blood concentration of Tsugumicin, a made-up drug, and compares ways of taking it (dosing plans).\n\nI'm not connected to a model now, so I'll guide you in a fixed order (no communication, no charge). To ask anything you like, connect Claude or Codex (ChatGPT) under \"API\" in the settings.",
+          "next": {
+            "Next": "settings",
+            "Tell me more": "startMore"
+          }
+        },
+        "startMore": {
+          "show": {
+            "highlight": "card:start",
+            "say": "The flow is settings → simulate → share, and from share it splits three ways: check, window and missed. A made-up model for teaching, neither medical advice nor dosing guidance.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "The flow is settings → simulate → share, and from share it splits three ways: check, window and missed. A made-up model for teaching, neither medical advice nor dosing guidance.",
+          "next": {
+            "Next": "settings"
+          }
+        },
+        "settings": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "settings holds the dosing plans to compare (400 mg every 24 hours, 200 mg every 12 hours, 100 mg every 6 hours, 200 mg every 24 hours) and the drug's values (a half-life of 8 hours and so on).",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "settings holds the dosing plans to compare (400 mg every 24 hours, 200 mg every 12 hours, 100 mg every 6 hours, 200 mg every 24 hours) and the drug's values (a half-life of 8 hours and so on).",
+          "next": {
+            "Next": "simulate",
+            "Tell me more": "settingsMore"
+          }
+        },
+        "settingsMore": {
+          "show": {
+            "highlight": "card:settings",
+            "say": "There are also the absorption rate, the volume of distribution (40 L), the bioavailability (0.8), an invented therapeutic range (2–6 mg/L) and the number of days to compute (5). Change a value and \"Apply\", and it is used from the next run.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "There are also the absorption rate, the volume of distribution (40 L), the bioavailability (0.8), an invented therapeutic range (2–6 mg/L) and the number of days to compute (5). Change a value and \"Apply\", and it is used from the next run.",
+          "next": {
+            "Next": "simulate"
+          }
+        },
+        "simulate": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "simulate solves the one-compartment oral model's differential equations with solve_ivp and draws the concentration over time for each dosing plan.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "simulate solves the one-compartment oral model's differential equations with solve_ivp and draws the concentration over time for each dosing plan.",
+          "next": {
+            "Next": "share",
+            "Tell me more": "simulateMore"
+          }
+        },
+        "simulateMore": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "It solves in pieces split at each dose, so you see it rise after each dose and fall with the half-life. The chart can be zoomed, and values read with the cursor.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It solves in pieces split at each dose, so you see it rise after each dose and fall with the half-life. The chart can be zoomed, and values read with the cursor.",
+          "next": {
+            "Next": "share"
+          }
+        },
+        "share": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share hands the same concentration curves to the three: check, window and missed.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "share hands the same concentration curves to the three: check, window and missed.",
+          "next": {
+            "Next": "check",
+            "Tell me more": "shareMore"
+          }
+        },
+        "shareMore": {
+          "show": {
+            "highlight": "card:share",
+            "say": "share is a fork Card. The three Cards run side by side without waiting for each other.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "share is a fork Card. The three Cards run side by side without waiting for each other.",
+          "next": {
+            "Next": "check"
+          }
+        },
+        "check": {
+          "show": {
+            "highlight": "card:check",
+            "say": "check compares the numerical solution with the closed form, a superposition of single-dose formulas. It fails if they differ much.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "check compares the numerical solution with the closed form, a superposition of single-dose formulas. It fails if they differ much.",
+          "next": {
+            "Next": "window",
+            "Tell me more": "checkMore"
+          }
+        },
+        "checkMore": {
+          "show": {
+            "highlight": "card:check",
+            "say": "It tables the steady-state accumulation ratio R and the mean concentration next to the formulas' values. A Card that checks the numerical computation against formulas with known answers.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It tables the steady-state accumulation ratio R and the mean concentration next to the formulas' values. A Card that checks the numerical computation against formulas with known answers.",
+          "next": {
+            "Next": "window"
+          }
+        },
+        "window": {
+          "show": {
+            "highlight": "card:window",
+            "say": "window compares the steady-state peaks and troughs with the invented therapeutic range.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "window compares the steady-state peaks and troughs with the invented therapeutic range.",
+          "next": {
+            "Next": "missed",
+            "Tell me more": "windowMore"
+          }
+        },
+        "windowMore": {
+          "show": {
+            "highlight": "card:window",
+            "say": "It overlays the concentration in the last dosing interval by time since the dose, and compares peaks, troughs and the share of time inside the therapeutic range for each dosing plan.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It overlays the concentration in the last dosing interval by time since the dose, and compares peaks, troughs and the share of time inside the therapeutic range for each dosing plan.",
+          "next": {
+            "Next": "missed"
+          }
+        },
+        "missed": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "missed draws, for each dosing plan, the concentration when a dose is missed (one, from hour 72, now).",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "missed draws, for each dosing plan, the concentration when a dose is missed (one, from hour 72, now).",
+          "next": {
+            "Next": "run",
+            "Tell me more": "missedMore"
+          }
+        },
+        "missedMore": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "It compares how much the time below the therapeutic range grows, and how long it takes to recover.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "It compares how much the time below the therapeutic range grows, and how long it takes to recover.",
+          "next": {
+            "Next": "run"
+          }
+        },
+        "resume": {
+          "show": {
+            "highlight": "card:start",
+            "say": "Welcome back. Here is the guide to the demo \"Pharmacokinetics\" again, from the beginning.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "settings"
+          }
+        },
+        "run": {
+          "show": {
+            "highlight": "run",
+            "say": "Now let's run it. Press ▶ Run at the top.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "running"
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "running": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you the results."
+          },
+          "ran": {
+            "ok": "ranOk",
+            "else": "ranFailed"
+          }
+        },
+        "ranOk": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "The run finished. In simulate's chart you can see the concentration rise and fall for each dosing plan as it approaches steady state.",
+            "choices": [
+              "Next",
+              "Tell me more"
+            ]
+          },
+          "text": "The run finished. In simulate's chart you can see the concentration rise and fall for each dosing plan as it approaches steady state.",
+          "next": {
+            "Next": "change",
+            "Tell me more": "ranOkMore"
+          }
+        },
+        "ranOkMore": {
+          "show": {
+            "highlight": "card:simulate",
+            "say": "check's table sets the numerical solution next to the closed forms; window compares the share of time inside the therapeutic range, and missed the effect of missed doses. Even at the same daily dose (400 mg), the shorter the interval, the smaller the gap between peak and trough.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "text": "check's table sets the numerical solution next to the closed forms; window compares the share of time inside the therapeutic range, and missed the effect of missed doses. Even at the same daily dose (400 mg), the shorter the interval, the smaller the gap between peak and trough.",
+          "next": {
+            "Next": "change"
+          }
+        },
+        "ranFailed": {
+          "show": {
+            "highlight": "logs",
+            "say": "The run did not go all the way. Open the log to see which Card stopped and why.",
+            "choices": [
+              "Run it again",
+              "Finish"
+            ]
+          },
+          "next": {
+            "Run it again": "run",
+            "Finish": "farewell"
+          }
+        },
+        "change": {
+          "show": {
+            "open": "card:missed",
+            "highlight": "param:missed_count",
+            "say": "Now try changing something yourself. Change missed_count of missed to 2, and save with Apply.",
+            "choices": [
+              "I changed and saved it!"
+            ]
+          },
+          "next": {
+            "I changed and saved it!": "runAgain"
+          }
+        },
+        "runAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "Once it's saved, press ▶ Run again.",
+            "actions": [
+              {
+                "kind": "run",
+                "label": "Run it"
+              }
+            ],
+            "choices": [
+              "I ran it!"
+            ]
+          },
+          "next": {
+            "I ran it!": "runningAgain"
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "runningAgain": {
+          "show": {
+            "highlight": "run",
+            "say": "It's running. When it finishes, I'll show you what changed."
+          },
+          "ran": {
+            "ok": "ranAgain",
+            "else": "ranFailed"
+          }
+        },
+        "ranAgain": {
+          "show": {
+            "highlight": "card:missed",
+            "say": "With two missed doses, the time below the therapeutic range grows and recovery takes longer. Compare the dosing plans in missed's figure.",
+            "choices": [
+              "Next"
+            ]
+          },
+          "next": {
+            "Next": "next"
+          }
+        },
+        "next": {
+          "show": {
+            "highlight": "chat",
+            "say": "You can edit this copy freely. You can also look at other demos, or make a project of your own.",
+            "actions": [
+              {
+                "kind": "show_demos",
+                "label": "Other demos"
+              },
+              {
+                "kind": "new_project",
+                "label": "New Project"
+              }
+            ],
+            "choices": [
+              "Finish"
+            ]
+          },
+          "next": {
+            "Finish": "farewell"
+          }
+        },
+        "farewell": {
+          "show": {
+            "highlight": "chat",
+            "say": "Call me any time with $demo. Connect Claude or Codex (ChatGPT) under \"API\" in the settings, and I can answer anything you're unsure of.",
+            "actions": [
+              {
+                "kind": "open_settings",
+                "label": "Open the API settings"
+              }
+            ],
+            "endTour": true
+          }
+        }
+      }
+    }
+  },
+  "noConnection": {
+    "show": {
+      "say": "Sorry, I can't answer free questions right now. Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings and I can. In a demo's copy, sending $demo in the chat starts the guide.",
+      "actions": [
+        {
+          "kind": "open_settings",
+          "label": "Open the API settings"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "report",
+          "label": "Start the demo's guide"
+        }
+      ]
+    }
+  },
+  "otherProject": {
+    "show": {
+      "say": "Only copies of these three demos have a fixed guide. Open one and the guide begins.",
+      "actions": [
+        {
+          "kind": "open_demo",
+          "demo": "report",
+          "label": "Data to report"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "exoplanet-transit",
+          "label": "Kepler-6 b"
+        },
+        {
+          "kind": "open_demo",
+          "demo": "pharmacokinetics",
+          "label": "Pharmacokinetics"
+        }
+      ]
+    },
+    "text": "Only copies of these three demos have a fixed guide. Open one and the guide begins.\n\nConnect Claude or Codex (ChatGPT) under \"API\" in the settings, and I can guide you in any project and answer questions."
+  }
+}

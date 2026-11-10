@@ -229,7 +229,7 @@ function VisibleCards({ session, tab }: { session: ProjectSession; tab: Workflow
         if (!gid || !list.length) return null
         return (
           <div key={gid}>
-            <div className="sidebar-row group-head caption headline secondary"><Icon name="rectangle.3.group" size={12} />{str(get(g, 'name')) ?? 'グループ'}</div>
+            <div className="sidebar-row group-head caption headline secondary"><Icon name="rectangle.3.group" size={12} />{str(get(g, 'name')) ?? L('グループ')}</div>
             {list.map((id) => row(id, true))}
           </div>
         )

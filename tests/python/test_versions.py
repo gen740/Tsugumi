@@ -141,7 +141,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path):
     branches tried, a failed run, the adopted version tagged, the spectrum
     added on top of it, and then CIAO."""
     root = tmp_path / "casa"
-    shutil.copytree(ROOT / "demos" / "casa", root)
+    shutil.copytree(ROOT / "demos" / "ja" / "casa", root)
     d = Daemon(root).start()
     try:
         c = d.client()

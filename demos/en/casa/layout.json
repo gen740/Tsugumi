@@ -1,0 +1,69 @@
+{
+  "cards": {
+    "start": {
+      "x": 0.0,
+      "y": 84.5
+    },
+    "begin": {
+      "x": 160.0,
+      "y": 65.5
+    },
+    "ciao": {
+      "x": 300.0,
+      "y": 35.0
+    },
+    "load": {
+      "x": 300.0,
+      "y": 160.0
+    },
+    "bands": {
+      "x": 560.0,
+      "y": 20.0
+    },
+    "share": {
+      "x": 820.0,
+      "y": 38.5
+    },
+    "rgb": {
+      "x": 960.0,
+      "y": 8.0
+    },
+    "spectrum": {
+      "x": 960.0,
+      "y": 620.0
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Cas A (Chandra)\n\nMakes a three-colour image from X-ray event data of the supernova remnant Cassiopeia A. Red is 600–1650 eV, green 1650–2250 eV and blue 2250–7500 eV.\n\nThe observation is pinned with Nix in the `default.nix` of **load**. It is fetched from HEASARC once, on the first run, and the file in the store is used after that (no network while running).\n\nThe analysis tool CIAO is pinned the same way in the `default.nix` of **ciao**. Its source is pinned by hash and built once, on the first run (it takes a few minutes), and **bands** counts the photons with that tool's `dmcopy`.\n\nChange obsid, file and hash of **load** to these values for a deep observation. You can also compare how the remnant changed over about twenty years.\n\n- 114 (2000, 50 ks, 520 MB): `acisf00114N006_evt2.fits.gz`, `sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y=`\n- 19606 (2019, 49 ks, 349 MB): `acisf19606N002_evt2.fits.gz`, `sha256-FPE5ByrHvbx0Cxk5wVu/N8kjZCrsiFy5snxV1Ypcvtc=`\n\nChange the bands of **bands** or the stretch of **rgb** and rerun just that Card.\n\n**spectrum** draws the energy spectrum of the same photons with matplotlib and shows which element's lines fall in which colour.",
+      "x": 1200.0,
+      "y": 540.0,
+      "width": 560.0,
+      "height": 430.0
+    }
+  ],
+  "flow": "leftToRight",
+  "displays": {
+    "bands": {
+      "x": 560.0,
+      "y": 180.0,
+      "width": 340.0,
+      "height": 150.0
+    },
+    "rgb": {
+      "x": 1200.0,
+      "y": 80.0,
+      "width": 420.0,
+      "height": 440.0
+    },
+    "spectrum": {
+      "x": 240.0,
+      "y": 540.0,
+      "width": 680.0,
+      "height": 400.0
+    }
+  }
+}

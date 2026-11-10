@@ -1,0 +1,7 @@
+namespace battery;
+table Settings {
+  seed:ulong; days:ulong; capacity_kwh:double; power_kw:double; round_trip_efficiency:double;
+  export_ratio:double; soc_step_kwh:double;
+}
+table Outputs { settings:Settings (required); }
+root_type Outputs;

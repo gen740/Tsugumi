@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace mnist;
+table SubsetFile { value:string; }
+table Outputs { subset:SubsetFile (required, tsugumi: "file"); }
+root_type Outputs;

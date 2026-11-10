@@ -1,0 +1,91 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 300
+    },
+    "branches": {
+      "x": 240,
+      "y": 300
+    },
+    "penguins": {
+      "x": 500,
+      "y": 0
+    },
+    "share": {
+      "x": 800,
+      "y": 0
+    },
+    "correlate": {
+      "x": 1060,
+      "y": -200
+    },
+    "figure": {
+      "x": 1640,
+      "y": -200
+    },
+    "survey": {
+      "x": 1060,
+      "y": 260
+    },
+    "admissions": {
+      "x": 500,
+      "y": 900
+    },
+    "applications": {
+      "x": 1240,
+      "y": 900
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## A relationship that reverses between the aggregate and the strata\n\nA correlation or a ratio can change even its sign depending on whether the data is seen together or split into strata (Simpson's paradox). The overall correlation is the sum of the correlation within strata and the differences between them.\n\n$$\\operatorname{Cov}(X,Y) = \\underbrace{\\mathrm{E}[\\operatorname{Cov}(X,Y \\mid Z)]}_{\\text{within strata}} + \\underbrace{\\operatorname{Cov}(\\mathrm{E}[X \\mid Z],\\, \\mathrm{E}[Y \\mid Z])}_{\\text{between strata}}$$\n\n**Upper branch**: Palmer Penguins (Gorman, Williams & Fraser 2014, measured at Palmer Station, Antarctica; the palmerpenguins package). The correlation of bill length and depth. Change `stratify` of **correlate** to species / sex / island and rerun from there. **survey** shows the three side by side. By species it reverses in every stratum, by sex it does not, and by island only Biscoe (where Adélie and Gentoo mix) stays negative.\n\n**Lower branch**: applications to Berkeley's graduate school in 1973 (Bickel, Hammel & O'Connell 1975; R's `UCBAdmissions`). Overall, men were admitted more readily; adjusted for department, the difference almost disappears.\n\n**Stratifying is not always right.** Which to read is decided by the causal question. If the choice of department arises as a consequence of sex (mediation), you must not adjust for department when asking about \"the total effect of sex\". If the question is whether each department's review discriminated, stratifying gets closer to the answer. Even then, an unmeasured confounder remains: differences among applicants within a department. The data alone cannot tell these apart; the question has to be decided before reading the values.",
+      "x": -40,
+      "y": -560,
+      "width": 760,
+      "height": 520
+    }
+  ],
+  "displays": {
+    "penguins": {
+      "x": 460,
+      "y": 130,
+      "width": 300,
+      "height": 170
+    },
+    "correlate": {
+      "x": 1020,
+      "y": -70,
+      "width": 560,
+      "height": 230
+    },
+    "figure": {
+      "x": 1600,
+      "y": -70,
+      "width": 620,
+      "height": 440
+    },
+    "survey": {
+      "x": 1020,
+      "y": 390,
+      "width": 620,
+      "height": 440
+    },
+    "admissions": {
+      "x": 460,
+      "y": 1030,
+      "width": 680,
+      "height": 330
+    },
+    "applications": {
+      "x": 1200,
+      "y": 1030,
+      "width": 620,
+      "height": 440
+    }
+  }
+}

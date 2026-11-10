@@ -686,7 +686,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
                     { label: L('大きく'), action: () => setFont(current + 2) },
                     { label: L('小さく'), action: () => setFont(current - 2) },
                     'divider',
-                    ...[11, 13, 16, 20, 28].map((v) => ({ label: L('{0}{1}', v, v === 13 ? '（デフォルト）' : ''), checked: current === v, action: () => setFont(v) })),
+                    ...[11, 13, 16, 20, 28].map((v) => ({ label: L('{0}{1}', v, v === 13 ? L('（デフォルト）') : ''), checked: current === v, action: () => setFont(v) })),
                   ],
                 },
                 'divider',

@@ -17,7 +17,7 @@ import { cancelChats, chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
 import { VMEnvironmentManager, VMTerminal } from './vm'
 import { desktopRecents, desktopSettings, Recent } from './desktop'
-import { L } from './i18n'
+import { L, language } from './i18n'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -69,7 +69,8 @@ const bins = {
 }
 const support = webDataDir()
 fs.mkdirSync(support, { recursive: true })
-const demosRoot = path.join(repo, 'demos')
+// The demos in the UI's language (demos/ja, demos/en: each a set of its own).
+const demosRoot = () => path.join(repo, 'demos', language())
 // TSUGUMI_PROJECTS_DIR: where demo copies go instead of ~/Documents/Tsugumi (checks).
 const projectsDir = process.env.TSUGUMI_PROJECTS_DIR ?? path.join(os.homedir(), 'Documents', 'Tsugumi')
 const publicDir = path.join(here, 'public')
@@ -129,9 +130,9 @@ function forgetRecents(paths: unknown) {
 
 interface Demo { id: string; title: string; description: string; path: string; tags: string[]; field?: string }
 function demos(): Demo[] {
-  const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[]; field?: string }[] }>(path.join(demosRoot, 'index.json'), {})
+  const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[]; field?: string }[] }>(path.join(demosRoot(), 'index.json'), {})
   return (idx.demos ?? []).map((d) => {
-    const dir = path.join(demosRoot, d.path)
+    const dir = path.join(demosRoot(), d.path)
     return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [], ...(d.field ? { field: String(d.field) } : {}) }
   })
 }

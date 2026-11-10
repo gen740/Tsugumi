@@ -1,0 +1,33 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 200,
+      "y": 0
+    },
+    "whiten": {
+      "x": 520,
+      "y": 0
+    },
+    "chirp": {
+      "x": 900,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## GW150914\n\nOn 14 September 2015, the two LIGO detectors (Hanford H1, Livingston L1) observed, for the first time, two black holes merging.\n\nWhitening divides by the noise spectrum $S_n(f)$ to even out the weight of each frequency.\n\n$$\\tilde h_w(f) = \\frac{\\tilde h(f)}{\\sqrt{S_n(f)}}$$\n\nJust before the merger, the gravitational wave's frequency rises as $f \\propto (t_c - t)^{-3/8}$ (the chirp).\n\nChange the pass band of **whiten** (f_low, f_high) and rerun just that Card.",
+      "x": -40,
+      "y": -420,
+      "width": 560,
+      "height": 380
+    }
+  ]
+}

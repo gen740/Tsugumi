@@ -271,7 +271,7 @@ export function App() {
           <div className="confirm">
             <div className="confirm-title">{L('保存できない変更があります')}</div>
             <div className="secondary">{L('Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。')}</div>
-            <div className="secondary selectable">保存できない理由: {unsaved.reason}</div>
+            <div className="secondary selectable">{L('保存できない理由: {0}', unsaved.reason)}</div>
             <div className="row end gap8">
               <Button onClick={() => { setUnsaved(undefined); unsaved.answer(false) }}>{L('キャンセル')}</Button>
               <Button kind="danger" onClick={() => { setUnsaved(undefined); unsaved.answer(true) }}>{L('変更を破棄して Home へ戻る')}</Button>

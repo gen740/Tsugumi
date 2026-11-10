@@ -741,7 +741,8 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
 
   func indented(_ rel: String) throws -> String {
-    let text = try String(contentsOf: root.appendingPathComponent(rel), encoding: .utf8)
+    // The rules' "demos/…" are the demos of the app's language; their code is the same in both.
+    let text = try String(contentsOf: root.appendingPathComponent(rel.replacingOccurrences(of: "demos/", with: "demos/en/")), encoding: .utf8)
     return text.split(separator: "\n", omittingEmptySubsequences: false).dropLast(text.hasSuffix("\n") ? 1 : 0)
       .map { $0.isEmpty ? "" : "      " + $0 }.joined(separator: "\n")
   }
@@ -755,11 +756,11 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let guide = try String(contentsOf: root.appendingPathComponent("agent/Reference/card-guide.md"), encoding: .utf8)
     let named = (Agent.systemPrompt + guide).matches(of: try Regex("demos/[A-Za-z0-9_/.-]+[A-Za-z0-9]")).map { String((Agent.systemPrompt + guide)[$0.range]) }
     #expect(!named.isEmpty)
-    for n in Set(named) { #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(n).path), "\(n)") }
+    for n in Set(named) { #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(n.replacingOccurrences(of: "demos/", with: "demos/en/")).path), "\(n)") }
   }
 
   @Test func referenceReadListsAndReadsOnlyTheReferences() async throws {
-    let refs = Agent.referenceDemos(in: root.appendingPathComponent("demos", isDirectory: true)).merging([
+    let refs = Agent.referenceDemos(in: root.appendingPathComponent("demos/en", isDirectory: true)).merging([
       "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
       "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     let bfbs = try #require(RPCSchema.bfbs())

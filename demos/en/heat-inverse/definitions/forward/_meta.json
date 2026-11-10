@@ -1,0 +1,10 @@
+{
+  "description": "The forward problem: heat spreads",
+  "content": "Makes a made-up initial temperature, computes the temperature at time final_time by eigendecomposition of the finite-difference matrix with insulated ends, and makes measurements with noise added. Plots the true values, the temperature at time T and the measurements, and checks that total heat is conserved.",
+  "outputs": [
+    {
+      "name": "measurement",
+      "description": "Positions, the true initial temperature, the measurements and the conditions"
+    }
+  ]
+}

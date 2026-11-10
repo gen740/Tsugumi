@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace exo;
+table LightCurveFiles { value:string; }
+table Outputs { data:LightCurveFiles (required, tsugumi: "directory"); }
+root_type Outputs;

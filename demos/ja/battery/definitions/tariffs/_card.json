@@ -1,0 +1,8 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "scenario"
+    }
+  ]
+}

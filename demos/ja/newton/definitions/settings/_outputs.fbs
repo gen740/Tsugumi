@@ -1,0 +1,4 @@
+namespace newton;
+table Settings { coeffs:[double]; damping:double; tolerance:double; max_iter:ulong; }
+table Outputs { settings:Settings (required); }
+root_type Outputs;

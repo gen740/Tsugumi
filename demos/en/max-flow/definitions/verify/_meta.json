@@ -1,0 +1,5 @@
+{
+  "description": "Check by other methods",
+  "content": "Checks that scipy's maximum_flow and brute force over all cuts give the same value, and counts how many minimum cuts there are. Fails if they disagree.",
+  "outputs": []
+}

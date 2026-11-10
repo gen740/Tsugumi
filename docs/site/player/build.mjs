@@ -334,6 +334,8 @@ async function main() {
     bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic', write: false,
     nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
     define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning',
+    // The site is in English: the player's strings (web/src/i18n.ts) from the start.
+    banner: { js: "globalThis.TSUGUMI_LANGUAGE = 'en';" },
   })
   outputs.set(rel(path.join(SITE, 'js', 'player.js')), bundle.outputFiles[0].text)
   const css = await esbuild.transform(scopedStyles(), { loader: 'css', minify: true })
@@ -344,8 +346,8 @@ async function main() {
   const guideDir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-guide-'))
   writeGuideProject(guideDir)
   const entries = [
-    ...readJson(path.join(ROOT, 'demos', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', d.path) })),
-    { id: 'card-guide', title: 'Card を手で書く', description: 'docs/CardGuide.md の start → settings → multiply。', tags: ['Python', 'ガイド'], root: guideDir },
+    ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
+    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → multiply of docs/CardGuide.md.', tags: ['Python', 'Guide'], root: guideDir },
   ]
   const index = []
   const built = []

@@ -340,7 +340,7 @@ function ShortcutSettings() {
   return (
     <div className="col gap8 pad16 fill">
       <div className="table shortcut-table flex1" style={{ margin: 0 }}>
-        <div className="table-head three"><span>{L('操作')}</span><span>キー</span><span /></div>
+        <div className="table-head three"><span>{L('操作')}</span><span>{L('キー')}</span><span /></div>
         {SHORTCUT_ACTIONS.map((a) => {
           const c = prefs.conflict(prefs.shortcut(a), a)
           return (
@@ -752,8 +752,8 @@ function ConnectionSettings() {
             </div>
             {e.state.state === 'ready' && (
               <>
-                <div className="row gap6 center"><span className="caption mono selectable">{e.state.endpoint}</span><Button small onClick={() => void copyText(e.state.endpoint!)}>コピー</Button></div>
-                <div className="row gap6 center"><span className="caption mono ellipsis selectable">{e.state.readyFile}</span><Button small onClick={() => void copyText(e.state.readyFile!)}>パスをコピー</Button></div>
+                <div className="row gap6 center"><span className="caption mono selectable">{e.state.endpoint}</span><Button small onClick={() => void copyText(e.state.endpoint!)}>{L('コピー')}</Button></div>
+                <div className="row gap6 center"><span className="caption mono ellipsis selectable">{e.state.readyFile}</span><Button small onClick={() => void copyText(e.state.readyFile!)}>{L('パスをコピー')}</Button></div>
                 <div className="caption2 secondary">project_id {e.state.projectId}</div>
               </>
             )}

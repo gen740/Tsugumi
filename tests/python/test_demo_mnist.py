@@ -158,7 +158,7 @@ def test_the_finished_cards_fit_the_draft_demo(tmp_path):
     env = demo_environment(tmp_path, "mnist-classifiers-draft")
     try:
         c = connect(env)
-        finished = ROOT / "demos" / "mnist-classifiers" / "definitions"
+        finished = ROOT / "demos" / "ja" / "mnist-classifiers" / "definitions"
         changes = []
         for card in MODELS + ["compare"]:
             body = json.loads((finished / card / "_card.json").read_text())
@@ -171,7 +171,7 @@ def test_the_finished_cards_fit_the_draft_demo(tmp_path):
         run_id = start_run(c, ["start"])
         succeeded(c, run_id)
         scores = leaderboard(c, run_id)
-        drafts = ROOT / "demos" / "mnist-classifiers-draft" / "definitions"
+        drafts = ROOT / "demos" / "ja" / "mnist-classifiers-draft" / "definitions"
         for card in MODELS:
             content = json.loads((drafts / card / "_meta.json").read_text())["content"]
             floor = float(re.search(r"正解率が ([\d.]+) 以上", content).group(1))

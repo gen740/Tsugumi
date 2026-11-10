@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace quake;
+table QuakeFiles { value:string; }
+table Outputs { data:QuakeFiles (required, tsugumi: "directory"); }
+root_type Outputs;

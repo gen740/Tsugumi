@@ -175,6 +175,8 @@ public actor Agent {
   public static let demoSkill = Shared.demoSkill
   /// What the guide says without a model connection (agent/Shared/guide-script.json, as JSON).
   public static let guideScript = Shared.guideScript
+  /// The same in English (agent/Shared/guide-script.en.json).
+  public static let guideScriptEnglish = Shared.guideScriptEnglish
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
               references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) throws {

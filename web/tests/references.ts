@@ -4,7 +4,7 @@ import { Agent, delegateTasks } from '../server/agent'
 
 const root = process.argv[2]
 const a = Object.create(Agent.prototype) as any
-a.references = { 'demos/report': path.join(root, 'demos/report') }
+a.references = { 'demos/report': path.join(root, 'demos/ja/report') }
 
 // A folder in one call: a Card's files, or every file under any other.
 const [card, cardError] = a.readReference('demos/report/definitions/render')

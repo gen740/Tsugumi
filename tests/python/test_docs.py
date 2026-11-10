@@ -81,7 +81,7 @@ def test_every_test_file_is_in_the_test_table():
 
 
 def test_every_demo_is_explained():
-    demos = json.loads((ROOT / "demos/index.json").read_text())
+    demos = json.loads((ROOT / "demos/ja/index.json").read_text())
     demos = demos if isinstance(demos, list) else demos["demos"]
     explained = (DOCS / "Demos.md").read_text()
     missing = [d["path"] for d in demos if d["path"].split("/")[-1] not in explained]

@@ -1,0 +1,9 @@
+namespace ecology;
+table ModelFit {
+  name:string; parameter_names:[string]; parameters:[double];
+  sse:double; n:long; k:long; aic:double; aicc:double; bic:double; rmse_log:double;
+  agreeing:long; restarts:long;
+}
+table Fits { fit_until:long; models:[ModelFit]; }
+table Outputs { fits:Fits (required); }
+root_type Outputs;

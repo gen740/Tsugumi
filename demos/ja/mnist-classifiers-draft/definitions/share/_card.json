@@ -1,0 +1,19 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "knn",
+        "logistic",
+        "svm",
+        "forest",
+        "boosting",
+        "mlp",
+        "cnn",
+        "compare"
+      ]
+    }
+  ]
+}

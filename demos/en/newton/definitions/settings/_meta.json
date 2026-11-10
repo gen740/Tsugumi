@@ -1,0 +1,10 @@
+{
+  "description": "Polynomial and iteration settings",
+  "content": "Passes on the polynomial's real coefficients (highest degree first), the damping factor λ, the tolerance and the iteration limit. The default is z³ − 1.",
+  "outputs": [
+    {
+      "name": "settings",
+      "description": "The polynomial's coefficients and the iteration settings"
+    }
+  ]
+}

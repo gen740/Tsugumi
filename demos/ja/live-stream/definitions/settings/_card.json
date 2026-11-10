@@ -1,0 +1,30 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 7
+    },
+    {
+      "name": "samples",
+      "type": "uint64",
+      "data": 200
+    },
+    {
+      "name": "interval_ms",
+      "type": "uint64",
+      "data": 100
+    },
+    {
+      "name": "index",
+      "type": "uint64",
+      "data": 0
+    },
+    {
+      "name": "value",
+      "type": "double",
+      "data": 0.0
+    }
+  ]
+}

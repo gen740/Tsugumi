@@ -1,0 +1,10 @@
+{
+  "description": "Meta-regression on latitude",
+  "content": "Fits a mixed-effects meta-regression with moderator (by default ablat: the absolute latitude) as the explanatory variable, and shows the slope, the residual τ² and the proportion explained in a figure.",
+  "outputs": [
+    {
+      "name": "regression",
+      "description": "CSV of the meta-regression's coefficients and τ²"
+    }
+  ]
+}

@@ -55,7 +55,7 @@ export function SymbolPicker({ symbol, onChange, inherited }: { symbol?: string;
     <div className="row gap8 center">
       <span ref={anchor}>
         <Button onClick={() => setOpen(!open)} help={L('アイコンを選ぶ')}>
-          <span className="row gap6 center"><Icon name={current} size={16} />アイコンを選ぶ…</span>
+          <span className="row gap6 center"><Icon name={current} size={16} />{L('アイコンを選ぶ…')}</span>
         </Button>
       </span>
       {symbol !== undefined && <Button kind="link" help={L('Card の種類のアイコンを使います')} onClick={() => onChange(undefined)}>{L('デフォルトに戻す')}</Button>}

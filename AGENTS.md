@@ -23,7 +23,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |
 | [plugins/](plugins/) | The Claude Code plugin (installed from `.claude-plugin/marketplace.json`; [docs/claude-code.md](docs/claude-code.md)) |
 | [nix/](nix/) | Package definitions of `tsugumid`, the worker, the Card SDK and the `tsugumi` command |
-| [demos/](demos/) | The bundled demos, and their Draft versions (only the shape of the processing, before implementation) |
+| [demos/](demos/) | The bundled demos and their Draft versions (only the shape of the processing, before implementation), as a Japanese and an English set (`demos/ja`, `demos/en`): change both |
 | [tests/](tests/) | Tests of the contract, scheduler, history, isolation, demos, fuzzing and more |
 | [docs/](docs/) | The list of documents is [docs/README.md](docs/README.md). The web version and [docs/llms.txt](docs/llms.txt) for AI are generated with `node docs/site/build.mjs` |
 

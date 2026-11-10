@@ -307,11 +307,11 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     # On Linux the bundled demos are in the Nix store.
     root = tmp_path / "share"
     shutil.copytree(SERVER.parent, root / "web" / "dist", ignore=shutil.ignore_patterns("public", "*.map"))
-    demo = root / "demos" / "d" / "definitions" / "c"
+    demo = root / "demos" / "ja" / "d" / "definitions" / "c"
     demo.mkdir(parents=True)
     (demo / "_card.json").write_text("{}")
-    (root / "demos" / "d" / "tsugumi.json").write_text('{"name": "D"}')
-    (root / "demos" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
+    (root / "demos" / "ja" / "d" / "tsugumi.json").write_text('{"name": "D"}')
+    (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
     env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))

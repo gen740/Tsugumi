@@ -67,7 +67,7 @@ function TableDisplay({ columns, rows, large, zoom }: { columns: string[]; rows:
         {Array.from({ length: page.count }, (_, i) => <option key={i} value={i}>{i + 1} / {page.count}</option>)}
       </select>
       <Button disabled={page.index + 1 >= page.count} onClick={() => setPage(page.index + 1)}>{L('次へ')}</Button>
-    </div> : <div className="secondary" style={{ fontSize: 9 * zoom }}>全 {rows.length} 行・先頭 {page.end} 行のプレビュー（拡大して全行表示）</div>}
+    </div> : <div className="secondary" style={{ fontSize: 9 * zoom }}>{L('全 {0} 行・先頭 {1} 行のプレビュー（拡大して全行表示）', rows.length, page.end)}</div>}
     <div key={page.index} className={`display-body${large ? ' display-scroll display-both' : ''}`}>
       <table className="display-table" style={{ fontSize: (large ? 12 : 10) * zoom, borderSpacing: `${12 * zoom}px ${3 * zoom}px`, padding: 4 * zoom }}>
         <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
@@ -171,7 +171,7 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
         setView((v) => ({ ...v, scale: Math.max(0.2, Math.min(8, v.scale * Math.exp(-e.deltaY * 0.01))) }))
       }}>
       <canvas ref={ref} />
-      <span className="display-points-caption caption2 secondary">{x.length} 点 · ドラッグで回転</span>
+      <span className="display-points-caption caption2 secondary">{L('{0} 点 · ドラッグで回転', x.length)}</span>
     </div>
   )
 }
@@ -244,7 +244,7 @@ function JSONModuleView({ name, json, large, zoom }: { name: string; json: strin
   }
   return (
     <div className="display-module">
-      <div className="secondary" style={{ fontSize: 10 * zoom, fontWeight: 700 }}>モジュール {name}</div>
+      <div className="secondary" style={{ fontSize: 10 * zoom, fontWeight: 700 }}>{L('モジュール {0}', name)}</div>
       <pre className={`display-text${large ? ' selectable display-scroll' : ''}`} style={{ fontSize: (large ? 12 : 10) * zoom }}>
         {value !== undefined ? serialize(value) : json}
       </pre>

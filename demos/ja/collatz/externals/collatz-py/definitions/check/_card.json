@@ -1,0 +1,9 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 200
+}

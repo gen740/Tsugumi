@@ -73,7 +73,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
             p.write_text(content)
         (dst / "layout.json").write_text("{}")
     else:
-        shutil.copytree(ROOT / "demos" / demo, dst)
+        shutil.copytree(ROOT / "demos" / "en" / demo, dst)
     if not sandbox:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
@@ -278,7 +278,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
 
 def resolved_ports() -> dict:
     """The core's resolved ports of every listed demo and of the guide's project (nothing runs)."""
-    names = [d["id"] for d in json.loads((ROOT / "demos" / "index.json").read_text())["demos"]] + ["card-guide"]
+    names = [d["id"] for d in json.loads((ROOT / "demos" / "en" / "index.json").read_text())["demos"]] + ["card-guide"]
     out: dict[str, dict] = {}
     for demo in names:
         with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:

@@ -1,0 +1,14 @@
+{
+  "template": "fork",
+  "maxRuns": 100000,
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "check",
+        "collect"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "description": "Map of where points converge (a fractal)",
+  "content": "Starts from every point of a grid on the complex plane and draws which root it reaches and in how many iterations. Zoom in with center_re, center_im and half_width. Checks that everything converges to one of the reference roots, and shows the shares.",
+  "outputs": []
+}

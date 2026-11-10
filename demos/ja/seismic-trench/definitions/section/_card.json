@@ -1,0 +1,21 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "lat_min",
+      "type": "double",
+      "data": 37.5
+    },
+    {
+      "name": "lat_max",
+      "type": "double",
+      "data": 39.5
+    }
+  ]
+}

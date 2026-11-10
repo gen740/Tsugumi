@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace airway;
+table Counts { value:string; }
+table Outputs { counts:Counts (required, tsugumi: "directory"); }
+root_type Outputs;

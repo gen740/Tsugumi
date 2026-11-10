@@ -1,0 +1,10 @@
+{
+  "description": "Read the penguins' measurements",
+  "content": "From palmerpenguins' measured data, writes the birds with both bill length and depth as CSV, and tables the numbers by species and island.",
+  "outputs": [
+    {
+      "name": "penguins",
+      "description": "CSV of species, sex, island, bill length and depth"
+    }
+  ]
+}

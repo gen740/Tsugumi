@@ -1,0 +1,16 @@
+{
+  "language": "python",
+  "maxRuns": 100000,
+  "inputs": [
+    {
+      "name": "sample"
+    }
+  ],
+  "params": [
+    {
+      "name": "window",
+      "type": "uint64",
+      "data": 60
+    }
+  ]
+}

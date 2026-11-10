@@ -1,0 +1,5 @@
+{
+  "description": "Recall per digit",
+  "content": "A table of recall by model × digit, to see which digits are hard for which models.",
+  "outputs": []
+}

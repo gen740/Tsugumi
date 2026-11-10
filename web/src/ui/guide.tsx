@@ -162,7 +162,7 @@ function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: Gu
         </div>
       </>}
       {step.kind === 'field' && <>
-        <span>「{step.field}」のデモです。どれを見ますか？</span>
+        <span>{L('「{0}」のデモです。どれを見ますか？', step.field)}</span>
         <div className="row gap6 wrap">{demos.filter((d) => d.field === step.field).map((d) => chip(d.title, () => guide.pickDemo(d)))}</div>
         <div className="row gap8">
           <Button small onClick={() => guide.recommend(step.field)}>{L('おすすめを聞く')}</Button>

@@ -1,0 +1,5 @@
+{
+  "description": "Estimate the order of convergence",
+  "content": "Estimates the order of convergence q and the asymptotic constant numerically from the sequence of errors, and tables them next to the theoretical values set by the multiplicity and the damping factor. Fails if an orbit said to have converged did not reach a reference root.",
+  "outputs": []
+}

@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace lung;
+table Cohort { value:string; }
+table Outputs { cohort:Cohort (required, tsugumi: "file"); }
+root_type Outputs;
