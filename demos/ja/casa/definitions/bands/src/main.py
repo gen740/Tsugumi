@@ -48,7 +48,9 @@ def main(ctx):
         cols = ev.columns
         assert cols["energy"].unit == "eV", "energy must be in eV"
         cx, cy = sky_pixel(cols, p.Ra(), p.Dec())
-        x0, y0 = cx - step * size / 2, cy - step * size / 2
+        # The grid starts on a whole sky pixel: its edges are then exact in the bin= text,
+        # and dmcopy makes exactly `size` bins wherever the observation's centre falls.
+        x0, y0 = math.floor(cx - step * size / 2), math.floor(cy - step * size / 2)
         edges_x, edges_y = x0 + np.arange(size + 1) * step, y0 + np.arange(size + 1) * step
         x = np.asarray(ev.data["x"], dtype=float)
         y = np.asarray(ev.data["y"], dtype=float)
@@ -67,13 +69,13 @@ def main(ctx):
                 spec = f"{source}[energy={limits[i]}:{limits[i + 1]}][{bins}]"
                 subprocess.run([f"{root}/bin/dmcopy", spec, str(image)], env=env, check=True)
                 counts = fits.getdata(image)
-                assert counts.shape == (size, size), "dmcopy must give the grid that was asked for"
+                assert counts.shape == (size, size), f"dmcopy gave a {counts.shape} grid for {size} x {size}"
                 shutil.copyfile(image, dest / image.name)
                 bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum()), "dmcopy": spec})
         # Counted again without CIAO: what the tool wrote is every selected photon, once.
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
         manifest = {"obsid": obsid, "events_file": source, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
-                    "centre_pixel": [round(cx, 2), round(cy, 2)], "grid": {"step": step, "pixels": size},
+                    "centre_pixel": [x0 + step * size / 2, y0 + step * size / 2], "grid": {"step": step, "pixels": size},
                     "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.Version().decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print(json.dumps(manifest, ensure_ascii=False))
