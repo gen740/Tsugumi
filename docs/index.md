@@ -4,8 +4,9 @@
 
 <p align="center">
   <a href="https://gen740.github.io/Tsugumi/"><img src="assets/docs-card.svg" alt="Read the documentation: the problem told with moving figures, demos you can watch without installing, and how it works" width="49%"></a>
-  <a href="https://gen740.github.io/Tsugumi-chronicle/"><img src="assets/chronicle-card.svg" alt="Built with Claude: Tsugumi Chronicle. A person asks, Claude builds. How Tsugumi was made" width="49%"></a>
 </p>
+
+<p align="center">The repository as submitted to <b>Build with Claude: Japan</b> is kept as a frozen mirror: <a href="https://github.com/gen740/tsugumi-hackathon">gen740/tsugumi-hackathon</a>.</p>
 
 <p align="center">
   <a href="#install"><img src="assets/install-card.svg" alt="Install it and try it: the app on a Mac, a command for the browser on Linux and Windows. Go to installation and first steps" width="100%"></a>
@@ -272,7 +273,7 @@ This idea starts from research and extends to turning research decisions into te
 
 ## Documentation
 
-The concerns behind Tsugumi, its author and how it was built during the hackathon are in **[What to build so that we are not used by AI](pages/philosophy.md)**; the record of building it with Claude is in **[Tsugumi Chronicle](https://gen740.github.io/Tsugumi-chronicle/)**.
+The concerns behind Tsugumi, its author and how it was built during the hackathon are in **[What to build so that we are not used by AI](pages/philosophy.md)**; the repository as submitted to Build with Claude: Japan is the frozen mirror **[gen740/tsugumi-hackathon](https://github.com/gen740/tsugumi-hackathon)**.
 
 | Purpose | Documents |
 | --- | --- |
