@@ -812,7 +812,7 @@ final class GuideController {
     case (.demos, _):
       lines.append("screen: Home, the demo list")
     default:
-      lines.append("screen: Home (recent projects, new project, open, デモを見る)")
+      lines.append("screen: Home (recent projects, new project, open, \(String(localized: "デモを見る")))")
     }
     if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
       lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")

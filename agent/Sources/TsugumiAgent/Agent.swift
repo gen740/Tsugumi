@@ -272,7 +272,7 @@ public actor Agent {
     var note = "Continue from where you stopped (the step limit ended the previous turn). Check the current state first"
     if let run = unconfirmedRun { note += " and the outcome of run \(run) (run_status), which was started and never checked" }
     note += ", then finish the remaining work."
-    conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: "（止まったところから続けます）"))
+    conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: String(localized: "（止まったところから続けます）", bundle: .main)))
     conversation.updatedAt = Date()
     guard saveBeforeTurn(events) else { return }
     startTurn { await self.loop(events) }
@@ -347,7 +347,7 @@ public actor Agent {
           conversation.messages.append(ChatMessage(role: "user", content: [.text(
             "Your last reply was cut at the output limit, so its tool call was not run and nothing was saved. Make the "
             + "change in smaller steps: one Card per project_save, and long source files in saves of their own.")],
-            display: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）"))
+            display: String(localized: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）", bundle: .main)))
           events(.retrying("the reply was cut at the output limit; asking for smaller steps"))
           try conversation.save(storage)
           continue

@@ -82,7 +82,9 @@ extension Shared {
     }
     /// The provider's web search: how each API names it, and what the model and the user read.
     struct WebSearch {
-      let name: String, anthropicType: String, openAIType: String, openAIInclude: String, note: String, sources: String
+      let name: String, anthropicType: String, openAIType: String, openAIInclude: String, note: String
+      /// The heading over a search's sources, by language ("ja", "en").
+      let sources: [String: String]
       let maxUses: Int
     }
     let requests: [String]
@@ -126,7 +128,7 @@ extension Shared {
                 comment: .init(card: cm["card"]!, comment: cm["comment"]!, text: cm["text"]!),
                 webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
                                  openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
-                                 note: w["note"] as! String, sources: w["sources"] as! String, maxUses: w["maxUses"] as! Int),
+                                 note: w["note"] as! String, sources: w["sources"] as! [String: String], maxUses: w["maxUses"] as! Int),
                 permissionDeclined: o["permissionDeclined"] as! String,
                 invalidArguments: o["invalidArguments"] as! String)
   }()

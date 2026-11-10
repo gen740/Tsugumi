@@ -777,7 +777,7 @@ export class GuideController extends Observable {
     } else if (screen === 'demos') {
       lines.push('screen: Home, the demo list')
     } else {
-      lines.push(L('screen: Home (recent projects, new project, open, デモを見る)'))
+      lines.push(`screen: Home (recent projects, new project, open, ${L('デモを見る')})`)
     }
     if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
     // The whole list where a demo is chosen; in a project, only the ids (open_demo).

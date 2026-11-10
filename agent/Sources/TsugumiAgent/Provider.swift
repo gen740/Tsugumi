@@ -60,7 +60,9 @@ public struct WebSearch: Codable, Equatable, Sendable {
         .trimmingCharacters(in: .whitespaces)
       lines.append("- [\(cleaned.isEmpty ? s.url : cleaned)](\(url))")
     }
-    return lines.isEmpty ? "" : "\n\n\(Shared.data.webSearch.sources):\n\(lines.joined(separator: "\n"))\n"
+    // The app's language (AppPreferences writes it as the app's AppleLanguages).
+    let heading = Shared.data.webSearch.sources[Bundle.main.preferredLocalizations.first == "en" ? "en" : "ja"]!
+    return lines.isEmpty ? "" : "\n\n\(heading):\n\(lines.joined(separator: "\n"))\n"
   }
 }
 

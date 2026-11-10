@@ -252,6 +252,7 @@ EN = {
 "Draft %lld 枚（%@）から Card を生成します": "Generating Cards from %lld Drafts (%@)",
 "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。": "Stopped answering. Runs already accepted keep going (stop runs with “Stop” on the canvas).",
 "（止まったところから続けます）": "(going on from where it stopped)",
+"（応答が長すぎて途中で切れたため、小さく分けてやり直します）": "(The response was too long and was cut off; trying again in smaller pieces)",
 "会話を圧縮しています…": "Compacting the conversation…",
 "再試行中: %@": "Retrying: %@",
 "回答を停止しました（Workflow の実行は止めていません）。": "Stopped answering (the Workflow's run was not stopped).",

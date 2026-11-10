@@ -1165,6 +1165,7 @@
 "（変更した Card: %@）" = " (changed Cards: %@)";
 "（実行中）" = "(running)";
 "（必須）" = "(required)";
+"（応答が長すぎて途中で切れたため、小さく分けてやり直します）" = "(The response was too long and was cut off; trying again in smaller pieces)";
 "（次の入力を待てます）" = "(can wait for the next input)";
 "（止まったところから続けます）" = "(going on from where it stopped)";
 "（省略可）" = " (optional)";

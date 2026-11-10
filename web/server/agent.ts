@@ -15,7 +15,7 @@ import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
 import { ChatGPTError, planError, TransientError } from './chatgpt'
-import { L } from './i18n'
+import { L, language } from './i18n'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -591,7 +591,7 @@ export function sourcesText(sources: WebSource[]): string {
     const title = (s.title ?? s.url).replace(/[\[\]\r\n]+/g, ' ').trim() || s.url
     lines.push(`- [${title}](${url})`)
   }
-  return lines.length ? `\n\n${AGENT.webSearch.sources}:\n${lines.join('\n')}\n` : ''
+  return lines.length ? `\n\n${AGENT.webSearch.sources[language()]}:\n${lines.join('\n')}\n` : ''
 }
 
 /** The ChatGPT plan takes function tools only grouped in a namespace; the
