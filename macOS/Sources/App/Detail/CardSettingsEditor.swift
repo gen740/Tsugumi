@@ -537,7 +537,7 @@ private struct GeneralCategory: View {
               Text(verbatim: "x86_64-linux").tag("x86_64-linux")
               Text(verbatim: "aarch64-linux").tag("aarch64-linux")
             }
-            .help("別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。")
+            .help("別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。")
             toggle("reuseWorker", label: "worker の状態を残す", fallback: true)
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)

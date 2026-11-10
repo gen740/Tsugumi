@@ -167,7 +167,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
-- For now this is for bash, R and Julia Cards, whose programs the kernel hands to the emulator. C++ and Python Cards are loaded into the worker, which is built for the machine's own system: they get a diagnostic (`unsupported_system`).
+- Every language works. bash, R and Julia Cards are programs the kernel hands to the emulator. C++ and Python Cards are a `main.so` the worker loads, so their build also makes a worker for that system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator: the worker and the Card share one glibc, libstdc++ and libpython. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card's build stage took 2 min 16 s with Rosetta, the x86_64 compiler's download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
 ### Outside access (Experimental)

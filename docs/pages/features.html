@@ -173,7 +173,7 @@ The worker loads the built shared library <code>lib/main.so</code> into memory a
 </ul>
 </li>
 <li>Each invocation records the emulator that ran it (its path; qemu&#39;s includes its version), shown in the Info tab of the Card&#39;s run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.</li>
-<li>For now this is for bash, R and Julia Cards, whose programs the kernel hands to the emulator. C++ and Python Cards are loaded into the worker, which is built for the machine&#39;s own system: they get a diagnostic (<code>unsupported_system</code>).</li>
+<li>Every language works. bash, R and Julia Cards are programs the kernel hands to the emulator. C++ and Python Cards are a <code>main.so</code> the worker loads, so their build also makes a worker for that system (<code>worker</code> of the Nix SDK) from the Card&#39;s own nixpkgs, and the kernel runs it under the emulator: the worker and the Card share one glibc, libstdc++ and libpython. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card&#39;s build stage took 2 min 16 s with Rosetta, the x86_64 compiler&#39;s download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.</li>
 <li>Without an emulator, the run stops before building, saying what is missing.</li>
 </ul>
 <h3 id="outside-access-experimental">Outside access (Experimental)</h3>

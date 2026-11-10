@@ -850,7 +850,7 @@ EN = {
 "エミュレーター": "Emulator",
 "システム": "System",
 "この環境と同じ": "Same as this environment",
-"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。": "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). C++ and Python Cards cannot run this way yet.",
+"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。": "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). Its first build runs under the emulator too, so it takes longer.",
 "折りたたむ": "Collapse",
 "拡大": "Zoom In",
 "拡大して表示": "Show Enlarged",

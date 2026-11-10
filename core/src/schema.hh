@@ -381,6 +381,7 @@ struct BuildCache {
 struct ManifestRun {
   Opt<"package", v::String> package;
   Opt<"bash", v::String> bash;
+  Opt<"worker", v::String> worker;  // a package of another system: the worker built for it
 };
 
 struct CardManifest {
