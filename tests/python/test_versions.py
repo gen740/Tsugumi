@@ -63,6 +63,7 @@ def test_runs_commit_note_and_branch(tmp_path):
         assert st.state == RunState.succeeded and not st.commit
         init = c.call("VersionInitRequest", opId=new_id(), origin="test")
         first = text(init.commit)
+        assert git(root, "log", "-1", "--format=%s").strip() == "プロジェクトを作成"  # a Japanese connection
         assert ".tsugumi/" in (root / ".gitignore").read_text()
         g = graph(c)
         assert g.enabled and text(g.head) == first and not g.dirty
@@ -241,8 +242,8 @@ def test_a_run_note_says_what_ran(tmp_path):
 
 
 def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp_path):
-    """What tsugumid writes into the project's git for a run (the commit's
-    message, the note) is in the language the starting connection's
+    """What tsugumid writes into the project's git (the first commit's message,
+    and for a run the commit's message and the note) is in the language the starting connection's
     SessionHello asked for: English for "en", Japanese otherwise."""
     root = tmp_path / "p"
     write(root,
@@ -259,6 +260,7 @@ def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp
         c = d.client()
         c.hello(language="en")
         c.call("VersionInitRequest", opId=new_id(), origin="test")
+        assert git(root, "log", "-1", "--format=%s").strip() == "Create the project"
         _, st = run_and_wait(c, "both")
         assert summary_of(c, root, st) == "from both / failed: both (input_missing) / not run: sink"
         set_text(c, "second")

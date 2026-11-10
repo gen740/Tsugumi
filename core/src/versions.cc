@@ -252,7 +252,7 @@ std::optional<std::string> Versions::card_of(const std::string& path) {
   return std::nullopt;
 }
 
-std::string Versions::init() {
+std::string Versions::init(bool english) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (open(r, root_)) {
@@ -266,7 +266,7 @@ std::string Versions::init() {
   stdfs::remove(root_ / kHistoryFile, ec);
   auto tip = stage_all(r.get());
   if (!history) {
-    commit_tree(r.get(), tip, {}, "プロジェクトを作成", "HEAD");
+    commit_tree(r.get(), tip, {}, english ? "Create the project" : "プロジェクトを作成", "HEAD");
     auto h = head_oid(r.get());
     return hex(&*h);
   }
@@ -420,8 +420,8 @@ std::string Versions::mark(const std::string& name, const std::string& message) 
   return id;
 }
 
-void Versions::checkout(const std::string& commit) {
-  commit_all("作業中の変更");
+void Versions::checkout(const std::string& commit, bool english) {
+  commit_all(english ? "Changes in progress" : "作業中の変更");
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_)) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
