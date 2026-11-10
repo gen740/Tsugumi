@@ -1019,7 +1019,7 @@ void Service::version_init(RequestIn& req) {
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
-    auto commit = versions_->init();
+    auto commit = versions_->init(english(req.conn));
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
     reply(req, receipt_reply(req.request_id, receipt, false));
@@ -1073,7 +1073,7 @@ void Service::version_checkout(RequestIn& req) {
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
     if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
-    versions_->checkout(r->commit()->str());
+    versions_->checkout(r->commit()->str(), english(req.conn));
     // The files are those of the version now: read them like a reload.
     auto staged = store_->stage_reload(op_id, r->origin()->str());
     std::string receipt;
