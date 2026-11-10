@@ -22,6 +22,7 @@ const KEYS: Record<string, string> = {
   allowedPermissions: 'agent.permissions.allowed',
   webSearch: 'agent.webSearch',
   versionSummaries: 'versions.summaries',
+  language: 'app.language',
 }
 const MODELS = ['anthropic', 'openai', 'chatgpt'] as const
 const modelsKey = (id: string) => `agent.models.${id}`

@@ -3,6 +3,7 @@
 // to the Cards it works on, one short scene after another, says what it does and
 // goes a little while after it ended. Times in seconds.
 import { workScene } from './guide'
+import { L } from '../i18n'
 
 /** Lengths of the scenes: unhurried, so that the bird glides. */
 export const BIRD_TIMING = { scene: 1.6, flight: 1, maxBacklog: 5, linger: 8, fadeIn: 0.5, fadeOut: 1.6, doneLine: 3 }
@@ -59,7 +60,7 @@ export const birdColor = (tint: number, dark: boolean) => {
 export const leadColor = (dark: boolean) => (dark ? 'rgb(250, 204, 89)' : 'rgb(184, 133, 13)')
 
 export type BirdOutcome = 'done' | 'failed' | 'stopped' | 'limit'
-const OUTCOME_LINE: Record<BirdOutcome, string> = { done: 'できました', failed: 'うまくいきませんでした', stopped: '止めました', limit: '途中で止まっています' }
+const OUTCOME_LINE: Record<BirdOutcome, string> = { done: L('できました'), failed: L('うまくいきませんでした'), stopped: L('止めました'), limit: L('途中で止まっています') }
 
 interface Scene { card: string; line: string; start: number }
 export interface BirdPlace extends Pt { flying: boolean; facing: 1 | -1 }
@@ -133,13 +134,13 @@ export class HelperBird {
   /** What its bubble says at `now`, and since when; undefined: no bubble. */
   line(now: number): { text: string; since: number; done?: boolean } | undefined {
     const file = this.writer()?.at(now)
-    if (file) return { text: `${file.card} を書いています`, since: this.flight?.at ?? now }
+    if (file) return { text: L('{0} を書いています', file.card), since: this.flight?.at ?? now }
     const s = this.scene(now)
     if (s && s.start + BIRD_TIMING.scene > now) return { text: s.line, since: s.start }
     if (this.working) {
       if (this.activity && this.activity.at >= (s?.start ?? -Infinity)) return { text: this.activity.text, since: this.activity.at }
       if (s) return { text: s.line, since: s.start }
-      return { text: '考えています', since: this.appearedAt ?? now }
+      return { text: L('考えています'), since: this.appearedAt ?? now }
     }
     const doneAt = Math.max(s ? s.start + BIRD_TIMING.scene : 0, this.endedAt ?? 0)
     return now - doneAt < BIRD_TIMING.doneLine ? { text: OUTCOME_LINE[this.outcome], since: doneAt, done: true } : undefined
@@ -191,7 +192,7 @@ export class HelperTeam {
   start(tasks: { name: string; cards: string[] }[], now: number) {
     this.birds = tasks.map((t, i) => {
       const b = new HelperBird(t.name, i + 1, () => this.writerOf(t.name), now)
-      if (t.cards[0]) b.visit(t.cards[0], `${t.cards[0]} を読んでいます`, now)
+      if (t.cards[0]) b.visit(t.cards[0], L('{0} を読んでいます', t.cards[0]), now)
       return b
     })
   }
@@ -216,7 +217,7 @@ export class HelperTeam {
     if (!b) return
     switch (e.kind) {
       case 'text':
-        b.doing('考えています', now)
+        b.doing(L('考えています'), now)
         break
       case 'toolStarted': {
         const s = workScene(e.name ?? '', e.arguments ?? '{}')

@@ -911,7 +911,7 @@ EN = {
 "複製": "Duplicate",
 "解放": "Freed",
 "言語": "Language",
-"言語の変更はアプリの再起動後に反映されます。": "The language changes after restarting the app.",
+"言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。": "The language changes after restarting the app. What it writes into a project's git (the run's record) is in this language too.",
 "記録": "Logger",
 "記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。": "Connections used by logger Cards to store logs in an external database, independent of the core history.",
 "記録がありません": "No record",

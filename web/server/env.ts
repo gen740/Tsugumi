@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { L } from './i18n'
 
 export interface Binaries {
   tsugumid: string
@@ -130,20 +131,20 @@ export class EnvironmentManager implements Environments {
   private async launch(e: Env): Promise<EnvState> {
     for (const [what, p] of [['tsugumid', this.bins.tsugumid], ['tsugumi-worker', this.bins.worker]] as const) {
       if (!fs.existsSync(p)) {
-        const s: EnvState = { state: 'failed', message: `${what} が見つかりません: ${p}`, recovery: 'リポジトリで core をビルドしてください（README の「Web UI」）。', log: '' }
+        const s: EnvState = { state: 'failed', message: L('{0} が見つかりません: {1}', what, p), recovery: L('リポジトリで core をビルドしてください（README の「Web UI」）。'), log: '' }
         this.set(e, s)
         return s
       }
     }
-    this.set(e, { state: 'starting', message: 'tsugumid を起動しています' })
+    this.set(e, { state: 'starting', message: L('tsugumid を起動しています') })
     fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
     fs.chmodSync(e.control, 0o700)
     fs.mkdirSync(e.sockDir, { recursive: true, mode: 0o700 })
     // In the shared temp directory another user could have made it first.
     const st = fs.lstatSync(e.sockDir)
     if (!st.isDirectory() || st.uid !== process.getuid!() || (st.mode & 0o077) !== 0) {
-      const s: EnvState = { state: 'failed', message: `ソケットのフォルダ ${e.sockDir} が自分専用ではありません（所有者かアクセス権が違います）`,
-        recovery: 'このフォルダを削除してから、もう一度開いてください。', log: '' }
+      const s: EnvState = { state: 'failed', message: L('ソケットのフォルダ {0} が自分専用ではありません（所有者かアクセス権が違います）', e.sockDir),
+        recovery: L('このフォルダを削除してから、もう一度開いてください。'), log: '' }
       this.set(e, s)
       return s
     }
@@ -170,7 +171,7 @@ export class EnvironmentManager implements Environments {
       if (e.state.state === 'ready' || e.state.state === 'starting') {
         this.set(e, code === 0 || sig === 'SIGTERM'
           ? { state: 'stopped' }
-          : { state: 'failed', message: `tsugumid が終了しました（${sig ?? code}）`, recovery: '再試行すると起動し直します。未保存の変更は画面に保持しています。', log: e.log })
+          : { state: 'failed', message: L('tsugumid が終了しました（{0}）', sig ?? code), recovery: L('再試行すると起動し直します。未保存の変更は画面に保持しています。'), log: e.log })
       }
     })
     const deadline = Date.now() + 60_000
@@ -178,8 +179,8 @@ export class EnvironmentManager implements Environments {
       if (proc.exitCode !== null || proc.signalCode !== null) {
         const s: EnvState = {
           state: 'failed',
-          message: 'tsugumid が起動中に終了しました',
-          recovery: e.log.includes('already owns') ? '同じプロジェクトを別の tsugumid（macOS アプリなど）が使っています。そちらを閉じてから再試行してください。' : 'ログを確認してください。',
+          message: L('tsugumid が起動中に終了しました'),
+          recovery: e.log.includes('already owns') ? L('同じプロジェクトを別の tsugumid（macOS アプリなど）が使っています。そちらを閉じてから再試行してください。') : L('ログを確認してください。'),
           log: e.log,
         }
         this.set(e, s)
@@ -194,7 +195,7 @@ export class EnvironmentManager implements Environments {
       await new Promise((r) => setTimeout(r, 50))
     }
     proc.kill('SIGKILL')
-    const s: EnvState = { state: 'failed', message: 'tsugumid が 60 秒以内に準備できませんでした', recovery: '再試行してください。', log: e.log }
+    const s: EnvState = { state: 'failed', message: L('tsugumid が 60 秒以内に準備できませんでした'), recovery: L('再試行してください。'), log: e.log }
     this.set(e, s)
     return s
   }

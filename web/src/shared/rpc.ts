@@ -12,6 +12,7 @@ import { ReplyT } from '../gen/tsugumi/rpc/reply'
 import { RequestPayload } from '../gen/tsugumi/rpc/request-payload'
 import { RequestT } from '../gen/tsugumi/rpc/request'
 import { NotificationT } from '../gen/tsugumi/rpc/notification'
+import { L } from '../i18n'
 
 export { D, R, RequestPayload }
 
@@ -48,7 +49,7 @@ export class RPCError extends Error {
   }
 }
 
-export const disconnected = () => new RPCError('disconnected', 'tsugumid との接続が切れました')
+export const disconnected = () => new RPCError('disconnected', L('tsugumid との接続が切れました'))
 
 export interface Transport {
   send(frame: Uint8Array): void
@@ -93,8 +94,8 @@ export class RPCClient {
   }
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
-  async connect(token: string | undefined, clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
+  async connect(token: string | undefined, language: 'ja' | 'en', clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
+    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null, language })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }

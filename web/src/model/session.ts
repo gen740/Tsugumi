@@ -15,6 +15,7 @@ import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeEx
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { cardPermissions } from './permissions'
+import { L, language } from '../i18n'
 
 export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
@@ -90,15 +91,15 @@ export function cardComments(meta: J | undefined): CardComment[] {
 }
 
 /** Who did something to a comment, for the sentences that say so. */
-export const commentActor = (by: string | undefined) => (by === 'agent' ? 'Agent' : by === 'user' ? 'あなた' : undefined)
+export const commentActor = (by: string | undefined) => (by === 'agent' ? 'Agent' : by === 'user' ? L('あなた') : undefined)
 /** "Agent が解決", or undefined when who did it is not recorded. */
-export const commentDone = (by: string | undefined, what: string) => (by === 'agent' ? `Agent が${what}` : by === 'user' ? `あなたが${what}` : undefined)
+export const commentDone = (by: string | undefined, what: string) => (by === 'agent' ? L('Agent が{0}', what) : by === 'user' ? L('あなたが{0}', what) : undefined)
 
 /** What a version or a save did to a comment, and who did it when that is recorded. */
 export function commentChange(change: string, by?: string): string {
-  const what = ({ added: '追加', edited: '編集', resolved: '解決', reopened: '開き直し', removed: '削除' } as Record<string, string>)[change] ?? change
+  const what = ({ added: L('追加'), edited: L('編集'), resolved: L('解決'), reopened: L('開き直し'), removed: L('削除') } as Record<string, string>)[change] ?? change
   const who = commentActor(by)
-  return who ? `${what}（${who}）` : what
+  return who ? L('{0}（{1}）', what, who) : what
 }
 
 /** Latest invocation of a Card in the current run, as the core reports it. *//** Latest invocation of a Card in the current run, as the core reports it. */
@@ -231,11 +232,11 @@ export function displaySummary(d: DisplaySnapshot): string {
       return line.replace(/^[#>*\-` ]+|[#>*\-` ]+$/g, '').replace(/\*\*/g, '')
     }
     case 'scalar': return `${v.label} = ${Number(v.value.toPrecision(6))}`
-    case 'lineChart': return `折れ線 ${v.series.length} 系列 · ${Math.max(0, ...v.series.map((x) => x.x.length))} 点`
-    case 'table': return `表 ${v.columns.length} 列 × ${v.rows.length} 行`
-    case 'image': return v.alt || '画像'
-    case 'points': return `点群 ${v.x.length} 点`
-    case 'module': return plotTitle(v.name, v.json) ?? `モジュール ${v.name}`
+    case 'lineChart': return L('折れ線 {0} 系列 · {1} 点', v.series.length, Math.max(0, ...v.series.map((x) => x.x.length)))
+    case 'table': return L('表 {0} 列 × {1} 行', v.columns.length, v.rows.length)
+    case 'image': return v.alt || L('画像')
+    case 'points': return L('点群 {0} 点', v.x.length)
+    case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
   }
 }
 
@@ -247,7 +248,7 @@ function plotTitle(name: string, json: string): string | undefined {
   try { v = JSON.parse(json) } catch { v = undefined }
   const t = name === 'plotly' ? v?.layout?.title : v?.title
   const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
-  return text || (name === 'plotly' ? 'Plotly のグラフ' : 'Vega-Lite のグラフ')
+  return text || (name === 'plotly' ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
 }
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
@@ -479,7 +480,7 @@ export class ProjectSession extends Observable {
   }
 
   get syncState(): SyncState {
-    if (!this.connected) return this.dirty ? { kind: 'failed', message: this.connectionMessage ?? '接続していません' } : { kind: 'offline' }
+    if (!this.connected) return this.dirty ? { kind: 'failed', message: this.connectionMessage ?? L('接続していません') } : { kind: 'offline' }
     if (this.saving) return { kind: 'saving' }
     if (this.saveError) return { kind: 'failed', message: this.saveError }
     if (this.savingAfterRun && this.dirty) return { kind: 'waitingForRun' }
@@ -604,7 +605,7 @@ export class ProjectSession extends Observable {
     for (let attempt = 0; ; attempt++) {
       try {
         const c = new RPCClient(await this.openTransport(endpoint))
-        await c.connect(token)
+        await c.connect(token, language())
         return c
       } catch (e) {
         if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
@@ -1243,7 +1244,7 @@ export class ProjectSession extends Observable {
   async settleBeforeLeaving(giveUp: (reason: string) => Promise<boolean>): Promise<boolean> {
     if (this.dirty) await this.save()
     if (!this.dirty) return true
-    if (!(await giveUp(this.saveError ?? this.connectionMessage ?? '変更を保存できませんでした。'))) return false
+    if (!(await giveUp(this.saveError ?? this.connectionMessage ?? L('変更を保存できませんでした。')))) return false
     this.discardDraft()
     return true
   }
@@ -1401,12 +1402,12 @@ export class ProjectSession extends Observable {
               const p = e.args.path
               if (e.kind === D.FailureKind.hash_conflict && p && !this.isExternalDocument(p)) {
                 // A file this window edited was changed elsewhere too: kept, not merged.
-                this.saveError = `${p} は別の場所でも変更されたため保存していません。変更は保持しています。`
+                this.saveError = L('{0} は別の場所でも変更されたため保存していません。変更は保持しています。', p)
                 return
               }
               if (this.conflictRetries >= 8) {
                 this.conflictRetries = 0
-                this.saveError = '他の変更と重なり保存できませんでした。変更は保持しています。'
+                this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
                 return
               }
               // Newer changes are on their way (DocPatched): merge them in and try again.
@@ -1421,7 +1422,7 @@ export class ProjectSession extends Observable {
               this.savingAfterRun = true
               break
             case D.FailureKind.external_change:
-              this.saveError = `${e.args.path ?? 'ファイル'} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。`
+              this.saveError = L('{0} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。', e.args.path ?? 'ファイル')
               break
             default:
               this.saveError = errorText(e)
@@ -1433,7 +1434,7 @@ export class ProjectSession extends Observable {
             this.saveError = undefined
             this.forgetSaved(sent, layoutOnly, merged)
           } else {
-            this.saveError = `保存できませんでした: ${errorText(e)}。変更は保持しています。`
+            this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
           }
         }
       }
@@ -1550,9 +1551,9 @@ export class ProjectSession extends Observable {
 
   async run(card: string[], propagate: boolean) {
     const client = this.client
-    if (!client) throw new RPCError('disconnected', '接続していません')
+    if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (this.computationDirty) await this.save()
-    if (this.computationDirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? '変更を保存できないため実行できません。' })
+    if (this.computationDirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? L('変更を保存できないため実行できません。') })
     const parallel = Math.max(1, Math.min(64, prefs.maxConcurrency))
     try {
       const accepted = await client.run(this.rev, uuid(), card, propagate, parallel)
@@ -1975,7 +1976,7 @@ export class ProjectSession extends Observable {
   async sourceText(p: string): Promise<string> {
     const e = this.sourceEdits.get(p)
     if (e !== undefined) return typeof e === 'string' ? e : new TextDecoder().decode(e)
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return new TextDecoder().decode(await this.client.readFile(p, this.rev))
   }
 
@@ -2244,8 +2245,8 @@ export class ProjectSession extends Observable {
   cardNameProblem(k: CardKey, raw: string): string | undefined {
     const nw = raw.trim()
     if (nw === path(k).pop()) return undefined
-    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return '名前に使えるのは英数字と - _ . だけです（128 文字まで）。'
-    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return `「${nw}」はすでに使われています。`
+    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return L('名前に使えるのは英数字と - _ . だけです（128 文字まで）。')
+    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return L('「{0}」はすでに使われています。', nw)
     return undefined
   }
 
@@ -2307,9 +2308,9 @@ export class ProjectSession extends Observable {
     const problem = this.cardNameProblem(k, nw)
     if (problem) throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: problem })
     if (this.dirty) await this.save()
-    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? '変更を保存できませんでした。' })
+    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? L('変更を保存できませんでした。') })
     const rpc = this.client
-    if (!rpc) throw new RPCError('disconnected', '接続していません')
+    if (!rpc) throw new RPCError('disconnected', L('接続していません'))
     const renamedGraph = (g: J) => {
       const out = clone(isObj(g) ? g : obj()) as JObj
       out.set('cards', (arr(out.get('cards')) ?? []).map((c) => (str(get(c, 'id')) === old ? obj([['id', nw]]) : c)))
@@ -2754,7 +2755,7 @@ export class ProjectSession extends Observable {
     this.edit((x) => {
       x.updateLayout(scope, (l) => {
         l.set('notes', [...(arr(l.get('notes')) ?? []), obj([
-          ['id', id], ['scope', ''], ['text', 'メモ'], ['color', 'yellow'],
+          ['id', id], ['scope', ''], ['text', L('メモ')], ['color', 'yellow'],
           ['x', real(p.x)], ['y', real(p.y)], ['width', real(240)], ['height', real(120)],
         ])])
       })
@@ -2822,7 +2823,7 @@ export class ProjectSession extends Observable {
     })
   }
 
-  addGroup(keys: Set<CardKey>, scope: string[], name = 'グループ'): string {
+  addGroup(keys: Set<CardKey>, scope: string[], name = L('グループ')): string {
     const id = 'group-' + uuid().slice(0, 8)
     this.edit((x) => x.updateGroups(scope, (g) => g.push(obj([
       ['id', id], ['scope', ''], ['name', name], ['color', 'blue'], ['cards', [...keys].map((k) => path(k).pop()!).sort()],
@@ -3071,19 +3072,19 @@ auto run(Card::Input& input) -> Card::Output {
   /** Why a Card that ran has no result to show. */
   noResultNote(k: CardKey): string | undefined {
     switch (this.cardStates.get(k)?.state) {
-      case D.CardState.failed: return '失敗したので結果はありません'
-      case D.CardState.blocked: return '上流の Card が失敗したので実行していません'
+      case D.CardState.failed: return L('失敗したので結果はありません')
+      case D.CardState.blocked: return L('上流の Card が失敗したので実行していません')
       default: return undefined
     }
   }
 
   async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.resolveNixSource(ref)
   }
 
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.clearCache(uuid())
   }
 
@@ -3168,16 +3169,16 @@ auto run(Card::Input& input) -> Card::Output {
   }
 
   async makeRepository() {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     await this.client.versionInit(uuid(), 'ui')
     await this.refreshVersions()
   }
 
   /** Names what is saved now as a version (a commit and an annotated tag). */
   async markVersion(name: string, message: string) {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     if (this.dirty) await this.save()
-    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionMark(uuid(), 'ui', name, message)
     await this.refreshVersions()
   }
@@ -3185,15 +3186,15 @@ auto run(Card::Input& input) -> Card::Output {
   /** Starts from `commit`: the documents become that version's; a change and
    *  run from there opens a branch, and nothing later is lost. */
   async startFrom(commit: string) {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
-    if (this.runActive) throw new Error('実行中は別の版に移れません。')
-    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    if (this.runActive) throw new Error(L('実行中は別の版に移れません。'))
+    if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()
   }
 
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.deleteHistory(uuid(), endedBefore ? endedBefore.getTime() : null)
   }
 
@@ -3255,7 +3256,7 @@ auto run(Card::Input& input) -> Card::Output {
   cardDetails(k: CardKey): string[] {
     const desc = this.cardDescription(k)
     const content = this.kind(k) === 'draft' ? str(get(this.cardMeta(k), 'content')) : undefined
-    return [desc, content, ...this.openComments(k).map((c) => `${c.author === 'agent' ? 'コメント（Agent）' : 'コメント'}: ${c.text}`)].filter((x): x is string => !!x)
+    return [desc, content, ...this.openComments(k).map((c) => L('{0}: {1}', c.author === 'agent' ? 'コメント（Agent）' : 'コメント', c.text))].filter((x): x is string => !!x)
   }
 
   /** Whether a Card does not run because it needs a Draft's output. */
@@ -3291,8 +3292,8 @@ auto run(Card::Input& input) -> Card::Output {
   /** One line describing the latest result of a Card. */
   resultSummary(k: CardKey): string | undefined {
     const st = this.cardStates.get(k)
-    if (st && st.state === D.CardState.failed) return st.failure ?? '失敗'
-    if (st && st.state === D.CardState.blocked) return st.failure ?? '入力が届きません'
+    if (st && st.state === D.CardState.failed) return st.failure ?? L('失敗')
+    if (st && st.state === D.CardState.blocked) return st.failure ?? L('入力が届きません')
     const d = this.displays.get(k)
     return d ? displaySummary(d) : undefined
   }
@@ -3363,7 +3364,7 @@ auto run(Card::Input& input) -> Card::Output {
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
       inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
-      result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? 'Draft のため実行しない' : undefined,
+      result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
@@ -3408,7 +3409,7 @@ export type CardKind = 'trigger' | 'input' | 'fork' | 'branch' | 'merge' | 'logg
 const KINDS: CardKind[] = ['trigger', 'input', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: '開始', input: '入力', fork: '分配', branch: '分岐', merge: '合流', logger: '記録', draft: 'Draft', subgraph: 'Card in Card', code: '処理',
+  trigger: L('開始'), input: L('入力'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
@@ -3430,43 +3431,43 @@ export function definitionKind(def: J | undefined): CardKind {
  *  gets a definition folder of its own (definitions/<id>/). */
 export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'python', label: 'Python の処理' }, { id: 'cpp', label: 'C++ の処理' }, { id: 'input', label: '入力値' },
-  { id: 'draft', label: 'Draft（未実装の計画）' }, { id: 'trigger', label: '開始' }, { id: 'fork', label: '分配' },
-  { id: 'branch', label: '分岐' }, { id: 'merge', label: '合流' }, { id: 'logger', label: '記録' },
+  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
+  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
 export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
-  { id: 'yellow', label: '黄' }, { id: 'blue', label: '青' }, { id: 'green', label: '緑' }, { id: 'pink', label: '桃' }, { id: 'gray', label: '灰' },
+  { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },
 ]
 
 export const RUN_STATE: Record<number, { label: string; icon: string; color: string }> = {
-  [D.RunState.idle]: { label: '待機中', icon: 'circle', color: 'secondary' },
-  [D.RunState.queued]: { label: '待機列', icon: 'hourglass', color: 'orange' },
-  [D.RunState.preparing]: { label: '準備中', icon: 'hourglass', color: 'orange' },
-  [D.RunState.running]: { label: '実行中', icon: 'play.circle.fill', color: 'orange' },
-  [D.RunState.cancelling]: { label: '停止中', icon: 'stop.circle', color: 'orange' },
-  [D.RunState.succeeded]: { label: '成功', icon: 'checkmark.circle.fill', color: 'green' },
-  [D.RunState.failed]: { label: '失敗', icon: 'xmark.circle.fill', color: 'red' },
-  [D.RunState.cancelled]: { label: '停止済み', icon: 'stop.circle.fill', color: 'brown' },
+  [D.RunState.idle]: { label: L('待機中'), icon: 'circle', color: 'secondary' },
+  [D.RunState.queued]: { label: L('待機列'), icon: 'hourglass', color: 'orange' },
+  [D.RunState.preparing]: { label: L('準備中'), icon: 'hourglass', color: 'orange' },
+  [D.RunState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
+  [D.RunState.cancelling]: { label: L('停止中'), icon: 'stop.circle', color: 'orange' },
+  [D.RunState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'green' },
+  [D.RunState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'red' },
+  [D.RunState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
 }
-export const runState = (st: D.RunState | undefined) => RUN_STATE[st ?? D.RunState.idle] ?? { label: '未実行', icon: 'circle', color: 'secondary' }
+export const runState = (st: D.RunState | undefined) => RUN_STATE[st ?? D.RunState.idle] ?? { label: L('未実行'), icon: 'circle', color: 'secondary' }
 
 export const CARD_STATE: Record<number, { label: string; icon: string; color: string }> = {
-  [D.CardState.not_started]: { label: '未実行', icon: 'circle.dotted', color: 'secondary' },
-  [D.CardState.waiting]: { label: '入力待ち', icon: 'hourglass', color: 'orange' },
-  [D.CardState.ready]: { label: '実行待ち', icon: 'hourglass', color: 'orange' },
-  [D.CardState.preparing]: { label: '準備中', icon: 'gearshape', color: 'orange' },
-  [D.CardState.running]: { label: '実行中', icon: 'play.circle.fill', color: 'orange' },
-  [D.CardState.succeeded]: { label: '成功', icon: 'checkmark.circle.fill', color: 'green' },
-  [D.CardState.failed]: { label: '失敗', icon: 'xmark.circle.fill', color: 'red' },
-  [D.CardState.blocked]: { label: 'ブロック', icon: 'nosign', color: 'purple' },
-  [D.CardState.cancelled]: { label: '停止済み', icon: 'stop.circle.fill', color: 'brown' },
-  [D.CardState.skipped]: { label: 'スキップ', icon: 'arrow.uturn.right.circle', color: 'gray' },
+  [D.CardState.not_started]: { label: L('未実行'), icon: 'circle.dotted', color: 'secondary' },
+  [D.CardState.waiting]: { label: L('入力待ち'), icon: 'hourglass', color: 'orange' },
+  [D.CardState.ready]: { label: L('実行待ち'), icon: 'hourglass', color: 'orange' },
+  [D.CardState.preparing]: { label: L('準備中'), icon: 'gearshape', color: 'orange' },
+  [D.CardState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
+  [D.CardState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'green' },
+  [D.CardState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'red' },
+  [D.CardState.blocked]: { label: L('ブロック'), icon: 'nosign', color: 'purple' },
+  [D.CardState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
+  [D.CardState.skipped]: { label: L('スキップ'), icon: 'arrow.uturn.right.circle', color: 'gray' },
 }
-export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: '不明', icon: 'circle.dotted', color: 'secondary' }
+export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: L('不明'), icon: 'circle.dotted', color: 'secondary' }
 
 export function formatMillis(ms: bigint | number | null | undefined): string {
   if (ms === null || ms === undefined) return ''

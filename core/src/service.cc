@@ -300,6 +300,10 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   }
   if (h->expected_project_id() && h->expected_project_id()->str() != store_->project_id())
     return failure(FailureKind::permission_denied, "this endpoint serves a different project");
+  {
+    std::lock_guard<std::mutex> l(subs_mu_);
+    english_[in.conn] = h->language() && h->language()->str() == "en";
+  }
   FBB b;
   auto caps = capabilities();
   std::vector<flatbuffers::Offset<flatbuffers::String>> cv;
@@ -316,6 +320,13 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 void Service::disconnected(ConnId conn) {
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
+  english_.erase(conn);
+}
+
+bool Service::english(ConnId conn) {
+  std::lock_guard<std::mutex> l(subs_mu_);
+  auto it = english_.find(conn);
+  return it != english_.end() && it->second;
 }
 
 void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)) {

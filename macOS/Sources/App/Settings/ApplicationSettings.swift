@@ -189,7 +189,7 @@ private struct GeneralSettings: View {
       Picker("言語", selection: $prefs.language) {
         ForEach(AppPreferences.Language.allCases) { Text($0.label).tag($0) }
       }
-      .help("言語の変更はアプリの再起動後に反映されます。")
+      .help("言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。")
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
         .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {

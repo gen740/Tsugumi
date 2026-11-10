@@ -76,6 +76,8 @@ class Service : public RequestSink {
   std::pair<std::string, bool> hello(const RequestIn& req) override;
   void dispatch(RequestIn req) override;
   void disconnected(ConnId conn) override;
+  // Whether the connection's SessionHello asked for English.
+  bool english(ConnId conn);
 
   static std::vector<std::string> capabilities();
 
@@ -189,6 +191,7 @@ class Service : public RequestSink {
 
   std::mutex subs_mu_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
+  std::map<ConnId, bool> english_;              // conn -> its SessionHello's language is English
 
   std::mutex view_mu_;
   std::string cursor_secret_;

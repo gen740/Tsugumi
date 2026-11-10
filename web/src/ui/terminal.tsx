@@ -10,6 +10,7 @@ import { errorText, ProjectSession } from '../model/session'
 import { TerminalInput } from '../model/terminalInput'
 import { Button } from './controls'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 export function ProjectTerminalPanel({ session, onClose }: { session: ProjectSession; onClose?: () => void }) {
   useObserve(session)
@@ -21,13 +22,13 @@ export function ProjectTerminalPanel({ session, onClose }: { session: ProjectSes
         <Icon name="terminal" />
         <b className="ellipsis">{session.folderName}</b>
         <span className="callout mono secondary ellipsis" title={session.dir}>{session.dir}</span>
-        <span className="caption secondary ellipsis">このホスト上（プロジェクトのフォルダで実行します）</span>
+        <span className="caption secondary ellipsis">{L('このホスト上（プロジェクトのフォルダで実行します）')}</span>
         <span className="spacer" />
         {ended && <span className="caption secondary nowrap">{ended}</span>}
-        <Button small icon="plus" help="ターミナルを開き直します（実行中のコマンドは終了します）" onClick={() => { setEnded(undefined); setGeneration((g) => g + 1) }}>
-          新しいターミナル
+        <Button small icon="plus" help={L('ターミナルを開き直します（実行中のコマンドは終了します）')} onClick={() => { setEnded(undefined); setGeneration((g) => g + 1) }}>
+          {L('新しいターミナル')}
         </Button>
-        {onClose && <Button kind="borderless" small iconOnly icon="xmark" help="閉じる（下部のアイコンでも開閉できます）" onClick={onClose} />}
+        {onClose && <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる（下部のアイコンでも開閉できます）')} onClick={onClose} />}
       </div>
       <TerminalHost key={generation} session={session} onEnd={setEnded} />
     </div>
@@ -62,8 +63,8 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   const onEvent = (e: TerminalEvent) => {
     if (e.type === 'terminal') term.write(e.data)
     else if (e.type === 'terminal-exit') {
-      term.write('\r\n[ターミナルは終了しました]\r\n')
-      onEnd('終了しました')
+      term.write(L('\r\n[ターミナルは終了しました]\r\n'))
+      onEnd(L('終了しました'))
     }
   }
   const off = onServerEvent((e: TerminalEvent) => {
@@ -96,8 +97,8 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
       mine = r.id
       for (const e of early.splice(0)) if (e.id === mine) onEvent(e)
     } catch (e) {
-      term.write(`ターミナルを開けませんでした: ${errorText(e)}\r\n`)
-      onEnd('開けませんでした')
+      term.write(L('ターミナルを開けませんでした: {0}\r\n', errorText(e)))
+      onEnd(L('開けませんでした'))
     }
   })()
   return () => {

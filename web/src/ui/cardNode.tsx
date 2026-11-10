@@ -15,28 +15,29 @@ import { D } from '../shared/rpc'
 import { Button } from './controls'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
+import { L } from '../i18n'
 
 // ---- Texts ------------------------------------------------------------------------
 
 /** "実行 #3 · 成功" and the like; undefined before the first invocation. */
 export function runText(d: CardNodeData): string | undefined {
   if (d.state === undefined || d.invocation <= 0n) return undefined
-  let s = `実行 #${d.invocation}`
+  let s = L('実行 #{0}', d.invocation)
   const cur = currentStage(d.stage)
   if (cur && (d.state === D.CardState.running || d.state === D.CardState.preparing)) {
     s += ' · ' + STAGE_INFO[cur.stage].active
   } else {
     s += ' · ' + cardState(d.state).label
-    if (d.state === D.CardState.succeeded && d.runContinues) s += '（次の入力を待てます）'
+    if (d.state === D.CardState.succeeded && d.runContinues) s += L('（次の入力を待てます）')
   }
   return s
 }
 
 /** Plain status for a Card that did not run in this run. */
 export function idleText(d: CardNodeData): string {
-  if (d.kind === 'draft') return '未実装（Draft）'
+  if (d.kind === 'draft') return L('未実装（Draft）')
   if (d.state !== undefined && d.state !== D.CardState.not_started) return cardState(d.state).label
-  return '未実行（0 回）'
+  return L('未実行（0 回）')
 }
 
 const colorVar = (c: string) => `var(--${c})`
@@ -110,8 +111,8 @@ export function CardNodeView(p: CardNodeProps) {
       </svg>
       <PortLabels data={data} g={g} flow={flow} z={z} />
       {!!data.openComments && (
-        <button type="button" className="cv-comments" disabled={!p.onComments} aria-label={`未解決のコメント ${data.openComments} 件`}
-          title={`未解決のコメント ${data.openComments} 件`} {...stopping}
+        <button type="button" className="cv-comments" disabled={!p.onComments} aria-label={L('未解決のコメント {0} 件', data.openComments)}
+          title={L('未解決のコメント {0} 件', data.openComments)} {...stopping}
           style={{ left: (o.x + o.width) * z, top: o.y * z, fontSize: font(9.5), height: s(15), minWidth: s(15), padding: `0 ${s(4)}px`, gap: s(2), borderRadius: s(8) }}
           onClick={(e) => { e.stopPropagation(); p.onComments?.() }}>
           <Icon name="bubble.left" size={font(9)} />{data.openComments}
@@ -124,7 +125,7 @@ export function CardNodeView(p: CardNodeProps) {
         return (
           <div key={(output ? 'o:' : 'i:') + port.name} className={`cv-port${p.onPortDown ? ' connectable' : ''}`}
             style={{ left: s(pt.x) - hit / 2, top: s(pt.y) - hit / 2, width: hit, height: hit }}
-            title={portHelp(data, port, output) + (p.onPortDown ? (output ? '（ドラッグして入力ポートへ接続）' : '（ドラッグして出力ポートへ接続）') : '')}
+            title={portHelp(data, port, output) + (p.onPortDown ? (output ? L('（ドラッグして入力ポートへ接続）') : L('（ドラッグして出力ポートへ接続）')) : '')}
             onPointerDown={p.onPortDown ? (e) => {
               if (e.button !== 0) return
               e.stopPropagation()
@@ -144,7 +145,7 @@ export function CardNodeView(p: CardNodeProps) {
         return (
           <div key={output ? 'new-o' : 'new-i'} className="cv-port connectable"
             style={{ left: s(pt.x) - hit / 2, top: s(pt.y) - hit / 2, width: hit, height: hit }}
-            title={output ? 'ドラッグして次の Card へ接続（出力は線に合わせて作られます）' : 'ドラッグして前の Card から接続（入力は線に合わせて作られます）'}
+            title={output ? L('ドラッグして次の Card へ接続（出力は線に合わせて作られます）') : L('ドラッグして前の Card から接続（入力は線に合わせて作られます）')}
             onPointerDown={(e) => {
               if (e.button !== 0) return
               e.stopPropagation()
@@ -202,8 +203,8 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
         <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
         {edit
-          ? <input ref={fields.name} className="cv-draft-name" style={{ fontSize: font(12) }} value={edit.draft.name} placeholder="名前" spellCheck={false}
-              aria-label="Draft の名前" aria-invalid={!!edit.nameProblem} {...stopping}
+          ? <input ref={fields.name} className="cv-draft-name" style={{ fontSize: font(12) }} value={edit.draft.name} placeholder={L('名前')} spellCheck={false}
+              aria-label={L('Draft の名前')} aria-invalid={!!edit.nameProblem} {...stopping}
               onChange={(e) => edit.onChange({ name: e.target.value })} onKeyDown={(e) => fields.keys(e, 'name')} />
           : <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>}
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
@@ -220,7 +221,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           </span>
         )}
         {p.onToggleCollapse && data.kind !== 'trigger' && !edit && (
-          <button type="button" className="cv-collapse secondary" title={data.collapsed ? '展開' : '折りたたむ（実行には影響しません）'}
+          <button type="button" className="cv-collapse secondary" title={data.collapsed ? L('展開') : L('折りたたむ（実行には影響しません）')}
             onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); p.onToggleCollapse!() }}>
             <Icon name={data.collapsed ? 'chevron.down' : 'chevron.up'} size={font(9)} />
@@ -233,13 +234,13 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             <div className="cv-draft-edit" style={{ height: s(g.draftRow), padding: `0 ${s(10)}px ${s(8)}px`, gap: s(2) }} {...stopping}>
               {edit.nameProblem && <span className="cv-draft-problem" role="alert" style={{ fontSize: font(9.5) }}>{edit.nameProblem}</span>}
               <textarea ref={fields.content} style={{ fontSize: font(11), lineHeight: `${s(14)}px` }} value={edit.draft.content}
-                placeholder="何を受け取り、何を出し、どう処理するかを書きます" aria-label="Draft の内容"
+                placeholder={L('何を受け取り、何を出し、どう処理するかを書きます')} aria-label={L('Draft の内容')}
                 onChange={(e) => edit.onChange({ content: e.target.value })} onKeyDown={(e) => fields.keys(e, 'content')} />
             </div>
           ) : (
             <div className={`cv-draft-text secondary${data.summary ? '' : ' placeholder'}`}
               style={{ height: s(g.draftRow), padding: `0 ${s(10)}px`, fontSize: font(11), lineHeight: `${s(14)}px` }}>
-              <span>{data.summary ?? 'ダブルクリックで内容を書く'}</span>
+              <span>{data.summary ?? L('ダブルクリックで内容を書く')}</span>
             </div>
           ))}
           {g.summary && data.summary && (
@@ -255,7 +256,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {g.result && (
             <div className="cv-result secondary" style={{ height: s(CardGeometry.resultRow), padding: `0 ${s(10)}px`, gap: s(4) }}>
               <Icon name="text.below.photo" size={font(9)} />
-              <span className={data.result !== undefined ? 'mono' : ''} style={{ fontSize: font(10) }}>{data.result ?? '結果はまだありません'}</span>
+              <span className={data.result !== undefined ? 'mono' : ''} style={{ fontSize: font(10) }}>{data.result ?? L('結果はまだありません')}</span>
             </div>
           )}
           {g.stages && (
@@ -281,7 +282,7 @@ function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const running = data.state !== undefined && data.state !== D.CardState.not_started
   return (
     <div className="cv-card-body cv-start" style={{ width: s(o.width), height: s(o.height), padding: `0 ${s(7)}px`, gap: s(6) }}>
-      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title="ここから Workflow を実行" {...stopping}
+      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title={L('ここから Workflow を実行')} {...stopping}
         onClick={(e) => { e.stopPropagation(); p.onRun?.() }}>
         <Icon name="play.fill" size={font(9)} />
       </button>
@@ -356,14 +357,14 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
 }
 
 function portHelp(data: CardNodeData, p: PortData, output: boolean): string {
-  let s = (output ? '出力 ' : '入力 ') + p.name
+  let s = (output ? L('出力 ') : L('入力 ')) + p.name
   if (data.kind === 'branch') {
-    if (p.name === 'condition') s += '（bool: true なら a、false なら b へ value を送る）'
-    if (p.name === 'a') s += '（condition が true のとき）'
-    if (p.name === 'b') s += '（condition が false のとき）'
+    if (p.name === 'condition') s += L('（bool: true なら a、false なら b へ value を送る）')
+    if (p.name === 'a') s += L('（condition が true のとき）')
+    if (p.name === 'b') s += L('（condition が false のとき）')
   }
   if (p.typeName) s += ` : ${p.typeName}`
-  s += p.optional ? '（省略可）' : '（必須）'
+  s += p.optional ? L('（省略可）') : L('（必須）')
   if (p.note) s += '\n' + p.note
   return s
 }
@@ -384,10 +385,10 @@ const STAGE_BADGE: Partial<Record<StageStatus, string>> = {
 export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void; caption?: string }) {
   const s = (v: number) => v * zoom
   const help = (item: StageItem) => {
-    let t = STAGE_INFO[item.stage].label + '：' + STAGE_STATUS_LABEL[item.status]
+    let t = STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]
     if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
-    if (item.status === 'failed' || item.status === 'cancelled') t += '（クリックでこの段階のログ）'
-    else if (onTap && item.status !== 'pending') t += '（クリックでログ）'
+    if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
+    else if (onTap && item.status !== 'pending') t += L('（クリックでログ）')
     return t
   }
   return (
@@ -399,7 +400,7 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
         return [
           ...(i > 0 ? [<span key={'a' + i} className="cv-stage-arrow" aria-hidden><Icon name="arrow.right" size={Math.max(4, s(6))} /></span>] : []),
           <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={help(item)}
-            aria-label={info.label + '：' + STAGE_STATUS_LABEL[item.status]}
+            aria-label={info.label + L('：') + STAGE_STATUS_LABEL[item.status]}
             style={{ width: s(15), height: s(15), color: c, background: item.status === 'running' ? fade('orange', 0.15) : undefined }}
             onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
@@ -413,7 +414,7 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
         ]
       })}
       {progress.workerReused && (
-        <span title="前回の worker を再利用して実行しました" style={{ color: 'var(--teal, #30b0c7)', display: 'inline-flex' }}>
+        <span title={L('前回の worker を再利用して実行しました')} style={{ color: 'var(--teal, #30b0c7)', display: 'inline-flex' }}>
           <Icon name="arrow.triangle.2.circlepath" size={Math.max(6, s(8))} />
         </span>
       )}
@@ -442,7 +443,7 @@ export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: P
     <div className="cv-param" style={{ gap: 6 * z }}>
       <span className="secondary cv-ellipsis" style={{ fontSize: Math.max(6, 10 * z), flex: 'none', maxWidth: '45%' }}>{param.name}</span>
       {param.type === 'bool' ? (
-        <label className="cv-param-bool" title={editable ? undefined : '実行中は変更できません'}
+        <label className="cv-param-bool" title={editable ? undefined : L('実行中は変更できません')}
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <input type="checkbox" checked={param.value === 'true'} disabled={!editable} onChange={(e) => commit(e.target.checked ? 'true' : 'false')} />
           <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
@@ -451,7 +452,7 @@ export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: P
         // The value is drawn as text at the zoom; the field exists only while editing.
         <div className={`cv-param-field${editing ? ' editing' : ''}`}
           style={{ height: 19 * z, padding: `0 ${4 * z}px`, borderRadius: 4 * z, fontSize: Math.max(6, 11 * z) }}
-          title={editable ? `${param.type}・クリックして編集、Return で反映` : '実行中は変更できません'}
+          title={editable ? L('{0}・クリックして編集、Return で反映', param.type) : L('実行中は変更できません')}
           onClick={(e) => {
             if (!editable || editing) return
             e.stopPropagation()
@@ -656,10 +657,10 @@ export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, 
         )
       })}
       <div className="cv-surface-zoom material" onPointerDown={(e) => e.stopPropagation()}>
-        <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help="縮小" onClick={() => zoomTo(camera.zoom / 1.2)} />
+        <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={L('縮小')} onClick={() => zoomTo(camera.zoom / 1.2)} />
         <span className="caption mono-digits" style={{ minWidth: 36, textAlign: 'center' }}>{Math.round(camera.zoom * 100)}%</span>
-        <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help="拡大" onClick={() => zoomTo(camera.zoom * 1.2)} />
-        <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help="全体表示" onClick={() => { adjusted.current = false; fit() }} />
+        <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={L('拡大')} onClick={() => zoomTo(camera.zoom * 1.2)} />
+        <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={L('全体表示')} onClick={() => { adjusted.current = false; fit() }} />
       </div>
     </div>
   )
@@ -699,17 +700,17 @@ export const PreviewSamples = {
     const port = (n: string): PortData => ({ name: n, typeName: 't.Number' })
     const base = { errors: [], warnings: [], collapsed: false, hasDisplay: false, runContinues: false, params: [], invocation: 0n }
     const input: CardNodeData = {
-      ...base, title: '初期値', kind: 'input', inputs: [port('start')], outputs: [port('value')],
+      ...base, title: L('初期値'), kind: 'input', inputs: [port('start')], outputs: [port('value')],
       params: [{ name: 'value', type: 'uint64', value: '27' }], state: D.CardState.succeeded, invocation: 1n,
     }
     const step: CardNodeData = {
-      ...base, title: 'n / 2', kind: 'code', summary: '偶数を半分にする', inputs: [port('number')], outputs: [port('next')],
+      ...base, title: 'n / 2', kind: 'code', summary: L('偶数を半分にする'), inputs: [port('number')], outputs: [port('next')],
       state: D.CardState.running, invocation: 3n, runContinues: true,
       stage: { items: [{ stage: Stage.build, status: 'reused' }, { stage: Stage.execute, status: 'running' }, { stage: Stage.validate, status: 'pending' }], workerReused: true },
     }
-    const gate: CardNodeData = { ...base, title: '偶数？', kind: 'branch', inputs: [port('value'), port('condition')], outputs: [port('a'), port('b')] }
+    const gate: CardNodeData = { ...base, title: L('偶数？'), kind: 'branch', inputs: [port('value'), port('condition')], outputs: [port('a'), port('b')] }
     const out: CardNodeData = {
-      ...base, title: '結果', kind: 'logger', inputs: [port('in')], outputs: [], result: '[27, 82, 41, …]', state: D.CardState.succeeded, invocation: 1n,
+      ...base, title: L('結果'), kind: 'logger', inputs: [port('in')], outputs: [], result: '[27, 82, 41, …]', state: D.CardState.succeeded, invocation: 1n,
     }
     return [
       { id: 'input', data: input, origin: { x: 0, y: 0 } },
@@ -735,7 +736,7 @@ export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPoin
 }) {
   const mark = Math.max(6, 8 * zoom)
   return (
-    <div className="cv-boundary" style={{ ...style, borderRadius: 8 * zoom }} title="ドラッグで移動できます" onPointerDown={onPointerDown}
+    <div className="cv-boundary" style={{ ...style, borderRadius: 8 * zoom }} title={L('ドラッグで移動できます')} onPointerDown={onPointerDown}
       aria-label={title + ': ' + ports.map((p) => p.name).join(', ')}>
       <span className="cv-boundary-title" style={{ fontSize: Math.max(6, 9.5 * zoom), left: 8 * zoom, top: 3 * zoom, gap: 4 * zoom }}>
         <Icon name={input ? 'arrow.down.to.line' : 'arrow.down.to.line.compact'} size={Math.max(6, 9.5 * zoom)} />{title}
@@ -745,7 +746,7 @@ export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPoin
         return (
           <span key={i}>
             <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
-              title={p.inner ? `内部の接続先: ${p.inner[0].split('/').pop()}.${p.inner[1]}` : '内部の接続先が未設定です'}>
+              title={p.inner ? L('内部の接続先: {0}.{1}', p.inner[0].split('/').pop(), p.inner[1]) : L('内部の接続先が未設定です')}>
               <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
               {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
             </span>

@@ -10,6 +10,7 @@ import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
+import { L } from '../i18n'
 
 export interface ChatItem {
   id: string
@@ -37,7 +38,7 @@ export interface SearchHit {
 }
 
 export type Reference = { kind: 'card' | 'display'; card: CardKey }
-export const refLabel = (r: Reference) => (r.kind === 'card' ? `Card ${r.card}` : `可視化 ${r.card}`)
+export const refLabel = (r: Reference) => (r.kind === 'card' ? `Card ${r.card}` : L('可視化 {0}', r.card))
 const refEq = (a: Reference, b: Reference) => a.kind === b.kind && a.card === b.card
 
 export interface Skill {
@@ -97,7 +98,7 @@ interface Conversation {
   summary?: string
 }
 
-const COMPACTING = '会話を圧縮しています…'
+const COMPACTING = L('会話を圧縮しています…')
 
 export class ChatController extends Observable {
   items: ChatItem[] = []
@@ -132,7 +133,7 @@ export class ChatController extends Observable {
   constructor(readonly session: ProjectSession, private readonly app: AppModel) {
     super()
     this.available = app.status?.chatAvailable ?? true
-    if (!this.available) this.status = app.status?.chatError ?? 'RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。'
+    if (!this.available) this.status = app.status?.chatError ?? L('RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。')
     this.offEvents = onServerEvent((e) => {
       if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
       // Claude Code's saves (the plugin) are approved here, whichever conversation is open.
@@ -371,8 +372,8 @@ export class ChatController extends Observable {
       const meta = s.cardMeta(k)
       return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '', context: str(get(meta, 'context')) ?? '' }
     })
-    const names = cards.map((k) => path(k).pop() ?? k).join('、')
-    this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))
+    const names = cards.map((k) => path(k).pop() ?? k).join(L('、'))
+    this.sendRequest(L('Draft {0} 枚（{1}）から Card を生成します', cards.length, names), draftRequest(scope, items))
   }
 
   /** Asks the Agent to do what the open comments on these Cards ask. */
@@ -383,21 +384,21 @@ export class ChatController extends Observable {
     }))
     const count = items.reduce((n, c) => n + c.comments.length, 0)
     const asked = items.flatMap((c) => c.comments.map((x) => `${c.definition}: ${x.text}`))
-    this.sendRequest([`コメント ${count} 件に従って Card を生成します`, ...asked].join('\n'), commentRequest(scope, items))
+    this.sendRequest([L('コメント {0} 件に従って Card を生成します', count), ...asked].join('\n'), commentRequest(scope, items))
   }
 
   cancel() {
     void api('/api/chat/cancel', this.base).catch(() => {})
     this.stopping = true
     this.busy = false
-    this.status = '回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。'
+    this.status = L('回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。')
     this.changed()
   }
 
   /** Goes on after the step limit stopped the Agent. */
   continueWork() {
     if (!this.available) return
-    this.items = [...this.items, { id: uuid(), role: 'user', text: '（止まったところから続けます）' }]
+    this.items = [...this.items, { id: uuid(), role: 'user', text: L('（止まったところから続けます）') }]
     this.begin()
     void api('/api/chat/continue', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
@@ -477,7 +478,7 @@ export class ChatController extends Observable {
   private fail(e: unknown) {
     this.busy = false
     this.failed = true
-    this.status = `エラー: ${(e as Error).message ?? e}`
+    this.status = L('エラー: {0}', (e as Error).message ?? e)
     this.changed()
   }
 
@@ -595,7 +596,7 @@ export class ChatController extends Observable {
         this.reloadCurrent()
         break
       case 'retrying':
-        this.status = `再試行中: ${e.message}`
+        this.status = L('再試行中: {0}', e.message)
         break
       case 'error':
         // The stopped answer ended after the next one began, which goes on.
@@ -612,10 +613,10 @@ export class ChatController extends Observable {
         this.failed = e.message !== 'cancelled'
         this.usageLimited = e.message === USAGE_LIMIT_TEXT
         this.contextFull = e.message === CONTEXT_FULL_TEXT
-        this.status = e.message === 'cancelled' ? '回答を停止しました（Workflow の実行は止めていません）。'
-          : this.usageLimited ? 'Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。'
-          : this.contextFull ? 'この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。'
-          : `エラー: ${e.message}`
+        this.status = e.message === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
+          : this.usageLimited ? L('Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。')
+          : this.contextFull ? L('この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。')
+          : L('エラー: {0}', e.message)
         this.refreshAfterTurn()
         break
       case 'finished':
@@ -625,7 +626,7 @@ export class ChatController extends Observable {
         this.team.endAll('done', Date.now() / 1000)
         this.busy = false
         // A note left by a retry (e.g. a reply cut at the output limit) or the compaction is no longer current.
-        if (this.status?.startsWith('再試行中') || this.status === COMPACTING) this.status = undefined
+        if (this.status?.startsWith(L('再試行中')) || this.status === COMPACTING) this.status = undefined
         this.refreshAfterTurn()
         queueMicrotask(() => this.flushNotes())
         break
@@ -636,8 +637,8 @@ export class ChatController extends Observable {
         this.team.endAll('limit', Date.now() / 1000)
         this.busy = false
         this.stoppedAtLimit = true
-        this.status = `${e.steps} 手の上限で中断しました。「続ける」で続きから再開できます。`
-          + (e.unconfirmedRun ? ` 実行 ${String(e.unconfirmedRun).slice(0, 8)} の結果はまだ確かめていません。` : '')
+        this.status = L('{0} 手の上限で中断しました。「続ける」で続きから再開できます。', e.steps)
+          + (e.unconfirmedRun ? L(' 実行 {0} の結果はまだ確かめていません。', String(e.unconfirmedRun).slice(0, 8)) : '')
         this.refreshAfterTurn()
         break
     }
@@ -668,9 +669,9 @@ export class ChatController extends Observable {
     let next: ChatItem | undefined
     if (e.kind === 'toolStarted') next = { ...it, tool: { name: e.name }, text: e.arguments }
     else if (e.kind === 'toolFinished' && it.tool?.name === e.name) next = { ...it, tool: { name: e.name, ok: e.ok } }
-    else if (e.kind === 'finished') next = { ...it, ended: '終わりました' }
-    else if (e.kind === 'stepLimit') next = { ...it, ended: '手数の上限で止まりました' }
-    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? '止めました' : `エラー: ${e.message}` }
+    else if (e.kind === 'finished') next = { ...it, ended: L('終わりました') }
+    else if (e.kind === 'stepLimit') next = { ...it, ended: L('手数の上限で止まりました') }
+    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? L('止めました') : L('エラー: {0}', e.message) }
     if (next) this.items = [...this.items.slice(0, i), next, ...this.items.slice(i + 1)]
   }
 

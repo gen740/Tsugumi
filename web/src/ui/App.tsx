@@ -18,6 +18,7 @@ import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
 import { WorkflowTabs } from './workbench'
+import { L } from '../i18n'
 
 const isTextInput = (el: Element | null) =>
   !!el && (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button'].includes(el.type)) ||
@@ -75,7 +76,7 @@ export function App() {
     const s = workspace.session
     if (!s) return true
     if (s.runActive) {
-      setSwitchError('実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。')
+      setSwitchError(L('実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。'))
       return false
     }
     const settled = await s.settleBeforeLeaving((reason) => new Promise((answer) => setUnsaved({ reason, answer })))
@@ -236,7 +237,7 @@ export function App() {
 
   let body: JSX.Element
   if (!app.status) {
-    body = app.error ? <Empty title="サーバーに接続できません" icon="network.slash" description={app.error}><Button onClick={() => void app.refresh()}>再試行</Button></Empty>
+    body = app.error ? <Empty title={L('サーバーに接続できません')} icon="network.slash" description={app.error}><Button onClick={() => void app.refresh()}>{L('再試行')}</Button></Empty>
       : <div className="center-fill"><Spinner /></div>
   } else if (app.setupNeeded) {
     body = <SetupView />
@@ -254,7 +255,7 @@ export function App() {
       {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
       {!detached && <GuideInvite />}
       {app.requestOpenProject && (
-        <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject
+        <FolderPicker message={L('tsugumi.json を含むフォルダを選んでください')} requireProject
           onClose={() => app.request('requestOpenProject', false)}
           onPick={(p) => {
             app.request('requestOpenProject', false)
@@ -268,12 +269,12 @@ export function App() {
       {unsaved && (
         <Sheet onClose={() => { setUnsaved(undefined); unsaved.answer(false) }} width={420}>
           <div className="confirm">
-            <div className="confirm-title">保存できない変更があります</div>
-            <div className="secondary">Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。</div>
+            <div className="confirm-title">{L('保存できない変更があります')}</div>
+            <div className="secondary">{L('Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。')}</div>
             <div className="secondary selectable">保存できない理由: {unsaved.reason}</div>
             <div className="row end gap8">
-              <Button onClick={() => { setUnsaved(undefined); unsaved.answer(false) }}>キャンセル</Button>
-              <Button kind="danger" onClick={() => { setUnsaved(undefined); unsaved.answer(true) }}>変更を破棄して Home へ戻る</Button>
+              <Button onClick={() => { setUnsaved(undefined); unsaved.answer(false) }}>{L('キャンセル')}</Button>
+              <Button kind="danger" onClick={() => { setUnsaved(undefined); unsaved.answer(true) }}>{L('変更を破棄して Home へ戻る')}</Button>
             </div>
           </div>
         </Sheet>
@@ -281,7 +282,7 @@ export function App() {
       {switchError && (
         <Sheet onClose={() => setSwitchError(undefined)} width={420}>
           <div className="confirm">
-            <div className="confirm-title">プロジェクトを切り替えられません</div>
+            <div className="confirm-title">{L('プロジェクトを切り替えられません')}</div>
             <div className="secondary selectable">{switchError}</div>
             <div className="row end"><Button kind="prominent" onClick={() => setSwitchError(undefined)}>OK</Button></div>
           </div>
@@ -300,15 +301,15 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
   return (
     <Sheet onClose={onClose} width={420}>
       <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name.trim()) setChoosing(true) }}>
-        <div className="headline">複製を作る場所を選んでください（保存済みの内容を複製します）</div>
-        <TextField value={name} onChange={setName} placeholder="名前" autoFocus />
+        <div className="headline">{L('複製を作る場所を選んでください（保存済みの内容を複製します）')}</div>
+        <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
-          <Button onClick={onClose}>キャンセル</Button>
-          <Button kind="prominent" type="submit" disabled={!name.trim()}>場所を選ぶ…</Button>
+          <Button onClick={onClose}>{L('キャンセル')}</Button>
+          <Button kind="prominent" type="submit" disabled={!name.trim()}>{L('場所を選ぶ…')}</Button>
         </div>
       </form>
       {choosing && (
-        <FolderPicker message="複製を作る場所を選んでください（保存済みの内容を複製します）" allowCreate initial={parent}
+        <FolderPicker message={L('複製を作る場所を選んでください（保存済みの内容を複製します）')} allowCreate initial={parent}
           onClose={() => setChoosing(false)}
           onPick={async (p) => {
             setChoosing(false)
@@ -318,7 +319,7 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
               onCreated(made)
             } catch (e) {
               onClose()
-              onError('複製できませんでした: ' + errorText(e))
+              onError(L('複製できませんでした: ') + errorText(e))
             }
           }} />
       )}

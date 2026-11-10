@@ -215,7 +215,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - The Card settings window: General, Comments, Nix Definition, Source (syntax highlighting, automatic formatting, showing where errors are), Ports, Run History, Artifacts and Additional Context. Edits are made on a working copy and put in with "Apply".
 - The settings window: the whole app (General, Appearance, Editor, Shortcuts, Skills, API, Connections) and the open project (Name and environment, Canvas, Database connections, Run history, Build cache). Each item shows where its value is kept.
 - A terminal inside the VM for each project (bash started in that project's namespaces with its own uid).
-- Switching the display between Japanese and English.
+- Japanese or English, chosen under "General" in the settings (Japanese by default, whatever the system's language; it takes effect when the app restarts, or by reloading the page in the Web UI). The Mac app and the Web UI on the same Mac share it, and what tsugumid writes into a project's git for a run follows it ([Versions](versions.md#the-results-of-runs)).
 - While running, changes to Cards and closing the project are blocked; progress, history and artifacts can still be seen.
 
 ### Several projects

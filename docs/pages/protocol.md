@@ -26,6 +26,7 @@ There are 41 requests.
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
+| `language` | `string` |  | The client's language ("ja" or "en"; anything else is Japanese). What tsugumid writes into the project's git for the runs this connection starts (the commit message, the run's note) is in it. |
 
 ## Projects and saving
 

@@ -38,21 +38,22 @@
 <p>A project&#39;s folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with &quot;Start Versioning&quot; in &quot;Version History&quot;. <code>.tsugumi/</code> (tsugumid&#39;s state) is excluded in <code>.gitignore</code>.</p>
 <h2 id="when-a-version-is-made">When a version is made</h2>
 <ul>
-<li><strong>When a run starts</strong>: if the content has changed since the last version, the saved content is committed (message &quot;実行: <Card>&quot;, currently written in Japanese). The run records the commit at its start, which you can see in the list of runs and in <code>RunStatus.commit</code>. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).</li>
+<li><strong>When a run starts</strong>: if the content has changed since the last version, the saved content is committed (message &quot;Run: <Card>&quot; in English, &quot;実行: <Card>&quot; in Japanese). The run records the commit at its start, which you can see in the list of runs and in <code>RunStatus.commit</code>. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).</li>
 <li><strong>Keep as Version</strong>: commits the current content and gives it a name (an annotated tag) and a memo.</li>
 </ul>
 <h2 id="the-results-of-runs">The results of runs</h2>
-<p>Each time a run ends, one line is appended to the note of that run&#39;s commit (<code>refs/notes/tsugumi</code>). The end of the line is a short summary of what ran (currently written in Japanese):</p>
-<pre><code>run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s 全体: load、bands ×3、rgb
-run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb
+<p>Each time a run ends, one line is appended to the note of that run&#39;s commit (<code>refs/notes/tsugumi</code>). The end of the line is a short summary of what ran:</p>
+<pre><code>run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s whole: load, bands ×3, rgb
+run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s from bands (with saved inputs): bands / failed: bands (worker_failed) / not run: rgb
 </code></pre>
+<p>The commit message and the summary are in the language of the app (or Web UI) that started the run: its client tells tsugumid in <code>SessionHello</code> (<code>language</code>), so a model cannot change it. In Japanese the same lines read <code>全体: load、bands ×3、rgb</code> and <code>bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb</code>.</p>
 <p>The summary is made mechanically from the results the core recorded for that run. No model is used.</p>
 <ul>
-<li><strong>Where it started</strong>: <code>全体</code> (whole: a run from a trigger or a Workflow), <code>&lt;Card&gt; から</code> (from that Card and downstream), <code>&lt;Card&gt; だけ</code> (only that Card). When any Card that ran used saved inputs from an earlier run, <code>（保存済みの入力で）</code> (with saved inputs) is added.</li>
+<li><strong>Where it started</strong>: <code>whole</code> (a run from a trigger or a Workflow), <code>from &lt;Card&gt;</code> (that Card and downstream), <code>only &lt;Card&gt;</code>. When any Card that ran used saved inputs from an earlier run, <code>(with saved inputs)</code> is added.</li>
 <li><strong>Cards that ran</strong>: the Cards actually invoked. One invoked several times gets <code>×count</code>. The trigger of a whole run is not included.</li>
-<li><strong>Failed</strong> (<code>失敗</code>): the Cards that failed and the kind of failure (the kind of <code>Failure</code>). The failure&#39;s text and logs are not put in git; see them in the run&#39;s record.</li>
-<li><strong>Not run</strong> (<code>未実行</code>): Cards not invoked because something upstream failed or stopped.</li>
-<li>To keep it short, each list has at most six Cards, and the rest are <code>ほか N</code> (N more).</li>
+<li><strong>Failed</strong>: the Cards that failed and the kind of failure (the kind of <code>Failure</code>). The failure&#39;s text and logs are not put in git; see them in the run&#39;s record.</li>
+<li><strong>Not run</strong>: Cards not invoked because something upstream failed or stopped.</li>
+<li>To keep it short, each list has at most six Cards, and the rest are <code>and N more</code>.</li>
 </ul>
 <p>Runs of versions made from a demo&#39;s history have no summary (the history file has no such record).</p>
 <p>Versions can be chosen by result from git too:</p>

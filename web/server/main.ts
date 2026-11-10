@@ -17,6 +17,7 @@ import { cancelChats, chatRoutes, chatStatus } from './chat'
 import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
 import { VMEnvironmentManager, VMTerminal } from './vm'
 import { desktopRecents, desktopSettings, Recent } from './desktop'
+import { L } from './i18n'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -43,13 +44,12 @@ function update(): number {
     // The latest release, from where GitHub sends releases/latest (no download when this is it).
     const r = spawnSync('curl', ['-fsSI', '-o', '/dev/null', '-w', '%{redirect_url}', 'https://github.com/gen740/Tsugumi/releases/latest'], { encoding: 'utf8' })
     if (/\/tag\/v([^/\s]+)$/.exec(r.stdout?.trim() ?? '')?.[1] === current) {
-      console.log(`tsugumi ${current} は最新です。`)
+      console.log(L('tsugumi {0} は最新です。', current))
       return 0
     }
   }
-  const r = spawnSync('/bin/sh', ['-c', `script="$(curl -fsSL "$1/install.sh")" || { echo "$1/install.sh を取得できませんでした。" >&2; exit 1; }
-printf '%s\\n' "$script" | /bin/sh`, 'sh', base], { stdio: 'inherit' })
-  if (r.status === 0) console.log('動いている tsugumi があれば、Ctrl-C で止めて起動し直すと新しい版で開きます。')
+  const r = spawnSync('/bin/sh', ['-c', L('script="$(curl -fsSL "$1/install.sh")" || { echo "$1/install.sh を取得できませんでした。" >&2; exit 1; }\nprintf \'%s\\n\' "$script" | /bin/sh'), 'sh', base], { stdio: 'inherit' })
+  if (r.status === 0) console.log(L('動いている tsugumi があれば、Ctrl-C で止めて起動し直すと新しい版で開きます。'))
   return r.status ?? 1
 }
 
@@ -169,7 +169,7 @@ const nixpkgsPin: string | null = (() => {
 /** Creates an empty project; the initial documents are placed before the environment starts. */
 function createProject(parent: string, name: string, flow: unknown): string {
   const dir = path.join(parent, name.replace(/[/\\]/g, '-'))
-  if (fs.existsSync(dir)) throw new HttpError(409, `${dir} は既に存在します`)
+  if (fs.existsSync(dir)) throw new HttpError(409, L('{0} は既に存在します', dir))
   fs.mkdirSync(dir, { recursive: true })
   const project = { name, pkgsPath: nixpkgsPin ?? 'tsugumi:default', databaseConnections: [], canvas: { cards: [], connections: [] } }
   fs.writeFileSync(path.join(dir, 'tsugumi.json'), JSON.stringify(project, null, 2) + '\n')
@@ -192,7 +192,7 @@ function projectFiles(root: string, limit: number): Map<string, Buffer> {
       else if (e.isFile()) {
         const d = fs.readFileSync(abs)
         total += d.length
-        if (total > limit) throw new HttpError(413, 'プロジェクトが大きすぎます（64 MB まで）。')
+        if (total > limit) throw new HttpError(413, L('プロジェクトが大きすぎます（64 MB まで）。'))
         out.set(r, d)
       }
     }
@@ -205,7 +205,7 @@ function projectFiles(root: string, limit: number): Map<string, Buffer> {
  *  it under externals/<name>/ as a copy; the original folder is not linked.
  *  Files that are not UTF-8 text come as base64, unchanged. */
 function importProject(folder: unknown) {
-  if (typeof folder !== 'string' || !fs.existsSync(path.join(folder, 'tsugumi.json'))) throw new HttpError(400, 'tsugumi.json のあるフォルダを選んでください。')
+  if (typeof folder !== 'string' || !fs.existsSync(path.join(folder, 'tsugumi.json'))) throw new HttpError(400, L('tsugumi.json のあるフォルダを選んでください。'))
   const root = fs.realpathSync(folder)
   const files: Record<string, string> = {}
   const binary: Record<string, string> = {}
@@ -223,9 +223,9 @@ function importProject(folder: unknown) {
 /** A copy of a project's saved documents and sources (what is in its folder,
  *  without hidden folders such as .tsugumi), as a new project folder. */
 function duplicateProject(from: string, parent: unknown, name: unknown): string {
-  if (typeof parent !== 'string' || typeof name !== 'string' || !name.trim()) throw new HttpError(400, '複製先を指定してください')
+  if (typeof parent !== 'string' || typeof name !== 'string' || !name.trim()) throw new HttpError(400, L('複製先を指定してください'))
   const dest = path.join(parent, name.trim().replace(/[/\\]/g, '-'))
-  if (fs.existsSync(dest)) throw new HttpError(409, `${dest} は既に存在します`)
+  if (fs.existsSync(dest)) throw new HttpError(409, L('{0} は既に存在します', dest))
   const files = projectFiles(from, 1 << 30)
   try {
     for (const [rel, d] of files) {
@@ -303,14 +303,14 @@ async function loadPty() {
     if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
     return pty
   } catch (e) {
-    throw new HttpError(500, `ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: ${(e as Error).message}`)
+    throw new HttpError(500, L('ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: {0}', (e as Error).message))
   }
 }
 
 const terminalSize = (v: unknown, fallback: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) < 1000 ? (v as number) : fallback)
 
 async function startTerminal(project: string, cols: unknown, rows: unknown) {
-  if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, `ターミナルは同時に ${MAX_TERMINALS} 個までです`)
+  if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, L('ターミナルは同時に {0} 個までです', MAX_TERMINALS))
   const id = randomUUID()
   // In the VM the project's own shell, as in the app's terminal (no node-pty there).
   const shell = vm ? '/bin/bash' : [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
@@ -332,7 +332,7 @@ async function startTerminal(project: string, cols: unknown, rows: unknown) {
 
 function terminal(id: unknown): Terminal {
   const t = typeof id === 'string' ? terminals.get(id) : undefined
-  if (!t) throw new HttpError(404, 'ターミナルは終了しました')
+  if (!t) throw new HttpError(404, L('ターミナルは終了しました'))
   return t
 }
 
@@ -409,7 +409,7 @@ async function body(req: http.IncomingMessage): Promise<any> {
 }
 
 function projectDir(p: unknown): string {
-  if (typeof p !== 'string' || !fs.existsSync(path.join(p, 'tsugumi.json'))) throw new HttpError(400, 'tsugumi.json を含むフォルダではありません')
+  if (typeof p !== 'string' || !fs.existsSync(path.join(p, 'tsugumi.json'))) throw new HttpError(400, L('tsugumi.json を含むフォルダではありません'))
   return fs.realpathSync(p)
 }
 
@@ -436,7 +436,7 @@ const routes: Record<string, Handler> = {
   // Finder (or the file manager) at a recent project; only folders on the list.
   'POST /api/reveal': (b) => {
     const p = String(b.path)
-    if (!recents().some((r) => r.path === p)) throw new HttpError(400, '一覧にないフォルダです')
+    if (!recents().some((r) => r.path === p)) throw new HttpError(400, L('一覧にないフォルダです'))
     const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', p]] : ['xdg-open', [path.dirname(p)]]
     spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return { ok: true }
@@ -590,7 +590,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return void res.end()
   }
   if (url.pathname.startsWith('/api/') && !authorized(req) && !agentAuthorized(req, `${req.method} ${url.pathname}`)) {
-    return send(res, 401, { error: 'このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。' })
+    return send(res, 401, { error: L('このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。') })
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -633,7 +633,7 @@ async function openOnRunningServer(): Promise<boolean> {
       method: 'POST', headers: { 'x-tsugumi': '1', [AGENT_KEY_HEADER]: info.agentKey }, signal: AbortSignal.timeout(5000),
     })
     if (!r.ok) return false
-    console.log(`Tsugumi は動いています（http://127.0.0.1:${info.port}/）。ブラウザでページを開きました。`)
+    console.log(L('Tsugumi は動いています（http://127.0.0.1:{0}/）。ブラウザでページを開きました。', info.port))
     return true
   } catch {
     return false
@@ -662,7 +662,7 @@ server.on('listening', () => {
   fs.rmSync(serverFile + '.tmp', { force: true })
   fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
-  if (reuseServer) console.log('終了するには Ctrl-C を押します。')
+  if (reuseServer) console.log(L('終了するには Ctrl-C を押します。'))
   if (openBrowser) openPage(launchProject)
 })
 server.listen(port, '127.0.0.1')

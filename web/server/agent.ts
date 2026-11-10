@@ -15,6 +15,7 @@ import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
 import { ChatGPTError, planError, TransientError } from './chatgpt'
+import { L } from './i18n'
 
 // ---- Tool catalog --------------------------------------------------------------
 
@@ -760,7 +761,7 @@ export const GUIDE_PROMPT = guidePrompt
 /** A version's summary, in the page's language, from what it changed
  *  (agent/Shared/version-summary-prompt.md). One line, however the model answers. */
 export async function summarizeVersion(c: ProviderConfig, input: string, signal: AbortSignal): Promise<string> {
-  const system = versionSummaryPrompt.replace('{language}', 'Japanese (plain form, 常体)')
+  const system = versionSummaryPrompt.replace('{language}', L('Japanese (plain form, 常体)'))
   let text = ''
   for await (const e of stream(c, system, [{ role: 'user', content: [{ type: 'text', text: input }] }], [], signal)) if (e.t === 'text') text += e.text
   return text.replace(/\s+/g, ' ').trim().slice(0, 300)
@@ -1343,7 +1344,7 @@ export class Agent {
     let note = 'Continue from where you stopped (the step limit ended the previous turn). Check the current state first'
     if (this.unconfirmedRun) note += ` and the outcome of run ${this.unconfirmedRun} (run_status), which was started and never checked`
     note += ', then finish the remaining work.'
-    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: note }], display: '（止まったところから続けます）' })
+    this.conversation.messages.push({ role: 'user', content: [{ type: 'text', text: note }], display: L('（止まったところから続けます）') })
     this.conversation.updatedAt = Date.now()
     this.save()
     this.start((s) => this.loop(events, s))
@@ -1425,7 +1426,7 @@ export class Agent {
             role: 'user',
             content: [{ type: 'text', text: 'Your last reply was cut at the output limit, so its tool call was not run and nothing was saved. Make the '
               + 'change in smaller steps: one Card per project_save, and long source files in saves of their own.' }],
-            display: '（応答が長すぎて途中で切れたため、小さく分けてやり直します）',
+            display: L('（応答が長すぎて途中で切れたため、小さく分けてやり直します）'),
           })
           events({ kind: 'retrying', message: 'the reply was cut at the output limit; asking for smaller steps' })
           this.save()

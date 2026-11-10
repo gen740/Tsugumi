@@ -18,6 +18,7 @@ import { D } from '../shared/rpc'
 import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
 import { Button } from './controls'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 // ---- The data build.mjs writes --------------------------------------------------------
 
@@ -153,8 +154,8 @@ function finishedStages(f: FinalState): StageItem[] {
 
 const resultText = (o: Output | undefined): string | undefined => {
   if (!o) return undefined
-  if (o.type === 'plot') return o.title || `折れ線 ${o.series.length} 系列`
-  if (o.type === 'module') return `モジュール ${o.name}`
+  if (o.type === 'plot') return o.title || L('折れ線 {0} 系列', o.series.length)
+  if (o.type === 'module') return L('モジュール {0}', o.name)
   const value = o.type === 'text' ? { kind: o.markdown ? 'markdown' : 'text', text: o.text }
     : o.type === 'table' ? { kind: 'table', columns: o.columns, rows: Array(o.totalRows) }
     : o.type === 'points' ? { kind: 'points', x: Array(o.count) }
@@ -222,13 +223,13 @@ function PlotView({ plot }: { plot: Extract<Output, { type: 'plot' }> }) {
   const m = { left: 54, right: 12, top: plot.title ? 24 : 10, bottom: plot.xLabel ? 36 : 22 }
   const shown = plot.series.slice(0, 4)
   const xs = shown.flatMap((s) => s.x), ys = shown.flatMap((s) => s.y)
-  if (!xs.length) return <div className="display-center secondary" style={{ fontSize: 11 }}>図の点を取り出せませんでした</div>
+  if (!xs.length) return <div className="display-center secondary" style={{ fontSize: 11 }}>{L('図の点を取り出せませんでした')}</div>
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
   const sx = (v: number) => m.left + ((v - x0) / (x1 - x0 || 1)) * (W - m.left - m.right)
   const sy = (v: number) => H - m.bottom - ((v - y0) / (y1 - y0 || 1)) * (H - m.top - m.bottom)
   const ticks = (a: number, b: number) => [a, (a + b) / 2, b]
   return (
-    <svg className="tp-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={plot.title || '折れ線の図'}>
+    <svg className="tp-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={plot.title || L('折れ線の図')}>
       {plot.title && <text x={W / 2} y={14} textAnchor="middle" className="tp-plot-title">{plot.title}</text>}
       {ticks(y0, y1).map((t) => (
         <g key={t}>
@@ -416,7 +417,7 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
             <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
               <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
               <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{p.doc.id}</span>
-              {data.run && <span className="mono-digits nowrap" style={{ fontSize: 9 * z }}>{`Run ${data.run.id.slice(0, 6)} · 実行 #${inv ?? 1}`}</span>}
+              {data.run && <span className="mono-digits nowrap" style={{ fontSize: 9 * z }}>{L('Run {0} · 実行 #{1}', data.run.id.slice(0, 6), inv ?? 1)}</span>}
             </div>
             <div className="cv-frame-body"><OutputView output={data.outputs[p.doc.id]} base={base} zoom={z} /></div>
           </div>
@@ -437,10 +438,10 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
       ))}
       {!compact && !view && (
         <div className="cv-surface-zoom material" onPointerDown={(e) => e.stopPropagation()}>
-          <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help="縮小" onClick={() => zoomTo(z / 1.2)} />
+          <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={L('縮小')} onClick={() => zoomTo(z / 1.2)} />
           <span className="caption mono-digits" style={{ minWidth: 36, textAlign: 'center' }}>{Math.round(z * 100)}%</span>
-          <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help="拡大" onClick={() => zoomTo(z * 1.2)} />
-          <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help="全体表示" onClick={() => { adjusted.current = false; fit() }} />
+          <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={L('拡大')} onClick={() => zoomTo(z * 1.2)} />
+          <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={L('全体表示')} onClick={() => { adjusted.current = false; fit() }} />
         </div>
       )}
       {children}
@@ -474,7 +475,7 @@ function Ports({ title, ports }: { title: string; ports: PortData[] }) {
           <li key={p.name}>
             <span className="mono">{p.name}</span>
             {p.typeName && <span className="mono secondary"> : {p.typeName}</span>}
-            {p.optional && <span className="secondary">（省略可）</span>}
+            {p.optional && <span className="secondary">{L('（省略可）')}</span>}
             {p.note && <div className="secondary caption">{p.note}</div>}
           </li>
         ))}
@@ -487,37 +488,37 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
   const f = data.final[card.id]
   const out = data.outputs[card.id]
   return (
-    <aside className="tp-panel material selectable" aria-label={`Card ${card.id} の中身`} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
+    <aside className="tp-panel material selectable" aria-label={L('Card {0} の中身', card.id)} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <header className="tp-panel-head">
         <Icon name={card.symbol ?? KIND_ICON[card.kind]} size={14} />
         <strong className="cv-ellipsis">{card.id}</strong>
         <span className="secondary caption nowrap">{KIND_LABEL[card.kind]}</span>
         <span style={{ flex: 1 }} />
-        <Button kind="borderless" small iconOnly icon="xmark" help="閉じる" onClick={onClose} />
+        <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる')} onClick={onClose} />
       </header>
       {card.details.map((d, i) => <p key={i} className={i ? 'secondary' : undefined}>{d}</p>)}
       {card.permissions.map((p) => <p key={p} className="caption tp-permission"><Icon name={permissionInfo(p).icon} size={11} /> {permissionInfo(p).label}</p>)}
       {reached && f && data.run?.realOrder && (
-        <p className="caption secondary mono-digits">記録：{cardState(D.CardState[f.state]).label} · {f.count > 1 ? `${f.count} 回 · ` : ''}{f.ms !== undefined ? formatDuration(f.ms / 1000) : ''}</p>
+        <p className="caption secondary mono-digits">記録：{cardState(D.CardState[f.state]).label} · {f.count > 1 ? L('{0} 回 · ', f.count) : ''}{f.ms !== undefined ? formatDuration(f.ms / 1000) : ''}</p>
       )}
-      <Ports title="入力" ports={card.inputs} />
-      <Ports title="出力" ports={card.outputs} />
+      <Ports title={L('入力')} ports={card.inputs} />
+      <Ports title={L('出力')} ports={card.outputs} />
       {card.allParams.length > 0 && (
         <>
-          <h4>パラメータ</h4>
+          <h4>{L('パラメータ')}</h4>
           <ul className="tp-ports">{card.allParams.map((p) => <li key={p.name}><span className="mono">{p.name}</span><span className="mono secondary"> : {p.type} = {p.value}</span></li>)}</ul>
         </>
       )}
       {reached && out && (
         <>
-          <h4>この Card の表示</h4>
+          <h4>{L('この Card の表示')}</h4>
           <div className="tp-panel-output"><OutputView output={out} base={base} zoom={1} large /></div>
         </>
       )}
-      {card.files.length > 0 && <><h4>ファイル</h4><Sources files={card.files} /></>}
+      {card.files.length > 0 && <><h4>{L('ファイル')}</h4><Sources files={card.files} /></>}
       {card.inner && card.inner.length > 0 && (
         <>
-          <h4>中の Card</h4>
+          <h4>{L('中の Card')}</h4>
           {card.inner.map((c) => (
             <details key={c.id} className="tp-file">
               <summary><span className="mono">{c.id}</span> <span className="secondary caption">{KIND_LABEL[c.kind]}{reached && c.count ? ` · ${c.count} 回` : ''}</span></summary>
@@ -535,7 +536,7 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
 
 export function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
   const step = frame.mode === 'playing' ? data.steps[frame.step] : undefined
-  const label = frame.mode === 'playing' ? '実行中' : frame.mode === 'done' ? (data.run?.state === 'failed' ? '失敗' : '成功') : '待機中'
+  const label = frame.mode === 'playing' ? L('実行中') : frame.mode === 'done' ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('待機中')
   const icon = frame.mode === 'playing' ? 'play.circle.fill' : frame.mode === 'done' ? 'checkmark.circle.fill' : 'circle'
   const color = frame.mode === 'playing' ? 'orange' : frame.mode === 'done' ? 'green' : 'secondary'
   const real = data.run?.realOrder
@@ -543,13 +544,13 @@ export function RunControl({ data, frame, playing, onRun, onStop }: { data: Demo
   return (
     <div className="capsule material cv-run" onPointerDown={(e) => e.stopPropagation()}>
       <Button kind={playing ? 'danger' : 'prominent'} icon={playing ? 'stop.fill' : 'play.fill'} className="cv-run-button" disabled={data.draftOnly}
-        help={data.draftOnly ? 'Draft だけのプロジェクトは、まだ実行できません' : playing ? '再生を止める' : '記録した実行を再生する'} onClick={playing ? onStop : onRun}>
-        {playing ? '停止' : '実行'}
+        help={data.draftOnly ? L('Draft だけのプロジェクトは、まだ実行できません') : playing ? L('再生を止める') : L('記録した実行を再生する')} onClick={playing ? onStop : onRun}>
+        {playing ? L('停止') : L('実行')}
       </Button>
       <span className="cv-run-state">
         <Icon name={icon} style={{ color: `var(--${color})` }} />
         <span className="nowrap">{label}</span>
-        {real && ms !== undefined && <span className="secondary mono-digits nowrap" title="実際の実行での経過時間（記録）">{formatDuration(ms / 1000)}</span>}
+        {real && ms !== undefined && <span className="secondary mono-digits nowrap" title={L('実際の実行での経過時間（記録）')}>{formatDuration(ms / 1000)}</span>}
       </span>
     </div>
   )
@@ -621,7 +622,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
   }, [compact, selected])
 
   if (failure) return <div className="tp-root tp-message">デモのデータを読み込めませんでした（{failure}）</div>
-  if (!data) return <div className={`tp-root ${compact ? 'tp-compact' : 'tp-full'} tp-message`}>{compact ? '' : '読み込み中…'}</div>
+  if (!data) return <div className={`tp-root ${compact ? 'tp-compact' : 'tp-full'} tp-message`}>{compact ? '' : L('読み込み中…')}</div>
 
   const { frame } = replay
   const playing = frame.mode === 'playing'
@@ -632,7 +633,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
 
   if (compact) {
     return (
-      <div className="tp-root tp-compact" role="img" aria-label={`${data.title} の Canvas${data.draftOnly ? '（Draft）' : ''}`}>
+      <div className="tp-root tp-compact" role="img" aria-label={L('{0} の Canvas{1}', data.title, data.draftOnly ? '（Draft）' : '')}>
         <Canvas data={data} frame={frame} base={base} compact selected={undefined} onSelect={() => undefined} motion={motion} />
       </div>
     )
@@ -644,7 +645,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
         {card && <SidePanel data={data} card={card} reached={reached} base={base} onClose={() => setSelected(undefined)} />}
       </Canvas>
       <div className="tp-cards-list">
-        {data.cards.map((c) => <button key={c.id} type="button" onClick={() => setSelected(c.id)}>{`Card ${c.id} の中身を開く`}</button>)}
+        {data.cards.map((c) => <button key={c.id} type="button" onClick={() => setSelected(c.id)}>{L('Card {0} の中身を開く', c.id)}</button>)}
       </div>
       <p className="tp-say" aria-live="polite">{say}</p>
     </div>

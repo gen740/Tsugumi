@@ -17,6 +17,7 @@ import { Button, Sheet } from './controls'
 import { PALETTE, useBird } from './home'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { L } from '../i18n'
 
 /** What the page lets the guide's buttons do (App sets it). */
 export interface GuideWindowActions {
@@ -54,10 +55,10 @@ export function GuideCorner({ screen }: { screen: GuideScreen }) {
       {guide.open && <GuidePanel screen={screen} perform={perform} />}
       {!guide.open && !guide.away && (guide.asksDemo ? <OfferBubble screen={screen} perform={perform} />
         : guide.bubble && !guide.speakingChat ? <BubbleView bubble={guide.bubble} perform={perform} />
-          : guide.failed ? <span className="guide-bubble material">うまく答えられませんでした</span> : null)}
+          : guide.failed ? <span className="guide-bubble material">{L('うまく答えられませんでした')}</span> : null)}
       <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
-        data-guide-home="" title={`ガイドのツグミに聞く（${prefs.label('toggleGuide')}）`}
-        aria-label="ガイドのツグミ" aria-expanded={guide.open}
+        data-guide-home="" title={L('ガイドのツグミに聞く（{0}）', prefs.label('toggleGuide'))}
+        aria-label={L('ガイドのツグミ')} aria-expanded={guide.open}
         onClick={() => guide.set('open', !guide.open)}>
         <GuideBird />
       </button>
@@ -72,7 +73,7 @@ export function GuideNest({ busy, small }: { busy: boolean; small?: boolean }) {
   if (!guide.present) return null
   return (
     <span className={`guide-nest${small ? ' small' : ''}${busy ? ' thinking' : ''}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
-      data-guide-home="" title="ツグミ" aria-label={busy ? 'ツグミ（考えています）' : 'ツグミ'} role="img">
+      data-guide-home="" title={L('ツグミ')} aria-label={busy ? L('ツグミ（考えています）') : L('ツグミ')} role="img">
       <GuideBird />
     </span>
   )
@@ -81,16 +82,16 @@ export function GuideNest({ busy, small }: { busy: boolean; small?: boolean }) {
 /** What the bird says, with the replies to tap and the buttons that act. */
 function BubbleView({ bubble, perform, style }: { bubble: GuideBubble; perform: (a: GuideAction) => void; style?: React.CSSProperties }) {
   return (
-    <div className="guide-speech material" style={style} role="dialog" aria-label="ツグミの吹き出し">
+    <div className="guide-speech material" style={style} role="dialog" aria-label={L('ツグミの吹き出し')}>
       <div className="row gap6">
-        {bubble.thinking ? <span className="secondary flex1">{guide.activity ? guide.activity + '…' : '考えています…'}</span>
-          : <span className="flex1">{bubble.say ?? 'ここです'}</span>}
-        <Button kind="borderless" small iconOnly icon="xmark" help="閉じる（ツグミは元の場所に戻ります）" onClick={() => guide.dismissBubble()} />
+        {bubble.thinking ? <span className="secondary flex1">{guide.activity ? guide.activity + '…' : L('考えています…')}</span>
+          : <span className="flex1">{bubble.say ?? L('ここです')}</span>}
+        <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる（ツグミは元の場所に戻ります）')} onClick={() => guide.dismissBubble()} />
       </div>
       {!bubble.thinking && bubble.more && (
         // The whole answer is in the chat: the eyes go there.
         <button type="button" className="guide-more" onClick={() => { if (guide.speakingChat) windowActions?.showChat?.(); guide.showDetails() }}>
-          {guide.speakingChat ? '詳しくはチャットに書きました →' : '続きは会話に書きました ↘'}
+          {guide.speakingChat ? L('詳しくはチャットに書きました →') : L('続きは会話に書きました ↘')}
         </button>
       )}
       {!bubble.thinking && <Choices choices={bubble.choices} actions={bubble.actions} perform={perform} onChoice={(c) => guide.choose(c)} />}
@@ -130,7 +131,7 @@ export function ChatChoices({ chat, session, tab }: { chat: ChatController; sess
 }
 
 /** A Draft's title without its "（Draft）": the question says it. */
-const shortTitle = (t: string) => t.replace('（Draft）', '').trim()
+const shortTitle = (t: string) => t.replace(L('（Draft）'), '').trim()
 
 /** The first questions, written by the app (no model until a question is
  *  typed or a recommendation asked): what to try, then a field (or the
@@ -141,44 +142,44 @@ function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: Gu
   const step = guide.offerStep
   const chip = (label: string, onClick: () => void) => <button key={label} type="button" className="guide-choice" onClick={onClick}>{label}</button>
   return (
-    <div className="guide-speech material" role="dialog" aria-label="ツグミの吹き出し">
+    <div className="guide-speech material" role="dialog" aria-label={L('ツグミの吹き出し')}>
       {step.kind === 'start' && <>
-        <span>こんにちは、ツグミです。何をしてみますか？</span>
+        <span>{L('こんにちは、ツグミです。何をしてみますか？')}</span>
         <div className="row gap6 wrap">
-          {chip('既にある Workflow を見る', () => guide.setOfferStep({ kind: 'fields' }))}
-          {chip('Draft を AI に実装させる', () => guide.setOfferStep({ kind: 'drafts' }))}
+          {chip(L('既にある Workflow を見る'), () => guide.setOfferStep({ kind: 'fields' }))}
+          {chip(L('Draft を AI に実装させる'), () => guide.setOfferStep({ kind: 'drafts' }))}
         </div>
-        <ReplyField placeholder="質問を書く" autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t, screen) }} />
-        <div className="row gap8"><Button small onClick={() => guide.answerDemoOffer()}>あとで</Button></div>
+        <ReplyField placeholder={L('質問を書く')} autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t, screen) }} />
+        <div className="row gap8"><Button small onClick={() => guide.answerDemoOffer()}>{L('あとで')}</Button></div>
       </>}
       {step.kind === 'fields' && <>
-        <span>どんな分野に興味がありますか？</span>
+        <span>{L('どんな分野に興味がありますか？')}</span>
         <div className="row gap6 wrap">{fields.map((f) => chip(f, () => guide.setOfferStep({ kind: 'field', field: f })))}</div>
-        <ReplyField placeholder="興味のあること（例: 画像処理）" autoFocus onSend={(t) => guide.answerInterest(t)} />
+        <ReplyField placeholder={L('興味のあること（例: 画像処理）')} autoFocus onSend={(t) => guide.answerInterest(t)} />
         <div className="row gap8">
-          <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>定番のデモを見る</Button>
-          <Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button>
+          <Button small onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>{L('定番のデモを見る')}</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>{L('戻る')}</Button>
         </div>
       </>}
       {step.kind === 'field' && <>
         <span>「{step.field}」のデモです。どれを見ますか？</span>
         <div className="row gap6 wrap">{demos.filter((d) => d.field === step.field).map((d) => chip(d.title, () => guide.pickDemo(d)))}</div>
         <div className="row gap8">
-          <Button small onClick={() => guide.recommend(step.field)}>おすすめを聞く</Button>
-          <Button small onClick={() => guide.setOfferStep({ kind: 'fields' })}>分野を選び直す</Button>
+          <Button small onClick={() => guide.recommend(step.field)}>{L('おすすめを聞く')}</Button>
+          <Button small onClick={() => guide.setOfferStep({ kind: 'fields' })}>{L('分野を選び直す')}</Button>
         </div>
       </>}
       {step.kind === 'drafts' && <>
-        <span>どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。</span>
+        <span>{L('どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。')}</span>
         <div className="row gap6 wrap">{demos.filter((d) => !d.field).map((d) => chip(shortTitle(d.title), () => guide.pickDemo(d)))}</div>
-        <div className="row gap8"><Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>戻る</Button></div>
+        <div className="row gap8"><Button small onClick={() => guide.setOfferStep({ kind: 'start' })}>{L('戻る')}</Button></div>
       </>}
     </div>
   )
 }
 
 /** A one-line answer to Tsugumi in its bubble (Return sends it). */
-function ReplyField({ onSend, placeholder = 'ツグミに返事', autoFocus }: { onSend: (t: string) => void; placeholder?: string; autoFocus?: boolean }) {
+function ReplyField({ onSend, placeholder = L('ツグミに返事'), autoFocus }: { onSend: (t: string) => void; placeholder?: string; autoFocus?: boolean }) {
   const [text, setText] = useState('')
   const go = () => {
     const t = text.trim()
@@ -188,9 +189,9 @@ function ReplyField({ onSend, placeholder = 'ツグミに返事', autoFocus }: {
   }
   return (
     <form className="guide-reply-field" onSubmit={(e) => { e.preventDefault(); go() }}>
-      <input className="field" value={text} placeholder={placeholder} aria-label="ツグミへの返事" autoFocus={autoFocus}
+      <input className="field" value={text} placeholder={placeholder} aria-label={L('ツグミへの返事')} autoFocus={autoFocus}
         onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
-      <Button kind="borderless" small iconOnly icon="arrow.up.circle.fill" help="送信" type="submit" disabled={!text.trim()} />
+      <Button kind="borderless" small iconOnly icon="arrow.up.circle.fill" help={L('送信')} type="submit" disabled={!text.trim()} />
     </form>
   )
 }
@@ -233,7 +234,7 @@ export function GuideFlyer() {
   const bubbleRef = useRef<HTMLDivElement>(null)
   // Where the bird goes: what Tsugumi points at, or (the chat's Agent at work) the Card it works on.
   const writing = guide.writer?.at(Date.now() / 1000)?.card
-  const working = guide.bubble ? undefined : writing ? { card: writing, line: `${writing} を書いています`, from: undefined } : guide.work?.card ? guide.work : undefined
+  const working = guide.bubble ? undefined : writing ? { card: writing, line: L('{0} を書いています', writing), from: undefined } : guide.work?.card ? guide.work : undefined
   const target = guide.present ? guide.bubble?.target ?? (working?.card ? `card:${working.card}` : undefined) : undefined
   const still = prefs.tsugumiStill
   // Where the target and home are now (Cards move with the canvas, loading comes and goes).
@@ -351,7 +352,7 @@ export function GuideFlyer() {
       <GuideRings />
       <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}${arrived ? ' draggable' : ''}${lead ? ' lead' : ''}`}
         style={{ left: box.left + dx, top: box.top + dy, width: box.width, height: box.height, transition: still || drag ? 'none' : undefined, ...leadStyle }}
-        aria-hidden title={arrived ? 'ドラッグで動かせます' : undefined}
+        aria-hidden title={arrived ? L('ドラッグで動かせます') : undefined}
         onPointerDown={(e) => {
           if (!arrived) return
           e.currentTarget.setPointerCapture(e.pointerId)
@@ -442,8 +443,8 @@ export function GuideBird() {
 }
 
 const HINTS: Record<'project' | 'home', string[]> = {
-  project: ['この Card は何をしている？', 'いま何が起きている？', 'グラフを表示するには？', 'デモを見せて'],
-  home: ['Tsugumi で何ができる？', 'デモを見せて', '新しいプロジェクトの作り方は？'],
+  project: [L('この Card は何をしている？'), L('いま何が起きている？'), L('グラフを表示するには？'), L('デモを見せて')],
+  home: [L('Tsugumi で何ができる？'), L('デモを見せて'), L('新しいプロジェクトの作り方は？')],
 }
 
 function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void }) {
@@ -473,7 +474,7 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
     }
   }
   return (
-    <div className="guide-panel material" role="dialog" aria-label="ガイドのツグミとの会話"
+    <div className="guide-panel material" role="dialog" aria-label={L('ガイドのツグミとの会話')}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()
@@ -482,19 +483,19 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
       }}>
       <div className="guide-head">
         <div className="col">
-          <span className="headline">ツグミ</span>
-          <span className="caption secondary ellipsis" aria-live="polite">{guide.activity ? guide.activity + '…' : '使い方の質問に答えます'}</span>
+          <span className="headline">{L('ツグミ')}</span>
+          <span className="caption secondary ellipsis" aria-live="polite">{guide.activity ? guide.activity + '…' : L('使い方の質問に答えます')}</span>
         </div>
         <span className="spacer" />
-        <Button kind="borderless" small disabled={guide.busy} help="新しい会話" onClick={() => void guide.newConversation()}>新しい会話</Button>
-        <Button kind="borderless" small iconOnly icon="xmark.circle.fill" help="閉じる（Esc）。ツグミは右下に残ります" onClick={() => guide.set('open', false)} />
+        <Button kind="borderless" small disabled={guide.busy} help={L('新しい会話')} onClick={() => void guide.newConversation()}>{L('新しい会話')}</Button>
+        <Button kind="borderless" small iconOnly icon="xmark.circle.fill" help={L('閉じる（Esc）。ツグミは右下に残ります')} onClick={() => guide.set('open', false)} />
       </div>
       {guide.tour && <TourBar tour={guide.tour} session={session} />}
       <div className="guide-scroll" aria-live="polite">
         {guide.offersDemo && <Offer onLater={() => { guide.answerDemoOffer(); field.current?.focus() }} perform={perform} />}
         {!guide.items.length && !guide.offersDemo && (
           <div className="col gap4">
-            <span className="callout secondary">いま見ている画面について、気軽に聞いてください。</span>
+            <span className="callout secondary">{L('いま見ている画面について、気軽に聞いてください。')}</span>
             {HINTS[screen === 'project' ? 'project' : 'home'].map((q) => (
               <button key={q} type="button" className="link-button" onClick={() => send(q)}>{q}</button>
             ))}
@@ -506,8 +507,8 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
             <span className={`caption selectable${guide.failed ? ' guide-error' : ' secondary'}`}><Icon name={guide.failed ? 'exclamationmark.triangle' : 'info.circle'} /> {guide.status}</span>
             {guide.failed && (
               <div className="row gap8">
-                <Button small disabled={guide.busy} onClick={() => guide.retry()}>再試行</Button>
-                <Button small onClick={() => perform({ kind: 'open_settings', label: '' })}>API の設定を開く</Button>
+                <Button small disabled={guide.busy} onClick={() => guide.retry()}>{L('再試行')}</Button>
+                <Button small onClick={() => perform({ kind: 'open_settings', label: '' })}>{L('API の設定を開く')}</Button>
               </div>
             )}
           </div>
@@ -515,7 +516,7 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
         <div ref={end} />
       </div>
       <form className="guide-input" onSubmit={(e) => { e.preventDefault(); send(text) }}>
-        <textarea ref={field} rows={1} value={text} placeholder="ツグミに質問" aria-label="ツグミへの質問"
+        <textarea ref={field} rows={1} value={text} placeholder={L('ツグミに質問')} aria-label={L('ツグミへの質問')}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -524,8 +525,8 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
             }
           }} />
         {guide.busy
-          ? <Button kind="borderless" iconOnly icon="stop.circle.fill" help="回答を止める" onClick={() => guide.cancel()} />
-          : <Button kind="borderless" iconOnly icon="arrow.up.circle.fill" help="送信" type="submit" disabled={!text.trim()} />}
+          ? <Button kind="borderless" iconOnly icon="stop.circle.fill" help={L('回答を止める')} onClick={() => guide.cancel()} />
+          : <Button kind="borderless" iconOnly icon="arrow.up.circle.fill" help={L('送信')} type="submit" disabled={!text.trim()} />}
       </form>
     </div>
   )
@@ -536,15 +537,15 @@ function TourBar({ tour, session }: { tour: GuideTour; session?: ProjectSession 
   return (
     <div className="guide-tour">
       <Icon name="sparkles" />
-      <span className="caption ellipsis">{here ? `デモ「${tour.title}」を案内中` : `デモ「${tour.title}」の案内は中断中`}</span>
+      <span className="caption ellipsis">{here ? L('デモ「{0}」を案内中', tour.title) : L('デモ「{0}」の案内は中断中', tour.title)}</span>
       <span className="spacer" />
       {!here && (
         <Button small onClick={() => {
           const p = guide.resumeTour()
           if (p) windowActions?.openProject(p)
-        }}>続ける</Button>
+        }}>{L('続ける')}</Button>
       )}
-      <Button small onClick={() => guide.endTour()}>終える</Button>
+      <Button small onClick={() => guide.endTour()}>{L('終える')}</Button>
     </div>
   )
 }
@@ -552,11 +553,11 @@ function TourBar({ tour, session }: { tour: GuideTour; session?: ProjectSession 
 function Offer({ onLater, perform }: { onLater: () => void; perform: (a: GuideAction) => void }) {
   return (
     <div className="guide-offer callout">
-      <div>こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。</div>
-      <div className="secondary">まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。</div>
+      <div>{L('こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。')}</div>
+      <div className="secondary">{L('まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。')}</div>
       <div className="row gap8">
-        <Button kind="prominent" onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>見る</Button>
-        <Button onClick={onLater}>あとで</Button>
+        <Button kind="prominent" onClick={() => perform({ kind: 'open_demo', label: '', demo: 'report' })}>{L('見る')}</Button>
+        <Button onClick={onLater}>{L('あとで')}</Button>
       </div>
     </div>
   )
@@ -587,21 +588,21 @@ export function GuideInvite() {
   if (!guide.demoInvite) return null
   return (
     <Sheet onClose={() => guide.closeInvite(true)} width={460}>
-      <div className="sheet-body guide-setup" role="alertdialog" aria-label="ガイドを見てみますか？">
+      <div className="sheet-body guide-setup" role="alertdialog" aria-label={L('ガイドを見てみますか？')}>
         <div className="row gap12">
           <span className={`guide-avatar${prefs.tsugumiStill ? ' still' : ''}`} style={{ flex: 'none' }}><GuideBird /></span>
           <div className="col gap6">
-            <div className="title2">ガイドを見てみますか？</div>
-            <div>こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。</div>
+            <div className="title2">{L('ガイドを見てみますか？')}</div>
+            <div>{L('こんにちは、ツグミです。デモを開いて、Card の動かし方や結果の見方を、画面を指しながら私がインタラクティブにご案内します。わからないところは、その場で聞いてください。')}</div>
           </div>
         </div>
-        <div className="caption secondary">案内ではモデルの API を使うため、利用料がかかります。</div>
+        <div className="caption secondary">{L('案内ではモデルの API を使うため、利用料がかかります。')}</div>
         <div className="row end gap8">
-          <Button onClick={() => guide.closeInvite(true)}>あとで</Button>
+          <Button onClick={() => guide.closeInvite(true)}>{L('あとで')}</Button>
           <Button kind="prominent" onClick={() => {
             guide.closeInvite(false)
             makePerform()({ kind: 'open_demo', label: '', demo: 'report' })
-          }}>ガイドを見る</Button>
+          }}>{L('ガイドを見る')}</Button>
         </div>
       </div>
     </Sheet>
@@ -628,7 +629,7 @@ export function GuideSetupSheet() {
       await api('/api/guide/check', {})
       await guide.finishSetup(true)
     } catch (e) {
-      setMessage(`接続を確かめられませんでした（${errorText(e)}）。キーを入れ直すか、ネットワークを確かめて再試行してください。`)
+      setMessage(L('接続を確かめられませんでした（{0}）。キーを入れ直すか、ネットワークを確かめて再試行してください。', errorText(e)))
     }
     setWorking(false)
   }
@@ -639,7 +640,7 @@ export function GuideSetupSheet() {
       await api('/api/settings', { provider })
       await api('/api/settings/key', { provider, key: k })
     } catch (e) {
-      setMessage(`キーを保存できませんでした: ${errorText(e)}`)
+      setMessage(L('キーを保存できませんでした: {0}', errorText(e)))
       return
     }
     setKey('')
@@ -652,27 +653,27 @@ export function GuideSetupSheet() {
         <div className="row gap12 center">
           <span className="guide-avatar still"><GuideBird /></span>
           <div className="col">
-            <div className="title2">ガイドのツグミを呼ぶ準備</div>
-            <div className="secondary">右下のツグミが、使い方の質問に答えたりデモを案内したりします。</div>
+            <div className="title2">{L('ガイドのツグミを呼ぶ準備')}</div>
+            <div className="secondary">{L('右下のツグミが、使い方の質問に答えたりデモを案内したりします。')}</div>
           </div>
         </div>
-        <div className="callout">ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。</div>
-        <div className="segmented" role="radiogroup" aria-label="使うモデル">
+        <div className="callout">{L('ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
+        <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
           {(['anthropic', 'openai'] as const).map((p) => (
             <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}
               onClick={() => { setProvider(p); setMessage(undefined); setSaved(false) }}>{p === 'openai' ? 'OpenAI' : 'Anthropic'}</button>
           ))}
         </div>
         <input type="password" className="field" value={key} autoFocus autoComplete="off" spellCheck={false}
-          placeholder={provider === 'openai' ? 'OpenAI の API キー' : 'Anthropic の API キー'} aria-label="API キー"
+          placeholder={provider === 'openai' ? L('OpenAI の API キー') : L('Anthropic の API キー')} aria-label={L('API キー')}
           onChange={(e) => setKey(e.target.value)} />
         {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
-        <div className="caption secondary">キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。</div>
+        <div className="caption secondary">{L('キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。')}</div>
         <div className="row gap8">
-          <Button onClick={() => void guide.finishSetup()}>スキップして始める</Button>
+          <Button onClick={() => void guide.finishSetup()}>{L('スキップして始める')}</Button>
           <span className="spacer" />
-          {saved && message && <Button disabled={working} onClick={() => void check()}>再試行</Button>}
-          <Button kind="prominent" type="submit" disabled={working || !key.trim()}>{working ? '確かめています…' : '接続して始める'}</Button>
+          {saved && message && <Button disabled={working} onClick={() => void check()}>{L('再試行')}</Button>}
+          <Button kind="prominent" type="submit" disabled={working || !key.trim()}>{working ? L('確かめています…') : L('接続して始める')}</Button>
         </div>
       </form>
     </Sheet>

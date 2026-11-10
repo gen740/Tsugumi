@@ -42,7 +42,7 @@ What it shares with the desktop app (the release) and what it does not:
 | VM, Nix store, control folders | `~/Library/Application Support/Tsugumi/` (change with `TSUGUMI_SUPPORT_DIR`) | Shared |
 | Recent projects | `recent-projects.json` in the same folder | Shared |
 | Where projects are kept | `~/Documents/Tsugumi` | Shared |
-| Provider, model, effort, Fast, web search, auto-approval of permissions, version summaries | The app's UserDefaults (`app.tsugumi.Tsugumi`) | Shared (`tsugumi-vmhost` reads and writes them) |
+| Language, provider, model, effort, Fast, web search, auto-approval of permissions, version summaries | The app's UserDefaults (`app.tsugumi.Tsugumi`) | Shared (`tsugumi-vmhost` reads and writes them) |
 | Conversation history, Skill folders, ChatGPT sign-in, the guide's state | `~/Library/Application Support/Tsugumi/web/` | Not shared |
 
 As `vm.lock` says, only one app at a time can use the VM. If the desktop app has a project open, the page says so, and the other way round. Stopping the server stops the VM too. If the desktop app and the `tsugumi` command are different versions, switching between them has the VM assemble that version of Tsugumi again (Nix's cache makes it short from the second time).

@@ -240,6 +240,46 @@ def test_a_run_note_says_what_ran(tmp_path):
         d.cleanup()
 
 
+def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp_path):
+    """What tsugumid writes into the project's git for a run (the commit's
+    message, the note) is in the language the starting connection's
+    SessionHello asked for: English for "en", Japanese otherwise."""
+    root = tmp_path / "p"
+    write(root,
+          defs={"trigger": {"template": "trigger"},
+                "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
+                "fork": {"template": "fork"},
+                "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
+                "log": {"template": "logger", "maxRuns": 4}},
+          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+          conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
+                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello(language="en")
+        c.call("VersionInitRequest", opId=new_id(), origin="test")
+        _, st = run_and_wait(c, "both")
+        assert summary_of(c, root, st) == "from both / failed: both (input_missing) / not run: sink"
+        set_text(c, "second")
+        _, st = run_and_wait(c, "start")
+        assert summary_of(c, root, st) == "whole: src, split, both ×2, sink ×2"
+        assert git(root, "log", "-1", "--format=%s", text(st.commit)).strip() == "Run: start"
+        _, st = run_and_wait(c, "split")
+        assert summary_of(c, root, st) == "from split (with saved inputs): split, both ×2, sink ×2"
+        _, st = run_and_wait(c, "sink", propagate=False)
+        assert summary_of(c, root, st) == "only sink (with saved inputs): sink"
+        # Another connection, in Japanese, on the same project.
+        j = d.client()
+        j.hello()
+        set_text(j, "third")
+        _, st = run_and_wait(j, "start")
+        assert summary_of(j, root, st) == "全体: src、split、both ×2、sink ×2"
+        assert git(root, "log", "-1", "--format=%s", text(st.commit)).strip() == "実行: start"
+    finally:
+        d.cleanup()
+
+
 def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path):
     """The merge's second invocation fails (maxRuns): the record has both
     invocations, and what follows ran on the first one's value."""

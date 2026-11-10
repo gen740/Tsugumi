@@ -68,6 +68,7 @@ void Service::run(RequestIn& req) {
     p.digest = digest;
     p.card = wire::card_arg(r->card());
     p.propagate = r->propagate().value_or(true);
+    p.english = english(req.conn);
     p.max_concurrency = r->max_concurrency().value_or(4);
     p.nix_jobs = r->nix_jobs().value_or(1);
     p.nix_cores = r->nix_cores().value_or(1);
@@ -86,7 +87,7 @@ void Service::run(RequestIn& req) {
     // The version it runs: what is saved, committed when it changed. A git
     // problem never stops a run (it then records no version).
     try {
-      p.commit = versions_->commit_all("実行: " + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
+      p.commit = versions_->commit_all((p.english ? "Run: " : "実行: ") + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
     } catch (const std::exception& e) {
       log::warn(std::string("versions: no commit for this run: ") + e.what());
     }

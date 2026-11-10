@@ -4,25 +4,27 @@ A project's folder is a git repository. Projects made in the app, and copies of 
 
 ## When a version is made
 
-- **When a run starts**: if the content has changed since the last version, the saved content is committed (message "実行: <Card>", currently written in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).
+- **When a run starts**: if the content has changed since the last version, the saved content is committed (message "Run: <Card>" in English, "実行: <Card>" in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).
 - **Keep as Version**: commits the current content and gives it a name (an annotated tag) and a memo.
 
 ## The results of runs
 
-Each time a run ends, one line is appended to the note of that run's commit (`refs/notes/tsugumi`). The end of the line is a short summary of what ran (currently written in Japanese):
+Each time a run ends, one line is appended to the note of that run's commit (`refs/notes/tsugumi`). The end of the line is a short summary of what ran:
 
 ```
-run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s 全体: load、bands ×3、rgb
-run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb
+run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s whole: load, bands ×3, rgb
+run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s from bands (with saved inputs): bands / failed: bands (worker_failed) / not run: rgb
 ```
+
+The commit message and the summary are in the language of the app (or Web UI) that started the run: its client tells tsugumid in `SessionHello` (`language`), so a model cannot change it. In Japanese the same lines read `全体: load、bands ×3、rgb` and `bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb`.
 
 The summary is made mechanically from the results the core recorded for that run. No model is used.
 
-- **Where it started**: `全体` (whole: a run from a trigger or a Workflow), `<Card> から` (from that Card and downstream), `<Card> だけ` (only that Card). When any Card that ran used saved inputs from an earlier run, `（保存済みの入力で）` (with saved inputs) is added.
+- **Where it started**: `whole` (a run from a trigger or a Workflow), `from <Card>` (that Card and downstream), `only <Card>`. When any Card that ran used saved inputs from an earlier run, `(with saved inputs)` is added.
 - **Cards that ran**: the Cards actually invoked. One invoked several times gets `×count`. The trigger of a whole run is not included.
-- **Failed** (`失敗`): the Cards that failed and the kind of failure (the kind of `Failure`). The failure's text and logs are not put in git; see them in the run's record.
-- **Not run** (`未実行`): Cards not invoked because something upstream failed or stopped.
-- To keep it short, each list has at most six Cards, and the rest are `ほか N` (N more).
+- **Failed**: the Cards that failed and the kind of failure (the kind of `Failure`). The failure's text and logs are not put in git; see them in the run's record.
+- **Not run**: Cards not invoked because something upstream failed or stopped.
+- To keep it short, each list has at most six Cards, and the rest are `and N more`.
 
 Runs of versions made from a demo's history have no summary (the history file has no such record).
 

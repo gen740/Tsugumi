@@ -10,6 +10,7 @@ import { FlowDirection } from '../model/prefs'
 import { cardKindNamed, CardKind, commentChange, ProjectSession } from '../model/session'
 import { Button, Confirm, Empty, Sheet, TextField, Toggle } from './controls'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 const ROW = 58
 const HOVER_H = 200
@@ -59,13 +60,13 @@ export function versionLayout(commits: { id: string; parents: string[] }[]): { r
 
 const LANE_COLORS = ['#3b82f6', '#a855f7', '#14b8a6', '#ec4899', '#6366f1', '#a16207']
 const stateColor = (s?: string | null) => (s === 'succeeded' ? 'var(--green)' : s === 'failed' ? 'var(--red)' : 'var(--secondary)')
-const stateLabel = (s?: string | null) => (s === 'succeeded' ? '成功' : s === 'failed' ? '失敗' : s === 'cancelled' ? '停止' : s ?? '')
+const stateLabel = (s?: string | null) => (s === 'succeeded' ? L('成功') : s === 'failed' ? L('失敗') : s === 'cancelled' ? L('停止') : s ?? '')
 const str = (v: string | Uint8Array | null | undefined) => (v == null ? '' : typeof v === 'string' ? v : new TextDecoder().decode(v))
 const list = (v: (string | Uint8Array | null)[] | undefined) => (v ?? []).map(str)
 
 function changedText(changed: string[]) {
   const names = changed.map((k) => k || 'Workflow')
-  return `変更: ${names.slice(0, 4).join('、')}${names.length > 4 ? ` ほか ${names.length - 4}` : ''}`
+  return L('変更: {0}{1}', names.slice(0, 4).join('、'), names.length > 4 ? ` ほか ${names.length - 4}` : '')
 }
 
 export interface MiniMapCard { id: string; x: number; y: number; kind: CardKind; fan: number; collapsed: boolean }
@@ -140,7 +141,7 @@ function VersionHover({ session, commit, top }: { session: ProjectSession; commi
   return (
     <div className="version-hover" style={{ top }}>
       {commit.changeSummary ? <div>{str(commit.changeSummary)}</div>
-        : session.versionSummaryBusy.has(id) ? <div className="secondary">要約しています…</div>
+        : session.versionSummaryBusy.has(id) ? <div className="secondary">{L('要約しています…')}</div>
           : <div>{str(commit.summary)}</div>}
       {error && <div className="caption" style={{ color: 'var(--red)' }}>要約を作れませんでした: {error}</div>}
       {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} />}
@@ -150,10 +151,10 @@ function VersionHover({ session, commit, top }: { session: ProjectSession; commi
 
 function ago(ms: number) {
   const s = Math.max(0, (Date.now() - ms) / 1000)
-  if (s < 90) return 'さっき'
-  if (s < 3600) return `${Math.round(s / 60)} 分前`
-  if (s < 86400 * 2) return `${Math.round(s / 3600)} 時間前`
-  return `${Math.round(s / 86400)} 日前`
+  if (s < 90) return L('さっき')
+  if (s < 3600) return L('{0} 分前', Math.round(s / 60))
+  if (s < 86400 * 2) return L('{0} 時間前', Math.round(s / 3600))
+  return L('{0} 日前', Math.round(s / 86400))
 }
 
 export function VersionTreeView({ session }: { session: ProjectSession }) {
@@ -187,20 +188,20 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   const act = (f: () => Promise<void>) => void f().catch((e) => setError(String(e?.message ?? e)))
   const g = session.versionGraph
   // What failed is said over any of the views below.
-  const failure = error && <Confirm title="版を操作できませんでした" message={error} confirm="OK" onConfirm={() => setError(undefined)} onCancel={() => setError(undefined)} />
+  const failure = error && <Confirm title={L('版を操作できませんでした')} message={error} confirm="OK" onConfirm={() => setError(undefined)} onCancel={() => setError(undefined)} />
   if (!g && session.versionGraphError) {
     return (
-      <Empty title="版を読み込めませんでした" description={session.versionGraphError}>
-        <Button onClick={() => void session.refreshVersions()}>再試行</Button>
+      <Empty title={L('版を読み込めませんでした')} description={session.versionGraphError}>
+        <Button onClick={() => void session.refreshVersions()}>{L('再試行')}</Button>
       </Empty>
     )
   }
-  if (!g) return <Empty title="版を読み込んでいます…" />
+  if (!g) return <Empty title={L('版を読み込んでいます…')} />
   if (!g.enabled) {
     return (
-      <Empty title="版管理されていません"
-        description="このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。">
-        <Button kind="prominent" onClick={() => act(() => session.makeRepository())}>版管理を始める</Button>
+      <Empty title={L('版管理されていません')}
+        description={L('このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。')}>
+        <Button kind="prominent" onClick={() => act(() => session.makeRepository())}>{L('版管理を始める')}</Button>
         {failure}
       </Empty>
     )
@@ -228,14 +229,14 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
     <div className="col fill versions">
       <div className="row gap8 versions-header">
         <Icon name="point.3.connected.trianglepath.dotted" />
-        <span>{branch ? `枝: ${branch}` : '枝の外（次の変更で新しい枝）'}</span>
-        {(g.dirty || session.dirty) && <span className="caption" style={{ color: 'var(--orange)' }}>最後の版から変更あり（次の実行で版になります）</span>}
+        <span>{branch ? L('枝: {0}', branch) : L('枝の外（次の変更で新しい枝）')}</span>
+        {(g.dirty || session.dirty) && <span className="caption" style={{ color: 'var(--orange)' }}>{L('最後の版から変更あり（次の実行で版になります）')}</span>}
         <span className="flex1" />
-        <Toggle small checked={session.versionSummaries} label="版の要約"
-          help="オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）"
+        <Toggle small checked={session.versionSummaries} label={L('版の要約')}
+          help={L('オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）')}
           onChange={(on) => { if (on) setConfirmSummaries(true); else act(() => session.setVersionSummaries(false)) }} />
-        <Button disabled={!session.connected} onClick={() => setNaming(true)}>版として残す…</Button>
-        <Button kind="borderless" iconOnly icon="arrow.clockwise" help="読み直す" onClick={() => void session.refreshVersions()} />
+        <Button disabled={!session.connected} onClick={() => setNaming(true)}>{L('版として残す…')}</Button>
+        <Button kind="borderless" iconOnly icon="arrow.clockwise" help={L('読み直す')} onClick={() => void session.refreshVersions()} />
       </div>
       <div className="row fill" style={{ minHeight: 0 }}>
         <div className="flex1 version-tree" style={{ minWidth: 420 }}>
@@ -308,20 +309,20 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
               {list(sel.changed).length > 0 && <div className="caption">{changedText(list(sel.changed))}</div>}
               {(sel.comments ?? []).length > 0 && (
                 <>
-                  <div style={{ fontWeight: 600 }}>コメント</div>
+                  <div style={{ fontWeight: 600 }}>{L('コメント')}</div>
                   {(sel.comments ?? []).filter((x): x is R.VersionCommentT => !!x).map((c, i) => (
                     <div key={i} className="col caption">
                       <div className="secondary">{str(c.card)} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
                       <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(c.text)}</div>
                       {str(c.resolution) && <div className="secondary selectable">{str(c.resolution)}</div>}
-                      {list(c.cards).length > 0 && <div className="secondary selectable">変更した Card: {list(c.cards).join('、')}</div>}
+                      {list(c.cards).length > 0 && <div className="secondary selectable">変更した Card: {list(c.cards).join(L('、'))}</div>}
                     </div>
                   ))}
                 </>
               )}
               {(sel.runs ?? []).length > 0 ? (
                 <>
-                  <div style={{ fontWeight: 600 }}>実行の結果</div>
+                  <div style={{ fontWeight: 600 }}>{L('実行の結果')}</div>
                   {(sel.runs ?? []).filter((x): x is R.VersionRunT => !!x).map((r, i) => (
                     <div key={i} className="col caption">
                       <div className="row gap6">
@@ -335,23 +336,23 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                     </div>
                   ))}
                 </>
-              ) : <div className="caption secondary">この版での実行はありません。</div>}
+              ) : <div className="caption secondary">{L('この版での実行はありません。')}</div>}
               <Button disabled={(str(sel.id) === head && !g.dirty) || session.runActive || !session.connected}
-                onClick={() => setConfirmStart(str(sel.id))}>この版から始める…</Button>
-              <div className="caption secondary">git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。</div>
+                onClick={() => setConfirmStart(str(sel.id))}>{L('この版から始める…')}</Button>
+              <div className="caption secondary">{L('git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。')}</div>
             </div>
-          ) : <div className="secondary">版を選ぶと、その実行の結果と変わった Card を表示します。</div>}
+          ) : <div className="secondary">{L('版を選ぶと、その実行の結果と変わった Card を表示します。')}</div>}
         </div>
       </div>
       {confirmSummaries && (
-        <Confirm title="版の要約をオンにしますか？" confirm="オンにする"
-          message="新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。"
+        <Confirm title={L('版の要約をオンにしますか？')} confirm={L('オンにする')}
+          message={L('新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。')}
           onConfirm={() => { setConfirmSummaries(false); act(() => session.setVersionSummaries(true)) }}
           onCancel={() => setConfirmSummaries(false)} />
       )}
       {confirmStart && (
-        <Confirm title="この版から始めますか？" confirm="この版から始める"
-          message="今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。"
+        <Confirm title={L('この版から始めますか？')} confirm={L('この版から始める')}
+          message={L('今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。')}
           onConfirm={() => { const c = confirmStart; setConfirmStart(undefined); act(() => session.startFrom(c)) }}
           onCancel={() => setConfirmStart(undefined)} />
       )}
@@ -367,13 +368,13 @@ function NameSheet({ onClose, onSave }: { onClose: () => void; onSave: (name: st
   return (
     <Sheet onClose={onClose} width={420}>
       <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name.trim()) onSave(name.trim(), message) }}>
-        <div className="title2">版として残す</div>
-        <div className="secondary">今の内容に名前を付けて残します（git の tag）。</div>
-        <TextField value={name} onChange={setName} placeholder="名前（例: thin-bands）" />
-        <TextField value={message} onChange={setMessage} placeholder="メモ" />
+        <div className="title2">{L('版として残す')}</div>
+        <div className="secondary">{L('今の内容に名前を付けて残します（git の tag）。')}</div>
+        <TextField value={name} onChange={setName} placeholder={L('名前（例: thin-bands）')} />
+        <TextField value={message} onChange={setMessage} placeholder={L('メモ')} />
         <div className="row end gap8">
-          <Button onClick={onClose}>キャンセル</Button>
-          <Button kind="prominent" type="submit" disabled={!name.trim()}>残す</Button>
+          <Button onClick={onClose}>{L('キャンセル')}</Button>
+          <Button kind="prominent" type="submit" disabled={!name.trim()}>{L('残す')}</Button>
         </div>
       </form>
     </Sheet>

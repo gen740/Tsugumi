@@ -2,17 +2,18 @@ import { Observable } from './observable'
 import type { Stage } from './canvasKit'
 import { D, uuid } from '../shared/rpc'
 import { CardKey, ProjectSession } from './session'
+import { L } from '../i18n'
 
 export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
 export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
-  general: { title: '一般', icon: 'slider.horizontal.3' },
-  comments: { title: 'コメント', icon: 'bubble.left' },
-  nix: { title: 'Nix 定義', icon: 'snowflake' },
-  source: { title: 'ソース', icon: 'doc.text' },
-  ports: { title: '入出力', icon: 'arrow.left.arrow.right' },
-  executions: { title: '実行履歴', icon: 'clock.arrow.circlepath' },
-  artifacts: { title: '成果物', icon: 'shippingbox' },
-  context: { title: '追加コンテキスト', icon: 'text.bubble' },
+  general: { title: L('一般'), icon: 'slider.horizontal.3' },
+  comments: { title: L('コメント'), icon: 'bubble.left' },
+  nix: { title: L('Nix 定義'), icon: 'snowflake' },
+  source: { title: L('ソース'), icon: 'doc.text' },
+  ports: { title: L('入出力'), icon: 'arrow.left.arrow.right' },
+  executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
+  artifacts: { title: L('成果物'), icon: 'shippingbox' },
+  context: { title: L('追加コンテキスト'), icon: 'text.bubble' },
 }
 
 /** One tab of the workbench: a scope (the root workflow or a child workflow)
@@ -59,7 +60,7 @@ export class WorkflowTab extends Observable {
 
 export type BottomPanel = 'log' | 'timeline' | 'terminal'
 export const BOTTOM_PANELS: BottomPanel[] = ['log', 'timeline', 'terminal']
-export const BOTTOM_TITLES: Record<BottomPanel, string> = { log: 'ログ', timeline: 'タイムライン', terminal: 'ターミナル' }
+export const BOTTOM_TITLES: Record<BottomPanel, string> = { log: L('ログ'), timeline: L('タイムライン'), terminal: L('ターミナル') }
 export const BOTTOM_ICONS: Record<BottomPanel, string> = { log: 'text.alignleft', timeline: 'chart.bar.xaxis', terminal: 'terminal' }
 
 /** State of one main window: which project is open, its tabs and panels. */

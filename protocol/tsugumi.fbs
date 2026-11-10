@@ -255,6 +255,10 @@ table SessionHelloRequest {
   expected_project_id:string (id: 2);
   token:string (id: 3);
   min_protocol:uint32 = null (id: 4);
+  /// The client's language ("ja" or "en"; anything else is Japanese). What
+  /// tsugumid writes into the project's git for the runs this connection
+  /// starts (the commit message, the run's note) is in it.
+  language:string (id: 5);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.

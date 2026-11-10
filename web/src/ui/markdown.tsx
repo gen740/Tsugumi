@@ -8,6 +8,7 @@
 import katex from 'katex'
 import { marked, Token, Tokens } from 'marked'
 import type { ReactNode } from 'react'
+import { L } from '../i18n'
 
 const OPEN = '', CLOSE = ''
 const PLACEHOLDER = /(\d+)/g
@@ -256,7 +257,7 @@ class Walker {
             {l.items.map((item, i) => (
               <div key={i} className="md-item">
                 <span className="md-marker">
-                  {item.task ? <span className={`md-check${item.checked ? ' on' : ''}`} aria-label={item.checked ? '完了' : '未完了'} /> : l.ordered ? `${start + i}.` : '•'}
+                  {item.task ? <span className={`md-check${item.checked ? ' on' : ''}`} aria-label={item.checked ? L('完了') : L('未完了')} /> : l.ordered ? `${start + i}.` : '•'}
                 </span>
                 <div className="md-item-body">{this.blocks(item.tokens, `${k}.${i}`)}</div>
               </div>

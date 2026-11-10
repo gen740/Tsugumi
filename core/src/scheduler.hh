@@ -48,6 +48,9 @@ struct RunParams {
   uint32_t max_concurrency = 4;
   uint32_t nix_jobs = 1;
   uint32_t nix_cores = 1;
+  // What it writes into the project's git (the run's note) is in English;
+  // Japanese otherwise. The language of the connection that started it.
+  bool english = false;
 };
 
 class Scheduler {

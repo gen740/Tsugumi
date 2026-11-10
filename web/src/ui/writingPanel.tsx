@@ -7,6 +7,7 @@ import { birdColor, helperClear, HelperTeam, leadColor } from '../model/helperBi
 import { LiveCode, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail } from '../model/liveCode'
 import { prefs } from '../model/prefs'
 import { CardKey } from '../model/session'
+import { L } from '../i18n'
 
 type Pt = { x: number; y: number }
 
@@ -60,7 +61,7 @@ export function WritingPanels({ writers, team, known, rect, obstacles, screen, z
           <div className="cv-writing" data-writing-card={c.card} style={{ left: f.x, top: f.y, width: f.width, height: f.height, ['--s' as string]: s }}>
             <div className="cv-writing-head">
               <span className="cv-writing-file"><span>{card ? c.file : `${c.card}/${c.file}`}</span></span>
-              <span className="cv-writing-state">{c.saved ? '保存済み' : '保存前'}</span>
+              <span className="cv-writing-state">{c.saved ? L('保存済み') : L('保存前')}</span>
             </div>
             {lines.map((l, i) => (
               // The line being written shows its end, the ones above their beginning.

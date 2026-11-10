@@ -13,6 +13,7 @@ import { CardKey, cardState, KIND_LABEL, key, ProjectSession, runState } from '.
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
 import { homeStep, noConnection, scriptDemoFor, scriptDemos, scriptStart, scriptStep, type ScriptStep } from './guideScript'
+import { L } from '../i18n'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
 const KINDS: GuideActionKind[] = ['open_demo', 'show_demos', 'run', 'stop', 'open_card', 'open_settings', 'new_project', 'home']
@@ -51,7 +52,7 @@ export interface GuideBubble {
 /** The first questions on Home, written by the app (no model): what to try,
  *  then a field or the Drafts, then a demo. */
 export type OfferStep = { kind: 'start' } | { kind: 'fields' } | { kind: 'field'; field: string } | { kind: 'drafts' }
-export const OTHER_DEMOS = 'ほかのデモ'
+export const OTHER_DEMOS = L('ほかのデモ')
 
 /** The panels under the canvas a guide_show "open" names. */
 export const OPEN_PANELS: Record<string, 'log' | 'timeline' | 'terminal' | undefined> = { logs: 'log', timeline: 'timeline', terminal: 'terminal' }
@@ -75,23 +76,23 @@ export function workScene(tool: string, args: string): { card?: string; line?: s
     return parts.length >= 2 && parts[0] === 'definitions' ? parts[1] : undefined
   }
   switch (tool) {
-    case 'run': return card ? { card, line: `${card} から実行しています` } : { line: '実行しています' }
-    case 'run_record': case 'log_range': case 'run_plan': return card ? { card, line: `${card} の記録を見ています` } : { line: '実行の記録を見ています' }
+    case 'run': return card ? { card, line: L('{0} から実行しています', card) } : { line: L('実行しています') }
+    case 'run_record': case 'log_range': case 'run_plan': return card ? { card, line: L('{0} の記録を見ています', card) } : { line: L('実行の記録を見ています') }
     case 'project_file_read': {
       const c = fileCard(o?.path)
-      return c ? { card: c, line: `${c} を読んでいます` } : { line: 'ファイルを読んでいます' }
+      return c ? { card: c, line: L('{0} を読んでいます', c) } : { line: L('ファイルを読んでいます') }
     }
     case 'project_save': {
       const changes: any[] = Array.isArray(o?.changes) ? o.changes : []
       const c = changes.map((x) => x?.value_type === 'PutDefinition' ? x?.value?.id : fileCard(x?.value?.path)).find((x) => typeof x === 'string')
-      return c ? { card: c, line: `${c} を書いています` } : { line: '保存しています' }
+      return c ? { card: c, line: L('{0} を書いています', c) } : { line: L('保存しています') }
     }
   }
   const lines: Record<string, string> = {
-    project_inspect: 'プロジェクトを見ています', reference_read: '書き方を調べています', project_validate: '変更を確かめています',
-    run_status: '実行の終わりを待っています', run_invocations: '実行の記録を見ています', run_history: '実行の記録を見ています',
-    artifact_list: '出力を見ています', artifact_read: '出力を見ています', project_file_list: 'ファイルを読んでいます',
-    attached_folder_read: '添えられたフォルダを読んでいます', run_cancel: '実行を止めています', delegate: '手分けして進めています',
+    project_inspect: L('プロジェクトを見ています'), reference_read: L('書き方を調べています'), project_validate: L('変更を確かめています'),
+    run_status: L('実行の終わりを待っています'), run_invocations: L('実行の記録を見ています'), run_history: L('実行の記録を見ています'),
+    artifact_list: L('出力を見ています'), artifact_read: L('出力を見ています'), project_file_list: L('ファイルを読んでいます'),
+    attached_folder_read: L('添えられたフォルダを読んでいます'), run_cancel: L('実行を止めています'), delegate: L('手分けして進めています'),
   }
   return { line: lines[tool] }
 }
@@ -370,9 +371,9 @@ export class GuideController extends Observable {
   pickDemo(d: { id: string; title: string; field?: string }) {
     this.answerDemoOffer()
     this.speakingChat = undefined
-    const say = d.field ? `「${d.title}」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。`
-      : `「${d.title}」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。`
-    this.show({ highlight: `demo:${d.id}`, say, choices: [OTHER_DEMOS], actions: [{ kind: 'open_demo', label: 'このデモを開く', demo: d.id }] })
+    const say = d.field ? L('「{0}」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。', d.title)
+      : L('「{0}」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。', d.title)
+    this.show({ highlight: `demo:${d.id}`, say, choices: [OTHER_DEMOS], actions: [{ kind: 'open_demo', label: L('このデモを開く'), demo: d.id }] })
     if (this.bubble) this.bubble.local = true
     this.changed()
   }
@@ -381,7 +382,7 @@ export class GuideController extends Observable {
   recommend(field: string) {
     this.answerDemoOffer()
     this.demosRequested = true
-    this.ask(`「${field}」のおすすめは？`, 'demos', undefined, undefined, `[Interest] The user asks which demo of the field "${field}" to see; pick one of its demos.`)
+    this.ask(L('「{0}」のおすすめは？', field), 'demos', undefined, undefined, `[Interest] The user asks which demo of the field "${field}" to see; pick one of its demos.`)
   }
 
   // ---- Conversation ----------------------------------------------------------------
@@ -437,7 +438,7 @@ export class GuideController extends Observable {
       this.busy = false
       this.activity = undefined
       this.failed = true
-      this.status = `うまく答えられませんでした: ${(e as Error).message}`
+      this.status = L('うまく答えられませんでした: {0}', (e as Error).message)
       this.changed()
     }
   }
@@ -447,7 +448,7 @@ export class GuideController extends Observable {
     void api('/api/guide/cancel', {})
     this.busy = false
     this.activity = undefined
-    this.status = '回答を止めました。'
+    this.status = L('回答を止めました。')
     this.changed()
   }
 
@@ -477,14 +478,14 @@ export class GuideController extends Observable {
     // The bird stays where it is and thinks.
     this.speakingChat = undefined
     this.bubble = { id: ++this.n, choices: [], actions: [], target: this.highlight, thinking: true }
-    this.activity = '考えています'
+    this.activity = L('考えています')
     this.changed()
   }
 
   private handle(e: any) {
     switch (e.kind) {
       case 'text': {
-        this.activity = '考えています'
+        this.activity = L('考えています')
         const last = this.items[this.items.length - 1]
         if (last?.role === 'assistant') last.text += e.text
         else this.items.push({ id: ++this.n, role: 'assistant', text: e.text })
@@ -498,14 +499,14 @@ export class GuideController extends Observable {
           this.pending.push(...shown.actions)
           this.pendingChoices.push(...shown.choices)
         } else {
-          this.activity = e.name.startsWith('run') || e.name === 'log_range' ? '実行の様子を見ています' : 'プロジェクトを読んでいます'
+          this.activity = e.name.startsWith('run') || e.name === 'log_range' ? L('実行の様子を見ています') : L('プロジェクトを読んでいます')
         }
         break
       case 'discardText':
         if (this.items[this.items.length - 1]?.role === 'assistant') this.items.pop()
         break
       case 'retrying':
-        this.status = `再試行中: ${e.message}`
+        this.status = L('再試行中: {0}', e.message)
         break
       case 'finished':
         this.ended()
@@ -513,14 +514,14 @@ export class GuideController extends Observable {
         break
       case 'stepLimit':
         this.ended()
-        this.status = '答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。'
+        this.status = L('答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。')
         break
       case 'error':
         this.ended()
         this.bubble = undefined
         this.queued = []
         this.failed = e.message !== 'cancelled'
-        this.status = e.message === 'cancelled' ? '回答を止めました。' : `うまく答えられませんでした: ${e.message}`
+        this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', e.message)
         break
       default:
         return
@@ -776,7 +777,7 @@ export class GuideController extends Observable {
     } else if (screen === 'demos') {
       lines.push('screen: Home, the demo list')
     } else {
-      lines.push('screen: Home (recent projects, new project, open, デモを見る)')
+      lines.push(L('screen: Home (recent projects, new project, open, デモを見る)'))
     }
     if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
     // The whole list where a demo is chosen; in a project, only the ids (open_demo).
@@ -841,14 +842,14 @@ export class GuideController extends Observable {
       void this.saveState({ tour: t })
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourStart', { demo: t.demo, title: t.title }), `デモ「${t.title}」の案内を始めます`, s, scriptStart(t.demo, 'start'))
+      this.tell(text('tourStart', { demo: t.demo, title: t.title }), L('デモ「{0}」の案内を始めます', t.title), s, scriptStart(t.demo, 'start'))
       return
     }
     if (this.resumeAsked && s.connected) {
       this.resumeAsked = false
       this.seen = now
       this.seenActive = s.runActive
-      this.tell(text('tourResume', { demo: t.demo }), 'デモの案内を続けます', s,
+      this.tell(text('tourResume', { demo: t.demo }), L('デモの案内を続けます'), s,
         this.scriptAt?.startsWith(t.demo + '/') ? this.scriptAt : scriptStart(t.demo, 'resume'))
       return
     }
@@ -859,20 +860,20 @@ export class GuideController extends Observable {
     if (before === undefined || before === now) return
     if (!s.connected) {
       // Lost while a run was going: its outcome is not known yet.
-      if (wasActive) this.tell(text('event', { event: text('disconnected') }), '実行環境との接続が切れました', s)
+      if (wasActive) this.tell(text('event', { event: text('disconnected') }), L('実行環境との接続が切れました'), s)
       return
     }
     const state = s.runStatus ? stateName(s.runStatus.state) : 'none'
     const run = s.currentRunId ?? '-'
     if (before === 'offline') {
-      if (wasActive) this.tell(text('event', { event: text('reconnected', { state }) }), '実行環境に再接続しました', s)
+      if (wasActive) this.tell(text('event', { event: text('reconnected', { state }) }), L('実行環境に再接続しました'), s)
       return
     }
     if (s.runActive) {
       // The bird watches the run; Tsugumi is told only how it ended.
     } else if (s.runStatus && (wasActive || !before.startsWith(run + ':'))) {
       const ran = this.scriptAt ? scriptStep(this.scriptAt)?.ran : undefined
-      this.tell(text('event', { event: text('runEnded', { run, state }) }), `実行が終わりました（${runState(s.runStatus.state).label}）`, s,
+      this.tell(text('event', { event: text('runEnded', { run, state }) }), L('実行が終わりました（{0}）', runState(s.runStatus.state).label), s,
         s.runStatus.state === D.RunState.succeeded ? ran?.ok : ran?.else)
     }
   }

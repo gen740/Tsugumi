@@ -9,20 +9,21 @@ import { Icon } from './icons'
 import { CardDatabaseView, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
 import { VersionTreeView } from './versions'
+import { L } from '../i18n'
 
 function title(w: DetailWindow): string {
   const s = w.session
   const name = (k: string) => s?.displayName(k) ?? k
   switch (w.what.kind) {
-    case 'card': return `Card 設定 · ${name(w.what.card)}`
-    case 'definitions': return 'Card 定義'
-    case 'versions': return '版の履歴'
-    case 'executions': return `実行履歴 · ${name(w.what.card)}`
-    case 'artifacts': return `成果物 · ${name(w.what.card)}`
-    case 'workflowSettings': return `Workflow 設定 · ${s?.scopeName([]) ?? ''}`
-    case 'visual': return `可視化 · ${name(w.what.card)}`
-    case 'chat': return 'チャット'
-    case 'appSettings': return '設定'
+    case 'card': return L('Card 設定 · {0}', name(w.what.card))
+    case 'definitions': return L('Card 定義')
+    case 'versions': return L('版の履歴')
+    case 'executions': return L('実行履歴 · {0}', name(w.what.card))
+    case 'artifacts': return L('成果物 · {0}', name(w.what.card))
+    case 'workflowSettings': return L('Workflow 設定 · {0}', s?.scopeName([]) ?? '')
+    case 'visual': return L('可視化 · {0}', name(w.what.card))
+    case 'chat': return L('チャット')
+    case 'appSettings': return L('設定')
   }
 }
 
@@ -73,7 +74,7 @@ function FloatingWindow({ w }: { w: DetailWindow }) {
         x: 20, y: 20, width: window.innerWidth - 40, height: window.innerHeight - 40,
       })}>
         <div className="traffic">
-          <button type="button" className="traffic-close" aria-label="閉じる" title="閉じる（⌘W の代わりに Esc）" onPointerDown={(e) => e.stopPropagation()} onClick={() => app.closeWindow(w.id)}>
+          <button type="button" className="traffic-close" aria-label={L('閉じる')} title={L('閉じる（⌘W の代わりに Esc）')} onPointerDown={(e) => e.stopPropagation()} onClick={() => app.closeWindow(w.id)}>
             <Icon name="xmark" size={8} />
           </button>
         </div>

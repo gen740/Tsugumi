@@ -215,6 +215,8 @@ The first start takes a few minutes to prepare. The signature (ad hoc), the envi
 3. **Let the thrush guide you.** Send `$demo` in the chat and the thrush points at the screen and guides you step by step. Without an API key, three demos (Data to report, Kepler-6 b and Pharmacokinetics) have a fixed script.
 4. **Connect the Agent (optional).** Register an Anthropic or OpenAI API key under "API" in the settings, or sign in with "Continue with ChatGPT", and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs ([what is sent to the model](pages/security.md#what-is-sent-to-the-model)). Without the Agent, everything (making, editing and running Cards) can still be done on screen.
 
+The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
+
 If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI ([Using it from Claude Code](pages/claude-code.md)).
 
 ### Bundled demos

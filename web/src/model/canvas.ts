@@ -8,6 +8,7 @@ import { Observable } from './observable'
 import { prefs, ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
+import { L } from '../i18n'
 
 export type { Camera }
 
@@ -638,7 +639,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
     const t = this.tab
     // Notes and frames are layout: they can go during a run, as from their own menus.
     if (!s.isEditable && (t.selection.size || t.selectedConnection !== undefined)) {
-      s.notice = '実行中は Card を削除できません。'
+      s.notice = L('実行中は Card を削除できません。')
       s.changed()
       return
     }

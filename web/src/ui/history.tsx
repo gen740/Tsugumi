@@ -10,6 +10,7 @@ import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select,
 import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
+import { L } from '../i18n'
 
 type Filter = 'all' | 'succeeded' | 'failed'
 type Detail = 'io' | 'log' | 'info'
@@ -32,7 +33,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc) {
-      setError('実行環境に接続していません')
+      setError(L('実行環境に接続していません'))
       setLoaded(true)
       return
     }
@@ -42,7 +43,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
       setRuns(p.runs)
       setRunId((cur) => (cur && p.runs.some((r) => s(r.status!.runId) === cur) ? cur : p.runs[0] ? s(p.runs[0].status!.runId) : undefined))
       setError(undefined)
-    }).catch((e) => alive && setError(`履歴を読み込めません: ${errorText(e)}`)).finally(() => alive && setLoaded(true))
+    }).catch((e) => alive && setError(L('履歴を読み込めません: {0}', errorText(e)))).finally(() => alive && setLoaded(true))
     return () => {
       alive = false
     }
@@ -74,15 +75,15 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     }
   }, [runId, invocation, cardKey])
 
-  if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">履歴を読み込んでいます…</span></div>
+  if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">{L('履歴を読み込んでいます…')}</span></div>
   if (!runs.length && error) {
     return (
-      <Empty title="履歴を読み込めませんでした" icon="exclamationmark.triangle" description={error}>
-        <Button onClick={() => setAttempt(attempt + 1)}>再試行</Button>
+      <Empty title={L('履歴を読み込めませんでした')} icon="exclamationmark.triangle" description={error}>
+        <Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button>
       </Empty>
     )
   }
-  if (!runs.length) return <Empty title="まだ実行していません" icon="clock" description="この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。" />
+  if (!runs.length) return <Empty title={L('まだ実行していません')} icon="clock" description={L('この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。')} />
 
   const filtered = runs.filter((r) => {
     const st = r.status!.state
@@ -93,9 +94,9 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     <HSplit sizes={[260, null]} min={[220, 380]}>
       {[
         <div key="runs" className="col fill">
-          <div className="pad6"><Segmented<Filter> small value={filter} onChange={setFilter} options={[{ value: 'all', label: 'すべて' }, { value: 'succeeded', label: '成功' }, { value: 'failed', label: '失敗' }]} /></div>
-          <div className="list flex1" role="listbox" aria-label="実行">
-            {!filtered.length && <Empty small title={runs.length ? '条件に合う実行はありません' : '実行履歴はありません'} icon="clock" />}
+          <div className="pad6"><Segmented<Filter> small value={filter} onChange={setFilter} options={[{ value: 'all', label: L('すべて') }, { value: 'succeeded', label: L('成功') }, { value: 'failed', label: L('失敗') }]} /></div>
+          <div className="list flex1" role="listbox" aria-label={L('実行')}>
+            {!filtered.length && <Empty small title={runs.length ? L('条件に合う実行はありません') : L('実行履歴はありません')} icon="clock" />}
             {filtered.map((r) => {
               const id = s(r.status!.runId), rs = runState(r.status!.state)
               return (
@@ -111,63 +112,63 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
           </div>
         </div>,
         <div key="detail" className="col fill">
-          {!runId ? <Empty title="実行を選んでください" icon="list.bullet.rectangle" /> : (
+          {!runId ? <Empty title={L('実行を選んでください')} icon="list.bullet.rectangle" /> : (
             <>
               <div className="row gap8 center pad6 border-bottom">
-                <Select label="呼び出し" style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
+                <Select label={L('呼び出し')} style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
                   onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
                   options={invocations.length ? invocations.map((i) => ({
                     value: String(i.invocation ?? 0n),
                     label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` + (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
-                  })) : [{ value: '', label: '呼び出しなし' }]} />
+                  })) : [{ value: '', label: L('呼び出しなし') }]} />
                 <span className="spacer" />
-                <Segmented<Detail> small width={220} value={detail} onChange={setDetail} options={[{ value: 'io', label: '入出力' }, { value: 'log', label: 'ログ' }, { value: 'info', label: '情報' }]} />
+                <Segmented<Detail> small width={220} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'info', label: L('情報') }]} />
               </div>
               <div className="flex1 col min0">
                 {detail === 'io' && (rec ? (
                   <div className="scroll pad10 col gap8">
-                    {(rec.recordIo === false || record?.recordingDisabled) && <span className="label secondary"><Icon name="info.circle" />この Card は入出力を記録していません（設定 &gt; 入出力 &gt; 入出力を記録）。</span>}
-                    <div className="headline">入力</div>
-                    {!rec.inputs.length && <span className="secondary">なし</span>}
+                    {(rec.recordIo === false || record?.recordingDisabled) && <span className="label secondary"><Icon name="info.circle" />{L('この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。')}</span>}
+                    <div className="headline">{L('入力')}</div>
+                    {!rec.inputs.length && <span className="secondary">{L('なし')}</span>}
                     {rec.inputs.map((v, i) => <ValueBox key={i} v={v} />)}
-                    <div className="headline">出力</div>
-                    {!rec.outputs.length && <span className="secondary">なし</span>}
+                    <div className="headline">{L('出力')}</div>
+                    {!rec.outputs.length && <span className="secondary">{L('なし')}</span>}
                     {rec.outputs.map((v, i) => <ValueBox key={i} v={v} />)}
                   </div>
-                ) : record?.exists === false ? <Empty title="この実行では呼び出されていません" icon="circle.dotted" /> : <Empty title="記録がありません" icon="tray" />)}
+                ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
                 {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
                 {detail === 'info' && (record ? (
                   <div className="scroll">
                     <Form>
                       <Section>
-                        <Value label="状態" value={cardState(record.status!.state).label} />
+                        <Value label={L('状態')} value={cardState(record.status!.state).label} />
                         {rec?.summary && (
                           <>
-                            <Value label="呼び出し" value={`#${rec.summary.invocation ?? 0n}`} />
-                            <Value label="段階" value={D.Phase[rec.summary.phase] ?? ''} />
-                            <Value label="開始" value={formatMillis(rec.summary.startedAt)} />
-                            <Value label="終了" value={formatMillis(rec.summary.endedAt)} />
-                            {rec.summary.durationMs !== null && <Value label="所要時間" value={formatDuration(Number(rec.summary.durationMs) / 1000)} />}
-                            {rec.summary.waitingInputs.length > 0 && <Value label="待っていた入力" value={rec.summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
+                            <Value label={L('呼び出し')} value={`#${rec.summary.invocation ?? 0n}`} />
+                            <Value label={L('段階')} value={D.Phase[rec.summary.phase] ?? ''} />
+                            <Value label={L('開始')} value={formatMillis(rec.summary.startedAt)} />
+                            <Value label={L('終了')} value={formatMillis(rec.summary.endedAt)} />
+                            {rec.summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(rec.summary.durationMs) / 1000)} />}
+                            {rec.summary.waitingInputs.length > 0 && <Value label={L('待っていた入力')} value={rec.summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
                           </>
                         )}
                         {record.status!.failure && (
                           <>
-                            <Value label="失敗の種類" value={D.FailureKind[record.status!.failure.kind] ?? String(record.status!.failure.kind)} />
+                            <Value label={L('失敗の種類')} value={D.FailureKind[record.status!.failure.kind] ?? String(record.status!.failure.kind)} />
                             <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{s(record.status!.failure.diagnostic)}</span></Row>
                           </>
                         )}
-                        <Value label="集計" value={`呼び出し ${record.aggregate?.calls ?? 0n} · 成功 ${record.aggregate?.succeeded ?? 0n} · 失敗 ${record.aggregate?.failed ?? 0n}`} />
+                        <Value label={L('集計')} value={L('呼び出し {0} · 成功 {1} · 失敗 {2}', record.aggregate?.calls ?? 0n, record.aggregate?.succeeded ?? 0n, record.aggregate?.failed ?? 0n)} />
                       </Section>
                       {rec && rec.inputSources.length > 0 && (
-                        <Section title="入力元">
+                        <Section title={L('入力元')}>
                           {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${segs(x.card).join('/')} #${x.invocation ?? 0n}`} />)}
                         </Section>
                       )}
-                      {record.orphaned && <div className="secondary pad10">この Card は文書から削除されています。</div>}
+                      {record.orphaned && <div className="secondary pad10">{L('この Card は文書から削除されています。')}</div>}
                     </Form>
                   </div>
-                ) : <Empty title="情報がありません" icon="info.circle" />)}
+                ) : <Empty title={L('情報がありません')} icon="info.circle" />)}
               </div>
             </>
           )}
@@ -211,7 +212,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc) {
-      setError('実行環境に接続していません')
+      setError(L('実行環境に接続していません'))
       setLoaded(true)
       return
     }
@@ -221,7 +222,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       setRuns(p.runs)
       setRunId((cur) => cur ?? (p.runs[0] ? s(p.runs[0].status!.runId) : undefined))
       setError(undefined)
-    }).catch((e) => alive && setError('成果物を読み込めません: ' + errorText(e))).finally(() => alive && setLoaded(true))
+    }).catch((e) => alive && setError(L('成果物を読み込めません: ') + errorText(e))).finally(() => alive && setLoaded(true))
     return () => {
       alive = false
     }
@@ -255,7 +256,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       } else {
         try {
           const t = new TextDecoder('utf-8', { fatal: true }).decode(data.subarray(0, 256 * 1024))
-          setPreview({ kind: 'text', text: t + (data.length > 256 * 1024 ? '\n…（先頭 256 KiB を表示）' : '') })
+          setPreview({ kind: 'text', text: t + (data.length > 256 * 1024 ? L('\n…（先頭 256 KiB を表示）') : '') })
         } catch {
           setPreview({ kind: 'binary', size: data.length })
         }
@@ -269,19 +270,19 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifactId, member])
 
-  if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">成果物を読み込んでいます…</span></div>
+  if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">{L('成果物を読み込んでいます…')}</span></div>
   if (!runs.length && error) {
     return (
-      <Empty title="成果物を読み込めませんでした" icon="exclamationmark.triangle" description={error}>
-        <Button onClick={() => setAttempt(attempt + 1)}>再試行</Button>
+      <Empty title={L('成果物を読み込めませんでした')} icon="exclamationmark.triangle" description={error}>
+        <Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button>
       </Empty>
     )
   }
   if (!runs.length) {
     const retains = bool(session.cardSetting(cardKey, 'retainArtifact')) === true
     return (
-      <Empty title="保持された成果物はありません" icon="shippingbox"
-        description={retains ? '成果物を保持する設定です。実行すると、ここに残ります。' : 'この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。'} />
+      <Empty title={L('保持された成果物はありません')} icon="shippingbox"
+        description={retains ? L('成果物を保持する設定です。実行すると、ここに残ります。') : L('この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。')} />
     )
   }
 
@@ -290,18 +291,18 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
   return (
     <div className="col fill">
       <div className="row gap8 center pad6 border-bottom">
-        <Select label="実行" style={{ maxWidth: 360 }} value={runId ?? ''} onChange={(v) => setRunId(v || undefined)}
+        <Select label={L('実行')} style={{ maxWidth: 360 }} value={runId ?? ''} onChange={(v) => setRunId(v || undefined)}
           options={runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}` }))} />
         <span className="spacer" />
         {selected && member && (
-          <Button onClick={() => void read(selected, member).then((d) => download(member.split('/').pop() ?? 'artifact', d)).catch((e) => setError(errorText(e)))}>書き出す…</Button>
+          <Button onClick={() => void read(selected, member).then((d) => download(member.split('/').pop() ?? 'artifact', d)).catch((e) => setError(errorText(e)))}>{L('書き出す…')}</Button>
         )}
       </div>
       <div className="flex1 min0">
         <HSplit sizes={[220, 280, null]} min={[180, 220, 260]}>
           {[
-            <div key="a" className="list fill" role="listbox" aria-label="成果物">
-              {!artifacts.length && <Empty small title="成果物はありません" icon="shippingbox" description="設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" />}
+            <div key="a" className="list fill" role="listbox" aria-label={L('成果物')}>
+              {!artifacts.length && <Empty small title={L('成果物はありません')} icon="shippingbox" description={L('設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。')} />}
               {artifacts.map((a) => (
                 <div key={s(a.artifactId)} role="option" aria-selected={s(a.artifactId) === artifactId}
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}
@@ -312,8 +313,8 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
               ))}
             </div>,
             <div key="m" className="col fill">
-              <div className="pad6"><TextField small value={search} onChange={setSearch} placeholder="ファイルを検索" style={{ width: '100%' }} /></div>
-              <div className="list flex1" role="listbox" aria-label="ファイル">
+              <div className="pad6"><TextField small value={search} onChange={setSearch} placeholder={L('ファイルを検索')} style={{ width: '100%' }} /></div>
+              <div className="list flex1" role="listbox" aria-label={L('ファイル')}>
                 {members.map((m) => (
                   <div key={s(m.path)} role="option" aria-selected={s(m.path) === member} className={`list-row clickable${s(m.path) === member ? ' selected' : ''}`} onClick={() => setMember(s(m.path))}>
                     <Icon name="doc" /><span className="ellipsis flex1">{s(m.path)}</span>
@@ -325,8 +326,8 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
             <div key="p" className="fill scroll">
               {preview?.kind === 'text' && <pre className="pad8 mono selectable small-text wrap-pre">{preview.text}</pre>}
               {preview?.kind === 'image' && (member?.endsWith('.pdf') ? <iframe title="preview" src={preview.url} className="fill" /> : <img src={preview.url} alt={member} className="preview-image" />)}
-              {preview?.kind === 'binary' && <Empty title="プレビューできません" icon="doc.questionmark" description={`バイナリ ${preview.size} bytes。書き出して確認してください。`} />}
-              {!preview && <Empty title={member ? '読み込み中…' : 'ファイルを選んでください'} icon="eye" />}
+              {preview?.kind === 'binary' && <Empty title={L('プレビューできません')} icon="doc.questionmark" description={L('バイナリ {0} bytes。書き出して確認してください。', preview.size)} />}
+              {!preview && <Empty title={member ? L('読み込み中…') : L('ファイルを選んでください')} icon="eye" />}
             </div>,
           ]}
         </HSplit>
@@ -349,7 +350,7 @@ export function VisualizationWindow({ session, cardKey }: { session: ProjectSess
         <span className="title2">{session.displayName(cardKey)}</span>
         {d && <span className="secondary">呼び出し #{String(d.invocation)}</span>}
         <span className="spacer" />
-        <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>チャットに参照を追加</Button>
+        <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
       </div>
       <div className="flex1 min0 col"><DisplayContent display={d} large /></div>
     </div>

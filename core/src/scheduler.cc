@@ -1303,6 +1303,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<std::string> failed;
     std::vector<std::string> never;
     bool saved = false;
+    const bool en = p_.english;
     for (const auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
       const std::string key = path_key(n.node->path);
@@ -1312,22 +1313,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         saved |= n.saved_inputs;
       }
       if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
-        failed.push_back(key + "（" + failure_kind_name(n.last_failure->kind) + "）");
+        failed.push_back(key + (en ? " (" : "（") + failure_kind_name(n.last_failure->kind) + (en ? ")" : "）"));
       else if (n.invocations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
         never.push_back(key);
     }
-    auto names = [](const std::vector<std::string>& v) {
+    auto names = [en](const std::vector<std::string>& v) {
       constexpr size_t kShown = 6;
       std::string s;
-      for (size_t i = 0; i < std::min(v.size(), kShown); ++i) s += (i ? "、" : "") + v[i];
-      if (v.size() > kShown) s += " ほか " + std::to_string(v.size() - kShown);
+      for (size_t i = 0; i < std::min(v.size(), kShown); ++i) s += (i ? (en ? ", " : "、") : "") + v[i];
+      if (v.size() > kShown) s += (en ? " and " + std::to_string(v.size() - kShown) + " more" : " ほか " + std::to_string(v.size() - kShown));
       return s;
     };
-    std::string out = whole ? "全体" : path_key(p_.card) + (p_.propagate ? " から" : " だけ");
-    if (saved) out += "（保存済みの入力で）";
+    std::string out = en ? (whole ? "whole" : (p_.propagate ? "from " : "only ") + path_key(p_.card))
+                         : (whole ? "全体" : path_key(p_.card) + (p_.propagate ? " から" : " だけ"));
+    if (saved) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
     if (!ran.empty()) out += ": " + names(ran);
-    if (!failed.empty()) out += " / 失敗: " + names(failed);
-    if (!never.empty()) out += " / 未実行: " + names(never);
+    if (!failed.empty()) out += (en ? " / failed: " : " / 失敗: ") + names(failed);
+    if (!never.empty()) out += (en ? " / not run: " : " / 未実行: ") + names(never);
     return out;
   }
 

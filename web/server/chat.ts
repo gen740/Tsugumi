@@ -14,6 +14,7 @@ import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './env'
 import { DesktopSettings } from './desktop'
+import { L, language, setLanguage, type Language } from './i18n'
 
 export interface ChatContext {
   support: string
@@ -73,6 +74,9 @@ interface Settings {
   guide: GuideState
   /** A small model writes what each version changed (off: nothing is sent for it). */
   versionSummaries: boolean
+  /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
+   *  server's messages, and what tsugumid writes into a project's git. */
+  language: Language
 }
 
 /** The demo the guide shows: its id and title, the copy's folder, and
@@ -87,11 +91,18 @@ const defaultSettings: Settings = {
   models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
   guide: { setupDone: false, demoAnswered: false, tour: null },
   versionSummaries: false,
+  language: 'ja',
 }
-const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values })
+const settings = (): Settings => {
+  const s: Settings = { ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values }
+  if (s.language !== 'en') s.language = 'ja'
+  setLanguage(s.language)
+  return s
+}
 const saveSettings = (s: Settings) => {
   ctx.desktop?.save(settings(), s)
   ctx.writeJSON(settingsFile(), s)
+  setLanguage(s.language)
 }
 
 /** Only these keys are written from the page (never a key or anything else). */
@@ -116,6 +127,7 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
   if (typeof b.webSearch === 'boolean') out.webSearch = b.webSearch
+  if (b.language === 'ja' || b.language === 'en') out.language = b.language
   return out
 }
 
@@ -167,20 +179,20 @@ async function keySource(p: KeyedProvider): Promise<'env' | 'keychain' | 'file' 
 async function saveKey(p: KeyedProvider, raw: string) {
   const key = raw.trim()
   // An API key is printable ASCII without spaces or quotes.
-  if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw ctx.httpError(400, 'API キーに使えない文字が含まれています。')
+  if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw ctx.httpError(400, L('API キーに使えない文字が含まれています。'))
   if (process.platform === 'darwin') {
     // The secret goes to `security` on its standard input, never as an argument.
     const r = await run('security', ['-i'], `add-generic-password -U -s "${KEYCHAIN_SERVICE}" -a "${PROVIDERS[p].name}" -w "${key}"\n`)
     keychain.forget(PROVIDERS[p].name)
     if (r.code === 0 && (await keychainKey(p)) === key) {
       fs.rmSync(keyFile(p), { force: true })
-      return 'Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。'
+      return L('Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。')
     }
   }
   fs.mkdirSync(ctx.support, { recursive: true })
   fs.writeFileSync(keyFile(p), key, { mode: 0o600 })
   fs.chmodSync(keyFile(p), 0o600)
-  return `${keyFile(p)}（0600）に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。`
+  return L('{0}（0600）に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。', keyFile(p))
 }
 
 async function deleteKey(p: KeyedProvider) {
@@ -189,7 +201,7 @@ async function deleteKey(p: KeyedProvider) {
     keychain.forget(PROVIDERS[p].name)
   }
   fs.rmSync(keyFile(p), { force: true })
-  return `${PROVIDERS[p].name} のキーを削除しました。` + (process.env[PROVIDERS[p].env] ? `（環境変数 ${PROVIDERS[p].env} は残っています）` : '')
+  return L('{0} のキーを削除しました。', PROVIDERS[p].name) + (process.env[PROVIDERS[p].env] ? L('（環境変数 {0} は残っています）', PROVIDERS[p].env) : '')
 }
 
 // Sign in with ChatGPT: this server's registrations and tokens, in a 0600
@@ -388,10 +400,10 @@ function loadSkills(folder: string, source: string): Skill[] {
 }
 
 /** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
-const DEMO: Skill = { name: 'demo', description: 'ツグミが画面を飛び回って、デモや画面の使い方を案内します', path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' }
+const demoSkill = (): Skill => ({ name: 'demo', description: L('ツグミが画面を飛び回って、デモや画面の使い方を案内します'), path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' })
 
 function skillsFor(project: string | undefined): Skill[] {
-  const out = [DEMO, ...(project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : [])]
+  const out = [demoSkill(), ...(project ? loadSkills(path.join(project, 'skills'), L('プロジェクト')) : [])]
   for (const f of settings().skillFolders) if (f.enabled) out.push(...loadSkills(f.path, path.basename(f.path)))
   return out
 }
@@ -486,7 +498,7 @@ class ChatHost {
     if (st.state !== 'ready') throw new Error(st.state === 'failed' ? st.message : 'tsugumid is not running')
     // On this host its Unix socket, which needs no token; in the VM its WebSocket.
     const c = new RPCClient(st.unix ? await unixTransport(st.unix) : await webSocketTransport(st.endpoint))
-    await c.connect(st.unix ? undefined : st.token)
+    await c.connect(st.unix ? undefined : st.token, language())
     this.client = c
     return c
   }
@@ -547,10 +559,10 @@ class ChatHost {
       const id = f.slice(0, -5)
       let c
       try { c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id) }
-      catch { return { id, title: `読み込めない会話 (${id})`, updatedAt: 0, messages: 0 } }
+      catch { return { id, title: L('読み込めない会話 ({0})', id), updatedAt: 0, messages: 0 } }
       const m = [...c.archive, ...c.messages].find((m) => m.role === 'user')
       const first = m?.display ?? m?.content.flatMap((b) => (b.type === 'text' ? [b.text] : []))[0]
-      return { id, title: c.title ?? (first ? first.slice(0, 60) : '新しい会話'), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
+      return { id, title: c.title ?? (first ? first.slice(0, 60) : L('新しい会話')), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
     }).sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
@@ -617,10 +629,13 @@ async function turnAgent(b: any) {
 
 export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
+  // The language for the server's own messages, from the start (the app's, once read).
+  settings()
+  void ctx.desktop?.refresh().then(() => settings(), () => {})
   try {
     catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(c.here, 'tsugumi.bfbs')))))
   } catch (e) {
-    catalogError = `RPC スキーマを読み込めないため、チャットは使えません（${(e as Error).message}）。通常の操作はすべて UI から行えます。`
+    catalogError = L('RPC スキーマを読み込めないため、チャットは使えません（{0}）。通常の操作はすべて UI から行えます。', (e as Error).message)
   }
   const projectDir = c.projectDir
   return {
@@ -638,13 +653,13 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
   'POST /api/versions/summarize': async (b) => {
     const s = settings()
-    if (!s.versionSummaries) throw ctx.httpError(400, '版の要約はオフです。')
-    if (s.provider === 'chatgpt') throw ctx.httpError(400, 'ChatGPT プランでは版の要約を作りません。')
+    if (!s.versionSummaries) throw ctx.httpError(400, L('版の要約はオフです。'))
+    if (s.provider === 'chatgpt') throw ctx.httpError(400, L('ChatGPT プランでは版の要約を作りません。'))
     const c = await provider()
     // Room for the model's own reasoning on a large diff: the answer itself is cut to one line.
     const small = { ...c, maxTokens: 1500, model: s.provider === 'anthropic' ? 'claude-haiku-5-5' : c.model }
     const text = await summarizeVersion(small, String(b.input ?? ''), AbortSignal.timeout(60_000))
-    if (!text) throw ctx.httpError(502, 'モデルが文を返しませんでした。')
+    if (!text) throw ctx.httpError(502, L('モデルが文を返しませんでした。'))
     return { text }
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
@@ -652,11 +667,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   /** Lists a connection's models (the one in use unless `provider` names another). */
   'POST /api/settings/models': async (b) => {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
-    if (id === 'fixture') throw ctx.httpError(400, 'fixture にはモデル一覧がありません。')
+    if (id === 'fixture') throw ctx.httpError(400, L('fixture にはモデル一覧がありません。'))
     const list = await listModels(await providerFor(id))
     // Read after the wait: the other connections' lists come at the same time.
     const next = withModelList(settings(), id, list)
-    if (!next) throw ctx.httpError(502, 'モデル一覧が空でした。保存済みの一覧はそのままです。')
+    if (!next) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
     saveSettings(next)
     return { models: next.models[id], modelNames: next.modelNames }
   },
@@ -673,10 +688,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     signInOutcome = null
     done.then((r) => {
       signInOutcome = { ok: true, welcome: r.welcome ? r.account.clientId : undefined, message: r.account.planEnabled
-        ? `${r.account.email ?? r.account.clientId} でサインインしました。`
-        : 'サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。' }
+        ? L('{0} でサインインしました。', r.account.email ?? r.account.clientId)
+        : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
     }, (e: Error) => {
-      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? 'サインインを中止しました。' : e.message }
+      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? L('サインインを中止しました。') : e.message }
     })
     return { url }
   },
@@ -697,8 +712,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id = String(b.clientId)
     const email = chatgpt().accounts().find((a) => a.clientId === id)?.email ?? id
     const revoked = await chatgpt().signOut(id)
-    return { ...chatGPTState(), message: revoked ? `${email} からサインアウトしました。`
-      : 'このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。' }
+    return { ...chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
+      : L('このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。') }
   },
   'POST /api/settings/skillCount': (b) => ({ count: loadSkills(String(b.path), '').length }),
   'POST /api/settings/skillFolderStatus': (b) => {
@@ -757,7 +772,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/folder': (b) => {
     // A folder to attach: it must be an existing folder of this host.
     const [f] = cleanFolders([b.folder])
-    if (!f) throw ctx.httpError(400, `フォルダが見つかりません: ${b.folder}`)
+    if (!f) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', b.folder))
     return { folder: f, name: path.basename(f) }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
@@ -805,9 +820,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return guideState()
   },
   'POST /api/guide/send': async (b) => {
-    if (!(await guideAvailable())) throw ctx.httpError(409, 'ガイドに使える API キーがありません。')
+    if (!(await guideAvailable())) throw ctx.httpError(409, L('ガイドに使える API キーがありません。'))
     const a = await guide()
-    if (a.busy) throw ctx.httpError(409, 'ツグミはまだ答えています。')
+    if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     a.send(String(b.prompt), String(b.display), guideEvents, String(b.display))
     return { ok: true }

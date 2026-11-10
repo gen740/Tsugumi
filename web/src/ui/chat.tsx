@@ -20,6 +20,7 @@ import { Markdown } from './markdown'
 import { ChatChoices, GuideNest } from './guide'
 import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
+import { L } from '../i18n'
 
 export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSession; chat: ChatController; detached: boolean; tab?: WorkflowTab }) {
   useObserve(chat, session, tab, prefs)
@@ -29,17 +30,17 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
     <div className="chat-panel">
       <div className="chat-header">
         {!detached && <GuideNest busy={chat.busy} />}
-        <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? '会話に戻る' : '会話の一覧と検索'} onClick={() => setShowList(!showList)} />
-        <b className="ellipsis flex1">{showList ? '会話' : chat.sessions.find((x) => x.id === chat.currentId)?.title ?? '新しい会話'}</b>
-        <Button kind="borderless" iconOnly icon="square.and.pencil" help="新しい会話" onClick={() => { chat.newSession(); setShowList(false) }} />
-        <MenuButton icon="ellipsis.circle" help="その他" items={() => [
+        <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? L('会話に戻る') : L('会話の一覧と検索')} onClick={() => setShowList(!showList)} />
+        <b className="ellipsis flex1">{showList ? L('会話') : chat.sessions.find((x) => x.id === chat.currentId)?.title ?? L('新しい会話')}</b>
+        <Button kind="borderless" iconOnly icon="square.and.pencil" help={L('新しい会話')} onClick={() => { chat.newSession(); setShowList(false) }} />
+        <MenuButton icon="ellipsis.circle" help={L('その他')} items={() => [
           // Only for the conversation that is open, never from the list.
-          !showList && { label: '会話を圧縮', disabled: chat.busy || chat.items.length < 6, action: () => chat.compact() },
+          !showList && { label: L('会話を圧縮'), disabled: chat.busy || chat.items.length < 6, action: () => chat.compact() },
           !showList && 'divider',
-          { label: 'Skill を再読込', action: () => void chat.reloadSkills() },
-          !detached && { label: '別ウインドウで開く', action: () => app.openWindow(session, { kind: 'chat' }) },
+          { label: L('Skill を再読込'), action: () => void chat.reloadSkills() },
+          !detached && { label: L('別ウインドウで開く'), action: () => app.openWindow(session, { kind: 'chat' }) },
           'divider',
-          { label: '接続設定…', action: () => app.openWindow(undefined, { kind: 'appSettings' }) },
+          { label: L('接続設定…'), action: () => app.openWindow(undefined, { kind: 'appSettings' }) },
         ]} />
       </div>
       {showList ? <SessionList chat={chat} onPick={() => setShowList(false)} /> : <Conversation session={session} chat={chat} tab={tab} />}
@@ -49,9 +50,9 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
 
 /** Why Fast mode cannot be chosen for the model in use. */
 function fastUnavailable(connection: string): string {
-  return connection === 'chatgpt' ? 'Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）'
-    : connection === 'openai' ? 'Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）'
-    : 'Fast mode: Claude Opus 5.5 でだけ選べます'
+  return connection === 'chatgpt' ? L('Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）')
+    : connection === 'openai' ? L('Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）')
+    : L('Fast mode: Claude Opus 5.5 でだけ選べます')
 }
 
 /** The Agent waits for this answer, so it shows whether or not the chat is open. */
@@ -96,14 +97,14 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
             </li>
           ))}
         </ul>
-        <div className="secondary small">今後は確認しない（設定の「API」でいつでも変えられます）</div>
+        <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>
         {kinds.map((k) => (
           <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
             onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />
         ))}
         <div className="row end gap8">
-          <Button onClick={() => onAnswer(false, [])}>許可しない</Button>
-          <Button kind="prominent" onClick={() => onAnswer(true, always)}>許可する</Button>
+          <Button onClick={() => onAnswer(false, [])}>{L('許可しない')}</Button>
+          <Button kind="prominent" onClick={() => onAnswer(true, always)}>{L('許可する')}</Button>
         </div>
       </div>
     </Sheet>
@@ -126,23 +127,23 @@ function SessionList({ chat, onPick }: { chat: ChatController; onPick: () => voi
   }
   return (
     <div className="chat-list">
-      <div className="sidebar-pad"><TextField value={query} onChange={setQuery} placeholder="履歴を検索" /></div>
+      <div className="sidebar-pad"><TextField value={query} onChange={setQuery} placeholder={L('履歴を検索')} /></div>
       <div className="list flex1">
         {!query && chat.sessions.map((x) => (
           <div key={x.id} className="list-row clickable col-start" onClick={() => open(x.id)}
-            onContextMenu={(e) => showMenu(e, [{ label: '削除', destructive: true, action: () => void chat.delete(x.id) }])}>
+            onContextMenu={(e) => showMenu(e, [{ label: L('削除'), destructive: true, action: () => void chat.delete(x.id) }])}>
             <div className="ellipsis" style={{ fontWeight: x.id === chat.currentId ? 600 : 400 }}>{x.title}</div>
             <div className="caption secondary">{new Date(x.updatedAt).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })} · {x.messages} 件</div>
           </div>
         ))}
-        {!query && !chat.sessions.length && <Empty title="会話はまだありません" icon="bubble.left" />}
+        {!query && !chat.sessions.length && <Empty title={L('会話はまだありません')} icon="bubble.left" />}
         {query && hits.map((h, i) => (
           <div key={i} className="list-row clickable col-start" onClick={() => open(h.session)}>
             <div className="caption" style={{ fontWeight: 600 }}>{h.title}</div>
             <div className="caption secondary clamp3">{h.snippet}</div>
           </div>
         ))}
-        {query && !hits.length && <Empty title={`“${query}” の結果はありません`} icon="magnifyingglass" description="スペルを確認するか、新しく検索してください。" />}
+        {query && !hits.length && <Empty title={L('“{0}” の結果はありません', query)} icon="magnifyingglass" description={L('スペルを確認するか、新しく検索してください。')} />}
       </div>
     </div>
   )
@@ -216,8 +217,8 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
         <div className="chat-column" ref={column}>
           {chat.items.length === 0 && (
             <div className="chat-intro">
-              <div className="callout">{guide.connected ? 'ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。' : 'Workflow の相談・生成・編集を依頼できます。'}</div>
-              <div className="caption secondary">Card を右クリックして参照に追加、$ で Skill を選べます。</div>
+              <div className="callout">{guide.connected ? L('ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。') : L('Workflow の相談・生成・編集を依頼できます。')}</div>
+              <div className="caption secondary">{L('Card を右クリックして参照に追加、$ で Skill を選べます。')}</div>
             </div>
           )}
           {chat.items.map((it) => (
@@ -239,9 +240,9 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
           <span className="caption clamp3 selectable flex1" style={{ color: chat.failed ? 'var(--red)' : 'var(--secondary)' }}>{chat.status}</span>
           {chat.usageLimited
             ? <Button small kind="prominent" onClick={() => window.open(USAGE_URL, '_blank', 'noopener,noreferrer')}>Manage usage</Button>
-            : chat.contextFull ? <Button small kind="prominent" onClick={() => chat.newSession()}>新しい会話</Button>
-            : chat.failed && <Button small onClick={() => chat.retry()}>再試行</Button>}
-          {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>続ける</Button>}
+            : chat.contextFull ? <Button small kind="prominent" onClick={() => chat.newSession()}>{L('新しい会話')}</Button>
+            : chat.failed && <Button small onClick={() => chat.retry()}>{L('再試行')}</Button>}
+          {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>{L('続ける')}</Button>}
         </div>
       )}
       <ChatChoices chat={chat} session={session} tab={tab} />
@@ -254,8 +255,8 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
 function currentStep(items: ChatItem[]): string {
   const t = [...items].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
   if (t?.tool) return toolStep(t.tool.name, t.text).running
-  if (items[items.length - 1]?.role === 'assistant') return '回答を書いています…'
-  return '考えています…'
+  if (items[items.length - 1]?.role === 'assistant') return L('回答を書いています…')
+  return L('考えています…')
 }
 
 function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boolean; session: ProjectSession; tab?: WorkflowTab }) {
@@ -299,7 +300,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
     const all = [
       ...(on.anthropic ? [list('anthropic', 'Anthropic API', s.model)] : []),
       ...(on.openai ? [list('openai', 'OpenAI API', s.openAIModel)] : []),
-      ...(on.chatgpt ? [list('chatgpt', 'ChatGPT プラン', s.chatGPTModel)] : []),
+      ...(on.chatgpt ? [list('chatgpt', L('ChatGPT プラン'), s.chatGPTModel)] : []),
     ]
     setConnections(all)
     return all
@@ -392,8 +393,8 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           {chat.folders.map((f) => (
             <span key={f} className="chip chip-folder" title={f}>
               <Icon name="folder" size={10} />{f.split('/').pop()}
-              <Icon name="lock" size={9} className="secondary" title="読み取り専用で共有しています。Agent だけが読みます。" />
-              <button type="button" className="chip-x" title="添付を外す" aria-label="添付を外す" onClick={() => chat.detach(f)}><Icon name="xmark.circle.fill" size={11} /></button>
+              <Icon name="lock" size={9} className="secondary" title={L('読み取り専用で共有しています。Agent だけが読みます。')} />
+              <button type="button" className="chip-x" title={L('添付を外す')} aria-label={L('添付を外す')} onClick={() => chat.detach(f)}><Icon name="xmark.circle.fill" size={11} /></button>
             </span>
           ))}
         </div>
@@ -403,7 +404,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           {chat.references.map((r) => (
             <span key={refLabel(r)} className="chip">
               <Icon name="paperclip" size={10} />{refLabel(r)}
-              <button type="button" className="chip-x" title="参照を外す" aria-label="参照を外す" onClick={() => chat.removeReference(r)}><Icon name="xmark.circle.fill" size={11} /></button>
+              <button type="button" className="chip-x" title={L('参照を外す')} aria-label={L('参照を外す')} onClick={() => chat.removeReference(r)}><Icon name="xmark.circle.fill" size={11} /></button>
             </span>
           ))}
         </div>
@@ -411,7 +412,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
       {skillQuery !== null && (
         <div className="skill-picker">
           {!matches.length && (
-            <div className="caption secondary pad6">{chat.skills.length ? '一致する Skill はありません' : 'Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）'}</div>
+            <div className="caption secondary pad6">{chat.skills.length ? L('一致する Skill はありません') : L('Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）')}</div>
           )}
           {matches.map((sk, i) => (
             <button key={sk.path} type="button" className={`skill-item${i === skillIndex ? ' highlighted' : ''}`} onMouseDown={(e) => e.preventDefault()} onClick={() => insertSkill(sk)}>
@@ -425,18 +426,18 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
         <div className="composer-input">
           {/* Gone while typing (and while an input method composes). */}
           {!input && !focused && <span className="composer-placeholder">メッセージ（{prefs.sendKey === 'returnKey' ? 'Return' : `${cmd}Return`} で送信）</span>}
-          <textarea ref={inputRef} className="chat-input" rows={1} value={input} aria-label="メッセージ"
+          <textarea ref={inputRef} className="chat-input" rows={1} value={input} aria-label={L('メッセージ')}
             onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             onChange={(e) => { setInput(e.target.value); updateSkillQuery(e.target.value) }}
             onKeyDown={onKeyDown} />
         </div>
         <div className="composer-bar">
-          <MenuButton icon={attaching ? 'hourglass' : 'paperclip'} help="参照・フォルダを添付" items={() => [
-            { label: '選択した Card を参照に追加', disabled: !tab || tab.selection.size === 0, action: () => { if (tab) for (const k of [...tab.selection].sort()) chat.addReference({ kind: 'card', card: k }) } },
-            { label: 'フォルダを添付…', disabled: attaching || !session.connected, action: () => setPicking(true) },
+          <MenuButton icon={attaching ? 'hourglass' : 'paperclip'} help={L('参照・フォルダを添付')} items={() => [
+            { label: L('選択した Card を参照に追加'), disabled: !tab || tab.selection.size === 0, action: () => { if (tab) for (const k of [...tab.selection].sort()) chat.addReference({ kind: 'card', card: k }) } },
+            { label: L('フォルダを添付…'), disabled: attaching || !session.connected, action: () => setPicking(true) },
           ]} />
           {/* The model, as quiet text under the input (a menu, not a pop-up box). */}
-          <button type="button" className="model-menu" disabled={!chat.provider.remote} title={`モデル（接続先: ${chat.provider.name}）`}
+          <button type="button" className="model-menu" disabled={!chat.provider.remote} title={L('モデル（接続先: {0}）', chat.provider.name)}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
               // Every connection set up, with its models: choosing one switches to it.
@@ -447,13 +448,13 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
                 return [
                   { label: 'Effort', disabled: true },
                   ...(options.efforts.length
-                    ? [{ label: options.defaultEffort ? `既定（${options.defaultEffort}）` : '既定', checked: !effort, action: () => chooseOption({ effort: '' }) },
+                    ? [{ label: options.defaultEffort ? L('既定（{0}）', options.defaultEffort) : L('既定'), checked: !effort, action: () => chooseOption({ effort: '' }) },
                        ...AGENT.modelOptions.efforts.filter((l) => options.efforts.includes(l)).map((l) => ({ label: l, checked: l === effort, action: () => chooseOption({ effort: l }) }))]
-                    : [{ label: 'このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）', disabled: true }]),
+                    : [{ label: L('このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）'), disabled: true }]),
                   'divider' as const,
                   options.fastPrice === undefined
                     ? { label: fastUnavailable(current), disabled: true }
-                    : { label: `Fast mode（料金は通常の ${options.fastPrice} 倍）`, checked: !!fast, action: () => chooseOption({ fastModel: fast ? '' : model }) },
+                    : { label: L('Fast mode（料金は通常の {0} 倍）', options.fastPrice), checked: !!fast, action: () => chooseOption({ fastModel: fast ? '' : model }) },
                   ...list.flatMap((c) => [
                     'divider' as const,
                     { label: c.name, disabled: true },
@@ -475,14 +476,14 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
             <Icon name="chevron.down" size={8} />
           </button>
           <span className="spacer" />
-          <span className="caption2 tertiary" title={`直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 ${chat.usage.cacheReadTokens ?? 0}、キャッシュに書いた量 ${chat.usage.cacheWriteTokens ?? 0}`}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
+          <span className="caption2 tertiary" title={L('直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 {0}、キャッシュに書いた量 {1}', chat.usage.cacheReadTokens ?? 0, chat.usage.cacheWriteTokens ?? 0)}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
-            ? <button type="button" className="send-button" onClick={() => chat.cancel()} title="回答を停止（Workflow の実行は止まりません）" aria-label="回答を停止"><Icon name="stop.circle.fill" size={22} /></button>
+            ? <button type="button" className="send-button" onClick={() => chat.cancel()} title={L('回答を停止（Workflow の実行は止まりません）')} aria-label={L('回答を停止')}><Icon name="stop.circle.fill" size={22} /></button>
             : <button type="button" className="send-button" disabled={!input.trim() || !session.connected || !chat.available} onClick={send}
-                title={prefs.sendKey === 'returnKey' ? '送信（Return）' : `送信（${cmd}Return）`} aria-label="送信"><Icon name="arrow.up.circle.fill" size={22} /></button>}
+                title={prefs.sendKey === 'returnKey' ? L('送信（Return）') : L('送信（{0}Return）', cmd)} aria-label={L('送信')}><Icon name="arrow.up.circle.fill" size={22} /></button>}
         </div>
       </div>
-      {picking && <FolderPicker message="チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）" onClose={() => setPicking(false)} onPick={(p) => {
+      {picking && <FolderPicker message={L('チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）')} onClose={() => setPicking(false)} onPick={(p) => {
         setPicking(false)
         setAttachError(undefined)
         setToAttach(p)
@@ -490,11 +491,11 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
       {toAttach && (
         <Sheet onClose={() => setToAttach(undefined)} width={440}>
           <div className="confirm">
-            <div className="confirm-title">フォルダを添付しますか？</div>
+            <div className="confirm-title">{L('フォルダを添付しますか？')}</div>
             <div className="secondary">「{toAttach.split('/').pop()}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{chat.provider.name}）に送られます。</div>
             {attachError && <div className="callout selectable" style={{ color: 'var(--red)' }}>{attachError}</div>}
             <div className="row end gap8">
-              <Button onClick={() => setToAttach(undefined)}>キャンセル</Button>
+              <Button onClick={() => setToAttach(undefined)}>{L('キャンセル')}</Button>
               <Button kind="prominent" disabled={attaching} onClick={async () => {
                 setAttaching(true)
                 try {
@@ -505,7 +506,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
                 } finally {
                   setAttaching(false)
                 }
-              }}>添付</Button>
+              }}>{L('添付')}</Button>
             </div>
           </div>
         </Sheet>
@@ -527,17 +528,17 @@ export function toolStep(name: string, args: string) {
   const target: string | undefined = card ?? (typeof v?.path === 'string' ? v.path : typeof v?.definition === 'string' ? v.definition : typeof v?.query === 'string' ? v.query : undefined)
   const n = name.toLowerCase()
   const [running, done] =
-    n === 'delegate' ? ['手分けして進めています', '手分けして進めました']
-    : n === 'web_search' ? ['Web を検索しています', 'Web を検索']
-    : n.includes('save') || n.includes('put') || n.includes('write') ? ['変更を保存しています', '変更を保存']
-    : n.includes('run') && !n.includes('status') ? ['実行しています', '実行']
-    : n.includes('read') || n.includes('inspect') || n.includes('get') ? ['確認しています', '確認']
-    : n.includes('log') ? ['ログを読んでいます', 'ログを確認']
-    : n.includes('validate') || n.includes('check') ? ['検証しています', '検証']
-    : n.includes('format') ? ['整形しています', '整形']
-    : n.includes('status') || n.includes('record') || n.includes('history') ? ['結果を確認しています', '結果を確認']
-    : [`${name} を実行しています`, name]
-  const t = target ? `（${target}）` : ''
+    n === 'delegate' ? [L('手分けして進めています'), L('手分けして進めました')]
+    : n === 'web_search' ? [L('Web を検索しています'), L('Web を検索')]
+    : n.includes('save') || n.includes('put') || n.includes('write') ? [L('変更を保存しています'), L('変更を保存')]
+    : n.includes('run') && !n.includes('status') ? [L('実行しています'), L('実行')]
+    : n.includes('read') || n.includes('inspect') || n.includes('get') ? [L('確認しています'), L('確認')]
+    : n.includes('log') ? [L('ログを読んでいます'), L('ログを確認')]
+    : n.includes('validate') || n.includes('check') ? [L('検証しています'), L('検証')]
+    : n.includes('format') ? [L('整形しています'), L('整形')]
+    : n.includes('status') || n.includes('record') || n.includes('history') ? [L('結果を確認しています'), L('結果を確認')]
+    : [L('{0} を実行しています', name), name]
+  const t = target ? L('（{0}）', target) : ''
   return { card, running: running + t + '…', done: done + t }
 }
 
@@ -546,7 +547,7 @@ export function toolStep(name: string, args: string) {
 function HelperRow({ item, color }: { item: ChatItem; color: string }) {
   const step = item.tool ? toolStep(item.tool.name, item.text) : undefined
   const ok = item.tool?.ok
-  const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : '：失敗')) : '考えています…')
+  const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗'))) : L('考えています…'))
   return (
     <div className="helper-row">
       <span className="helper-dot" style={{ background: color }} />
@@ -576,7 +577,7 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
           {ok === undefined ? <Spinner small /> : <Icon name={ok ? 'checkmark.circle' : 'xmark.circle.fill'} style={{ color: ok ? 'var(--secondary)' : 'var(--red)' }} />}
         </span>
         <span className="caption ellipsis" style={{ color: ok === false ? 'var(--red)' : 'var(--secondary)' }}>
-          {ok === undefined ? step.running : step.done + (ok ? '' : '：失敗')}
+          {ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗'))}
         </span>
         {step.card && tab && session.instance(step.card) && (
           <button type="button" className="link caption" onClick={() => {
@@ -584,16 +585,16 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
             tab.enter(path(k).slice(0, -1))
             tab.setSelection([k])
             canvasFor(session, tab).reveal(k)
-          }}>Card を表示</button>
+          }}>{L('Card を表示')}</button>
         )}
         <span className="spacer" />
-        <Button kind="borderless" iconOnly small icon={open ? 'chevron.up' : 'chevron.down'} help={open ? '詳細を閉じる' : 'ツールの詳細'} onClick={() => setOpen(!open)} />
+        <Button kind="borderless" iconOnly small icon={open ? 'chevron.up' : 'chevron.down'} help={open ? L('詳細を閉じる') : L('ツールの詳細')} onClick={() => setOpen(!open)} />
       </div>
       {savedComments(item.text).map((c, i) => (
         <div key={i} className="chat-tool-comment caption secondary selectable">
           {c.card} · コメントを{commentChange(c.change, c.by)}: {c.text}
           {c.resolution && ` — ${c.resolution}`}
-          {!!c.cards?.length && `（変更した Card: ${c.cards.join('、')}）`}
+          {!!c.cards?.length && L('（変更した Card: {0}）', c.cards.join('、'))}
         </div>
       ))}
       {open && <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>}
@@ -623,7 +624,7 @@ function ChatMarkdown({ text }: { text: string }) {
   return (
     <div className="col gap8">
       <Markdown text={long ? fold(text) : text} className="selectable chat-assistant" renderCode={codeBlock} />
-      {long && <button type="button" className="link caption chat-more" onClick={() => setExpanded(true)}>続きを表示</button>}
+      {long && <button type="button" className="link caption chat-more" onClick={() => setExpanded(true)}>{L('続きを表示')}</button>}
     </div>
   )
 }
@@ -652,7 +653,7 @@ function ChatCodeBlock({ code, language }: { code: string; language: string }) {
       <div className="chat-code-head">
         <span className="caption2 secondary">{language || 'code'}</span>
         <span className="spacer" />
-        <button type="button" className="chat-code-copy caption2" onClick={() => void copyText(code).then(() => setCopied(true))}>{copied ? 'コピーしました' : 'コピー'}</button>
+        <button type="button" className="chat-code-copy caption2" onClick={() => void copyText(code).then(() => setCopied(true))}>{copied ? L('コピーしました') : L('コピー')}</button>
       </div>
       <pre className="chat-code-text selectable">{folded ? lines.slice(0, 30).join('\n') : code}</pre>
       {folded && <button type="button" className="link caption chat-code-more" onClick={() => setExpanded(true)}>残り {lines.length - 30} 行を表示</button>}

@@ -14,6 +14,7 @@ import { guide } from '../model/guide'
 import { GuideCorner } from './guide'
 import { FolderPicker } from './sidebar'
 import { birdFeet, drawIdleScene, drawTemariScene, drawProgressScene, drawSpool, drawWorkflowBackdrop, HopWalker, PALETTE, SeededRandom, TsugumiBird } from './tsugumiArt'
+import { L } from '../i18n'
 
 // ---- Art ---------------------------------------------------------------------------
 
@@ -203,8 +204,8 @@ export function TsugumiLoadingCard({ content, onCancel }: { content: LoadingCont
           <div className="title3">{content.title}</div>
           {content.message && <div className="callout secondary clamp3">{content.message}</div>}
           {content.detail && <div className="caption mono tertiary ellipsis">{content.detail}</div>}
-          {content.dirty && <span className="label callout" style={{ color: PALETTE.rufous }}><Icon name="pencil.circle" />未保存の変更があります（保持しています）</span>}
-          {onCancel && <Button onClick={onCancel}>キャンセル</Button>}
+          {content.dirty && <span className="label callout" style={{ color: PALETTE.rufous }}><Icon name="pencil.circle" />{L('未保存の変更があります（保持しています）')}</span>}
+          {onCancel && <Button onClick={onCancel}>{L('キャンセル')}</Button>}
           {/* the temari beside the words; its thread catches on the picture's edge */}
           <canvas ref={spool.ref} className="loading-spool" aria-hidden />
         </div>
@@ -224,7 +225,7 @@ export function SetupView() {
   const [message, setMessage] = useState<string>()
   const step = (title: string, ok: boolean, detail: string, action?: JSX.Element) => (
     <div className="setup-step">
-      <Icon name={ok ? 'checkmark.circle.fill' : 'circle.dotted'} size={20} style={{ color: ok ? 'var(--green)' : 'var(--secondary)' }} title={ok ? '完了' : '未完了'} />
+      <Icon name={ok ? 'checkmark.circle.fill' : 'circle.dotted'} size={20} style={{ color: ok ? 'var(--green)' : 'var(--secondary)' }} title={ok ? L('完了') : L('未完了')} />
       <div className="flex1">
         <b>{title}</b>
         <div className="callout secondary selectable">{detail}</div>
@@ -235,10 +236,10 @@ export function SetupView() {
   return (
     <div className="setup">
       <h1><Icon name="shippingbox" size={28} /> Tsugumi の実行環境を準備します</h1>
-      <div className="secondary">Web UI では core（tsugumid）をこのホストで直接動かします（VM は使いません）。次の項目を確認してください。</div>
+      <div className="secondary">{L('Web UI では core（tsugumid）をこのホストで直接動かします（VM は使いません）。次の項目を確認してください。')}</div>
       <div className="groupbox">
-        {step('Nix がインストールされている', s.nix.ok, s.nix.ok ? '/nix/store があります。Card の環境は Nix で作ります。' : 'https://nixos.org/download からインストールしてください（flakes を有効に）。')}
-        {step('core（tsugumid と tsugumi-worker）がビルドされている', s.tsugumid.ok && s.worker.ok, `${s.tsugumid.path}\n${s.worker.path}`,
+        {step(L('Nix がインストールされている'), s.nix.ok, s.nix.ok ? L('/nix/store があります。Card の環境は Nix で作ります。') : L('https://nixos.org/download からインストールしてください（flakes を有効に）。'))}
+        {step(L('core（tsugumid と tsugumi-worker）がビルドされている'), s.tsugumid.ok && s.worker.ok, `${s.tsugumid.path}\n${s.worker.path}`,
           <Button disabled={!s.nix.ok || !!s.building?.running} onClick={async () => {
             setMessage(undefined)
             try {
@@ -247,13 +248,13 @@ export function SetupView() {
             } catch (e) {
               setMessage(errorText(e))
             }
-          }}>ビルド</Button>)}
-        {step('Card SDK が見つかる', s.sdk.ok, s.sdk.path)}
+          }}>{L('ビルド')}</Button>)}
+        {step(L('Card SDK が見つかる'), s.sdk.ok, s.sdk.path)}
       </div>
       {s.building && (
         <div className="col gap6">
           <div className="row gap8 center">
-            {s.building.running ? <><Spinner small />ビルドしています（初回は数分かかります）…</> : s.building.code === 0 ? 'ビルドが完了しました。' : <span style={{ color: 'var(--red)' }}>ビルドに失敗しました（{s.building.code}）。</span>}
+            {s.building.running ? <><Spinner small />{L('ビルドしています（初回は数分かかります）…')}</> : s.building.code === 0 ? 'ビルドが完了しました。' : <span style={{ color: 'var(--red)' }}>ビルドに失敗しました（{s.building.code}）。</span>}
           </div>
           <pre className="env-log selectable">{s.building.log}</pre>
         </div>
@@ -262,7 +263,7 @@ export function SetupView() {
       <div className="row gap8 center">
         {message && <span className="label" style={{ color: 'var(--red)' }}><Icon name="exclamationmark.triangle.fill" />{message}</span>}
         <span className="spacer" />
-        <Button onClick={() => void app.refresh()}>再確認</Button>
+        <Button onClick={() => void app.refresh()}>{L('再確認')}</Button>
       </div>
     </div>
   )
@@ -273,10 +274,10 @@ export function SetupView() {
 /** "たった今", "5 分前", "3 時間前", "2 日前": no seconds that tick. */
 export function relativeAge(ms: number, now = Date.now()): string {
   const d = Math.max(0, (now - ms) / 1000)
-  if (d < 60) return 'たった今'
-  if (d < 3600) return `${Math.floor(d / 60)} 分前`
-  if (d < 86400) return `${Math.floor(d / 3600)} 時間前`
-  return `${Math.floor(d / 86400)} 日前`
+  if (d < 60) return L('たった今')
+  if (d < 3600) return L('{0} 分前', Math.floor(d / 60))
+  if (d < 86400) return L('{0} 時間前', Math.floor(d / 3600))
+  return L('{0} 日前', Math.floor(d / 86400))
 }
 
 /** Home (new, existing and recent projects) and the demo list, entered from
@@ -311,13 +312,13 @@ export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
           <div className="error-bar">
             <span className="label selectable" style={{ color: 'var(--red)' }}><Icon name="exclamationmark.triangle.fill" />{app.error}</span>
             <span className="spacer" />
-            <Button onClick={() => app.setError(undefined)}>閉じる</Button>
+            <Button onClick={() => app.setError(undefined)}>{L('閉じる')}</Button>
           </div>
         )}
       </div>
       <GuideCorner screen={showDemos ? 'demos' : 'home'} />
       {showNew && <NewProjectSheet onClose={() => setShowNew(false)} onCreated={onOpen} />}
-      {picking && <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); onOpen(p) }} />}
+      {picking && <FolderPicker message={L('tsugumi.json を含むフォルダを選んでください')} requireProject onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); onOpen(p) }} />}
     </div>
   )
 }
@@ -332,14 +333,14 @@ function HomeSidebar({ showDemos, onToggleDemos, onNew, onOpen }: { showDemos: b
         <div className="home-scene"><TsugumiTemariScene /></div>
         <div className="home-title">Tsugumi</div>
         <div className="col gap8 home-buttons">
-          <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>新規プロジェクト…</Button>
-          <Button large icon="folder" guide="open_project" onClick={onOpen}>既存のプロジェクトを開く…</Button>
+          <Button kind="prominent" large icon="plus.square" guide="new_project" onClick={onNew}>{L('新規プロジェクト…')}</Button>
+          <Button large icon="folder" guide="open_project" onClick={onOpen}>{L('既存のプロジェクトを開く…')}</Button>
           <button type="button" className="home-link" data-guide="demos" onClick={onToggleDemos}>
-            <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? '最近のプロジェクト' : 'デモを見る'}
+            <Icon name={showDemos ? 'clock' : 'sparkles'} />{showDemos ? L('最近のプロジェクト') : L('デモを見る')}
           </button>
         </div>
         <span className="spacer" />
-        <Button kind="borderless" small icon="gearshape" className="home-settings" guide="settings" help="アプリ設定（⌘,）" onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>設定</Button>
+        <Button kind="borderless" small icon="gearshape" className="home-settings" guide="settings" help={L('アプリ設定（⌘,）')} onClick={() => app.openWindow(undefined, { kind: 'appSettings' })}>{L('設定')}</Button>
       </div>
     </div>
   )
@@ -365,33 +366,33 @@ function Recents({ onOpen }: { onOpen: (path: string) => void }) {
   return (
     <div className="home-pane">
       <div className="row center gap8 home-pane-head">
-        <span className="headline">最近のプロジェクト</span>
+        <span className="headline">{L('最近のプロジェクト')}</span>
         <span className="spacer" />
         {chosen ? (
           <>
             <Toggle kind="checkbox" checked={recents.length > 0 && chosen.size === recents.length}
-              onChange={(v) => setChosen(v ? new Set(recents.map((r) => r.path)) : new Set())} label="すべて選択" />
-            <Button disabled={!chosen.size} help="一覧から外すだけで、フォルダは削除しません" onClick={() => {
+              onChange={(v) => setChosen(v ? new Set(recents.map((r) => r.path)) : new Set())} label={L('すべて選択')} />
+            <Button disabled={!chosen.size} help={L('一覧から外すだけで、フォルダは削除しません')} onClick={() => {
               void app.forgetRecents(chosen)
               setChosen(undefined)
-            }}>一覧から削除</Button>
-            <Button onClick={() => setChosen(undefined)}>完了</Button>
+            }}>{L('一覧から削除')}</Button>
+            <Button onClick={() => setChosen(undefined)}>{L('完了')}</Button>
           </>
-        ) : recents.length > 0 && <Button help="一覧から外すプロジェクトを選ぶ" onClick={() => setChosen(new Set())}>編集</Button>}
+        ) : recents.length > 0 && <Button help={L('一覧から外すプロジェクトを選ぶ')} onClick={() => setChosen(new Set())}>{L('編集')}</Button>}
       </div>
       {recents.length === 0 ? (
-        <Empty title="最近開いたプロジェクトはありません" icon="clock" description="新規作成するか、既存のフォルダを開いてください。" />
+        <Empty title={L('最近開いたプロジェクトはありません')} icon="clock" description={L('新規作成するか、既存のフォルダを開いてください。')} />
       ) : (
         <div className="scroll">
           <div className="recents-list">
             {recents.map((p) => (
               <button key={p.path} type="button" className="recent-row" onClick={() => (chosen ? toggle(p.path) : onOpen(p.path))}
                 onContextMenu={(e) => showMenu(e, [
-                  { label: 'Finder で表示', action: () => void api('/api/reveal', { path: p.path }).catch((er) => app.setError(er)) },
-                  { label: '一覧から削除', action: () => void app.forgetRecents([p.path]) },
+                  { label: L('Finder で表示'), action: () => void api('/api/reveal', { path: p.path }).catch((er) => app.setError(er)) },
+                  { label: L('一覧から削除'), action: () => void app.forgetRecents([p.path]) },
                 ])}>
                 {chosen && (
-                  <Icon name={chosen.has(p.path) ? 'checkmark.square.fill' : 'square'} title={chosen.has(p.path) ? '選択済み' : '未選択'}
+                  <Icon name={chosen.has(p.path) ? 'checkmark.square.fill' : 'square'} title={chosen.has(p.path) ? L('選択済み') : L('未選択')}
                     style={{ color: chosen.has(p.path) ? 'var(--accent)' : 'var(--secondary)' }} />
                 )}
                 <Icon name="square.stack.3d.up" className="secondary" />
@@ -427,18 +428,18 @@ function Demos({ onOpen }: { onOpen: (path: string) => void }) {
   return (
     <div className="home-pane">
       <div className="row center gap8 home-pane-head">
-        <span className="title2">デモ</span>
+        <span className="title2">{L('デモ')}</span>
         <span className="spacer" />
-        <TextField value={search} onChange={setSearch} placeholder="探す" style={{ maxWidth: 220 }} />
+        <TextField value={search} onChange={setSearch} placeholder={L('探す')} style={{ maxWidth: 220 }} />
       </div>
-      <div className="callout secondary">デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。</div>
+      <div className="callout secondary">{L('デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。')}</div>
       {/* Tags to narrow the list as demos grow. */}
       <div className="tag-row">
-        <TagChip label="すべて" selected={tag === undefined} onClick={() => setTag(undefined)} />
+        <TagChip label={L('すべて')} selected={tag === undefined} onClick={() => setTag(undefined)} />
         {tags.map((t) => <TagChip key={t} label={t} selected={tag === t} onClick={() => setTag(tag === t ? undefined : t)} />)}
       </div>
       <div className="scroll flex1">
-        {shown.length === 0 && <Empty title={demos.length === 0 ? 'デモが見つかりません' : '条件に合うデモはありません'} icon="questionmark.folder" />}
+        {shown.length === 0 && <Empty title={demos.length === 0 ? L('デモが見つかりません') : L('条件に合うデモはありません')} icon="questionmark.folder" />}
         <div className="demo-grid">
           {shown.map((d) => (
             <DemoCard key={d.id} demo={d} onOpen={async () => {
@@ -467,7 +468,7 @@ function DemoCard({ demo, onOpen }: { demo: Demo; onOpen: () => void }) {
       <div className="headline">{demo.title}</div>
       <div className="callout secondary clamp3">{demo.description}</div>
       <div className="row gap4 wrap">{demo.tags.map((t) => <span key={t} className="demo-tag caption2">{t}</span>)}</div>
-      <div className="row end"><Button kind="prominent" onClick={onOpen}>コピーを開く</Button></div>
+      <div className="row end"><Button kind="prominent" onClick={onOpen}>{L('コピーを開く')}</Button></div>
     </div>
   )
 }
@@ -478,14 +479,14 @@ function NewProjectSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   return (
     <Sheet onClose={onClose} width={380}>
       <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name) setChoosing(true) }}>
-        <div className="title2">新規プロジェクト</div>
-        <TextField value={name} onChange={setName} placeholder="名前" autoFocus />
+        <div className="title2">{L('新規プロジェクト')}</div>
+        <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
-          <Button onClick={onClose}>キャンセル</Button>
-          <Button kind="prominent" type="submit" disabled={!name}>作成場所を選ぶ…</Button>
+          <Button onClick={onClose}>{L('キャンセル')}</Button>
+          <Button kind="prominent" type="submit" disabled={!name}>{L('作成場所を選ぶ…')}</Button>
         </div>
       </form>
-      {choosing && <FolderPicker message="プロジェクトのフォルダを作成する場所を選んでください" allowCreate initial={app.status?.home} onClose={() => setChoosing(false)}
+      {choosing && <FolderPicker message={L('プロジェクトのフォルダを作成する場所を選んでください')} allowCreate initial={app.status?.home} onClose={() => setChoosing(false)}
         onPick={async (parent) => {
           setChoosing(false)
           try {

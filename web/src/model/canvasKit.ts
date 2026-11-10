@@ -5,6 +5,7 @@ import { D } from '../shared/rpc'
 import type { FlowDirection } from './prefs'
 import type { CardKind } from './session'
 import type { PermissionKind } from './permissions'
+import { L } from '../i18n'
 
 export type Pt = { x: number; y: number }
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -13,14 +14,14 @@ export type Rect = { x: number; y: number; width: number; height: number }
 export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, done }
 
 export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
-  [Stage.waiting]: { label: '入力待ち', active: '入力待ち', icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: 'SDK 準備', active: 'SDK 準備中', icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
-  [Stage.evaluate]: { label: 'Nix 評価', active: 'Nix 評価中', icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
-  [Stage.build]: { label: 'build', active: 'build 中', icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
-  [Stage.execute]: { label: 'run', active: '実行中', icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.stdout },
-  [Stage.validate]: { label: 'validate', active: '出力を検証中', icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
-  [Stage.save]: { label: '保存', active: '保存中', icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
-  [Stage.done]: { label: '完了', active: '完了', icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
+  [Stage.waiting]: { label: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
+  [Stage.prepare]: { label: L('SDK 準備'), active: L('SDK 準備中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
+  [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
+  [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.stdout },
+  [Stage.validate]: { label: 'validate', active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
+  [Stage.save]: { label: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
+  [Stage.done]: { label: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
 }
 
 export function stageOfPhase(p: D.Phase): Stage | undefined {
@@ -48,8 +49,8 @@ export function stageParts(s: Stage): Stage[] {
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'cached' | 'reused' | 'failed' | 'cancelled' | 'notRun'
 export const STAGE_STATUS_LABEL: Record<StageStatus, string> = {
-  pending: '未開始', running: '進行中', done: '完了', cached: 'キャッシュを利用（処理なし）',
-  reused: 'この Run で準備済みのものを再利用', failed: '失敗', cancelled: '停止', notRun: '実行されませんでした',
+  pending: L('未開始'), running: L('進行中'), done: L('完了'), cached: L('キャッシュを利用（処理なし）'),
+  reused: L('この Run で準備済みのものを再利用'), failed: L('失敗'), cancelled: L('停止'), notRun: L('実行されませんでした'),
 }
 
 export interface StageItem {
