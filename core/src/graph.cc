@@ -400,12 +400,6 @@ class Builder {
               n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia")
             n.exec_diags.push_back(diag(n.path, "invalid_language",
                                         "language must be cpp, python, bash, r or julia"));
-          // C++ and Python run inside the worker, which is built for this machine.
-          if (!n.settings.system.empty() && (n.settings.language == "cpp" || n.settings.language == "python"))
-            n.exec_diags.push_back(diag(n.path, "unsupported_system",
-                                        "system " + n.settings.system + " runs bash, R and Julia Cards; a " +
-                                            n.settings.language + " Card runs in the worker, which is built for " +
-                                            native_system()));
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
                                         n.def_dir + "default.nix"));

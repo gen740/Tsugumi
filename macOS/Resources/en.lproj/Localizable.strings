@@ -699,7 +699,7 @@
 "初期化を完了できませんでした（残りは保持しています。再試行できます）: " = "Could not finish resetting (the rest is kept; you can retry): ";
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
-"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。" = "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). C++ and Python Cards cannot run this way yet.";
+"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。" = "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). Its first build runs under the emulator too, so it takes longer.";
 "別のプロジェクトを開く…" = "Open Another Project…";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
 "別ウインドウで開く" = "Open in New Window";

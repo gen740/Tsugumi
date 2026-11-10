@@ -64,6 +64,16 @@ Tests marked "VM" run only on the shared VM.
 
 Plans and the scope of the guarantees are gathered in [Plans and guarantees](Limitations.md).
 
+## Cards of another system (x86_64-linux) in the app
+
+Checked by hand in the app (`macOS/build-app.sh`, the shared VM on an M3 Max, 2026-11-10): a project of a trigger, a C++ Card and a Python Card, both with `"system": "x86_64-linux"`, each showing what it ran as (`uname -m` and `platform.machine()`, and the glibc in the process). Every run reported `x86_64` and glibc 2.44 for both, and the Info tab of each invocation named the emulator. The C++ Card's build stage includes building the x86_64 worker; the Python Card's reuses it.
+
+| Emulator | Builds | C++ build stage | Python build stage | Emulator recorded |
+| --- | --- | --- | --- | --- |
+| Rosetta | first (the x86_64 compiler downloaded) | 136 s | 18 s | `/run/rosetta/rosetta` |
+| qemu (`TSUGUMI_VM_X86=qemu`) | the worker built again (its derivation had changed) | 249 s | 8 s | `/nix/store/…-qemu-user-11.1.2/bin/qemu-x86_64` |
+| Rosetta, then qemu | from the store (built under the other emulator too) | cached; the whole invocation 0.5 s | cached; 0.4–0.7 s | as above |
+
 ## A run with the real Claude API
 
 A record of going, with the real Claude API, from a project of Drafts only, through having the app's Agent "Generate Cards", to running them and checking the results.

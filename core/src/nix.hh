@@ -31,6 +31,9 @@ struct CardBuild {
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.
   std::string emulator;
+  // The worker that loads a package of another system, built with the Card's
+  // nixpkgs for that system; "" for tsugumid's own worker.
+  std::string worker;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };

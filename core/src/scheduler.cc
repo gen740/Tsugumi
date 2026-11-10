@@ -1167,7 +1167,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<uid_t> uid;
     if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
     WorkerSpawn sp;
-    sp.worker_binary = svc_.options().worker_binary.string();
+    // A package of another system is loaded by the worker its build made for
+    // that system, which the kernel runs under the emulator.
+    sp.worker_binary = rt.build->worker.empty() ? svc_.options().worker_binary.string() : rt.build->worker;
     sp.bash = TSUGUMI_BASH;
     sp.build = *rt.build;
     sp.sandbox = node.settings.sandbox;
@@ -1199,7 +1201,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // The resident worker of this Card, if it runs the same build under the same conditions.
     std::string key = rt.build->package.value_or("") + "|" + rt.build->bash.value_or("") + "|" + rt.build->pre_run +
                       "|" + rt.build->post_run + "|" + (sp.sandbox ? "s" : "u") + "|" +
-                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-");
+                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary;
     for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
     std::string card_key = path_key(node.path);
     auto lease = svc_.workers().acquire(card_key, key, sp, rt.node->settings.reuse_worker);
@@ -1254,7 +1256,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         {"TSUGUMI_CARD", path_key(node.path)},
         {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
         {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
-        {"TSUGUMI_WORKER", svc_.options().worker_binary.string()},
+        {"TSUGUMI_WORKER", sp.worker_binary},
     };
     std::optional<uint64_t> deadline_ms;
     std::optional<std::chrono::steady_clock::time_point> deadline;

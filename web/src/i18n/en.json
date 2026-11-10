@@ -902,7 +902,7 @@
  "エミュレーター": "Emulator",
  "システム": "System",
  "この環境と同じ": "Same as this environment",
- "別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。C++ と Python の Card は、まだこの方法では動きません。": "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). C++ and Python Cards cannot run this way yet.",
+ "別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。": "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). Its first build runs under the emulator too, so it takes longer.",
  "手分けして進めています": "Splitting the work among helpers",
  "手分けして進めました": "Split the work among helpers",
  "手動でビルドする場合:": "To build by hand:",

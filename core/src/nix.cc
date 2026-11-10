@@ -588,14 +588,10 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   if (const auto* r = schema::get(m.run)) {
     if (const auto* p = schema::get(r->package)) b.package = *p;
     if (const auto* p = schema::get(r->bash)) b.bash = *p;
+    if (const auto* p = schema::get(r->worker)) b.worker = *p;
   }
   if (b.package.has_value() == b.bash.has_value())
     throw Failed(FailureKind::nix_failed, "the Card manifest needs exactly one body: run.package or run.bash");
-  if (b.package && !node.settings.system.empty())
-    throw Failed(FailureKind::unsupported,
-                 "system " + node.settings.system + " runs Cards whose body is bash (bash, R, Julia); run.package " +
-                     "is loaded into the worker, which is built for " + native_system(),
-                 {{"system", node.settings.system}});
   b.emulator = emulator;
   if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
   if (const auto* p = schema::get(m.post_run)) b.post_run = *p;

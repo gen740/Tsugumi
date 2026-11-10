@@ -1,6 +1,6 @@
 """A Card's "system": built and run for another Nix system under an emulator
-the kernel has registered (binfmt_misc). Which systems a Card may name,
-which Cards can use one, and what a run says when no emulator is there.
+the kernel has registered (binfmt_misc). Which systems a Card may name (Cards
+of every language may), and what a run says when no emulator is there.
 
 Emulated runs themselves are checked in the shared VM on a Mac, with Rosetta
 and with qemu (TSUGUMI_VM_X86=qemu): docs/Evidence.md.
@@ -64,15 +64,13 @@ def test_which_systems_and_cards(tmp_path):
         c = d.client()
         c.hello()
         assert "invalid_setting" in diagnostics(c, "unknown")
-        # C++ and Python run inside the worker, which is built for this machine.
-        assert "unsupported_system" in diagnostics(c, "py")
-        assert "unsupported_system" in diagnostics(c, "cc")
-        # bash, R and Julia run as programs the kernel hands to the emulator.
-        for ok in ("sh", "r"):
-            assert not {"unsupported_system", "invalid_setting"} & set(diagnostics(c, ok)), ok
+        # bash, R and Julia run as programs the kernel hands to the emulator;
+        # C++ and Python in a worker built for that system.
+        for ok in ("py", "cc", "sh", "r"):
+            assert "invalid_setting" not in diagnostics(c, ok), ok
         if NATIVE.endswith("-linux"):
             # This machine's own system is the default, written out.
-            assert not {"unsupported_system", "invalid_setting"} & set(diagnostics(c, "native"))
+            assert "invalid_setting" not in diagnostics(c, "native")
     finally:
         d.cleanup()
 
