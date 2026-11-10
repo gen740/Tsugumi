@@ -87,7 +87,7 @@ done
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
-# Help > Tsugumi を知る: the documentation site's story pages, as they are, with
+# Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
 # what they use (Sources/App/Explainer/ExplainerWindow.swift).
 explainer="$app/Contents/Resources/explainer"
 mkdir -p "$explainer/pages" "$explainer/site/js" "$explainer/site/assets" "$explainer/assets"

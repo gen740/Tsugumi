@@ -213,7 +213,7 @@ function ScopeRow({ workspace, session, tab, scope, depth }: { workspace: Worksp
 
 /** The Cards of the current scope, under the headings of their visual
  *  groups. A row selects its Card and moves the canvas to it; a composite
- *  Card has an explicit "開く". Collapsing is done on the Card itself. */
+ *  Card has an explicit "Open". Collapsing is done on the Card itself. */
 function VisibleCards({ session, tab }: { session: ProjectSession; tab: WorkflowTab }) {
   const ids = session.cards(tab.scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
   const groups = session.groups(tab.scope)

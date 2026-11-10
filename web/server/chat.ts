@@ -59,8 +59,8 @@ interface Settings {
   effort: string
   fastModel: string
   fixturePort: number
-  /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
-  /** Models listed with "モデル一覧を取得", per connection (no request from the chat). */
+  /** Models listed earlier with "List Models" (no request from the chat). */
+  /** Models listed with "List Models", per connection (no request from the chat). */
   models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   /** Their display names (the ChatGPT account's catalog has them). */
   modelNames: Record<string, string>

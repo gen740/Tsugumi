@@ -218,8 +218,8 @@ struct CardGroup {
   Opt<"outputs", v::Array<Obj<GroupPort>>> outputs;     // outputs shown on the group frame
 };
 
-// Where the inner canvas of a Card in Card shows its boundary bars ("この Card
-// の入力" / "の出力"); placed automatically when absent.
+// Where the inner canvas of a Card in Card shows its boundary bars ("This Card's
+// inputs" / "outputs"); placed automatically when absent.
 struct BoundaryLayout {
   Opt<"inputs", Obj<Position>> inputs;
   Opt<"outputs", Obj<Position>> outputs;

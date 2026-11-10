@@ -1,7 +1,7 @@
 import Foundation
 import TsugumiAgent
 
-/// "思考の過程を描く": what the Agent is thinking, in one short line for the
+/// "Draw thoughts": what the Agent is thinking, in one short line for the
 /// tsugumi's bubble. A small model reads the Agent's recent words and tool
 /// calls (at most every few seconds, only while it is on) and writes the
 /// line; this costs tokens of its own, counted in `usage`. Off, the bubble
@@ -88,7 +88,7 @@ final class ThoughtSummarizer {
   }
 
   /// The bubble speaks in the app's language and in the voice of its plain
-  /// lines (「load を読んでいます」), so a summary does not change the tone.
+  /// lines (in Japanese 「load を読んでいます」, "reading load"), so a summary does not change the tone.
   static var system: String { system(english: Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true) }
 
   nonisolated static func system(english: Bool) -> String {

@@ -45,7 +45,7 @@ export interface GuideShow { highlight?: string; say?: string; choices: string[]
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
 export interface GuideBubble {
   id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean; more?: boolean
-  /** Said by the app (a demo picked from the first questions), not by a model: its ほかのデモ asks those questions again. */
+  /** Said by the app (a demo picked from the first questions), not by a model: its "Other demos" asks those questions again. */
   local?: boolean
 }
 
@@ -149,9 +149,9 @@ export class GuideController extends Observable {
   }
   /** The first start's question (provider and key, or skip) was answered. */
   setupDone = true
-  /** "デモを見ますか？" was answered (見る or あとで). */
+  /** The question whether to see a demo was answered ("Show Me" or "Later"). */
   demoAnswered = true
-  /** "ガイドを見てみますか？" is asked: the user's own save of a key (or
+  /** "Would you like to see the guide?" is asked: the user's own save of a key (or
    *  sign-in) has just made the guide usable. */
   demoInvite = false
   tour: GuideTour | null = null
@@ -232,7 +232,7 @@ export class GuideController extends Observable {
   /** The chat's answer the bubble points to was asked for: the chat shows it marked. */
   chatFlash = 0
 
-  /** The bubble's "詳しくはチャットに": the chat (or on Home the panel) shows the whole answer. */
+  /** The bubble's "More in the chat": the chat (or on Home the panel) shows the whole answer. */
   showDetails() {
     if (this.speakingChat) this.chatFlash = Date.now()
     else this.open = true
@@ -281,7 +281,7 @@ export class GuideController extends Observable {
     return this.available && !this.demoAnswered
   }
 
-  /** Where the first questions are; ほかのデモ by a demo the app pointed at puts them out again. */
+  /** Where the first questions are; "Other demos" by a demo the app pointed at puts them out again. */
   offerStep: OfferStep = { kind: 'start' }
   asksAgain = false
   /** The corner shows the first questions. */
@@ -344,7 +344,7 @@ export class GuideController extends Observable {
     this.changed()
   }
 
-  /** The dialog was answered: あとで is the bubble's あとで (ガイドを見る answers it by starting the tour). */
+  /** The dialog was answered: "Later" is the bubble's "Later" ("See the guide" answers it by starting the tour). */
   closeInvite(later: boolean) {
     this.demoInvite = false
     if (later) this.answerDemoOffer()
@@ -378,7 +378,7 @@ export class GuideController extends Observable {
     this.changed()
   }
 
-  /** おすすめを聞く in a field: the guide picks one of its demos. */
+  /** "Ask for a Recommendation" in a field: the guide picks one of its demos. */
   recommend(field: string) {
     this.answerDemoOffer()
     this.demosRequested = true

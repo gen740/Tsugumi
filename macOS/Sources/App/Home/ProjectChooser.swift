@@ -3,7 +3,7 @@ import SwiftUI
 import TsugumiRPC
 
 /// Home (new, existing and recent projects) and the demo list, entered
-/// from "デモを見る" with a way back. Both follow the window's size: lists
+/// from "Browse Demos" with a way back. Both follow the window's size: lists
 /// scroll, nothing is cut at the top.
 struct ProjectChooser: View {
   @Environment(AppModel.self) private var model
@@ -285,7 +285,7 @@ struct ProjectChooser: View {
   }
 }
 
-/// "たった今", "5 分前", "3 時間前", "2 日前": no seconds that tick.
+/// "Just now", "5 minutes ago", "3 hours ago", "2 days ago": no seconds that tick.
 func relativeAge(_ date: Date, now: Date = Date()) -> String {
   let s = max(0, now.timeIntervalSince(date))
   if s < 60 { return String(localized: "たった今") }
@@ -365,7 +365,7 @@ private struct HomeSidebar: View {
   }
 }
 
-/// Home: the documents, read with their figures (the same window as Help > Tsugumi を知る).
+/// Home: the documents, read with their figures (the same window as Help > Learn about Tsugumi).
 private struct OpenExplainerLink: View {
   @Environment(\.openWindow) private var openWindow
   var body: some View {

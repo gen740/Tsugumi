@@ -2,7 +2,7 @@ import Foundation
 import TsugumiAgent
 import TsugumiRPC
 
-/// "版の要約": a small model writes what a version changed from its diff, only
+/// "Version summaries": a small model writes what a version changed from its diff, only
 /// while switched on (the version tree asks first): code and settings go to
 /// the model's provider, never data files. It costs tokens of its own and is
 /// not made on the ChatGPT plan, whose allowance is for the Agent.

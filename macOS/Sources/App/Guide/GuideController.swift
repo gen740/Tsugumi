@@ -65,7 +65,7 @@ struct GuideBubble: Equatable {
   /// The answer says more than the bubble: it points the user to the chat (or the panel).
   var more = false
   /// Said by the app (a demo picked from the first questions), not by a model:
-  /// its ほかのデモ asks those questions again.
+  /// its "Other demos" asks those questions again.
   var local = false
 }
 
@@ -162,7 +162,7 @@ final class GuideController {
   /// The chat's answer the bubble points to was asked for: the chat shows it marked.
   private(set) var chatFlash: Date?
 
-  /// The bubble's "詳しくはチャットに": the chat (or on Home the panel) shows the whole answer.
+  /// The bubble's "More in the chat": the chat (or on Home the panel) shows the whole answer.
   func showDetails() {
     if speakingChat != nil { chatFlash = Date() } else { open = true }
   }
@@ -177,14 +177,14 @@ final class GuideController {
 
   /// The first start's question (provider and key, or skip) was answered.
   private(set) var setupDone: Bool
-  /// "デモを見ますか？" was answered (見る or あとで).
+  /// The question whether to see a demo was answered ("Show Me" or "Later").
   private(set) var demoAnswered: Bool
 
   /// The first start asks for a key: nothing usable is set and it was never answered.
   var needsSetup: Bool { !setupDone && !connected && !Self.quiet }
   /// The guide greets and offers the demo once (without a connection, the scripted tour).
   var offersDemo: Bool { available && !demoAnswered && !Self.quiet }
-  /// The main window (its Workspace id) that asks "ガイドを見てみますか？": the
+  /// The main window (its Workspace id) that asks "Would you like to see the guide?": the
   /// user's own save of a key (or sign-in) has just made the guide usable.
   var demoInvite: UUID?
   @ObservationIgnored private var inviteOnConnect = false
@@ -193,7 +193,7 @@ final class GuideController {
   /// then a field or the Drafts, then a demo.
   enum OfferStep: Equatable { case start, fields, field(String), drafts }
   var offerStep: OfferStep = .start
-  /// ほかのデモ by a demo the app pointed at: the questions are out again.
+  /// "Other demos" by a demo the app pointed at: the questions are out again.
   private(set) var asksAgain = false
   /// The corner shows the first questions.
   var asksDemo: Bool { available && !Self.quiet && (!demoAnswered || asksAgain) }
@@ -393,7 +393,7 @@ final class GuideController {
     clearHighlight()
   }
 
-  /// "デモを見ますか？": either answer is kept, so it is never asked again.
+  /// The question whether to see a demo: either answer is kept, so it is never asked again.
   func answerDemoOffer() {
     demoAnswered = true
     asksAgain = false
@@ -413,7 +413,7 @@ final class GuideController {
     bubble?.local = true
   }
 
-  /// おすすめを聞く in a field: the guide picks one of its demos.
+  /// "Ask for a Recommendation" in a field: the guide picks one of its demos.
   func recommend(in field: String) {
     answerDemoOffer()
     demosRequested = true

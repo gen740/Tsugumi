@@ -412,7 +412,7 @@ const dot = (a: V, b: V) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 const norm = (a: V): V => mul(a, 1 / Math.sqrt(dot(a, a)))
 const cross = (a: V, b: V): V => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 
-/** The temari (巻きかがり) the bird unwinds, low-poly like the bird: a ball of
+/** The temari (wound and stitched) the bird unwinds, low-poly like the bird: a ball of
  *  若草 thread with four wound bands in two tones (docs/assets/tsugumi-icon.svg #temari). */
 export const TsugumiTemari = {
   /** Where the thread leaves the ball: its top. */

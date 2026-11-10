@@ -271,7 +271,7 @@ export function SetupView() {
 
 // ---- Home --------------------------------------------------------------------------
 
-/** "たった今", "5 分前", "3 時間前", "2 日前": no seconds that tick. */
+/** "Just now", "5 minutes ago", "3 hours ago", "2 days ago": no seconds that tick. */
 export function relativeAge(ms: number, now = Date.now()): string {
   const d = Math.max(0, (now - ms) / 1000)
   if (d < 60) return L('たった今')
@@ -281,7 +281,7 @@ export function relativeAge(ms: number, now = Date.now()): string {
 }
 
 /** Home (new, existing and recent projects) and the demo list, entered from
- *  "デモを見る" with a way back. Lists scroll; nothing is cut at the top. */
+ *  "Browse Demos" with a way back. Lists scroll; nothing is cut at the top. */
 export function ProjectChooser({ onOpen }: { onOpen: (path: string) => void }) {
   useObserve(app)
   const [showDemos, setShowDemos] = useState(false)

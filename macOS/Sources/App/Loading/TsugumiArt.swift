@@ -397,7 +397,7 @@ enum TsugumiThread {
   }
 }
 
-/// The temari (巻きかがり) the bird unwinds, low-poly like the bird: a ball
+/// The temari (wound and stitched) the bird unwinds, low-poly like the bird: a ball
 /// of 若草 thread with four wound bands in two tones, each facet shaded by
 /// how it faces the light. The same ball as the key visual
 /// (docs/assets/tsugumi-icon.svg #temari).

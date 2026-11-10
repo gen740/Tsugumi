@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 
-// "Tsugumi を知る": the story pages of the documentation site in a web view, so
+// "Learn about Tsugumi": the story pages of the documentation site in a web view, so
 // the app and the site show the same words and the same figures from one source
 // (docs/site/build.mjs, docs/site/js/). The pages use ES modules, which WebKit
 // does not load from file:, so they are served under a scheme of the app's own.

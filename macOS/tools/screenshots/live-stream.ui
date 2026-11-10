@@ -1,4 +1,4 @@
-# Dawn の折れ線の確認用: 乱数歩行を逐次表示している途中と、終わった後の画面
+# For checking Dawn's line charts: the screen while the random walks are shown as they come, and after they end
 size 1440 900
 chat hide
 wait 2

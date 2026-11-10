@@ -1061,7 +1061,7 @@ private struct GuidePanel: View {
 // MARK: - The invitation
 
 /// Right after the user's first key (or sign-in): Tsugumi offers to show a
-/// demo itself. ガイドを見る does what the bubble's 定番のデモを見る does.
+/// demo itself. "See the guide" does what the bubble's "See the Standard Demo" does.
 struct GuideInviteView: View {
   let see: () -> Void
   let later: () -> Void

@@ -582,7 +582,7 @@ function Row({ item, perform, enabled }: { item: GuideItem; perform: (a: GuideAc
 }
 
 /** Right after the user's first key (or sign-in): Tsugumi offers to show a
- *  demo itself. ガイドを見る does what the bubble's 定番のデモを見る does. */
+ *  demo itself. "See the guide" does what the bubble's "See the Standard Demo" does. */
 export function GuideInvite() {
   useObserve(guide, prefs)
   if (!guide.demoInvite) return null

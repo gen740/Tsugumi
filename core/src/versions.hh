@@ -83,8 +83,9 @@ class Versions {
   // Makes the folder a repository with a first commit of what is in it
   // (.gitignore keeps .tsugumi/ out). A demo's history file
   // (.tsugumi-history.json) becomes its commits, branches, tags and notes
-  // instead, ending in what is on disk. Returns HEAD.
-  std::string init();
+  // instead, ending in what is on disk. Returns HEAD. `english` is the language
+  // of the first commit's message (the connection's, as for runs).
+  std::string init(bool english);
   // Commits what is on disk when it differs from HEAD (on a detached HEAD a
   // branch is made first, so nothing is left unreachable). Returns HEAD; ""
   // when the folder is not a repository.
@@ -94,8 +95,8 @@ class Versions {
   std::string mark(const std::string& name, const std::string& message);
   // The folder becomes `commit` (what is saved now is committed first). On a
   // branch's tip HEAD follows that branch, else it is detached and the next
-  // commit starts a branch.
-  void checkout(const std::string& commit);
+  // commit starts a branch. `english`: the language of that first commit's message.
+  void checkout(const std::string& commit, bool english);
   VersionGraphData graph(size_t limit);
   // The Cards of `commit`: saved positions, or columns by depth when a Card
   // has none. No Cards when its documents cannot be read.

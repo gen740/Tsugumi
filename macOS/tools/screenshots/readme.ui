@@ -1,6 +1,6 @@
-# README の画像（docs/assets/screenshots）を casa のコピーで撮る:
-# workflow / timeline / card-source と、$demo のツグミ（guide）。
-# サイドバーを隠し、Canvas を広く取って文字が読める倍率で撮る。
+# The README's images (docs/assets/screenshots), taken in a copy of casa:
+# workflow / timeline / card-source, and Tsugumi of $demo (guide).
+# The sidebar is hidden and the canvas made wide, at a zoom where the text can be read.
 size 1440 900
 sidebar hide
 chat show

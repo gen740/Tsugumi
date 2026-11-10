@@ -1,4 +1,4 @@
-# Home のデモ一覧（プロジェクトを開かずに起動して撮る）
+# The demo list on Home (taken on a launch that opens no project)
 nowait
 wait 2
 size 1440 900

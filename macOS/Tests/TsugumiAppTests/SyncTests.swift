@@ -198,7 +198,7 @@ import Testing
     #expect(f?["width"]?.double == 320 && f?["height"]?.double == 170)
   }
 
-  /// A draft the core refuses, while the Agent goes on saving: 変更を破棄 goes back
+  /// A draft the core refuses, while the Agent goes on saving: "Discard Changes" goes back
   /// to what is saved, the Agent's saves included, and saving works again.
   @Test func discardingWhatCannotBeSavedGoesBackAndSavingWorksAgain() async throws {
     let dir = try Self.project()
