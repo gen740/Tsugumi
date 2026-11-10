@@ -1,6 +1,6 @@
 // Card settings: a local working copy of one Card's settings (its
 // `_card.json`), metadata and sources. Nothing reaches the project until
-// "適用". Every Card has its own definition folder, so what is edited here is
+// "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -423,7 +423,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
         ))}
       </nav>
       <div className="cse-main">
-        {/* The preview belongs to 一般; editors, ports and history use the whole height. */}
+        {/* The preview belongs to General; editors, ports and history use the whole height. */}
         {category === 'general' && <CardPreview session={session} model={model} height={170} />}
         <div className="cse-content">
           {category === 'general' && <GeneralCategory model={model} onRenamed={renamed} />}
@@ -994,7 +994,7 @@ function CommentRecord({ comment: c }: { comment: CardComment }) {
   )
 }
 
-/** What the user and the Agent write about this Card. Saved at once, not with 適用
+/** What the user and the Agent write about this Card. Saved at once, not with Apply
  *  (during a run, when the run ends, as other edits): it says nothing about how it runs. */
 function CommentsCategory({ session, card }: { session: ProjectSession; card: CardKey }) {
   useObserve(session)

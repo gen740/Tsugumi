@@ -108,7 +108,7 @@ final class ChatController {
   }
 
   let session: ProjectSession
-  /// "思考の過程を描く": the Agent's thinking in one line for the canvas.
+  /// "Draw thoughts": the Agent's thinking in one line for the canvas.
   let thoughts: ThoughtSummarizer
   private(set) var items: [Item] = []
   /// The last turn stopped at the step limit and can go on.

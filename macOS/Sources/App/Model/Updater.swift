@@ -104,7 +104,7 @@ enum UpdateCheck {
 /// or the settings) it reads the latest release; a newer one is downloaded
 /// next to the app, its checksum and signature checked, and it takes the
 /// app's place when the app quits: the VM has been powered off by then, so
-/// no run is cut short by an update. "再起動して更新" quits and opens the
+/// no run is cut short by an update. "Restart to Update" quits and opens the
 /// new version. A build from source (AppChannel.dev) never updates itself.
 @MainActor @Observable
 final class Updater {

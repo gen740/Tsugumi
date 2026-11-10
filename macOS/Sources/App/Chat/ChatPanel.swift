@@ -39,7 +39,7 @@ struct ChatPanel: View {
     // that would have to ask keeps its saved list until a turn or Settings > API reads it.
     try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
   })
-  /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
+  /// "Draw thoughts": the Agent's thinking summarized for the canvas (extra tokens).
   @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
   @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
   @State private var askThoughts = false
@@ -599,7 +599,7 @@ struct ChatPanel: View {
 
   private func modelName(_ m: String) -> String { modelNames[m] ?? m }
 
-  /// "思考の過程を描く": on, a small model writes what the Agent is thinking
+  /// "Draw thoughts": on, a small model writes what the Agent is thinking
   /// for the tsugumi's bubble (asks once before the first time).
   private var thoughtsToggle: some View {
     Button {

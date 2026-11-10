@@ -242,7 +242,7 @@ type GroupStatus = { icon: string; color: string; label: string }
 /** The log of one invocation of a Card by stage, like a CI job: SDK
  *  preparation, Nix evaluation and build / execution / validation and save,
  *  each with its state, duration and what it printed, folded unless it failed
- *  or was asked for. The raw streams stay available under 「stream 別」. */
+ *  or was asked for. The raw streams stay available under "By stream". */
 export function StageLogView({ session, runId, card, invocation, focus }: {
   session: ProjectSession; runId: string; card: string[]; invocation?: bigint; focus?: Stage
 }) {
@@ -483,7 +483,7 @@ const STAGE_COLORS: Partial<Record<Stage, string>> = {
 
 /** Invocations of one run on a shared time axis, one row per Card, each bar
  *  split into its stages. Drag over a time range to zoom into it, scroll
- *  sideways to move along time, 「全体」 to see the whole run again. Hover a bar
+ *  sideways to move along time, "All" to see the whole run again. Hover a bar
  *  for its Card, invocation, stage and times; click it to show the Card. */
 function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSession; runId?: string; run?: R.RunStatusT; onSelect: (k: CardKey) => void }) {
   const [entries, setEntries] = useState<TimelineEntry[]>([])

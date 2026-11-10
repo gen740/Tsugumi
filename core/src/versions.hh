@@ -24,7 +24,7 @@ struct VersionRunNote {
   std::string state;  // succeeded, failed, cancelled
   std::string ended;  // ISO 8601 (UTC)
   double seconds = 0;
-  // What ran, from what the run did ("全体: a、b ×2 / 失敗: b（worker_failed）").
+  // What ran, from what the run did ("whole: a, b ×2 / failed: b (worker_failed)").
   // Empty for a run a demo's history file lists.
   std::string summary;
 };

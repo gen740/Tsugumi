@@ -9,7 +9,7 @@ import TsugumiRPC
 struct CardDatabaseView: View {
   @Environment(\.openWindow) private var openWindow
   let session: ProjectSession
-  /// The definition the window was opened for ("編集…" in the tree).
+  /// The definition the window was opened for ("Edit…" in the tree).
   var initial: String? = nil
   @State private var search = ""
   @State private var selected: String?

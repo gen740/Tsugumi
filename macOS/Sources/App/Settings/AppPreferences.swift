@@ -193,7 +193,7 @@ final class AppPreferences {
   var flowDirection: FlowDirection { didSet { d.set(flowDirection.rawValue, forKey: "canvas.flow") } }
   var tsugumiMotion: Motion { didSet { d.set(tsugumiMotion.rawValue, forKey: "app.tsugumiMotion") } }
 
-  /// The bird stays still: as set here, or by default as macOS "Reduce motion" (視差効果を減らす).
+  /// The bird stays still: as set here, or by default as macOS "Reduce motion".
   func tsugumiStill(reduceMotion: Bool) -> Bool {
     switch tsugumiMotion {
     case .system: return reduceMotion

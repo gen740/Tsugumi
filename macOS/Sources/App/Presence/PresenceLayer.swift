@@ -175,7 +175,7 @@ struct PresenceLayer: View {
   /// The main Agent while helpers work: larger, gold, named "Agent".
   var lead = false
   @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-  /// Still: the app's "Tsugumi のアニメーション" (or the system's reduce motion).
+  /// Still: the app's "Tsugumi animation" (or the system's reduce motion).
   private var reduceMotion: Bool { AppPreferences.shared.tsugumiStill(reduceMotion: systemReduceMotion) }
 
   var body: some View {

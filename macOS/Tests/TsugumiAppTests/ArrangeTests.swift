@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import TsugumiApp
 
-/// The 整列 button gives what the Web UI gives: the same input and result as
+/// The Arrange button gives what the Web UI gives: the same input and result as
 /// tests/fixtures/arrange-contract.json, which web/tests/arrange.ts checks there
 /// (`cd web && npm test -- --update-arrange` after a change on purpose).
 @MainActor

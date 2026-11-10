@@ -45,7 +45,7 @@ export interface GuideShow { highlight?: string; say?: string; choices: string[]
  *  home) and what can be tapped there; `thinking` while Tsugumi answers. */
 export interface GuideBubble {
   id: number; say?: string; choices: string[]; actions: GuideAction[]; target?: string; thinking?: boolean; farewell?: boolean; more?: boolean
-  /** Said by the app (a demo picked from the first questions), not by a model: its ほかのデモ asks those questions again. */
+  /** Said by the app (a demo picked from the first questions), not by a model: its Other demos asks those questions again. */
   local?: boolean
 }
 
@@ -149,7 +149,7 @@ export class GuideController extends Observable {
   }
   /** The first start's question (provider and key, or skip) was answered. */
   setupDone = true
-  /** "デモを見ますか？" was answered (見る or あとで). */
+  /** The offer of a demo was answered (Show Me or Later). */
   demoAnswered = true
   /** "ガイドを見てみますか？" is asked: the user's own save of a key (or
    *  sign-in) has just made the guide usable. */

@@ -130,7 +130,7 @@ export function ChatChoices({ chat, session, tab }: { chat: ChatController; sess
   )
 }
 
-/** A Draft's title without its "（Draft）": the question says it. */
+/** A Draft's title without its " (Draft)": the question says it. */
 const shortTitle = (t: string) => t.replace(L('（Draft）'), '').trim()
 
 /** The first questions, written by the app (no model until a question is
@@ -582,7 +582,7 @@ function Row({ item, perform, enabled }: { item: GuideItem; perform: (a: GuideAc
 }
 
 /** Right after the user's first key (or sign-in): Tsugumi offers to show a
- *  demo itself. ガイドを見る does what the bubble's 定番のデモを見る does. */
+ *  demo itself. See the guide does what the bubble's See the Standard Demo does. */
 export function GuideInvite() {
   useObserve(guide, prefs)
   if (!guide.demoInvite) return null

@@ -171,7 +171,7 @@ import Testing
     #expect(!s.connected)
   }
 
-  /// A frame still drawn beside its Card has no place of its own yet. 整列 gives it
+  /// A frame still drawn beside its Card has no place of its own yet. Arrange gives it
   /// the whole frame, or the core refuses the layout and nothing can be saved.
   @Test func arrangingAFrameWithoutAPlaceCanBeSaved() async throws {
     let dir = try Self.project()
@@ -198,7 +198,7 @@ import Testing
     #expect(f?["width"]?.double == 320 && f?["height"]?.double == 170)
   }
 
-  /// A draft the core refuses, while the Agent goes on saving: 変更を破棄 goes back
+  /// A draft the core refuses, while the Agent goes on saving: Discard Changes goes back
   /// to what is saved, the Agent's saves included, and saving works again.
   @Test func discardingWhatCannotBeSavedGoesBackAndSavingWorksAgain() async throws {
     let dir = try Self.project()
@@ -287,7 +287,7 @@ import Testing
     #expect(s.saveError == nil)
   }
 
-  /// 整列 changes the layout only, frames and notes too, and is one step of undo.
+  /// Arrange changes the layout only, frames and notes too, and is one step of undo.
   @Test func arrangingIsOneUndo() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

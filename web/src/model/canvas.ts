@@ -574,7 +574,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
     else this.session.addGroup(sel, this.tab.scope)
   }
 
-  /** "選択をグループ化": a new group, its editor open. */
+  /** "Group Selection": a new group, its editor open. */
   groupSelection() {
     if (!this.tab.selection.size) return
     this.set('editingGroup', this.session.addGroup(this.tab.selection, this.tab.scope))
@@ -650,7 +650,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
       this.tab.changed()
       return
     }
-    // A frame alone is closed and its Card stays (the frame's own 枠を削除);
+    // A frame alone is closed and its Card stays (the frame's own Remove Frame);
     // a deleted Card takes its frame with it.
     const scene = this.scene()
     const closing = scene.outputKeys.filter((k) => t.selectedFrames.has(k) && !t.selection.has(k)).map((k) => [k, scene.frameRect(k)] as const)

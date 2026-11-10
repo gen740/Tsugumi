@@ -1,4 +1,4 @@
-// The 整列 button. tests/fixtures/arrange-contract.json has what Web and Swift
+// The Arrange button. tests/fixtures/arrange-contract.json has what Web and Swift
 // must both give: this file checks it here, macOS/Tests/.../ArrangeTests.swift
 // there. After changing CardGeometry or the layout on purpose:
 //   cd web && npm test -- --update-arrange

@@ -266,7 +266,7 @@ struct CardNodeData: Equatable {
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
 
-  /// "実行 #3 · 成功" and the like; nil before the first invocation.
+  /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
     guard let state, invocation > 0 else { return nil }
     var s = String(localized: "実行 #\(invocation)")

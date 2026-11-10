@@ -84,8 +84,8 @@ globalThis.fetch = (async (url: string) => {
   assert.equal(guide.busy, false)
 }
 
-// Home's first question: the bird flies to the demo that fits; ほかのデモ and
-// もっと詳しく go on from there, and a question keeps those choices.
+// Home's first question: the bird flies to the demo that fits; Other demos and
+// Tell me more go on from there, and a question keeps those choices.
 {
   guide.answerInterest('天文・地震・タンパク質のデータ')
   assert.equal(guide.bubble?.target, 'demo:exoplanet-transit')
@@ -101,7 +101,7 @@ globalThis.fetch = (async (url: string) => {
   assert.equal(guide.bubble?.target, 'demo:report')
 }
 
-// Each tour in its demo's copy: its chat shows each step, もっと詳しく says more
+// Each tour in its demo's copy: its chat shows each step, Tell me more says more
 // and goes on, a typed question keeps the step's choices, runs' ends are
 // answered, and the farewell ends the tour.
 for (const demo of scriptDemos) {

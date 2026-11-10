@@ -165,7 +165,7 @@ struct GuideCorner: View {
           } else if let b = guide.bubble, guide.speakingChat == nil {
             GuideBubbleView(bubble: b, perform: perform)
           } else if guide.failed, !guide.open {
-            // What went wrong, briefly (the panel has it in full, with 再試行).
+            // What went wrong, briefly (the panel has it in full, with Retry).
             Text(guide.status ?? String(localized: "うまく答えられませんでした")).font(.caption).lineLimit(3)
               .frame(maxWidth: 280, alignment: .trailing)
               .padding(.horizontal, 9).padding(.vertical, 5)
@@ -406,7 +406,7 @@ private struct GuideOfferBubble: View {
     return out
   }
 
-  /// A Draft's title without its "（Draft）": the question says it.
+  /// A Draft's title without its " (Draft)": the question says it.
   nonisolated static func short(_ title: String) -> String {
     title.replacingOccurrences(of: "（Draft）", with: "").trimmingCharacters(in: .whitespaces)
   }
@@ -880,7 +880,7 @@ private struct GuidePanel: View {
         }
         .onChange(of: guide.items.last?.text) { proxy.scrollTo("end", anchor: .bottom) }
         .onChange(of: guide.items.count) { proxy.scrollTo("end", anchor: .bottom) }
-        // Opened, or a status came (an error with 再試行): the end is shown.
+        // Opened, or a status came (an error with Retry): the end is shown.
         .onChange(of: guide.status) { proxy.scrollTo("end", anchor: .bottom) }
         .onAppear { proxy.scrollTo("end", anchor: .bottom) }
       }
@@ -1061,7 +1061,7 @@ private struct GuidePanel: View {
 // MARK: - The invitation
 
 /// Right after the user's first key (or sign-in): Tsugumi offers to show a
-/// demo itself. ガイドを見る does what the bubble's 定番のデモを見る does.
+/// demo itself. See the guide does what the bubble's See the Standard Demo does.
 struct GuideInviteView: View {
   let see: () -> Void
   let later: () -> Void

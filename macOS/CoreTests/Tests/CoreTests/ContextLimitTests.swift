@@ -38,7 +38,7 @@ import TsugumiRPC
   }
 
   /// Ten reads in one reply are more than the model can take in the next
-  /// request (the chat shows ten rows of 確認). Refused, the results are cut
+  /// request (the chat shows ten rows of Check). Refused, the results are cut
   /// until they fit, the model answers, and the next request goes through. The
   /// conversation is too short to summarize: nothing but the results can shrink.
   @Test func resultsTooLargeForTheContextAreCutAndTheTurnEnds() async throws {

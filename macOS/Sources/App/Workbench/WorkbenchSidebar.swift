@@ -231,7 +231,7 @@ struct ScopeRow: View {
 
 /// The Cards of the current scope, under the headings of their visual
 /// groups. A row selects its Card and moves the canvas to it; a composite
-/// Card has an explicit "開く". Collapsing is done on the Card itself.
+/// Card has an explicit "Open". Collapsing is done on the Card itself.
 struct VisibleCards: View {
   let session: ProjectSession
   let tab: WorkflowTab

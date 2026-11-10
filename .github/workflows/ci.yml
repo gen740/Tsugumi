@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   # Documents alone need no Swift build. The app does read four of them
-  # (Help > Tsugumi を知る, macOS/Tests checks that it finds them).
+  # (Help > Learn about Tsugumi, macOS/Tests checks that it finds them).
   changes:
     name: What changed
     runs-on: ubuntu-24.04

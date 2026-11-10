@@ -1152,7 +1152,7 @@ extension ProjectSession {
   }
 
   /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
-  /// Card stays (the frame's own 枠を削除); a deleted Card takes its frame with it.
+  /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
   func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
     edit { s in
       s.removeCards(cards, in: scope)

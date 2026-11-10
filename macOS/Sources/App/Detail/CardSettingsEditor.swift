@@ -4,7 +4,7 @@ import TsugumiAgent
 import TsugumiRPC
 
 /// Local working copy of one Card's settings (its `_card.json`), metadata
-/// and sources. Nothing reaches the project until "適用". Every Card has its
+/// and sources. Nothing reaches the project until "Apply". Every Card has its
 /// own definition folder, so what is edited here is this Card only (inside a
 /// Card in Card: the Card of the external, this project's copy).
 ///
@@ -332,7 +332,7 @@ struct CardSettingsEditor: View {
                       title: \.title, symbol: \.symbol, width: 160)
       Divider()
       VStack(spacing: 0) {
-        // The preview belongs to 一般; editors, ports and history use the whole height.
+        // The preview belongs to General; editors, ports and history use the whole height.
         if m.category == .general {
           CardPreview(session: session, model: m)
             .frame(minHeight: 120, idealHeight: 170, maxHeight: 220)
@@ -934,7 +934,7 @@ private struct BoundaryCategory: View {
 }
 
 /// Free text describing intent and notes, kept in `_meta.json` (`context`).
-/// What the user and the Agent write about this Card. Saved at once, not with 適用
+/// What the user and the Agent write about this Card. Saved at once, not with Apply
 /// (during a run, when the run ends, as other edits): it says nothing about how it runs.
 private struct CommentsCategory: View {
   let session: ProjectSession

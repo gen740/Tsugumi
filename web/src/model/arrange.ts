@@ -1,4 +1,4 @@
-// The 整列 button: a layered drawing of a scope's graph, the way a person lays
+// The Arrange button: a layered drawing of a scope's graph, the way a person lays
 // one out by hand. Wires that can be straight are, what comes after a fork
 // stays in its own column, gaps follow the real size of each Card, and output
 // frames and notes go in free room near what they belong to.

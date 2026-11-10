@@ -1,4 +1,4 @@
-// What the core refuses to save: 整列 does not make such a layout, 変更を破棄 goes
+// What the core refuses to save: Arrange does not make such a layout, Discard Changes goes
 // back to what is saved, and the state of the save follows.
 import assert from 'node:assert/strict'
 import { parse, get, dbl } from '../src/shared/json'
@@ -27,7 +27,7 @@ const session = () => {
 const saveOnce = (s: unknown) => (s as { saveOnce(): Promise<void> }).saveOnce()
 const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnostic: 'layout.json: display b needs x, y, width and height' })
 
-// 整列 gives a frame still drawn beside its Card the whole frame the core asks for.
+// Arrange gives a frame still drawn beside its Card the whole frame the core asks for.
 {
   const s = session()
   s.displays.set('b', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'shown' } })
@@ -40,7 +40,7 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
   assert.equal(dbl(get(f, 'height')), 170)
 }
 
-// A refused save, then 変更を破棄: back to what is saved, and the next edit is saved.
+// A refused save, then Discard Changes: back to what is saved, and the next edit is saved.
 {
   const s = session()
   let refuse = true
@@ -108,7 +108,7 @@ for (const outcome of ['refused', 'saved']) {
   assert.equal(s.syncState.kind, 'saved', outcome)
 }
 
-// 変更を破棄 takes a rename waiting to be sent with it.
+// Discard Changes takes a rename waiting to be sent with it.
 {
   const s = session()
   s.pendingCardRenames.push({ from: ['a'], to: ['c'] })

@@ -27,7 +27,7 @@ import TsugumiRPC
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
 ///   chatstate | chatstop            reopen <project folder> (from Home)
-///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
+///   explainer (Help > Learn about Tsugumi)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
 ///   menu <item title>               (presses the menu bar's item)
 ///   newproject                      (the new project sheet, as ⌘N in the window steps act on)
@@ -241,7 +241,7 @@ final class UIScript {
         }
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
-        // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
+        // The canvas's "Generate Cards": the Drafts of the shown scope go to the Agent.
         if let s = session, let t = workspace?.active {
           let drafts = s.cards(in: t.scope).compactMap { $0["id"]?.string }.map { key(t.scope + [$0]) }.filter { s.kind($0) == .draft }
           workspace?.showChat = true
@@ -252,7 +252,7 @@ final class UIScript {
         // comment <card> <text>: a comment written on a Card, as in its settings window
         if let s = session { s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
       case "generate-comments":
-        // The canvas's "コメントから生成": the open comments of the shown scope go to the Agent.
+        // The canvas's "Generate from comments": the open comments of the shown scope go to the Agent.
         if let s = session, let t = workspace?.active {
           let cards = s.cardsWithOpenComments(in: t.scope)
           workspace?.showChat = true

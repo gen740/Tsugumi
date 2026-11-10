@@ -19,7 +19,7 @@ import { L } from '../i18n'
 
 // ---- Texts ------------------------------------------------------------------------
 
-/** "実行 #3 · 成功" and the like; undefined before the first invocation. */
+/** "Invocation #3 · Succeeded" and the like; undefined before the first invocation. */
 export function runText(d: CardNodeData): string | undefined {
   if (d.state === undefined || d.invocation <= 0n) return undefined
   let s = L('実行 #{0}', d.invocation)

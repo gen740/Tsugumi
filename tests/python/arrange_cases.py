@@ -1,4 +1,4 @@
-"""The Card graphs of the bundled demos, as the 整列 tests take them.
+"""The Card graphs of the bundled demos, as the Arrange tests take them.
 
 Port names come from a real tsugumid (they are what `resolve` says), so the
 tests in Web and Swift lay out the graphs the canvas really has without needing

@@ -92,7 +92,7 @@ export function cardComments(meta: J | undefined): CardComment[] {
 
 /** Who did something to a comment, for the sentences that say so. */
 export const commentActor = (by: string | undefined) => (by === 'agent' ? 'Agent' : by === 'user' ? L('あなた') : undefined)
-/** "Agent が解決", or undefined when who did it is not recorded. */
+/** "Resolved by the Agent", or undefined when who did it is not recorded. */
 export const commentDone = (by: string | undefined, what: string) => (by === 'agent' ? L('Agent が{0}', what) : by === 'user' ? L('あなたが{0}', what) : undefined)
 
 /** What a version or a save did to a comment, and who did it when that is recorded. */

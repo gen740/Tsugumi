@@ -698,7 +698,7 @@ struct GraphCanvas: View {
     writeDraft(k)
   }
 
-  /// The Card menu's "名前と内容を書く".
+  /// The Card menu's "Write name and content".
   func handleWriteDraft(_ n: Notification) {
     if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.isEditable { writeDraft(k) }
   }

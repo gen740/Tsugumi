@@ -5,7 +5,7 @@ import TsugumiRPC
 /// The log of one invocation of a Card by stage, like a CI job: SDK
 /// preparation, Nix evaluation and build / execution / validation and save,
 /// each with its state, duration and what it printed, folded unless it failed
-/// or was asked for. The raw streams stay available under 「stream 別」.
+/// or was asked for. The raw streams stay available under "By stream".
 struct StageLogView: View {
   let session: ProjectSession
   let runId: String
