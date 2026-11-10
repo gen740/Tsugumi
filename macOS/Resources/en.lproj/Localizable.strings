@@ -393,6 +393,7 @@
 "コメント %lld 件に従って Card を生成します" = "Generating Cards from %lld comments";
 "コメント: %@" = "Comment: %@";
 "コメント…" = "Comments…";
+"コメントから生成" = "Generate from comments";
 "コメントから生成（%lld）" = "Generate from comments (%lld)";
 "コメントが閉じていません" = "A comment is not closed";
 "コメントを追加" = "Add Comment";

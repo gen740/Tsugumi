@@ -78,6 +78,8 @@ extension Shared {
       let tools: [String]
       let showTool: Tool
       let texts: [String: String]
+      /// The controls the bird names: highlight id and the label's source (Japanese) text.
+      let controls: [(id: String, label: String)]
       func text(_ k: String) -> String { texts[k]! }
     }
     /// The provider's web search: how each API names it, and what the model and the user read.
@@ -123,7 +125,8 @@ extension Shared {
                 guide: .init(tools: g["tools"] as! [String],
                              showTool: .init(name: gt["name"] as! String, description: gt["description"] as! String,
                                              inputSchema: gt["inputSchema"] as! [String: Any]),
-                             texts: g.compactMapValues { $0 as? String }),
+                             texts: g.compactMapValues { $0 as? String },
+                             controls: (g["controls"] as! [[String: String]]).map { ($0["id"]!, $0["label"]!) }),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
                 comment: .init(card: cm["card"]!, comment: cm["comment"]!, text: cm["text"]!),
                 webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,

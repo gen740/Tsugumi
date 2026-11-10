@@ -62,12 +62,21 @@ extension Agent {
     description: Shared.data.delegateTool.description, inputSchema: Shared.data.delegateTool.inputSchema,
     mutating: false)
 
+  /// The labels of the controls the bird names, in the app's language (its
+  /// Localizable.strings, keyed by the Japanese text), so that the prompts need
+  /// no wording of any language.
+  static var controlsNote: String {
+    let list = Shared.data.guide.controls.map { "\($0.id) \"\(Bundle.main.localizedString(forKey: $0.label, value: $0.label, table: nil))\"" }
+    return Shared.fill(Shared.data.guide.text("controlsNote"), ["controls": list.joined(separator: ", ")])
+  }
+
   /// The rules, and for a helper its task.
   var system: String {
-    if role == .guide { return Self.guidePrompt }
+    if role == .guide { return Self.guidePrompt + "\n\n" + Self.controlsNote }
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
     guard let helper else {
-      return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") + (searches ? "\n\n" + Shared.data.webSearch.note : "")
+      return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") + "\n\n" + Self.controlsNote
+        + (searches ? "\n\n" + Shared.data.webSearch.note : "")
     }
     let h = Shared.data.helper
     return Self.systemPrompt + "\n\n" + Shared.fill(h.prompt, [

@@ -758,6 +758,13 @@ export const SYSTEM_PROMPT = systemPrompt
 /** The guide's rules (agent/Shared/guide-prompt.md). */
 export const GUIDE_PROMPT = guidePrompt
 
+/** The labels of the controls the bird names, in the app's language (en.json,
+ *  keyed by the Japanese text), so that the prompts need no wording of any language. */
+export function controlsNote(): string {
+  const list = AGENT.guide.controls.map((c: { id: string; label: string }) => `${c.id} "${L(c.label)}"`).join(', ')
+  return fill(AGENT.guide.controlsNote, { controls: list })
+}
+
 /** A version's summary, in the page's language, from what it changed
  *  (agent/Shared/version-summary-prompt.md). One line, however the model answers. */
 export async function summarizeVersion(c: ProviderConfig, input: string, signal: AbortSignal): Promise<string> {
@@ -960,7 +967,7 @@ export function externalTools(catalog: ToolCatalog): ToolSpec[] {
 const EXTERNAL_TOOL_NAMES = (catalog: ToolCatalog) => new Set(externalTools(catalog).map((t) => t.name))
 const GUIDE_SHOW_TOOL: ToolSpec = { ...AGENT.guide.showTool, payloadType: -1, object: -1, mutating: false }
 const GUIDE_TOOLS = new Set<string>(AGENT.guide.tools)
-type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>
+type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool' | 'controls'>
 /** A note of the app to the guide (agent/Shared/agent.json "guide"), filled in. */
 export const guideText = (k: GuideText, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
 
@@ -1179,9 +1186,9 @@ export class Agent {
 
   /** The rules, and for a helper its task. */
   get system(): string {
-    if (this.role === 'guide') return GUIDE_PROMPT
+    if (this.role === 'guide') return GUIDE_PROMPT + '\n\n' + controlsNote()
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
-    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote + (this.searches ? '\n\n' + AGENT.webSearch.note : '')
+    if (!this.helper) return SYSTEM_PROMPT + '\n\n' + AGENT.guide.chatNote + '\n\n' + controlsNote() + (this.searches ? '\n\n' + AGENT.webSearch.note : '')
     const h = AGENT.helper, together = this.helper.runsTogether
     return SYSTEM_PROMPT + '\n\n' + fill(h.prompt, {
       name: this.helper.name, cards: this.helper.cards.join(', '), instruction: this.helper.instruction,

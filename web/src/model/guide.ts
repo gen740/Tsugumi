@@ -132,7 +132,7 @@ export function parseShow(args: string): GuideShow {
     open: typeof v?.open === 'string' ? v.open.trim() : undefined }
 }
 
-const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool'>, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
+const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool' | 'controls'>, values: Record<string, string> = {}) => fill(AGENT.guide[k], values)
 const stateName = (st: D.RunState | undefined) => (st === undefined ? 'none' : D.RunState[st] ?? String(st))
 const real = (p: string) => p.replace(/\/+$/, '')
 

@@ -51,7 +51,20 @@ def web_keys() -> set[str]:
             continue
         for m in re.finditer(r"\bL\('((?:[^'\\\n]|\\.)*)'", p.read_text(encoding="utf-8")):
             keys.add(json.loads('"' + m.group(1).replace('"', '\\"').replace("\\'", "'") + '"'))
-    return keys
+    # The labels of the controls the bird names (agent.json), looked up with L(label) on the server.
+    return keys | set(control_labels())
+
+
+def control_labels() -> list[str]:
+    agent = json.loads((ROOT / "agent/Shared/agent.json").read_text(encoding="utf-8"))
+    return [c["label"] for c in agent["guide"]["controls"]]
+
+
+def test_the_controls_the_bird_names_have_english_in_both_apps():
+    # The prompts name no button in any language: each app fills in its own labels.
+    web = json.loads(WEB_TABLE.read_text(encoding="utf-8"))
+    mac = load().EN
+    assert not [l for l in control_labels() if l not in web or l not in mac]
 
 
 def test_every_web_string_has_its_english():

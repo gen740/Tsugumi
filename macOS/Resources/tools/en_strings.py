@@ -584,6 +584,7 @@ EN = {
 "コメント…": "Comments…",
 "コメント: %@": "Comment: %@",
 "コメントから生成（%lld）": "Generate from comments (%lld)",
+"コメントから生成": "Generate from comments",
 "コメント %lld 件に従って Card を生成します": "Generating Cards from %lld comments",
 "コメント（Agent）: %@": "Comment (Agent): %@",
 "あなた": "You",
