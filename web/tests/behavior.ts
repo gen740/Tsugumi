@@ -37,6 +37,7 @@ await import("./wireDemos")
 await import("./modelMenu")
 
 await import("./chatFollow")
+await import("./terminalText")
 
 await import("./projectActions")
 

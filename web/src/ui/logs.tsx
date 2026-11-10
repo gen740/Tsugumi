@@ -1,9 +1,11 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
+import { terminalText } from '../model/terminalText'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../shared/rpc'
@@ -221,7 +223,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
         <Button small disabled={!log} onClick={() => download(`${runId}-${D.LogStream[stream]}.log`, log, 'text/plain')}>{L('書き出す…')}</Button>
       </div>
       <div className="log-text">
-        <pre className={`selectable${log ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{log || emptyReason}</pre>
+        <pre className={`selectable${log ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(log) || emptyReason}</pre>
         <div ref={end} />
       </div>
       {error && <div className="caption" style={{ color: 'var(--red)', padding: '0 6px' }}>{error}</div>}
@@ -258,6 +260,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const [error, setError] = useState<string>()
   const [loaded, setLoaded] = useState(false)
   const busy = useRef({ running: false, again: false })
+  // The log opens at its end and follows it, as the chat does, until the
+  // reader scrolls up; back at the end, it follows again.
+  const scroll = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  /** Groups opened when they started running: each once, so one the reader folds stays folded. */
+  const openedRunning = useRef(new Set<string>())
+  const lastTop = useRef(0)
 
   const code = session.kind(k) === 'code'
   const groups: StageGroup[] = [
@@ -328,6 +337,12 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
         if (f) n.add(f.id)
         return n
       })
+      // So does the one running now, to show its output as it comes.
+      const running = groups.filter((g) => st.some((r) => g.stages.includes(r.stage) && r.outcome === D.StageOutcome.running) && !openedRunning.current.has(g.id))
+      if (running.length) {
+        for (const g of running) openedRunning.current.add(g.id)
+        setOpen((o) => new Set([...o, ...running.map((g) => g.id)]))
+      }
     } catch (e) {
       if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) {
         setLogs(new Map())
@@ -346,8 +361,18 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   useEffect(() => {
     setOpen(new Set())
     setLoaded(false)
+    following.current = true
+    openedRunning.current = new Set()
     void load()
   }, [runId, k, invocation])
+  useLayoutEffect(() => {
+    const el = scroll.current
+    if (el && following.current) el.scrollTop = el.scrollHeight
+  })
+  const scrolled = (el: HTMLDivElement) => {
+    following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
+    lastTop.current = el.scrollTop
+  }
   useEffect(() => {
     void load()
   }, [session.logRevision])
@@ -374,7 +399,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   }).join('\n')
 
   const logText = (text: string, empty: string) => (
-    <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{text || empty}</pre>
+    <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(text) || empty}</pre>
   )
 
   const shown = shownInvocation ?? invocation ?? 0n
@@ -390,7 +415,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     body = <Empty title={L('この実行では、この Card はまだ動いていません')} icon="circle.dotted" />
   } else {
     body = (
-      <div className="stage-log-scroll">
+      <div className="stage-log-scroll" ref={scroll} onScroll={(e) => scrolled(e.currentTarget)}>
         {groups.map((g) => {
           const st = status(g)
           const sec = seconds(g)
