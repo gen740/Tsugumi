@@ -119,7 +119,7 @@ def guide_files() -> dict[str, dict[str, str]]:
     """The page's files: {variant: {path: content}}; "" is the Python Card."""
     page = (DOCS / "CardGuide.md").read_text()
     files: dict[str, dict[str, str]] = {}
-    for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
+    for m in re.finditer(r"^`([^`\n]+)`(?: \(([^)\n]+)\))?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
         files.setdefault(m.group(2) or "", {})[m.group(1)] = m.group(3)
     return files
 
@@ -166,7 +166,7 @@ def test_llms_txt_guides_agents_to_every_document():
     documents = re.findall(r"^\| \[[^\]]+\]\(([^)]+)\) \|", (DOCS / "README.md").read_text(), flags=re.M)
     expected = {f"pages/{Path(d).stem.lower().replace('_', '-')}.md" for d in documents}
     assert not expected - listed
-    assert guide.index("## リポジトリ") < guide.index("## Optional"), "Optional comes last: agents may skip it"
+    assert guide.index("## Repository") < guide.index("## Optional"), "Optional comes last: agents may skip it"
 
 
 def test_markdown_pages_have_links_that_work_on_the_site():

@@ -179,7 +179,7 @@ async function gallery() {
     if (document.querySelector('dialog.player-dialog')) return
     const dialog = document.createElement('dialog')
     dialog.className = 'player-dialog'
-    dialog.innerHTML = '<form method="dialog"><button class="close">閉じる</button></form><div class="player-host"></div>'
+    dialog.innerHTML = '<form method="dialog"><button class="close">Close</button></form><div class="player-host"></div>'
     document.body.append(dialog)
     const mounted = player.mountPlayer(dialog.querySelector('.player-host'), { demo: id, data: dataUrl(id), autoplay: !still })
     dialog.addEventListener('close', () => {

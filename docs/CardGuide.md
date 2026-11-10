@@ -1,50 +1,50 @@
-# はじめての Card
+# Your first Card
 
-入力の数を掛け算するだけの Card を作り、実行して、条件を変えて試します。
-Python で作ったあと、同じ Card を bash・C++・R・Julia に置き換えます。
+Make a Card that just multiplies the number it receives, run it, and try other conditions.
+After making it in Python, replace the same Card with bash, C++, R and Julia.
 
-このページのコードは飾りではありません。[tests/python/test_docs.py](../tests/python/test_docs.py) が**この文書からファイルを取り出して実際に実行**します。
+The code on this page is not decoration: [tests/python/test_docs.py](../tests/python/test_docs.py) **takes the files out of this document and actually runs them**.
 
-詳しい仕様は [agent/Reference/card-guide.md](../agent/Reference/card-guide.md)（英語）にあります。アプリの Agent が読むものと同じ文書です。
+The full specification is in [agent/Reference/card-guide.md](../agent/Reference/card-guide.md), the same document the app's Agent reads.
 
-## 作るもの
+## What you will make
 
 ```text
 start ──out→ settings ──number→ multiply
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `start` | 開始（trigger） | 実行の起点 |
-| `settings` | 入力値（input） | Canvas で書き換えられる数を流す |
-| `multiply` | 処理（Python） | 受け取った数に `factor` を掛け、結果を出して表示する |
+| `start` | Start (trigger) | Where the run begins |
+| `settings` | Input value (input) | Sends a number you can edit on the Canvas |
+| `multiply` | Processing (Python) | Multiplies the number it receives by `factor`, outputs the result and displays it |
 
-完成すると、Canvas はこうなります。下は実際の画面と同じ Card で、インストールなしで動かせます。▶ 実行で流れを見て、`multiply` を押すとこのページの Python のコードが読めます（Web 版のみ）。
+When it is done, the Canvas looks like this. Below are the same Cards as on the real screen, and they run without installing anything. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
 
 <div data-player="card-guide"></div>
 
-## 画面で作る
+## Making it on screen
 
-1. ホームの「新規プロジェクト…」でプロジェクトを作ります。
-2. Canvas を右クリックして「Card を追加」から「開始」「入力値」「処理（Python）」を置き、名前を `start`、`settings`、`multiply` にします。
-3. `start` の出力から `settings` へ、`settings` の出力から `multiply` へ線を引きます。
-4. 各 Card を開き（`s` キーか右クリックの「設定」）、次の節のファイルと同じ内容にします。
+1. Make a project with "New Project…" on the home screen.
+2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Processing (Python)", naming them `start`, `settings` and `multiply`.
+3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
+4. Open each Card (the `s` key or "Settings" in the context menu) and make it the same as the files in the next section.
 
-Card の設定は次のような画面です。左の一覧で「ソース」「入出力」「Nix 定義」を切り替えて編集し、「適用」で Workflow に反映します。
+A Card's settings look like this. Switch between "Source", "Ports" and "Nix Definition" in the list on the left to edit, and "Apply" puts the change into the Workflow.
 
-![Card の設定で、ソースコードを編集する画面](assets/screenshots/card-source.png)
+![Editing the source code in a Card's settings](assets/screenshots/card-source.png)
 
-Card の実体はプロジェクトフォルダの中のふつうのファイルなので、エディターで直接書いても同じです。
+A Card is ordinary files in the project folder, so writing them directly in an editor is the same.
 
-## ファイルの中身
+## The files
 
-プロジェクトの全体です。
+The whole project:
 
 `tsugumi.json`
 
 ```json
 {
-  "name": "はじめての Card",
+  "name": "Your first Card",
   "pkgsPath": "tsugumi:default",
   "databaseConnections": [],
   "canvas": {
@@ -63,10 +63,10 @@ Card の実体はプロジェクトフォルダの中のふつうのファイル
 {"template": "trigger"}
 ```
 
-### 入力値の Card
+### The input value Card
 
-出力の型を `_outputs.fbs` に書きます。`Outputs` のフィールドが出力ポートです。
-`params` は、出力するテーブルのフィールドと同じ名前にします。
+Write the output type in `_outputs.fbs`. The fields of `Outputs` are the output ports.
+`params` have the same names as the fields of the table that is output.
 
 `definitions/settings/_card.json`
 
@@ -83,9 +83,9 @@ table Outputs { number:Number (required); }
 root_type Outputs;
 ```
 
-### 処理の Card（Python）
+### The processing Card (Python)
 
-`inputs` に入力ポートの名前を書きます。入力の型は、つないだ Card の出力から導出されるので書きません。
+Write the names of the input ports in `inputs`. Input types are not written: they are derived from the outputs of the connected Cards.
 
 `definitions/multiply/_card.json`
 
@@ -106,17 +106,17 @@ table Outputs { result:Result (required); }
 root_type Outputs;
 ```
 
-Card の概要は `_meta.json` に書きます。Canvas と Card 設定に出るので、何をする Card かを短く書いておきます。
+A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card's settings, so write briefly what the Card does.
 
 `definitions/multiply/_meta.json`
 
 ```json
 {
-  "description": "number を factor 倍する"
+  "description": "Multiply number by factor"
 }
 ```
 
-実行環境は `default.nix` に書きます。`numpy` などを使うときは `pythonCard` に `packages = ps: [ ps.numpy ];` を足します。
+The environment goes in `default.nix`. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`.
 
 `definitions/multiply/default.nix`
 
@@ -130,7 +130,7 @@ in
 }
 ```
 
-本体は `main(ctx)` です。入力は `inputs.<ポート>.<namespace>.<テーブル>`、出力は `outputs.<ポート>.<namespace>.<テーブル>` から import します。
+The body is `main(ctx)`. Import inputs from `inputs.<port>.<namespace>.<table>` and outputs from `outputs.<port>.<namespace>.<table>`.
 
 `definitions/multiply/src/main.py`
 
@@ -149,27 +149,27 @@ def main(ctx):
     ctx.display_text(f"{n} × {factor} = {n * factor}")
 ```
 
-## 実行して確かめる
+## Running it and checking
 
-1. Canvas 上部の「実行」（⌘R）を押します。初回だけ Nix が環境を用意するので時間がかかります。
-2. `multiply` の表示に `21 × 2 = 42` と出ます。
-3. 右クリックの「実行履歴」で、段階（Nix 評価・ビルド・実行・保存）ごとの時間とログを見られます。
+1. Press "Run" (⌘R) at the top of the Canvas. Only the first time takes a while, as Nix prepares the environment.
+2. `multiply` displays `21 × 2 = 42`.
+3. "Run History" in the context menu shows the time and logs of each stage (Nix evaluation, build, run, saving).
 
-## 条件を変えて試す
+## Trying other conditions
 
-- **パラメータだけを変える。** `multiply` の `factor` を 3 にして、右クリックの「この Card だけ実行（最後の入力）」で `multiply` だけを実行します。`settings` は動かず、保存された入力で `21 × 3 = 63` になります。`factor` は Nix に渡らないので、ビルドもやり直しません。
-- **上流を変える。** `settings` の `value` を変えたら、`start` から実行し直します。部分実行は保存された入力を使うので、上流の変更は全体を実行するまで届きません（[Q&A の Q5](QA.md#q5-解析の途中からやり直せることにはどんな意味がありますか)）。
-- **前の版に戻る。** 実行のたびに変更が git に commit されます。Workflow メニューの「版の履歴…」（⌥⌘Y）から、前の版に戻って別の試行を始められます（[版の管理](Versions.md)）。
+- **Change only a parameter.** Set `factor` of `multiply` to 3 and run only `multiply` with "Run Only This Card (Last Inputs)" in the context menu. `settings` does not run, and with the saved input the result is `21 × 3 = 63`. `factor` is not passed to Nix, so nothing is rebuilt either.
+- **Change something upstream.** After changing `value` of `settings`, run again from `start`. Partial runs use saved inputs, so an upstream change does not arrive until you run the whole ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)).
+- **Go back to an earlier version.** Each run commits the changes to git. From "Version History…" (⌥⌘Y) in the Workflow menu, go back to an earlier version and start a different attempt ([Versions](Versions.md)).
 
-## 同じ Card を別の言語で書く
+## Writing the same Card in another language
 
-入出力の型が同じなら、Canvas の線や前後の Card はそのままで中身を置き換えられます。
+As long as the input and output types are the same, what is inside can be replaced while the wires on the Canvas and the Cards around it stay as they are.
 
 ### bash
 
-`src/` を消し、`language` を `bash` にして、`default.nix` の `run` に文字列を書きます。入力は `$JSON_<ポート>`（JSON ファイルのパス）で、出力は JSON を `$TSUGUMI_OUTPUT` に書きます。
+Delete `src/`, set `language` to `bash`, and write a string in `run` of `default.nix`. Inputs are `$JSON_<PORT>` (the path of a JSON file); write the output as JSON to `$TSUGUMI_OUTPUT`.
 
-`definitions/multiply/_card.json`（bash）
+`definitions/multiply/_card.json` (bash)
 
 ```json
 {
@@ -179,7 +179,7 @@ def main(ctx):
 }
 ```
 
-`definitions/multiply/default.nix`（bash）
+`definitions/multiply/default.nix` (bash)
 
 ```nix
 { pkgs, inputs, params }: {
@@ -189,15 +189,15 @@ def main(ctx):
 }
 ```
 
-ここでは `"nix": true` を付けて、`factor` を Nix の式から読んでいます。この param は Nix に渡るので、変えると Card をビルドし直します。実行時に読むなら、すべての param は `$TSUGUMI_PARAMS_JSON`（JSON の本文）にあります。
+Here `"nix": true` is set and `factor` is read from the Nix expression. This param is passed to Nix, so changing it rebuilds the Card. To read params at run time instead, all of them are in `$TSUGUMI_PARAMS_JSON` (the JSON text).
 
-表示は `$TSUGUMI_DISPLAY` に JSON を書きます。`{"markdown": "**太字**"}` のほか、`text`、`table`（`columns` と `rows`）、`image`（`path` と `alt`）、`module`（`name` と `data`）のどれか 1 つで、スクリプトが正常に終わったときに表示されます。
+For a display, write JSON to `$TSUGUMI_DISPLAY`: one of `{"markdown": "**bold**"}`, `text`, `table` (`columns` and `rows`), `image` (`path` and `alt`) or `module` (`name` and `data`). It is shown when the script ends normally.
 
 ### C++
 
-入力ポートと出力ポートが、そのまま `Card::Input`・`Card::Output` のメンバーになります。
+The input and output ports become members of `Card::Input` and `Card::Output` as they are.
 
-`definitions/multiply/_card.json`（C++）
+`definitions/multiply/_card.json` (C++)
 
 ```json
 {
@@ -207,7 +207,7 @@ def main(ctx):
 }
 ```
 
-`definitions/multiply/default.nix`（C++）
+`definitions/multiply/default.nix` (C++)
 
 ```nix
 { pkgs, inputs, params }:
@@ -219,7 +219,7 @@ in
 }
 ```
 
-`definitions/multiply/src/card.cc`（C++）
+`definitions/multiply/src/card.cc` (C++)
 
 ```cpp
 #include <card.hh>
@@ -238,9 +238,9 @@ auto run(Card::Input& input) -> Card::Output {
 
 ### R
 
-R には FlatBuffers の生成器がないので、R の Card は別プロセスで動き、ポートの値を JSON でやり取りします（worker がポートの型で変換します）。
+R has no FlatBuffers code generator, so an R Card runs in a separate process and exchanges port values as JSON (the worker converts them by the port's type).
 
-`definitions/multiply/_card.json`（R）
+`definitions/multiply/_card.json` (R)
 
 ```json
 {
@@ -250,7 +250,7 @@ R には FlatBuffers の生成器がないので、R の Card は別プロセス
 }
 ```
 
-`definitions/multiply/default.nix`（R）
+`definitions/multiply/default.nix` (R)
 
 ```nix
 { pkgs, inputs, params }: {
@@ -258,7 +258,7 @@ R には FlatBuffers の生成器がないので、R の Card は別プロセス
 }
 ```
 
-`definitions/multiply/src/main.R`（R）
+`definitions/multiply/src/main.R` (R)
 
 ```r
 main <- function(ctx) {
@@ -269,13 +269,13 @@ main <- function(ctx) {
 }
 ```
 
-パッケージは nixpkgs の `rPackages` から選びます（`packages = ps: [ ps.survival ps.ggplot2 ];`）。図は `ctx$plot(expr, alt = "説明")` で Card の表示に描けます（基本のグラフィックスと ggplot のどちらも）。表は `ctx$display_table(data.frame)` です。
+Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot2 ];`). `ctx$plot(expr, alt = "description")` draws a figure in the Card's display (both base graphics and ggplot). Tables are `ctx$display_table(data.frame)`.
 
 ### Julia
 
-Julia の Card も別プロセスで、値を JSON でやり取りします。
+A Julia Card also runs in a separate process and exchanges values as JSON.
 
-`definitions/multiply/_card.json`（Julia）
+`definitions/multiply/_card.json` (Julia)
 
 ```json
 {
@@ -285,7 +285,7 @@ Julia の Card も別プロセスで、値を JSON でやり取りします。
 }
 ```
 
-`definitions/multiply/default.nix`（Julia）
+`definitions/multiply/default.nix` (Julia)
 
 ```nix
 { pkgs, inputs, params }: {
@@ -293,7 +293,7 @@ Julia の Card も別プロセスで、値を JSON でやり取りします。
 }
 ```
 
-`definitions/multiply/src/main.jl`（Julia）
+`definitions/multiply/src/main.jl` (Julia)
 
 ```julia
 function main(ctx)
@@ -304,13 +304,13 @@ function main(ctx)
 end
 ```
 
-標準ライブラリだけで動きます。General レジストリのパッケージは `packages = [ "JuMP" ];` でビルド時に固定します。図は `display_vegalite(ctx, spec)` に Vega-Lite の spec を Dict で渡すと、操作できるグラフとして表示されます。
+It runs with the standard library alone. Packages from the General registry are pinned at build time with `packages = [ "JuMP" ];`. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
 
-## 次に読むもの
+## What to read next
 
-| 知りたいこと | 文書 |
+| To know | Document |
 | --- | --- |
-| 分岐・合流・ループ、ファイルの受け渡し、Nix で固定したデータ | [Card の仕様](../agent/Reference/card-guide.md)、[同梱デモのしくみ](Demos.md) |
-| 動くコードの例 | [demos/](../demos/)（`report`・`collatz` など） |
-| 実装を Agent に任せる | [主要機能の Agent](features.md#9-agent)、[実際の Claude API での実行記録](AgentRun.md) |
-| 言葉の意味 | [用語集](Glossary.md) |
+| Branches, merges and loops, passing files, data pinned with Nix | [The Card specification](../agent/Reference/card-guide.md), [The bundled demos](Demos.md) |
+| Examples of code that runs | [demos/](../demos/) (`report`, `collatz` and others) |
+| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent), [a run with the real Claude API](Evidence.md#a-run-with-the-real-claude-api) |
+| What the words mean | [Glossary](Glossary.md) |

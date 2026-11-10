@@ -1,8 +1,8 @@
-# デモプレイヤー
+# The demo player
 
-インストールなしでデモの動きを見せる、文書サイト用のプレイヤーです。
-Card・線・幾何は Web UI のコード（`web/src/ui/cardNode.tsx`、`web/src/model/canvasKit.ts`）をそのまま使い、CSS は `web/src/styles/canvas.css` と `web/src/styles.css` の色を `.tp-root` の中に閉じて使います。
-ブラウザの中では何も計算しません。実際に動かした実行の記録を再生するだけです。
+A player for the documentation site that shows demos in motion without installing anything.
+Cards, wires and geometry use the Web UI's code as it is (`web/src/ui/cardNode.tsx`, `web/src/model/canvasKit.ts`), and the CSS uses the colours of `web/src/styles/canvas.css` and `web/src/styles.css`, scoped inside `.tp-root`.
+Nothing is computed in the browser: it only replays the record of a real run.
 
 ```js
 import { mountPlayer } from './site/js/player.js'
@@ -10,39 +10,39 @@ const player = mountPlayer(el, { demo: 'report', data: 'site/player-data/report.
 player.destroy()
 ```
 
-- `data` は JSON への相対 URL で、画像はこの JSON からの相対で読みます。`site/player.css` はページになければ自動で足します。
-- `compact: true` はギャラリー用の縮小表示です。枠に合わせて全体を描き、画面に入ったときとホバーで再生します（`autoplay: false` でホバーだけ）。`el` に高さを与えてください。
-- 通常の表示は `autoplay: true` で画面に入ったときに一度再生します。既定では ▶ 実行 を押すまで動きません。
-- `prefers-reduced-motion` のときは自動で再生しません（`compact` は実行の終わりの状態を静止して見せます）。
-- 高さは `--tp-height` で変えられます。
+- `data` is a relative URL of the JSON, and images are loaded relative to that JSON. If the page has no `site/player.css`, it is added automatically.
+- `compact: true` is the reduced view for the gallery. It draws the whole within the frame and plays when it comes into view and on hover (`autoplay: false` for hover only). Give `el` a height.
+- The normal view plays once when it comes into view with `autoplay: true`. By default it does not move until ▶ Run is pressed.
+- With `prefers-reduced-motion`, it does not play automatically (`compact` shows the state at the end of the run, still).
+- The height can be changed with `--tp-height`.
 
-## ファイル
+## Files
 
-| ファイル | 中身 |
+| File | Contents |
 | --- | --- |
-| `web/src/ui/demoPlayer.tsx` | プレイヤー本体。Web UI の Home のサムネイルも同じものです |
-| `web/src/styles/demoPlayer.css` | プレイヤー独自の CSS |
-| `narration.json` | 実行の各段階の説明文（[Demos.md](../../Demos.md) から手で書いたもの） |
-| `build.mjs` | `site/js/player.js`、`site/player.css`、`site/player-data/<id>.json`、`index.json` を生成する（`--check` は調べるだけ） |
-| `harvest.py` | デモを実際に実行して `site/player-data/assets/` に記録を書く |
-| `svg.mjs` | 再生を動く SVG にする（Cas A の大きいもの `docs/assets/casa-demo.svg`、アプリの窓の形の `docs/assets/casa-window.svg`、各デモのタイル `docs/assets/demos/<id>.svg`）。README のように画像しか置けない場所のため |
-| `demo.html` | 開発用のページ（全デモのサムネイルと通常表示） |
+| `web/src/ui/demoPlayer.tsx` | The player itself. The thumbnails on the Web UI's Home are the same thing |
+| `web/src/styles/demoPlayer.css` | The player's own CSS |
+| `narration.json` | The text for each stage of a run (written by hand from [Demos.md](../../Demos.md)) |
+| `build.mjs` | Generates `site/js/player.js`, `site/player.css`, `site/player-data/<id>.json` and `index.json` (`--check` only checks) |
+| `harvest.py` | Runs the demos for real and writes their records into `site/player-data/assets/` |
+| `svg.mjs` | Turns the replay into moving SVGs (the large Cas A `docs/assets/casa-demo.svg`, the app-window-shaped `docs/assets/casa-window.svg`, each demo's tile `docs/assets/demos/<id>.svg`), for places like the README that can hold only images |
+| `demo.html` | A page for development (thumbnails and normal views of every demo) |
 
-## 作り直す
+## Regenerating
 
-Card やデモを変えたら、まず `web/src/gen` を用意して（`web/` で `nix develop --command npm run gen`）、次を実行します。
+After changing Cards or demos, first prepare `web/src/gen` (`nix develop --command npm run gen` in `web/`), then run:
 
 ```sh
 node docs/site/player/build.mjs
 ```
 
-作り直し忘れは `node docs/site/player/build.mjs --check`（何も書かず、`player.js`・`player.css`・`player-data/` が今の入力と違えば失敗します）で分かります。CI の Web のステップが実行します。
+`node docs/site/player/build.mjs --check` (which writes nothing and fails if `player.js`, `player.css` or `player-data/` differ from the current inputs) shows when regenerating was forgotten. CI's Web step runs it.
 
-実行の記録は別の手順です。`tsugumid` のビルドと Nix が要ります（初回は依存の取得に数分かかります）。
+Recording runs is a separate step. It needs a `tsugumid` build and Nix (the first time takes a few minutes to fetch dependencies).
 
 ```sh
-# 既定は <repo>/build。別の場所のビルドなら TSUGUMI_BUILD_DIR で指定する
-# 隔離（Seatbelt）のまま、Draft 以外の全デモを実行する
+# The default is <repo>/build. For a build elsewhere, set TSUGUMI_BUILD_DIR
+# Runs every demo except the Drafts, isolated (Seatbelt)
 nix develop --command python3 docs/site/player/harvest.py --ports \
   report collatz live-stream plots casa card-guide \
   gw150914 protein-6lu7 exoplanet-transit seismic-trench \
@@ -51,42 +51,41 @@ nix develop --command python3 docs/site/player/harvest.py --ports \
 node docs/site/player/build.mjs
 ```
 
-## 動く SVG
+## Moving SVGs
 
-GitHub の README のように、スクリプトが動かず画像だけを置ける場所のために、再生を SVG にします。`player-data/` を作り直してから、Mac で実行し、できた SVG をコミットします（Chrome を画面なしで使い、タイルの画像を `sips` で縮めます）。
+For places like GitHub's README, where scripts do not run and only images can be placed, the replay is made into SVGs. After regenerating `player-data/`, run this on a Mac and commit the SVGs it makes (it uses Chrome without a screen, and shrinks the tiles' images with `sips`).
 
 ```sh
-node docs/site/player/svg.mjs            # 記録のある全デモ。ID を並べればそれだけ
+node docs/site/player/svg.mjs            # every demo with a record; list IDs for only those
 ```
 
-- `docs/assets/casa-demo.svg`: Cas A を、通常の表示（実行ボタンと経過時間、説明文、メモ）のまま大きく。
-- `docs/assets/casa-window.svg`: Cas A を Mac アプリの窓の形で。Card・出力の枠・メモの置き場所は README のスクリーンショット（`docs/assets/screenshots/workflow.png`）にならい（`svg.mjs` の `WINDOW_LAYOUT`）、実行ボタンと経過時間はタイトルバー、実行の状態はステータスバーに出ます。
-- README の「画面でたどる、実験と検証」の画面も、同じ窓の形で動かします。
-  - `casa-source.svg`: spectrum の Card 設定が開き、`main.py` が `plt.show()` までスクロールします。
-  - `casa-timeline.svg`: 下のタイムラインが、各 Card の開始・終了と段階の時間で、再生に合わせて伸びます。
-  - `collatz-subworkflow.svg`: collatz-cpp の中の Workflow を、その回数（loop 112 回など）で再生します。
-  - `casa-guide.svg`: ツグミがチャットから spectrum の Card へ飛び、吹き出しを出します。
-- `docs/assets/demos/<id>.svg`: 記録のある各デモを、ギャラリーの縮小表示（`compact`）のまま 440 × 264 のタイルに。小さい Canvas で CSS が隠す文字（`.tp-small` など）と Card の説明の行の中身は省き、画像はタイルの中の表示の 2 倍の大きさにします。
+- `docs/assets/casa-demo.svg`: Cas A, large, in the normal view (the Run button and elapsed time, the description, the notes).
+- `docs/assets/casa-window.svg`: Cas A in the shape of the Mac app's window. Where Cards, output frames and notes go follows the README's screenshot (`docs/assets/screenshots/workflow.png`; `WINDOW_LAYOUT` in `svg.mjs`); the Run button and elapsed time are in the title bar, and the run's state is in the status bar.
+- The screens of the README's "Following an experiment on screen" move in the same window shape.
+  - `casa-source.svg`: the spectrum Card's settings open, and `main.py` scrolls down to `plt.show()`.
+  - `casa-timeline.svg`: the timeline at the bottom grows with the replay, by each Card's start and end and the time of its stages.
+  - `collatz-subworkflow.svg`: replays the Workflow inside collatz-cpp, with its counts (the loop 112 times and so on).
+  - `casa-guide.svg`: the thrush flies from the chat to the spectrum Card and shows a speech bubble.
+- `docs/assets/demos/<id>.svg`: each demo with a record, as a 440 × 264 tile in the gallery's reduced view (`compact`). Text the CSS hides on a small Canvas (`.tp-small` and the like) and the contents of the Cards' description lines are left out, and images are twice the size they are shown at in the tile.
 
-再生の各段階（`framesOf`）を、プレイヤーの `Canvas`（と `RunControl`）が `site/player.css` で描く HTML にします。同じ描画は 1 回だけ持ち（Card は形・本体・ポートに分けて）、その HTML を Chrome（ヘッドレス）でレイアウトし、[dom-to-svg](https://github.com/felixfbecker/dom-to-svg) で四角・線・文字・画像の SVG に変えます。それが出ている段階でだけ CSS のアニメーションで見せます（要素の class が SVG のグループに残ります）。ループし、`prefers-reduced-motion` のときは実行の終わりの状態で止まります。画像は data: URI で埋め込むので、外のファイルもフォントも読みません。
+Each stage of the replay (`framesOf`) is turned into the HTML that the player's `Canvas` (and `RunControl`) draws with `site/player.css`. The drawing is held only once (with Cards split into shape, body and ports); that HTML is laid out in headless Chrome and turned by [dom-to-svg](https://github.com/felixfbecker/dom-to-svg) into an SVG of rectangles, lines, text and images, shown with CSS animations only during the stages in which it appears (the elements' classes remain on the SVG's groups). It loops, and with `prefers-reduced-motion` it stops at the state at the end of the run. Images are embedded as data: URIs, so it loads no outside files or fonts.
 
-プレイヤーと違う点は、Card を選んで中身を読めないこと、拡大縮小のボタンがないこと、出力の枠のフェードインが最初の 1 周だけなことです。中身を読むには、サイトの `#demo-<id>`（例: `https://gen740.github.io/Tsugumi/#demo-casa`）でそのデモのプレイヤーが開きます。
+How it differs from the player: Cards cannot be selected to read inside, there are no zoom buttons, and output frames fade in only on the first round. To read inside, the site's `#demo-<id>` (for example `https://gen740.github.io/Tsugumi/#demo-casa`) opens that demo's player.
 
-SVG の中に HTML を入れる `<foreignObject>` は使いません。Safari は、`<img>` の大きさに縮められた SVG の `<foreignObject>` の中の位置を持つ要素を縮めずに描き（WebKit の [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)）、動くと一部しか描き直さないためです。dom-to-svg が描かないもの（Canvas の点のグリッドの `radial-gradient`、リストの記号）は、変える前に SVG の模様や文字に置き換えます。
+`<foreignObject>`, which puts HTML inside SVG, is not used. Safari draws positioned elements inside the `<foreignObject>` of an SVG shrunk to the size of an `<img>` without shrinking them (WebKit [bug 23113](https://bugs.webkit.org/show_bug.cgi?id=23113)), and redraws only part when they move. What dom-to-svg does not draw (the `radial-gradient` of the Canvas's dot grid, list markers) is replaced with SVG patterns or text before converting.
 
-GitHub では `<img>`（README）として見せます。raw.githubusercontent.com のファイルを直接開くと、その CSP（`default-src 'none'`）が data: URI の画像も止めるので、出力の画像だけが出ません（alt のある図は壊れた画像のアイコンになります）。README に置くときは、GitHub が画像に付ける raw ファイルへのリンクの代わりに、`<a>` でサイトの `#demo-<id>` へつなぎます。
+On GitHub they are shown as `<img>` (in the README). Opening a file on raw.githubusercontent.com directly, its CSP (`default-src 'none'`) blocks even data: URI images, so only the output images do not appear (a figure with alt text becomes a broken image icon). In the README, instead of the link to the raw file GitHub puts on images, an `<a>` links to the site's `#demo-<id>`.
 
-## 記録の中身
+## What the records hold
 
-`player-data/assets/<id>.run.json` の `run` に、どの実行の記録か（Run ID、日付、ホスト、隔離、コミット）があります。
-再生の順序と時間は `RunInvocationsRequest`、表示は `RunRecordRequest` の値そのものです。時間の重なる Card は同時に動いたものとして 1 つの段階で再生します。再生の速さは実際の時間に比例しません。
+`run` in `player-data/assets/<id>.run.json` says which run the record is of (Run ID, date, host, isolation, commit).
+The order and timing of the replay are `RunInvocationsRequest`, and the displays are the values of `RunRecordRequest` themselves. Cards whose times overlap are replayed in one stage, as having run at the same time. The replay's speed is not proportional to the real time.
 
-手を加えているのは次の点だけです。
+Only these things are changed:
 
-- 画像は長辺 640 px に縮め、220 KB を超える PNG は JPEG にしています。
-- 表は先頭 24 行、文章は 4000 文字、折れ線と散布図は 1 系列 400 点に間引いています（点数の多いものだけ）。
-- Plotly・Altair・Dawn の図は、ライブラリを読み込まず、同じ値を簡単な SVG で描きます（アプリのようなズームやホバーはありません）。パネルが分かれた Vega-Lite の図（concat や facet）は、記録するときに Vega で描いて画像にします（`vega-svg.mjs`）。3D 点群は点の数だけを示します。
-- `ports.json` はコアが解決したポートです（実行はしません）。
+- Images are shrunk to 640 px on their long side, and PNGs over 220 KB become JPEGs.
+- Tables are cut to their first 24 rows, text to 4000 characters, and line and scatter charts thinned to 400 points per series (only those with many points).
+- Plotly, Altair and Dawn charts are drawn as simple SVGs of the same values, without loading the libraries (no zooming or hovering as in the app). Vega-Lite charts with separate panels (concat or facet) are drawn with Vega into images when recorded (`vega-svg.mjs`). 3D point clouds show only the number of points.
+- `ports.json` is the ports the core resolved (nothing is run).
 
-記録のないデモは、線のつながりから順序を作って再生し、結果は出しません。Draft は実行できません。
-
+Demos without a record are replayed in an order made from their wires, with no results. Drafts cannot run.

@@ -32,7 +32,7 @@ jobs:
           app=true
           if files="$(git diff --name-only "$BASE" HEAD)" && [ -n "$files" ]; then
             others="$(grep -vE '^docs/|^[A-Z_]+\.md$' <<<"$files" || true)"
-            read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Name|Author)\.md)$' <<<"$files" || true)"
+            read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Rationale|Vision)\.md)$' <<<"$files" || true)"
             if [ -z "$others$read_by_app" ]; then app=false; fi
           fi
           echo "app=$app" >> "$GITHUB_OUTPUT"

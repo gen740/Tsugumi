@@ -527,11 +527,11 @@ function openDeck(fromEnd = false) {
   deck.duration = fromEnd ? 0.01 : durationOf(first?.fig, deck.p0, deck.p1)
   const el = document.createElement('section')
   el.className = 'deck'
-  el.setAttribute('aria-label', 'スライドショー')
+  el.setAttribute('aria-label', 'Slide show')
   el.tabIndex = -1
-  el.innerHTML = `<div class="deck-close" role="group" aria-label="読み方"><button type="button" data-to="read" aria-pressed="false">読む</button><button type="button" aria-pressed="true">スライドショー</button></div>
+  el.innerHTML = `<div class="deck-close" role="group" aria-label="How to read"><button type="button" data-to="read" aria-pressed="false">Read</button><button type="button" aria-pressed="true">Slide show</button></div>
     <div class="deck-stage"><div class="deck-figure" hidden><canvas></canvas><p></p></div><div class="deck-text"></div></div>
-    <div class="deck-controls"><button type="button" data-go="-1" aria-label="前へ">‹</button><div class="deck-dots"></div><button type="button" data-go="1" aria-label="次へ">›</button></div>`
+    <div class="deck-controls"><button type="button" data-go="-1" aria-label="Previous">‹</button><div class="deck-dots"></div><button type="button" data-go="1" aria-label="Next">›</button></div>`
   mainEl.append(el)
   deck.el = el
   deck.canvas = el.querySelector('canvas')

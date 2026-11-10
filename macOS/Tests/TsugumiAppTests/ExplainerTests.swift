@@ -2,13 +2,13 @@ import Foundation
 import Testing
 @testable import TsugumiApp
 
-/// Help > Tsugumi を知る opens on a page that exists, and its list has the story
+/// Help > Learn about Tsugumi opens on a page that exists, and its list has the story
 /// pages: the site's generator decides which they are.
 @Test func theExplainerFindsItsPages() throws {
   #expect(Explainer.file(for: Explainer.start) != nil)
   let pages = Explainer.pages
   #expect(pages.contains("pages/problem.html"))
-  #expect(pages.contains("pages/origin.html"))
+  #expect(pages.contains("pages/philosophy.html"))
   // A plain document of the site is not a story page, and is not listed.
   #expect(!pages.contains("pages/security.html"))
 }

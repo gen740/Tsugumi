@@ -1,51 +1,51 @@
-# 今後の予定と、保証の範囲
+# Plans and guarantees
 
-今の Tsugumi でできることの範囲と、これから加わる予定のものをまとめています。各文書に書いたものをここに集めています。
+What Tsugumi can do today, and what is planned. This page gathers what the other documents say.
 
-「Tsugumi が原理的に保証できないこと」は、どんな道具でも根本的には解決できないことです（[Philosophy](philosophy.md)）。「データと権限」は、Tsugumi が何を引き受け、何をプロジェクトの作者と利用者に委ねるかという線引きです（[セキュリティの要点](security.md#どこまでを-tsugumi-が引き受けるか)）。それ以外は、今の範囲と今後の開発予定です。
+"What Tsugumi cannot guarantee in principle" lists what no tool can fundamentally solve ([Philosophy](philosophy.md)). "Data and permissions" draws the line between what Tsugumi takes on and what it leaves to a project's author and its users ([the summary in Security](security.md#what-tsugumi-takes-on)). The rest is the current scope and the plans.
 
-## Tsugumi が原理的に保証できないこと
+## What Tsugumi cannot guarantee in principle
 
-- **科学的に正しいかどうかは、道具には保証できません。** それを判断するのは人間です。Tsugumi が用意するのは、判断の材料に手が届き、別の可能性をすぐに試せる足場です（[Philosophy](philosophy.md#きれいな結果だけでは確かめられない)）。
-- **計算そのものに含まれる偶然は、環境を固定しても固定できません。** Nix で実行環境を、版でコードと定義を固定するので、プロジェクトさえ共有すれば、一度やった解析は違う Mac でも同じように動きます。乱数・外部データ・到着順・保持した状態に結果が依存する処理で seed などの条件を決めるのは、計算を書く側です（[Q&A の Q3](qa.md#q3-解析の再現性をどのように確保するのですか)）。
-- **過去の版に戻せるのは、コードと定義です。** 当時の worker のメモリの中身や、外から取ってきたデータまでは取り戻せません（[Q&A の Q6](qa.md#q6-git-と実行履歴はそれぞれ何を記録するのですか)）。
+- **A tool cannot guarantee that a result is scientifically right.** People judge that. What Tsugumi provides is a foothold from which the material for that judgement is within reach and other possibilities can be tried at once ([Philosophy](philosophy.md#a-clean-result-alone-cannot-be-checked)).
+- **Chance inside the computation cannot be pinned by pinning the environment.** Nix pins the environment and versions pin the code and definitions, so an analysis done once runs the same way on another Mac as long as the project is shared. Deciding conditions such as seeds, for processing whose result depends on random numbers, external data, arrival order or kept state, is up to whoever writes the computation ([Reproducibility](rationale.md#reproducibility)).
+- **Going back to an earlier version brings back code and definitions.** Not what was in a worker's memory then, nor data fetched from outside ([What is recorded, and where](rationale.md#what-is-recorded-and-where)).
 
-## 結果をたどること
+## Following results
 
-- **2 つの実行を並べて比べる画面は、[#156](https://github.com/gen740/Tsugumi/issues/156) で開発予定です。** 今は実行履歴をそれぞれ開いて比べます。
-- **Agent の報告から根拠の Card や実行へ飛べるリンクは、[#157](https://github.com/gen740/Tsugumi/issues/157) で開発予定です。**
-- **実行の記録に各 Card のビルド結果（store パス）を残すことは、[#158](https://github.com/gen740/Tsugumi/issues/158) で開発予定です。** 今は実行の commit（`pkgsPath` と `default.nix` を含む）から環境をたどれます。
-- **部分実行は、保存済みの入力で動きます。** 上流を変えたあとは、最後に Workflow 全体を通して確かめます（[Q&A の Q5](qa.md#q5-解析の途中からやり直せることにはどんな意味がありますか)）。
-- **過去の入出力値を残すかどうかは、Card ごとに選べます。** `recordIO` を入れた Card の値が残ります（既定は off。[Q&A の Q4](qa.md#q4-なぜすべての実行データを保存しないのですか)）。
+- **A screen that puts two runs side by side is planned in [#156](https://github.com/gen740/Tsugumi/issues/156).** For now, open each run's history and compare.
+- **Links from the Agent's report to the Cards and runs it rests on are planned in [#157](https://github.com/gen740/Tsugumi/issues/157).**
+- **Keeping each Card's build result (store path) in the run's record is planned in [#158](https://github.com/gen740/Tsugumi/issues/158).** For now, the environment can be traced from the run's commit (which includes `pkgsPath` and `default.nix`).
+- **Partial runs use saved inputs.** After changing something upstream, finish by running the whole Workflow ([Rerunning from the middle](rationale.md#rerunning-from-the-middle)).
+- **Whether past input and output values are kept is chosen per Card.** Values are kept for Cards with `recordIO` on (off by default; [What is recorded, and where](rationale.md#what-is-recorded-and-where)).
 
-## データと権限
+## Data and permissions
 
-- **Agent に送られるのは、Agent が読んだものだけです。** ソース・ログ・入出力値のうち Agent が読んだものはモデルのプロバイダへ送られ、自動で伏せる仕組みはありません。Agent を使わなくても、すべての操作は UI からできます（[モデルに送られるもの](security.md#モデルに送られるもの)、[業務自動化とデータの境界](vision.md#業務自動化とデータの境界)）。Web 検索は既定でオフで、オンにすると検索語も検索サービスへ出ます（[Web 検索](security.md#web-検索)）。
-- **プロジェクトを開くことは、その中身を信頼するという判断です。** 他人のプロジェクトの `_card.json` に書かれた `hostFolders` は開くときに共有され、`network` と `sandbox: false`、`tsugumi.json` の `nixSources` は実行時に有効になり、確認は出ません。`make` や notebook を動かすのと同じく、作者が書いたとおりに動かすのが Tsugumi の役目で、作者を信頼するかどうかは利用者が決めます。Tsugumi は、書かれた権限を Card のアイコンと Experimental の項目に出し、`.tsugumi/` を使う前に検査し、Agent が権限を広げる保存には承認を求めます（[どこまでを Tsugumi が引き受けるか](security.md#どこまでを-tsugumi-が引き受けるか)、[既知の制限](security.md#10-既知の制限と注意事項)）。
-- **プロジェクトどうしは、コンテナと同じ方法で分けています。** 1 つの Linux カーネルの上なので、カーネルの脆弱性までは防げません（Mac との間は VM で分けています）。共通の `/nix/store` は全プロジェクトから読めます（[既知の制限](security.md#10-既知の制限と注意事項)）。
-- **Nix の固定出力 derivation は、`network: false` でもビルド時に取得できます。** Nix の仕様で、取得した中身は hash で照合されるので変わりません（[Nix 評価の制限](security.md#5-nix-評価の制限)）。
+- **The Agent is sent only what it read.** Of the sources, logs and input and output values, what the Agent read is sent to the model's provider, and there is no mechanism that masks it automatically. Without the Agent, every operation can be done from the UI ([What is sent to the model](security.md#what-is-sent-to-the-model), [Business automation and the data boundary](vision.md#business-automation-and-the-data-boundary)). Web search is off by default; when on, the search terms also go to the search service ([Web search](security.md#web-search)).
+- **Opening a project is a decision to trust its contents.** In someone else's project, `hostFolders` written in a `_card.json` are shared on opening, and `network`, `sandbox: false` and the `nixSources` of `tsugumi.json` take effect at run time, without confirmation. Like running `make` or a notebook, Tsugumi's job is to run it as its author wrote it; whether to trust the author is the user's decision. Tsugumi shows the permissions written on the Card's icons and among the Experimental items, inspects `.tsugumi/` before using it, and asks for approval for saves in which the Agent widens permissions ([What Tsugumi takes on](security.md#what-tsugumi-takes-on), [Known limitations](security.md#10-known-limitations-and-cautions)).
+- **Projects are separated the way containers are.** They share one Linux kernel, so a kernel vulnerability is not prevented (the Mac is separated by the VM). The shared `/nix/store` is readable from every project ([Known limitations](security.md#10-known-limitations-and-cautions)).
+- **Nix's fixed-output derivations can fetch at build time even with `network: false`.** That is how Nix works; what is fetched is checked against its hash, so it cannot change ([Limits on Nix evaluation](security.md#5-limits-on-nix-evaluation)).
 
-## 動く環境
+## Where it runs
 
-- **デスクトップアプリは、Apple silicon の macOS 26 以降で動きます。** Linux と Windows ではブラウザの Web UI（`tsugumi` コマンド）を使います（[インストール](install.md)）。
-- **Mac 版は、README のコマンド 1 行で入れます。** リリース版は Apple の公証をしていない ad-hoc 署名なので、ブラウザでダウンロードしたものは Gatekeeper に止められます。`curl` で入れれば止められず、以後の自動更新はチェックサムとコード署名を確かめてから入れます（[インストール](install.md#デスクトップアプリmacを入れる)）。
-- **Linux は Ubuntu と NixOS で確かめています。** aarch64 は OrbStack の VM（Ubuntu 26.04）で、x86_64 は友人の Ubuntu と、SSH 越しに Web UI を使う NixOS のマシンで動かしました（[SSH 越しに使う](webui.md#別のマシンで動かしてssh-越しに使う)）。x86_64 では CI（GitHub Actions の Ubuntu）でもビルドとテストを流しています。Linux と Windows には Nix が必要です。
-- **Windows は WSL2 で動きます。** 友人の Windows で、WSL2 の中に Nix を daemon なしで入れ、`tsugumi` を入れてデモを開くところまで確かめました（[#159](https://github.com/gen740/Tsugumi/issues/159)）。`install.ps1` のほか、WSL の Linux のシェルで Linux と同じ手順でも入れられます（[インストール](install.md#ブラウザで使うtsugumi-コマンド)）。
-- **安定版は v1.0.0 からです。** いまの 0.x の版は開発を速く進めるための版で、版の間でプロジェクトの文書や設定の互換性を保たず、移行もしません（[AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)）。
-- **Claude Code の plugin は Web UI で使います。** `tsugumi` コマンドなどで開いた Web UI のプロジェクトを、Claude Code に任せられます（[Claude Code から使う](claude-code.md#対応していないこと)）。Claude Code 自身のシェルやファイル操作は、Tsugumi の権限の確認を通りません。
+- **The desktop app runs on Apple silicon with macOS 26 or later.** On Linux and Windows, use the Web UI in the browser (the `tsugumi` command) ([Installation](install.md)).
+- **The Mac version installs with the one-line command in the README.** Releases are signed ad hoc, without Apple's notarisation, so a download from a browser is stopped by Gatekeeper. Installing with `curl` is not stopped, and later automatic updates are installed after their checksum and code signature are checked ([Installation](install.md#installing-the-desktop-app-mac)).
+- **Linux has been checked on Ubuntu and NixOS.** On aarch64 in an OrbStack VM (Ubuntu 26.04); on x86_64 on a friend's Ubuntu and on a NixOS machine used through the Web UI over SSH ([Over SSH](webui.md#running-it-on-another-machine-over-ssh)). On x86_64, CI (Ubuntu on GitHub Actions) also builds and runs the tests. Linux and Windows need Nix.
+- **Windows works through WSL2.** On a friend's Windows, with Nix installed in WSL2 without its daemon, `tsugumi` was installed and a demo opened ([#159](https://github.com/gen740/Tsugumi/issues/159)). Besides `install.ps1`, it can be installed from a shell in the WSL Linux with the same steps as on Linux ([Installation](install.md#using-it-in-the-browser-the-tsugumi-command)).
+- **The stable release starts at v1.0.0.** The current 0.x versions are for moving development fast: compatibility of project documents and settings is not kept between versions, and nothing is migrated ([AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)).
+- **The Claude Code plugin works with the Web UI.** You can hand a Web UI project, opened with the `tsugumi` command or otherwise, to Claude Code ([Using it from Claude Code](claude-code.md#what-is-not-supported)). Claude Code's own shell and file operations do not go through Tsugumi's permission checks.
 
-## 機能
+## Features
 
-- **Card は C++・Python・bash・R・Julia で書けます。** Go・Rust・Ruby・C# は [#10](https://github.com/gen740/Tsugumi/issues/10)・[#11](https://github.com/gen740/Tsugumi/issues/11)・[#13](https://github.com/gen740/Tsugumi/issues/13)・[#14](https://github.com/gen740/Tsugumi/issues/14) で開発予定です。R と Julia の Card は別プロセスで動き、値を JSON でやり取りします（呼び出しごとに起動し、表示は Card の終了時に出ます）。常駐 worker での状態保持とライブ表示は [#161](https://github.com/gen740/Tsugumi/issues/161) で開発予定です。
-- **図は、ふつうの Python の Card で描けます。** matplotlib・Plotly・Altair のコードをそのまま書けば、Card の表示になります。雛形を選んで図を作る専用の Visualization Card は [#19](https://github.com/gen740/Tsugumi/issues/19) で登場予定です。
-- **marimo と R Markdown / Quarto の専用 Card は、[#15](https://github.com/gen740/Tsugumi/issues/15)・[#16](https://github.com/gen740/Tsugumi/issues/16) で登場予定です。**
-- **logger Card は、受け取った値を Card のログと表示に出します。** 外部 DB（SQLite・PostgreSQL など）への記録は [#160](https://github.com/gen740/Tsugumi/issues/160) で開発予定です。
-- **アプリでは、16 個のプロジェクトを同時に開けます。** 共通 VM の共有デバイスの数で決まります（`SharedVM.slotCount`）。
-- **大規模デモ（200 Card）と WASM の表示は、今後の拡張です**（[今後の拡張](development.md#今後の拡張)）。
-- **科学デモの `load` は、実行のたびに公開元から取得します。** 公開元の内容が変われば結果も変わります。hash で固定しているのは Cas A です（[同梱デモのしくみ](demos.md#科学デモ公開データの取得と解析)）。
+- **Cards can be written in C++, Python, bash, R and Julia.** Go, Rust, Ruby and C# are planned in [#10](https://github.com/gen740/Tsugumi/issues/10), [#11](https://github.com/gen740/Tsugumi/issues/11), [#13](https://github.com/gen740/Tsugumi/issues/13) and [#14](https://github.com/gen740/Tsugumi/issues/14). R and Julia Cards run in a separate process and exchange values as JSON (started per invocation; their display appears when the Card ends). Keeping state in a resident worker, and live display, are planned in [#161](https://github.com/gen740/Tsugumi/issues/161).
+- **Figures can be drawn by ordinary Python Cards.** Write matplotlib, Plotly or Altair code as it is and it becomes the Card's display. A dedicated Visualization Card that makes figures from templates is planned in [#19](https://github.com/gen740/Tsugumi/issues/19).
+- **Dedicated Cards for marimo and R Markdown / Quarto are planned in [#15](https://github.com/gen740/Tsugumi/issues/15) and [#16](https://github.com/gen740/Tsugumi/issues/16).**
+- **The logger Card puts the values it receives in the Card's log and display.** Recording to an external database (SQLite, PostgreSQL and the like) is planned in [#160](https://github.com/gen740/Tsugumi/issues/160).
+- **The app can have 16 projects open at once.** The number of shared devices of the shared VM decides it (`SharedVM.slotCount`).
+- **A large demo (200 Cards) and WASM display are future extensions** ([Future extensions](development.md#future-extensions)).
+- **The `load` of the science demos fetches from the publisher on every run.** If the publisher's content changes, so does the result. Cas A is the one pinned by hash ([The bundled demos](demos.md#science-demos-fetching-and-analysing-public-data)).
 
-## 確認の範囲
+## What has been checked
 
-- **共通 VM のテストは、Virtualization.framework を使える Mac で行います**（`TSUGUMI_TEST_CONTAINER=1`）。GitHub Actions の runner では動かせないためです（[確認範囲](development.md#確認範囲)、[Evidence](evidence.md)）。
-- **実際の Claude API や ChatGPT のプランでも、多くの場面で試しています。** それでも、試していない組み合わせが残っているかもしれません。自動テストはテスト用モデルで行い、実際の API で通した記録の一例は [AgentRun.md](agentrun.md) にあります。
-- **Web 検索は、テスト用モデルで自動テストしています。** 実際の API と ChatGPT プランでは、これから確かめます（[実装状況](development.md#実装状況)）。
+- **Tests of the shared VM run on a Mac that can use Virtualization.framework** (`TSUGUMI_TEST_CONTAINER=1`), because GitHub Actions runners cannot run them ([What has been checked](development.md#what-has-been-checked), [Evidence](evidence.md)).
+- **Many situations have also been tried with the real Claude API and the ChatGPT plan.** Even so, combinations that were not tried may remain. Automated tests use a test model; one record of going through it with the real API is in [Evidence](evidence.md#a-run-with-the-real-claude-api).
+- **Web search is tested automatically with the test model.** It is yet to be checked with the real API and the ChatGPT plan ([Implementation status](development.md#implementation-status)).

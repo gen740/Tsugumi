@@ -3,13 +3,13 @@
 Tsugumi's own code is under the [MIT License](LICENSE). Existing libraries,
 copied code, fonts and external data retain their own licenses, including
 the author's pre-existing [hosq](https://github.com/CLI20-dev/hosq) library.
-See [制作範囲と事前準備](docs/Provenance.md) for the authorship boundary.
+See [How it was built](docs/Philosophy.md#how-it-was-built) for the authorship boundary.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](macOS/tools/bundle-licenses.sh)).
 The corresponding source of the VM's boot disk is in that disk's release of
 [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
-[ライセンス調査](docs/LicenseAudit.md). Versions
+[License audit](docs/LicenseAudit.md). Versions
 below were audited at `0ec6460` (2026-11-04) and checked again on 2026-11-05;
 lock files and build recipes are authoritative when dependencies change.
 
@@ -158,7 +158,7 @@ carries in `licenses/vm-boot/`, lists what the image really contains, with each
 package's license as nixpkgs declares it, its sources and patches, the license
 files of those sources and the kernel's configuration. The corresponding source
 is `sources.tar.gz` in the same release. See
-[how it is provided](docs/LicenseAudit.md#vm-の対応ソースの提供方法).
+[how it is provided](docs/LicenseAudit.md#how-the-vms-corresponding-source-is-provided).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
 
@@ -174,7 +174,7 @@ distributing a standalone daemon or a different container image.
 
 ## Documentation site
 
-The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image. The app's Help > Tsugumi を知る shows the same pages: `build-app.sh` copies them, with these files and the font's license text, to `Contents/Resources/explainer/`.
+The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image. The app's Help > Learn about Tsugumi shows the same pages: `build-app.sh` copies them, with these files and the font's license text, to `Contents/Resources/explainer/`.
 
 | Component | Version / license text | Use |
 | --- | --- | --- |

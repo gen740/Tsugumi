@@ -1,49 +1,43 @@
-# Tsugumi ドキュメント一覧
+# Tsugumi documents
 
-プロジェクトのコンセプトと実画面によるウォークスルーは [README](../index.md) にあります。
-読む目的に合わせて、次の文書から始めてください。動く図と一緒に読むなら [Web 版](https://gen740.github.io/Tsugumi/) があります（内容は同じ文書です）。AI には、各ページの Markdown 版を案内する [llms.txt](../llms.txt) があります。
+The concept, and a walkthrough with real screens, are in the [README](../index.md).
+Start from the document that fits what you want to read. To read with moving figures, there is the [web version](https://gen740.github.io/Tsugumi/) (the same documents). For AI, [llms.txt](../llms.txt) points to the Markdown of each page.
 
-## はじめる
+## Getting started
 
-| 文書 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [INSTALL.md](install.md) | デスクトップアプリと `tsugumi` コマンド（Mac・Linux・Windows）の導入と更新、ソースからのビルド手順 |
-| [Usage.md](usage.md) | デモの案内に沿って始める手順と、よく使う操作 |
-| [CardGuide.md](cardguide.md) | はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する） |
-| [Demos.md](demos.md) | 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと |
-| [WebUI.md](webui.md) | ブラウザで同じ画面を使う Web UI（`tsugumi` コマンド: Mac は共通 VM、Linux は bubblewrap、Windows は WSL） |
-| [claude-code.md](claude-code.md) | Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう |
+| [INSTALL.md](install.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
+| [Usage.md](usage.md) | Getting started by following a demo's guide, and the operations you use most |
+| [CardGuide.md](cardguide.md) | Your first Card: a Card that takes an input and computes, written in Python, bash, C++, R and Julia (a test runs the code on this page) |
+| [Demos.md](demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
+| [WebUI.md](webui.md) | The same screens in the browser (the `tsugumi` command: the shared VM on a Mac, bubblewrap on Linux, WSL on Windows) |
+| [claude-code.md](claude-code.md) | Having Claude Code make and run Cards through the Claude Code plugin, shown in the Web UI |
 
-## 考え方を知る
+## The ideas
 
-| 文書 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [QA.md](qa.md) | AI に任せるのをためらう 3 つの理由（過程が見えない・再現性・データ）に答える Q&A。各問いに、確かめる場所（デモ・テスト）つき |
-| [novelty.md](novelty.md) | 同じ Workflow で設計・実装・検証をつなぐ独自性、なぜ今この設計なのか、試行錯誤を支える実装上の工夫 |
-| [Vision.md](vision.md) | 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想 |
-| [Philosophy.md](philosophy.md) | 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験 |
-| [Name.md](name.md) | 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来 |
-| [Author.md](author.md) | この道具を作った人 |
-| [Origin.md](origin.md) | 作者が自分の言葉で書いた、この道具の出発点 |
-| [Limitations.md](limitations.md) | 今の範囲と今後の開発予定、保証の範囲 |
+| [Philosophy.md](philosophy.md) | "What to build so that we are not used by AI": the concern behind Tsugumi, where it started, its name, how it was built and its author |
+| [Rationale.md](rationale.md) | Why design, implementation and checking share one Workflow: answers to the three reasons for hesitating to hand research to AI (an invisible process, reproducibility, data), the measures that keep trial and error light, and where to check each |
+| [Vision.md](vision.md) | Applications: learning research decisions, growing tools, handing work to the next person, and the idea of business automation |
+| [Limitations.md](limitations.md) | The current scope, plans and the scope of the guarantees |
 
-## 仕組みを知る
+## How it works
 
-| 文書 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [features.md](features.md) | 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ） |
-| [Versions.md](versions.md) | 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」 |
-| [security.md](security.md) | 守っていること・守っていないことの要点と、4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限 |
-| [Protocol.md](protocol.md) | RPC 契約: 41 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成） |
-| [Glossary.md](glossary.md) | Card・Draft・Run・invocation・版などの用語集 |
+| [features.md](features.md) | A technical tour of the main features (architecture, Cards and Workflows, Nix, SDK and workers, saving, history, visualisation, UI, Agent, demos) |
+| [Versions.md](versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
+| [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
+| [Protocol.md](protocol.md) | The RPC contract: the 41 requests and the notifications (generated from `protocol/tsugumi.fbs`) |
+| [Glossary.md](glossary.md) | Card, Draft, Run, invocation, version and other terms |
 
-## 記録と開発
+## Records and development
 
-| 文書 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [Evidence.md](evidence.md) | 主張ごとの確かめ方: テスト名・コマンド・最後に確認した環境 |
-| [AgentRun.md](agentrun.md) | 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録 |
-| [Development.md](development.md) | 実行基盤の設計決定、テストと確認範囲、計測、現在の実装状況 |
-| [Lock.md](lock.md) | 実行環境と依存ライブラリの固定バージョン一覧 |
-| [Provenance.md](provenance.md) | ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界 |
-| [LicenseAudit.md](licenseaudit.md) | Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項 |
+| [Evidence.md](evidence.md) | How to check each claim: test names, commands and the last environment checked, and a run with the real Claude API |
+| [Development.md](development.md) | Design decisions of the runtime, tests and what has been checked, measurements, implementation status |
+| [Lock.md](lock.md) | Pinned versions of the runtime and its dependencies |
+| [LicenseAudit.md](licenseaudit.md) | The license audit of Tree-sitter, fonts, the VM and more, and what remains for distribution |

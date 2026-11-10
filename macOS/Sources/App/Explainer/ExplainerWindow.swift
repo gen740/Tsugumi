@@ -36,7 +36,7 @@ enum Explainer {
     return file
   }
 
-  /// The pages there are here, as paths from the root ("pages/name.html").
+  /// The pages there are here, as paths from the root ("pages/philosophy.html").
   static var pages: [String] {
     guard let root else { return [] }
     let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("pages").path)) ?? []

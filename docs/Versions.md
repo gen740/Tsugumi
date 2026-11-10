@@ -1,32 +1,32 @@
-# 版の管理（git）
+# Versions (git)
 
-プロジェクトのフォルダは git のリポジトリです。アプリで作ったプロジェクトとデモのコピーは、最初に開いたときにリポジトリになります。それ以外のプロジェクトは「版の履歴」から「版管理を始める」でリポジトリにできます。`.tsugumi/`（tsugumid の状態）は `.gitignore` で除外します。
+A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History". `.tsugumi/` (tsugumid's state) is excluded in `.gitignore`.
 
-## 版ができるとき
+## When a version is made
 
-- **実行の開始時**：前の版から変わっていれば、保存済みの内容を commit します（メッセージ「実行: <Card>」）。実行は開始時の commit を記録し、実行一覧や `RunStatus.commit` で見られます。何も変えずにもう一度実行したときは同じ commit に実行が増えます（commit と実行は 1 : N）。
-- **版として残す**：今の内容を commit し、名前（annotated tag）とメモを付けます。
+- **When a run starts**: if the content has changed since the last version, the saved content is committed (message "実行: <Card>", currently written in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).
+- **Keep as Version**: commits the current content and gives it a name (an annotated tag) and a memo.
 
-## 実行の結果
+## The results of runs
 
-実行が終わるたびに、その実行の commit の note（`refs/notes/tsugumi`）に 1 行追記します。行の末尾は、何が実行されたかの短い概要です。
+Each time a run ends, one line is appended to the note of that run's commit (`refs/notes/tsugumi`). The end of the line is a short summary of what ran (currently written in Japanese):
 
 ```
 run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s 全体: load、bands ×3、rgb
 run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb
 ```
 
-概要は、その実行で core が記録した結果から機械的に作ります。モデルは使いません。
+The summary is made mechanically from the results the core recorded for that run. No model is used.
 
-- **起点**: `全体`（trigger や Workflow からの実行）、`<Card> から`（その Card と下流）、`<Card> だけ`。動いた Card のどれかが前の実行の保存済みの入力を使ったときは `（保存済みの入力で）` が付きます。
-- **動いた Card**: 実際に呼び出された Card。複数回呼ばれたものは `×回数`。全体の実行の trigger は入れません。
-- **失敗**: 失敗した Card とその種類（`Failure` の kind）。失敗の文面とログは git に入れず、実行の記録で見ます。
-- **未実行**: 上流の失敗や停止で、呼び出されなかった Card。
-- 長くならないよう、Card は一覧ごとに 6 個までで、残りは `ほか N` です。
+- **Where it started**: `全体` (whole: a run from a trigger or a Workflow), `<Card> から` (from that Card and downstream), `<Card> だけ` (only that Card). When any Card that ran used saved inputs from an earlier run, `（保存済みの入力で）` (with saved inputs) is added.
+- **Cards that ran**: the Cards actually invoked. One invoked several times gets `×count`. The trigger of a whole run is not included.
+- **Failed** (`失敗`): the Cards that failed and the kind of failure (the kind of `Failure`). The failure's text and logs are not put in git; see them in the run's record.
+- **Not run** (`未実行`): Cards not invoked because something upstream failed or stopped.
+- To keep it short, each list has at most six Cards, and the rest are `ほか N` (N more).
 
-デモの履歴から作った版の実行には、概要がありません（履歴のファイルにその記録がないため）。
+Runs of versions made from a demo's history have no summary (the history file has no such record).
 
-git からも結果で版を選べます。
+Versions can be chosen by result from git too:
 
 ```bash
 git log --notes=tsugumi --grep=failed
@@ -36,55 +36,55 @@ git log --notes=tsugumi --grep=failed
 git tag -l
 ```
 
-出力やログは git に入れず、これまでどおり実行の記録（VM の中の履歴、`.tsugumi/runs.sqlite`）に置きます。
+Outputs and logs are not put in git; as before, they are in the run's record (the history inside the VM, `.tsugumi/runs.sqlite`).
 
-## 版のツリー
+## The version tree
 
-Mac アプリは Workflow メニューの「版の履歴…」（⌥⌘Y）、Web UI はサイドバー下のボタンで開きます。
+In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu; in the Web UI, with the button at the bottom of the sidebar.
 
-- 枝分かれと合流を線で描き、各版に実行の回数と結果（点の色: 緑は成功、赤は失敗）、手動で残した版の名前（tag）、枝の名前、変わった Card を表示します。
-- 版の点や行にポインタを乗せると、その版で何が変わったかの短い文（版の要約）と、その版の Card のつながりのミニマップが出ます。ミニマップではその版で変わった Card が強調されます。
-- 版を選ぶと、そのメッセージ、版の要約、実行の結果と概要を見られます。「この版から始める」で、今の内容を版として残してから、その版の内容に戻ります。
-- 枝の先の版に戻ると、その枝を続けます。それ以外の版から変更して実行すると、新しい枝（`try-<版>`）になり、前の流れは消えません。
-- 未保存の変更があるときと実行中は、別の版に移れません。
+- Branches and merges are drawn as lines, and each version shows the number and results of its runs (the dot's colour: green succeeded, red failed), the name of a version kept by hand (a tag), branch names and the Cards that changed.
+- Hover a version's dot or row to see a short sentence on what changed in that version (the version summary) and a minimap of that version's Cards and connections, in which the Cards that changed in that version are highlighted.
+- Select a version to see its message, its version summary and its runs' results and summaries. "Start from This Version" keeps the current content as a version and then returns to that version's content.
+- Returning to the version at the tip of a branch continues that branch. Changing and running from any other version starts a new branch (`try-<version>`); the earlier line is not lost.
+- You cannot move to another version while there are unsaved changes or a run is going.
 
-## 版の要約
+## Version summaries
 
-版の履歴の上の「版の要約」をオンにすると（最初に確認します。既定はオフ）、小さなモデル（Anthropic なら `claude-haiku-5-5`。OpenAI は Agent のモデル）が、その版で何が変わったかを短い文にします。実行の概要とは別物で、こちらはモデルが書く文です。
+Turn on "Version summaries" above the version history (it asks first; off by default) and a small model (`claude-haiku-5-5` for Anthropic; for OpenAI, the Agent's model) writes a short sentence on what changed in each version. This is different from the run summary: it is text a model writes.
 
-- **いつ作るか**: その版の実行が終わったときと、要約のない版にポインタを乗せたときに、1 回だけ作ります。作る処理はアプリと Web UI のサーバーにあり（API キーがあるのはここだけです）、`tsugumid` はモデルを呼びません。ページやアプリが開いていない間の実行は、次にポインタを乗せたときに作ります。
-- **何を送るか**: その版の `VersionDiff` です。`tsugumi.json`、Card の `_card.json`・`_meta.json`・`_link.json`・`_outputs.fbs`・`default.nix`、`src/` のコード（`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`）の差分に限ります。`data/` などのデータファイル、`src/` の中のコード以外のファイル、`layout.json` は送りません。長いときは切ります（1 ファイル 4,000 バイト、全体 12,000 バイト）。ただし `_card.json` のパラメータの値とコードに書かれた値は送られます。
-- **どこに残すか**: commit の note（`refs/notes/tsugumi-summary`）です。実行の記録（`refs/notes/tsugumi`）とは分けているので、`git log --notes=tsugumi --grep=failed` はモデルの文に左右されません。git からは次のコマンドで読めます。
+- **When it is made**: once, when a run of that version ends, or when you hover a version without a summary. It is made in the app and in the Web UI's server (the only places with the API key); `tsugumid` never calls a model. For runs while no page or app is open, it is made the next time you hover.
+- **What is sent**: that version's `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and the code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are not sent. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values in `_card.json` and values written in code are sent, though.
+- **Where it is kept**: a commit note (`refs/notes/tsugumi-summary`). It is kept apart from the run records (`refs/notes/tsugumi`), so `git log --notes=tsugumi --grep=failed` is not affected by the model's text. Read it from git with:
 
 ```bash
 git log --notes=tsugumi-summary
 ```
 
-- 文は差分だけから書かせますが、モデルの文なので誤ることがあります。確かなのは差分と実行の記録です。
-- ChatGPT プランでは作りません（プランの利用枠は Agent のためのものです）。
+- The model is asked to write only from the diff, but it is a model's text and can be wrong. What is certain is the diff and the run records.
+- It is not made with the ChatGPT plan (the plan's allowance is for the Agent).
 
-## コメント
+## Comments
 
-Card のコメント（[コメントから Card を生成](features.md#コメントから-card-を生成)）は `definitions/<id>/_meta.json` にあるので、ほかの設定と同じように commit されます。版の履歴の詳細には、その前の版と比べてコメントがどう変わったかが出ます（`VersionCommit.comments`）。
+A Card's comments ([Generating Cards from comments](features.md#generating-cards-from-comments)) are in `definitions/<id>/_meta.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).
 
-- 変化は追加・編集・解決・開き直し・削除の 5 つです。同じ版の中で書かれて解決されたものは解決です。
-- それぞれ、誰がしたか（Agent か利用者か）と、解決した保存で変わった Card も出ます。誰が消したかはコメントと一緒になくなるので、削除には出ません（Agent の削除はチャットの行に残ります）。
-- コメントは id で区別するので、Card の名前を変えても別のコメントになりません。
-- 版は実行の開始時か「版として残す」でできます。その間に書いて消したコメントは残りません。残したいものは削除せず解決にします。
-- git からも読めます（例: `git show <版>:definitions/<id>/_meta.json`）。
+- The changes are of five kinds: added, edited, resolved, reopened and deleted. One written and resolved within the same version counts as resolved.
+- Each shows who did it (the Agent or the user) and, for a resolving save, the Cards it changed. Who deleted a comment goes with the comment, so it is not shown for deletions (an Agent's deletion remains in the chat's row).
+- Comments are told apart by id, so renaming a Card does not make them different comments.
+- A version is made when a run starts or with "Keep as Version". A comment written and deleted in between is not kept; to keep one, resolve it instead of deleting it.
+- They can be read from git too (for example `git show <version>:definitions/<id>/_meta.json`).
 
 ## nixpkgs
 
-新しいプロジェクトは、作った Tsugumi の nixpkgs（`flake.lock`）を `tsugumi.json` の `pkgsPath` に固定値で持ちます。版の一部なので、過去の版に戻れば nixpkgs も戻ります。固定されていないプロジェクト（`tsugumi:default`）は、Workflow 設定で固定できます。
+A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a fixed value in `pkgsPath` of `tsugumi.json`. It is part of the version, so going back to an earlier version brings back its nixpkgs too. A project that is not pinned (`tsugumi:default`) can be pinned in the Workflow settings.
 
-## デモの履歴
+## Demo histories
 
-デモのフォルダにある `.tsugumi-history.json` は、コピーがリポジトリになるときに commit・枝・tag・note になります（ファイル自体は消えます）。Cas A デモには、帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 `rgb-v1`、その上にスペクトルを足した版、CIAO を固定した版）が入っています。
+A demo folder's `.tsugumi-history.json` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
 
-## 実装
+## Implementation
 
-`core/src/versions.cc`（libgit2）。RPC は `VersionInit`・`VersionMark`・`VersionCheckout`・`VersionGraph`・`VersionCanvas`・`VersionDiff`・`VersionSummary`。git の操作が失敗しても実行は止めません（その実行は版を記録しません）。
+`core/src/versions.cc` (libgit2). The RPCs are `VersionInit`, `VersionMark`, `VersionCheckout`, `VersionGraph`, `VersionCanvas`, `VersionDiff` and `VersionSummary`. A failing git operation does not stop a run (that run records no version).
 
-## まだできないこと
+## Not yet possible
 
-- 版を選んだときに、戻らずにその版の Canvas と結果を見ること。今は「この版から始める」で戻って見ます。
+- Selecting a version and seeing its Canvas and results without going back to it. For now, go back with "Start from This Version" to see them.

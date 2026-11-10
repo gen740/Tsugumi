@@ -1,29 +1,29 @@
-# UI / Agent の共通動作契約
+# The shared behaviour contract of the UI and the Agent
 
-macOS（Swift）と Web（TypeScript）は同じ JSON の入力と期待値で検証する。片方の実装だけに合わせて期待値を変更せず、意味が変わる場合は両実装と fixture を同時に更新する。
+macOS (Swift) and the Web (TypeScript) are checked against the same JSON inputs and expected values. Do not change an expected value to fit only one implementation; when the meaning changes, update both implementations and the fixture together.
 
-- `agent-contract.json` の `modelOptions`: 接続・モデル・メニューで選んだ effort と Fast mode の組ごとに、選択肢（レベル、既定、Fast の料金の倍率）と、リクエスト本文に入る項目・入らない項目。
-- `agent-tools.json`: Agent に tool として渡す RPC の一覧（名前・説明・入力の schema・変更するか）。Swift（`ContractTests.swift`）と Web（`web/server/contract.ts`）が同じ一覧を作ることを確かめる。RPC を変えたら `npm run contract -- --update` で作り直す。
-- `model_fixture.py`: モデルの接続だけを置き換えるローカルの代役（Anthropic Messages API の形、SSE）。受け取った会話から応答を決めるので、Agent の切断・再起動・再開を両実装で確かめられる。
-- `merge-contract.json`: 名前付きレコードの同時編集、配列の順序・重複・削除・追加、connections の集合としての扱い。
-- `agent-behavior.json` の `recovery`: OperationGet の reply / value と期待するエラー状態。`error: null` は未確定（sent を維持）、`false` は成功、`true` は失敗。両実装で実際の BFBS から応答を encode / decode し、Agent の復帰処理と保存後の履歴を検証する。
-- `agent-behavior.json` の `compaction`: 保存形式の messages と圧縮境界 cut。ツール呼び出しと結果を分断せず、圧縮対象と残すメッセージを合わせると元の履歴になることを検証する。
-- `agent-behavior.json` の `helperBrief`: ProjectSnapshot の値と読めるファイルから、helper が最初に受け取る文章。自分の Card、線、上流で値を作る Card（fork は通り抜ける）、読まれる先。
-- `arrange-demos.json`: ある時点の同梱デモの全スコープから取った Card のグラフの見本（ポート名は実際の tsugumid が解決したもの）。デモを変えても作り直す必要はない。見本を新しくしたいときは `python3 tests/python/arrange_cases.py --write` で作る。
-- `arrange-cases.json`: 孤立した Card、折りたたみ、フィードバック、Card in Card の境界、線の順序など、デモにない形を手で書いたもの。
-- `arrange-contract.json`: 上の 2 つを両方の流れの向きで `CardGeometry` に通した入力と、整列の結果の期待値。両実装で入力（幾何）と結果の一致を確かめる。`CardGeometry` か整列を意図して変えたら `cd web && npm test -- --update-arrange` で作り直す。
-- `wire-routes.json`: 配線の入力（流れの向き・障害物・線の両端）と、両実装が同じように見つける経路。入力はある時点のデモから取った見本で、デモを変えても作り直す必要はない。経路の探索を意図して変えたら `WIRE_ROUTES_WRITE=1 npm test` で作り直す。
-- `port-grid-contract.json`: Canvas の格子への吸着と、Card のポートが格子に乗る位置の期待値（`UILogicTests.swift` と `web/tests/portGrid.ts`）。
-- `nix-source-refs.json`: `nixSources` の参照から作る名前・固定前の参照・短いコミットの期待値（`UILogicTests.swift` と `web/tests/nixSources.ts`）。
+- `modelOptions` in `agent-contract.json`: for each combination of connection, model, and the effort and Fast mode chosen in the menu, the choices (levels, default, Fast's price multiplier) and which fields go into the request body and which do not.
+- `agent-tools.json`: the list of RPCs given to the Agent as tools (name, description, input schema, whether it changes something). Checks that Swift (`ContractTests.swift`) and the Web (`web/server/contract.ts`) make the same list. After changing the RPC, regenerate it with `npm run contract -- --update`.
+- `model_fixture.py`: a local stand-in that replaces only the model connection (in the shape of the Anthropic Messages API, SSE). It decides its responses from the conversation it receives, so the Agent's disconnection, restart and resumption can be checked in both implementations.
+- `merge-contract.json`: simultaneous edits of named records; the order, duplicates, deletions and additions of arrays; connections treated as a set.
+- `recovery` in `agent-behavior.json`: OperationGet's reply / value and the expected error state. `error: null` is undetermined (keeps sent), `false` succeeded, `true` failed. Both implementations encode / decode responses from the real BFBS and check the Agent's recovery and the history after saving.
+- `compaction` in `agent-behavior.json`: messages in the stored format and the compaction boundary cut. Checks that tool calls and results are never split, and that what is compacted together with the messages kept gives back the original history.
+- `helperBrief` in `agent-behavior.json`: from a ProjectSnapshot's values and readable files, the text a helper first receives: its own Cards, wires, the upstream Cards that make their values (passing through forks), and where they are read.
+- `arrange-demos.json`: samples of Card graphs taken from every scope of the bundled demos at one point in time (port names as a real tsugumid resolved them). They need not be remade when demos change. To refresh the samples, make them with `python3 tests/python/arrange_cases.py --write`.
+- `arrange-cases.json`: shapes the demos do not have, written by hand: isolated Cards, folding, feedback, the boundaries of Cards in Cards, the order of wires and so on.
+- `arrange-contract.json`: the two above passed through `CardGeometry` in both flow directions as inputs, with the expected results of arranging. Both implementations check that the input (geometry) and the result agree. After intentionally changing `CardGeometry` or arranging, regenerate with `cd web && npm test -- --update-arrange`.
+- `wire-routes.json`: wiring inputs (flow direction, obstacles, the wire's ends) and the routes both implementations find alike. The inputs are samples taken from the demos at one point in time and need not be remade when demos change. After intentionally changing the route search, regenerate with `WIRE_ROUTES_WRITE=1 npm test`.
+- `port-grid-contract.json`: expected values for snapping to the Canvas's grid and for where a Card's ports sit on the grid (`UILogicTests.swift` and `web/tests/portGrid.ts`).
+- `nix-source-refs.json`: expected values for the name, the reference before pinning and the short commit made from a `nixSources` reference (`UILogicTests.swift` and `web/tests/nixSources.ts`).
 
-実行:
+Running:
 
 ```sh
 npm --prefix web test
-# Swift は macOS の Xcode + flatc が必要
+# Swift needs Xcode and flatc on macOS
 (cd macOS/CoreTests && swift test --filter 'RecoveryTests|CompactionTests')
 (cd macOS && swift test --filter mergePreservesNamedRecordsAndOrderedValues)
 (cd macOS && swift test --filter ArrangeTests)
 ```
 
-`.github/workflows/ci.yml` の Linux / macOS ジョブで両側を実行する。Agent の承認前後の永続化・保存失敗、既存モデル fixture を用いた圧縮後の継続などは、それぞれの言語の統合テストでも補う。
+The Linux / macOS jobs of `.github/workflows/ci.yml` run both sides. Persistence around the Agent's approvals, failed saves, continuing after compaction with the existing model fixture and the like are covered further by each language's integration tests.

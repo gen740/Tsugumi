@@ -1,315 +1,315 @@
-# セキュリティと隔離
+# Security and isolation
 
-この文書では、Tsugumi が設ける「4 段階の信頼境界（どこからどこまでを隔離しているか）」と、「秘密情報（外部モデルの API キーや RPC の認証トークン）の扱い」をまとめています。
-すべての記述は現在の実装（`core/src/vmd_main.cc`・`core/src/worker_proc.cc`・`core/src/server.cc`・`macOS/Sources/Launcher/`・`agent/Sources/TsugumiAgent/Provider.swift`）に基づいています。
+This document describes Tsugumi's four trust boundaries (what is isolated from what) and how secrets (the API keys of outside models and the RPC's authentication token) are handled.
+Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `macOS/Sources/Launcher/`, `agent/Sources/TsugumiAgent/Provider.swift`).
 
-## 要点
+## Summary
 
-### どこまでを Tsugumi が引き受けるか
+### What Tsugumi takes on
 
-Tsugumi のプロジェクトは、実行するためのコードと、その実行環境の定義です。プロジェクトを開いて実行することは、その中身を信頼するという利用者の判断で、`git clone` したリポジトリで `make` を動かすことや、受け取った Jupyter notebook を実行することと変わりません。作者が書いたとおりに動かすのが Tsugumi の役目なので、そのプロジェクトの作者を信頼してよいかを Tsugumi が判定したり、保証したりはしません。ここが Tsugumi の保証の境界です。
+A Tsugumi project is code to run and the definition of the environment it runs in. Opening and running a project is the user's decision to trust its contents, no different from running `make` in a repository you `git clone`d or executing a Jupyter notebook you received. Tsugumi's job is to run it as its author wrote it, so Tsugumi neither judges nor guarantees whether the project's author can be trusted. That is the boundary of Tsugumi's guarantees.
 
-その内側で、Tsugumi は次のことを引き受けます。
+Inside it, Tsugumi takes on the following:
 
-- **AI が、利用者の承認なしに権限を広げないこと。** Agent が Card にネットワーク・隔離なしの実行・Mac のフォルダ・外部の Nix ソースを与える保存は、利用者が承認するまで通りません（§8）。AI に作業を任せる道具として、いちばん大事にしている境界です。
-- **既定で閉じていること。** Card は既定でネットワークに出られず、プロジェクトの定義・認証 token・ほかの Card の作業領域も見えません。広がるのは、プロジェクトにそう書かれたときだけです（§4）。
-- **書かれた権限が見えること。** 広げた権限は `_card.json` と `tsugumi.json` という読めるファイルにあり、Canvas の Card のアイコンと、Card 設定の Experimental の項目に出ます。他人から来たプロジェクトの `.tsugumi/` は、使う前に検査します。
-- **Mac とほかのプロジェクトを守ること。** アプリ（共通 VM）では、あるプロジェクトを信頼できなかったとしても、そのファイルとプロセスが届くのは、そのプロジェクトと、そこへ明示的に共有したフォルダまでです（§2・§3）。
+- **AI does not widen permissions without the user's approval.** A save in which the Agent gives a Card the network, running without isolation, a Mac folder or an external Nix source does not go through until the user approves (§8). For a tool you hand work to AI with, this is the boundary that matters most.
+- **Closed by default.** By default a Card cannot reach the network, and cannot see the project's definitions, the authentication token or other Cards' work areas. It widens only when the project says so (§4).
+- **The permissions written are visible.** Widened permissions are in readable files, `_card.json` and `tsugumi.json`, and appear on the Card's icons on the Canvas and among the Experimental items of the Card's settings. The `.tsugumi/` of a project from someone else is inspected before use.
+- **The Mac and other projects are protected.** In the app (the shared VM), even if a project could not be trusted, its files and processes reach only that project and the folders explicitly shared with it (§2, §3).
 
-次の 2 つの表は、この境界の内側で守っていることと、境界の外にあるものです。後者は抜け穴ではなく、どこまでを Tsugumi が保証するかの線引きとして、理由と一緒に挙げています。詳しくは各節にあります。
+The two tables below list what is protected inside this boundary, and what lies outside it. The latter are not loopholes: they are where the line of Tsugumi's guarantees is drawn, listed with the reasons. Details are in each section.
 
-| 守っていること | 確かめる場所 |
+| Protected | Where to check |
 | --- | --- |
-| Card は既定でネットワークに出られず、プロジェクトの定義・認証 token・ほかの Card の作業領域が見えない（§4） | [test_cards_container.py](../tests/python/test_cards_container.py)、[test_workers.py](../tests/python/test_workers.py)（`test_network_is_off_unless_the_card_allows_it`）、Mac 上は [test_host_sandbox.py](../tests/python/test_host_sandbox.py) |
-| プロジェクトどうしは、uid・名前空間・cgroup で分かれている（§3） | [test_shared_vm.py](../tests/python/test_shared_vm.py) |
-| Mac のファイルで VM から見えるのは、開いているプロジェクトと、明示的に指定したフォルダだけ（§2） | [test_workers.py](../tests/python/test_workers.py)（`test_mac_folders_are_read_only_unless_written`） |
-| RPC は `127.0.0.1` だけで待ち受け、token がなければ切断し、ブラウザのページからはつながらない（§6） | [test_transport.py](../tests/python/test_transport.py)、[test_frame_fuzz.py](../tests/python/test_frame_fuzz.py) |
-| Agent が Card の権限（ネットワーク・隔離なし・Mac のフォルダ・外部の Nix ソース）を広げる保存は、利用者の承認なしには通らない（§8） | [test_permissions.py](../tests/python/test_permissions.py) |
-| Web 検索は既定でオフで、オフの間はモデルにツールを見せず、要求にも載せない（§8） | [WebSearchTests.swift](../macOS/CoreTests/Tests/CoreTests/WebSearchTests.swift)、[contract.ts](../web/server/contract.ts) |
-| API キーとトークンは Keychain（Web UI の ChatGPT と Linux では 0600 のファイル）に置き、`tsugumid`・VM・Card には渡さない（§8） | [agent/Sources/TsugumiAgent/Provider.swift](../agent/Sources/TsugumiAgent/Provider.swift)、[test_release.py](../tests/python/test_release.py)（アプリと Web UI が同じ Keychain 項目を使う） |
-| 他人から来たプロジェクトの `.tsugumi/` は、使う前に検査する | [test_untrusted_project.py](../tests/python/test_untrusted_project.py) |
+| By default a Card cannot reach the network and cannot see the project's definitions, the authentication token or other Cards' work areas (§4) | [test_cards_container.py](../tests/python/test_cards_container.py), [test_workers.py](../tests/python/test_workers.py) (`test_network_is_off_unless_the_card_allows_it`), and on a Mac [test_host_sandbox.py](../tests/python/test_host_sandbox.py) |
+| Projects are separated by uid, namespaces and cgroup (§3) | [test_shared_vm.py](../tests/python/test_shared_vm.py) |
+| Of the Mac's files, the VM sees only the open projects and folders explicitly specified (§2) | [test_workers.py](../tests/python/test_workers.py) (`test_mac_folders_are_read_only_unless_written`) |
+| The RPC listens only on `127.0.0.1`, disconnects without the token and cannot be reached from a browser's page (§6) | [test_transport.py](../tests/python/test_transport.py), [test_frame_fuzz.py](../tests/python/test_frame_fuzz.py) |
+| A save in which the Agent widens a Card's permissions (network, no isolation, Mac folders, external Nix sources) does not go through without the user's approval (§8) | [test_permissions.py](../tests/python/test_permissions.py) |
+| Web search is off by default; while off, the model is not shown the tool and it is not put in requests (§8) | [WebSearchTests.swift](../macOS/CoreTests/Tests/CoreTests/WebSearchTests.swift), [contract.ts](../web/server/contract.ts) |
+| API keys and tokens are kept in the Keychain (a 0600 file for the Web UI's ChatGPT and on Linux) and never given to `tsugumid`, the VM or Cards (§8) | [agent/Sources/TsugumiAgent/Provider.swift](../agent/Sources/TsugumiAgent/Provider.swift), [test_release.py](../tests/python/test_release.py) (the app and the Web UI use the same Keychain item) |
+| The `.tsugumi/` of a project from someone else is inspected before use | [test_untrusted_project.py](../tests/python/test_untrusted_project.py) |
 
-| 保証の範囲の外にあること | 理由 | 詳しく |
+| Outside the guarantees | Why | Details |
 | --- | --- | --- |
-| 他人のプロジェクトを開くとき、`_card.json` に書かれた `network`・`sandbox: false`・`hostFolders` と、`tsugumi.json` の `nixSources` に確認は出ない | プロジェクトを開くことは、その中身を信頼する判断だから（上の「どこまでを Tsugumi が引き受けるか」）。書かれた権限はファイルと Card の表示で見え、Agent が加えるときだけは承認を待つ | [§10](#10-既知の制限と注意事項) |
-| Agent を使うと、Agent が読んだコード・ログ・入出力値はモデルのプロバイダへ送られる | 外部のモデルに読ませる以上、読ませたものは送られる。送るのは Agent が読んだものだけで、使うかどうかとプロバイダは利用者が選ぶ。Agent を使わなくても、すべての操作は UI からできる | [モデルに送られるもの](#モデルに送られるもの) |
-| Web 検索をオンにすると、検索語が検索サービスへ出る。未公開のデータが検索語に載らないことは保証できない | 既定はオフで、オンにするのは利用者の選択。オフの間はモデルに検索のツールを見せない | [Web 検索](#web-検索) |
-| プロジェクト間の隔離は 1 つの Linux カーネルの上で、カーネルの脆弱性までは防げない | コンテナと同じ隔離のしかたで、Mac との間は VM で分けている。強く分けたいプロジェクトどうしは、同時に開かない | [§10](#10-既知の制限と注意事項) |
-| `network: false` でも、Nix の固定出力 derivation はビルド時に通信できる | Nix の仕様。取得した中身は hash で照合され、一致しなければ捨てられるので、中身は変わらない。外に出るのは、作者が書いた取得先への通信 | [§5](#5-nix-評価の制限) |
+| Opening someone else's project, there is no confirmation for `network`, `sandbox: false` and `hostFolders` written in `_card.json`, or for `nixSources` in `tsugumi.json` | Opening a project is a decision to trust its contents ("What Tsugumi takes on" above). The permissions written are visible in the files and on the Cards, and only when the Agent adds one does it wait for approval | [§10](#10-known-limitations-and-cautions) |
+| With the Agent, the code, logs and input and output values the Agent reads are sent to the model's provider | Having an outside model read something means sending it. Only what the Agent reads is sent, and whether to use it, and which provider, is the user's choice. Without the Agent, every operation can be done from the UI | [What is sent to the model](#what-is-sent-to-the-model) |
+| With web search on, search terms go to the search service. It cannot be guaranteed that unpublished data stays out of them | Off by default; turning it on is the user's choice. While off, the model is not shown the search tool | [Web search](#web-search) |
+| Isolation between projects is on one Linux kernel and does not prevent kernel vulnerabilities | The same isolation as containers; the Mac is separated by the VM. Do not open at the same time projects you want strongly separated | [§10](#10-known-limitations-and-cautions) |
+| Even with `network: false`, Nix's fixed-output derivations can communicate at build time | How Nix works. What is fetched is checked against its hash and discarded if it does not match, so the content cannot change. What goes out is the request to the source the author wrote | [§5](#5-limits-on-nix-evaluation) |
 
-## 1. 信頼境界の全体像
+## 1. The trust boundaries
 
 ```text
-┌─ macOS（ユーザー権限） ────────────────────────────────────────────────┐
+┌─ macOS (user's permissions) ───────────────────────────────────────────┐
 │  Tsugumi.app                                                           │
 │   ├ SwiftUI UI                                                         │
-│   ├ Agent ── HTTPS ──▶ モデル provider（API キーは Keychain から）     │
-│   └ LoopbackBridge 127.0.0.1:<空きポート>  ◀── 外部クライアント        │
+│   ├ Agent ── HTTPS ──▶ model provider (API key from the Keychain)      │
+│   └ LoopbackBridge 127.0.0.1:<free port>  ◀── other clients            │
 │        │ vsock                                                         │
-│  ┌─ 共通 Linux VM（Virtualization.framework） ──────────────────────┐  │
-│  │  tsugumi-vmd（root、VM の管理役）  nix-daemon（共通 store）      │  │
+│  ┌─ Shared Linux VM (Virtualization.framework) ─────────────────────┐  │
+│  │  tsugumi-vmd (root, manages the VM)  nix-daemon (shared store)   │  │
 │  │  ┌─ project A ────────────────────────┐ ┌─ project B ────────┐   │  │
-│  │  │ 専用 uid / mount・PID・IPC・UTS ns │ │ 同左（別 uid）     │   │  │
+│  │  │ own uid / mount, PID, IPC, UTS ns  │ │ same (other uid)   │   │  │
 │  │  │ cgroup tsugumi/<A>                 │ │                    │   │  │
 │  │  │ tsugumid                           │ │ tsugumid           │   │  │
-│  │  │  └ worker（bubblewrap: 全 ns 分離、│ │  └ worker          │   │  │
-│  │  │     デフォルトで通信・cap なし）   │ │                    │   │  │
+│  │  │  └ worker (bubblewrap: all ns,     │ │  └ worker          │   │  │
+│  │  │     no network or caps by default) │ │                    │   │  │
 │  │  └────────────────────────────────────┘ └────────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-隔離の境界は、最も内側から外側へ向かって 4 段あります。
+There are four boundaries, from the innermost outwards.
 
-| 境界 | 守る対象 | 仕組み |
+| Boundary | Protects | Mechanism |
 | --- | --- | --- |
-| Card（worker）⇄ tsugumid | プロジェクト全体・認証 token・他の Card の作業領域・外部ネットワーク（既定） | bubblewrap による全名前空間分離と capability 破棄 |
-| project ⇄ project | 他プロジェクトのファイル・プロセス・実行履歴・ビルド root | 専用 uid・名前空間・cgroup（`tsugumi-vmd` が管理） |
-| VM ⇄ macOS | Mac 側のファイル全体・ホームフォルダ | `Virtualization.framework`。共有するのは開いているプロジェクトのフォルダと、Card 定義やチャットで指定されたフォルダ（§2）のみ |
-| macOS 上の RPC ⇄ 他のプロセス・ネットワーク | core の操作権限 | `127.0.0.1` 限定の待ち受け、token 認証、WebSocket の `Origin` 検査 |
+| Card (worker) ⇄ tsugumid | The whole project, the authentication token, other Cards' work areas, the outside network (by default) | bubblewrap separating all namespaces, and dropping capabilities |
+| project ⇄ project | Other projects' files, processes, run histories and build roots | Own uid, namespaces and cgroup (managed by `tsugumi-vmd`) |
+| VM ⇄ macOS | All of the Mac's files and the home folder | `Virtualization.framework`. Only the open projects' folders and folders specified in Card definitions or the chat (§2) are shared |
+| The RPC on macOS ⇄ other processes and the network | The authority to operate the core | Listening only on `127.0.0.1`, token authentication, checking the WebSocket's `Origin` |
 
 ## 2. VM ⇄ macOS
 
-### VM に渡しているもの
+### What the VM is given
 
-| デバイス | 内容 | 書込 |
+| Device | Contents | Writable |
 | --- | --- | --- |
-| rootfs | アプリ同梱の erofs イメージ（Linux カーネル 6.12.115 と Nix、`macOS/Container/vm-boot.nix`）。Tsugumi 自身は同梱のソースから VM の中で Nix がビルド（`macOS/Container/vm-system.nix`、依存は署名を検証して cache.nixos.org から取得） | 読み取り専用（ソースの共有も読み取り専用） |
-| store ディスク | `~/Library/Application Support/Tsugumi/vm/store.img`（全プロジェクト共通の Nix store。ソースからビルドした開発版は `Tsugumi-dev/` の下。以下同じ） | 可 |
-| 実行履歴ディスク | `~/Library/Application Support/Tsugumi/vm/history.img`（全プロジェクトの実行履歴、プロジェクトごとにディレクトリ分離） | 可 |
-| virtiofs（スロットごと） | 開いているプロジェクトのフォルダ（`project`）と、その control フォルダ（`control`） | 可 |
-| virtiofs（同じスロット、指定時のみ） | Card 設定で指定した Mac のフォルダ（`host-<tag>`）、チャットに添付した Mac のフォルダ（`chat-<tag>`） | `host-` は `write: true` のもののみ可、`chat-` は読み取り専用 |
-| vsock | 制御チャネル（1024）と RPC 中継（1025） | — |
-| ネットワーク | NAT（`VZNATNetworkDeviceAttachment`） | — |
+| rootfs | An erofs image bundled with the app (Linux kernel 6.12.115 and Nix, `macOS/Container/vm-boot.nix`). Tsugumi itself is built by Nix inside the VM from the bundled source (`macOS/Container/vm-system.nix`; dependencies fetched from cache.nixos.org with their signatures verified) | Read-only (the shared source is read-only too) |
+| Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
+| Run-history disk | `~/Library/Application Support/Tsugumi/vm/history.img` (all projects' run histories, one directory per project) | Yes |
+| virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
+| virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
+| vsock | The control channel (1024) and the RPC relay (1025) | — |
+| Network | NAT (`VZNATNetworkDeviceAttachment`) | — |
 
-- **Mac 側のファイルで VM から見えるのは、現在開いているプロジェクトのフォルダとその control フォルダ、およびそのプロジェクトの Card 定義やチャットで明示的に指定されたフォルダだけ**です。ホームフォルダ全体や他のプロジェクトは共有されません。プロジェクトを閉じると、そのスロットの共有はすぐに解除されます。
-- Mac のフォルダを VM に共有する経路は次の 2 つです（`macOS/Sources/Launcher/EnvironmentManager.swift`・`HostFolders.swift`）。
-  - **Card の「ホストのフォルダへのアクセスを許可する」**（`_card.json` の `hostFolders`、Experimental）：プロジェクト（およびその `externals`）の Card 定義に記述されたフォルダを、環境の起動時にそのプロジェクトのスロットへ共有します。書き込みを許可したもの（`write: true`）以外は読み取り専用です。**この共有は定義ファイルの記述だけで決まり、開くときに確認は出ません**（Agent が加える保存は承認を待ちます。§8・§10）。
-  - **チャットへのフォルダ添付**：Agent が参照するためのフォルダを、そのプロジェクトに対して読み取り専用で共有します。
-- 共有にはプロジェクトごとに独立した virtiofs デバイス（`tsugumi-<slot>`）を割り当てるため、あるプロジェクトの共有を差し替えても他のプロジェクトには影響しません。
-- アプリに付与している entitlement は `com.apple.security.virtualization` のみです（`macOS/Resources/Tsugumi.entitlements`）。
-- VM は `vm/vm.lock` のファイルロック（`flock`）を取得した 1 つのアプリプロセスだけが起動します。
+- **Of the Mac's files, the VM sees only the folder of each open project and its control folder, and the folders explicitly specified in that project's Card definitions or chat.** Neither the whole home folder nor other projects are shared. When a project is closed, its slot's sharing ends at once.
+- There are two routes for sharing a Mac folder with the VM (`macOS/Sources/Launcher/EnvironmentManager.swift`, `HostFolders.swift`).
+  - **A Card's "Allow access to folders of the host"** (`hostFolders` in `_card.json`, Experimental): folders written in the Card definitions of the project (and its `externals`) are shared into that project's slot when the environment starts. Those without write permission (`write: true`) are read-only. **This sharing is decided by what is written in the definition files alone, with no confirmation on opening** (a save the Agent makes waits for approval; §8, §10).
+  - **Attaching a folder to the chat**: a folder for the Agent to read is shared read-only with that project.
+- Each project is given its own virtiofs device (`tsugumi-<slot>`) for sharing, so replacing one project's shares does not affect others.
+- The only entitlement given to the app is `com.apple.security.virtualization` (`macOS/Resources/Tsugumi.entitlements`).
+- The VM is started only by the one app process that holds the file lock (`flock`) on `vm/vm.lock`.
 
-### VM のネットワーク
+### The VM's network
 
-VM の NAT は、**`nix-daemon` が `cache.nixos.org` からバイナリキャッシュを取得し、固定された nixpkgs アーカイブをダウンロードするため**に存在します。
-Card 自身は既定でネットワーク名前空間から切り離されており、外部と通信できません。Card 設定で「ネットワークへのアクセスを許可する」（`_card.json` の `network: true`、Experimental）を有効にした Card だけが、この NAT を通じて外部と通信できます（§4）。
+The VM's NAT exists **so that `nix-daemon` can fetch the binary cache from `cache.nixos.org` and download the pinned nixpkgs archives**.
+Cards themselves are cut off from the network namespace by default and cannot communicate outside. Only a Card with "Allow network access" turned on in its settings (`network: true` in `_card.json`, Experimental) can communicate outside through this NAT (§4).
 
-## 3. project ⇄ project（VM 内）
+## 3. project ⇄ project (inside the VM)
 
-VM 内の管理プロセス `tsugumi-vmd` が、プロジェクトごとに次の隔離条件で `tsugumid` を起動します（`core/src/vmd_main.cc`）。
+The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugumid` under these isolation conditions (`core/src/vmd_main.cc`).
 
-- **専用 uid**：プロジェクトごとに固有の uid（20001 以降、`/persist/tsugumi/uids` に記録）を割り当て、`setgroups(0)` → `setgid` → `setuid` で root 権限を放棄してから起動します。
-- **名前空間**：`CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS` を分離します。
-- **見えるファイル**：mount 名前空間内で以下のパスだけを bind mount し、全スロットの親ディレクトリ（`/mnt`）、store ディスク全体（`/persist`）、全プロジェクトの実行履歴ディスク全体（`/history-disk`）はすべて `umount` します。
-  - `/project` … 自身のプロジェクトフォルダ
-  - `/control` … 自身の control フォルダ
-  - `/history` … 自身の実行履歴フォルダ（実行履歴ディスク上、`nosuid,nodev`）
-  - 専用の `/tmp` と `/run/tsugumi`（`tmpfs`）
-  - `/run/tsugumi/rpc` … `tsugumid` の待ち受けソケット（WebSocket、Unix ソケット）。実体は `/run/tsugumi-rpc/<id>`（そのプロジェクトの uid だけが入れる 0700 のフォルダ）で、`tsugumi-vmd` がここへ中継します。VM の loopback にはどのプロジェクトのポートもありません（ネットワークを許可した Card は VM のネットワークを共有するため、ポートがあれば他のプロジェクトの `tsugumid` に届いてしまいます）。
-  - `/run/tsugumi/host/<tag>`・`/run/tsugumi/chat/<tag>` … そのプロジェクトに共有された Mac のフォルダ（§2、指定時のみ）
-  - `/nix` … オーバーレイマウント（共通 store は全プロジェクトから読み取り可能、書き込みは `nix-daemon` 経由のみ）
-- **cgroup**：`/sys/fs/cgroup/tsugumi/<id>` に配置します。プロジェクトを停止する際は `cgroup.kill` によってその cgroup 内のプロセスだけを確実に終了させ、他のプロジェクトには影響しません。
-- **GC root**：`/nix/var/nix/gcroots/tsugumi/projects/<id>/` は `tsugumi-vmd` が root 権限で作成し、親ディレクトリにはプロジェクト側からの書き込み権限を与えません。そのため、他のプロジェクトが先にディレクトリを作って横取りすることはできません（`test_shared_vm.py` で検証済み）。
-- **カーネル**：Linux 6.12 LTS（`macOS/Container/kernel.nix`）から io_uring を外し、非特権 BPF を既定で無効にしています。`/init` が sysctl でカーネルアドレスとログの読み取り、ptrace（子孫のみ）、共有の sticky フォルダでのリンク・ファイルの差し込みを制限します（Yama を有効にしています。BPF JIT と userfaultfd は組み込んでいません）。
-- **ターミナル**：VM 内ターミナルを開く際は、対象プロジェクトの名前空間に `setns` で入り、同じ cgroup に所属させ、プロジェクトの uid に権限を落としてから `bash` を起動します。プロジェクトを閉じればターミナルも終了します。
+- **Own uid**: each project is assigned a uid of its own (from 20001, recorded in `/persist/tsugumi/uids`), and root is given up with `setgroups(0)` → `setgid` → `setuid` before starting.
+- **Namespaces**: `CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS` are separated.
+- **Visible files**: only the paths below are bind-mounted in the mount namespace; the parent of all slots (`/mnt`), the whole store disk (`/persist`) and the whole run-history disk of all projects (`/history-disk`) are all unmounted.
+  - `/project` … its own project folder
+  - `/control` … its own control folder
+  - `/history` … its own run-history folder (on the run-history disk, `nosuid,nodev`)
+  - its own `/tmp` and `/run/tsugumi` (`tmpfs`)
+  - `/run/tsugumi/rpc` … the sockets `tsugumid` listens on (WebSocket, Unix socket). They actually live in `/run/tsugumi-rpc/<id>` (a 0700 folder only that project's uid can enter), and `tsugumi-vmd` relays to them. There are no ports of any project on the VM's loopback (a Card allowed the network shares the VM's network, so a port there would let it reach another project's `tsugumid`).
+  - `/run/tsugumi/host/<tag>`, `/run/tsugumi/chat/<tag>` … Mac folders shared with that project (§2, only when specified)
+  - `/nix` … an overlay mount (the shared store is readable from every project; writes go only through `nix-daemon`)
+- **cgroup**: placed at `/sys/fs/cgroup/tsugumi/<id>`. Stopping a project ends exactly the processes in that cgroup with `cgroup.kill`, without affecting other projects.
+- **GC roots**: `/nix/var/nix/gcroots/tsugumi/projects/<id>/` is created by `tsugumi-vmd` as root, and the parent directory is not writable from projects, so another project cannot take it over by creating the directory first (checked in `test_shared_vm.py`).
+- **Kernel**: Linux 6.12 LTS (`macOS/Container/kernel.nix`) without io_uring, and with unprivileged BPF off by default. `/init` uses sysctls to restrict reading kernel addresses and logs, ptrace (descendants only) and planting links and files in shared sticky folders (Yama is enabled; BPF JIT and userfaultfd are not built in).
+- **Terminal**: opening the terminal inside the VM enters the project's namespaces with `setns`, joins the same cgroup and drops to the project's uid before starting `bash`. Closing the project ends the terminal too.
 
-### プロジェクト間で共有しているもの
+### What projects share
 
-- `nix-daemon` と `/nix/store` を共有しています。store 内のパスはすべて入力のハッシュで識別され、ビルドは `nix-daemon` のサンドボックス（`sandbox = true`）内で行われるため、あるプロジェクトが他プロジェクトのビルド成果物を書き換えることはできません。ただし、Nix の仕様上、**「どのパスが store 内に存在するか」は全プロジェクトから参照可能**です。秘密情報を Nix store に入れないでください。
+- `nix-daemon` and `/nix/store` are shared. Every path in the store is identified by the hash of its inputs, and builds happen in `nix-daemon`'s sandbox (`sandbox = true`), so one project cannot rewrite another's build results. By Nix's design, however, **which paths exist in the store is visible to every project**. Do not put secrets in the Nix store.
 
-## 4. Card（worker）⇄ tsugumid
+## 4. Card (worker) ⇄ tsugumid
 
-各 Card のコードは、さらに `bubblewrap` のサンドボックス内で実行されます（`core/src/worker_proc.cc`）。
+Each Card's code is further run inside a `bubblewrap` sandbox (`core/src/worker_proc.cc`).
 
-### `sandbox: true`（既定）
+### `sandbox: true` (the default)
 
 ```text
 bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
-      --symlink <store の bash> /bin/sh
-      --uid <nobody 相当> --gid <…>
-      --ro-bind <保存済み入力・runs>  --bind <worker の一時領域>
+      --symlink <bash from the store> /bin/sh
+      --uid <like nobody> --gid <…>
+      --ro-bind <saved inputs, runs>  --bind <the worker's temporary area>
       -- tsugumi-worker
 ```
 
-- **すべての名前空間を分離**（user・mount・PID・network・IPC・UTS・cgroup）します。ネットワークインターフェースはループバック（`lo`）のみです。`network: true` を指定した Card に限り、network 名前空間を分離せず（`--share-net`）、名前解決設定と CA 証明書ファイルを読み取り専用でマウントします。
-- **Linux capability をすべて破棄**（`--cap-drop ALL`）します。
-- **見えるファイル**：`/nix/store`（読み取り専用）、worker の実行ファイル（開発ビルドで `/nix/store` の外にあるときは、そのファイルだけを読み取り専用で）、プロジェクトの `runs` と保存済み入力（読み取り専用）、その worker 専用の一時作業領域（書き込み可）、およびその Card が `hostFolders` で指定した Mac のフォルダ（`/host/<name>`、`write: true` のもののみ書き込み可）だけに限定されます。プロジェクトの定義文書やソースコード、control フォルダ、認証 token、他の Card の作業領域、他の Card が指定したホストフォルダ、チャットに添付されたフォルダは見えません。
-- **環境変数は空から再構成**（`PATH=/var/empty`、`LANG=C.UTF-8`、および Tsugumi が渡す変数のみ）し、`tsugumid` やホストの環境変数は引き継ぎません。
-- **出力の受け渡し**：各呼び出しの出力先ディレクトリは `SCM_RIGHTS` でファイル記述子（FD）として渡し、worker 内からは `/proc/self/fd/900` としてアクセスさせます。実行後に core が本来のパスへ戻して検証します。
-- **入力を FD で渡さない理由**：読み取り専用で開いた FD であっても、Linux では `/proc/self/fd/N` を経由して開き直すと書き込みが可能になるケースがあることを実測で確認したためです。そのため、入力は読み取り専用の bind mount で保護しています。
-- **`bubblewrap` が利用できない環境では、`sandbox: true` の Card を実行せずすぐに拒否します**（`permission_denied`）。暗黙のうちに隔離なしで実行することはありません。
-- 例外は、リポジトリから [Web UI](WebUI.md) を起動して `tsugumid` を Mac のホストで直接動かす場合です（`tsugumi` コマンドは共通 VM を使うので当てはまりません）。bubblewrap の代わりに `sandbox-exec`（Seatbelt）で隔離し（ネットワークなし、読み取りは `/nix/store`・実行と入力の領域・システムライブラリのみ、書き込みは worker 自身の領域と実行の出力フォルダのみ）、`sandbox-exec` がない場合は同じく拒否します。`network: true` の Card でもこのマシン自身のアドレスと Unix ソケット、ほとんどの Mach サービスは閉じたままです。詳細と塞げない経路は [Web UI の隔離](WebUI.md#隔離macos-ホスト)にあります。
+- **All namespaces are separated** (user, mount, PID, network, IPC, UTS, cgroup). The only network interface is loopback (`lo`). Only for a Card with `network: true` is the network namespace left shared (`--share-net`), with the name-resolution settings and the CA certificate file mounted read-only.
+- **All Linux capabilities are dropped** (`--cap-drop ALL`).
+- **Visible files** are limited to `/nix/store` (read-only), the worker's executable (when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
+- **The environment variables are rebuilt from empty** (`PATH=/var/empty`, `LANG=C.UTF-8` and only the variables Tsugumi passes); nothing is inherited from `tsugumid` or the host.
+- **Passing outputs**: each invocation's output directory is passed as a file descriptor (FD) with `SCM_RIGHTS` and accessed inside the worker as `/proc/self/fd/900`. After the run, the core maps it back to its real path and validates it.
+- **Why inputs are not passed as FDs**: measurement showed that on Linux, even an FD opened read-only can in some cases be reopened for writing through `/proc/self/fd/N`. Inputs are therefore protected with read-only bind mounts.
+- **Where `bubblewrap` is not available, a `sandbox: true` Card is refused at once without running** (`permission_denied`). Nothing ever runs without isolation implicitly.
+- The exception is starting the [Web UI](WebUI.md) from the repository and running `tsugumid` directly on a Mac host (the `tsugumi` command uses the shared VM, so this does not apply to it). There, `sandbox-exec` (Seatbelt) isolates instead of bubblewrap (no network; reading only `/nix/store`, the run's and inputs' areas and system libraries; writing only the worker's own area and the run's output folder), and without `sandbox-exec` it is refused in the same way. Even a `network: true` Card is kept away from this machine's own addresses, Unix sockets and most Mach services. The details, and the paths that cannot be closed, are in [Isolation in the Web UI](WebUI.md#isolation-macos-host).
 
 ### `sandbox: false`
 
-ファイルシステム参照の制限だけを緩和する設定です。bubblewrap のある環境（共通 VM、Linux の `tsugumi` コマンド）では、以下の保護が引き続き維持されます（bubblewrap のない Mac のホストで直接動かす `tsugumid` では、`sandbox: false` の Card は隔離なしに利用者の権限で動きます。§10）。
+A setting that relaxes only the restrictions on seeing the file system. Where bubblewrap is available (the shared VM, the `tsugumi` command on Linux), these protections remain (on a `tsugumid` run directly on a Mac host without bubblewrap, a `sandbox: false` Card runs without isolation, with the user's permissions; §10):
 
-- user・PID・**network**・IPC の各名前空間は分離されます（`network: true` を併せて指定しない限り外部通信はできず、子孫プロセスも worker 終了時にすべて回収されます）。
-- control フォルダと `.tsugumi` ディレクトリは空の `tmpfs` でマスクして隠します。virtiofs の仕様上、すべてのファイルが「参照する側のプロセス所有」として見えるため、通常のファイルパーミッション（mode）だけでは認証 token を保護できないためです。
-- VM 内のファイルにはプロジェクトの uid でアクセスできるため、そのプロジェクトに共有された Mac のフォルダ（`/run/tsugumi/host/`・`/run/tsugumi/chat/`、§3）も、他の Card が指定したものやチャットに添付されたものを含めて参照可能になります。
+- The user, PID, **network** and IPC namespaces are separated (no outside communication unless `network: true` is also set, and all descendant processes are reaped when the worker ends).
+- The control folder and the `.tsugumi` directory are hidden behind empty `tmpfs` mounts. virtiofs presents every file as owned by the process looking at it, so ordinary file permissions (mode) alone cannot protect the authentication token.
+- Files in the VM are accessible with the project's uid, so the Mac folders shared with that project (`/run/tsugumi/host/`, `/run/tsugumi/chat/`; §3) become readable too, including those other Cards specified and those attached to the chat.
 
-### worker の寿命管理
+### Worker lifetimes
 
-- キャンセルやタイムアウト期限切れの際は、worker が起動した子孫プロセスまで残さず終了させます（sandbox の on / off 両方で自動テスト済み）。
-- 常駐 worker も、プロジェクトの停止・ビルド条件の変更・実行失敗時にはすぐに破棄され、メモリ使用量（上限 2 GiB）と常駐プロセス数（上限 32）が制限されています。
+- On cancellation or a deadline, the processes a worker started are all ended, descendants included (tested automatically with the sandbox both on and off).
+- Resident workers are discarded at once when the project stops, the build conditions change or a run fails, and their memory (at most 2 GiB) and number (at most 32) are limited.
 
-### Card のグラフ（Plotly・Vega-Lite）の表示
+### Showing Card charts (Plotly, Vega-Lite)
 
-Card が送る Plotly の図と Vega-Lite の仕様は信頼しないデータとして扱い、同梱の plotly.js / Vega で描く表示部品（`ui/modules`）の中だけで動かします。
+Plotly figures and Vega-Lite specs a Card sends are treated as untrusted data and run only inside a display component (`ui/modules`) that draws them with the bundled plotly.js / Vega.
 
-- Web UI: `/modules/viewer.html` を iframe に入れます。応答の CSP は `sandbox allow-scripts`（`allow-same-origin` なし）です。そのため表示部品は opaque origin で動き、cookie も `/api/` も使えません。`default-src 'none'`・`connect-src 'none'` なので何も読み込まず、どこにも接続しません。スクリプトはページに埋め込み、ライブラリのコードは親ページが postMessage で渡します。埋め込みを許すのはこの経路だけ（`frame-ancestors 'self'`）で、ほかの応答は埋め込みを禁じます。
-- macOS アプリ: 表示部品を WKWebView（保存しないデータストア）で開き、content rule で `file:` 以外の読み込みをすべて遮断します。
-- どちらでも、Vega のデータ読み込み（`data.url`）は loader で拒否します。グラフのデータは仕様に含めるよう SDK が送ります。
+- Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
+- macOS app: the component is opened in a WKWebView (with a non-persistent data store), and a content rule blocks every load other than `file:`.
+- In both, Vega's data loading (`data.url`) is refused by the loader. The SDK sends charts with their data inside the spec.
 
-## 5. Nix 評価の制限
+## 5. Limits on Nix evaluation
 
-Card の `default.nix` には任意の Nix 式を書けますが、評価時には以下の制限を強制しています（`core/src/nix_eval.cc`、`macOS/Container/vm-boot.nix`）。
+A Card's `default.nix` may contain any Nix expression, but evaluation enforces these limits (`core/src/nix_eval.cc`, `macOS/Container/vm-boot.nix`):
 
-- `restrictEval = true`：許可されたパス（Card のソース・SDK・参照が許可された上流定義）以外のファイルを読み取れません。
-- `enableImportFromDerivation = false`：Nix 式の評価中にビルドやコマンド実行を走らせる（IFD）ことを禁止しています。
-- `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`：ネットワーク経由で取得できる URL を公式 nixpkgs のアーカイブのみに限定しています（`NIX_PATH` も空です）。Card の評価器に `builtins.getFlake` はありません。
-- プロジェクトが `tsugumi.json` の `nixSources` で宣言した flake は、`tsugumid` が Card とは別の評価器で評価します（[機能](features.md)の「外部の Nix ソース」、[test_nix_sources.py](../tests/python/test_nix_sources.py)）。この評価器は `nix build` と同じ pure 評価で、IFD は禁止です。宣言はコミットと hash で固定したものに限ります。Card の隔離の外で評価するので、宣言は flake の式を信頼するという判断です。Card に渡るのは package の derivation だけです。
-- ビルドは `nix-daemon` のサンドボックス（`sandbox = true`、`build-users-group = nixbld`）内で行われ、`trusted-users = root` のみとしているため、プロジェクト側の uid から substituter や Nix 設定を書き換えることはできません。
-- バイナリキャッシュの取得先は `https://cache.nixos.org` のみとし、署名検証鍵を固定しています。
-- **固定出力 derivation（`fetchurl` など、内容を hash で固定したもの）は、ビルドのときに外部と通信できます**。これは Nix の仕様で、Card の `network` 設定とは別です（`network: false` の Card の `default.nix` でもデータを取得できます）。取得したものは hash と一致しなければ捨てられますが、取得先への通信そのもの（URL に含めた値など）は外へ出ます。
+- `restrictEval = true`: no files can be read outside the allowed paths (the Card's source, the SDK and the upstream definitions it may refer to).
+- `enableImportFromDerivation = false`: running builds or commands during evaluation of a Nix expression (IFD) is forbidden.
+- `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`: the URLs that can be fetched over the network are limited to the official nixpkgs archives (`NIX_PATH` is empty too). The Cards' evaluator has no `builtins.getFlake`.
+- Flakes a project declares in `nixSources` of `tsugumi.json` are evaluated by `tsugumid` with an evaluator separate from the Cards' ("External Nix sources" in [Features](features.md), [test_nix_sources.py](../tests/python/test_nix_sources.py)). This evaluator is the same pure evaluation as `nix build`, with IFD forbidden. Declarations are limited to ones pinned by commit and hash. Since they are evaluated outside the Cards' isolation, declaring one is a decision to trust the flake's expressions. Only the packages' derivations reach the Card.
+- Builds run in `nix-daemon`'s sandbox (`sandbox = true`, `build-users-group = nixbld`), and with `trusted-users = root` only, a project's uid cannot rewrite substituters or Nix settings.
+- The binary cache is fetched only from `https://cache.nixos.org`, with its signing key pinned.
+- **Fixed-output derivations (`fetchurl` and the like, whose content is pinned by hash) can communicate outside at build time.** That is how Nix works, and it is separate from a Card's `network` setting (the `default.nix` of a `network: false` Card can still fetch data). What is fetched is discarded unless it matches the hash, but the request to the source itself (including any values in the URL) goes out.
 
-## 6. RPC の認証
+## 6. RPC authentication
 
-### 待ち受け経路
+### Where it listens
 
-- `tsugumid` は VM の中では TCP ポートを開かず、Unix ソケット `/run/tsugumi/rpc/s` で WebSocket を待ち受けます（`--listen-unix-ws`、`core/src/vmd_main.cc`）。実体はそのプロジェクトの uid だけが入れる 0700 のフォルダ `/run/tsugumi-rpc/<id>` にあります（§3）。
-- Mac 側へは **vsock を介してホストの `127.0.0.1:<空きポート>` にのみ中継**されます（`LoopbackBridge`、vsock 1025 で `tsugumi-vmd` がプロジェクト ID からソケットへつなぐ）。LAN や外部ネットワークには公開されません。
-- VM の loopback にポートがないので、別のプロジェクトや、ネットワークを許可した Card から `tsugumid` へ接続する経路はありません。
-- Mac の `tsugumi` コマンドもこの経路です（中継は `tsugumi-vmhost`）。リポジトリから起動した Web UI と Linux の `tsugumi` コマンドでは `tsugumid` がホストで直接動き、`127.0.0.1` の WebSocket で待ち受けます（[Web UI](WebUI.md)）。
-- Unix ドメインソケットを使う場合は `umask 0177`（パーミッション `0600`）で作成します。アプリの標準経路は WebSocket であり、常に token 認証が必須です。
+- Inside the VM, `tsugumid` opens no TCP port; it listens for WebSockets on the Unix socket `/run/tsugumi/rpc/s` (`--listen-unix-ws`, `core/src/vmd_main.cc`). It actually lives in `/run/tsugumi-rpc/<id>`, a 0700 folder only that project's uid can enter (§3).
+- To the Mac, it is **relayed through vsock only to the host's `127.0.0.1:<free port>`** (`LoopbackBridge`; on vsock 1025, `tsugumi-vmd` connects to the socket by project ID). It is not exposed to the LAN or outside networks.
+- With no ports on the VM's loopback, there is no route to `tsugumid` from another project or from a Card allowed the network.
+- The Mac's `tsugumi` command uses this route too (relayed by `tsugumi-vmhost`). In a Web UI started from the repository, and with the `tsugumi` command on Linux, `tsugumid` runs directly on the host and listens with a WebSocket on `127.0.0.1` ([Web UI](WebUI.md)).
+- Unix domain sockets, when used, are created with `umask 0177` (permissions `0600`). The app's standard route is the WebSocket, and token authentication is always required.
 
-### 認証 token
+### The authentication token
 
-- `tsugumid` は起動ごとに 32 byte の暗号論的乱数 token を生成し（`crypto::random_token(32)`）、**control フォルダ内の `server.ready`（パーミッション `0600`、原子的書き込み）にのみ**出力します。control フォルダ自体も `0700` で保護されています。
-- クライアントは最初の `SessionHello` メッセージで token を提示します。照合には定数時間比較（`crypto::equal_secret`）を用い、一致しなければ `unauthenticated` で切断します。
-- token は URL やログには出力されず（WebSocket URL は `ws://127.0.0.1:<port>/rpc` のみ）、アプリ内でもメモリ上にしか保持しません。
-- 設定の「外部接続」では接続先 URL と `server.ready` のファイルパスをコピーできますが、token の文字列そのものは画面に表示しません。
+- At each start, `tsugumid` generates a 32-byte cryptographically random token (`crypto::random_token(32)`) and writes it **only to `server.ready` in the control folder (permissions `0600`, written atomically)**. The control folder itself is protected with `0700`.
+- A client presents the token in its first `SessionHello` message. It is compared in constant time (`crypto::equal_secret`), and on a mismatch the connection is closed with `unauthenticated`.
+- The token never appears in URLs or logs (the WebSocket URL is just `ws://127.0.0.1:<port>/rpc`), and the app keeps it only in memory.
+- Under "Connections" in the settings you can copy the URL to connect to and the file path of `server.ready`, but the token's string itself is never shown on screen.
 
-### WebSocket の保護
+### Protecting the WebSocket
 
-- エンドポイントは `GET /rpc` のみを受け付け（それ以外は 404）、`Sec-WebSocket-Protocol: tsugumi.rpc.v1` の提示を必須としています。
-- `Origin` ヘッダーが付与された接続は許可リスト（`--allow-origin`、アプリ起動時は空）と照合し、一致しなければ 403 で拒否します。一般的な Web ブラウザからの接続には必ず `Origin` ヘッダーが付くため、**悪意ある Web ページを開いたブラウザから `127.0.0.1` の Tsugumi へ接続することはできません**（DNS rebinding や Cross-Site WebSocket Hijacking の防止）。`Origin` ヘッダーを持たないネイティブクライアント（アプリ本体・Agent・テストスクリプト）は token によって認証します。
-- マスクされていないクライアントフレーム、予約ビットが立ったフレーム、サイズ上限を超えるフレーム、未知の union 型や不正な長さを持つ FlatBuffers メッセージを受信した場合はすぐに接続を切断します（`test_transport.py`・`test_contract.py` で検証済み）。
+- The endpoint accepts only `GET /rpc` (anything else is 404) and requires `Sec-WebSocket-Protocol: tsugumi.rpc.v1`.
+- A connection with an `Origin` header is checked against the allow list (`--allow-origin`; empty when the app starts it) and refused with 403 on a mismatch. Ordinary web browsers always send an `Origin` header, so **a browser that opened a malicious web page cannot connect to Tsugumi on `127.0.0.1`** (preventing DNS rebinding and Cross-Site WebSocket Hijacking). Native clients without an `Origin` header (the app itself, the Agent, test scripts) authenticate with the token.
+- The connection is closed at once on receiving an unmasked client frame, a frame with reserved bits set, a frame over the size limit, or a FlatBuffers message with an unknown union type or an invalid length (checked in `test_transport.py` and `test_contract.py`).
 
-### ページング cursor の署名
+### Signed paging cursors
 
-履歴取得などのページング cursor には、起動ごとに生成される秘密鍵を用いた HMAC 相当の署名（`sha256(secret + payload)` の先頭 32 桁）を付与しており、クライアント側で cursor を改ざんして範囲外のデータを読み取ることはできません。
+Paging cursors, for reading history and the like, carry a signature like an HMAC with a secret key generated at each start (the first 32 hex digits of `sha256(secret + payload)`), so a client cannot tamper with a cursor to read data out of range.
 
-## 7. ファイルの取り込み（import grant）
+## 7. Importing files (import grants)
 
-他のプロジェクトから Card 定義を取り込む際、RPC クライアント（Agent を含む）がホスト上の任意のファイルパスを `tsugumid` に読ませることを防ぐ仕組みです。
+A mechanism that stops an RPC client (the Agent included) from having `tsugumid` read arbitrary file paths on the host when importing Card definitions from another project.
 
-1. 利用者がアプリのファイル選択ダイアログで取り込み元を選ぶと、アプリがその時点の内容を control フォルダ内の `grants/<uuid>/` にコピーし、`grants.json` に登録します。
-2. RPC の `Import` リクエストではこの grant ID だけを指定でき、`tsugumid` は `grants.json` に登録されたパス以外を読み取りません。
-3. `grants.json` は RPC からは変更できず、アプリ本体だけが書き込めます。また Card の worker からは control フォルダ自体が見えません。
+1. When the user chooses the source in the app's file dialog, the app copies its content at that moment into `grants/<uuid>/` in the control folder and registers it in `grants.json`.
+2. An RPC `Import` request can name only this grant ID, and `tsugumid` reads nothing other than the paths registered in `grants.json`.
+3. `grants.json` cannot be changed through the RPC; only the app itself writes it. And a Card's worker cannot see the control folder at all.
 
-## 8. モデルの API キー（Agent）
+## 8. The model's API keys (Agent)
 
-- LLM プロバイダの API キーは利用者の **ログインキーチェーン**（macOS Keychain）に保存します（`agent/Sources/TsugumiAgent/Provider.swift`）。
-  - サービス名は `app.tsugumi.agent`、アカウント名はプロバイダ名（`Anthropic` / `OpenAI`）です。アプリと Web UI のサーバーは同じ項目を使うので、どちらで登録したキーも両方で使えます。
-  - ログインキーチェーンの項目は iCloud キーチェーンに同期されません。読めるのはログインキーチェーンのロックが解除されている間（通常はログイン中）です。
-  - 項目のアクセスリストは、保存したプログラムだけを信頼します。アプリで保存したキーをほかのプログラム（`security` コマンドを含む）が読もうとすると、macOS が利用者に確認します。ad-hoc 署名でビルドしたアプリは、ビルドし直すと最初の読み出しで一度確認が出ます（`TSUGUMI_CODESIGN_IDENTITY` で署名すれば出ません。[開発資料](Development.md)の「開発版の署名」）。
-  - Web UI のサーバーは `/usr/bin/security` を通して読み書きします。Web UI で保存したキーは `security` を信頼するため、この利用者として動くプログラムなら確認なしに `security find-generic-password` で読めます。両方を使う場合は、アプリの設定からキーを登録することを勧めます。macOS 以外（または Keychain に保存できなかったとき）は、Web UI のデータフォルダのファイル（0600）に保存します。
-  - データ保護キーチェーン（`kSecUseDataProtectionKeychain`）は使いません。これには provisioning profile でしか与えられない entitlement が必要で、ad-hoc 署名のビルドでは使えないためです（`errSecMissingEntitlement`）。
-- API キーは **モデルへのリクエスト送信時に Keychain から読み出し、HTTPS のリクエストヘッダー（`x-api-key` / `Authorization: Bearer`）にのみ載せます**。Web UI のサーバーは読み出したキーをそのプロセスのメモリに保ち（項目の属性が変わると読み直します）、拒否された読み出しも覚えるので、`security` の確認が同じキーで何度も出ることはありません。
-- モデルメニューがモデル一覧を取り直すときは、利用者が頼んだ読み出しではないので、アプリは確認なしで読めるキーだけを読みます（`Keychain.loadWithoutAsking`。チャットの実行と設定の「モデル一覧を取得」では確認が出ます）。Web UI のサーバーには確認なしで読む手段がないので、まだ読んでいないキーについて、起動ごとに最大 1 回確認が出ることがあります。
-- API キーを `tsugumid`・Linux VM・Card worker へ渡すことはありません。また、プロジェクトファイル・アプリ設定・ログ・会話履歴にも記録しません。
-- HTTPS 通信には `URLSessionConfiguration.ephemeral` を使用し、ディスク上にキャッシュや Cookie を残しません。
-- 設定画面ではキーの登録と削除のみを行え、登録済みのキーを画面に再表示する機能はありません。
+- LLM providers' API keys are kept in the user's **login keychain** (the macOS Keychain) (`agent/Sources/TsugumiAgent/Provider.swift`).
+  - The service name is `app.tsugumi.agent` and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web UI's server use the same item, so a key registered in either works in both.
+  - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
+  - An item's access list trusts only the program that saved it. When another program (the `security` command included) tries to read a key the app saved, macOS asks the user. An app built with an ad hoc signature asks once on the first read after each rebuild (it does not if signed with `TSUGUMI_CODESIGN_IDENTITY`; "Signing development builds" in [Development](Development.md)).
+  - The Web UI's server reads and writes through `/usr/bin/security`. A key saved in the Web UI trusts `security`, so any program running as this user can read it without confirmation with `security find-generic-password`. If you use both, registering the key from the app's settings is recommended. Outside macOS (or when it could not be saved in the Keychain), it is kept in a file (0600) in the Web UI's data folder.
+  - The data protection keychain (`kSecUseDataProtectionKeychain`) is not used. It needs an entitlement that only a provisioning profile can grant, which an ad hoc signed build cannot have (`errSecMissingEntitlement`).
+- An API key is **read from the Keychain when a request is sent to the model, and put only in the HTTPS request header (`x-api-key` / `Authorization: Bearer`)**. The Web UI's server keeps a key it read in that process's memory (rereading it when the item's attributes change) and also remembers refused reads, so `security`'s confirmation does not appear again and again for the same key.
+- When the model menu refetches the list of models, that read is not one the user asked for, so the app reads only keys it can read without confirmation (`Keychain.loadWithoutAsking`; running the chat and "Fetch model list" in the settings do ask). The Web UI's server has no way to read without confirmation, so for a key it has not read yet, it may ask at most once per start.
+- API keys are never passed to `tsugumid`, the Linux VM or Card workers, and are not recorded in project files, app settings, logs or conversation history.
+- HTTPS uses `URLSessionConfiguration.ephemeral`, leaving no cache or cookies on disk.
+- The settings screen can only register and delete keys; there is no way to show a registered key again.
 
-### ChatGPT プラン（Sign in with ChatGPT）
+### The ChatGPT plan (Sign in with ChatGPT)
 
-API キーの代わりに、利用者の ChatGPT（Plus・Pro）プランで Agent を使えます。OpenAI が[オープンソースのツール向けに公開している手順](https://developers.openai.com/siwc/token-sharing-open-source)（ChatGPT plan usage）に従っています（`agent/Sources/TsugumiAgent/ChatGPT.swift`、Web UI は `web/server/chatgpt.ts`）。
+Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. This follows the [procedure OpenAI publishes for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source) (ChatGPT plan usage) (`agent/Sources/TsugumiAgent/ChatGPT.swift`; the Web UI's is `web/server/chatgpt.ts`).
 
-- サインインは既定のブラウザで行います。Tsugumi は `127.0.0.1` の空いたポートで `/auth/callback` を待ち、結果を受け取るとすぐに閉じます。毎回新しい `state`・`nonce`・PKCE（S256）を使い、`state` が合わない応答は捨てます。client secret や開発者の API キーは使いません（初回は `dynamic_agent_client` で Tsugumi を登録し、発行された `client_id` を以後のサインインに使います）。
-- ID トークンは OpenAI の JWKS（`https://auth.openai.com/.well-known/jwks.json`）で RS256 の署名を確かめ、発行者・audience（発行された `client_id`）・期限・`nonce` を検査します。以前のアカウントに入り直すときは、同じアカウント（`sub`）であることも確かめます。プランを使う許可（`chatgpt.tokens.use.direct`）が付与されなかったときは、Agent はプランを使わず、許可し直すか API キーを使うよう案内します。
-- ホスト ID（`ext_agent_host_id`）は最初のサインインの前に作る `urn:uuid:`（UUIDv4）で、利用者を識別する情報を含みません。
-- アプリでは、ホスト ID・登録（アカウント）ごとの `client_id`・メールアドレス・ID / アクセス / リフレッシュトークンを、API キーと同じサービスの **ログインキーチェーン** の 1 項目（アカウント名 `ChatGPT`）に置きます。開発版とリリース版は同じ項目を使い、トークンの更新はファイルロックで 1 つずつ行います。
-- Web UI のサーバーは別の agent host です。`security -i` では長い記録を書けないため、ホスト ID と登録・トークンをデータフォルダの `chatgpt.json`（0600、書き換えは一時ファイルから rename）に置きます。アプリでサインインしていても、Web UI では別にサインインします。サインインはサーバーと同じマシンのブラウザで行ってください（`127.0.0.1` の受け口に届く必要があります）。
-- アクセストークンは期限の前に更新します。更新が `invalid_grant` などで終わったセッションのトークンは消してサインインし直してもらい、通信の一時的な失敗では消しません。
-- サインアウトは OpenAI の取り消し口（revocation endpoint）でリフレッシュトークンを取り消してから、手元のトークンを消します（登録とホスト ID は残ります）。取り消しを確かめられなかったときは、ChatGPT の設定から Tsugumi の接続を解除できることを伝えます。
-- トークンは API キーと同じく、`tsugumid`・Linux VM・Card worker・ページへ渡さず、プロジェクトファイル・設定・ログ・会話履歴にも記録しません。リクエストのヘッダー（`Authorization: Bearer`）にだけ載せ、送り先は `https://api.openai.com/v1/responses` と `/v1/models` だけです。
-- プランでのリクエストは `store: false` で送ります（会話の状態を保存しない指定です。送信先でのデータの扱いは OpenAI の方針に従います）。利用上限では再試行せずに止め、別の課金方法へ黙って切り替えることはありません。
+- Sign-in happens in the default browser. Tsugumi waits for `/auth/callback` on a free port of `127.0.0.1` and closes it as soon as the result arrives. Each time it uses a new `state`, `nonce` and PKCE (S256), and a response whose `state` does not match is discarded. No client secret and no developer API key are used (the first time, Tsugumi registers itself with `dynamic_agent_client` and uses the issued `client_id` for later sign-ins).
+- The ID token's RS256 signature is checked against OpenAI's JWKS (`https://auth.openai.com/.well-known/jwks.json`), and its issuer, audience (the issued `client_id`), expiry and `nonce` are checked. Signing back in to a previous account, it also checks that it is the same account (`sub`). If permission to use the plan (`chatgpt.tokens.use.direct`) was not granted, the Agent does not use the plan and suggests granting it again or using an API key.
+- The host ID (`ext_agent_host_id`) is a `urn:uuid:` (UUIDv4) made before the first sign-in, containing nothing that identifies the user.
+- In the app, the host ID, the `client_id` per registration (account), the email address and the ID / access / refresh tokens are kept in one item of the **login keychain** under the same service as the API keys (account name `ChatGPT`). The development and release versions use the same item, and token refreshes happen one at a time under a file lock.
+- The Web UI's server is a separate agent host. `security -i` cannot write long records, so the host ID, registrations and tokens are kept in `chatgpt.json` in the data folder (0600, rewritten by renaming a temporary file). Even if you are signed in in the app, the Web UI signs in separately. Sign in with a browser on the same machine as the server (it must reach the receiver on `127.0.0.1`).
+- Access tokens are refreshed before they expire. The tokens of a session whose refresh ended with `invalid_grant` or the like are deleted and the user is asked to sign in again; a temporary communication failure does not delete them.
+- Signing out revokes the refresh token at OpenAI's revocation endpoint and then deletes the local tokens (the registration and host ID stay). If the revocation could not be confirmed, it says that Tsugumi's connection can be removed from ChatGPT's settings.
+- Like API keys, the tokens are never passed to `tsugumid`, the Linux VM, Card workers or the page, and are not recorded in project files, settings, logs or conversation history. They go only in the request header (`Authorization: Bearer`), and only to `https://api.openai.com/v1/responses` and `/v1/models`.
+- Requests on the plan are sent with `store: false` (asking that the conversation's state not be stored; how data is handled at the destination follows OpenAI's policies). At a usage limit it stops without retrying, and never silently switches to another way of paying.
 
-### モデルに送られるもの
+### What is sent to the model
 
-Agent を使う際、接続先のモデルプロバイダ（Anthropic / OpenAI。ChatGPT プランも OpenAI）には以下の情報が送信されます。
-- チャットの会話本文
-- チャットに参照として追加した Card や可視化の情報
-- Agent が tool（RPC）を通じて読み取った内容（Card の定義・ソースコード・実行ログ・入出力値、およびチャットに添付したフォルダから `AttachedFolderRead` で読み取ったファイル内容など）
-- ガイドのツグミに質問したとき、またデモの案内中：質問文と、そのとき画面に出ているものの要約（プロジェクトの名前とフォルダ、表示中の Workflow の Card、選択した Card の状態と結果の要約、実行と接続の状態、同梱デモの一覧。プロジェクトの画面ではデモの id だけ）、およびガイドが読み取りの tool で読んだ内容。ガイドは保存・実行・停止の tool を持たず、プロジェクトを変えません。モデルにつないでいない間のツグミは台本で答えるので、何も送りません。
-- 設定の「API」で Web 検索をオンにしたとき：Agent が書いた検索語は、プロバイダからさらにその検索サービスへ渡ります（[Web 検索](#web-検索)）。
+When the Agent is used, the following is sent to the connected model provider (Anthropic / OpenAI; the ChatGPT plan is OpenAI too):
+- The text of the chat conversation
+- Information on Cards and visualisations added to the chat as references
+- What the Agent read through its tools (the RPC): Card definitions, source code, run logs, input and output values, and the contents of files read with `AttachedFolderRead` from folders attached to the chat
+- When asking the guide's thrush a question, and during a demo's guide: the question and a summary of what is on screen at the time (the project's name and folder, the Cards of the Workflow shown, the state and a summary of the result of the selected Card, the state of runs and of the connection, and the list of bundled demos; on a project's screen, only the demos' ids), and what the guide read with its reading tools. The guide has no tools to save, run or stop, and does not change the project. While not connected to a model, the thrush answers from its script and sends nothing.
+- With web search turned on under "API" in the settings: the search terms the Agent writes are passed on by the provider to its search service ([Web search](#web-search)).
 
-- 「版の要約」をオンにしたとき（既定はオフ。[版の管理](Versions.md#版の要約)）：各版で変わったコードと設定の差分、commit のメッセージ、変わった Card の名前。データファイルは送りません。
+- With "Version summaries" on (off by default; [Versions](Versions.md#version-summaries)): the diffs of code and settings changed in each version, the commit message and the names of the Cards that changed. Data files are not sent.
 
-**Agent を使用すると、プロジェクト内のコードやログ、入出力データ、添付フォルダの内容の一部が外部のモデルプロバイダへ送信される**点に注意してください。未公開データや機密情報を含むプロジェクトで Agent を使う場合は、それらが接続先プロバイダへ送信されてよいかをあらかじめ確認してください。
+**Note that using the Agent sends part of the code, logs, input and output data and the contents of attached folders in the project to an outside model provider.** Before using the Agent on a project containing unpublished data or confidential information, check that it may be sent to the provider.
 
-なお、**Agent を使用せず、「版の要約」をオンにせず、かつ `network: true` を有効にした Card も存在しない場合、プロジェクトの内容やデータが Mac とローカル VM の外へ出ることはありません**（Nix がパッケージを取得する通信を除く）。`network: true` を許可した Card は、その Card がアクセスできるデータ（入力値や指定したホストフォルダの内容など）を外部ネットワークへ送信できます。
+Conversely, **without the Agent, with "Version summaries" off and with no Card that has `network: true`, the project's content and data do not leave the Mac and the local VM** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
 
-### Web 検索
+### Web search
 
-Agent が自分の判断で Web を検索できる設定です（設定の「API」の「Web 検索」）。**既定はオフ**で、オフの間はモデルにツールを見せず、要求にも規則にも載せません。
+A setting that lets the Agent search the web at its own discretion ("Web search" under "API" in the settings). **Off by default**; while off, the model is not shown the tool, and it is in neither requests nor rules.
 
-- **検索はプロバイダが行います。** Anthropic の `web_search` と OpenAI の `web_search` を使い、Tsugumi は検索サービスに接続しません。新しい API キーも要りません。検索語はプロバイダのデータの扱いに従って扱われます。接続先の設定で検索が止められていると、その要求は失敗します（Anthropic の Console の組織設定、ChatGPT プランのモデルとワークスペースの方針）。
-- **検索語は外に出ます。未公開のデータが載る危険があります。** 検索語を書くのはモデルで、Tsugumi はその中身を検査しません。モデルには、未公開のデータ・結果・ファイルや Card の名前・パス・コードを検索語に入れないよう規則で指示していますが、**確実に防げるものではありません**。Agent が読んだ内容が検索語に混ざることはありえます。未公開の研究を扱うプロジェクトでは、接続先のプロバイダだけでなく検索サービスへ渡ってよいかまで考えて、オンにするか決めてください。
-- **検索したことは残ります。** 検索語と見つかった URL は、ほかの tool と同じようにチャットの行と会話の記録（`tools`・`messages`）に残ります。応答が途中で失敗して破棄されても、検索の記録は残ります（検索語はもう出ているからです）。
-- **検索結果は外部の文章です。** 結果に Agent への指示が書かれている可能性があります。モデルには指示として扱わないよう規則で伝えていますが、これも保証ではありません。Card の権限を広げる保存が利用者の承認なしに通らないこと（[Agent の権限境界](#agent-の権限境界)）は、検索しても変わりません。
-- **使えるのはチャットの Agent だけです。** helper（`delegate`）とガイドのツグミには渡しません。
-- **回数と料金。** Anthropic では 1 ターンの検索を 5 回までに制限しています。OpenAI には同じ制限がありません。検索はトークンとは別に課金されることがあります（プロバイダの料金表を確認してください）。
-- Anthropic は基本の版（`web_search_20250305`）を使います。動的フィルタのある新しい版はプロバイダの側でコードを実行し、zero data retention の対象外になるからです。検索結果は暗号化された形で会話の記録（Mac の会話ファイル、Web のデータフォルダ）に残り、次の要求でプロバイダへ送り返します。設定をオフにした後は、この形では送らず、検索語と URL を文にして送ります。
+- **The provider does the search.** It uses Anthropic's `web_search` and OpenAI's `web_search`; Tsugumi does not connect to a search service, and no new API key is needed. Search terms are handled by the provider's data policies. If search is disabled in the connected account's settings, the request fails (organisation settings in Anthropic's Console; the ChatGPT plan's model and workspace policies).
+- **Search terms go outside, with the risk of unpublished data in them.** The model writes the search terms, and Tsugumi does not inspect them. The model's rules tell it not to put unpublished data, results, names, paths or code of files and Cards in search terms, but **this cannot be relied on to prevent it**. What the Agent has read may end up in a search term. For projects with unpublished research, decide whether to turn it on considering whether it may reach not only the provider but also the search service.
+- **Searches are kept.** Search terms and the URLs found are kept, like other tools, in the chat's rows and the conversation's record (`tools`, `messages`). Even if a response fails and is discarded, the record of the search stays (the terms have already gone out).
+- **Search results are outside text.** They may contain instructions to the Agent. The model's rules tell it not to treat them as instructions, but this is not a guarantee either. That a save widening a Card's permissions does not go through without the user's approval ([The Agent's permission boundary](#the-agents-permission-boundary)) does not change with search.
+- **Only the chat's Agent can use it.** It is not given to helpers (`delegate`) or the guide's thrush.
+- **Counts and charges.** With Anthropic, searches are limited to five per turn; OpenAI has no such limit. Search may be charged separately from tokens (check the provider's pricing).
+- With Anthropic, the basic version (`web_search_20250305`) is used: the newer version with dynamic filtering runs code on the provider's side and is not covered by zero data retention. Search results are kept encrypted in the conversation's record (the conversation file on a Mac, the data folder on the Web) and sent back to the provider in the next request. After the setting is turned off, they are not sent in that form; the search terms and URLs are sent as text.
 
-### Agent の権限境界
+### The Agent's permission boundary
 
-- Agent が実行できる操作は公開された RPC の tool のみであり、UI や Mac のファイルシステムを直接操作することはできません。`tsugumid` から見れば UI と対等な 1 クライアントであり、同じリビジョン検査と競合検出を通ります。
-- 変更を伴う tool 呼び出しには一意な `op_id` が付与され、応答が途切れた場合も `OperationGet` で適用状態を確認するため、盲目的な再実行による二重適用は起きません。
-- モデルが書いた引数は Agent と `tsugumid` が検査し、JSON のオブジェクトになっていない呼び出しや出力の上限で切れた応答の tool は実行しません。
-- **Card の権限は利用者のものです。** Agent の保存が、Card に次のどれかを新たに与えるときは、`tsugumid` は保存せずに `approval_required` で返し、広がる権限を 1 つずつ挙げます（Card in Card の中の Card も含みます。`core/src/permissions.cc`）。
-  - ネットワーク（`network: true`）
-  - 隔離なしの実行（`sandbox: false`）
-  - Mac のフォルダ（`hostFolders`、読み取りと書き込み）
-  - 外部の Nix ソース（`tsugumi.json` の `nixSources`）
+- The only operations the Agent can perform are the published RPC tools; it cannot operate the UI or the Mac's file system directly. To `tsugumid` it is one client equal to the UI, going through the same revision checks and conflict detection.
+- Tool calls that change something carry a unique `op_id`, and when a response is cut off the applied state is confirmed with `OperationGet`, so blind retries never apply anything twice.
+- Arguments the model wrote are checked by the Agent and `tsugumid`, and a tool call that is not a JSON object, or from a response cut off at the output limit, is not run.
+- **A Card's permissions belong to the user.** When an Agent's save newly gives a Card any of the following, `tsugumid` does not save it and returns `approval_required`, listing each permission that widens (Cards inside a Card in Card included; `core/src/permissions.cc`):
+  - the network (`network: true`)
+  - running without isolation (`sandbox: false`)
+  - Mac folders (`hostFolders`, reading and writing)
+  - external Nix sources (`nixSources` in `tsugumi.json`)
 
-  承認の流れは次のとおりです。
-  - アプリ（Mac・Web）は、設定の「API」の「Agent が確認なしに Card に与えてよい権限」に入れた種類だけをそのまま承認し、それ以外は利用者に確認します。既定ではすべて確認し、確認の画面で「以後は確認しない」を選ぶこともできます。
-  - 承認は Agent の実行部分がつける欄（`approved_permissions`）で送ります。モデルからは設定できません。
-  - 許可されなければ何も保存されず、Agent には理由を利用者に説明するよう伝えます。
-  - 利用者自身が Card の設定で変えるときは確認しません。Canvas の Card には、持っている権限がアイコンで表示されます。
-- **Card のコメントは Agent も書けます。** 拒否はしませんが、誰が書き、変え、解決したかは `tsugumid` が保存の `origin` から記録するので、モデルは利用者のコメントになりすませません（`core/src/comments.cc`、[test_card_comments.py](../tests/python/test_card_comments.py)）。コメントに従った保存も、上の承認を同じように通ります。
-- **Claude Code の plugin**（[Claude Code から使う](claude-code.md)）は、Web UI のサーバーを通してだけ操作します。
-  - サーバーはチャットの Agent と同じ道具を、同じ検査で実行します。Card の権限を広げる保存は、Web UI のページで利用者の承認を待ちます（ページが開いていなければ保存しません）。チャットに添えたフォルダの読み取りは渡しません。
-  - plugin の MCP サーバーは、サーバーがデータフォルダに書く `server.json`（ポートと、起動ごとの Agent 用の鍵。0600、終了時に削除）でサーバーを見つけます。
-  - この鍵で届くのは、plugin と、もう一度実行した `tsugumi` コマンド（動いているサーバーにページを開かせる）が使う 6 つの口だけです（`/api/project/open`・`/api/project/create`・`/api/agent/tools`・`/api/agent/open`・`/api/agent/call`・`/api/page/open`。`web/server/paths.ts` の `AGENT_ROUTES`）。承認への回答（`/api/chat/permission`）、イベントの購読、端末、ファイル一覧、設定には届きません（`tests/python/test_claude_code_plugin.py`）。
-  - ページの鍵（起動時に表示する URL の鍵）は `server.json` に書きません。ページを開くときは、サーバー自身がブラウザを開きます。
-  - この境界が守るのは、**Tsugumi の道具を通した操作**です。Claude Code はシェルとファイル操作も持つので、利用者と同じ権限でプロジェクトのファイル（`_card.json` など）を直接書き換えたり、利用者が読めるもの（Claude Code が起動したサーバーのログ `server.log` に出る URL など）を読んだりできます。それを止めるのは Claude Code 自身の権限設定で、Tsugumi ではありません。
-- チャットに添えたフォルダは、添えているものだけを Agent が `attached_folder_read` で読みます（アプリでは `agent/Sources/TsugumiAgent/Agent.swift`、Web UI では `web/server/agent.ts` が送る前に確かめます）。アプリで外したフォルダは、VM との共有が次に環境が起動するまで残りますが、Agent は外した時点から読みません（`macOS/CoreTests` の `onlyAttachedFoldersAreRead`）。
+  The approval works like this:
+  - The app (Mac and Web) approves directly only the kinds listed under "Permissions the Agent may give Cards without asking" in "API" of the settings, and asks the user about the rest. By default it asks about all of them; the confirmation screen also offers "Don't ask again".
+  - The approval is sent in a field the Agent's runtime fills (`approved_permissions`), which the model cannot set.
+  - If not allowed, nothing is saved, and the Agent is told to explain the reason to the user.
+  - When the user changes it themselves in the Card's settings, nothing is asked. A Card on the Canvas shows the permissions it has as icons.
+- **The Agent can write a Card's comments too.** This is not refused, but `tsugumid` records who wrote, changed and resolved each comment from the save's `origin`, so the model cannot pose as the user's comment (`core/src/comments.cc`, [test_card_comments.py](../tests/python/test_card_comments.py)). Saves that follow comments go through the same approval as above.
+- **The Claude Code plugin** ([Using it from Claude Code](claude-code.md)) operates only through the Web UI's server.
+  - The server runs the same tools as the chat's Agent, with the same checks. A save that widens a Card's permissions waits for the user's approval on the Web UI's page (and is not saved if no page is open). Reading folders attached to the chat is not provided.
+  - The plugin's MCP server finds the server through `server.json`, which the server writes in the data folder (the port and a per-start key for agents; 0600, deleted on exit).
+  - That key reaches only the six routes the plugin and a second run of the `tsugumi` command (which has the running server open a page) use (`/api/project/open`, `/api/project/create`, `/api/agent/tools`, `/api/agent/open`, `/api/agent/call`, `/api/page/open`; `AGENT_ROUTES` in `web/server/paths.ts`). It does not reach answers to approvals (`/api/chat/permission`), event subscriptions, the terminal, file listings or settings (`tests/python/test_claude_code_plugin.py`).
+  - The page's key (the key in the URL shown at startup) is not written to `server.json`. To open a page, the server opens the browser itself.
+  - What this boundary protects is **operations through Tsugumi's tools**. Claude Code also has a shell and file operations, so with the same permissions as the user it can rewrite the project's files (`_card.json` and the like) directly and read what the user can read (such as the URL in the log `server.log` of a server Claude Code started). Stopping that is up to Claude Code's own permission settings, not Tsugumi.
+- Of the folders attached to the chat, the Agent reads only the ones currently attached, with `attached_folder_read` (checked before sending by `agent/Sources/TsugumiAgent/Agent.swift` in the app and `web/server/agent.ts` in the Web UI). A folder removed in the app stays shared with the VM until the environment next starts, but the Agent stops reading it from the moment it is removed (`onlyAttachedFoldersAreRead` in `macOS/CoreTests`).
 
-## 9. データの置き場所と削除方法
+## 9. Where data is kept, and how to delete it
 
-| データ | 保存場所 | 削除・管理方法 |
+| Data | Where | Deleting and managing |
 | --- | --- | --- |
-| プロジェクトの文書・ソース | プロジェクトフォルダ | Finder 等で管理（Tsugumi が勝手にフォルダ自体を消すことはありません） |
-| 実行履歴（正本） | VM の実行履歴ディスク `vm/history.img`（VM 内の `/history-disk/<id>/`） | プロジェクト設定の「実行履歴を削除」、または設定の「VM 内の実行履歴」 |
-| 実行履歴（プロジェクト内コピー） | `.tsugumi/runs.sqlite`・`.tsugumi/runs/` | 「実行履歴を削除」、または `saveRunHistory = false` で書き出しを停止 |
-| Nix store・ビルド root | `~/Library/Application Support/Tsugumi/vm/store.img` | 「ビルドキャッシュを削除」および「共有 store を掃除」 |
-| control フォルダ（token・grant） | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | 「すべての実行環境を初期化」 |
-| API キー | macOS Keychain（Linux の Web UI はデータフォルダの 0600 のファイル） | 設定 > API から削除 |
-| チャットの会話履歴（アプリ） | `~/Library/Application Support` 配下 | — |
-| Web UI（`tsugumi` コマンド）の会話履歴・ChatGPT のサインイン（`chatgpt.json`）・Skill のフォルダ | データフォルダ（Mac は `~/Library/Application Support/Tsugumi/web/`、Linux は `~/.local/share/tsugumi-web`） | — |
+| The project's documents and sources | The project folder | Manage in Finder or the like (Tsugumi never deletes the folder itself) |
+| Run history (primary) | The VM's run-history disk `vm/history.img` (`/history-disk/<id>/` inside the VM) | "Delete Run History" in the project's settings, or "Run history in the VM" in the settings |
+| Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete Run History", or stop writing it with `saveRunHistory = false` |
+| Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete the build cache" and "Clean shared store" |
+| Control folders (token, grants) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
+| API keys | The macOS Keychain (a 0600 file in the data folder for the Web UI on Linux) | Delete under Settings > API |
+| Chat conversation history (app) | Under `~/Library/Application Support` | — |
+| The Web UI's (`tsugumi` command's) conversation history, ChatGPT sign-in (`chatgpt.json`) and Skill folders | The data folder (`~/Library/Application Support/Tsugumi/web/` on a Mac, `~/.local/share/tsugumi-web` on Linux) | — |
 
-設定の「すべての実行環境を初期化」を実行すると、VM を停止したうえで `vm/`（実行履歴ディスク `vm/history.img` を除く）と `environments/` を削除します。プロジェクトフォルダ内の文書・成果物・`.tsugumi/runs.sqlite`、および VM 内の実行履歴ディスクは保持されます。
+"Reset all environments" in the settings stops the VM and deletes `vm/` (except the run-history disk `vm/history.img`) and `environments/`. The documents, artifacts and `.tsugumi/runs.sqlite` in project folders, and the run-history disk of the VM, are kept.
 
-## 10. 既知の制限と注意事項
+## 10. Known limitations and cautions
 
-多くは、[要点](#どこまでを-tsugumi-が引き受けるか)の境界の外にあるもの（プロジェクトの中身を信頼するかどうか）を、実際に気をつける点として書いたものです。
+Most of these spell out, as practical cautions, what lies outside the boundary in the [summary](#what-tsugumi-takes-on) (whether to trust a project's contents).
 
-- **受け取ったプロジェクトは、書かれた権限を確かめてから動かします。** `_card.json` の `network`・`sandbox: false`・`hostFolders`（特に `write: true`）と `tsugumi.json` の `nixSources` は、開くときも実行時も確認なしに有効になります（Agent が加える保存だけは承認を待ちます。§8）。Card のアイコンと Card 設定の Experimental の項目を見てください。`sandbox: false` の Card は、そのプロジェクトに共有されたすべての Mac のフォルダを読めます（§4）。
-- **プロジェクトどうしは 1 つの Linux カーネルを共有します。** カーネルの脆弱性を突かれると他のプロジェクトに及びうるので、強く分けたいプロジェクトは同時に開かないでください（§3）。
-- **リポジトリから Mac のホストで直接動かす Web UI は、隔離が弱くなります。** `sandbox: false` の Card は隔離なしに利用者の権限で動き（`network: false` も効きません）、`network: true` の Card は同じ LAN や VPN の機器に届きます（[Web UI の隔離](WebUI.md#隔離macos-ホスト)）。`tsugumi` コマンドは共通 VM を使うので当てはまりません。
-- **リリース版は ad-hoc 署名で、Apple の公証はしていません。** GitHub Actions がこのリポジトリのタグからビルドし（`.github/workflows/release.yml`）、自動更新はチェックサムとコード署名などを確かめてから入れます（[開発資料](Development.md)の「自動更新」）。更新の正しさは、このリポジトリとその GitHub Releases に書き込める人を信頼することに依っています。
+- **Check the permissions written in a project you received before running it.** `network`, `sandbox: false` and `hostFolders` (especially `write: true`) in `_card.json`, and `nixSources` in `tsugumi.json`, take effect without confirmation both on opening and at run time (only saves the Agent makes wait for approval; §8). Look at the Cards' icons and the Experimental items of the Cards' settings. A `sandbox: false` Card can read every Mac folder shared with that project (§4).
+- **Projects share one Linux kernel.** An exploited kernel vulnerability could reach other projects, so do not open at the same time projects you want strongly separated (§3).
+- **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Isolation in the Web UI](WebUI.md#isolation-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
+- **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Development](Development.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.

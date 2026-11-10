@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320" width="640" height="320" role="img" aria-labelledby="t">
-  <title id="t">ドキュメントを読む: gen740.github.io/Tsugumi</title>
+  <title id="t">Read the documentation: gen740.github.io/Tsugumi</title>
   <defs>
     <clipPath id="card"><rect width="640" height="320" rx="24"/></clipPath>
   </defs>
@@ -20,9 +20,9 @@
     <polygon points="70,116 100,86 70,86" fill="#92a568"/>
     <path d="M45 70 Q 70 88 97 75" fill="none" stroke="#f6ecd8" stroke-width="4"/>
     <path d="M42 95 Q 70 76 96 102" fill="none" stroke="#d58b49" stroke-width="4"/>
-    <text x="40" y="186" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="44" font-weight="700" fill="#f3ede2">ドキュメントを読む</text>
-    <text x="42" y="226" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="19" fill="#c3cbc8">動く図で読む課題の話、</text>
-    <text x="42" y="253" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="19" fill="#c3cbc8">インストールせずに見られるデモ、仕組みの解説</text>
+    <text x="40" y="186" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="42" font-weight="700" fill="#f3ede2">Read the docs</text>
+    <text x="42" y="226" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#c3cbc8">The problem told with moving figures,</text>
+    <text x="42" y="253" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#c3cbc8">demos without installing, and how it works</text>
     <text x="42" y="290" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#9fb070">gen740.github.io/Tsugumi</text>
 
     <!-- the way in -->

@@ -1,59 +1,53 @@
 # Tsugumi
 
-> AI と描いた解析を、そのまま動かし、自分の手で確かめる。
+> Run the analysis you sketched with AI, as it is, and check it with your own hands.
 
-Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う研究ワークベンチです。macOS・Linux・Windows に対応しています（macOS と Linux（Ubuntu・NixOS）で確認。Windows は WSL2 でデモを開くところまで確認）。
-計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
-気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
+Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, through WSL2, as far as opening a demo).
+You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
+You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.
 
-文書は人間と AI の両方に向けて書いています。下の URL は各ページの Markdown 版です。主張の確かめ方は「主張と、それを確かめる方法」に、コード・テスト・コマンドと一緒に並べています。
+The documents are written for both people and AI. The URLs below are the Markdown version of each page. How to check each claim is in "Claims and how to check them", with the code, tests and commands.
 
-## 全体
+## Overview
 
-- [README](https://gen740.github.io/Tsugumi/index.md): 課題意識、使い方、実画面の説明
+- [README](https://gen740.github.io/Tsugumi/index.md): the problem, how to use it, and the real screens explained
 
-## はじめる
+## Getting started
 
-- [インストールと開発用ビルド](https://gen740.github.io/Tsugumi/pages/install.md): デスクトップアプリと `tsugumi` コマンド（Mac・Linux・Windows）の導入と更新、ソースからのビルド手順
-- [操作ガイド](https://gen740.github.io/Tsugumi/pages/usage.md): デモの案内に沿って始める手順と、よく使う操作
-- [はじめての Card](https://gen740.github.io/Tsugumi/pages/cardguide.md): はじめての Card: 入力を受け取って計算する Card を Python・bash・C++・R・Julia で作る（テストがこのページのコードを実行する）
-- [同梱デモのしくみ](https://gen740.github.io/Tsugumi/pages/demos.md): 同梱デモのしくみ: 各デモの Card のつながり、それぞれの Card がしていること、試すこと
-- [Web UI](https://gen740.github.io/Tsugumi/pages/webui.md): ブラウザで同じ画面を使う Web UI（`tsugumi` コマンド: Mac は共通 VM、Linux は bubblewrap、Windows は WSL）
-- [Claude Code から使う](https://gen740.github.io/Tsugumi/pages/claude-code.md): Claude Code の plugin で、Web UI に出しながら Card を作り・実行してもらう
+- [Installation and development builds](https://gen740.github.io/Tsugumi/pages/install.md): Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source
+- [Usage](https://gen740.github.io/Tsugumi/pages/usage.md): Getting started by following a demo's guide, and the operations you use most
+- [Your first Card](https://gen740.github.io/Tsugumi/pages/cardguide.md): Your first Card: a Card that takes an input and computes, written in Python, bash, C++, R and Julia (a test runs the code on this page)
+- [The bundled demos](https://gen740.github.io/Tsugumi/pages/demos.md): How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try
+- [Web UI](https://gen740.github.io/Tsugumi/pages/webui.md): The same screens in the browser (the `tsugumi` command: the shared VM on a Mac, bubblewrap on Linux, WSL on Windows)
+- [Using it from Claude Code](https://gen740.github.io/Tsugumi/pages/claude-code.md): Having Claude Code make and run Cards through the Claude Code plugin, shown in the Web UI
 
-## 考え方を知る
+## The ideas
 
-- [Tsugumi Q&A](https://gen740.github.io/Tsugumi/pages/qa.md): AI に任せるのをためらう 3 つの理由（過程が見えない・再現性・データ）に答える Q&A。各問いに、確かめる場所（デモ・テスト）つき
-- [なぜ今、設計・実装・検証を同じ Workflow にするのか](https://gen740.github.io/Tsugumi/pages/novelty.md): 同じ Workflow で設計・実装・検証をつなぐ独自性、なぜ今この設計なのか、試行錯誤を支える実装上の工夫
-- [Tsugumi の構想と応用](https://gen740.github.io/Tsugumi/pages/vision.md): 研究の判断を学び、ツールを育て、次の人へ仕事を渡すための応用と、業務自動化の構想
-- [AI に使われないために、何を作るか](https://gen740.github.io/Tsugumi/pages/philosophy.md): 「AI に使われないために、何を作るか」——背景にある問題意識と制作体験
-- [私にしかない深さ](https://gen740.github.io/Tsugumi/pages/origin.md): 作者が自分の言葉で書いた、この道具の出発点
-- [今後の予定と、保証の範囲](https://gen740.github.io/Tsugumi/pages/limitations.md): 今の範囲と今後の開発予定、保証の範囲
+- [What to build so that we are not used by AI](https://gen740.github.io/Tsugumi/pages/philosophy.md): "What to build so that we are not used by AI": the concern behind Tsugumi, where it started, its name, how it was built and its author
+- [Why one Workflow for design, implementation and checking](https://gen740.github.io/Tsugumi/pages/rationale.md): Why design, implementation and checking share one Workflow: answers to the three reasons for hesitating to hand research to AI (an invisible process, reproducibility, data), the measures that keep trial and error light, and where to check each
+- [Vision and applications](https://gen740.github.io/Tsugumi/pages/vision.md): Applications: learning research decisions, growing tools, handing work to the next person, and the idea of business automation
+- [Plans and guarantees](https://gen740.github.io/Tsugumi/pages/limitations.md): The current scope, plans and the scope of the guarantees
 
-## 仕組みを知る
+## How it works
 
-- [Tsugumi の主要機能](https://gen740.github.io/Tsugumi/pages/features.md): 主要機能の技術解説（全体構成・Card と Workflow・Nix・SDK と worker・保存・履歴・可視化・UI・Agent・デモ）
-- [版の管理（git）](https://gen740.github.io/Tsugumi/pages/versions.md): 版の管理: プロジェクトの git、実行ごとの版と結果（git notes）、版のツリーと「この版から始める」
-- [セキュリティと隔離](https://gen740.github.io/Tsugumi/pages/security.md): 守っていること・守っていないことの要点と、4 段階の隔離境界（VM・プロジェクト・Card・RPC）、API キーの管理、データの置き場所、既知の制限
-- [RPC 契約](https://gen740.github.io/Tsugumi/pages/protocol.md): RPC 契約: 41 種の要求と通知の一覧（`protocol/tsugumi.fbs` から生成）
-- [用語集](https://gen740.github.io/Tsugumi/pages/glossary.md): Card・Draft・Run・invocation・版などの用語集
+- [Tsugumi's features](https://gen740.github.io/Tsugumi/pages/features.md): A technical tour of the main features (architecture, Cards and Workflows, Nix, SDK and workers, saving, history, visualisation, UI, Agent, demos)
+- [Versions (git)](https://gen740.github.io/Tsugumi/pages/versions.md): Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version"
+- [Security and isolation](https://gen740.github.io/Tsugumi/pages/security.md): What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations
+- [The RPC contract](https://gen740.github.io/Tsugumi/pages/protocol.md): The RPC contract: the 41 requests and the notifications (generated from `protocol/tsugumi.fbs`)
+- [Glossary](https://gen740.github.io/Tsugumi/pages/glossary.md): Card, Draft, Run, invocation, version and other terms
 
-## 記録と開発
+## Records and development
 
-- [主張と、それを確かめる方法](https://gen740.github.io/Tsugumi/pages/evidence.md): 主張ごとの確かめ方: テスト名・コマンド・最後に確認した環境
-- [実際の Claude API での実行記録](https://gen740.github.io/Tsugumi/pages/agentrun.md): 実際の Claude API で、Draft から Card を生成して実行・検証するまでを通した記録
-- [開発資料](https://gen740.github.io/Tsugumi/pages/development.md): 実行基盤の設計決定、テストと確認範囲、計測、現在の実装状況
-- [制作範囲と事前準備](https://gen740.github.io/Tsugumi/pages/provenance.md): ハッカソン前の準備と、Tsugumi の実装・OSS・生成物の境界
+- [Claims and how to check them](https://gen740.github.io/Tsugumi/pages/evidence.md): How to check each claim: test names, commands and the last environment checked, and a run with the real Claude API
+- [Development](https://gen740.github.io/Tsugumi/pages/development.md): Design decisions of the runtime, tests and what has been checked, measurements, implementation status
 
-## リポジトリ
+## Repository
 
-- [AGENTS.md](https://raw.githubusercontent.com/gen740/Tsugumi/main/AGENTS.md): 地図、主張と確かめる場所、このリポジトリで作業するエージェントへの指示
-- [Card の仕様](https://raw.githubusercontent.com/gen740/Tsugumi/main/agent/Reference/card-guide.md): アプリの Agent が読むものと同じ文書
-- [RPC の契約](https://raw.githubusercontent.com/gen740/Tsugumi/main/protocol/tsugumi.fbs): UI・Web・Agent が使う契約の正本
+- [AGENTS.md](https://raw.githubusercontent.com/gen740/Tsugumi/main/AGENTS.md): a map, the claims and where to check them, and instructions for agents working in this repository
+- [The Card specification](https://raw.githubusercontent.com/gen740/Tsugumi/main/agent/Reference/card-guide.md): the same document the app's Agent reads
+- [The RPC contract](https://raw.githubusercontent.com/gen740/Tsugumi/main/protocol/tsugumi.fbs): the source of the contract the UI, the Web and the Agent use
 
 ## Optional
 
-- [Tsugumi という名前に込めた意味](https://gen740.github.io/Tsugumi/pages/name.md): 「継ぐ・積む・組む」「紡ぐ」、そして鳥のツグミに重ねた名前の由来
-- [この道具を作った人](https://gen740.github.io/Tsugumi/pages/author.md): この道具を作った人
-- [固定しているバージョン](https://gen740.github.io/Tsugumi/pages/lock.md): 実行環境と依存ライブラリの固定バージョン一覧
-- [ライセンス調査](https://gen740.github.io/Tsugumi/pages/licenseaudit.md): Tree-sitter・フォント・VM などのライセンス調査と、配布上の未対応事項
+- [Pinned versions](https://gen740.github.io/Tsugumi/pages/lock.md): Pinned versions of the runtime and its dependencies
+- [License audit](https://gen740.github.io/Tsugumi/pages/licenseaudit.md): The license audit of Tree-sitter, fonts, the VM and more, and what remains for distribution

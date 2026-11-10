@@ -1,6 +1,6 @@
 // Writes the documentation site from the repository's Markdown: docs/index.html
 // and docs/pages/*.html, for GitHub Pages serving docs/. The Markdown files stay
-// the single source. Four pages ("Tsugumi を知る") get figures set in after
+// the single source. The story pages ("Learn about Tsugumi") get figures set in after
 // phrases of their text; a phrase or section that is gone fails the build.
 // For agents, each page also has its Markdown next to it (pages/x.md, with links
 // that work on the site) and docs/llms.txt lists them (https://llmstxt.org/).
@@ -16,84 +16,65 @@ const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
 /** Documents an agent can skip when it needs less context ("Optional" in llms.txt). */
-const SECONDARY = ['docs/Name.md', 'docs/Author.md', 'docs/Lock.md', 'docs/LicenseAudit.md']
+const SECONDARY = ['docs/Lock.md', 'docs/LicenseAudit.md']
 
 /** Pages read with the thread and the moving figures, in the order the slide show goes through them. */
 const STORY = [
   {
-    out: 'pages/problem.html', source: 'README.md', title: 'Tsugumi が解決しようとしている課題', navTitle: '解決しようとしている課題', know: true,
+    out: 'pages/problem.html', source: 'README.md', title: 'The problem Tsugumi addresses', navTitle: 'The problem', know: true,
     // A section, or its beginning: upTo names the first block left out.
     sections: [
-      { title: 'AI を研究に積極的に活用できていますか？' },
-      { title: '処理の流れそのものを、人と AI の共通言語にする', upTo: 'この仕組みは研究を出発点に' },
-      { title: 'AI に頼みたいことは、本来単純なはずです' },
-      { title: '処理の形を描く。AI と実装する。実行して確かめる。' },
+      { title: 'Are you using AI in your research as much as you could?' },
+      { title: 'The flow of processing as a common language for people and AI', upTo: 'This idea starts from research' },
+      { title: 'What we want to ask of AI should be simple' },
+      { title: 'Draw the shape of the processing. Implement it with AI. Run it and check.' },
     ],
     figures: [
-      ['**AI に仕事を任せるには', 'summit', 'AI が登った道を、確かめられる足場として残す。だから人が登っていける。'],
-      ['これらに共通しているのは', 'wall', 'AI の出力が積み上がるほど、人と AI の間に壁ができていく。'],
-      ['この三つを同じ Workflow', 'thread', 'Tsugumi は、積み上がった壁を越えて、人と AI を一本の糸でつなぐ。'],
-      ['観測データをダウンロードして', 'casaSky', 'たとえば、カシオペヤA。三百年あまり前に、その光が地球に届いた超新星の残骸で、いまも秒速数千キロで広がり続けている。その観測データを、エネルギーで三つに分けて重ねれば、3 色の画像になる。'],
-      ['紙に箱を三つ', 'sketch', '紙に描いた、三つの箱。'],
-      ['組み立てる macOS アプリ', 'draft', 'もし、書いた通りのものが、そのまま形になったら？　三つの箱が、そのまま Draft になる。'],
-      ['**確かめる。** Nix', 'run', 'Agent が Draft を実装し、実行すると、帯域ごとの光子数と RGB 画像がそのまま Canvas に並ぶ（同梱の Cas A · Chandra RGB デモ）。'],
-      ['**確かめる。** Nix', { image: 'assets/screenshots/workflow.png', width: 1440, height: 900, alt: 'Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas' }, '実際の画面。深い観測で実行すると、スペクトルの輝線と画像の色の対応まで同じ Canvas で確かめられる。'],
+      ['**To hand work to an AI', 'summit', 'Leave the path the AI climbed as footholds you can check, and people can climb it too.'],
+      ['What these share is', 'wall', 'The more the AI\'s output piles up, the higher the wall between people and AI grows.'],
+      ['Tsugumi shares all three on the same Workflow', 'thread', 'Tsugumi joins people and AI with one thread, over the wall that piled up.'],
+      ['Download the observation, split it', 'casaSky', 'Take Cassiopeia A: the remnant of a supernova whose light reached Earth a little over three hundred years ago, still expanding at thousands of kilometres per second. Split its observation into three by energy and overlay them, and you have a three-colour image.'],
+      ['three boxes on paper', 'sketch', 'Three boxes, drawn on paper.'],
+      ['macOS app for assembling', 'draft', 'What if what you wrote took shape just as it is? The three boxes become Drafts.'],
+      ['**Check.** Run the graph', 'run', 'The Agent implements the Drafts and runs them, and the photon counts per band and the RGB image appear on the Canvas (the bundled Cas A · Chandra RGB demo).'],
+      ['**Check.** Run the graph', { image: 'assets/screenshots/workflow.png', width: 1440, height: 900, alt: 'A Canvas that makes an RGB image and an energy spectrum from an X-ray observation of Cas A' }, 'The real screen. Run it on a deep observation, and even how the spectrum\'s lines match the image\'s colours can be checked on the same Canvas.'],
     ],
   },
   {
     out: 'pages/philosophy.html', source: 'docs/Philosophy.md', know: true,
     figures: [
-      ['そうした研究のあり方を', 'driven', '問いを立てるのは人。試行を回すのは AI。意味を与えるのは、また人。'],
-      ['AI が試行を回す速度に対して', 'outpace', 'AI が試す速さと、人が理解する速さ。その差は開いていく。'],
-      ['しばらく運転から離れていた人間が', 'driver', '任せていた人が、ある瞬間に引き継ぎを求められる。'],
-      ['研究で AI を使うときにも', 'grasp', '手が届くことと、わかっていることは違う。運転でも、研究でも。'],
-      ['サンプルの選び方を確かめる', 'curve', '選ばれた点だけの美しい線と、除かれていた点も入れた線。'],
-      ['だからこそ、試行錯誤の過程と', 'partial', '気になった Card の条件を変えて、そこからもう一度動かす。'],
+      ['What is it that only people can do?', 'asking'],
+      ['I would like to call research done this way', 'driven', 'People ask the questions. AI runs the trials. People give them meaning, again.'],
+      ['Can the speed at which people understand', 'outpace', 'How fast AI tries, and how fast people understand. The gap keeps widening.'],
+      ['A person who has been away from driving', 'driver', 'Someone who had handed over the wheel is suddenly asked to take it back.'],
+      ['I feel that using AI in research has exactly', 'grasp', 'Being within reach is not the same as understanding. In driving, and in research.'],
+      ['Check how the samples were chosen', 'curve', 'A beautiful line through the chosen points only, and the line with the excluded points put back.'],
+      ['That is why I want the process of trial and error', 'partial', 'Change the conditions of the Card you were curious about, and run again from there.'],
+      ['The author studies astrophysics', 'orbit'],
+      ['Yet space should be close to everyone', 'sky'],
+      ['the data is public on the internet', 'reach'],
+      ['Before the hackathon there were countless prototypes', 'trials'],
+      ['Claude gave that idea a form', 'formed'],
+      ['The essay ends with a call', 'fellows'],
+      ['a single thread drawn from the temari becomes the wire', 'name', 'A single thread drawn from the temari becomes the wire between Card and Card.'],
+      ['It comes to Japan as a winter bird', 'walk', 'A few hops, a stop, and it stands up straight to look around.'],
+      ['In an age that tells results with ever more words', 'hush', 'Saying little, it offers the accumulated attempts.'],
+      ['A first-year PhD student at the University of Tokyo', 'author', 'Yasuda Auditorium, the University of Tokyo. Research that reads the universe with AI, like joining up the stars.'],
     ],
   },
   {
-    out: 'pages/name.html', source: 'docs/Name.md', know: true,
+    out: 'pages/rationale.html', source: 'docs/Rationale.md',
     figures: [
-      ['Card と Card をつなぐ配線', 'name', '手毬から引き出した一本の糸が、Card と Card をつなぐ配線になる。'],
-      ['ツグミは、冬鳥として', 'walk', '数歩跳ねては立ち止まり、胸を張ってあたりを見渡す。'],
-      ['言葉を重ねて結果を語る時代に', 'hush', '多くを語らず、試行の積み重ねを差し出す。'],
-    ],
-  },
-  {
-    out: 'pages/author.html', source: 'docs/Author.md', know: true,
-    figures: [['AI for astrophysics', 'author', '東京大学・安田講堂。星をつなぐように、AI で宇宙を読み解く研究をしています。']],
-  },
-  // The author's own words: figures without a caption and without words of their own, and its short paragraphs gathered on a slide.
-  {
-    out: 'pages/origin.html', source: 'docs/Origin.md', know: true, gather: true,
-    figures: [
-      ['人間にしかできないことって何でしょうか', 'asking'],
-      ['宇宙環境特有のノイズを含んでいたり', 'orbit'],
-      ['宇宙は全人類のものです', 'sky'],
-      ['全てのデータはインターネットで公開され', 'reach'],
-      ['けれども、ずっと あと一歩が足りない', 'trials'],
-      ['Claude はその想いを形にしてくれました', 'formed'],
-      ['最後に全ての同志に呼びかけたい', 'fellows'],
-    ],
-  },
-  {
-    out: 'pages/qa.html', source: 'docs/QA.md',
-    figures: [
-      ['AI に解析を任せると', 'oneGraph', '人が描くもの、AI が編集するもの、実際に動くものが、一つに重なる。'],
-      ['Tsugumi では、保存された最新入力を', 'partial', '直した Card から、保存された入力で試す。最後は全体を通す。'],
-    ],
-  },
-  {
-    out: 'pages/novelty.html', source: 'docs/novelty.md',
-    figures: [
-      ['Tsugumi は、コードや Workflow の定義を Git で管理し', 'branches', '一つの結果から、別の仮説へ。どの枝も、たどって戻れる。'],
+      ['Hand an analysis to AI and the trials go fast', 'oneGraph', 'What people draw, what AI edits and what actually runs become one.'],
+      ['In Tsugumi you can run only the Cards you choose', 'partial', 'From the Card you fixed, try it with the saved inputs. Finally, run the whole.'],
+      ['Tsugumi versions the code and the Workflow', 'branches', 'From one result to another hypothesis. Every branch can be followed back.'],
     ],
   },
   {
     out: 'pages/vision.html', source: 'docs/Vision.md',
     figures: [
-      ['学ぶ側は入力やパラメータを', 'teach', '条件を自分で変えて、結論がどう動くかを確かめる。'],
-      ['例えば毎月の集計業務を引き継ぐとき', 'handoff', '意図とコードと環境を一緒に渡し、次の人がそこから試し続ける。'],
+      ['The learner can change inputs and parameters', 'teach', 'Change the conditions yourself, and see how the conclusion moves.'],
+      ['For example, when handing over a monthly aggregation', 'handoff', 'Hand over the intention, the code and the environment together, and the next person keeps trying from there.'],
     ],
   },
 ]
@@ -103,43 +84,43 @@ const OFF_THE_LIST = new Set(['INSTALL.md', 'docs/Demos.md', 'docs/Limitations.m
 
 /** The demos of the gallery on Home, by what they are about, in plain words (demos/index.json has the rest). */
 const GALLERY = [
-  ['基本のデモ', [
-    ['report', 'データからレポートへ', 'データ生成・集計・レポート作成をつなぐ。途中を変えて、そこから再実行する。'],
-    ['collatz', 'Collatz (C++ / Python / Julia / R)', '四つの言語で同じ計算をして、分岐と反復をたどりながら結果を比べる。'],
-    ['plots', 'Plots', 'ウィンドウ向けに書いた matplotlib のコードが、そのまま Card の表示になる。'],
-    ['live-stream', 'Live Stream', '時系列の出力を、実行中にそのままグラフで描く。'],
+  ['The basics', [
+    ['report', 'Data to report', 'Generate data, aggregate it and write a report. Change a step in the middle and rerun from there.'],
+    ['collatz', 'Collatz (C++ / Python / Julia / R)', 'The same computation in four languages, compared while following its branch and loop.'],
+    ['plots', 'Plots', 'matplotlib code written for a window becomes the Card\'s display as it is.'],
+    ['live-stream', 'Live Stream', 'A time series plotted while the run is still going.'],
   ]],
-  ['公開データの解析', [
-    ['casa', 'Cas A · Chandra RGB', 'X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。'],
-    ['gw150914', 'GW150914', '公開データから、重力波のチャープを取り出して図にする。'],
-    ['protein-6lu7', '6LU7', 'タンパク質の立体構造を取得して、結合ポケットを見る。'],
-    ['exoplanet-transit', 'Kepler-6 b', '光度曲線を折りたたんで、系外惑星のトランジットを見る。'],
-    ['seismic-trench', '日本海溝', '地震カタログから、震源の断面と b 値を見る。'],
+  ['Public data', [
+    ['casa', 'Cas A · Chandra RGB', 'An X-ray observation split into three energy bands for an RGB image, with the spectrum of the same photons to match lines to colours.'],
+    ['gw150914', 'GW150914', 'The chirp of a gravitational wave, extracted from public data and plotted.'],
+    ['protein-6lu7', '6LU7', 'A protein\'s 3D structure, fetched to look at its binding pocket.'],
+    ['exoplanet-transit', 'Kepler-6 b', 'A light curve folded to show an exoplanet\'s transit.'],
+    ['seismic-trench', 'Japan Trench', 'A cross-section of hypocentres and the b-value, from an earthquake catalogue.'],
   ]],
-  ['機械学習と計算', [
-    ['mnist-classifiers', 'MNIST · 分類器くらべ', '本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べる。'],
-    ['newton', 'Newton 法', '初期値で行き先と収束の速さが変わる様子を、複素平面の地図で見る。'],
-    ['max-flow', '最大流と最小カット', '架空のネットワークで、どの辺を増やせば流れが増えるかを確かめる。'],
-    ['pharmacokinetics', '薬物動態（架空の薬物）', '投与間隔で濃度がどう動くかを比べる教材。医療上の助言ではない。'],
-    ['dose-response', '濃度–反応曲線（合成データ）', '真の値が分かるデータで、当てはめと信頼区間を確かめる。'],
-    ['molecules', '分子の物性', 'SMILES から RDKit で物性と構造式を求める。'],
-    ['cell-count', '細胞画像の計数', '正解のある合成画像で数え方を採点し、実際の核の画像にもかける。'],
+  ['Machine learning and computation', [
+    ['mnist-classifiers', 'MNIST · comparing classifiers', 'The real MNIST fed to seven classifiers at once, comparing accuracy and time.'],
+    ['newton', 'Newton\'s method', 'A map of the complex plane showing how the starting point decides where it goes and how fast.'],
+    ['max-flow', 'Maximum flow and minimum cut', 'On a made-up network, which edge to widen to increase the flow.'],
+    ['pharmacokinetics', 'Pharmacokinetics (a made-up drug)', 'Teaching material comparing how concentration moves with the dosing interval. Not medical advice.'],
+    ['dose-response', 'Dose–response curve (synthetic data)', 'A fit and its confidence interval, checked on data whose true values are known.'],
+    ['molecules', 'Molecular properties', 'Properties and structural formulas from SMILES, with RDKit.'],
+    ['cell-count', 'Counting cells in images', 'A counting method scored on synthetic images with known answers, then applied to real images of nuclei.'],
   ]],
-  ['R の統計', [
-    ['survival', '生存時間解析', '同じハザード比が、対象者と調整でどれだけ動くかを並べる。'],
-    ['meta-analysis', 'メタ解析: BCG ワクチン', '併合の方法や試験の除外で、結論がどう動くかを比べる。'],
-    ['rna-seq', 'RNA-seq: airway', 'DESeq2 と edgeR で、発現の動く遺伝子の数が閾値でどう変わるかを見る。'],
-    ['simpson', '集計と層別で逆転する相関', '全体と層で向きが逆になる例を、2 つの実データで確かめる。'],
+  ['Statistics in R', [
+    ['survival', 'Survival analysis', 'How much the same hazard ratio moves with the subjects and the adjustment.'],
+    ['meta-analysis', 'Meta-analysis: the BCG vaccine', 'How the conclusion moves with the pooling method and the trials left out.'],
+    ['rna-seq', 'RNA-seq: airway', 'With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.'],
+    ['simpson', 'A correlation that reverses when stratified', 'Two real datasets in which the whole and its strata point in opposite directions.'],
   ]],
-  ['Julia のシミュレーション', [
-    ['battery', '蓄電池の最適運用', '架空の料金で、充放電を動的計画法で最適化する。'],
-    ['gillespie', '化学反応のゆらぎ', 'Gillespie 法のシミュレーションを理論と照合する。'],
-    ['heat-inverse', '熱伝導の逆問題', '素朴な逆解が破綻し、正則化で復元できることを見る。'],
-    ['ecology-models', '生態系のモデル比較', '毛皮の記録に捕食モデルを当てはめて比べる。'],
+  ['Simulation in Julia', [
+    ['battery', 'Scheduling a battery', 'Charging and discharging optimised by dynamic programming, under made-up prices.'],
+    ['gillespie', 'Fluctuations in chemical reactions', 'A Gillespie simulation checked against theory.'],
+    ['heat-inverse', 'An inverse problem in heat conduction', 'The naive inverse breaks down; regularisation recovers the answer.'],
+    ['ecology-models', 'Comparing ecological models', 'Predator–prey models fitted to fur-trade records and compared.'],
   ]],
-  ['Agent に任せる', [
-    ['dynamics-draft', '力学系ギャラリー', '6 つの Draft を、Agent が helper に手分けさせて同時に実装する。'],
-    ['mnist-classifiers-draft', 'MNIST · 分類器くらべ', '7 つの分類器を helper が同時に実装し、Agent が比較に合流させる。'],
+  ['Left to the Agent', [
+    ['dynamics-draft', 'Dynamical systems gallery', 'The Agent splits six Drafts among helpers and implements them at the same time.'],
+    ['mnist-classifiers-draft', 'MNIST · comparing classifiers', 'Helpers implement seven classifiers at the same time, and the Agent merges them into a comparison.'],
   ]],
 ]
 const DOWNLOAD = `${REPO}/releases/latest`
@@ -231,7 +212,7 @@ function makeMarked(link) {
         headings.push({ depth, id, html: inner.replace(/<\/?a\b[^>]*>/g, '') })
         return `<h${depth} id="${esc(id)}">${inner}</h${depth}>\n`
       },
-      // Japanese lines of a paragraph join without the space a line break would show.
+      // Lines of a paragraph in Japanese (should any be left) join without the space a line break would show.
       paragraph({ tokens }) {
         return `<p>${this.parser.parseInline(tokens).replace(/([^\x00-\x7f])\n(?=[^\x00-\x7f])|([。！？」）])\n/g, '$1$2')}</p>\n`
       },
@@ -281,7 +262,7 @@ function storyBody(story, marked) {
     tokens = picked
     tokens.unshift({ type: 'heading', depth: 1, raw: `# ${story.title}`, text: story.title, tokens: marked.Lexer.lexInline(story.title) })
   }
-  tokens = tokens.filter((t) => !(t.type === 'paragraph' && t.raw.startsWith('[README に戻る]')) && t.type !== 'space')
+  tokens = tokens.filter((t) => !(t.type === 'paragraph' && t.raw.startsWith('[Back to the README]')) && t.type !== 'space')
   const after = new Map()
   for (const [phrase, what, caption] of story.figures ?? []) {
     const i = tokens.findIndex((t) => t.raw.includes(phrase))
@@ -305,7 +286,7 @@ function pageContents(headings) {
   const shown = headings.filter((h) => h.depth === 2 || h.depth === 3)
   if (shown.length < 5) return ''
   const items = shown.map((h) => `<li class="d${h.depth}"><a href="#${esc(h.id)}">${h.html}</a></li>`).join('')
-  return `<details class="toc" open><summary>目次</summary><ul>${items}</ul></details>
+  return `<details class="toc" open><summary>Contents</summary><ul>${items}</ul></details>
 <script>{ const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 1240px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set) }</script>
 `
 }
@@ -313,7 +294,7 @@ function pageContents(headings) {
 function sidebar(groups, pages, outRel) {
   const href = (to) => (to === outRel ? '#' : path.relative(path.dirname(outRel), to).split(path.sep).join('/'))
   const item = (to, title) => `<li${to === outRel ? ' class="on" aria-current="page"' : ''}><a href="${href(to)}">${esc(title)}</a></li>`
-  let out = `<div class="nav-group"><h2>Tsugumi を知る</h2><ul>`
+  let out = `<div class="nav-group"><h2>Learn about Tsugumi</h2><ul>`
   for (const s of STORY.filter((x) => x.know)) out += item(s.out, s.navTitle ?? s.title ?? titleOf(s.source))
   out += '</ul></div>'
   for (const g of groups) {
@@ -346,17 +327,17 @@ function llmsTxt(groups, mdPages, tagline) {
   const item = (d) => `- [${titleOf(d)}](${SITE}${mdPages.get(d)})${notes.has(d) ? `: ${notes.get(d)}` : ''}`
   const out = [
     '# Tsugumi', '', `> ${tagline}`, '', about(read('README.md'), tagline).join('\n'), '',
-    '文書は人間と AI の両方に向けて書いています。下の URL は各ページの Markdown 版です。主張の確かめ方は「主張と、それを確かめる方法」に、コード・テスト・コマンドと一緒に並べています。', '',
-    '## 全体', '', `- [README](${SITE}index.md): 課題意識、使い方、実画面の説明`, '',
+    'The documents are written for both people and AI. The URLs below are the Markdown version of each page. How to check each claim is in "Claims and how to check them", with the code, tests and commands.', '',
+    '## Overview', '', `- [README](${SITE}index.md): the problem, how to use it, and the real screens explained`, '',
   ]
   for (const g of groups) {
     const docs = g.docs.filter((d) => !SECONDARY.includes(d))
     out.push(`## ${g.title}`, '', ...docs.map(item), '')
   }
-  out.push('## リポジトリ', '',
-    `- [AGENTS.md](${RAW}/AGENTS.md): 地図、主張と確かめる場所、このリポジトリで作業するエージェントへの指示`,
-    `- [Card の仕様](${RAW}/agent/Reference/card-guide.md): アプリの Agent が読むものと同じ文書`,
-    `- [RPC の契約](${RAW}/protocol/tsugumi.fbs): UI・Web・Agent が使う契約の正本`, '')
+  out.push('## Repository', '',
+    `- [AGENTS.md](${RAW}/AGENTS.md): a map, the claims and where to check them, and instructions for agents working in this repository`,
+    `- [The Card specification](${RAW}/agent/Reference/card-guide.md): the same document the app's Agent reads`,
+    `- [The RPC contract](${RAW}/protocol/tsugumi.fbs): the source of the contract the UI, the Web and the Agent use`, '')
   out.push('## Optional', '', ...SECONDARY.map(item), '')
   return out.join('\n')
 }
@@ -366,7 +347,7 @@ function page({ outRel, title, source, markdown, description, body, nav, story, 
   const canonical = SITE + (outRel === 'index.html' ? '' : outRel)
   return `<!doctype html>
 <!-- Generated by docs/site/build.mjs from ${source}: do not edit. -->
-<html lang="ja"${story ? ' class="story"' : ''}>
+<html lang="en"${story ? ' class="story"' : ''}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -380,11 +361,11 @@ function page({ outRel, title, source, markdown, description, body, nav, story, 
 ${neighbours?.next ? `<meta name="story-next" content="${asset(neighbours.next)}">\n` : ''}${neighbours?.prev ? `<meta name="story-prev" content="${asset(neighbours.prev)}">\n` : ''}<script>try { if (localStorage.getItem('tsugumi.side') === 'closed') document.documentElement.classList.add('side-closed') } catch { /* the page works without it */ }</script>
 </head>
 <body>
-<button type="button" class="side-open" aria-label="サイドバーを開く" title="サイドバーを開く">${ICON.panel}</button>
+<button type="button" class="side-open" aria-label="Open the sidebar" title="Open the sidebar">${ICON.panel}</button>
 <div class="layout">
-<nav class="side" aria-label="文書">
-  <div class="brand"><a href="${asset('index.html')}"><img src="${asset('assets/tsugumi-icon.svg')}" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="${REPO}" rel="noopener">${ICON.github}GitHub</a><button type="button" class="side-close" aria-label="サイドバーを閉じる" title="サイドバーを閉じる">${ICON.panel}</button></span></div>
-  <details class="nav-fold" open><summary>文書の一覧</summary>${nav}</details>
+<nav class="side" aria-label="Documents">
+  <div class="brand"><a href="${asset('index.html')}"><img src="${asset('assets/tsugumi-icon.svg')}" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="${REPO}" rel="noopener">${ICON.github}GitHub</a><button type="button" class="side-close" aria-label="Close the sidebar" title="Close the sidebar">${ICON.panel}</button></span></div>
+  <details class="nav-fold" open><summary>Documents</summary>${nav}</details>
   <script>{
     const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
     const side = fold.parentElement, on = fold.querySelector('li.on')
@@ -395,14 +376,14 @@ ${neighbours?.next ? `<meta name="story-next" content="${asset(neighbours.next)}
   }</script>
 </nav>
 <main class="main${home ? ' main-home' : ''}">
-${home ?? `${story ? '<div class="mode" role="group" aria-label="読み方"><button type="button" data-mode="read" aria-pressed="true">読む</button><button type="button" data-mode="cards" aria-pressed="false">スライドショー</button></div>' : ''}
+${home ?? `${story ? '<div class="mode" role="group" aria-label="How to read"><button type="button" data-mode="read" aria-pressed="true">Read</button><button type="button" data-mode="cards" aria-pressed="false">Slide show</button></div>' : ''}
 <div class="reading">
 ${toc ?? ''}<article class="doc"${gather ? ' data-gather=""' : ''}>
 ${body}</article>
 </div>
 <p class="source">${whole
-    ? `<a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> の一部から作ったページです（<a href="${asset(whole)}">全文</a> · <a href="${asset(markdown)}">Markdown</a>）`
-    : `<a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> と同じ文書です（<a href="${asset(markdown)}">Markdown</a>）`}</p>
+    ? `<a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> (<a href="${asset(whole)}">the whole document</a> · <a href="${asset(markdown)}">Markdown</a>)`
+    : `<a href="${REPO}/blob/main/${source}" rel="noopener"><code>${esc(source)}</code></a> (<a href="${asset(markdown)}">Markdown</a>)`}</p>
 `}</main>
 </div>
 ${home ? `<script type="module" src="${asset('site/js/home.js')}"></script>\n` : ''}${story ? `<script type="module" src="${asset('site/js/reader.js')}"></script>\n` : ''}${toc ? `<script src="${asset('site/js/toc.js')}" defer></script>\n` : ''}${embeds ? `<script type="module" src="${asset('site/js/embed.js')}"></script>\n` : ''}
@@ -414,13 +395,13 @@ ${home ? `<script type="module" src="${asset('site/js/home.js')}"></script>\n` :
 /** Home: the thread from the temari runs through the ways in, as a Workflow of documents. */
 function homePage(groups, pages, tagline, lead) {
   const here = (to) => to
-  const doorText = { 'はじめる': '使い始める', '考え方を知る': 'なぜこの形なのか', '仕組みを知る': '中がどうなっているか', '記録と開発': '確かめられるように' }
+  const doorText = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', 'Records and development': 'So that it can be checked' }
   const know = STORY.filter((s) => s.know)
   const row = (to, title, note) => `<li><a href="${here(to)}"><b>${esc(title)}</b>${note ? `<span>${esc(note)}</span>` : ''}</a></li>`
   const shortNote = (d) => (notes.get(d) ?? '').replace(/^(「[^」]+」——|[^:：]{1,14}[:：]\s*)/, '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
   const door = (id, name, sub, items) => `<section class="door" data-door="${id}"><header><i>&lt;/&gt;</i><h2>${esc(name)}</h2><small>${esc(sub)}</small></header><ul>${items}</ul></section>`
   const doors = [
-    door('know', 'Tsugumi を知る', 'どんな課題に、どう向き合っているか', know.map((s) => row(s.out, s.title ?? titleOf(s.source), s.sections ? '壁と糸、三つの箱から Cas A まで' : shortNote(s.source))).join('')),
+    door('know', 'Learn about Tsugumi', 'What problem it takes on, and how', know.map((s) => row(s.out, s.title ?? titleOf(s.source), s.sections ? 'The wall and the thread, from three boxes to Cas A' : shortNote(s.source))).join('')),
     ...groups.map((g) => {
       const docs = g.docs.filter((d) => !OFF_THE_LIST.has(d) && !know.some((s) => s.source === d))
       return door(g.title, g.title, doorText[g.title] ?? '', docs.map((d) => row(pages.get(d), titleOf(d), shortNote(d))).join(''))
@@ -435,28 +416,28 @@ function homePage(groups, pages, tagline, lead) {
     <p class="tagline">${esc(tagline)}</p>
     <p class="lead">${esc(lead)}</p>
     <div class="hero-actions">
-      <a class="cta" href="${DOWNLOAD}">${ICON.download}Mac 版をダウンロード</a>
-      <a class="cta quiet" href="#demos">インストールせずにデモを見る</a>
+      <a class="cta" href="${DOWNLOAD}">${ICON.download}Download for Mac</a>
+      <a class="cta quiet" href="#demos">See the demos without installing</a>
     </div>
-    <p class="home-note">macOS・Linux・Windows に対応（macOS と Linux で確認、Windows は WSL2 で確認。アプリは Apple silicon / macOS 26 以降） · <a href="${pages.get('INSTALL.md')}">インストールと開発用ビルド</a></p>
+    <p class="home-note">Runs on macOS, Linux and Windows (checked on macOS and Linux; Windows through WSL2. The app needs Apple silicon and macOS 26 or later) · <a href="${pages.get('INSTALL.md')}">Installation and development builds</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>
 <div class="doors">${doors}</div>
 <a class="chronicle-card" href="${CHRONICLE}" rel="noopener">
-  <header><i>Build Log</i><h2>Tsugumi Chronicle</h2><small>Claude で開発した記録</small></header>
+  <header><i>Build Log</i><h2>Tsugumi Chronicle</h2><small>The record of building it with Claude</small></header>
   <div class="chronicle-body">
-    <p class="chronicle-lead">人が問い、Claude が積む。</p>
-    <p>ひとりの人と Claude が Tsugumi をどう作ったのかを、開発セッションと Git の履歴からたどれる記録です。何を頼み、どこで止め、何を確かめたか。</p>
-    <span class="chronicle-go">記録をたどる →</span>
+    <p class="chronicle-lead">A person asks, Claude builds.</p>
+    <p>A record, from the development sessions and the Git history, of how one person and Claude built Tsugumi: what was asked, where it was stopped, and what was checked.</p>
+    <span class="chronicle-go">Follow the record →</span>
   </div>
 </a>
 <section class="gallery" id="demos">
-  <h2>デモを、そのまま動かしてみる</h2>
-  <p>同梱のデモです。インストールしなくても、Card のつながりと実行の様子をここで見られます。押すと大きく開きます。一つずつの説明は<a href="${pages.get('docs/Demos.md')}">同梱デモのしくみ</a>にあります。</p>
+  <h2>Run the demos, right here</h2>
+  <p>The bundled demos. Without installing anything, you can see here how their Cards connect and how they run. Click one to open it large. Each is explained in <a href="${pages.get('docs/Demos.md')}">The bundled demos</a>.</p>
   ${tiles}
 </section>
-<p class="home-foot"><a href="${pages.get('README.md')}">README</a> · <a href="${pages.get('docs/README.md')}">すべての文書</a> · <a href="${pages.get('docs/Limitations.md')}">今後の予定</a> · <a href="llms.txt">AI 向けの案内（llms.txt）</a></p>
+<p class="home-foot"><a href="${pages.get('README.md')}">README</a> · <a href="${pages.get('docs/README.md')}">All documents</a> · <a href="${pages.get('docs/Limitations.md')}">Plans</a> · <a href="llms.txt">A guide for AI (llms.txt)</a></p>
 </article>
 `
 }
@@ -467,7 +448,7 @@ function build() {
   const out = new Map()
   const readme = read('README.md')
   const tagline = /^\*\*(.+)\*\*$/m.exec(readme)?.[1] ?? 'Tsugumi'
-  const lead = about(readme, tagline).join('')
+  const lead = about(readme, tagline).join(' ')
 
   STORY.forEach((s, i) => {
     const marked = makeMarked(linker(s.source, s.out, pages))
@@ -478,7 +459,7 @@ function build() {
     }))
   })
   out.set('index.html', page({
-    outRel: 'index.html', title: 'ドキュメント', source: 'README.md', markdown: markdownOut('README.md', pages), description: tagline,
+    outRel: 'index.html', title: 'Documentation', source: 'README.md', markdown: markdownOut('README.md', pages), description: tagline,
     nav: sidebar(groups, pages, 'index.html'), home: homePage(groups, pages, tagline, lead),
   }))
   for (const [source, outRel] of pages) {

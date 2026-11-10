@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 216" width="1280" height="216" role="img" aria-labelledby="t">
-  <title id="t">Tsugumi を入れて、動かす: インストールと最初の一歩</title>
+  <title id="t">Install Tsugumi and run it: installation and first steps</title>
   <defs>
     <clipPath id="card"><rect width="1280" height="216" rx="24"/></clipPath>
   </defs>
@@ -20,9 +20,9 @@
     <path d="M62 152 H230" stroke="#efe0c3" stroke-width="4" stroke-opacity="0.35"/>
     <path d="M146 40 V118 M114 88 L146 120 L178 88" fill="none" stroke="#c97d3d" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <text x="288" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="52" font-weight="700" fill="#f3ede2">入れて、動かしてみる</text>
-    <text x="290" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif" font-size="22" fill="#c3cbc8">Mac はアプリ、Linux・Windows はブラウザで使うコマンド</text>
-    <text x="290" y="186" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9fb070">README · インストール → 最初の一歩</text>
+    <text x="288" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="52" font-weight="700" fill="#f3ede2">Install it, and try it</text>
+    <text x="290" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="22" fill="#c3cbc8">The app on a Mac; a command for the browser on Linux and Windows</text>
+    <text x="290" y="186" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9fb070">README · Install → First steps</text>
 
     <!-- the way in -->
     <rect x="1088" y="66" width="128" height="84" rx="42" fill="#c97d3d"/>
