@@ -1,32 +1,60 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320" width="640" height="320" role="img" aria-labelledby="t">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-labelledby="t">
   <title id="t">Read the documentation: gen740.github.io/Tsugumi</title>
   <defs>
-    <clipPath id="card"><rect width="640" height="320" rx="24"/></clipPath>
+    <clipPath id="card"><rect width="1280" height="360" rx="24"/></clipPath>
   </defs>
   <g clip-path="url(#card)">
-    <rect width="640" height="320" fill="#16282d"/>
-    <polygon points="0,0 210,0 96,126" fill="#1d3a3e"/>
-    <polygon points="0,0 96,126 0,216" fill="#1a3338"/>
-    <polygon points="640,0 470,0 560,120" fill="#1d3a3e"/>
-    <polygon points="640,0 560,120 640,230" fill="#1a3338"/>
-    <polygon points="470,0 560,120 420,320" fill="#173136"/>
-    <polygon points="560,120 640,230 640,320 420,320" fill="#1b363a"/>
-    <!-- the thread from the temari -->
-    <path d="M86 78 C 130 34, 168 104, 214 66" fill="none" stroke="#efe0c3" stroke-width="3" stroke-linecap="round"/>
-    <circle cx="70" cy="86" r="30" fill="#9fb070"/>
-    <polygon points="70,56 100,86 70,86" fill="#b6c489"/>
-    <polygon points="40,86 70,56 70,86" fill="#8a9c5f"/>
-    <polygon points="40,86 70,116 70,86" fill="#7a8c52"/>
-    <polygon points="70,116 100,86 70,86" fill="#92a568"/>
-    <path d="M45 70 Q 70 88 97 75" fill="none" stroke="#f6ecd8" stroke-width="4"/>
-    <path d="M42 95 Q 70 76 96 102" fill="none" stroke="#d58b49" stroke-width="4"/>
-    <text x="40" y="186" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="42" font-weight="700" fill="#f3ede2">Read the docs</text>
-    <text x="42" y="226" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#c3cbc8">The problem told with moving figures,</text>
-    <text x="42" y="253" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#c3cbc8">demos without installing, and how it works</text>
-    <text x="42" y="290" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#9fb070">gen740.github.io/Tsugumi</text>
+    <rect width="1280" height="360" fill="#16282d"/>
+    <polygon points="0,0 230,0 104,138" fill="#1d3a3e"/>
+    <polygon points="0,0 104,138 0,236" fill="#1a3338"/>
+    <polygon points="0,360 104,138 0,236" fill="#173136"/>
+    <polygon points="1280,0 1040,0 1180,132" fill="#1d3a3e"/>
+    <polygon points="1280,0 1180,132 1280,250" fill="#1a3338"/>
+    <polygon points="1040,0 1180,132 1000,360" fill="#173136"/>
+    <polygon points="1180,132 1280,250 1280,360 1000,360" fill="#1b363a"/>
+    <rect x="2" y="2" width="1276" height="356" rx="22" fill="none" stroke="#9fb070" stroke-opacity="0.6" stroke-width="3"/>
+
+    <!-- the temari and its thread, running on to the three pages -->
+    <path d="M132 92 C 200 40, 250 130, 330 82 S 540 46, 640 84" fill="none" stroke="#efe0c3" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="104" cy="104" r="40" fill="#9fb070"/>
+    <polygon points="104,64 144,104 104,104" fill="#b6c489"/>
+    <polygon points="64,104 104,64 104,104" fill="#8a9c5f"/>
+    <polygon points="64,104 104,144 104,104" fill="#7a8c52"/>
+    <polygon points="104,144 144,104 104,104" fill="#92a568"/>
+    <path d="M70 83 Q 104 107 140 90" fill="none" stroke="#f6ecd8" stroke-width="5"/>
+    <path d="M66 117 Q 104 92 139 122" fill="none" stroke="#d58b49" stroke-width="5"/>
+
+    <text x="64" y="214" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="58" font-weight="700" fill="#f3ede2">Read the docs</text>
+    <text x="66" y="262" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="22" fill="#c3cbc8">Why Tsugumi exists, what it does, and how it works</text>
+    <text x="66" y="312" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#9fb070">gen740.github.io/Tsugumi</text>
+
+    <!-- what is there: three pages on the thread -->
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+      <g transform="translate(640 46)">
+        <rect width="300" height="78" rx="14" fill="#1f3c41" stroke="#3c5e60" stroke-width="2"/>
+        <path d="M24 52 C 40 22, 56 52, 72 30" fill="none" stroke="#d58b49" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="72" cy="30" r="6" fill="#efe0c3"/>
+        <text x="96" y="36" font-size="21" font-weight="600" fill="#f3ede2">The problem</text>
+        <text x="96" y="60" font-size="16" fill="#c3cbc8">told with moving figures</text>
+      </g>
+      <g transform="translate(640 142)">
+        <rect width="300" height="78" rx="14" fill="#1f3c41" stroke="#3c5e60" stroke-width="2"/>
+        <path d="M30 24 L58 39 L30 54 Z" fill="#9fb070"/>
+        <text x="96" y="36" font-size="21" font-weight="600" fill="#f3ede2">The demos</text>
+        <text x="96" y="60" font-size="16" fill="#c3cbc8">replayed, without installing</text>
+      </g>
+      <g transform="translate(640 238)">
+        <rect width="300" height="78" rx="14" fill="#1f3c41" stroke="#3c5e60" stroke-width="2"/>
+        <rect x="22" y="22" width="20" height="14" rx="3" fill="none" stroke="#efe0c3" stroke-width="3"/>
+        <rect x="50" y="42" width="20" height="14" rx="3" fill="none" stroke="#efe0c3" stroke-width="3"/>
+        <path d="M42 29 H56 V42" fill="none" stroke="#d58b49" stroke-width="3"/>
+        <text x="96" y="36" font-size="21" font-weight="600" fill="#f3ede2">How it works</text>
+        <text x="96" y="60" font-size="16" fill="#c3cbc8">Cards, Nix, the record</text>
+      </g>
+    </g>
 
     <!-- the way in -->
-    <rect x="508" y="228" width="100" height="66" rx="33" fill="#c97d3d"/>
-    <path d="M536 261 H580 M564 245 L581 261 L564 277" fill="none" stroke="#1b1d1f" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="1060" y="138" width="140" height="92" rx="46" fill="#c97d3d"/>
+    <path d="M1100 184 H1162 M1140 162 L1164 184 L1140 206" fill="none" stroke="#1b1d1f" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

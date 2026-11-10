@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="Read the documentation: the problem told with moving figures, demos you can watch without installing, and how it works" width="49%"></a>
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="Read the documentation: the problem told with moving figures, demos you can watch without installing, and how it works" width="100%"></a>
 </p>
 
 <p align="center">The repository as submitted to <b>Build with Claude: Japan</b> is kept as a frozen mirror: <a href="https://github.com/gen740/tsugumi-hackathon">gen740/tsugumi-hackathon</a>.</p>
