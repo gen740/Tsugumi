@@ -96,19 +96,9 @@ cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
 # Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
 # what they use (Sources/App/Explainer/ExplainerWindow.swift).
-explainer="$app/Contents/Resources/explainer"
-mkdir -p "$explainer/pages" "$explainer/site/js" "$explainer/site/assets" "$explainer/assets"
-stories=$(grep -l 'class="story"' "$repo"/docs/pages/*.html)
-[ -n "$stories" ] || { echo "no story pages in docs/pages" >&2; exit 1; }
-cp $stories "$explainer/pages/"
-cp "$repo/docs/site/site.css" "$explainer/site/"
-cp "$repo"/docs/site/js/{reader,art,scenes,scenes2}.js "$explainer/site/js/"
-cp "$repo"/docs/site/assets/* "$explainer/site/assets/"
-# The images the pages name, and no others: docs/assets holds all the screenshots.
-for used in $(grep -oh 'src="\.\./assets/[^"]*"\|href="\.\./assets/[^"]*"' $stories | sed 's/.*"\.\.\/\(.*\)"/\1/' | sort -u); do
-  mkdir -p "$explainer/$(dirname "$used")"
-  cp "$repo/docs/$used" "$explainer/$used"
-done
+nix develop "$repo" -c npm ci --prefix "$repo/docs/site" --no-audit --no-fund
+ASTRO_TELEMETRY_DISABLED=1 nix develop "$repo" -c npm --prefix "$repo/docs/site" run build
+bash "$repo/macOS/tools/bundle-docs.sh" "$app/Contents/Resources/explainer"
 # Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
 # each demo and the images it names, without what only builds that data.
 thumbs="$app/Contents/Resources/player-data"

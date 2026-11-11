@@ -1,0 +1,37 @@
+---
+import path from 'node:path'
+import Icon from '../components/Icon.astro'
+import Sidebar from '../components/Sidebar.astro'
+import { SITE, introduction } from '../lib/documents.mjs'
+const { out = 'index.html', title, markdown = 'index.md', story = false, home = false, previous, next, toc = false, embeds = false } = Astro.props
+const asset = to => path.relative(path.dirname(out), to)
+const { tagline } = introduction()
+---
+<!doctype html>
+<html lang="en" class:list={{ story }}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · Tsugumi</title>
+    <meta name="description" content={tagline} />
+    <link rel="canonical" href={SITE + (out === 'index.html' ? '' : out)} />
+    <link rel="alternate" type="text/markdown" href={asset(markdown)} />
+    <link rel="describedby" href={asset('llms.txt')} />
+    <link rel="icon" href={asset('assets/tsugumi-icon.svg')} type="image/svg+xml" />
+    <link rel="stylesheet" href={asset('site/site.css')} />
+    {next && <meta name="story-next" content={asset(next)} />}
+    {previous && <meta name="story-prev" content={asset(previous)} />}
+    <script is:inline>try { if (localStorage.getItem('tsugumi.side') === 'closed') document.documentElement.classList.add('side-closed') } catch {}</script>
+  </head>
+  <body>
+    <button type="button" class="side-open" aria-label="Open the sidebar" title="Open the sidebar"><Icon name="panel" /></button>
+    <div class="layout">
+      <Sidebar out={out} />
+      <main class:list={['main', { 'main-home': home }]}><slot /></main>
+    </div>
+    {home && <script is:inline type="module" src={asset('site/js/home.js')}></script>}
+    {story && <script is:inline type="module" src={asset('site/js/reader.js')}></script>}
+    {toc && <script is:inline src={asset('site/js/toc.js')} defer></script>}
+    {embeds && <script is:inline type="module" src={asset('site/js/embed.js')}></script>}
+  </body>
+</html>

@@ -5,7 +5,7 @@
 import {
   Palette, Polyline, birdGape, childText, clamp01, curve, drawBird, drawBranch, drawTemari, easeInOut, easeOut, ellipse, faded,
   fillRect, fillRound, glow, hex, lin, mix, mixColor, mixP, mixR, Motion, poly, pop, pose, pt, rect, rgb, roundRect, seeded, smooth, span,
-  stroke, strokeRound, temariLead, text, trace,, textWidth } from './art.js'
+  stroke, strokeRound, temariLead, text, trace, textWidth } from './art.js'
 
 export const scene = { since: -1 }
 const artW = 1600, artH = 900

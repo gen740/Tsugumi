@@ -1,0 +1,17 @@
+{
+  "name": "tsugumi-docs",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.23.4" },
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "astro": "7.4.10",
+    "marked": "18.1.1",
+    "sirv": "3.0.2"
+  }
+}

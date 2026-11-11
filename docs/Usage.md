@@ -38,4 +38,4 @@ The steps are in the README's [First steps](../README.md#first-steps). The first
 - Make your first Card yourself: [Your first Card](CardGuide.md)
 - What each demo does and what you can try: [The bundled demos](Demos.md)
 - How the screen is organised, and the settings: [the UI in Features](features.md#8-ui-the-workbench)
-- Installation, and how API keys are handled: [Installation and development builds](../INSTALL.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
+- Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](security.md#what-is-sent-to-the-model)

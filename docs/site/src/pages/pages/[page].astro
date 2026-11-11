@@ -1,0 +1,42 @@
+---
+import { getCollection, render } from 'astro:content'
+import path from 'node:path'
+import Site from '../../layouts/Site.astro'
+import { REPO } from '../../lib/documents.mjs'
+
+export async function getStaticPaths() {
+  return (await getCollection('documents')).map(entry => ({ params: { page: entry.id }, props: { entry } }))
+}
+const { entry } = Astro.props
+const { Content, headings } = await render(entry)
+const { source, out, title, markdown, story, whole, previous, next } = entry.data
+const shown = story ? [] : headings.filter(h => h.depth === 2 || h.depth === 3)
+const toc = shown.length >= 5
+const asset = to => path.relative(path.dirname(out), to)
+---
+<Site out={out} title={title} markdown={markdown} story={story} previous={previous} next={next} toc={toc} embeds={entry.body.includes('data-player=')}>
+  {story && <div class="mode" role="group" aria-label="How to read">
+    <button type="button" data-mode="read" aria-pressed="true">Read</button>
+    <button type="button" data-mode="cards" aria-pressed="false">Slide show</button>
+  </div>}
+  <div class="reading">
+    {toc && <>
+      <details class="toc" open><summary>Contents</summary><ul>
+        {shown.map(h => <li class={`d${h.depth}`}><a href={`#${h.slug}`}>{h.text}</a></li>)}
+      </ul></details>
+      <script is:inline>
+        {
+          const fold = document.currentScript.previousElementSibling;
+          const narrow = matchMedia('(max-width: 1240px)');
+          const set = () => { fold.open = !narrow.matches };
+          set(); narrow.addEventListener('change', set);
+        }
+      </script>
+    </>}
+    <article class="doc"><Content /></article>
+  </div>
+  <p class="source">
+    <a href={`${REPO}/blob/main/${source}`} rel="noopener"><code>{source}</code></a>
+    {' ('}{whole && <><a href={asset(whole)}>the whole document</a> · </>}<a href={asset(markdown)}>Markdown</a>{')'}
+  </p>
+</Site>

@@ -20,7 +20,7 @@ Browser (React UI + WebGPU rendering) ── WebSocket /rpc (FlatBuffers) ──
 
 ## The tsugumi command
 
-The command installed by `curl … | sh` ([Installation](../INSTALL.md#using-it-in-the-browser-the-tsugumi-command)). Run without arguments, it starts the server and opens the browser. If a server is already running with the same data folder, it has that server open a page and exits. If the usual port (8780) is taken, it uses a free one. `tsugumi update` runs the latest release's `install.sh` to replace it with the new version (if it is already the latest, it says so and fetches nothing). A running server stays on the old version; stop it and start it again to open with the new one.
+The command installed by `curl … | sh` ([Installation](INSTALL.md#using-it-in-the-browser-the-tsugumi-command)). Run without arguments, it starts the server and opens the browser. If a server is already running with the same data folder, it has that server open a page and exits. If the usual port (8780) is taken, it uses a free one. `tsugumi update` runs the latest release's `install.sh` to replace it with the new version (if it is already the latest, it says so and fetches nothing). A running server stays on the old version; stop it and start it again to open with the new one.
 
 The command is the single `tsugumi` on Mac, Linux and Windows alike. How it runs is decided by the environment, never by the user, so there are no other names.
 
@@ -49,7 +49,7 @@ As `vm.lock` says, only one app at a time can use the VM. If the desktop app has
 
 **On Linux**, `tsugumid` built with Nix runs directly on this host, and Cards are isolated with bubblewrap (`nix/cli.nix`). The terminal's `node-pty` is built with it. Data is in `~/.local/share/tsugumi-web`, and the API key is a 0600 file in it. Installation, connecting from a browser and running demos were checked in an OrbStack VM (Ubuntu 26.04, aarch64). It was also run on x86_64 Ubuntu (a friend's environment).
 
-**On Windows**, `tsugumi.cmd` runs the Linux version inside WSL2 (`cli/install.ps1`). `tsugumid` needs Nix and bubblewrap, so it does not run on native Windows. The server recognises WSL by the environment variable `WSL_DISTRO_NAME` and opens the Windows browser; the page and `tsugumid`'s ports are reached through WSL's localhost forwarding. It has been verified as far as opening and running a demo ([#159](https://github.com/gen740/Tsugumi/issues/159)).
+**On Windows**, `tsugumi.cmd` runs the Linux version inside WSL2 (`cli/install.ps1`). `tsugumid` needs Nix and bubblewrap, so it does not run on native Windows. The server recognises WSL by the environment variable `WSL_DISTRO_NAME` and opens the Windows browser; the page and `tsugumid`'s ports are reached through WSL's localhost forwarding.
 
 ### Running it on another machine, over SSH
 

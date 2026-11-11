@@ -1,0 +1,48 @@
+---
+import Site from '../layouts/Site.astro'
+import Icon from '../components/Icon.astro'
+import { catalog, introduction, STORY, GALLERY, DOWNLOAD, OFF_THE_LIST, notes, titleOf } from '../lib/documents.mjs'
+const { groups, pages } = catalog()
+const { tagline, lead } = introduction()
+const know = STORY.filter(s => s.know)
+const shortNote = source => (notes.get(source) ?? '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+const subtitles = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', Development: 'Build and maintain Tsugumi' }
+const doors = [
+  { id: 'know', title: 'Learn about Tsugumi', subtitle: 'What problem it takes on, and how', items: know.map(s => ({ out: s.out, title: s.title ?? titleOf(s.source), note: s.sections ? 'The wall and the thread, from three boxes to Cas A' : shortNote(s.source) })) },
+  ...groups.map(g => ({ id: g.title, title: g.title, subtitle: subtitles[g.title], items: g.docs
+    .filter(d => !OFF_THE_LIST.has(d) && !know.some(s => s.source === d))
+    .map(d => ({ out: pages.get(d), title: titleOf(d), note: shortNote(d) })) })),
+]
+---
+<Site title="Documentation" home>
+  <article class="home">
+    <header class="home-hero">
+      <div class="home-copy">
+        <h1>Tsugumi</h1>
+        <p class="tagline">{tagline}</p>
+        <p class="lead">{lead}</p>
+        <div class="hero-actions">
+          <a class="cta" href={DOWNLOAD}><Icon name="download" />Download for Mac</a>
+          <a class="cta quiet" href="#demos">See the demos without installing</a>
+        </div>
+        <p class="home-note">Runs on macOS, Linux and Windows (Windows through WSL2. The app needs Apple silicon and macOS 26 or later) · <a href={pages.get('docs/INSTALL.md')}>Installation and development builds</a></p>
+      </div>
+      <div class="home-perch" aria-hidden="true"></div>
+    </header>
+    <div class="doors">{doors.map(door => <section class="door" data-door={door.id}>
+      <header><i>&lt;/&gt;</i><h2>{door.title}</h2><small>{door.subtitle}</small></header>
+      <ul>{door.items.map(item => <li><a href={item.out}><b>{item.title}</b><span>{item.note}</span></a></li>)}</ul>
+    </section>)}</div>
+    <section class="gallery" id="demos">
+      <h2>Run the demos, right here</h2>
+      <p>The bundled demos. Without installing anything, you can see here how their Cards connect and how they run. Click one to open it large. Each is explained in <a href={pages.get('docs/Demos.md')}>The bundled demos</a>.</p>
+      {GALLERY.map(([name, demos]) => <>
+        <h3>{name}</h3>
+        <div class="demo-grid">{demos.map(([id, title, text]) => <button type="button" class="demo-tile" id={`demo-${id}`} data-demo={id}>
+          <span class="demo-thumb"></span><b>{title}</b><span>{text}</span>
+        </button>)}</div>
+      </>)}
+    </section>
+    <p class="home-foot"><a href={pages.get('README.md')}>README</a> · <a href={pages.get('docs/README.md')}>All documents</a> · <a href={pages.get('docs/Limitations.md')}>Plans</a> · <a href="llms.txt">A guide for AI (llms.txt)</a></p>
+  </article>
+</Site>

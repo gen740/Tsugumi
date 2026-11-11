@@ -4,7 +4,7 @@ import WebKit
 
 // "Learn about Tsugumi": the story pages of the documentation site in a web view, so
 // the app and the site show the same words and the same figures from one source
-// (docs/site/build.mjs, docs/site/js/). The pages use ES modules, which WebKit
+// (docs/site/src/, docs/site/js/). The pages use ES modules, which WebKit
 // does not load from file:, so they are served under a scheme of the app's own.
 // Nothing leaves the app from here: every other load is blocked, and a link to
 // anything not bundled opens in the browser.
@@ -13,14 +13,14 @@ enum Explainer {
   static let start = URL(string: "\(scheme)://app/pages/problem.html")!
   static let published = URL(string: "https://gen740.github.io/Tsugumi/")!
 
-  /// Contents/Resources/explainer (build-app.sh), or docs/ of the repository in
+  /// Contents/Resources/explainer (build-app.sh), or build/docs/ of the repository in
   /// a development build: the same layout.
   static let root: URL? = {
     if let dir = Bundle.main.url(forResource: "explainer", withExtension: nil) { return dir }
     #if DEBUG
     var repo = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { repo.deleteLastPathComponent() }
-    let docs = repo.appendingPathComponent("docs")
+    let docs = repo.appendingPathComponent("build/docs")
     if FileManager.default.fileExists(atPath: docs.appendingPathComponent("pages/problem.html").path) { return docs }
     #endif
     return nil
@@ -43,7 +43,7 @@ enum Explainer {
     return names.filter { $0.hasSuffix(".html") && isStory($0, root) }.map { "pages/\($0)" }
   }
 
-  /// A story page, among all the pages a development build finds in docs/.
+  /// A story page, among all the pages a development build finds in build/docs/.
   private static func isStory(_ name: String, _ root: URL) -> Bool {
     let url = root.appendingPathComponent("pages/\(name)")
     guard let head = try? FileHandle(forReadingFrom: url).read(upToCount: 400) else { return false }
