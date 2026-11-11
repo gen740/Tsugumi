@@ -62,7 +62,7 @@ export interface CardNodeProps {
   selected?: boolean
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
-  /** Committing an edited param of an input Card (undefined: read-only). */
+  /** Committing an input or Switch Card's param (undefined: read-only). */
   onParamCommit?: (name: string, text: string) => void
   paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
@@ -91,7 +91,8 @@ export function CardNodeView(p: CardNodeProps) {
   const outline = g.outline({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
   const selected = !!p.selected
   const draft = data.kind === 'draft'
-  const fill = isRouting(data) ? 'var(--window-bg)' : 'var(--control-bg)'
+  const switched = data.kind === 'switch' && data.params.find(param => param.name === 'value')?.value === 'true'
+  const fill = switched ? '#0f5cbf' : isRouting(data) ? 'var(--window-bg)' : 'var(--control-bg)'
   const border = selected ? 'var(--accent)' : data.state !== undefined && data.state !== D.CardState.not_started
     ? fade(cardState(data.state).color, 0.7) : fade('secondary', draft ? 0.7 : 0.4)
   const w = s(g.size.width), h = s(g.size.height)
@@ -100,12 +101,12 @@ export function CardNodeView(p: CardNodeProps) {
   if (data.errors.length) parts.push(data.errors.join(' '))
 
   return (
-    <div className={`cv-card ${p.className ?? ''}`} style={{ width: w, height: h, ...p.style }} data-guide={p.guide} role="group" aria-label={parts.join(', ')}
+    <div className={`cv-card${data.kind === 'switch' ? ' cv-card-switch' : ''} ${p.className ?? ''}`} style={{ width: w, height: h, ...p.style }} data-guide={p.guide} role="group" aria-label={parts.join(', ')}
       onPointerDown={p.onPointerDown} onDoubleClick={p.onDoubleClick} onContextMenu={p.onContextMenu}>
       <svg className="cv-card-fill" width={w} height={h}>
         <path d={outline} fill={fill} style={{ filter: `drop-shadow(0 1px ${selected ? 4 : 1.5}px rgba(0,0,0,${selected ? 0.2 : 0.07}))` }} />
       </svg>
-      {g.shape === 'card' ? <CardBody p={p} g={g} /> : g.shape === 'start' ? <StartBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
+      {g.shape === 'switch' ? <SwitchBody p={p} g={g} /> : g.shape === 'card' ? <CardBody p={p} g={g} /> : g.shape === 'start' ? <StartBody p={p} g={g} /> : <RoutingBody data={data} g={g} z={z} />}
       <svg className="cv-card-stroke" width={w} height={h}>
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
@@ -131,7 +132,7 @@ export function CardNodeView(p: CardNodeProps) {
               e.stopPropagation()
               p.onPortDown!(port.name, output, e)
             } : undefined}>
-            {output ? <span className="cv-port-out" style={{ width: mark, height: mark }} /> : (
+            {output ? <span className="cv-port-out" style={{ width: mark, height: mark, ...(data.kind === 'switch' ? { boxShadow: `0 0 0 ${s(1)}px #fff` } : {}) }} /> : (
               <span className={`cv-port-in${condition ? ' condition' : ''}`}
                 style={{ width: mark, height: mark, borderRadius: Math.max(1, s(1.5)), transform: condition ? 'rotate(45deg)' : undefined }} />
             )}
@@ -156,6 +157,40 @@ export function CardNodeView(p: CardNodeProps) {
         )
       })}
     </div>
+  )
+}
+
+/** The whole Card is the switch track. Dragging and selection modifiers still
+ *  belong to the canvas; only an ordinary click or keyboard activation toggles. */
+function SwitchBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
+  const z = p.zoom ?? 1
+  const on = p.data.params.find(param => param.name === 'value')?.value === 'true'
+  const moved = useRef(false)
+  const pointerStarted = useRef(false)
+  return (
+    <button type="button" role="switch" className="cv-switch-card-control" aria-label={p.data.title} aria-checked={on}
+      disabled={!p.paramsEditable || !p.onParamCommit} title={`${p.data.title} · value:bool = ${on}`}
+      style={{ width: g.size.width * z, height: g.size.height * z, borderRadius: g.size.height * z / 2, color: on ? '#fff' : 'var(--label)' }}
+      onPointerDown={event => {
+        moved.current = false
+        pointerStarted.current = event.button === 0
+        if (event.button === 0) drive(event, 3, () => { moved.current = true }, event => {
+          if (event.type === 'pointercancel') pointerStarted.current = false
+        })
+      }}
+      onDoubleClick={event => event.stopPropagation()}
+      onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') event.stopPropagation() }}
+      onKeyUp={event => { if (event.key === ' ' || event.key === 'Enter') event.stopPropagation() }}
+      onClick={event => {
+        event.stopPropagation()
+        const activate = event.detail === 0 || (pointerStarted.current && !moved.current)
+        pointerStarted.current = false
+        if (!activate || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return
+        p.onParamCommit?.('value', on ? 'false' : 'true')
+      }}>
+      <span className="cv-switch-card-knob" aria-hidden style={{ left: 6 * z, top: (g.size.height - 26) * z / 2, width: 26 * z, height: 26 * z, transform: `translateX(${on ? (g.size.width - 38) * z : 0}px)` }} />
+      <span className="cv-switch-card-title cv-title" style={{ left: 6 * z, width: (g.size.width - 42) * z, fontSize: Math.max(6, 12 * z), transform: `translateX(${on ? 0 : 30 * z}px)` }}>{p.data.title}</span>
+    </button>
   )
 }
 
@@ -364,6 +399,7 @@ function portHelp(data: CardNodeData, p: PortData, output: boolean): string {
     if (p.name === 'b') s += L('（condition が false のとき）')
   }
   if (p.typeName) s += ` : ${p.typeName}`
+  if (data.kind === 'switch') s += ' { value: bool }'
   s += p.optional ? L('（省略可）') : L('（必須）')
   if (p.note) s += '\n' + p.note
   return s

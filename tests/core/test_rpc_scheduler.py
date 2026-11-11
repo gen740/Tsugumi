@@ -114,6 +114,33 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     assert all(st.start <= st.end for st in rec.stages)
 
 
+def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(project, core_factory):
+    """A saved Switch condition selects the same branch after reopening the project."""
+    write(project, dict(BASE_DEFS, switch={"template": "switch"}),
+          [card("start", "trigger"), card("src", "msg"), card("toggle", "switch"),
+           card("gate", "branch"), card("yes", "log"), card("no", "log")],
+          [conn("src", "msg", "gate", "value"), conn("toggle", "value", "gate", "condition"),
+           conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
+    d = core_factory()
+    c = d.connect()
+
+    def assert_branch(selected, skipped):
+        rid, status = run_and_wait(c, "start", timeout=10)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert states(c, rid, selected) == [CardState.succeeded]
+        assert states(c, rid, skipped) in ([], [CardState.skipped])
+
+    assert_branch("no", "yes")
+    snap = c.call("ProjectInspectRequest")
+    body = {"template": "switch", "params": [{"name": "value", "type": "bool", "data": True}]}
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
+           changes=[change("PutDefinition", id="toggle", cardJson=json.dumps(body), keepMeta=True)])
+
+    d.restart()
+    c = d.connect()
+    assert_branch("yes", "no")
+
+
 def test_max_runs_is_enforced(env):
     """A card stops the run when another invocation would exceed maxRuns."""
     defs = dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 1})

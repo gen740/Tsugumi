@@ -22,6 +22,7 @@ const BASE: Record<string, string> = {
   hourglass: 'M4.5 2h7M4.5 14h7M5.2 2c0 3 5.6 3.4 5.6 6S5.2 11 5.2 14M10.8 2c0 3-5.6 3.4-5.6 6s5.6 3 5.6 6',
   gearshape: 'M8 5.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8zM8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3',
   'slider.horizontal.3': 'M2 4h12M2 8h12M2 12h12M5 2.6v2.8M10.5 6.6v2.8M7 10.6v2.8',
+  'switch.2': 'M4 2h8a2 2 0 0 1 0 4H4a2 2 0 0 1 0-4zM4 10h8a2 2 0 0 1 0 4H4a2 2 0 0 1 0-4zM4 4h.01M12 12h.01',
   'arrow.triangle.branch': 'M4 14V9.5c0-2 1.5-3 4-3.5l4-.8M4 2v7.5M10.4 3.2 12.2 5 10.4 6.8',
   'arrow.triangle.swap': 'M3 5h9.5M10.5 3l2 2-2 2M13 11H3.5M5.5 9l-2 2 2 2',
   'arrow.triangle.merge': 'M8 14V8.5L3.5 3M8 8.5 12.5 3M3.5 5.8V3h2.8M12.5 5.8V3H9.7',

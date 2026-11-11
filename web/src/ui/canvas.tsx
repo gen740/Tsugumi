@@ -245,7 +245,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const commitParam = (k: CardKey, name: string, text: string) => {
     if (!session.isEditable) return
-    const type = str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
+    const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
+      : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
     if (type) session.setParam(k, name, parseParam(text, type))
   }
 
@@ -557,7 +558,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         return (
           <CardNodeView key={k} data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(screen(scene.origin(k)), g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamCommit={data.kind === 'input' ? (name, text) => commitParam(k, name, text) : undefined}
+            onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text) => commitParam(k, name, text) : undefined}
             paramsEditable={session.isEditable}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {
@@ -783,7 +784,7 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 /** The built-in Cards, for the canvas menu and the + button. */
 export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
   const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  return [item('python'), item('cpp'), item('draft'), 'divider', item('trigger'), item('input'), item('fork'), item('branch'), item('merge'), item('logger')]
+  return [item('python'), item('cpp'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
 }
 export { templateIcon }
 

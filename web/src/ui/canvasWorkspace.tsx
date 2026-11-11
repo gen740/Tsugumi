@@ -177,7 +177,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
         <IssueList workspace={workspace} session={session} tab={tab} onDone={() => setShowIssues(false)} />
       </Popover>
       <Divider vertical />
-      <MenuButton icon="plus" disabled={!session.isEditable} help={L('組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）')}
+      <MenuButton icon="plus" disabled={!session.isEditable} help={L('組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・記録・処理）')}
         items={() => builtinCardItems((t) => {
           const k = canvasFor(session, tab).addBuiltin(t)
           if (k && t === 'draft') canvasFor(session, tab).writeDraft(k)

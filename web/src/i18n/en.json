@@ -1,4 +1,5 @@
 {
+ "スイッチ": "Switch",
  "このフォルダを追加": "Add this folder",
  "このフォルダの選択を解除": "Deselect this folder",
  "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
@@ -1067,7 +1068,7 @@
  "終了": "Ended",
  "終了しました": "Ended",
  "終了するには Ctrl-C を押します。": "Press Ctrl-C to quit.",
- "組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）": "Add a built-in Card (input, Draft, start, fork, branch, merge, logger, code)",
+ "組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・記録・処理）": "Add a built-in Card (input, Switch, Draft, start, fork, branch, merge, logger, code)",
  "結果": "Result",
  "結果はまだありません": "No result yet",
  "結果を確認": "Check the result",

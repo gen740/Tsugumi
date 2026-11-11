@@ -5,11 +5,15 @@ import TsugumiRPC
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
   case trigger, input, fork, branch, merge, logger, draft, subgraph, code
+  case switchCard = "switch"
+
+  var editsValueOnCanvas: Bool { self == .input || self == .switchCard }
 
   var label: String {
     switch self {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
+    case .switchCard: return String(localized: "スイッチ")
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
@@ -24,6 +28,7 @@ enum CardKind: String {
     switch self {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
+    case .switchCard: return "switch.2"
     case .fork: return "arrow.triangle.branch"
     case .branch: return "arrow.triangle.swap"
     case .merge: return "arrow.triangle.merge"
@@ -39,6 +44,7 @@ enum CardKind: String {
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case python, cpp, input, draft, trigger, fork, branch, merge, logger
+  case switchCard = "switch"
   var id: String { rawValue }
   var label: String {
     switch self {
@@ -46,6 +52,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
     case .input: return String(localized: "入力値")
+    case .switchCard: return String(localized: "スイッチ")
     case .trigger: return String(localized: "開始")
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
@@ -835,7 +842,11 @@ extension ProjectSession {
     edit { s in
       s.updateCard(k) { c in
         var params = c["params"]?.array ?? []
-        if let i = params.firstIndex(where: { $0["name"]?.string == name }) { params[i]["data"] = value }
+        if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
+          params[i]["data"] = value
+        } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
+          params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
+        }
         c["params"] = .array(params)
       }
     }
@@ -1293,6 +1304,11 @@ extension ProjectSession {
         ("params", .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])),
       ]))
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
+    case .switchCard:
+      set(.object([
+        ("template", .string(t.rawValue)),
+        ("params", .array([.object([("name", .string("value")), ("type", .string("bool")), ("data", .bool(false))])])),
+      ]))
     case .python:
       set(.object([("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")

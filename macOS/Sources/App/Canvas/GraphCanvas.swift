@@ -471,7 +471,7 @@ struct GraphCanvas: View {
     let data = session.nodeData(k)
     let g = CardGeometry(data, flow: session.flow)
     return CardNodeView(data: data, flow: session.flow, zoom: camera.zoom, selected: tab.selection.contains(k),
-                        onParamCommit: data.kind == .input ? { name, text in commitParam(k, name, text) } : nil,
+                        onParamCommit: data.kind.editsValueOnCanvas ? { name, text in commitParam(k, name, text) } : nil,
                         paramsEditable: session.isEditable,
                         onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, true) } },
                         onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) },
@@ -986,8 +986,10 @@ struct GraphCanvas: View {
   }
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String) {
-    guard session.isEditable,
-          let type = session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string else { return }
+    guard session.isEditable else { return }
+    let type = session.kind(k) == .switchCard && name == "value" ? "bool"
+      : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
+    guard let type else { return }
     session.setParam(k, name, parseParam(text, type))
   }
 
@@ -1279,7 +1281,7 @@ struct BuiltinCardItems: View {
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Divider()
-    ForEach([DefinitionTemplate.trigger, .input, .fork, .branch, .merge, .logger], id: \.self) { t in
+    ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
   }

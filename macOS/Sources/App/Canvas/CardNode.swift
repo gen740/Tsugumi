@@ -42,6 +42,9 @@ extension ProjectSession {
       return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
               r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
     }
+    if kind(k) == .switchCard {
+      return ([], [PortData(name: "value", typeName: "tsugumi.builtin.Condition")])
+    }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }
@@ -63,7 +66,7 @@ extension ProjectSession {
 
   /// Params edited directly on input Cards.
   func inlineParams(_ k: CardKey, definition: JSONValue? = nil) -> [ParamData] {
-    guard kind(k) == .input, let def = definition ?? cardDefinition(k) else { return [] }
+    guard kind(k).editsValueOnCanvas, let def = definition ?? cardDefinition(k) else { return [] }
     return (def["params"]?.array ?? []).compactMap { p -> ParamData? in
       guard let name = p["name"]?.string, let type = p["type"]?.string,
             ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }

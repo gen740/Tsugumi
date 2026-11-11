@@ -595,7 +595,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
         </Row>
         {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
-        {def !== undefined && (
+        {def !== undefined && kind !== 'switch' && (
           <Row label={L('アイコン')}>
             <SymbolPicker symbol={str(get(def, 'symbol')) || undefined} inherited={KIND_ICON[kind]}
               onChange={(v) => model.setSetting('symbol', v)} />
@@ -610,7 +610,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           </Row>
         )}
       </Section>
-      {params.length > 0 && (
+      {kind !== 'switch' && params.length > 0 && (
         <Section title={L('パラメータ')}>
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
         </Section>

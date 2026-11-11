@@ -498,10 +498,12 @@ private struct GeneralCategory: View {
         .help("名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。")
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
-        LabeledContent("アイコン") {
-          SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
-                                       set: { model.definition?["symbol"] = $0.map { .string($0) } }),
-                       inherited: model.kind.symbol)
+        if model.kind != .switchCard {
+          LabeledContent("アイコン") {
+            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
+                                         set: { model.definition?["symbol"] = $0.map { .string($0) } }),
+                         inherited: model.kind.symbol)
+          }
         }
         TextField("概要", text: metaString("description"), axis: .vertical)
           .lineLimit(2...5)
@@ -510,7 +512,7 @@ private struct GeneralCategory: View {
             .lineLimit(6...16)
         }
       }
-      if let params = model.definition?["params"]?.array, !params.isEmpty {
+      if model.kind != .switchCard, let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }

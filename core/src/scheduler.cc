@@ -1018,7 +1018,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                              std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()), {}});
         break;
       }
-      case Template::Input: {
+      case Template::Input:
+      case Template::Switch: {
         for (const auto& port : node.outputs) {
           if (!port.type) throw Failed(FailureKind::validation_failed, "output " + port.name + " has no type");
           // Message fields are filled from params of the same name.

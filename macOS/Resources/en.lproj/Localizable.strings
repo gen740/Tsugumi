@@ -417,6 +417,7 @@
 "システムに従う" = "System";
 "システムに従う（視差効果を減らす）" = "Follow the system (Reduce motion)";
 "ショートカット" = "Shortcuts";
+"スイッチ" = "Switch";
 "スキップ" = "Skipped";
 "スキップして始める" = "Skip and Start";
 "ソース" = "Source";
@@ -1049,7 +1050,7 @@
 "終わりました" = "Finished";
 "終了" = "Ended";
 "終了しました" = "Ended";
-"組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）" = "Add a built-in Card (input, Draft, start, fork, branch, merge, logger, code)";
+"組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・記録・処理）" = "Add a built-in Card (input, Switch, Draft, start, fork, branch, merge, logger, code)";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";

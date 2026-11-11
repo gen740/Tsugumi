@@ -2619,6 +2619,9 @@ export class ProjectSession extends Observable {
         const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
         const p = params.find((p) => str(get(p, 'name')) === name)
         if (isObj(p)) p.set('data', value)
+        else if (str(c.get('template')) === 'switch' && name === 'value' && typeof value === 'boolean') {
+          params.push(obj([['name', 'value'], ['type', 'bool'], ['data', value]]))
+        }
         c.set('params', params)
       })
     })
@@ -3038,6 +3041,9 @@ export class ProjectSession extends Observable {
         set(obj([['template', 'input'], ['params', [obj([['name', 'value'], ['type', 'double'], ['data', num('0')]])]]]))
         this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
         break
+      case 'switch':
+        set(obj([['template', 'switch'], ['params', [obj([['name', 'value'], ['type', 'bool'], ['data', false]])]]]))
+        break
       case 'python':
         set(obj([['language', 'python'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n')
@@ -3210,6 +3216,7 @@ auto run(Card::Input& input) -> Card::Output {
     const def = definition ?? this.cardDefinition(k)
     const m = meta ?? this.cardMeta(k)
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
+    if (definitionKind(def) === 'switch') return { inputs: [], outputs: [{ name: 'value', typeName: 'tsugumi.builtin.Condition', note: note('outputs', 'value') }] }
     const r = this.resolution.get(k)
     // A Draft's ports change with its wires, before they are resolved again.
     const draft = this.kind(k) === 'draft'
@@ -3237,10 +3244,14 @@ auto run(Card::Input& input) -> Card::Output {
     return { inputs: ins, outputs: outs }
   }
 
-  /** Params edited directly on input Cards. */
+  /** Params edited directly on input and Switch Cards. */
   inlineParams(k: CardKey, definition?: J): ParamData[] {
     const def = definition ?? this.cardDefinition(k)
-    if (this.kind(k) !== 'input' || def === undefined) return []
+    if (!['input', 'switch'].includes(this.kind(k)) || def === undefined) return []
+    if (definitionKind(def) === 'switch') {
+      const value = (arr(get(def, 'params')) ?? []).find(p => str(get(p, 'name')) === 'value')
+      return [{ name: 'value', type: 'bool', value: get(value, 'data') === true ? 'true' : 'false' }]
+    }
     return (arr(get(def, 'params')) ?? []).flatMap((p) => {
       const name = str(get(p, 'name')), type = str(get(p, 'type'))
       if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
@@ -3405,15 +3416,15 @@ export class ExternalCopy {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'fork' | 'branch' | 'merge' | 'logger' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'logger' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
+  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
+  trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
   merge: 'arrow.triangle.merge', logger: 'list.bullet.rectangle', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
@@ -3429,9 +3440,10 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]

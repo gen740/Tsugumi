@@ -14,7 +14,7 @@
 
 namespace tsugumi {
 
-enum class Template { Code, Trigger, Input, Fork, Branch, Merge, Logger, Subgraph, Draft };
+enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Logger, Subgraph, Draft };
 const char* template_name(Template t);
 // What a definition is; no definition at all is a Draft.
 Template template_of(const DefinitionDoc* def);

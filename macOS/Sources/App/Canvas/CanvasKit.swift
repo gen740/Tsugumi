@@ -289,11 +289,12 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, start
+  case card, branch, fork, merge, start, toggle
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
+    case .switchCard: self = .toggle
     case .branch: self = .branch
     case .fork: self = .fork
     case .merge: self = .merge
@@ -388,6 +389,10 @@ struct CardGeometry {
     case .start:
       guard let grid else { return CGSize(width: 116, height: 34) }
       return CGSize(width: Self.gridLength(near: 116, grid), height: flow == .leftToRight ? 2 * Self.rowPitch(grid) : 34)
+    case .toggle:
+      guard let grid else { return CGSize(width: 112, height: 38) }
+      let height = flow == .leftToRight ? Self.gridLength(atLeast: 38, Self.rowPitch(grid)) : 38
+      return CGSize(width: Self.gridLength(atLeast: 112, grid), height: height)
     case .card: return .zero
     }
   }
@@ -502,7 +507,7 @@ struct CardGeometry {
   var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
   var size: CGSize {
-    if shape == .start { return routingSize }
+    if shape == .start || shape == .toggle { return routingSize }
     if shape != .card {
       let r = routingSize
       return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
@@ -521,7 +526,7 @@ struct CardGeometry {
   /// The outline's frame inside the Card's box.
   var outlineRect: CGRect {
     let s = size
-    guard shape != .card, shape != .start else { return CGRect(origin: .zero, size: s) }
+    guard shape != .card, shape != .start, shape != .toggle else { return CGRect(origin: .zero, size: s) }
     if flow == .topToBottom { return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut) }
     return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
@@ -533,7 +538,7 @@ struct CardGeometry {
     switch shape {
     case .card:
       return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
-    case .start:
+    case .start, .toggle:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
@@ -573,7 +578,7 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch, .start:
+    case .card, .branch, .start, .toggle:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .fork, .merge:
@@ -605,7 +610,7 @@ struct CardGeometry {
     // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
     if draft { return false }
     if shape == .card && collapsed { return false }
-    if shape == .start { return false }
+    if shape == .start || shape == .toggle { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
     if shape == .fork || shape == .merge { return false }
     if shape == .branch { return true }
@@ -640,7 +645,7 @@ struct CardGeometry {
     let i = CGFloat(index)
     let n = CGFloat(max(list.count, 1))
     let r = outlineRect
-    if shape == .start {
+    if shape == .start || shape == .toggle {
       // Its one output, in the middle of the downstream edge.
       return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
     }
@@ -818,8 +823,14 @@ struct CardNodeView: View {
     ZStack(alignment: .topLeading) {
       path.fill(fillColor)
         .shadow(color: .black.opacity(selected ? 0.2 : 0.07), radius: selected ? 4 : 1.5, y: 1)
-      if g.shape == .card { cardBody(g) } else if g.shape == .start { startBody(outline: outline) } else { routingBody(g, outline: outline) }
+      switch g.shape {
+      case .card: cardBody(g)
+      case .start: startBody(outline: outline)
+      case .toggle: switchBody(outline: outline)
+      default: routingBody(g, outline: outline)
+      }
       path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
+        .allowsHitTesting(false)
       portLabels(g)
       portMarks(g)
       if data.openComments > 0 { commentsBadge(outline: outline) }
@@ -1054,6 +1065,18 @@ struct CardNodeView: View {
     .frame(width: outline.width, height: outline.height)
   }
 
+  private func switchBody(outline: CGRect) -> some View {
+    Toggle(isOn: Binding(
+      get: { data.params.first { $0.name == "value" }?.value == "true" },
+      set: { onParamCommit?("value", $0 ? "true" : "false") }
+    )) {
+      Text(verbatim: data.title)
+    }
+    .toggleStyle(CanvasSwitchStyle(size: outline.size, zoom: z))
+    .disabled(!paramsEditable || onParamCommit == nil)
+    .position(x: outline.midX, y: outline.midY)
+  }
+
   // MARK: Routing Card (branch, fork, merge)
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
@@ -1143,6 +1166,11 @@ struct CardNodeView: View {
       ForEach(data.outputs, id: \.name) { p in
         let pt = g.port(p.name, output: true)
         Circle().fill(Color.accentColor)
+          .overlay {
+            if g.shape == .toggle {
+              Circle().strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: s(1))
+            }
+          }
           .frame(width: mark, height: mark)
           .frame(width: hit, height: hit)
           .contentShape(Circle())
@@ -1180,6 +1208,7 @@ struct CardNodeView: View {
       if p.name == "b" { s += String(localized: "（condition が false のとき）") }
     }
     if let t = p.typeName { s += " : \(t)" }
+    if data.kind == .switchCard { s += " { value: bool }" }
     s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
@@ -1189,6 +1218,47 @@ struct CardNodeView: View {
     if selected { return .accentColor }
     if let s = data.state, s != .notStarted { return s.color.opacity(0.7) }
     return .secondary.opacity(data.isDraft ? 0.7 : 0.4)
+  }
+}
+
+/// The Card's entire outline is the control. Its output port remains separate.
+private struct CanvasSwitchStyle: ToggleStyle {
+  let size: CGSize
+  let zoom: CGFloat
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.isEnabled) private var enabled
+
+  func makeBody(configuration: Configuration) -> some View {
+    let inset = 6 * zoom
+    let knob = 26 * zoom
+    let travel = (size.width - knob) / 2 - inset
+    let on = configuration.isOn
+    Button {
+      configuration.isOn.toggle()
+    } label: {
+      ZStack {
+        Capsule().fill(on ? Color(red: 0.06, green: 0.36, blue: 0.75) : Color(nsColor: .controlBackgroundColor))
+        configuration.label
+          .font(.system(size: max(6, 11 * zoom), weight: .semibold))
+          .lineLimit(1)
+          .foregroundStyle(on ? Color.white : .primary)
+          .frame(width: max(0, size.width - knob - 2 * inset - 4 * zoom))
+          .offset(x: (on ? -1 : 1) * (knob + 4 * zoom) / 2)
+        Circle().fill(.white)
+          .overlay(Circle().strokeBorder(.black.opacity(0.13), lineWidth: 0.75 * zoom))
+          .frame(width: knob, height: knob)
+          .shadow(color: .black.opacity(0.2), radius: 1.5 * zoom, y: zoom)
+          .offset(x: on ? travel : -travel)
+      }
+      .frame(width: size.width, height: size.height)
+      .contentShape(Capsule())
+      .opacity(enabled ? 1 : 0.76)
+      .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: on)
+    }
+    .buttonStyle(.plain)
+    .accessibilityRepresentation {
+      Toggle(isOn: configuration.$isOn) { configuration.label }.toggleStyle(.switch)
+    }
   }
 }
 
