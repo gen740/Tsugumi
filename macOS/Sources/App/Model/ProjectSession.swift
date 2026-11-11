@@ -169,6 +169,36 @@ struct DisplaySnapshot {
   /// asks at every move, and a figure's title is found by parsing its JSON.
   let summary: String
 
+  /// Decode the exact recorded display without changing the current canvas result.
+  static func decode(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
+    let value: DisplayValue
+    switch d.value?.type {
+    case .displaytext:
+      let t = d.value?.value as? Tsugumi_Data_DisplayTextT
+      value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
+    case .displayscalar:
+      let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
+      value = .scalar(s?.value ?? 0, s?.label ?? "")
+    case .displaylinechart:
+      let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
+      value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
+    case .displaytable:
+      let t = d.value?.value as? Tsugumi_Data_DisplayTableT
+      value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
+    case .displayimage:
+      let im = d.value?.value as? Tsugumi_Data_DisplayImageT
+      value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
+    case .displaypointcloud:
+      let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
+      value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
+    case .displaymodule:
+      let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
+      value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
+    default: return nil
+    }
+    return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
+  }
+
   init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
     self.runId = runId
     self.invocation = invocation
@@ -801,32 +831,7 @@ final class ProjectSession {
     let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    let value: DisplayValue
-    switch d.value?.type {
-    case .displaytext:
-      let t = d.value?.value as? Tsugumi_Data_DisplayTextT
-      value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
-    case .displayscalar:
-      let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
-      value = .scalar(s?.value ?? 0, s?.label ?? "")
-    case .displaylinechart:
-      let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
-      value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
-    case .displaytable:
-      let t = d.value?.value as? Tsugumi_Data_DisplayTableT
-      value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
-    case .displayimage:
-      let im = d.value?.value as? Tsugumi_Data_DisplayImageT
-      value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
-    case .displaypointcloud:
-      let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
-      value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
-    case .displaymodule:
-      let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
-      value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
-    default: return
-    }
-    displays[k] = DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: rev, value: value)
+    if let snapshot = DisplaySnapshot.decode(d) { displays[k] = snapshot }
   }
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {

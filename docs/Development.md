@@ -142,3 +142,32 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `tests/prompt/` | Offline prompt probe scoring |
 
 For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+
+## Evidence-link checks
+
+`tests/prompt/evidence_probe.py` runs one opt-in real-model turn against a read-only replay of the checked-in Cas A recording. The tool schemas come from `tests/fixtures/agent-tools.json`; run ids, states and counts come from `docs/site/player-data/assets/casa.run.json`. RPC envelopes are reconstructed, image pixels are omitted, and no science run or project save is performed. Inspect the reply against the rubric in the probe, independently of whether the model reports success.
+
+```sh
+git show 03837b42:agent/Shared/system-prompt.md > /tmp/evidence-before.md
+python3 tests/prompt/evidence_probe.py casa --prompt /tmp/evidence-before.md
+python3 tests/prompt/evidence_probe.py casa
+python3 tests/prompt/evidence_probe.py control --prompt /tmp/evidence-before.md
+python3 tests/prompt/evidence_probe.py control
+python3 tests/prompt/evidence_probe.py heldout
+python3 -m unittest discover -s tests/prompt
+```
+
+Use the same model, effort, initial recording and fresh conversation for both sides. The report records prompt/fixture hashes, CLI version, calls and usage; `--events <file>` retains the raw transcript. Failed replay calls are environmental failures, not evidence about the prompt. This replay checks citation decisions, not the complete native Agent/provider path.
+
+The browser integration fixture uses the production Markdown links, Canvas and evidence windows with a read-only RPC replay:
+
+```sh
+node web/tools/evidence.mjs /tmp/evidence-ui
+python3 -m http.server 8783 --bind 127.0.0.1 --directory /tmp/evidence-ui
+```
+
+Open it in a background browser. Click bands and spectrum to select those Cards, their result links to inspect the saved photon table and spectrum image, and the run link to inspect its eight Card records. Missing targets must remain disabled. The answer field accepts the model's actual reply, so its links can be checked through the same UI. This is a recorded-data fixture, not a new Cas A execution.
+
+On 2026-11-12, Codex CLI 0.167.0 with `gpt-6.1-sol` / low answered the Cas A question correctly before and after the change. The baseline used three read calls and produced no links. The final candidate used four read calls and produced five valid destinations: the run, both Cards, and both invocation records. The project-name control used one inspection and answered only the name on both sides. A separate question about the band with the most photons correctly identified green (157,471) and linked the Card and its record. These few trials show the observed omission and the candidate's behavior, not a success rate or efficiency improvement. An initial replay run with missing CLI read-tool approvals was excluded.
+
+The actual candidate answer was pasted into the production browser components: both Card selections, the saved table's three counts, the spectrum image, the run's eight invocation links, unavailable targets, and keyboard link activation were checked. macOS's evidence address/Markdown/display tests passed. A live model turn through the actual application Agent/provider remains a separate, required check before adopting the prompt; the proxy model trials and UI replay do not substitute for it.
