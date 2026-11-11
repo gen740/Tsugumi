@@ -83,6 +83,14 @@ table Outputs { number:Number (required); }
 root_type Outputs;
 ```
 
+For a File output, the `value` parameter names a saved project source. A path such
+as `data/events.fits` is relative to the input Card's own definition folder;
+`project:definitions/shared/data/events.fits` explicitly uses the owning
+project's root to name a saved source in another Card. Inside an
+external project, these bases stay within that external project. Absolute paths
+and `..` components are rejected. The file is copied into the saved run before
+it is passed downstream, so later source edits do not change that run's file.
+
 ### The processing Card (Python)
 
 Write the names of the input ports in `inputs`. Input types are not written: they are derived from the outputs of the connected Cards.

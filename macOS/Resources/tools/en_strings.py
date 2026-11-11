@@ -1222,6 +1222,8 @@ EN = {
 "使用中": "In use",
 "設定の「API」で接続を設定してください": "Set up a connection in Settings > API",
 "保存前": "Not saved",
+"Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
+"参照先: %@": "Resolved path: %@",
 }
 
 

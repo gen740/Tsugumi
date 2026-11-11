@@ -25,7 +25,7 @@ def make(root: Path) -> None:
     put(root / "layout.json", "{}")
     put(root / "definitions" / "start" / "_card.json", json.dumps({"template": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/load/data/events.txt"}]}))
+        "template": "input", "params": [{"name": "value", "type": "string", "data": "data/events.txt"}]}))
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
     put(root / "definitions" / "show" / "_card.json", json.dumps({"template": "logger"}))
@@ -80,7 +80,7 @@ def test_put_definition_can_keep_the_meta(tmp_path, core_factory):
     put(root / "definitions" / "load" / "_meta.json", json.dumps(meta, ensure_ascii=False))
     c = core_factory(project_root=root, mocked_builds=True).connect()
     snap = c.call("ProjectInspectRequest")
-    card = {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/load/data/events.txt"}],
+    card = {"template": "input", "params": [{"name": "value", "type": "string", "data": "data/events.txt"}],
             "maxRuns": 2}
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
            changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepMeta=True)])

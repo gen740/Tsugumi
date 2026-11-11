@@ -84,11 +84,8 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             if not match:
                 raise ValueError(f"card {cid}: param {pname} is not defined")
             match[0]["data"] = value
-        # A file of the definition named by a param (an input Card's file) is the Card's own.
+        # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
-        for p in body.get("params", []):
-            if d and isinstance(p.get("data"), str) and p["data"].startswith(theirs):
-                p["data"] = mine + p["data"][len(theirs):]
         put(folder / "_card.json", json.dumps(body))
         if outputs:
             put(folder / "_outputs.fbs", outputs)

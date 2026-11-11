@@ -17,7 +17,7 @@ def saved_file_subgraph(project, core_factory):
         defs={
             "source": {
                 "template": "input",
-                "params": [{"name": "value", "type": "string", "data": "definitions/source/report.txt"}],
+                "params": [{"name": "value", "type": "string", "data": "report.txt"}],
                 "_outputs": FILE_FBS,
             },
             "copy": {

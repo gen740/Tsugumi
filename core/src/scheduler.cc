@@ -1033,10 +1033,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               // A selected project file is copied into the run before use.
               schema::v::String relv;
               if (schema::decode(*prm.data, relv)) throw Failed(FailureKind::invalid_path, "input file must be a path string");
-              // Relative to the project the Card is written in.
-              std::string rel = node.project_dir + relv.value();
-              if (!fs::valid_relative_path(relv.value()) || !doc_->sources.count(rel))
-                throw Failed(FailureKind::invalid_path, "input file " + rel + " is not a project source", {{"path", rel}});
+              // Card-local by default; project: explicitly selects the Card's
+              // own project, including when that project is an external.
+              const bool project_relative = relv.value().starts_with("project:");
+              const std::string file = project_relative ? relv.value().substr(8) : relv.value();
+              const std::string rel = (project_relative ? node.project_dir : node.def_dir) + file;
+              if (!fs::valid_relative_path(file) || !doc_->sources.count(rel))
+                throw Failed(FailureKind::invalid_path,
+                             "input file " + rel + " is not a project source; use a path relative to the Card's "
+                             "definition folder, or project:<path> for its project root", {{"path", rel}});
               auto data = svc_.store().read_source(*doc_, rel);
               auto dest = invocation_dir(node, s.invocation) / "out" / stdfs::path(rel).filename();
               fs::write_atomic(dest, data, 0644);

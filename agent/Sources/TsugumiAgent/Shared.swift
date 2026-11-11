@@ -80,13 +80,14 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   word for word. Decide for each Draft what it becomes:
   * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
     _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
-    relative to the project, e.g. definitions/load/data/x.fits>"}]} (its optional "start" input stays wired to the
+    relative to this Card's definition folder, e.g. data/x.fits>"}]} (its optional "start" input stays wired to the
     trigger), and _outputs.fbs with a File port (one table whose only field is value:string):
         attribute "tsugumi";
         namespace data;
         table EventsFile { value:string; }
         table Outputs { events:EventsFile (required, tsugumi: "file"); }
         root_type Outputs;
+    Use project:<path> for a file relative to the Card's own project root (also inside an external project).
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
     branch, merge, logger (card-guide.md).

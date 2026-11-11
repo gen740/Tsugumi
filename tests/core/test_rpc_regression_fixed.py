@@ -16,7 +16,7 @@ from Tsugumi.RPC.NotificationPayload import NotificationPayload
 def file_fork_project(root: Path) -> None:
     write(root,
           defs={"trigger": {"template": "trigger"},
-                "doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/doc/data/report.txt"}],
+                "doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
                         "_outputs": FILE_FBS},
                 "fork": {"template": "fork"},
                 "log": {"template": "logger"}},
@@ -95,7 +95,7 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
     src = "source-" + "x" * 80
     root = tmp_path / "p"
     write(root,
-          defs={"doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "definitions/doc/report.txt"}],
+          defs={"doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
                         "_outputs": FILE_FBS},
                 "join": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
                 "log": {"template": "logger"}},

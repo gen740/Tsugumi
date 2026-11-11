@@ -77,6 +77,7 @@
 "Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。" = "A Card in Card is this project's own copy in externals. Its ports map to the inside through the boundary of its tsugumi.json. Go inside to edit its Cards and connections.";
 "Card が見つかりません" = "Card not found";
 "Card の定義" = "Card definition";
+"Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。" = "Relative to this Card's definition folder. Use project: for a path relative to its owning project.";
 "Card の実行履歴から、前の入力と出力をいつでも見返せるよ" = "A Card's Run History keeps every earlier input and output.";
 "Card の種類のアイコンを使います" = "Uses the icon of the Card's kind";
 "Card の設定画面で開きます" = "Opens in the Card's settings";
@@ -718,6 +719,7 @@
 "原因（ログより）" = "Cause (from the log)";
 "参照を外す" = "Remove the reference";
 "参照・フォルダを添付" = "Attach references or folders";
+"参照先: %@" = "Resolved path: %@";
 "取り消す" = "Undo";
 "取り込む" = "Import";
 "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。" = "Choose a Tsugumi project to import (a folder with tsugumi.json). It is copied into externals and does not follow the original folder.";

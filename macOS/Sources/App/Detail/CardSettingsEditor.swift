@@ -699,14 +699,27 @@ private struct ParamRow: View {
     let name = param["name"]?.string ?? "?"
     let type = param["type"]?.string ?? "string"
     let value = param["data"]
-    HStack {
-      if type == "bool" {
-        Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
-      } else {
-        TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
+    let fileInput = model.kind == .input && name == "value" && type == "string" &&
+      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .file } ?? false)
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        if type == "bool" {
+          Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
+        } else {
+          TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
+        }
+        Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
+          .guideTarget("param:\(name)")
       }
-      Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
-        .guideTarget("param:\(name)")
+      if fileInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
+        Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
+          .font(.caption).foregroundStyle(.secondary)
+        let entered = value?.string ?? ""
+        let target = entered.hasPrefix("project:")
+          ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
+          : folder + entered
+        Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      }
     }
   }
 

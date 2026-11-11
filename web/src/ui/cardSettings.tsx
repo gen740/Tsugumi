@@ -746,6 +746,13 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   const name = str(get(param, 'name')) ?? '?'
   const type = str(get(param, 'type')) ?? 'string'
   const value = get(param, 'data')
+  const fileInput = model.kind === 'input' && name === 'value' && type === 'string' &&
+    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.File)
+  const folder = model.session.definitionDir(model.cardKey) ?? ''
+  const entered = str(value) ?? ''
+  const target = entered.startsWith('project:')
+    ? folder.slice(0, folder.lastIndexOf('definitions/')) + entered.slice(8)
+    : folder + entered
   const set = (v: J | undefined) => {
     const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
     if (index >= params.length || !isObj(params[index])) return
@@ -754,11 +761,17 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   }
   return (
     <Row label={name}>
-      <div className="row gap6 center" data-guide={`param:${name}`}>
-        {type === 'bool'
-          ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
-          : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
-        <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
+      <div>
+        <div className="row gap6 center" data-guide={`param:${name}`}>
+          {type === 'bool'
+            ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
+            : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
+          <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
+        </div>
+        {fileInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+          <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
+          <div>{L('参照先: {0}', target)}</div>
+        </div>}
       </div>
     </Row>
   )

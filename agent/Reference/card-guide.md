@@ -41,12 +41,18 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 The file stays in the project; at run time it is copied into the run and the
 next Card receives its path.
 
-`_card.json` (the path is relative to the project):
+`definitions/load/_card.json` (the path is relative to this Card's definition folder):
 
 ```json
 {"template": "input",
- "params": [{"name": "value", "type": "string", "data": "definitions/load/data/events.fits"}]}
+ "params": [{"name": "value", "type": "string", "data": "data/events.fits"}]}
 ```
+
+Use `project:definitions/shared/data/events.fits` for a saved source in another
+Card of the owning project.
+The same rules apply inside external projects: `project:` names that external
+project's root. Paths cannot be absolute or contain `..`, and must name a saved
+project source. The base never changes according to which file exists.
 
 `_outputs.fbs` (a File port: one table whose only field is `value:string`):
 
