@@ -290,14 +290,14 @@ export class ChatController extends Observable {
     this.changed()
   }
 
-  /** Attaches a folder of this host (the server checks that it exists). */
+  /** Attaches folders in one operation (the server validates each one). */
   private folderResources = new Map<string, string>()
 
-  async attach(folder: string) {
-    const r = await api<{ folder: string; resource: string }>('/api/chat/folder', { ...this.base, folder, folders: this.folders })
-    this.folderResources.set(r.folder, r.resource)
-    if (this.folders.includes(r.folder)) return
-    this.folders = [...this.folders, r.folder]
+  async attach(folders: string[]) {
+    if (!folders.length) return
+    const r = await api<{ folders: { folder: string; resource: string }[] }>('/api/chat/folders', { ...this.base, selected: [...new Set(folders)], folders: this.folders })
+    for (const item of r.folders) this.folderResources.set(item.folder, item.resource)
+    this.folders = [...new Set([...this.folders, ...r.folders.map(item => item.folder)])]
     this.changed()
   }
 

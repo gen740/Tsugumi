@@ -278,15 +278,17 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
 }
 
 /** Browses folders on the host (the web counterpart of the open panel). */
-export function FolderPicker({ initial, message, onPick, onClose, allowCreate, requireProject, confirmLabel }: {
-  initial?: string; message: string; onPick: (path: string) => void; onClose: () => void; allowCreate?: boolean; requireProject?: boolean
+export function FolderPicker({ initial, message, onPick, onPickMultiple, onClose, allowCreate, requireProject, confirmLabel }: {
+  initial?: string; message: string; onClose: () => void; allowCreate?: boolean; requireProject?: boolean
   /** The choose button's title (an open panel's prompt). */
   confirmLabel?: string
-}) {
+} & ({ onPick: (path: string) => void; onPickMultiple?: never } | { onPick?: never; onPickMultiple: (paths: string[]) => void })) {
   const [listing, setListing] = useState<FolderListing>()
   const [error, setError] = useState<string>()
   const [typed, setTyped] = useState('')
   const [newFolder, setNewFolder] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const toggle = (folder: string) => setSelected(current => current.includes(folder) ? current.filter(p => p !== folder) : [...current, folder])
   const load = async (p?: string) => {
     try {
       const l = await api<FolderListing>(`/api/fs${p ? `?path=${encodeURIComponent(p)}` : ''}`)
@@ -313,8 +315,11 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
         <div className="list bordered" style={{ height: 300 }}>
           {!listing && !error && <Spinner />}
           {listing?.entries.map((e) => (
-            <div key={e.name} className="list-row clickable" onDoubleClick={() => (e.project && requireProject ? onPick(`${listing.path}/${e.name}`) : void load(`${listing.path}/${e.name}`))}
+            <div key={e.name} className="list-row clickable" onDoubleClick={() => (e.project && requireProject && onPick ? onPick(`${listing.path}/${e.name}`) : void load(`${listing.path}/${e.name}`))}
               onClick={() => void load(`${listing.path}/${e.name}`)}>
+              {onPickMultiple && <input type="checkbox" aria-label={`${L('選択')}: ${e.name}`} checked={selected.includes(`${listing.path.replace(/\/$/, '')}/${e.name}`)}
+                onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}
+                onChange={() => toggle(`${listing.path.replace(/\/$/, '')}/${e.name}`)} />}
               <Icon name={e.project ? 'square.stack.3d.up' : 'folder'} style={{ color: e.project ? 'var(--accent)' : 'var(--secondary)' }} />
               <span className="flex1">{e.name}</span>
               {e.project && <span className="caption2 secondary">{L('プロジェクト')}</span>}
@@ -322,6 +327,15 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
           ))}
           {listing && listing.entries.length === 0 && <div className="list-row secondary">{L('サブフォルダはありません')}</div>}
         </div>
+        {onPickMultiple && <>
+          <Button disabled={!listing} onClick={() => listing && toggle(listing.path)}>{listing && selected.includes(listing.path) ? L('このフォルダの選択を解除') : L('このフォルダを追加')}</Button>
+          {selected.length > 0 && <div className="list bordered" style={{ maxHeight: 140, overflowY: 'auto' }}>
+            {selected.map(folder => <label key={folder} className="list-row gap8">
+              <input type="checkbox" checked onChange={() => toggle(folder)} />
+              <span className="selectable" style={{ overflowWrap: 'anywhere' }}>{folder}</span>
+            </label>)}
+          </div>}
+        </>}
         {error && <div style={{ color: 'var(--red)' }} className="callout selectable">{error}</div>}
         {requireProject && listing && !listing.project && <div className="caption secondary">{L('tsugumi.json を含むフォルダを選んでください')}</div>}
         <div className="row gap8">
@@ -344,7 +358,7 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
             ))}
           <span className="spacer" />
           <Button onClick={onClose}>{L('キャンセル')}</Button>
-          <Button kind="prominent" disabled={!can} onClick={() => listing && onPick(listing.path)}>{confirmLabel ?? L('選択')}</Button>
+          <Button kind="prominent" disabled={onPickMultiple ? !selected.length : !can} onClick={() => onPickMultiple ? onPickMultiple(selected) : listing && onPick(listing.path)}>{confirmLabel ?? L('選択')}{onPickMultiple && selected.length > 0 ? ` (${selected.length})` : ''}</Button>
         </div>
       </div>
     </Sheet>

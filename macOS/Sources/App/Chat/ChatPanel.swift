@@ -46,7 +46,7 @@ struct ChatPanel: View {
   @State private var skillQuery: String?
   /// The highlighted Skill candidate (↑ / ↓, Return or Tab takes it).
   @State private var skillIndex = 0
-  @State private var folderToAttach: URL?
+  @State private var foldersToAttach: [URL]?
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
   @State private var follow = ChatFollow()
@@ -254,10 +254,12 @@ struct ChatPanel: View {
             ForEach(chat.folders, id: \.self) { f in
               HStack(spacing: 3) {
                 Image(systemName: "folder").font(.caption2)
-                Text((f as NSString).lastPathComponent).font(.caption)
+                Text(chat.folders.filter { ($0 as NSString).lastPathComponent == (f as NSString).lastPathComponent }.count > 1
+                     ? f : (f as NSString).lastPathComponent).font(.caption)
                 ReadOnlyMark(why: String(localized: "読み取り専用で共有しています。Agent だけが読みます。"))
                 Button { chat.detach(folder: f) } label: { Image(systemName: "xmark.circle.fill") }
                   .buttonStyle(.borderless).font(.caption)
+                  .disabled(chat.attaching)
                   .help("添付を外す")
               }
               .help(f)
@@ -395,7 +397,7 @@ struct ChatPanel: View {
           } else {
             Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
               .buttonStyle(.borderless)
-              .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected || !chat.available)
+              .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected || !chat.available || chat.attaching)
               .help(prefs.sendKey == .returnKey ? "送信（Return）" : "送信（⌘Return）")
               .accessibilityLabel("送信")
           }
@@ -434,12 +436,12 @@ struct ChatPanel: View {
     } message: {
       Text("Agent の発言とツールの結果を、数秒ごとに小さなモデル（\(ThoughtSummarizer.config()?.model ?? "なし")、接続先: \(chat.provider.name)）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。")
     }
-    .confirmationDialog("フォルダを添付しますか？", isPresented: Binding(get: { folderToAttach != nil }, set: { if !$0 { folderToAttach = nil } }),
-                        presenting: folderToAttach) { url in
-      Button("添付（環境を再起動）") { Task { await chat.attach(folder: url) } }
+    .confirmationDialog("フォルダを添付しますか？", isPresented: Binding(get: { foldersToAttach != nil }, set: { if !$0 { foldersToAttach = nil } }),
+                        presenting: foldersToAttach) { urls in
+      Button("添付（環境を再起動）") { Task { await chat.attach(folders: urls) } }
       Button("キャンセル", role: .cancel) {}
-    } message: { url in
-      Text("「\(url.lastPathComponent)」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（\(chat.provider.name)）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。")
+    } message: { urls in
+      Text("「\(urls.map(\.path).joined(separator: "\n"))」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（\(chat.provider.name)）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。")
     }
   }
 
@@ -447,9 +449,9 @@ struct ChatPanel: View {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
+    panel.allowsMultipleSelection = true
     panel.message = String(localized: "チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）")
-    if panel.runModal() == .OK, let url = panel.url { folderToAttach = url }
+    if panel.runModal() == .OK, !panel.urls.isEmpty { foldersToAttach = panel.urls }
   }
 
   /// Rough text height for the growing input (17 pt per line).
@@ -486,7 +488,7 @@ struct ChatPanel: View {
 
   private func send() {
     let text = input
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !chat.busy, session.connected else { return }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !chat.busy, !chat.attaching, session.connected else { return }
     chat.send(text)
     input = ""
     skillQuery = nil

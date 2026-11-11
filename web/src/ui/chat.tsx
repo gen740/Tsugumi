@@ -288,7 +288,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   /** The connections set up, each with its chosen model and its saved models. */
   const [connections, setConnections] = useState<{ id: string; name: string; models: string[] }[]>([])
   const [picking, setPicking] = useState(false)
-  const [toAttach, setToAttach] = useState<string>()
+  const [toAttach, setToAttach] = useState<string[]>()
   const [attaching, setAttaching] = useState(false)
   const [attachError, setAttachError] = useState<string>()
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -328,7 +328,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const cmd = isMac ? '⌘' : 'Ctrl+'
 
   const send = () => {
-    if (!input.trim() || chat.busy || !session.connected) return
+    if (!input.trim() || chat.busy || attaching || !session.connected) return
     chat.send(input)
     setInput('')
     setSkillQuery(null)
@@ -394,9 +394,9 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
         <div className="chip-row">
           {chat.folders.map((f) => (
             <span key={f} className="chip chip-folder" title={f}>
-              <Icon name="folder" size={10} />{f.split('/').pop()}
+              <Icon name="folder" size={10} />{chat.folders.filter(other => other.split('/').pop() === f.split('/').pop()).length > 1 ? f : f.split('/').pop()}
               <Icon name="lock" size={9} className="secondary" title={L('読み取り専用で共有しています。Agent だけが読みます。')} />
-              <button type="button" className="chip-x" title={L('添付を外す')} aria-label={L('添付を外す')} onClick={() => chat.detach(f)}><Icon name="xmark.circle.fill" size={11} /></button>
+              <button type="button" className="chip-x" disabled={attaching} title={L('添付を外す')} aria-label={L('添付を外す')} onClick={() => chat.detach(f)}><Icon name="xmark.circle.fill" size={11} /></button>
             </span>
           ))}
         </div>
@@ -481,23 +481,23 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           <span className="caption2 tertiary" title={L('直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 {0}、キャッシュに書いた量 {1}', chat.usage.cacheReadTokens ?? 0, chat.usage.cacheWriteTokens ?? 0)}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
             ? <button type="button" className="send-button" onClick={() => chat.cancel()} title={L('回答を停止（Workflow の実行は止まりません）')} aria-label={L('回答を停止')}><Icon name="stop.circle.fill" size={22} /></button>
-            : <button type="button" className="send-button" disabled={!input.trim() || !session.connected || !chat.available} onClick={send}
+            : <button type="button" className="send-button" disabled={!input.trim() || attaching || !session.connected || !chat.available} onClick={send}
                 title={prefs.sendKey === 'returnKey' ? L('送信（Return）') : L('送信（{0}Return）', cmd)} aria-label={L('送信')}><Icon name="arrow.up.circle.fill" size={22} /></button>}
         </div>
       </div>
-      {picking && <FolderPicker message={L('チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）')} onClose={() => setPicking(false)} onPick={(p) => {
+      {picking && <FolderPicker message={L('チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）')} onClose={() => setPicking(false)} onPickMultiple={(p) => {
         setPicking(false)
         setAttachError(undefined)
         setToAttach(p)
       }} />}
       {toAttach && (
-        <Sheet onClose={() => setToAttach(undefined)} width={440}>
+        <Sheet onClose={() => { if (!attaching) setToAttach(undefined) }} width={520}>
           <div className="confirm">
             <div className="confirm-title">{L('フォルダを添付しますか？')}</div>
-            <div className="secondary">{L('「{0}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{1}）に送られます。', toAttach.split('/').pop(), chat.provider.name)}</div>
+            <div className="secondary">{L('「{0}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{1}）に送られます。', toAttach.join(', '), chat.provider.name)}</div>
             {attachError && <div className="callout selectable" style={{ color: 'var(--red)' }}>{attachError}</div>}
             <div className="row end gap8">
-              <Button onClick={() => setToAttach(undefined)}>{L('キャンセル')}</Button>
+              <Button disabled={attaching} onClick={() => setToAttach(undefined)}>{L('キャンセル')}</Button>
               <Button kind="prominent" disabled={attaching} onClick={async () => {
                 setAttaching(true)
                 try {

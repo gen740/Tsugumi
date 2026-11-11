@@ -137,29 +137,48 @@ final class ChatController {
   private var folderResources: [String: String] = [:]
   private(set) var attaching = false
 
-  /// Attaches a folder; the environment starts again to share it.
-  func attach(folder url: URL) async {
-    let path = url.standardizedFileURL.path
-    guard !folders.contains(path) else { return }
+  /// Share a batch with one restart, then register each folder independently.
+  /// Only registered folders are offered to the Agent; a failed attempt is retryable.
+  func attach(folders urls: [URL]) async {
+    guard !attaching else { return }
+    var paths: [String] = []
+    for url in urls {
+      let path = url.standardizedFileURL.path
+      if folderResources[path] == nil && !paths.contains(path) { paths.append(path) }
+    }
+    guard !paths.isEmpty else { return }
     attaching = true
     defer { attaching = false }
-    folders.append(path)
-    await session.environments.setExtraFolders(session.identity, folders)
-    await session.restartEnvironment()
     do {
-      guard let project = try await RPCToolTransport(session: session).project() else { return }
-      let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+      for path in paths {
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else {
+          throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: path])
+        }
+      }
+      let shared = folders + paths.filter { !folders.contains($0) }
+      await session.environments.setExtraFolders(session.identity, shared)
+      await session.restartEnvironment()
+      guard session.connected, let project = try await RPCToolTransport(session: session).project() else {
+        throw RPCError.disconnected
+      }
       _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": project.id,
         "endpoint": project.endpoint, "token": project.token, "title": project.title])
-      _ = try await CoreAgentClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
-        "resource_id": resource, "folder": path, "title": url.lastPathComponent])
-      folderResources[path] = resource
+      for path in paths {
+        let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+        _ = try await CoreAgentClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
+          "resource_id": resource, "folder": path, "title": (path as NSString).lastPathComponent])
+        folderResources[path] = resource
+        if !folders.contains(path) { folders.append(path) }
+      }
+      status = nil
     } catch { status = String(describing: error) }
   }
 
   /// No longer offered to the Agent, which refuses it from now on (the share
   /// itself goes when the environment next starts).
   func detach(folder path: String) {
+    guard !attaching else { return }
     folders.removeAll { $0 == path }
     let resource = folderResources.removeValue(forKey: path)
     let folders = self.folders
@@ -343,7 +362,7 @@ final class ChatController {
         references.append(AgentSkillReference(name: skill.name, resourceID: project.id, path: String(skill.path.dropFirst(root.count))))
       } else if let folder = AppPreferences.shared.skillFolders.first(where: { $0.enabled && skill.path.hasPrefix(URL(fileURLWithPath: $0.path).standardizedFileURL.path + "/") }) {
         let url = URL(fileURLWithPath: folder.path).standardizedFileURL
-        if folderResources[url.path] == nil { await attach(folder: url) }
+        if folderResources[url.path] == nil { await attach(folders: [url]) }
         guard let resource = folderResources[url.path] else { throw NSError(domain: "Tsugumi", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not register the skill folder"]) }
         references.append(AgentSkillReference(name: skill.name, resourceID: resource, path: String(skill.path.dropFirst(url.path.count + 1))))
       }
@@ -364,7 +383,7 @@ final class ChatController {
   // MARK: - Conversation
 
   func send(_ text: String, selection: [CardKey] = []) {
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    guard !attaching, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     // No model connection: Tsugumi answers from its script (a connection of this chat's own, as in tests, is used).
     if GuideController.shared.scripted, provider.auth != .none, !busy {
       GuideController.shared.answerScripted(text, chat: self)
@@ -389,7 +408,7 @@ final class ChatController {
                        selectedCards: refs.compactMap { if case .card(let key) = $0 { return key }; return nil },
                        selectedDisplays: refs.compactMap { if case .display(let key) = $0 { return key }; return nil },
                        skillNames: used.filter { $0.path == "builtin:demo" }.map(\.name), skillReferences: skillReferences,
-                       attachedResources: Array(folderResources.values), events: events)
+                       attachedResources: folders.compactMap { folderResources[$0] }, events: events)
       } catch { events(.error(String(describing: error))) }
     }
   }

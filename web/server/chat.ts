@@ -449,12 +449,20 @@ class ChatHost {
   }
 
   async attach(folder: string, existing: string[] = []) {
-    for (const value of [...existing, folder]) this.folders.add(value)
+    return (await this.attachFolders([folder], existing))[0].resource
+  }
+
+  async attachFolders(folders: string[], existing: string[] = []) {
+    for (const value of [...existing, ...folders]) this.folders.add(value)
     await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
     const project = await core.project(this.project)
-    const resource = `folder:${project}:${createHash('sha256').update(folder).digest('hex')}`
-    await core.user.call('RegisterFolderRequest', { project_id: project, resource_id: resource, folder, title: path.basename(folder) })
-    return resource
+    const attached: { folder: string; resource: string }[] = []
+    for (const folder of folders) {
+      const resource = `folder:${project}:${createHash('sha256').update(folder).digest('hex')}`
+      await core.user.call('RegisterFolderRequest', { project_id: project, resource_id: resource, folder, title: path.basename(folder) })
+      attached.push({ folder, resource })
+    }
+    return attached
   }
 
   async detachFolder(folder: string) {
@@ -703,12 +711,15 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
-  'POST /api/chat/folder': async (b) => {
-    const [folder] = cleanFolders([b.folder])
-    if (!folder) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', b.folder))
+  'POST /api/chat/folders': async (b) => {
+    if (!Array.isArray(b.selected) || !b.selected.length) throw ctx.httpError(400, 'Select at least one folder.')
+    // Validate the entire selection before sharing anything or restarting the VM.
+    for (const folder of b.selected) {
+      if (!cleanFolders([folder]).length) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', folder))
+    }
+    const folders = cleanFolders(b.selected)
     const host = chatFor(projectDir(b.path))
-    const resource = await host.attach(folder, cleanFolders(Array.isArray(b.folders) ? b.folders : []))
-    return { folder, resource, name: path.basename(folder) }
+    return { folders: await host.attachFolders(folders, cleanFolders(b.folders)) }
   },
   'POST /api/chat/folder/detach': async (b) => {
     const project = projectDir(b.path)

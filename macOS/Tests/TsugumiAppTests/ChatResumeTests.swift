@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Testing
@@ -76,6 +77,14 @@ import TsugumiAgent
       return session
     }
 
+    /// The VM launcher creates read-only shares; this host fixture uses the
+    /// daemon's equivalent allowlist, separate from the Agent's access grants.
+    func shareFolders(_ folders: [URL]) throws {
+      let daemon = try #require(daemon)
+      let data = try JSONSerialization.data(withJSONObject: ["folders": folders.map { $0.standardizedFileURL.path }])
+      try data.write(to: daemon.dir.appendingPathComponent("control/attached.json"))
+    }
+
     func makeChat() -> ChatController {
       let port = port
       let chat = ChatController(session: session, directory: directory.appendingPathComponent("ui"),
@@ -149,6 +158,79 @@ import TsugumiAgent
 
   func reply(_ chat: ChatController, after n: Int) -> Bool {
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
+  }
+
+  @Test func multipleAttachedFoldersRemainDistinctAndReadableAfterSending() async throws {
+    try await withFixture { t in
+      let first = t.directory.appendingPathComponent("first/data")
+      let second = t.directory.appendingPathComponent("second/data")
+      for (folder, text) in [(first, "first folder"), (second, "second folder")] {
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("nested"), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: folder.appendingPathComponent("nested/note.txt"))
+      }
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      let chat = t.makeChat()
+      try await until("the chat is ready") { chat.currentId == t.conversationID }
+      // Invalid batches do not appear attached, and can be retried.
+      await chat.attach(folders: [first, t.directory.appendingPathComponent("missing")])
+      #expect(chat.folders.isEmpty && chat.status != nil && !chat.attaching)
+      await chat.attach(folders: [first, second, first])
+      let paths = [first, second].map { $0.standardizedFileURL.path }
+      #expect(chat.folders == paths && chat.status == nil && !chat.attaching)
+      #expect(await t.session.environments.extraFolders[t.session.identity.id] == paths)
+      await chat.attach(folders: [first, second])
+      #expect(chat.folders == paths, "Repeated attachment does not duplicate either folder")
+      try t.shareFolders([first, second])
+      let project = try #require(t.session.endpointOverride?.projectId)
+      let resources = paths.map { path in
+        "folder:\(project):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+      }
+      func grant(_ resource: String) async throws -> String {
+        let request = try await CoreAgentClient.shared.call("AccessRequest", ["project_id": resource,
+          "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Fixture-selected folder"])
+        let id = try #require(request["id"] as? String)
+        _ = try await CoreAgentClient.shared.call("AccessResolveRequest", ["request_id": id, "allow": true])
+        return id
+      }
+      func read(_ folder: String, _ path: String) async throws -> String {
+        let args = try JSONSerialization.data(withJSONObject: ["folder": folder, "path": path])
+        let result = try await CoreAgentClient.shared.call("ToolCallRequest", ["conversation_id": t.conversationID,
+          "project_id": project, "name": "attached_folder_read", "arguments_json": String(decoding: args, as: UTF8.self), "op_id": UUID().uuidString])
+        #expect(result["isError"] as? Bool == false)
+        let text = try #require(result["text"] as? String)
+        let envelope = try #require(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let value = try #require(envelope["value"] as? [String: Any])
+        return try #require(value["bytes"] as? String)
+      }
+      _ = try await grant(project)
+      let firstGrant = try await grant(resources[0])
+      do {
+        _ = try await read(paths[1], "nested/note.txt")
+        Issue.record("A folder needs its own grant")
+      } catch let failure as CoreAgentFailure { #expect(failure.code == "grant_required") }
+      _ = try await grant(resources[1])
+      chat.send("hello from both attached folders")
+      try await until("the message with both attachments ended") { !chat.busy && reply(chat, after: 0) }
+      let snapshot = try await t.snapshot()
+      let conversation = try #require(snapshot["conversation"] as? [String: Any])
+      let messages = try #require(conversation["messages"] as? [[String: Any]])
+      let user = try #require(messages.first { $0["role"] as? String == "user" })
+      let content = try #require(user["content"] as? [[String: Any]])
+      let text = content.compactMap { $0["text"] as? String }.joined()
+      for path in paths { #expect(text.contains(path)) }
+      let attached = content.flatMap { $0["resource_ids"] as? [String] ?? [] }
+      for resource in resources { #expect(attached.contains(resource)) }
+      #expect(try await read(paths[0], "") == "nested/\n")
+      #expect(try await read(paths[0], "nested/note.txt") == "first folder")
+      #expect(try await read(paths[1], "nested/note.txt") == "second folder")
+      _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": firstGrant])
+      do {
+        _ = try await read(paths[0], "nested/note.txt")
+        Issue.record("Revoked folder access must not remain readable")
+      } catch let failure as CoreAgentFailure { #expect(failure.code == "grant_required") }
+      #expect(try await read(paths[1], "nested/note.txt") == "second folder")
+    }
   }
 
   @Test func aRunningCoreAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
