@@ -31,30 +31,6 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
-    '実行全体の環境': 'Environments across the run',
-    '各 Card の最後の呼び出しを比較します。': 'Comparing the last invocation of each Card.',
-    '比較元の実行': 'Compare against run',
-    '比較しない': 'Do not compare',
-    '以前の実行を読み込む': 'Load earlier runs',
-    '追加された Card': 'Added Card',
-    '削除された Card': 'Removed Card',
-    '環境が変わりました': 'Environment changed',
-    '同じ環境です': 'Same environment',
-    '環境の記録がありません': 'Environment not recorded',
-    '追加された依存パス': 'Added dependency paths',
-    '削除された依存パス': 'Removed dependency paths',
-
-    '記録された実行環境': 'Recorded execution environment',
-    'この呼び出しの環境は記録されていません': 'No environment was recorded for this invocation',
-    '共有環境 ID': 'Shared environment ID',
-    '同じ環境 ID の呼び出しは、この環境を共有しています。': 'Invocations with the same environment ID share this environment.',
-    '実行環境の出力': 'Environment output',
-    '実行時の依存パス': 'Runtime dependency paths',
-    'ビルド時だけに使う依存関係は含まれません。': 'Dependencies used only at build time are not included.',
-    '依存パスを検索': 'Search dependency paths',
-    '検索結果を 100 件ずつ表示します。': 'Showing 100 search results at a time.',
-    '一致する依存パスはありません': 'No matching dependency paths',
-
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',
@@ -1256,7 +1232,24 @@ EN = {
 "保存前": "Not saved",
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
 "参照先: %@": "Resolved path: %@",
+    '依存 package': 'Packages',
+    'この Card の環境はまだ記録されていません': 'No environment has been recorded for this Card yet.',
+    '直近の実行で記録された package です。Nix 定義の変更は次の実行後に反映されます。': 'Packages recorded in the latest run. Changes to the Nix definition appear after the next run.',
+    '実行時の依存パス': 'Runtime dependencies',
+    'ビルド時だけに使う依存関係は含まれません。': 'Build-only dependencies are not included.',
+    '依存パスを検索': 'Search dependencies',
+    '検索結果を 100 件ずつ表示します。': 'Showing 100 matching paths per page.',
+    '一致する依存パスはありません': 'No matching dependencies.',
+    'Nix 参照': 'Nix references',
+    'Nix 参照一覧': 'Nix reference list',
+    '参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。': 'Referencing Card → referenced Card. Shows static Card references in saved default.nix files.',
+    'Card 間の Nix 参照はありません': 'No Nix references between Cards.',
+    '参照を解決できません。Nix 定義と診断を確認してください。': 'This reference is invalid. Check the Nix definition and diagnostics.',
+    'Nix 定義を開く': 'Open Nix definition',
+    '一覧': 'List',
+    'ページ': 'Page',
 }
+
 
 
 def quote(s: str) -> str:

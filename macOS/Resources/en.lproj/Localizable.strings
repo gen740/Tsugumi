@@ -94,6 +94,7 @@
 "Card 定義" = "Card Definitions";
 "Card 設定" = "Card Settings";
 "Card 設定を開く" = "Open Card Settings";
+"Card 間の Nix 参照はありません" = "No Nix references between Cards.";
 "Card「%@」の定義（definitions/%@/）です。" = "The definition of Card “%@” (definitions/%@/).";
 "ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。" = "The Agent uses your ChatGPT Plus or Pro plan. Requests go to OpenAI's Responses API and count against your plan's usage (apart from API key billing; Tsugumi charges nothing). Plus has one five-hour usage limit shared with other apps, open-source tools included. Pro has no such limit.";
 "ChatGPT プランを使っています" = "You're using your ChatGPT plan";
@@ -134,7 +135,10 @@
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
+"Nix 参照" = "Nix references";
+"Nix 参照一覧" = "Nix reference list";
 "Nix 定義" = "Nix Definition";
+"Nix 定義を開く" = "Open Nix definition";
 "Nix 評価" = "Nix evaluation";
 "Nix 評価中" = "Evaluating Nix";
 "Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。" = "Nixpkgs is not pinned: updating the app also changes the packages of this project's Cards.";
@@ -247,6 +251,7 @@
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
 "この Card の出力" = "This Card's output";
+"この Card の環境はまだ記録されていません" = "No environment has been recorded for this Card yet.";
 "この Card は何をしている？" = "What does this Card do?";
 "この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。" = "This Card does not record inputs and outputs (Settings > Ports > Record I/O).";
 "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。" = "This Card keeps no artifacts (Settings > Inputs & Outputs > Keep artifacts).";
@@ -287,7 +292,6 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
-"この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -498,7 +502,7 @@
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
-"ビルド時だけに使う依存関係は含まれません。" = "Dependencies used only at build time are not included.";
+"ビルド時だけに使う依存関係は含まれません。" = "Build-only dependencies are not included.";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
@@ -567,8 +571,9 @@
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
-"一致する依存パスはありません" = "No matching dependency paths";
+"一致する依存パスはありません" = "No matching dependencies.";
 "一般" = "General";
+"一覧" = "List";
 "一覧から削除" = "Remove from the list";
 "一覧から外す" = "Remove from list";
 "一覧から外すだけで、フォルダは削除しません" = "Only removes it from the list; the folder is not deleted";
@@ -592,7 +597,6 @@
 "付箋を編集" = "Edit Note";
 "付箋を編集…" = "Edit Note…";
 "付箋を追加" = "Add Note";
-"以前の実行を読み込む" = "Load earlier runs";
 "会話" = "Conversations";
 "会話に戻る" = "Back to the conversation";
 "会話の一覧と検索" = "Conversations and search";
@@ -614,7 +618,8 @@
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
-"依存パスを検索" = "Search dependency paths";
+"依存 package" = "Packages";
+"依存パスを検索" = "Search dependencies";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -672,7 +677,6 @@
 "共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。" = "Cleaning the shared Nix store deletes what no project has registered as a build result (no GC root). Registered Card builds and the compilers used for them stay. A project's “Clear build cache” only unregisters; the store is cleaned only here.";
 "共有 Nix store を掃除しますか？" = "Clean the shared Nix store?";
 "共有 store を掃除…" = "Clean shared store…";
-"共有環境 ID" = "Shared environment ID";
 "内容" = "Content";
 "内容が不明なため、編集・名前変更・保存はできません。\n%@" = "Its contents are unknown, so it cannot be edited, renamed or saved.\n%@";
 "内部の接続先: %@.%@" = "Inside it goes to: %@.%@";
@@ -721,8 +725,6 @@
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
 "削除…" = "Delete…";
-"削除された Card" = "Removed Card";
-"削除された依存パス" = "Removed dependency paths";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
 "前へ" = "Previous";
@@ -732,7 +734,9 @@
 "化学・生態" = "Chemistry and ecology";
 "原因（ログより）" = "Cause (from the log)";
 "参照を外す" = "Remove the reference";
+"参照を解決できません。Nix 定義と診断を確認してください。" = "This reference is invalid. Check the Nix definition and diagnostics.";
 "参照・フォルダを添付" = "Attach references or folders";
+"参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。" = "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.";
 "参照先: %@" = "Resolved path: %@";
 "取り消す" = "Undo";
 "取り込む" = "Import";
@@ -746,11 +750,8 @@
 "可視化 %@" = "Display %@";
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
-"各 Card の最後の呼び出しを比較します。" = "Comparing the last invocation of each Card.";
 "合流" = "Merge";
 "同じ名前があります" = "That name is taken";
-"同じ環境 ID の呼び出しは、この環境を共有しています。" = "Invocations with the same environment ID share this environment.";
-"同じ環境です" = "Same environment";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -851,7 +852,6 @@
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
 "実行中・SDK 準備中は削除できません。" = "Cannot delete while a run or SDK preparation is active.";
 "実行全体" = "Whole run";
-"実行全体の環境" = "Environments across the run";
 "実行履歴" = "Run History";
 "実行履歴…" = "Run History…";
 "実行履歴なし" = "No runs";
@@ -861,7 +861,7 @@
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
-"実行時の依存パス" = "Runtime dependency paths";
+"実行時の依存パス" = "Runtime dependencies";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境との接続が切れました" = "Lost the connection to the environment";
@@ -871,7 +871,6 @@
 "実行環境の VM イメージがある" = "The environment's VM image is here";
 "実行環境のコンソール" = "Environment Console";
 "実行環境のデータ" = "Environment data";
-"実行環境の出力" = "Environment output";
 "実行環境の準備ができませんでした: %@" = "The environment could not get ready: %@";
 "実行環境の管理プロセスを起動しています" = "Starting the environment's supervisor";
 "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
@@ -1010,7 +1009,7 @@
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
-"検索結果を 100 件ずつ表示します。" = "Showing 100 search results at a time.";
+"検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
 "検証しています" = "Validating";
 "概要" = "Description";
@@ -1021,8 +1020,6 @@
 "残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";
 "段階" = "Phase";
-"比較しない" = "Do not compare";
-"比較元の実行" = "Compare against run";
 "流れの向き" = "Flow direction";
 "添えられたフォルダを読んでいます" = "Reading the attached folder";
 "添付を外す" = "Remove the attachment";
@@ -1048,8 +1045,6 @@
 "版管理されていません" = "Not versioned";
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
-"環境が変わりました" = "Environment changed";
-"環境の記録がありません" = "Environment not recorded";
 "環境を停止" = "Stop Environment";
 "生命・医療" = "Life and medicine";
 "生成" = "Generated";
@@ -1062,6 +1057,7 @@
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
+"直近の実行で記録された package です。Nix 定義の変更は次の実行後に反映されます。" = "Packages recorded in the latest run. Changes to the Nix definition appear after the next run.";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
 "破棄して再読込" = "Discard and Reload";
@@ -1119,7 +1115,6 @@
 "記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。" = "Connections used by logger Cards to store logs in an external database, independent of the core history.";
 "記録がありません" = "No record";
 "記録された出来事はありません" = "No events were recorded";
-"記録された実行環境" = "Recorded execution environment";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";
 "記録と成果物" = "Recording and artifacts";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
@@ -1149,8 +1144,6 @@
 "起動中: %@" = "Starting: %@";
 "起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
-"追加された Card" = "Added Card";
-"追加された依存パス" = "Added dependency paths";
 "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here like inputs.sources.ciao.packages.ciao. It is fixed by its commit and hash. Adding, updating and removing are saved at once. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";

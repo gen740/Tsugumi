@@ -20,7 +20,7 @@ struct WorkflowRef: Codable, Hashable {
 }
 
 enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
-  case general, comments, nix, source, ports, executions, artifacts, context
+  case general, comments, nix, packages, source, ports, executions, artifacts, context
   var id: String { rawValue }
 
   var title: String {
@@ -28,6 +28,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .general: return String(localized: "一般")
     case .comments: return String(localized: "コメント")
     case .nix: return String(localized: "Nix 定義")
+    case .packages: return String(localized: "依存 package")
     case .source: return String(localized: "ソース")
     case .ports: return String(localized: "入出力")
     case .executions: return String(localized: "実行履歴")
@@ -41,6 +42,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .general: return "slider.horizontal.3"
     case .comments: return "bubble.left"
     case .nix: return "snowflake"
+    case .packages: return "shippingbox"
     case .source: return "doc.text"
     case .ports: return "arrow.left.arrow.right"
     case .executions: return "clock.arrow.circlepath"
@@ -75,6 +77,11 @@ final class WorkflowTab: Identifiable {
   var selectedFrames: Set<CardKey> = []
   var back: [[String]] = []
   var selectedConnection: Int?
+  var showNixReferences = false
+  var showNixList = false
+  var selectedNixReference: String?
+  var hoveredNixCard: CardKey?
+  var revealNixCard: CardKey?
 
   init(scope: [String], selection: Set<CardKey> = []) {
     self.scope = scope

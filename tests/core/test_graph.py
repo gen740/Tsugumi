@@ -3,7 +3,7 @@
 import pytest
 
 from projects import card, card_in_card, conn, write
-from tsugumi_client import path, text
+from tsugumi_client import change, new_id, path, text
 
 
 NUMBER = 'namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
@@ -121,6 +121,10 @@ def test_nix_can_reference_only_guaranteed_upstream_cards(core_factory, project,
 
     errors = codes(resolved["result"]) & {"nix_reference_unknown", "nix_reference_self", "nix_reference_not_guaranteed"}
     assert errors == ({expected_error} if expected_error else set())
+    ref, = resolved["result"].nixReferences
+    assert [text(s) for s in ref.target.segments] == [reference]
+    assert text(ref.name) == reference and not ref.local
+    assert ref.valid == (expected_error is None)
 
 
 @pytest.mark.parametrize("expression,expected", [
@@ -152,6 +156,9 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
     client, resolved = inspect_graph(core_factory, project, definitions,
                                      [conn("source", "out", "child", "in"), conn("child", "out", "sink", "in")], cards)
     assert not codes(resolved["sink"])
+    ref, = resolved["sink"].nixReferences
+    assert [text(s) for s in ref.target.segments] == ["child", "inner"]
+    assert ref.valid
     assert text(resolved["sink"].inputs[0].rootType) == "t.Number"
     for target, propagate, expected in [
         ("start", True, {"start", "source", "child/inner", "sink"}),
@@ -160,3 +167,23 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
     ]:
         plan = client.call("RunPlanRequest", card=path(target), propagate=propagate)
         assert {"/".join(text(segment) for segment in target.segments) for target in plan.targets} == expected
+
+
+def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, project):
+    client, resolved = inspect_graph(core_factory, project,
+                                    {"source": code(), "result": code(["in"], body='{ run = inputs.local.source.run; }')},
+                                    [conn("source", "out", "result", "in")])
+    ref, = resolved["result"].nixReferences
+    assert ref.local and ref.valid
+    for body, expected in [
+        ('{ run = inputs.upstream.source.run; exports.again = inputs.upstream.source.exports; }', [("source", False, True)]),
+        ('{ run = inputs.local.missing.run; }', [("missing", True, False)]),
+        ('{ run = "true"; /* inputs.local.source */ note = "inputs.upstream.source"; }', []),
+    ]:
+        snap = client.call("ProjectInspectRequest")
+        client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[
+            change("PutSource", path="definitions/result/default.nix",
+                   baseHash=next(text(s.hash) for s in snap.sources if text(s.path) == "definitions/result/default.nix"), bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
+        snap = client.call("ProjectInspectRequest")
+        result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
+        assert [(text(r.name), r.local, r.valid) for r in result.nixReferences] == expected

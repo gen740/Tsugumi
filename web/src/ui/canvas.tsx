@@ -1,3 +1,4 @@
+import { nixCurve, nixReferences, visibleNixCard } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
 // and output frames, with pan/zoom, selection, wiring and drag & drop.
 // Inside a Card in Card, the outer Card's inputs and outputs are drawn as
@@ -72,6 +73,15 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const findField = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
   const scene = cv.scene({ cards: cardDrag, boundary: boundaryDrag })
+  const visibleCards = new Set(scene.cardKeys)
+  const nixLinks = tab.showNixReferences ? nixReferences(session).flatMap(ref => {
+    const source = visibleNixCard(ref.source, tab.scope, visibleCards)
+    const target = visibleNixCard(ref.target, tab.scope, visibleCards)
+    return source && target && source !== target ? [{ ...ref, source, target }] : []
+  }) : []
+  const activeNix = nixLinks.filter(ref => tab.hoveredNixCard
+    ? ref.source === tab.hoveredNixCard || ref.target === tab.hoveredNixCard : ref.id === tab.selectedNixReference)
+  const highlightedNix = new Set(activeNix.flatMap(ref => [ref.source, ref.target]))
   const cam = cv.camera
   const z = cam.zoom
   const scope = tab.scope
@@ -141,6 +151,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     clearTimeout(hoverTimer.current)
     wanted.current = undefined
     setHover(undefined)
+    if (tab.hoveredNixCard) { tab.hoveredNixCard = undefined; tab.changed() }
   }
 
   const track = (p: Pt) => {
@@ -149,6 +160,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const w = cv.world(p)
     let target: HoverTarget | undefined
     const k = scene.cardAt(w)
+    if (tab.showNixReferences && tab.hoveredNixCard !== k) { tab.hoveredNixCard = k; tab.changed() }
     // A Draft being written has its details in front of it.
     if (k) target = k === session.inlineDraft?.card ? undefined : { kind: 'card', k }
     else {
@@ -549,6 +561,29 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
       <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted }))}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
+
+      {tab.showNixReferences && <svg width={cv.size.width} height={cv.size.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}>
+        <defs><marker id={`nix-arrow-${tab.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
+        {nixLinks.map(ref => {
+          const d = pathToScreen(nixCurve(scene.cardRect(ref.source), scene.cardRect(ref.target)), cam)
+          const active = activeNix.includes(ref)
+          return <g key={ref.id}>
+            <path d={d} fill="none" stroke={ref.valid ? 'var(--purple)' : 'var(--orange)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
+              opacity={tab.hoveredNixCard && !active ? 0.2 : 0.9} markerEnd={`url(#nix-arrow-${tab.id})`} />
+            <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+              role="button" tabIndex={0} aria-label={`${ref.source} → ${ref.target}: ${ref.expression}`}
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); tab.selectedNixReference = ref.id; tab.showNixList = true; tab.changed() }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tab.selectedNixReference = ref.id; tab.showNixList = true; tab.changed() } }}>
+              <title>{ref.expression}</title>
+            </path>
+          </g>
+        })}
+        {[...highlightedNix].map(k => {
+          const r = scene.cardRect(k), p = screen(r)
+          return <rect key={k} x={p.x - 3} y={p.y - 3} width={r.width * z + 6} height={r.height * z + 6} rx={10} fill="none" stroke="var(--purple)" strokeWidth={3} />
+        })}
+      </svg>}
 
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} onDown={onBoundaryDown} />}
 

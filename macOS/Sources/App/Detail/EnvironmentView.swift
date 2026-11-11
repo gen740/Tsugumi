@@ -20,7 +20,7 @@ struct RecordedEnvironmentView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 10) {
-        Text("記録された実行環境").font(.headline)
+        Text("依存 package").font(.headline)
         if let error {
           Text(error).foregroundStyle(.red)
           Button("再試行") { attempt += 1 }
@@ -28,13 +28,6 @@ struct RecordedEnvironmentView: View {
         if !loaded { ProgressView() }
         else if let environment {
           Text(environment.system)
-          Text("共有環境 ID").font(.caption)
-          Text(environment.id).font(.caption.monospaced()).textSelection(.enabled)
-          Text("同じ環境 ID の呼び出しは、この環境を共有しています。").foregroundStyle(.secondary)
-          Text("実行環境の出力").font(.headline)
-          storePath(environment.manifest)
-          Text("Derivation").font(.headline)
-          storePath(environment.derivation)
           Text("実行時の依存パス").font(.headline)
           Text("ビルド時だけに使う依存関係は含まれません。")
           TextField("依存パスを検索", text: $query).textFieldStyle(.roundedBorder)
@@ -50,7 +43,7 @@ struct RecordedEnvironmentView: View {
             Button("次へ") { if let next { offsets.append(next) } }.disabled(busy || next == nil)
           }
         } else if error == nil {
-          Text("この呼び出しの環境は記録されていません")
+          Text("この Card の環境はまだ記録されていません")
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -134,4 +127,50 @@ func recordedStoreName(_ path: String) -> String {
   guard prefix.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber) }),
         name[name.index(name.startIndex, offsetBy: 32)] == "-" else { return name }
   return String(name.dropFirst(33))
+}
+
+/// Packages are a Card setting, loaded from its latest recorded invocation.
+struct CardPackagesView: View {
+  let session: ProjectSession
+  let cardKey: CardKey
+  @State private var selection: Selection?
+  @State private var loaded = false
+  @State private var error: String?
+  @State private var attempt = 0
+
+  private struct Selection: Hashable {
+    let run: String
+    let environment: String
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text("直近の実行で記録された package です。Nix 定義の変更は次の実行後に反映されます。")
+        .foregroundStyle(.secondary).padding(12)
+      if let error {
+        Text(error).foregroundStyle(.red)
+        Button("再試行") { attempt += 1 }
+      } else if !loaded { ProgressView() }
+      else if let selection {
+        RecordedEnvironmentView(session: session, runId: selection.run, environmentId: selection.environment).id(selection)
+      } else { Text("この Card の環境はまだ記録されていません").padding(12) }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await load() }
+    .task(id: attempt) { if attempt > 0 { await load() } }
+  }
+
+  private func load() async {
+    loaded = false; error = nil; selection = nil
+    defer { if !Task.isCancelled { loaded = true } }
+    guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
+    do {
+      let page = try await rpc.history(card: path(cardKey), limit: 1)
+      try Task.checkCancellation()
+      guard let run = page.runs.compactMap({ $0 }).first?.status.runId else { return }
+      let record = try await rpc.record(runId: run, card: path(cardKey), followLatest: true)
+      try Task.checkCancellation()
+      selection = Selection(run: run, environment: record.record?.summary.environmentId ?? "")
+    } catch { if !Task.isCancelled { self.error = String(describing: error) } }
+  }
 }

@@ -47,11 +47,21 @@ table Definition {
   link_json:string (id: 3);
 }
 
+/// A static Card reference in default.nix. Target paths are absolute in the
+/// project, including references that fail validation. No Nix evaluation.
+table CardNixReference {
+  target:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  local:bool (id: 2);
+  valid:bool (id: 3);
+}
+
 table ResolvedCard {
   card:Tsugumi.Data.CardPath (id: 0, required);
   inputs:[Tsugumi.Data.Port] (id: 1, required);
   outputs:[Tsugumi.Data.Port] (id: 2, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
+  nix_references:[CardNixReference] (id: 4, required);
 }
 
 table Camera {
@@ -546,10 +556,6 @@ table RunEnvironmentPathsRequest {
   limit:uint32 = null (id: 3);
   /// Case-insensitive literal substring search. Offset and total refer to matching paths.
   query:string (id: 4);
-  /// Optional pair: omit paths present in this recorded environment. Swap the
-  /// two environments to inspect the opposite side of a dependency diff.
-  exclude_run_id:string (id: 5);
-  exclude_environment_id:string (id: 6);
 }
 
 table BuildEnvironment {

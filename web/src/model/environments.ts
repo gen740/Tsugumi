@@ -37,24 +37,3 @@ export async function environmentPaths(source: EnvironmentSource, run: string, i
   if (page.next !== null && page.next <= offset) throw Error('Dependency pagination did not advance')
   return page
 }
-
-export interface CardEnvironment { card: string; environment?: string }
-export function compareCardEnvironments(before: CardEnvironment[], after: CardEnvironment[]) {
-  const old = new Map(before.map(r => [r.card, r.environment]))
-  const current = new Map(after.map(r => [r.card, r.environment]))
-  return [...new Set([...old.keys(), ...current.keys()])].sort().map(card => ({
-    card, before: old.get(card), after: current.get(card),
-    state: !old.has(card) ? 'added' : !current.has(card) ? 'removed'
-      : !old.get(card) || !current.get(card) ? 'unrecorded'
-      : old.get(card) === current.get(card) ? 'same' : 'changed',
-  }))
-}
-
-export function groupCardEnvironments(rows: CardEnvironment[]) {
-  const groups = new Map<string, string[]>()
-  for (const row of rows) {
-    const id = row.environment ?? ''
-    groups.set(id, [...(groups.get(id) ?? []), row.card])
-  }
-  return [...groups].map(([id, cards]) => ({ id, cards: cards.sort() }))
-}

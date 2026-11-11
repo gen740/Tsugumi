@@ -4,11 +4,12 @@ import { D, uuid } from '../shared/rpc'
 import { CardKey, ProjectSession } from './session'
 import { L } from '../i18n'
 
-export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
+export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'packages' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
 export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
   general: { title: L('一般'), icon: 'slider.horizontal.3' },
   comments: { title: L('コメント'), icon: 'bubble.left' },
   nix: { title: L('Nix 定義'), icon: 'snowflake' },
+  packages: { title: L('依存 package'), icon: 'shippingbox' },
   source: { title: L('ソース'), icon: 'doc.text' },
   ports: { title: L('入出力'), icon: 'arrow.left.arrow.right' },
   executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
@@ -22,6 +23,10 @@ export class WorkflowTab extends Observable {
   readonly id = uuid()
   back: string[][] = []
   selectedConnection?: number
+  showNixReferences = false
+  showNixList = false
+  selectedNixReference?: string
+  hoveredNixCard?: CardKey
   /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
   selectedNotes = new Set<string>()
   selectedFrames = new Set<CardKey>()

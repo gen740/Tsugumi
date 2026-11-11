@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { L } from '../i18n'
 import { EnvironmentSource, RecordedEnvironment, environmentPaths, findEnvironment, storeName } from '../model/environments'
-import { ProjectSession } from '../model/session'
+import { CardKey, path, ProjectSession } from '../model/session'
 import { R, RPCClient, s } from '../shared/rpc'
+import { useObserve } from '../model/observable'
 import { Button } from './controls'
 
 export function recordedEnvironmentSource(rpc: RPCClient): EnvironmentSource {
@@ -59,15 +60,11 @@ export function EnvironmentView({ session, runId, environmentId }: { session: Pr
     return () => { alive = false }
   }, [session.rpc, environment, runId, offset, query, attempt])
   return <section className="scroll pad10 col gap8">
-    <h3>{L('記録された実行環境')}</h3>
+    <h3>{L('依存 package')}</h3>
     {error && <p role="alert">{error} <Button onClick={() => setAttempt(a => a + 1)}>{L('再試行')}</Button></p>}
-    {!loaded ? <p>{L('読み込み中…')}</p> : !environment && !error ? <p>{L('この呼び出しの環境は記録されていません')}</p> : null}
+    {!loaded ? <p>{L('読み込み中…')}</p> : !environment && !error ? <p>{L('この Card の環境はまだ記録されていません')}</p> : null}
     {environment && <>
       <p>{environment.system}</p>
-      <p className="caption selectable">{L('共有環境 ID')}: {environment.id}</p>
-      <p className="secondary">{L('同じ環境 ID の呼び出しは、この環境を共有しています。')}</p>
-      <h4>{L('実行環境の出力')}</h4><StorePath value={environment.manifest} />
-      <h4>Derivation</h4><StorePath value={environment.derivation} />
       <h4>{L('実行時の依存パス')} ({String(environment.pathCount)})</h4>
       <p>{L('ビルド時だけに使う依存関係は含まれません。')}</p>
       <label>{L('依存パスを検索')}<input value={query} onChange={e => { setQuery(e.target.value); setOffsets([0n]) }} /></label>
@@ -80,4 +77,35 @@ export function EnvironmentView({ session, runId, environmentId }: { session: Pr
       </div>
     </>}
   </section>
+}
+
+/** Card settings show the latest invocation's recorded runtime packages. */
+export function CardPackages({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
+  useObserve(session)
+  const [selection, setSelection] = useState<{ run: string; environment: string }>()
+  const [error, setError] = useState<string>()
+  const [loaded, setLoaded] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let alive = true
+    setLoaded(false); setSelection(undefined); setError(undefined)
+    const rpc = session.rpc
+    if (!rpc) { setError(L('実行環境に接続していません')); setLoaded(true); return }
+    void (async () => {
+      const runs = await rpc.history(path(cardKey), false, 1)
+      const run = s(runs.runs[0]?.status?.runId)
+      if (!run) return
+      const record = await rpc.record(run, path(cardKey), null, true)
+      if (alive) setSelection({ run, environment: s(record.record?.summary?.environmentId) })
+    })().catch(e => { if (alive) setError(String(e.message ?? e)) })
+      .finally(() => { if (alive) setLoaded(true) })
+    return () => { alive = false }
+  }, [session.rpc, session.lastFinished, cardKey, attempt])
+  return <div className="col fill">
+    <p className="pad10 secondary">{L('直近の実行で記録された package です。Nix 定義の変更は次の実行後に反映されます。')}</p>
+    {error ? <p role="alert">{error} <Button onClick={() => setAttempt(a => a + 1)}>{L('再試行')}</Button></p>
+      : !loaded ? <p>{L('読み込み中…')}</p>
+      : selection ? <EnvironmentView key={`${selection.run}:${selection.environment}`} session={session} runId={selection.run} environmentId={selection.environment} />
+      : <p className="pad10">{L('この Card の環境はまだ記録されていません')}</p>}
+  </div>
 }
