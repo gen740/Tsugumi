@@ -29,6 +29,13 @@ struct StageLogView: View {
   @State private var follow = ChatFollow()
   @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
+  private struct Refresh: Equatable {
+    let runId: String
+    let invocation: UInt64?
+    let card: [String]
+    let execution: ExecutionHistoryRefresh
+  }
+
   private struct Group: Identifiable {
     let id: String
     let title: String
@@ -97,13 +104,26 @@ struct StageLogView: View {
         }
       }
     }
-    .task(id: "\(runId)|\(invocation ?? 0)") {
+    .onChange(of: "\(runId)|\(key(card))|\(invocation ?? 0)") {
       openedRunning = []
+      stages = []
+      state = nil
+      failure = nil
+      logs = [:]
+      loaded = false
       follow.restart()
       scrollPosition.scrollTo(edge: .bottom)
-      await load()
     }
-    .onChange(of: session.logRevision) { Task { await load() } }
+    .task(id: Refresh(runId: runId, invocation: invocation, card: card,
+                      execution: ExecutionHistoryRefresh(session: session, card: key(card)))) {
+      // Read serially while this run is active. Log notifications can arrive
+      // faster than a read finishes; restarting on each one starves the view.
+      repeat {
+        await load()
+        guard !Task.isCancelled, session.runActive, runId == session.currentRunId else { return }
+        do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+      } while !Task.isCancelled
+    }
     .onChange(of: focus) { if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { open.insert(g.id) } }
   }
 
@@ -192,28 +212,31 @@ struct StageLogView: View {
   }
 
   private func load() async {
-    defer { loaded = true }
+    defer { if !Task.isCancelled { loaded = true } }
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
     do {
       var inv = invocation
       if inv == nil, runId == session.currentRunId { inv = session.cardStates[key(card)]?.invocation }
       let rec = try? await rpc.record(runId: runId, card: card, invocation: inv, followLatest: inv == nil)
       inv = inv ?? rec?.selectedInvocation
-      shownInvocation = inv
+      var nextStages: [StageRecord] = []
+      var nextState: Tsugumi_Data_CardState?
+      var nextFailure: String?
       if runId == session.currentRunId, let s = session.cardStates[key(card)], s.invocation == inv {
-        stages = s.stages
-        state = s.state
-        failure = s.failure
+        nextStages = s.stages
+        nextState = s.state
+        nextFailure = s.failure
       } else if let summary = rec?.record?.summary {
-        stages = TimelineEntry.stages(summary.stages)
-        state = summary.state
-        failure = summary.failure?.diagnostic
+        nextStages = TimelineEntry.stages(summary.stages)
+        nextState = summary.state
+        nextFailure = summary.failure?.diagnostic
       }
       var out: [Tsugumi_Data_LogStream: String] = [:]
       for stream in [Tsugumi_Data_LogStream.build, .stdout, .stderr, .journal] {
         var text = "", offset: UInt64 = 0
         while true {
           let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream, offset: offset, limit: 256 * 1024)
+          guard !Task.isCancelled else { return }
           text += slice.text
           let next = slice.nextOffset ?? offset
           if next == offset || next >= (slice.sizeBytes ?? 0) { break }
@@ -221,6 +244,11 @@ struct StageLogView: View {
         }
         out[stream] = text
       }
+      guard !Task.isCancelled else { return }
+      shownInvocation = inv
+      stages = nextStages
+      state = nextState
+      failure = nextFailure
       logs = out
       error = nil
       // A failed stage opens by itself; so does the one asked for.
@@ -234,9 +262,15 @@ struct StageLogView: View {
         open.insert(g.id)
       }
     } catch let f as RPCFailure where f.kind == .notFound {
+      guard !Task.isCancelled else { return }
+      shownInvocation = nil
+      stages = []
+      state = nil
+      failure = nil
       logs = [:]
       error = nil
     } catch {
+      guard !Task.isCancelled else { return }
       self.error = "\(error)"
     }
   }

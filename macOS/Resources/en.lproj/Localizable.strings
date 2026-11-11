@@ -1128,6 +1128,9 @@
 "途中で止まっています" = "Stopped partway";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
+"進行中の実行を表示" = "Show Active Run";
+"進行中の実行を表示しています" = "Showing the active run";
+"過去の実行を表示しています。別の実行が進行中です。" = "Showing a previous run. Another run is active.";
 "適用" = "Apply";
 "適用しました。" = "Applied.";
 "適用しました（revision %llu）。" = "Applied (revision %llu).";

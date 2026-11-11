@@ -51,7 +51,7 @@ struct StageRecord: Equatable, Hashable {
 }
 
 /// Latest invocation of a Card in the current run, as the core reports it.
-struct CardRunState {
+struct CardRunState: Equatable {
   var state: Tsugumi_Data_CardState
   /// Number of the latest invocation in this run (1, 2, …); 0 = not run.
   var invocation: UInt64

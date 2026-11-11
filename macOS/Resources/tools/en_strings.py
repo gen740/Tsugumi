@@ -31,6 +31,9 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"進行中の実行を表示しています": "Showing the active run",
+"過去の実行を表示しています。別の実行が進行中です。": "Showing a previous run. Another run is active.",
+"進行中の実行を表示": "Show Active Run",
 "Agent がアクセスの許可を求めています": "The Agent is requesting access" ,
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。": "Allow access to the listed resource and scope. Content read may be sent to the connected model." ,
 "プロジェクトへのアクセスは許可されませんでした。": "Access to the project was not allowed." ,

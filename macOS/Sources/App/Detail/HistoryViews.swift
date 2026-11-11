@@ -2,6 +2,36 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
+/// Refresh history on state transitions even when a build prints no log bytes.
+struct ExecutionHistoryRefresh: Equatable {
+  let runId: String?
+  let state: Tsugumi_Data_RunState?
+  let card: CardRunState?
+  let connected: Bool
+
+  @MainActor init(session: ProjectSession, card: CardKey) {
+    runId = session.currentRunId
+    state = session.runStatus?.state
+    self.card = session.cardStates[card]
+    connected = session.connected
+  }
+}
+
+/// Keep an explicit historical selection; a newly opened view prefers the live run.
+enum ExecutionHistorySelection {
+  static func run(_ selected: String?, available: [String], active: String?) -> String? {
+    if let selected, available.contains(selected) { return selected }
+    if let active, available.contains(active) { return active }
+    return available.first
+  }
+
+  static func invocation(_ selected: UInt64?, previous: [UInt64], available: [UInt64]) -> UInt64? {
+    // Follow new calls only while the reader was already following the latest one.
+    if let selected, selected != previous.last, available.contains(selected) { return selected }
+    return available.last
+  }
+}
+
 /// Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
 struct CardExecutionView: View {
   let session: ProjectSession
@@ -16,6 +46,7 @@ struct CardExecutionView: View {
   @State private var detail = Detail.io
   @State private var error: String?
   @State private var loaded = false
+  @State private var invocationsRunId: String?
 
   enum Filter: String, CaseIterable, Identifiable {
     case all, succeeded, failed
@@ -45,64 +76,90 @@ struct CardExecutionView: View {
         content
       }
     }
-    .task(id: session.lastFinished) { await loadRuns() }
+    .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) {
+      await loadRuns()
+    }
+  }
+
+  private struct DetailRefresh: Equatable {
+    let runId: String?
+    let invocation: UInt64?
+    let execution: ExecutionHistoryRefresh
   }
 
   private var content: some View {
-    HSplitView {
-      VStack(spacing: 0) {
-        Picker("", selection: $filter) { ForEach(Filter.allCases) { Text($0.title).tag($0) } }
-          .pickerStyle(.segmented).labelsHidden().padding(6)
-        List(filtered, id: \.status.runId, selection: $runId) { r in
-          HStack {
-            Image(systemName: r.status.state.symbol).foregroundStyle(r.status.state.color)
-            VStack(alignment: .leading) {
-              Text(formatMillis(r.status.acceptedAt)).font(.callout)
-              Text("\(r.status.state.label) · 対象 \(r.target.path.joined(separator: "/"))").font(.caption).foregroundStyle(.secondary)
-            }
+    VStack(spacing: 0) {
+      if session.runActive, let active = session.currentRunId {
+        HStack {
+          Label(runId == active ? "進行中の実行を表示しています" : "過去の実行を表示しています。別の実行が進行中です。",
+                systemImage: runId == active ? "play.circle" : "clock.arrow.circlepath")
+          Spacer()
+          if runId != active, runs.contains(where: { $0.status.runId == active }) {
+            Button("進行中の実行を表示") { filter = .all; runId = active }
           }
-          // The selection is optional: the tag must be too, or a click selects nothing.
-          .tag(Optional(r.status.runId))
         }
-        .overlay {
-          if loaded && filtered.isEmpty {
-            ContentUnavailableView(runs.isEmpty ? "実行履歴はありません" : "条件に合う実行はありません", systemImage: "clock")
-          } else if !loaded { ProgressView() }
-        }
+        .font(.callout).padding(8)
+        Divider()
       }
-      .frame(minWidth: 220, idealWidth: 260)
-      VStack(spacing: 0) {
-        if runId == nil {
-          ContentUnavailableView("実行を選んでください", systemImage: "list.bullet.rectangle")
-        } else {
-          HStack {
-            Picker("呼び出し", selection: $invocation) {
-              if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
-              ForEach(invocations, id: \.invocation) { i in
-                Text("#\(i.invocation ?? 0) · \(i.state.label)" + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
-                  .tag(i.invocation)
+      HSplitView {
+        VStack(spacing: 0) {
+          Picker("", selection: $filter) { ForEach(Filter.allCases) { Text($0.title).tag($0) } }
+            .pickerStyle(.segmented).labelsHidden().padding(6)
+          List(filtered, id: \.status.runId, selection: $runId) { r in
+            HStack {
+              Image(systemName: r.status.state.symbol).foregroundStyle(r.status.state.color)
+              VStack(alignment: .leading) {
+                Text(formatMillis(r.status.acceptedAt)).font(.callout)
+                Text("\(r.status.state.label) · 対象 \(r.target.path.joined(separator: "/"))").font(.caption).foregroundStyle(.secondary)
               }
             }
-            .frame(maxWidth: 320)
-            Spacer()
-            Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
-              .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            // The selection is optional: the tag must be too, or a click selects nothing.
+            .tag(Optional(r.status.runId))
           }
-          .padding(6)
-          Divider()
-          switch detail {
-          case .io: ioView
-          case .log:
-            if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
-          case .info: infoView
+          .overlay {
+            if loaded && filtered.isEmpty {
+              ContentUnavailableView(runs.isEmpty ? "実行履歴はありません" : "条件に合う実行はありません", systemImage: "clock")
+            } else if !loaded { ProgressView() }
           }
         }
-        if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
+        .frame(minWidth: 220, idealWidth: 260)
+        VStack(spacing: 0) {
+          if runId == nil {
+            ContentUnavailableView("実行を選んでください", systemImage: "list.bullet.rectangle")
+          } else {
+            HStack {
+              Picker("呼び出し", selection: $invocation) {
+                if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
+                ForEach(invocations, id: \.invocation) { i in
+                  Text("#\(i.invocation ?? 0) · \(i.state.label)" + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
+                    .tag(i.invocation)
+                }
+              }
+              .frame(maxWidth: 320)
+              Spacer()
+              Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            }
+            .padding(6)
+            Divider()
+            switch detail {
+            case .io: ioView
+            case .log:
+              if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
+            case .info: infoView
+            }
+          }
+          if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
+        }
+        .frame(minWidth: 380)
       }
-      .frame(minWidth: 380)
     }
-    .task(id: runId) { await loadInvocations() }
-    .task(id: "\(runId ?? "")#\(invocation ?? 0)") { await loadRecord() }
+    .task(id: DetailRefresh(runId: runId, invocation: nil, execution: ExecutionHistoryRefresh(session: session, card: cardKey))) {
+      await loadInvocations()
+    }
+    .task(id: DetailRefresh(runId: runId, invocation: invocation, execution: ExecutionHistoryRefresh(session: session, card: cardKey))) {
+      await loadRecord()
+    }
   }
 
   private var filtered: [Tsugumi_RPC_RunSummaryT] {
@@ -188,25 +245,40 @@ struct CardExecutionView: View {
   private func loadRuns() async {
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); loaded = true; return }
     do {
-      runs = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
-      if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
+      let page = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
+      guard !Task.isCancelled else { return }
+      runs = page
+      runId = ExecutionHistorySelection.run(runId, available: runs.compactMap { $0.status.runId },
+                                             active: session.runActive ? session.currentRunId : nil)
       error = nil
-    } catch { self.error = String(localized: "履歴を読み込めません: \(String(describing: error))") }
+    } catch {
+      guard !Task.isCancelled else { return }
+      self.error = String(localized: "履歴を読み込めません: \(String(describing: error))")
+    }
     loaded = true
   }
 
   private func loadInvocations() async {
-    // Another run: its own latest call is shown, never the previous run's number.
-    invocation = nil
-    record = nil
-    guard let rpc = session.rpc, let runId else { invocations = []; return }
-    invocations = (try? await rpc.invocations(runId: runId, card: path(cardKey)).records.compactMap { $0 }) ?? []
-    invocation = invocations.last?.invocation
+    guard let rpc = session.rpc, let selectedRun = runId else { invocations = []; return }
+    if invocationsRunId != selectedRun {
+      invocationsRunId = selectedRun
+      invocations = []
+      invocation = nil
+      record = nil
+    }
+    let page = (try? await rpc.invocations(runId: selectedRun, card: path(cardKey)).records.compactMap { $0 }) ?? []
+    guard !Task.isCancelled, runId == selectedRun else { return }
+    invocation = ExecutionHistorySelection.invocation(invocation, previous: invocations.compactMap { $0.invocation },
+                                                       available: page.compactMap { $0.invocation })
+    invocations = page
   }
 
   private func loadRecord() async {
-    guard let rpc = session.rpc, let runId else { record = nil; return }
-    record = try? await rpc.record(runId: runId, card: path(cardKey), invocation: invocation, followLatest: invocation == nil)
+    guard let rpc = session.rpc, let selectedRun = runId else { record = nil; return }
+    let selectedInvocation = invocation
+    let next = try? await rpc.record(runId: selectedRun, card: path(cardKey), invocation: selectedInvocation, followLatest: selectedInvocation == nil)
+    guard !Task.isCancelled, runId == selectedRun, invocation == selectedInvocation else { return }
+    record = next
   }
 }
 
