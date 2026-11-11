@@ -144,6 +144,7 @@ public actor RPCClient {
   private var nextId: UInt64 = 1
   private var closed = false
   private var started = false
+  private var receiveTask: Task<Void, Never>?
   public private(set) var hello: Tsugumi_RPC_HelloResultT?
 
   public init(endpoint: URL) {
@@ -157,8 +158,18 @@ public actor RPCClient {
   public func connect(token: String, clientId: UUID, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
     guard !started, !closed else { throw RPCError.disconnected }
     started = true
-    transport.observe(receive: { [weak self] data in Task { await self?.receiveEvent(data) } },
-                      closed: { [weak self] in Task { await self?.closedByPeer() } })
+    // Native callbacks are ordered. A separate Task for every notification can
+    // reach this actor out of order, creating false sequence gaps in clients.
+    let incoming = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
+    transport.observe(receive: { incoming.continuation.yield($0) },
+                      closed: { incoming.continuation.finish() })
+    receiveTask = Task.detached { [weak self, stream = incoming.stream] in
+      for await data in stream {
+        guard !Task.isCancelled else { break }
+        await self?.receiveEvent(data)
+      }
+      await self?.closedByPeer()
+    }
     try await transport.start()
     let req = Tsugumi_RPC_SessionHelloRequestT()
     req.protocol_ = 1
@@ -175,10 +186,12 @@ public actor RPCClient {
     guard !closed else { return }
     closed = true
     transport.close()
+    receiveTask?.cancel()
+    receiveTask = nil
     notify.finish()
   }
 
-  private func closedByPeer() { closed = true; notify.finish() }
+  private func closedByPeer() { closed = true; receiveTask = nil; notify.finish() }
   public var isClosed: Bool { closed }
 
   public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .seconds(60)) async throws -> R {

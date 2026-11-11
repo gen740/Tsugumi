@@ -430,6 +430,60 @@ import Testing
     #expect(tab.selectedNotes.isEmpty && !tab.hasSelection)
   }
 
+  @Test func publicRPCNotificationsKeepTheirOrderDuringRunBursts() async throws {
+    let dir = try Self.project()
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let rpc = RPCClient(endpoint: daemon.endpoint.url)
+    _ = try await rpc.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    let opened = try await rpc.open(viewId: UUID())
+    let marker = UUID()
+    // A final saved change is the barrier: every run notification before it
+    // must be delivered in order, including when replies arrive concurrently.
+    let received = Task {
+      var sequences: [UInt64] = []
+      for await event in rpc.notifications {
+        sequences.append(event.seq)
+        if let patch = event.payload.value as? Tsugumi_RPC_DocPatchedT,
+           patch.delta.opId == marker.uuidString.lowercased() { return (sequences, true) }
+      }
+      return (sequences, false)
+    }
+    let deadline = Task {
+      do { try await Task.sleep(for: .seconds(30)); received.cancel() } catch {}
+    }
+    defer { deadline.cancel(); received.cancel() }
+    var project = try JSONValue.parse(opened.snapshot.projectJson)
+    let cards = (project["canvas"]?["cards"]?.array ?? []).filter {
+      ["start", "b"].contains($0["id"]?.string ?? "")
+    }
+    project["canvas"]?["cards"] = .array(cards)
+    project["canvas"]?["connections"] = .array([
+      .object([("from", .object([("card", .string("start")), ("port", .string("out"))])),
+               ("to", .object([("card", .string("b")), ("port", .string("in"))]))])
+    ])
+    let saved = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: UUID(), origin: "ui",
+                                   changes: [Change.setProject(project.serialized())])
+    for _ in 0..<20 {
+      let accepted = try await rpc.run(baseRev: saved.rev ?? 0, opId: UUID(), card: ["start"], propagate: true)
+      var status = try await rpc.runStatus(runId: accepted.run.runId)
+      for _ in 0..<200 where status.endedAt == nil {
+        try await Task.sleep(for: .milliseconds(5))
+        status = try await rpc.runStatus(runId: accepted.run.runId)
+      }
+      try #require(status.state == .succeeded)
+    }
+    _ = try await rpc.save(baseRev: saved.rev ?? 0, opId: marker, origin: "ui",
+                            changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
+    let (sequences, reachedMarker) = await received.value
+    await rpc.close()
+    #expect(reachedMarker, "The saved-change barrier must arrive after the run notifications")
+    #expect(sequences.count > 200)
+    #expect(sequences.first == (opened.seq ?? 1) + 1)
+    let outOfOrder = zip(sequences, sequences.dropFirst()).first { $1 != $0 + 1 }
+    #expect(outOfOrder == nil)
+  }
+
   /// A name a Card has had is free again, but its frame and its result stay
   /// behind: a new Card under that name (the next Draft) starts with neither,
   /// also when it is implemented later, and the Card that had them keeps them
