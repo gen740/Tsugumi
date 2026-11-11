@@ -1,0 +1,10 @@
+{
+  "description": "Stationary distribution and the Poisson distribution",
+  "content": "Makes the distribution of molecule counts from the end points of runs simulations after enough time, and overlays the theoretical Poisson distribution. Passes on the mean, variance and Fano factor.",
+  "outputs": [
+    {
+      "name": "stationary",
+      "description": "Mean, variance and Fano factor, with theory and standard errors"
+    }
+  ]
+}

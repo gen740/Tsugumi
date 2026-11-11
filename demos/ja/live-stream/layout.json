@@ -1,0 +1,42 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 60.0,
+      "y": 0.0
+    },
+    "settings": {
+      "x": 0.0,
+      "y": 80.0
+    },
+    "loop": {
+      "x": 80.0,
+      "y": 360.0
+    },
+    "generate": {
+      "x": -20.0,
+      "y": 440.0
+    },
+    "plot": {
+      "x": -20.0,
+      "y": 580.0
+    }
+  },
+  "displays": {
+    "plot": {
+      "x": 240.0,
+      "y": 410.0,
+      "width": 520.0,
+      "height": 260.0
+    }
+  },
+  "notes": [
+    {
+      "id": "n1",
+      "scope": "",
+      "text": "Stream settings の interval_ms・seed・samples と、Live chart の window を変えられます。停止するとストリームは止まり、最後のグラフが残ります。",
+      "x": -520.0,
+      "y": 0.0
+    }
+  ]
+}

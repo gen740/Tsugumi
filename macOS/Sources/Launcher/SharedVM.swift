@@ -65,6 +65,20 @@ public struct VMResources: Sendable, Equatable {
   }
 }
 
+/// How the VM runs x86_64-linux binaries (Cards with "system": "x86_64-linux"):
+/// with Rosetta when it is installed on this Mac, with qemu only when
+/// TSUGUMI_VM_X86=qemu asks for it. The guest's supervisor (vm-system.nix)
+/// registers the one named on the kernel command line (tsugumi.x86=...).
+enum X86Emulation: String {
+  case rosetta, qemu, none
+
+  static var chosen: X86Emulation {
+    if ProcessInfo.processInfo.environment["TSUGUMI_VM_X86"] == "qemu" { return .qemu }
+    // Never installed from here: that is a system dialog.
+    return VZLinuxRosettaDirectoryShare.availability == .installed ? .rosetta : .none
+  }
+}
+
 /// The VM console: the guest writes `console.log` in the VM folder (the
 /// previous boot's is `console.prev.log`); the app's own notes about the VM
 /// go to `launcher.log`. Both are kept in memory, in order, for the console view.
@@ -272,13 +286,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     lock.withLock { _state = .starting(.image) }
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      console.open(console: consoleURL)
-      // One VM per support folder: a second app instance does not get it.
+      // One VM per support folder: a second app instance does not get it (and
+      // leaves the console file of the VM that runs alone).
       let hl = try HostLock(path: directory.appendingPathComponent("vm.lock"))
       do { try hl.lock(wait: false) } catch {
         throw LauncherError.startFailed(reason: "another Tsugumi is using the execution environment", log: "")
       }
       lock.withLock { hostLock = hl }
+      console.open(console: consoleURL)
       setState(.starting(.image))
       let files = try installImage(image)
       setState(.starting(.disk))
@@ -286,7 +301,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       try ensureDisk(historyImage, gib: Self.historyGiB, what: "run history")
       setState(.starting(.boot))
       lock.withLock { _bootCount += 1 }
-      console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version))")
+      console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version)), x86_64-linux: \(X86Emulation.chosen.rawValue)")
       let config = try configuration(files: files, resources: resources)
       try await boot(config)
     } catch {
@@ -394,8 +409,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private func configuration(files: VMImage, resources: VMResources) throws -> VZVirtualMachineConfiguration {
     let c = VZVirtualMachineConfiguration()
     let boot = VZLinuxBootLoader(kernelURL: files.kernel)
+    let x86 = X86Emulation.chosen
     boot.commandLine = ProcessInfo.processInfo.environment["TSUGUMI_VM_CMDLINE"]
-      ?? "console=hvc0 root=/dev/vda rootfstype=erofs ro init=/init loglevel=4 panic=-1"
+      ?? "console=hvc0 root=/dev/vda rootfstype=erofs ro init=/init loglevel=4 panic=-1 tsugumi.x86=\(x86.rawValue)"
     c.bootLoader = boot
     c.platform = VZGenericPlatformConfiguration()
     c.cpuCount = max(VZVirtualMachineConfiguration.minimumAllowedCPUCount,
@@ -419,7 +435,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-\(i)")
       fs.share = VZMultipleDirectoryShare(directories: [:])
       return fs
-    } + [source]
+    } + [source] + (x86 == .rosetta ? [try rosettaShare()] : [])
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
@@ -431,6 +447,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     followConsole(consoleURL, boot: bootCount)
     try c.validate()
     return c
+  }
+
+  /// Rosetta's directory, for the guest to register its binary with binfmt_misc.
+  /// After the slots: setShare finds a slot by its index among these devices.
+  private func rosettaShare() throws -> VZVirtioFileSystemDeviceConfiguration {
+    let fs = VZVirtioFileSystemDeviceConfiguration(tag: "rosetta")
+    fs.share = try VZLinuxRosettaDirectoryShare()
+    return fs
   }
 
   private var _bootCount = 0

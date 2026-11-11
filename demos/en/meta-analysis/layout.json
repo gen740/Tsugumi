@@ -1,0 +1,77 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "trials": {
+      "x": 240,
+      "y": 0
+    },
+    "share": {
+      "x": 900,
+      "y": 0
+    },
+    "pool": {
+      "x": 1160,
+      "y": -560
+    },
+    "funnel": {
+      "x": 1160,
+      "y": 40
+    },
+    "moderator": {
+      "x": 1880,
+      "y": -560
+    },
+    "sensitivity": {
+      "x": 1880,
+      "y": 40
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Meta-analysis: the BCG vaccine and tuberculosis\n\nThe data is `dat.bcg`, bundled with **metafor**: real data from 13 clinical trials of the BCG vaccine against tuberculosis (Colditz et al., *JAMA* 1994;271:698–702).\n\nEach trial's log risk ratio $y_i$ and its variance $v_i$ are pooled with weights $w_i$.\n\n$$\\hat\\mu=\\frac{\\sum_i w_i y_i}{\\sum_i w_i},\\qquad w_i=\\frac{1}{v_i+\\tau^2}$$\n\n$\\tau^2=0$ is the fixed effect; allowing for heterogeneity between trials, $\\tau^2>0$, is random effects. $I^2$ is the share of the total variation taken by the differences between trials.\n\n**moderator** is the known explanation, a meta-regression on the latitude of the trial sites (the further from the equator, the larger the effect). It is an observational association at the level of trials, though, and latitude itself cannot be called the cause.\n\nChange `method` (DL, REML, ...) and `exclude` (trial numbers to leave out) of **pool** and rerun just that Card. **sensitivity** lays out the change when one trial is left out and when the estimator changes.\n\nAn example of statistical methods for old trials, not advice about vaccination.",
+      "x": -40,
+      "y": -640,
+      "width": 760,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "trials": {
+      "x": 60,
+      "y": 130,
+      "width": 760,
+      "height": 400
+    },
+    "pool": {
+      "x": 1120,
+      "y": -430,
+      "width": 680,
+      "height": 440
+    },
+    "funnel": {
+      "x": 1120,
+      "y": 170,
+      "width": 560,
+      "height": 440
+    },
+    "moderator": {
+      "x": 1840,
+      "y": -430,
+      "width": 640,
+      "height": 430
+    },
+    "sensitivity": {
+      "x": 1840,
+      "y": 170,
+      "width": 860,
+      "height": 420
+    }
+  }
+}

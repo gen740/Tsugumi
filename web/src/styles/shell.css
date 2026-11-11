@@ -75,36 +75,18 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 :root[data-theme="dark"] .loading-card { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
 .loading-picture { position: relative; height: 150px; overflow: hidden; }
 .loading-picture .low-poly { position: absolute; inset: 0; width: 100%; height: 100%; }
-.loading-picture .tsugumi-scene { position: absolute; inset: 0; width: 100%; height: 100%; }
 .loading-shade { position: absolute; left: 0; right: 0; bottom: 0; height: 14px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.45)); }
-.loading-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--tsugumi-cream); transition: width 0.3s; }
+.loading-picture canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* the faint workflow behind the bird, fading toward the bottom */
+.loading-picture .loading-backdrop { opacity: 0.5; mask-image: linear-gradient(#000 50%, transparent); }
+/* where the bird stands, for the guide's bird to land on (drawn on the canvas) */
+.loading-picture .tsugumi-bird { position: absolute; pointer-events: none; }
 .loading-text { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 16px 70px; }
-.loading-percent { font-size: 26px; font-weight: 700; }
-.temari { position: absolute; left: 22px; top: 0; pointer-events: none; }
-.temari-spin { animation: temari-sway 3.2s ease-in-out infinite; }
-@keyframes temari-sway { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(14deg); } }
+.loading-percent { font-size: 26px; font-weight: 700; font-family: ui-rounded, system-ui, sans-serif; }
+.loading-spool { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 /* ---- the bird ---- */
 .low-poly { display: block; }
-.tsugumi-scene { display: block; overflow: visible; }
-.tsugumi-bird { transform-box: view-box; transform-origin: 505px 706px; }
-.tsugumi-bird.hopping { animation: tsugumi-hop 5.6s ease-in-out infinite; }
-.tsugumi-shadow { transform-box: view-box; transform-origin: 505px 702px; animation: tsugumi-shadow 5.6s ease-in-out infinite; }
-.tsugumi-thread { animation: tsugumi-thread 3s ease-in-out infinite; transform-box: view-box; transform-origin: 770px 404px; }
-@keyframes tsugumi-hop {
-  0%, 52%, 100% { transform: translateY(0) rotate(0) scaleY(1); }
-  56% { transform: translateY(0) scaleY(0.94); }
-  62% { transform: translateY(-60px) rotate(-3deg) scaleY(1.03); }
-  68% { transform: translateY(0) scaleY(0.95); }
-  72% { transform: translateY(0) scaleY(1); }
-  80% { transform: rotate(6deg); }
-  86% { transform: rotate(0); }
-}
-@keyframes tsugumi-shadow { 0%, 56%, 68%, 100% { transform: scaleX(1); opacity: 1; } 62% { transform: scaleX(0.7); opacity: 0.6; } }
-@keyframes tsugumi-thread { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(4deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .tsugumi-bird.hopping, .tsugumi-shadow, .tsugumi-thread, .temari-spin { animation: none; }
-}
 
 /* ---- problem page ---- */
 .problem-page { flex: 1; background: var(--window-bg); padding: 60px 32px 32px; }
@@ -118,11 +100,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .bottom-panel > .panel-bar { border-bottom: 1px solid var(--separator); }
 .terminal-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .terminal-panel > .panel-bar { border-bottom: 1px solid var(--separator); }
-.terminal { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--text-bg); }
-.terminal-out { flex: 1; overflow: auto; padding: 6px 8px; min-height: 0; }
-.terminal-out pre { white-space: pre-wrap; word-break: break-all; font-family: var(--mono); }
-.terminal-line { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--separator); flex: none; }
-.terminal-input { flex: 1; border: 0; outline: none; background: transparent; color: var(--label); font-family: var(--mono); padding: 2px 0; user-select: text; }
+.terminal { flex: 1; min-height: 0; padding: 4px 0 0 8px; background: var(--text-bg); }
 .stage-log { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .stage-log > .panel-bar { border-bottom: 1px solid var(--separator); }
 .stage-log-scroll { flex: 1; overflow: auto; padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }
@@ -157,8 +135,7 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .home-window { display: flex; height: 100%; min-height: 0; }
 .home-sidebar { position: relative; width: 250px; flex: none; overflow: hidden; color: var(--tsugumi-cream); color-scheme: dark; }
 .home-sidebar-content { position: relative; display: flex; flex-direction: column; gap: 10px; height: 100%; padding-bottom: 12px; }
-.home-scene { height: 150px; margin-top: 30px; }
-.home-scene .tsugumi-scene { width: 100%; height: 100%; }
+.home-scene { position: relative; height: 150px; margin-top: 30px; }
 .home-title { font-size: 28px; font-weight: 700; padding: 0 18px; color: var(--tsugumi-cream); }
 .home-buttons { padding: 0 18px; }
 .home-buttons .btn:not(.btn-prominent) { background: rgba(255, 255, 255, 0.14); color: var(--tsugumi-cream); border-color: rgba(255, 255, 255, 0.2); }
@@ -201,4 +178,11 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .version-tag { background: color-mix(in srgb, #a855f7 16%, transparent); display: inline-flex; gap: 3px; align-items: center; }
 .version-branch { background: color-mix(in srgb, var(--secondary) 18%, transparent); font-family: var(--mono, ui-monospace, monospace); }
 .version-branch.current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.version-tree { position: relative; min-height: 0; }
+.version-hover { position: absolute; right: 12px; width: 308px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; z-index: 5;
+  background: var(--material); backdrop-filter: blur(16px); border: 0.5px solid var(--separator); border-radius: 8px; box-shadow: 0 6px 24px rgb(0 0 0 / 28%); font-size: 12px; line-height: 1.45; }
+.version-map path { fill: color-mix(in srgb, var(--secondary) 22%, transparent); stroke: var(--secondary); stroke-width: 0.75; }
+.version-map path.ground { fill: var(--window-bg); stroke: none; }
+.version-map path.changed { fill: color-mix(in srgb, var(--accent) 45%, transparent); stroke: var(--accent); stroke-width: 1.25; }
+.version-map text { font-size: 8.5px; fill: var(--label); }
 .versions-detail { width: 320px; flex: none; padding: 14px; border-left: 1px solid var(--separator); }

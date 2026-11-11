@@ -1,21 +1,24 @@
 // What a Card may do beyond computing (core/src/permissions.hh): reach the
-// network, run without the sandbox, see folders of this host. The Agent's
+// network, run without the sandbox, see folders of this host, have Nix read a
+// source outside nixpkgs. The Agent's
 // saves that widen these wait for the user, except for the kinds the user
 // allows without asking (settings).
 import { get, J } from '../shared/json'
+import { L } from '../i18n'
 
-export type PermissionKind = 'network' | 'sandbox_off' | 'host_folder_read' | 'host_folder_write'
+export type PermissionKind = 'network' | 'sandbox_off' | 'host_folder_read' | 'host_folder_write' | 'nix_source'
 
 export const PERMISSIONS: { kind: PermissionKind; label: string; icon: string }[] = [
-  { kind: 'network', label: 'ネットワークへのアクセス', icon: 'network' },
-  { kind: 'sandbox_off', label: '隔離（sandbox）なしで実行', icon: 'shield.slash' },
-  { kind: 'host_folder_read', label: 'このマシンのフォルダを読む', icon: 'folder' },
-  { kind: 'host_folder_write', label: 'このマシンのフォルダに書く', icon: 'folder.badge.plus' },
+  { kind: 'network', label: L('ネットワークへのアクセス'), icon: 'network' },
+  { kind: 'sandbox_off', label: L('隔離（sandbox）なしで実行'), icon: 'shield.slash' },
+  { kind: 'host_folder_read', label: L('このマシンのフォルダを読む'), icon: 'folder' },
+  { kind: 'host_folder_write', label: L('このマシンのフォルダに書く'), icon: 'folder.badge.plus' },
+  { kind: 'nix_source', label: L('外部の Nix ソースを読む'), icon: 'shippingbox' },
 ]
 
 export const permissionInfo = (k: PermissionKind) => PERMISSIONS.find((p) => p.kind === k)!
 
-/** One widening a save asks for: "<kind> <card>[ <folder>]". */
+/** One widening a save asks for: "<kind> <card>[ <folder>]" (nix_source: "<kind> <name> <url>#<hash>"). */
 export function parsePermission(raw: string): { raw: string; kind: PermissionKind; card: string; folder?: string } | undefined {
   const [kind, card, ...rest] = raw.split(' ')
   if (!card || !PERMISSIONS.some((p) => p.kind === kind)) return undefined

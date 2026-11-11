@@ -1,0 +1,5 @@
+{
+  "description": "Draw the spectrum",
+  "content": "Histogram, with matplotlib, the energies (eV) of the photons of the same events as bands (events_file in provenance.json) within the same grid (range 300–8000 eV, 20 eV bins, a log vertical axis; range and bin width are parameters). Shade the three bands of bands red, green and blue, with the photons per band in the legend. Mark the remnant's emission lines (Mg 1.35, Si 1.86, S 2.45, Ar 3.12, Ca 3.88, Fe 6.68 keV) to show which element falls in which colour. Show it in the Card's display with plt.show().",
+  "outputs": []
+}

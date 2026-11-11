@@ -1,0 +1,16 @@
+{
+  "description": "Tell the digits apart with a multilayer perceptron",
+  "content": "A neural network with two fully connected hidden layers (two pairs of Linear of width hidden and ReLU, then a Linear to 10). Use torch on the CPU, with torch.set_num_threads(1), torch.use_deterministic_algorithms(True) and a fixed seed. import torch may be at the top of main.py. Adam (lr=1e-3), batches of 64, CrossEntropyLoss. hidden (default 256), epochs (default 15) and seed (default 0) are parameters. Add to the figure a line of the training loss by epoch. data is the path of prepare's npz file: train_images and test_images are 784-dimensional arrays scaled to 0–1, train_labels and test_labels are digits, digest is a fingerprint of the test images. Set OMP_NUM_THREADS=1 at the top of main.py (before the imports) to run on one thread. Measure training and prediction times as differences of time.process_time(). The type of the output result is the same for all seven classifiers, and compare reads it with one type, so _outputs.fbs is, without changing a character, \"namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;\". model is the Card's id, settings a string of the parameters' values, digest the value received as it is, and predictions the predictions for every test image. Show the accuracy, the times and a breakdown of the mistakes (a 10×10 table of true and predicted) in a matplotlib figure. Assert: that the length of predictions equals the number of test images, that every prediction is 0–9, that the accuracy is at least 0.93, that the total number of parameters equals 784·hidden + hidden + hidden·hidden + hidden + 10·hidden + 10, and that the training loss of the last epoch is less than half that of the first. Use numpy, matplotlib and torch.",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare's subset (the path of the npz file)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "Accuracy, CPU time, settings, and predictions for every test image"
+    }
+  ]
+}

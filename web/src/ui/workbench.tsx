@@ -12,13 +12,14 @@ import { canvasFor } from '../model/canvas'
 import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, WorkflowTab } from '../model/workspace'
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
-import { ChatPanel } from './chat'
-import { guide } from '../model/guide'
+import { ChatPanel, PermissionHost } from './chat'
+import { guide, OPEN_PANELS } from '../model/guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
 import { LogTimelinePanel } from './logs'
 import { WorkbenchSidebar } from './sidebar'
+import { L } from '../i18n'
 
 const readWidth = (k: string, fallback: number) => {
   try {
@@ -79,13 +80,21 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   useEffect(() => {
     if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)
   }, [session])
-  // Tsugumi opens a Card's settings to show it, and points into a Card in Card
+  // Tsugumi opens what it shows (a panel under the canvas, the versions, a Card's settings), and points into a Card in Card
   // (or back at a root Card): the canvas shows that workflow.
   useObserve(guide)
   useEffect(() => {
     const r = guide.openRequest
     if (!onSwitchProject || !r) return
     guide.openRequest = undefined
+    const panel = OPEN_PANELS[r]
+    if (panel) {
+      workspace.set('bottomPanel', panel)
+      workspace.set('showBottom', true)
+      return
+    }
+    if (r === 'versions') return app.openWindow(session, { kind: 'versions' })
+    if (!r.startsWith('card:')) return
     const p = r.slice(5)
     const k = session.instance(p) ? p : key([...(tab?.scope ?? []), ...p.split('/')])
     if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
@@ -107,14 +116,14 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
       {workspace.showSidebar && tab && (
         <SidePane side="left" storageKey="tsugumi.sidebar.width" initial={250} min={200} max={380} className="sidebar-pane">
           <div className="sidebar-top">
-            <Button kind="borderless" small iconOnly icon="sidebar.left" help="サイドバーを隠す" onClick={() => workspace.set('showSidebar', false)} />
+            <Button kind="borderless" small iconOnly icon="sidebar.left" help={L('サイドバーを隠す')} onClick={() => workspace.set('showSidebar', false)} />
           </div>
           <WorkbenchSidebar workspace={workspace} session={session} tab={tab} />
         </SidePane>
       )}
       <div className={`workflow-detail${workspace.showSidebar ? '' : ' sidebar-hidden'}`}>
         {!workspace.showSidebar && (
-          <Button kind="borderless" iconOnly icon="sidebar.left" className="sidebar-show material" help="サイドバーを表示" onClick={() => workspace.set('showSidebar', true)} />
+          <Button kind="borderless" iconOnly icon="sidebar.left" className="sidebar-show material" help={L('サイドバーを表示')} onClick={() => workspace.set('showSidebar', true)} />
         )}
         {problem ? (
           // Nothing of the canvas stays behind the problem: it replaces the content.
@@ -138,6 +147,7 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
         </SidePane>
       )}
       <LoadingOverlay content={loadingContent(session)} />
+      {onSwitchProject && <PermissionHost session={session} />}
     </div>
   )
 }
@@ -148,7 +158,7 @@ function TabButton({ t, active, session, workspace }: { t: WorkflowTab; active: 
     <div className={`tab${active ? ' active' : ''}`} role="tab" aria-selected={active} onClick={() => workspace.selectTab(t.id)}>
       <Icon name={t.scope.length === 0 ? 'square.stack.3d.up.fill' : 'square.stack.3d.up'} size={12} />
       <span className="ellipsis">{session.scopeName(t.scope)}</span>
-      <Button kind="borderless" small iconOnly icon="xmark" help="タブを閉じる" onClick={() => workspace.closeTab(t.id)} />
+      <Button kind="borderless" small iconOnly icon="xmark" help={L('タブを閉じる')} onClick={() => workspace.closeTab(t.id)} />
     </div>
   )
 }
@@ -184,12 +194,12 @@ export function loadingContent(session: ProjectSession): LoadingContent | undefi
     case 'stopped':
       return undefined
     case 'reconnecting':
-      return { title: '再接続しています…', message: '未保存の変更は保持しています。', dirty }
+      return { title: L('再接続しています…'), message: L('未保存の変更は保持しています。'), dirty }
     case 'starting':
-      return { title: '起動しています', message: env.message || 'このプロジェクトの tsugumid を起動しています', detail: 'tsugumid', dirty }
+      return { title: L('起動しています'), message: env.message || L('このプロジェクトの tsugumid を起動しています'), fraction: env.fraction, detail: env.stage ?? 'tsugumid', dirty }
     case 'ready':
       if (session.connectionMessage) return undefined
-      return { title: 'プロジェクトを読み込んでいます…', detail: 'project snapshot', dirty }
+      return { title: L('プロジェクトを読み込んでいます…'), detail: 'project snapshot', dirty }
   }
 }
 
@@ -268,15 +278,18 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   let p: Problem
   if (env.state === 'failed') {
     const log = env.log ?? ''
-    p = { icon: 'xmark.octagon.fill', color: 'red', title: '実行環境を起動できませんでした', message: env.message ?? '', recovery: env.recovery || undefined, log, canStop: true, cause: causeIn(log) }
+    p = { icon: 'xmark.octagon.fill', color: 'red', title: L('実行環境を起動できませんでした'), message: env.message ?? '', recovery: env.recovery || undefined, log, canStop: true, cause: causeIn(log) }
     if (p.cause?.includes('cannot open the project')) {
-      p.recovery = 'プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。'
+      p.recovery = L('プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。')
     }
   } else if (env.state === 'stopped') {
-    p = { icon: 'pause.circle.fill', color: 'secondary', title: '実行環境は停止しています', message: 'このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。', log: '', canStop: false }
+    p = { icon: 'pause.circle.fill', color: 'secondary', title: L('実行環境は停止しています'), message: L('このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。'), log: '', canStop: false }
   } else {
-    p = { icon: 'exclamationmark.triangle.fill', color: 'orange', title: 'プロジェクトを読み込めませんでした', message: session.connectionMessage ?? '',
-      recovery: 'tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。', log: '', canStop: true }
+    p = session.connectionFailed
+      ? { icon: 'exclamationmark.triangle.fill', color: 'orange', title: L('実行環境に接続できませんでした'), message: session.connectionMessage ?? '',
+          recovery: L('再試行してください。WSL や SSH 越しに使っているときは、このプロジェクトのポートがブラウザから届くかを確かめてください（Web UI の文書の「SSH 越しに使う」）。'), log: '', canStop: true }
+      : { icon: 'exclamationmark.triangle.fill', color: 'orange', title: L('プロジェクトを読み込めませんでした'), message: session.connectionMessage ?? '',
+          recovery: L('tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。'), log: '', canStop: true }
   }
   return (
     <div className="problem-page scroll">
@@ -289,34 +302,34 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
           </div>
         </div>
         {p.message && (
-          <ProblemSection title="何が起きたか">
+          <ProblemSection title={L('何が起きたか')}>
             <div className="selectable wrap-pre">{p.message}</div>
             {p.cause && (
               <div className="col gap4">
-                <div className="caption secondary">原因（ログより）</div>
+                <div className="caption secondary">{L('原因（ログより）')}</div>
                 <div className="callout mono selectable wrap-pre">{p.cause}</div>
               </div>
             )}
           </ProblemSection>
         )}
-        {p.recovery && <ProblemSection title="どうすればよいか"><div className="selectable wrap-pre">{p.recovery}</div></ProblemSection>}
-        {session.dirty && <span className="label callout" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle" />保存できていない変更は保持しています（起動すると保存します）</span>}
+        {p.recovery && <ProblemSection title={L('どうすればよいか')}><div className="selectable wrap-pre">{p.recovery}</div></ProblemSection>}
+        {session.dirty && <span className="label callout" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle" />{L('保存できていない変更は保持しています（起動すると保存します）')}</span>}
         <div className="row gap8 center">
-          <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? '再試行' : '起動'}</Button>
-          {p.canStop && <Button onClick={() => void session.stopEnvironment()}>環境を停止</Button>}
+          <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? L('再試行') : L('起動')}</Button>
+          {p.canStop && <Button onClick={() => void session.stopEnvironment()}>{L('環境を停止')}</Button>}
           <span className="spacer" />
-          {onSwitchProject && <Button onClick={onSwitchProject}>別のプロジェクトを開く…</Button>}
+          {onSwitchProject && <Button onClick={onSwitchProject}>{L('別のプロジェクトを開く…')}</Button>}
         </div>
         {p.log && (
           <div className="col gap6">
             <button type="button" className="disclosure-head headline callout" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>
-              <Icon name={showLog ? 'chevron.down' : 'chevron.right'} size={9} />詳しいログ
+              <Icon name={showLog ? 'chevron.down' : 'chevron.right'} size={9} />{L('詳しいログ')}
             </button>
             {showLog && (
               <>
                 <pre className="problem-log selectable">{p.log.slice(-20000)}</pre>
                 <div className="row end">
-                  <Button small onClick={() => { void copyText(p.log); setCopied(true) }}>{copied ? 'コピーしました' : 'ログをコピー'}</Button>
+                  <Button small onClick={() => { void copyText(p.log); setCopied(true) }}>{copied ? L('コピーしました') : L('ログをコピー')}</Button>
                 </div>
               </>
             )}
@@ -342,10 +355,10 @@ const PANEL_SHORTCUT: Record<BottomPanel, ShortcutAction> = { log: 'toggleLog', 
 
 /** A status bar control that looks pressable: a light background, stronger
  *  on hover and when pressed (plain status texts have none). */
-const StatusButton = ({ selected, help, onClick, children, label, buttonRef }: {
-  selected?: boolean; help?: string; onClick: () => void; children: ReactNode; label?: string; buttonRef?: React.Ref<HTMLButtonElement>
+const StatusButton = ({ selected, help, onClick, children, label, buttonRef, guide }: {
+  selected?: boolean; help?: string; onClick: () => void; children: ReactNode; label?: string; buttonRef?: React.Ref<HTMLButtonElement>; guide?: string
 }) => (
-  <button ref={buttonRef} type="button" className={`status-button${selected ? ' selected' : ''}`} title={help} aria-label={label} aria-pressed={selected}
+  <button ref={buttonRef} type="button" className={`status-button${selected ? ' selected' : ''}`} title={help} aria-label={label} aria-pressed={selected} data-guide={guide}
     onClick={(e) => { e.stopPropagation(); onClick() }}>
     {children}
   </button>
@@ -378,42 +391,42 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           )}
         </span>
         <span className="vdivider sb-not-min" />
-        <StatusButton buttonRef={syncRef} help="保存・同期の詳細" onClick={() => setShowSync(!showSync)}>
-          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>保存済み</span></>}
-          {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">実行が終わったら保存します</span><span className="sb-short">実行後に保存</span></>}
-          {sync.kind === 'saving' && <><Spinner small /><span>保存中…</span></>}
-          {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>同期できません</span></>}
-          {sync.kind === 'offline' && <><Icon name="icloud.slash" className="secondary" /><span>未接続</span></>}
+        <StatusButton buttonRef={syncRef} help={L('保存・同期の詳細')} guide="save" onClick={() => setShowSync(!showSync)}>
+          {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>{L('保存済み')}</span></>}
+          {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">{L('実行が終わったら保存します')}</span><span className="sb-short">{L('実行後に保存')}</span></>}
+          {sync.kind === 'saving' && <><Spinner small /><span>{L('保存中…')}</span></>}
+          {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>{L('同期できません')}</span></>}
+          {sync.kind === 'offline' && <><Icon name="icloud.slash" className="secondary" /><span>{L('未接続')}</span></>}
         </StatusButton>
         {/* The saved revision; the project's versions (git) open from it. */}
         <span className="sb-full">
-          <StatusButton label="版の履歴" help={`版の履歴を開く（確定 revision ${String(session.rev)}）`} onClick={() => app.openWindow(session, { kind: 'versions' })}>
+          <StatusButton label={L('版の履歴')} help={L('版の履歴を開く（確定 revision {0}）', String(session.rev))} onClick={() => app.openWindow(session, { kind: 'versions' })}>
             <Icon name="point.3.connected.trianglepath.dotted" /><span className="mono-digits">rev {String(session.rev)}</span>
           </StatusButton>
         </span>
         <Popover open={showSync} onClose={() => setShowSync(false)} anchor={syncRef} width={440}>
           <div className="popover-body">
-            <div className="headline">保存・同期</div>
-            <Value label="確定 revision" value={String(session.rev)} />
-            <Value label="実行 revision" value={String(session.executionRev)} />
+            <div className="headline">{L('保存・同期')}</div>
+            <Value label={L('確定 revision')} value={String(session.rev)} />
+            <Value label={L('実行 revision')} value={String(session.executionRev)} />
             {sync.kind === 'failed' && <div className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{sync.message}</div>}
-            <div className="callout secondary">変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。</div>
+            <div className="callout secondary">{L('変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。')}</div>
             <div className="row gap8 wrap">
               {session.saveError !== undefined && (
                 <>
-                  <Button disabled={!session.connected} onClick={() => void session.save()}>もう一度保存</Button>
-                  <Button kind="destructive" onClick={() => setConfirmDiscard(true)}>変更を破棄…</Button>
+                  <Button disabled={!session.connected} onClick={() => void session.save()}>{L('もう一度保存')}</Button>
+                  <Button kind="destructive" onClick={() => setConfirmDiscard(true)}>{L('変更を破棄…')}</Button>
                 </>
               )}
-              <Button disabled={!session.connected} help="Tsugumi の外で編集されたファイルを取り込みます" onClick={() => void session.reloadExternal()}>外部の変更を再読込</Button>
-              <Button icon="point.3.connected.trianglepath.dotted" help="実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます"
-                onClick={() => { setShowSync(false); app.openWindow(session, { kind: 'versions' }) }}>版の履歴…</Button>
+              <Button disabled={!session.connected} help={L('Tsugumi の外で編集されたファイルを取り込みます')} onClick={() => void session.reloadExternal()}>{L('外部の変更を再読込')}</Button>
+              <Button icon="point.3.connected.trianglepath.dotted" help={L('実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます')}
+                onClick={() => { setShowSync(false); app.openWindow(session, { kind: 'versions' }) }}>{L('版の履歴…')}</Button>
             </div>
           </div>
         </Popover>
         <span className="vdivider sb-full" />
         <span className="row center gap8 sb-full nowrap">
-          <StatusButton buttonRef={issueRef} help="問題一覧" onClick={() => setShowIssues(!showIssues)}>
+          <StatusButton buttonRef={issueRef} help={L('問題一覧')} onClick={() => setShowIssues(!showIssues)}>
             <span className="label" style={{ color: errors ? 'var(--red)' : 'var(--secondary)' }}><Icon name="xmark.octagon" />{errors}</span>
             <span className="label" style={{ color: warnings ? 'var(--yellow)' : 'var(--secondary)' }}><Icon name="exclamationmark.triangle" />{warnings}</span>
           </StatusButton>
@@ -425,14 +438,14 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         {session.notice && (
           <span className="row center gap4 sb-full min0">
             <span className="label secondary ellipsis notice" title={session.notice}><Icon name="info.circle" /><span className="ellipsis">{session.notice}</span></span>
-            <Button kind="borderless" small iconOnly icon="xmark" help="閉じる" onClick={() => { session.notice = undefined; session.changed() }} />
+            <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる')} onClick={() => { session.notice = undefined; session.changed() }} />
           </span>
         )}
         <span className="row gap2 nowrap">
           {BOTTOM_PANELS.map((p) => {
             const open = workspace.showBottom && workspace.bottomPanel === p
             return (
-              <span key={p} data-guide={p === 'log' ? 'logs' : p}><StatusButton selected={open} label={BOTTOM_TITLES[p]} help={`${BOTTOM_TITLES[p]}（${prefs.label(PANEL_SHORTCUT[p])}）`} onClick={() => workspace.togglePanel(p)}>
+              <span key={p} data-guide={p === 'log' ? 'logs' : p}><StatusButton selected={open} label={BOTTOM_TITLES[p]} help={L('{0}（{1}）', BOTTOM_TITLES[p], prefs.label(PANEL_SHORTCUT[p]))} onClick={() => workspace.togglePanel(p)}>
                 <Icon name={BOTTOM_ICONS[p]} />
               </StatusButton></span>
             )
@@ -440,8 +453,8 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         </span>
       </div>
       {confirmDiscard && (
-        <Confirm title="保存できない変更を破棄して、保存済みの内容に戻しますか？" message="破棄した変更は取り消せません。"
-          confirm="変更を破棄" onCancel={() => setConfirmDiscard(false)} onConfirm={() => session.discardDraft()} />
+        <Confirm title={L('保存できない変更を破棄して、保存済みの内容に戻しますか？')} message={L('破棄した変更は取り消せません。')}
+          confirm={L('変更を破棄')} onCancel={() => setConfirmDiscard(false)} onConfirm={() => session.discardDraft()} />
       )}
     </div>
   )
@@ -459,7 +472,7 @@ export function IssueList({ workspace, session, tab, onDone }: { workspace: Work
   for (const d of session.diagnostics) {
     issues.push({ id: d.id, error: d.error, title: d.message, detail: [d.card?.join('/'), d.path, d.code].filter(Boolean).join(' · '), card: d.card, run: false })
   }
-  if (!issues.length) return <Empty title="問題はありません" icon="checkmark.seal" />
+  if (!issues.length) return <Empty title={L('問題はありません')} icon="checkmark.seal" />
   const reveal = (card: string[]) => {
     tab.enter(card.slice(0, -1))
     tab.setSelection([key(card)])
@@ -477,8 +490,8 @@ export function IssueList({ workspace, session, tab, onDone }: { workspace: Work
           </div>
           {i.card && (
             <>
-              <Button kind="borderless" small onClick={() => reveal(i.card!)}>表示</Button>
-              {i.run && <Button kind="borderless" small onClick={() => { workspace.showLog(key(i.card!)); onDone?.() }}>ログ</Button>}
+              <Button kind="borderless" small onClick={() => reveal(i.card!)}>{L('表示')}</Button>
+              {i.run && <Button kind="borderless" small onClick={() => { workspace.showLog(key(i.card!)); onDone?.() }}>{L('ログ')}</Button>}
             </>
           )}
         </div>

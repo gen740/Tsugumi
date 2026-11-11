@@ -9,6 +9,8 @@ struct DemoEntry: Identifiable, Hashable {
   let description: String
   let url: URL
   var tags: [String] = []
+  /// The field the guide lists it under (an implemented demo; nil: a Draft).
+  var field: String?
 }
 
 struct RecentProject: Codable, Identifiable, Hashable {
@@ -30,8 +32,10 @@ final class AppModel {
   private(set) var recents: [RecentProject] = []
   private(set) var sessions: [String: ProjectSession] = [:]
   var error: String?
-  /// "New project" asked from the menu: Home opens its sheet.
-  var requestNewProject = false
+  /// The main windows there are, each with its project or Home (MainWindowRouting.swift).
+  var mainWindows: [Workspace] = []
+  /// What the next new main windows do first.
+  @ObservationIgnored var pendingWindowIntents: [MainWindowIntent] = []
   let demosRoot: URL?
   private(set) var setup: EnvironmentManager.SetupStatus?
   private(set) var checkingSetup = false
@@ -68,11 +72,16 @@ final class AppModel {
   /// Chats already created (opening Settings never creates new ones).
   var openChats: [ChatController] { Array(chats.values) }
 
-  /// One chat per project, shared by its panel and its detached window.
+  /// One chat per project, shared by its panel and its detached window, on the
+  /// session open now: a view leaving a closed session (drawn once more) never
+  /// keeps the project's chat on it, where its tools have no connection.
   func chat(for s: ProjectSession) -> ChatController {
-    if let c = chats[s.identity.id] { return c }
-    let c = ChatController(session: s)
-    chats[s.identity.id] = c
+    let id = s.identity.id
+    let current = sessions[id] ?? s
+    if let c = chats[id], c.session === current { return c }
+    chats[id]?.cancel()
+    let c = ChatController(session: current)
+    chats[id] = c
     return c
   }
 
@@ -85,7 +94,9 @@ final class AppModel {
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
     environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
-    demosRoot = bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos()
+    // The demos in the app's language (demos/ja, demos/en: each a set of its own).
+    demosRoot = (bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos())?
+      .appendingPathComponent(AppPreferences.Language.running.rawValue, isDirectory: true)
     loadDemos()
     loadRecents()
   }
@@ -96,7 +107,7 @@ final class AppModel {
     var dir = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { dir.deleteLastPathComponent() }
     let candidate = dir.appendingPathComponent("demos")
-    return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("index.json").path) ? candidate : nil
+    return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("ja/index.json").path) ? candidate : nil
     #else
     return nil  // a release build has its demos in the bundle only
     #endif
@@ -109,7 +120,7 @@ final class AppModel {
     demos = list.compactMap { d in
       guard let id = d["id"] as? String, let title = d["title"] as? String, let p = d["path"] as? String else { return nil }
       return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: root.appendingPathComponent(p),
-                       tags: d["tags"] as? [String] ?? [])
+                       tags: d["tags"] as? [String] ?? [], field: (d["field"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
   }
 
@@ -148,6 +159,9 @@ final class AppModel {
     holders[id, default: 1] -= 1
     guard holders[id] ?? 0 <= 0 else { return }
     holders[id] = nil
+    // Edits that could not be saved stay open: opening it again finds them, quitting asks.
+    guard !s.dirty else { return }
+    if let c = chats[id] { GuideController.shared.chatClosed(c) }
     chats[id]?.cancel()
     chats[id] = nil
     sessions[id] = nil

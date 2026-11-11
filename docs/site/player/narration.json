@@ -1,354 +1,356 @@
 {
   "report": {
-    "intro": "seed から売上表を作り、地域ごとに集計してレポートにするデモです。▶ 実行 で、実際に動かしたときの順に Card が進みます。",
+    "intro": "A demo that makes a sales table from a seed and aggregates it by region into a report. Press ▶ Run and the Cards move in the order they did when it really ran.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "seed 42・500 行・見出しという設定を流します。",
-      "share": "同じ設定を generate と render に配ります。",
-      "generate": "seed の乱数で、地域・商品・数量・単価の CSV を 500 行書きます。同じ seed なら同じ CSV になります。",
-      "aggregate": "地域ごとに売上と数量を合計します。",
-      "render": "集計を report.md と summary.json に書き、レポートを表示します。",
-      "archive": "中の子 Workflow が、レポートのフォルダを複製して保管します。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the settings: seed 42, 500 rows and a heading.",
+      "share": "Hands the same settings to generate and render.",
+      "generate": "Writes 500 rows of region, product, quantity and unit price as CSV, with random numbers from the seed. The same seed gives the same CSV.",
+      "aggregate": "Totals sales and quantity per region.",
+      "render": "Writes the aggregate to report.md and summary.json and shows the report.",
+      "archive": "The child Workflow inside duplicates the report's folder and files it away."
     },
-    "finale": "レポートは成果物として残りました。どの Card が何を受け取り、何を出したかも記録に残っています。"
+    "finale": "The report was kept as an artifact. What each Card received and output is in the record too."
   },
   "collatz": {
-    "intro": "同じコラッツの反復を C++・Python・Julia・R で別々に実装し、4 つの数列が一致するかを確かめるデモです。",
+    "intro": "A demo that implements the same Collatz iteration separately in C++, Python, Julia and R, and checks that the four sequences agree.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "initial": "初期値 27 を流します。",
-      "both": "同じ値を C++・Python・Julia・R の 4 つの側に配ります。",
-      "collatz-cpp": "中の Workflow が、偶数なら半分、奇数なら 3 倍して 1 を足す反復を、1 に着くまで線の上で回します。",
-      "collatz-py": "Python 側でも同じ形の Workflow が同じ反復を回します。",
-      "collatz-jl": "Julia 側も同じ形です。呼び出しごとに別のプロセスで動くので、ここまでの数列をメッセージに載せて次へ渡します。",
-      "collatz-r": "R 側も同じ形です。R は 2 の 53 乗未満の整数だけを正確に扱えるので、それを超える値は黙って丸めずに失敗します。",
-      "compare": "4 つの数列が完全に一致することを確かめます。",
-      "record": "数列を collatz.csv に書き、成果物として残します。"
+      "start": "The run begins at the start Card.",
+      "initial": "Sends the starting value 27.",
+      "both": "Hands the same value to the four sides: C++, Python, Julia and R.",
+      "collatz-cpp": "The Workflow inside runs the iteration on its wires, halving even numbers and tripling odd ones plus 1, until it reaches 1.",
+      "collatz-py": "On the Python side, a Workflow of the same shape runs the same iteration.",
+      "collatz-jl": "The Julia side has the same shape. It runs in a separate process per invocation, so it carries the sequence so far in the message.",
+      "collatz-r": "The R side has the same shape. R handles integers exactly only below 2 to the 53rd, so beyond that it fails rather than round silently.",
+      "compare": "Checks that the four sequences agree exactly.",
+      "record": "Writes the sequence to collatz.csv and keeps it as an artifact."
     },
-    "finale": "27 は 111 手で 1 に着き、途中の最大値は 9232 でした。2 つの実装の数列は一致しています。"
+    "finale": "27 reached 1 in 111 steps, with a maximum of 9232 on the way. The implementations' sequences agree."
   },
   "live-stream": {
-    "intro": "100 ms ごとにランダムウォークの値を 1 つ作り、折れ線でリアルタイムに描くデモです。",
+    "intro": "A demo that makes one value of a random walk every 100 ms and draws it as a line chart in real time.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "seed・個数・間隔と、最初の状態を流します。",
-      "generate": "1 歩進めて値を plot へ送り、次の状態を自分の入力へ戻します。この線のループが、決まった個数まで回ります。",
-      "loop": "最初の状態と、generate から戻る次の状態を合流させます。",
-      "plot": "直近の値とその平均を折れ線に描きます。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the seed, the count, the interval and the first state.",
+      "generate": "Takes one step, sends the value to plot, and returns the next state to its own input. This loop of wires goes round until the set count.",
+      "loop": "Merges the first state with the next state coming back from generate.",
+      "plot": "Draws the latest values and their mean as a line chart."
     },
-    "finale": "決まった個数で次の状態が出なくなり、流れが終わりました。アプリでは途中で停止でき、そこまでのグラフが残ります。"
+    "finale": "After the set number of values, no next state came out and the stream ended. In the app you can stop it partway, and the chart up to there stays."
   },
   "plots": {
-    "intro": "ランダムウォークを、ほかの場所で書くのと同じ matplotlib・Plotly・Altair のコードで図にするデモです。Tsugumi 専用の描画呼び出しは使っていません。",
+    "intro": "A demo that plots random walks with the same matplotlib, Plotly and Altair code you would write anywhere else. No Tsugumi-specific drawing calls are used.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "seed・本数・歩数を流します。",
-      "simulate": "numpy で ±1 のランダムウォークを作ります。",
-      "share": "同じ軌跡を 4 つの図に配ります。",
-      "summary": "4 つの Card が、同じ軌跡からそれぞれの図を描きます。plt.show()、FuncAnimation、fig.show()、chart.show() がそのまま Card の表示になります。",
-      "diffusion": "分布が √t で広がる様子を、FuncAnimation で描きます。",
-      "explore": "各ウォーカーの最終位置と、最も遠くまで行った距離を Plotly の散布図にします。",
-      "spread": "平均二乗距離が t に比例して増える様子を、Altair で理論値と並べて描きます。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the seed, the number of walkers and the number of steps.",
+      "simulate": "Makes ±1 random walks with numpy.",
+      "share": "Hands the same walks to the four figures.",
+      "summary": "Four Cards each draw their figure from the same walks. plt.show(), FuncAnimation, fig.show() and chart.show() become the Card's display as they are.",
+      "diffusion": "Draws with FuncAnimation how the distribution spreads as √t.",
+      "explore": "Makes a Plotly scatter plot of each walker's final position and farthest distance.",
+      "spread": "Draws with Altair the mean squared distance growing in proportion to t, next to the theory."
     },
-    "finale": "4 つの図ができました。アプリでは、アニメーションが動き、Plotly と Altair の図はズームやホバーができます。ここでは同じ値を簡単に描いています。"
+    "finale": "Four figures were made. In the app the animation moves, and the Plotly and Altair figures can be zoomed and hovered. Here the same values are drawn simply."
   },
   "casa": {
-    "intro": "超新星残骸カシオペヤ座 A の X 線観測を Nix で固定して取得し、3 つのエネルギー帯に分けて RGB 画像にするデモです。",
+    "intro": "A demo that pins an X-ray observation of the supernova remnant Cassiopeia A and the analysis tool CIAO with Nix, and splits the photons into three energy bands for an RGB image.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "観測ファイルを hash で固定して使います。ダウンロードは最初の 1 回だけで、実行中はネットワークを使いません。",
-      "bands": "光子を 3 つのエネルギー帯に分け、Cas A の中心に合わせた格子で数えます。",
-      "share": "帯域のディレクトリを rgb と spectrum に配ります。",
-      "rgb": "rgb が 3 帯域を R・G・B に割り当てて画像を作り、spectrum が同じ光子のエネルギーのスペクトルを描きます。",
-      "spectrum": "どの元素の輝線がどの色に入ったかを、スペクトルで確かめます。"
+      "start": "The run begins at the start Card.",
+      "begin": "Starts preparing the analysis tool and the observation at the same time.",
+      "ciao": "Builds the analysis tool CIAO with Nix, pinned by the hash of its source. The build happens only the first time.",
+      "load": "Uses the observation file pinned by hash. The download happens only the first time; no network while running.",
+      "bands": "With CIAO's dmcopy, splits the photons into three energy bands and counts them on a grid centred on Cas A.",
+      "share": "Hands the bands' directory to rgb and spectrum.",
+      "rgb": "rgb assigns the three bands to R, G and B for an image, and spectrum draws the energy spectrum of the same photons.",
+      "spectrum": "The spectrum shows which element's lines fell in which colour."
     },
-    "finale": "RGB 画像とスペクトルができました。アプリでは帯域や伸長を変えて、その Card だけを実行し直せます。"
+    "finale": "The RGB image and the spectrum are done. In the app you can change the bands or the stretch and rerun just that Card."
   },
   "gw150914": {
-    "intro": "GWOSC の公開データから、重力波イベント GW150914 の波形を取り出すデモです。",
+    "intro": "A demo that extracts the waveform of the gravitational-wave event GW150914 from GWOSC's public data.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "H1・L1 のひずみデータを取得し、大きさと SHA-256 を表示します。",
-      "whiten": "白色化してバンドパスを掛け、イベント前後の波形を描きます。",
-      "chirp": "L1 をずらして H1 と重ね、スペクトログラムでチャープを見せます。"
+      "start": "The run begins at the start Card.",
+      "load": "Fetches the H1 and L1 strain data and shows their sizes and SHA-256.",
+      "whiten": "Whitens and band-passes them, and draws the waveform around the event.",
+      "chirp": "Shifts L1 to overlay H1, and shows the chirp in a spectrogram."
     },
-    "finale": "アプリでは通過帯域を変えて、取得し直さずに解析の Card だけを実行し直せます。"
+    "finale": "In the app you can change the pass band and rerun only the analysis Cards, without fetching again."
   },
   "protein-6lu7": {
-    "intro": "RCSB PDB の 6LU7（SARS-CoV-2 メインプロテアーゼと阻害剤 N3）の構造から、結合ポケットを調べるデモです。",
+    "intro": "A demo that examines the binding pocket in the structure of 6LU7 (the SARS-CoV-2 main protease with the inhibitor N3) from RCSB PDB.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "PDB のファイルを取得し、大きさと SHA-256 を表示します。",
-      "structure": "Cα 原子と阻害剤の座標を取り出し、3D 点群で表示します。",
-      "pocket": "阻害剤の近くの残基を表にし、コンタクトマップに印を付けます。"
+      "start": "The run begins at the start Card.",
+      "load": "Fetches the PDB file and shows its size and SHA-256.",
+      "structure": "Takes out the coordinates of the Cα atoms and the inhibitor and shows them as a 3D point cloud.",
+      "pocket": "Tables the residues near the inhibitor and marks them on a contact map."
     },
-    "finale": "アプリでは cutoff を変えて、取得し直さずに pocket だけを実行し直せます。"
+    "finale": "In the app you can change cutoff and rerun only pocket, without fetching again."
   },
   "exoplanet-transit": {
-    "intro": "MAST の Kepler-6 のライトカーブから、系外惑星のトランジットを見つけるデモです。",
+    "intro": "A demo that finds an exoplanet's transit in MAST's light curve of Kepler-6.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "ライトカーブの FITS を取得し、大きさと SHA-256 を表示します。",
-      "detrend": "トレンドを除き、Box Least Squares で周期を探します。",
-      "fold": "周期で位相を折り畳み、減光の深さから惑星半径比を求めます。"
+      "start": "The run begins at the start Card.",
+      "load": "Fetches the light curve's FITS and shows its size and SHA-256.",
+      "detrend": "Removes the trend and searches for the period with Box Least Squares.",
+      "fold": "Folds the phase by the period and finds the planet-to-star radius ratio from the depth of the dip."
     },
-    "finale": "アプリでは window_days を変えて、取得し直さずに解析の Card だけを実行し直せます。"
+    "finale": "In the app you can change window_days and rerun only the analysis Cards, without fetching again."
   },
   "seismic-trench": {
-    "intro": "USGS の震源カタログから、日本海溝の断面と b 値を求めるデモです。",
+    "intro": "A demo that finds a section of the Japan Trench and the b-value from USGS's earthquake catalogue.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "震源の CSV を取得し、大きさと SHA-256 を表示します。",
-      "section": "緯度帯を切り出し、震央の地図と経度–深さの断面を描きます。",
-      "b_value": "累積頻度を描き、最尤法で Gutenberg–Richter 則の b 値を求めます。"
+      "start": "The run begins at the start Card.",
+      "load": "Fetches the hypocentres' CSV and shows its size and SHA-256.",
+      "section": "Cuts out a band of latitude and draws a map of epicentres and a longitude–depth section.",
+      "b_value": "Plots the cumulative frequency and finds the b-value of the Gutenberg–Richter law by maximum likelihood."
     },
-    "finale": "アプリでは緯度帯や mc を変えて、取得し直さずに解析の Card だけを実行し直せます。"
+    "finale": "In the app you can change the band of latitude or mc and rerun only the analysis Cards, without fetching again."
   },
   "card-guide": {
-    "intro": "「Card を手で書く」の章で作る、いちばん小さな Workflow です。",
+    "intro": "The smallest Workflow, made in the chapter on writing Cards by hand.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "Canvas で書き換えられる数 21 を流します。",
-      "multiply": "受け取った数に factor を掛け、結果を出して Card に表示します。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the number 21, which you can edit on the Canvas.",
+      "multiply": "Multiplies the number it receives by factor, outputs the result and shows it on the Card."
     },
-    "finale": "multiply の表示に結果が出ました。入力も出力も記録に残り、factor を変えて multiply だけを実行し直せます。"
+    "finale": "The result appeared in multiply's display. Inputs and outputs are in the record, and you can change factor and rerun only multiply."
   },
   "draft": {
-    "intro": "Draft は、何を受け取り、何をして、何を渡すかを文章で書いた Card です。コードはまだありません。アプリの「Card を生成」で、Agent がこの文章からコードを書き、実行して確かめます。"
+    "intro": "A Draft is a Card that says in words what it receives, what it does and what it passes on. It has no code yet. With \"Generate Cards\" in the app, the Agent writes code from these words, runs it and checks."
   },
   "dynamics-draft": {
-    "intro": "互いに依存しない 6 つの Draft です。アプリの「Card を生成」で、Agent が helper に手分けさせて同時に実装します。"
+    "intro": "Six Drafts that depend on no other. With \"Generate Cards\" in the app, the Agent splits them among helpers and implements them at the same time."
   },
   "mnist-classifiers-draft": {
-    "intro": "データの Card までは実装済みで、7 つの分類器と比較が Draft です。アプリの「Card を生成」で、Agent が helper に 7 つの分類器を同時に実装させ、そのあと比較を書きます。"
+    "intro": "Implemented up to the data Cards; the seven classifiers and the comparison are Drafts. With \"Generate Cards\" in the app, the Agent has helpers implement the seven classifiers at the same time, then writes the comparison."
   },
   "mnist-classifiers": {
-    "intro": "本物の MNIST を 7 つの分類器に同時に流して、正解率と時間を比べるデモです。分類器ごとに Nix の環境が分かれています。",
+    "intro": "A demo that feeds the real MNIST to seven classifiers at once and compares accuracy and time. Each classifier has its own Nix environment.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "MNIST のファイルを Nix のハッシュで固定して読みます。実行中にネットワークは使いません。",
-      "prepare": "数字ごとの割合を保って部分データを取り、画素を揃えます。",
-      "share": "7 つの分類器と比較の Card に同じデータを渡します。",
-      "knn": "7 つの分岐が同時に動きます。k 近傍法は、間違えた数字とその近傍を表示します。",
-      "logistic": "ロジスティック回帰です。数字ごとの重みを画像で表示します。",
-      "svm": "RBF カーネルの SVM です。サポートベクターの数を表示します。",
-      "forest": "ランダムフォレストです。効いた画素を画像で表示します。",
-      "boosting": "勾配ブースティング（xgboost）です。回数ごとの誤り率を表示します。",
-      "mlp": "全結合のネット（torch）です。損失の推移を表示します。",
-      "cnn": "小さな畳み込みネット（torch）です。1 層目が取り出したものを表示します。",
-      "compare": "全部の分岐を待ち、正解率を予測から計算し直して照合し、順位表を作ります。",
-      "views": "比較の結果を 3 つの図に渡します。",
-      "tradeoff": "正解率と時間の関係を Plotly の図にします。",
-      "recall": "モデルと数字ごとの再現率を表にします。",
-      "hard": "多くのモデルが間違えた画像を並べます。"
+      "start": "The run begins at the start Card.",
+      "load": "Reads the MNIST files pinned by their Nix hash. No network while running.",
+      "prepare": "Takes a subset keeping the share of each digit, and scales the pixels.",
+      "share": "Hands the same data to the seven classifiers and the comparison Card.",
+      "knn": "The seven branches run at the same time. k-nearest neighbours shows the digits it got wrong and their neighbours.",
+      "logistic": "Logistic regression. Shows each digit's weights as an image.",
+      "svm": "An SVM with an RBF kernel. Shows the number of support vectors.",
+      "forest": "A random forest. Shows the pixels that mattered as an image.",
+      "boosting": "Gradient boosting (xgboost). Shows the error rate by round.",
+      "mlp": "A fully connected network (torch). Shows how the loss went.",
+      "cnn": "A small convolutional network (torch). Shows what the first layer picks out.",
+      "compare": "Waits for every branch, recomputes the accuracies from the predictions to cross-check, and makes a ranking.",
+      "views": "Hands the comparison's result to three figures.",
+      "tradeoff": "Plots accuracy against time with Plotly.",
+      "recall": "Tables recall by model and digit.",
+      "hard": "Lays out the images many models got wrong."
     },
-    "finale": "7 つの結果が同じ基準で並びました。アプリでは 1 つの分類器の設定を変えて、その分岐だけを実行し直せます。"
+    "finale": "The seven results are lined up on the same footing. In the app you can change one classifier's settings and rerun just that branch."
   },
   "newton": {
-    "intro": "z³ − 1 = 0 を複素平面の Newton 法で解き、初期値が行き先と収束の速さをどう決めるかを見るデモです。",
+    "intro": "A demo that solves z³ − 1 = 0 by Newton's method on the complex plane, to see how the starting point decides where it goes and how fast.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "多項式の係数や減衰係数を流します。",
-      "roots": "Newton 法を使わずに、固有値から根と重複度を求めます。",
-      "share": "問題を 3 つの Card に配ります。",
-      "orbits": "初期値ごとの誤差の減り方を描きます。",
-      "order": "誤差の列から収束の次数を見積もり、理論値と並べます。",
-      "basins": "格子の全点を初期値にして、どの根に着くかの地図を描きます。",
-      "trouble": "2 次収束を失う場合と、収束しない場合を並べます。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the polynomial's coefficients and the damping factor.",
+      "roots": "Finds the roots and their multiplicities from eigenvalues, without Newton's method.",
+      "share": "Hands the problem to three Cards.",
+      "orbits": "Draws how the error falls for each starting point.",
+      "order": "Estimates the order of convergence from the errors and sets it next to the theory.",
+      "basins": "Starts from every point of a grid and maps which root each reaches.",
+      "trouble": "Lays out cases that lose quadratic convergence and cases that do not converge."
     },
-    "finale": "収束先の地図ができました。アプリでは拡大の位置を変えて、その Card だけを実行し直せます。"
+    "finale": "The map of where points converge is done. In the app you can change where to zoom and rerun just that Card."
   },
   "pharmacokinetics": {
-    "intro": "架空の薬物「ツグミシン」のモデルで、投与間隔を変えると濃度がどう動くかを比べる教材です。実在の薬の値ではなく、医療上の助言でもありません。",
+    "intro": "Teaching material comparing how concentration moves with the dosing interval, in a model of a made-up drug, \"Tsugumicin\". The values are not those of any real drug, and this is not medical advice.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "比べる投与計画と、架空の薬物の値を流します。",
-      "simulate": "微分方程式を解いて、濃度の推移を描きます。",
-      "share": "結果を 3 つの Card に配ります。",
-      "check": "数値解を閉じた式と比べて確かめます。差が大きければ失敗します。",
-      "window": "最後の投与間隔の濃度を重ね、山と谷を比べます。",
-      "missed": "途中の投与を抜いたときの濃度を描きます。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the dosing plans to compare and the made-up drug's values.",
+      "simulate": "Solves the differential equation and draws the concentration over time.",
+      "share": "Hands the results to three Cards.",
+      "check": "Checks the numerical solution against closed forms. Fails if they differ much.",
+      "window": "Overlays the concentration in the last dosing interval and compares peaks and troughs.",
+      "missed": "Draws the concentration when doses are missed partway."
     },
-    "finale": "投与計画ごとの違いが並びました。繰り返しますが、架空のモデルによる教材です。"
+    "finale": "The differences between dosing plans are lined up. Again: teaching material from a made-up model."
   },
   "max-flow": {
-    "intro": "seed から作った架空のネットワークで、最大流と最小カットが等しいことを確かめるデモです。",
+    "intro": "A demo that checks, on a made-up network made from a seed, that the maximum flow equals the minimum cut.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "seed やネットワークの大きさを流します。",
-      "network": "容量つきの有向グラフを作ります。",
-      "flow": "最大流を求めて、各辺の流量を図にします。",
-      "cut": "最小カットを求めます。最大流と等しくなければ失敗します。",
-      "share": "結果を 3 つの Card に配ります。",
-      "verify": "別の解法と総当たりで同じ値が出ることを確かめます。",
-      "whatif": "カットの内と外で容量を増やし、最大流を比べます。",
-      "sweep": "すべての辺について、容量を増やしたときの増分を並べます。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the seed and the size of the network.",
+      "network": "Makes a directed graph with capacities.",
+      "flow": "Finds the maximum flow and draws each edge's flow.",
+      "cut": "Finds the minimum cut. Fails unless it equals the maximum flow.",
+      "share": "Hands the results to three Cards.",
+      "verify": "Checks that another solver and brute force give the same value.",
+      "whatif": "Raises capacities on and off the cut and compares the maximum flow.",
+      "sweep": "For every edge, lays out the gain from raising its capacity."
     },
-    "finale": "どの辺を増やせば流れが増えるかが見えました。アプリでは辺や増やす量を変えて試せます。"
+    "finale": "It shows which edges to widen to increase the flow. In the app you can try other edges and amounts."
   },
   "dose-response": {
-    "intro": "架空の化合物の合成データに Hill 曲線を当てはめ、EC50 に信頼区間を付けるデモです。実在の薬ではありません。",
+    "intro": "A demo that fits a Hill curve to synthetic data of made-up compounds and puts a confidence interval on the EC50. These are not real drugs.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "generate": "真の曲線にノイズを乗せた合成プレートを作ります。",
-      "share": "プレートを 3 つの Card に配ります。",
-      "fit": "4 つのパラメータを当てはめて、データと曲線を描きます。",
-      "bootstrap": "ブートストラップで区間を求め、真の値が入るかを確かめます。",
-      "compare": "2 つの化合物の力価の比と区間を示します。",
-      "range": "最高濃度を変えると区間の幅がどう変わるかを描きます。"
+      "start": "The run begins at the start Card.",
+      "generate": "Makes a synthetic plate with noise on the true curves.",
+      "share": "Hands the plate to three Cards.",
+      "fit": "Fits the four parameters and draws the data and the curves.",
+      "bootstrap": "Finds intervals by bootstrap and checks whether they contain the true values.",
+      "compare": "Shows the ratio of the two compounds' potencies and its interval.",
+      "range": "Draws how the interval's width changes with the highest concentration."
     },
-    "finale": "真の値が分かっているデータなので、回復できたかをその場で確かめられます。"
+    "finale": "The true values are known, so you can check on the spot whether they were recovered."
   },
   "molecules": {
-    "intro": "分子を表す文字列 SMILES から、RDKit で物性や構造式を求めるデモです。",
+    "intro": "A demo that finds properties and structural formulas with RDKit from SMILES, strings that write molecules.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "paste": "試したい分子の SMILES を流します。",
-      "properties": "分子量や logP などを表にします。読めない SMILES は理由を示して飛ばします。",
-      "share": "物性を 3 つの Card に配ります。",
-      "structures": "構造式を並べて描きます。",
-      "lipinski": "Lipinski の Rule of Five を確かめます。",
-      "chemspace": "分子量と logP の地図を Plotly で描きます。",
-      "similarity": "構造の似かたをヒートマップにします。"
+      "start": "The run begins at the start Card.",
+      "paste": "Sends the SMILES of a molecule to try.",
+      "properties": "Tables molecular weight, logP and more. A SMILES that cannot be read is skipped, with the reason.",
+      "share": "Hands the properties to three Cards.",
+      "structures": "Draws the structural formulas side by side.",
+      "lipinski": "Checks Lipinski's Rule of Five.",
+      "chemspace": "Draws a map of molecular weight and logP with Plotly.",
+      "similarity": "Makes a heat map of how alike the structures are."
     },
-    "finale": "アプリでは自分の分子を貼り付けると、全部の Card に加わります。"
+    "finale": "In the app, paste your own molecule and it joins every Card."
   },
   "cell-count": {
-    "intro": "正解の分かる合成画像で細胞の数え方を採点し、同じ手順を実際の核の画像にかけるデモです。",
+    "intro": "A demo that scores ways of counting cells on synthetic images with known answers, and applies the same procedure to a real image of nuclei.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "begin": "合成画像と実画像の両方に実行を配ります。",
-      "generate": "中心の分かっている細胞の合成画像を作ります。",
-      "share": "画像と正解を 3 つの Card に配ります。",
-      "preprocess": "背景を引いて、ぼかしをかけます。",
-      "segment": "閾値と watershed で領域を切り分けます。",
-      "score": "正解と対応づけて、両方の方法を採点します。",
-      "sweep": "細胞の数とノイズを変えて、どこで破綻するかを表にします。",
-      "mitosis": "実際の核の画像を Nix のハッシュで固定して渡します。",
-      "real": "同じ手順を実画像にかけます。正解がないので採点はしません。"
+      "start": "The run begins at the start Card.",
+      "begin": "Hands the run to both the synthetic and the real image.",
+      "generate": "Makes a synthetic image of cells with known centres.",
+      "share": "Hands the image and the answers to three Cards.",
+      "preprocess": "Subtracts the background and blurs.",
+      "segment": "Separates regions with a threshold and watershed.",
+      "score": "Matches them with the answers and scores both methods.",
+      "sweep": "Changes the number of cells and the noise, and tables where it breaks down.",
+      "mitosis": "Passes a real image of nuclei, pinned by its Nix hash.",
+      "real": "Applies the same procedure to the real image. There is no ground truth, so it is not scored."
     },
-    "finale": "接した細胞を切り分けると何が得られるかが、点数で比べられました。"
+    "finale": "What separating touching cells gains is compared in scores."
   },
   "survival": {
-    "intro": "R の survival パッケージの肺がん試験データで、同じハザード比が対象者と調整でどれだけ動くかを見るデモです。統計手法の例で、助言ではありません。",
+    "intro": "A demo with the lung cancer trial data of R's survival package, showing how much the same hazard ratio moves with the subjects and the adjustment. An example of statistical method, not advice.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "データに列を足して、変数の要約を表にします。",
-      "share": "データを 2 つの枝に配ります。",
-      "cohort": "年齢などで対象者を選びます。",
-      "split": "選んだ人を 2 つの Card に配ります。",
-      "km": "Kaplan–Meier 曲線と log-rank 検定です。",
-      "cox": "Cox モデルでハザード比を求めます。",
-      "zph": "比例ハザードの仮定を確かめます。",
-      "specs": "対象者と調整の組み合わせごとのハザード比を 1 枚に並べます。"
+      "start": "The run begins at the start Card.",
+      "load": "Adds columns to the data and tables a summary of the variables.",
+      "share": "Hands the data to two branches.",
+      "cohort": "Chooses subjects by age and the like.",
+      "split": "Hands the people chosen to two Cards.",
+      "km": "Kaplan–Meier curves and the log-rank test.",
+      "cox": "Finds hazard ratios with a Cox model.",
+      "zph": "Checks the proportional hazards assumption.",
+      "specs": "Lays out the hazard ratio for each combination of subjects and adjustment in one figure."
     },
-    "finale": "同じデータでも、選び方で結論がどれだけ動くかが並びました。"
+    "finale": "Even with the same data, how much the conclusion moves with the choices is laid out."
   },
   "meta-analysis": {
-    "intro": "BCG ワクチンの 13 試験で、併合の方法や試験の除外で結論がどう動くかを比べる R のデモです。統計手法の例で、接種についての助言ではありません。",
+    "intro": "An R demo comparing, over 13 trials of the BCG vaccine, how the conclusion moves with the pooling method and the trials left out. An example of statistical method, not advice about vaccination.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "trials": "各試験の効果量と分散を求めます。",
-      "share": "同じ効果量を 4 つの解析に配ります。",
-      "pool": "固定効果と変量効果で併合し、森林図を描きます。",
-      "funnel": "ファンネルプロットで出版の偏りを見ます。",
-      "moderator": "緯度でメタ回帰を行います。",
-      "sensitivity": "1 試験ずつ除いたときや、推定量を変えたときの結果を並べます。"
+      "start": "The run begins at the start Card.",
+      "trials": "Finds each trial's effect size and variance.",
+      "share": "Hands the same effect sizes to four analyses.",
+      "pool": "Pools with fixed and random effects and draws a forest plot.",
+      "funnel": "Looks for publication bias with a funnel plot.",
+      "moderator": "Runs a meta-regression on latitude.",
+      "sensitivity": "Lays out the results when each trial is left out, or the estimator changes."
     },
-    "finale": "選択ごとの結論の違いが並びました。アプリでは除く試験を変えて試せます。"
+    "finale": "The conclusion under each choice is laid out. In the app you can try leaving out other trials."
   },
   "rna-seq": {
-    "intro": "airway の実データで、発現の動く遺伝子を DESeq2 と edgeR で求める R のデモです。細胞培養の実験で、治療の効果を示すものではありません。",
+    "intro": "An R demo that finds differentially expressed genes with DESeq2 and edgeR on airway's real data. A cell-culture experiment; it shows no effect of treatment.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "カウント行列と遺伝子名を読みます。",
-      "filter": "リード数の少ない遺伝子を除きます。",
-      "share": "カウントを 4 つの Card に配ります。",
-      "normalize": "サイズ因子で正規化して、前後を比べます。",
-      "pca": "主成分分析で処理と細胞株を見ます。",
-      "deseq": "DESeq2 で検定します。",
-      "fan": "結果を配ります。",
-      "volcano": "閾値で数えて、火山プロットを描きます。",
-      "thresholds": "閾値の組み合わせごとの遺伝子の数を表にします。",
-      "top": "上位の遺伝子と既知の応答遺伝子の順位を見ます。",
-      "edger": "同じカウントを edgeR で検定します。",
-      "compare": "2 つの方法の結果を重ねて比べます。",
-      "design": "デザインを変えると結果がどう変わるかを並べます。"
+      "start": "The run begins at the start Card.",
+      "load": "Reads the count matrix and gene names.",
+      "filter": "Removes genes with few reads.",
+      "share": "Hands the counts to four Cards.",
+      "normalize": "Normalises by size factors and compares before and after.",
+      "pca": "Looks at treatment and cell line by principal component analysis.",
+      "deseq": "Tests with DESeq2.",
+      "fan": "Hands the results on.",
+      "volcano": "Counts at the thresholds and draws a volcano plot.",
+      "thresholds": "Tables the number of genes for each combination of thresholds.",
+      "top": "Looks at the top genes and the ranks of known responsive genes.",
+      "edger": "Tests the same counts with edgeR.",
+      "compare": "Overlays the two methods' results to compare them.",
+      "design": "Lays out how the results change with the design."
     },
-    "finale": "「発現変動遺伝子の数」が閾値とデザインで変わることが見えました。"
+    "finale": "It shows that \"the number of differentially expressed genes\" changes with thresholds and design."
   },
   "simpson": {
-    "intro": "全体の傾向と層ごとの傾向で向きが逆になる例を、2 つの実データで確かめる R のデモです。",
+    "intro": "An R demo that checks, on two real datasets, examples where the overall trend and the trend within strata point in opposite directions.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "branches": "実行を 2 つの枝に配ります。",
-      "penguins": "ペンギンのくちばしのデータを読みます。",
-      "share": "データを 2 つの Card に配ります。",
-      "correlate": "層に分けて相関を求めます。",
-      "figure": "全体の直線と層ごとの直線を重ねます。",
-      "survey": "分け方ごとに、どこで逆転するかを並べます。",
-      "admissions": "1973 年の Berkeley の出願を、学科ごとと全体で比べます。",
-      "applications": "合格率を応募者数と一緒に描きます。"
+      "start": "The run begins at the start Card.",
+      "branches": "Hands the run to two branches.",
+      "penguins": "Reads the penguins' bill data.",
+      "share": "Hands the data to two Cards.",
+      "correlate": "Splits into strata and finds the correlations.",
+      "figure": "Overlays the overall line and the lines for each stratum.",
+      "survey": "Lays out, for each way of splitting, where it reverses.",
+      "admissions": "Compares Berkeley's 1973 applications by department and overall.",
+      "applications": "Draws the admission rates with the numbers of applicants."
     },
-    "finale": "どちらの値を読むべきかは、データだけでは決まりません。問いによって決まります。"
+    "finale": "Which value to read is not decided by the data alone. The question decides it."
   },
   "battery": {
-    "intro": "架空の料金データで、家庭用蓄電池の充放電を動的計画法で最適化する Julia のデモです。",
+    "intro": "A Julia demo that optimises the charging and discharging of a home battery by dynamic programming, on made-up price data.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "容量や効率などの条件を流します。",
-      "market": "消費・太陽光・料金を作ります。すべて架空のデータです。",
-      "share": "条件とデータを 4 つの Card に配ります。",
-      "schedule": "電気代が最小になる充放電を求めます。",
-      "capacities": "容量を変えて、節約額を比べます。",
-      "tariffs": "同じ電池を契約ごとに動かして比べます。",
-      "check": "全探索と比べて結果を確かめます。外れれば失敗します。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends conditions such as capacity and efficiency.",
+      "market": "Makes consumption, solar and prices. All of it is made-up data.",
+      "share": "Hands the conditions and data to four Cards.",
+      "schedule": "Finds the charging and discharging with the lowest bill.",
+      "capacities": "Compares the saving at other capacities.",
+      "tariffs": "Runs the same battery under each contract and compares.",
+      "check": "Checks the result against exhaustive search. Fails if anything is off."
     },
-    "finale": "料金と容量で運転がどう変わるかが並びました。"
+    "finale": "How operation changes with the tariff and the capacity is laid out."
   },
   "gillespie": {
-    "intro": "化学反応のゆらぎを Gillespie 法でシミュレーションし、理論と照合する Julia のデモです。",
+    "intro": "A Julia demo that simulates fluctuations in chemical reactions with Gillespie's method and checks them against theory.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "反応の速さや本数を流します。",
-      "share": "条件を 4 つの Card に配ります。",
-      "trajectories": "軌道と平均、率方程式の解を重ねます。",
-      "stationary": "終点の分布を理論のポアソン分布と比べます。",
-      "scaling": "体積を変えて、ゆらぎの大きさを理論と比べます。",
-      "binding": "結合反応を厳密解と率方程式と比べます。",
-      "check": "結果を閉じた式と比べて確かめます。外れれば失敗します。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the reaction rates and the number of runs.",
+      "share": "Hands the conditions to four Cards.",
+      "trajectories": "Overlays trajectories, their mean and the solution of the rate equation.",
+      "stationary": "Compares the distribution of end points with the theoretical Poisson distribution.",
+      "scaling": "Changes the volume and compares the size of fluctuations with theory.",
+      "binding": "Compares a binding reaction with the exact solution and the rate equation.",
+      "check": "Checks the results against closed forms. Fails if anything is off."
     },
-    "finale": "シミュレーションが理論と合っていることを、数字で確かめました。"
+    "finale": "The simulation was confirmed, in numbers, to agree with the theory."
   },
   "heat-inverse": {
-    "intro": "測定した温度から初期の温度を復元する逆問題で、正則化の働きを見る Julia のデモです。データは架空です。",
+    "intro": "A Julia demo of an inverse problem, recovering an initial temperature from measured ones, to see what regularisation does. The data is made up.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "settings": "格子や測定の時刻、ノイズを流します。",
-      "forward": "架空の初期温度から、時刻 T の温度にノイズをのせて作ります。",
-      "share": "測定を 6 つの Card に配ります。",
-      "spectrum": "どの成分がノイズに埋もれるかを示します。",
-      "naive": "そのまま逆に解くと発散することを示します。",
-      "tikhonov": "正則化の強さを変えて比べます。",
-      "reconstruct": "選んだ強さと、小さすぎ・大きすぎの復元を並べます。",
-      "horizon": "測定が遅いほど細部が失われることを示します。",
-      "check": "保存則や解析解と比べて確かめます。外れれば失敗します。"
+      "start": "The run begins at the start Card.",
+      "settings": "Sends the grid, the measurement time and the noise.",
+      "forward": "Makes the temperature at time T from a made-up initial temperature, with noise added.",
+      "share": "Hands the measurements to six Cards.",
+      "spectrum": "Shows which components sink into the noise.",
+      "naive": "Shows that solving backwards as it is diverges.",
+      "tikhonov": "Compares strengths of regularisation.",
+      "reconstruct": "Lays out recoveries at the chosen strength, too small and too large.",
+      "horizon": "Shows that the later the measurement, the more detail is lost.",
+      "check": "Checks against conservation laws and analytic solutions. Fails if anything is off."
     },
-    "finale": "素朴な解き方が破綻し、正則化で復元できることが並びました。"
+    "finale": "The naive solution breaks down, and regularisation recovers it: both are laid out."
   },
   "ecology-models": {
-    "intro": "ノウサギとオオヤマネコの毛皮の記録に捕食モデルを当てはめて比べる Julia のデモです。",
+    "intro": "A Julia demo that fits predator–prey models to the fur records of hares and lynx and compares them.",
     "cards": {
-      "start": "開始 Card から実行が始まります。",
-      "load": "1900〜1920 年の毛皮の記録を読みます。",
-      "share": "記録を 2 つの Card に配ります。",
-      "fit": "3 つのモデルを当てはめて、記録に重ねます。",
-      "forecast": "途中の年までで当てはめて、残りを予測します。",
-      "fits-share": "当てはめの結果を 3 つの Card に配ります。",
-      "scores": "誤差や AICc を表にして比べます。",
-      "phase": "解を先まで延ばして、相図で比べます。",
-      "check": "保存量と既存の事例研究で確かめます。"
+      "start": "The run begins at the start Card.",
+      "load": "Reads the fur records of 1900–1920.",
+      "share": "Hands the records to two Cards.",
+      "fit": "Fits three models and overlays them on the records.",
+      "forecast": "Fits up to a year partway and predicts the rest.",
+      "fits-share": "Hands the fitted results to three Cards.",
+      "scores": "Tables errors and AICc to compare.",
+      "phase": "Extends the solutions ahead and compares them in phase diagrams.",
+      "check": "Checks with the conserved quantity and an existing case study."
     },
-    "finale": "当てはまりと予測の誤差を、同じ表で比べられるようになりました。アプリでは当てはめる期間を変えて、その Card だけを実行し直せます。"
+    "finale": "Fit and prediction errors can be compared in the same table. In the app you can change the fitting period and rerun just that Card."
   }
 }

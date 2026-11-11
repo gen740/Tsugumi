@@ -1,0 +1,10 @@
+{
+  "description": "Leave one trial out, change the estimator",
+  "content": "Lays out the pooled value with each trial left out in turn (fixed effect and DL), and with other estimators of τ² (estimators).",
+  "outputs": [
+    {
+      "name": "sensitivity",
+      "description": "CSV of the pooled values by trial left out and by estimator"
+    }
+  ]
+}

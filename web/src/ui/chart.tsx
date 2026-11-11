@@ -4,6 +4,7 @@
 // happens at most once per animation frame. WebGPU is required.
 import { useEffect, useRef, useState } from 'react'
 import type { LineSeries } from '../model/session'
+import { L } from '../i18n'
 
 const SHADER = /* wgsl */ `
 struct VOut {
@@ -183,7 +184,7 @@ export function DawnLineChart({ series }: { series: LineSeries[] }) {
     let observer: ResizeObserver | undefined
     void (async () => {
       const renderer = await webgpu(canvas)
-      if (!renderer) return setError('このブラウザでは WebGPU を使えないためグラフを表示できません（Chrome / Edge / Safari 26 以降で開いてください）。')
+      if (!renderer) return setError(L('このブラウザでは WebGPU を使えないためグラフを表示できません（Chrome / Edge / Safari 26 以降で開いてください）。'))
       if (!alive) return renderer.destroy()
       r.current = renderer
       const resize = () => {

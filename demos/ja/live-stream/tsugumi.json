@@ -1,0 +1,76 @@
+{
+  "name": "Live Stream",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "loop"
+      },
+      {
+        "id": "generate"
+      },
+      {
+        "id": "plot"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "state"
+        },
+        "to": {
+          "card": "loop",
+          "port": "init"
+        }
+      },
+      {
+        "from": {
+          "card": "loop",
+          "port": "out"
+        },
+        "to": {
+          "card": "generate",
+          "port": "state"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "next"
+        },
+        "to": {
+          "card": "loop",
+          "port": "next"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "sample"
+        },
+        "to": {
+          "card": "plot",
+          "port": "sample"
+        }
+      }
+    ]
+  }
+}

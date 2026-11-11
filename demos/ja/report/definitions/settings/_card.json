@@ -1,0 +1,20 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 42
+    },
+    {
+      "name": "rows",
+      "type": "uint64",
+      "data": 500
+    },
+    {
+      "name": "heading",
+      "type": "string",
+      "data": "Quarterly sales"
+    }
+  ]
+}

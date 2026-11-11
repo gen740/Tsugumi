@@ -1,0 +1,5 @@
+namespace live;
+table State { index:ulong; samples:ulong; interval_ms:ulong; seed:ulong; value:double; }
+table Sample { index:ulong; value:double; }
+table Outputs { sample:Sample (required); next:State; }
+root_type Outputs;

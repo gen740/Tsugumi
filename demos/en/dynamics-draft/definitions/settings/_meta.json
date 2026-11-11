@@ -1,0 +1,9 @@
+{
+  "description": "Image size and random seed",
+  "outputs": [
+    {
+      "name": "config",
+      "description": "size (pixels per side of the image) and seed (the random seed)"
+    }
+  ]
+}

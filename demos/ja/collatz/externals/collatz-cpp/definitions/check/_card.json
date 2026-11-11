@@ -1,0 +1,9 @@
+{
+  "language": "cpp",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 200
+}

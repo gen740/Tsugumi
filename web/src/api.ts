@@ -15,12 +15,29 @@ export async function api<T = any>(path: string, body?: unknown): Promise<T> {
 type Listener = (e: any) => void
 const listeners = new Set<Listener>()
 let source: EventSource | undefined
+/** This page (browser tab) to the host server. */
+let pageId: string | undefined
+const page = () => (pageId ??= crypto.randomUUID())
+let reported: string | undefined
+
+/** Tells the host server what this page shows now (it picks a free page for Claude Code's projects). */
+export function reportPageProject(project?: string) {
+  reported = project
+  void api('/api/page', { page: page(), project }).catch(() => {})
+}
+
+/** This page left a project: its environment and chat stop unless another page shows it. */
+export function closePageProject(project: string) {
+  reported = undefined
+  return api('/api/project/close', { page: page(), path: project })
+}
 
 /** Events from the host server: environment states, terminals and Agent progress. */
 export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
   if (!source) {
-    source = new EventSource('/api/events')
+    const detached = new URLSearchParams(globalThis.location?.search).has('scope')
+    source = new EventSource(`/api/events?page=${page()}${detached ? '&detached' : ''}`)
     // Events sent while the stream was down are lost: after it comes back,
     // every listener reads its state again ({ type: 'reconnected' }).
     let lost = false
@@ -30,6 +47,8 @@ export function onServerEvent(fn: Listener): () => void {
     source.onopen = () => {
       if (!lost) return
       lost = false
+      // A new stream is a new page to the server.
+      reportPageProject(reported)
       for (const l of [...listeners]) l({ type: 'reconnected' })
     }
     source.onmessage = (m) => {
@@ -48,6 +67,9 @@ export function onServerEvent(fn: Listener): () => void {
 export interface EnvPublicState {
   state: 'stopped' | 'starting' | 'ready' | 'failed'
   message?: string
+  /** While starting in the VM: the step, and how far along the start is. */
+  stage?: string
+  fraction?: number
   recovery?: string
   log?: string
   endpoint?: string
@@ -71,6 +93,8 @@ export interface Demo {
   description: string
   path: string
   tags: string[]
+  /** The field the guide lists it under (an implemented demo; none: a Draft). */
+  field?: string
 }
 
 export interface Status {
@@ -81,6 +105,8 @@ export interface Status {
   /** Where demo copies go (~/Documents/Tsugumi or TSUGUMI_PROJECTS_DIR). */
   documents: string
   launchProject: string | null
+  /** Cards can use folders of this host at /host/<name>. */
+  hostFolders: boolean
   /** The nixpkgs this Tsugumi builds with (new projects are pinned to it). */
   nixpkgsPin: string | null
   chatAvailable: boolean

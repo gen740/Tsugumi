@@ -1,0 +1,10 @@
+{
+  "description": "Normalise by size factors",
+  "content": "Finds size factors by DESeq2's median of ratios and compares the distributions before and after normalisation in a figure. Passes a variance-stabilising transformation (vst) on for the PCA.",
+  "outputs": [
+    {
+      "name": "normalized",
+      "description": "size_factors.csv and vst.rds"
+    }
+  ]
+}

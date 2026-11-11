@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace report;
+table ArchiveDir { value:string; }
+table Outputs { archive:ArchiveDir (required, tsugumi: "directory"); }
+root_type Outputs;

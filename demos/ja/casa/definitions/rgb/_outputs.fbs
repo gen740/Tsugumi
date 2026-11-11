@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace casa;
+table RgbDir { value:string; }
+table Outputs { rgb:RgbDir (required, tsugumi: "directory"); }
+root_type Outputs;

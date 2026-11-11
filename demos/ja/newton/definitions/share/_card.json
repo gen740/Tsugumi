@@ -1,0 +1,14 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "orbits",
+        "basins",
+        "trouble"
+      ]
+    }
+  ]
+}

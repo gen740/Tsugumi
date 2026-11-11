@@ -189,7 +189,7 @@ private struct GeneralSettings: View {
       Picker("言語", selection: $prefs.language) {
         ForEach(AppPreferences.Language.allCases) { Text($0.label).tag($0) }
       }
-      .help("言語の変更はアプリの再起動後に反映されます。")
+      .help("言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。")
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
         .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {
@@ -548,6 +548,7 @@ private struct APISettings: View {
   @AppStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
   @AppStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @AppStorage("agent.fixturePort") private var port = 8765
+  @AppStorage(AgentSettings.webSearchKey) private var webSearch = false
 
   var body: some View {
     Form {
@@ -585,20 +586,30 @@ private struct APISettings: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {
-        LabeledContent("状態", value: GuideController.shared.available
+        Toggle("Agent が自分の判断で Web を検索する", isOn: $webSearch)
+      } header: {
+        Text("Web 検索")
+      } footer: {
+        Text(provider == "fixture"
+             ? "ローカル fixture には検索がないため、オンでも使えません。"
+             : "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      Section {
+        LabeledContent("状態", value: GuideController.shared.connected
                        ? String(localized: "右下に表示中（\(AgentSettings.current().name)）")
-                       : String(localized: "API キーが未設定のため表示していません"))
+                       : String(localized: "API キーが未設定のため、決まったデモの案内だけをしています"))
         // Pressed, it says what happens next and waits until it has happened.
         Button("初回の案内（デモの勧誘）をもう一度表示") { GuideController.shared.resetIntroduction() }
           .disabled(GuideController.shared.offersDemo)
         if GuideController.shared.offersDemo {
-          Label("設定しました。Home に戻ると、ツグミが「何に興味がありますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
+          Label("設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。", systemImage: "checkmark.circle.fill")
             .font(.callout).foregroundStyle(.green)
         }
       } header: {
         Text("ガイドのツグミ")
       } footer: {
-        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると現れ、なくなると消えます。質問に答えるだけではプロジェクトを変えません。")
+        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。")
           .font(.caption).foregroundStyle(.secondary)
       }
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
@@ -630,7 +641,7 @@ private struct APIKeySection: View {
           do {
             try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
-            refresh()
+            refresh(saved: true)
             message = String(localized: "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
           } catch { message = "\(error)" }
         }
@@ -671,10 +682,10 @@ private struct APIKeySection: View {
     }
   }
 
-  private func refresh() {
+  private func refresh(saved: Bool = false) {
     stored = Keychain.exists(account: config.name)
     // The guide is there while the connection in use works.
-    GuideController.shared.refreshAvailability()
+    if saved { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
   }
 }
 

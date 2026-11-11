@@ -107,17 +107,23 @@ table SetLayout { json:string (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);  // empty with link_json
-  /// The new _meta.json; omitted removes it unless keep_meta.
+  /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
   meta_json:string (id: 2);
-  link_json:string (id: 3);  // a Card in Card: _link.json instead of _card.json
+  /// A Card in Card: _link.json instead of _card.json. Empty: none.
+  link_json:string (id: 3);
   /// Keep _meta.json as it is (meta_json omitted): change settings without
   /// writing the intent text again.
   keep_meta:bool = false (id: 4);
+  /// Fill _meta.json's description if it is empty; what has text stays as it is
+  /// (keeps the rest of _meta.json, as keep_meta).
+  fill_description:string (id: 5);
+  /// Fill _meta.json's context if it is empty; what has text stays as it is.
+  fill_context:string (id: 6);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 /// A Card's new name: its definition folder (with its sources) moves, and
-/// its run history follows. The client sends the matching SetProject and
-/// SetLayout in the same save.
+/// its run history and its entries in layout.json follow. The client sends
+/// the matching SetProject in the same save.
 table RenameDefinition {
   id:string (id: 0, required);
   to:string (id: 1, required);
@@ -176,6 +182,8 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
+  /// What a model's save did to the comments on Cards.
+  comments:[VersionComment] (id: 4);
 }
 
 table IdMapping {
@@ -247,6 +255,10 @@ table SessionHelloRequest {
   expected_project_id:string (id: 2);
   token:string (id: 3);
   min_protocol:uint32 = null (id: 4);
+  /// The client's language ("ja" or "en"; anything else is Japanese). What
+  /// tsugumid writes into the project's git for the runs this connection
+  /// starts (the commit message, the run's note) is in it.
+  language:string (id: 5);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
@@ -287,15 +299,14 @@ table ProjectReloadRequest {
 }
 
 /// -> ProjectValidateResult. targets = [] means everything; mode = executable.
-/// With `changes` (the same as project_save's), the document as it would be
-/// after them is checked and nothing is saved: try definitions, _outputs.fbs
-/// and default.nix text here instead of saving trial versions.
 table ProjectValidateRequest {
   /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 0);
   targets:[Tsugumi.Data.CardPath] (id: 1);
   mode:Tsugumi.Data.ValidateMode (id: 2);
-  /// Proposed changes (as in project_save): checked, never saved.
+  /// Proposed changes (as in project_save): the document as it would be after
+  /// them is checked and nothing is saved. For the apps' editors; the model is
+  /// not offered this field (it saves, then checks).
   changes:[DocumentChange] (id: 3);
 }
 
@@ -310,6 +321,11 @@ table ProjectImportRequest {
 
 /// -> ProjectCacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
+
+/// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
+/// its current commit and hash, and the packages it has for this system. Slow
+/// the first time: it evaluates them, fetching what they need.
+table NixSourceResolveRequest { ref:string (id: 0, required); }
 
 /// -> RunHistoryDeleteResult. Deletes finished runs (all, or those that ended
 /// before ended_before, Unix ms) with their records, values, logs and files,
@@ -348,6 +364,22 @@ table VersionCheckoutRequest {
 
 /// -> VersionGraph, newest first.
 table VersionGraphRequest { limit:uint32 = null (id: 0); }
+
+/// -> VersionCanvas: the Cards of a version and how they connect (a minimap).
+table VersionCanvasRequest { commit:string (id: 0, required); }
+
+/// -> VersionDiff: what a version changed from its first parent, in the text a
+/// summary is written from. Only code and settings: never data files.
+table VersionDiffRequest { commit:string (id: 0, required); }
+
+/// -> VersionResult. Keeps a client's summary of a version in the commit's own
+/// note (refs/notes/tsugumi-summary), replacing the one there.
+table VersionSummaryRequest {
+  op_id:string (id: 0, required);
+  origin:string (id: 1, required);
+  commit:string (id: 2, required);
+  summary:string (id: 3, required);
+}
 
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); }
@@ -461,6 +493,10 @@ table RunInvocationsRequest {
   limit:uint32 = null (id: 3);
 }
 
+/// -> InvocationPage. Each Card's latest invocation of a run, for a client that
+/// opens the project after the run: it did not get RunCardChanged for them.
+table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
+
 /// -> RecordResult. invocation and follow_latest = true are exclusive.
 table RunRecordRequest {
   run_id:string (id: 0, required);
@@ -560,6 +596,11 @@ union RequestPayload {
   VersionMarkRequest = 34,
   VersionCheckoutRequest = 35,
   VersionGraphRequest = 36,
+  VersionCanvasRequest = 37,
+  VersionDiffRequest = 38,
+  VersionSummaryRequest = 39,
+  NixSourceResolveRequest = 40,
+  RunLatestInvocationsRequest = 41,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -575,6 +616,24 @@ table VersionRun {
   state:string (id: 1, required);
   ended:string (id: 2);
   seconds:double (id: 3);
+  /// What ran, from what the run did: where it started, the Cards that ran,
+  /// those that failed or never ran. Absent for a run a demo's history lists.
+  summary:string (id: 4);
+}
+
+/// A comment on a Card that a version or a save changed.
+table VersionComment {
+  card:string (id: 0, required);
+  text:string (id: 1, required);
+  /// added, edited, resolved, reopened or removed. A comment written and
+  /// resolved within one version is resolved.
+  change:string (id: 2, required);
+  resolution:string (id: 3);
+  /// Who did it, as the comment records it: agent or user. Absent when it is
+  /// not recorded, as for a comment that is gone.
+  by:string (id: 4);
+  /// The Cards the save that resolved it changed.
+  cards:[string] (id: 5);
 }
 
 table VersionCommit {
@@ -590,6 +649,45 @@ table VersionCommit {
   /// Card keys whose files changed from the first parent ("" for the
   /// project's own documents).
   changed:[string] (id: 9);
+  /// What this version changed, in a sentence a model wrote from its diff
+  /// (refs/notes/tsugumi-summary). Absent until one is written.
+  change_summary:string (id: 10);
+  /// What this version did to the comments on Cards, from the first parent.
+  comments:[VersionComment] (id: 11);
+}
+
+table VersionCanvasCard {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
+  /// logger, draft, subgraph or code.
+  kind:string (id: 3, required);
+  /// The ports a fork or merge fans over, which decide its width; 0 for others.
+  fan:uint32 (id: 4);
+  /// Folded on the canvas: only its header shows.
+  collapsed:bool (id: 5);
+}
+
+table VersionCanvasWire {
+  from:string (id: 0, required);
+  to:string (id: 1, required);
+}
+
+/// A version's own Cards: Card in Card is one Card here. Saved positions, or
+/// columns by depth when a Card has none.
+table VersionCanvas {
+  cards:[VersionCanvasCard] (id: 0, required);
+  wires:[VersionCanvasWire] (id: 1, required);
+  /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
+  /// are always leftToRight.
+  flow:string (id: 2, required);
+}
+
+table VersionDiff {
+  text:string (id: 0, required);
+  /// The text stops short of what changed.
+  truncated:bool (id: 1);
 }
 
 table VersionGraph {
@@ -645,6 +743,14 @@ table FileContent {
 table ProjectFileFormatResult {
   text:string (id: 0, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 1, required);
+}
+
+table NixSourceResolved {
+  /// Locked: what goes into nixSources.
+  ref:string (id: 0, required);
+  rev:string (id: 1);
+  nar_hash:string (id: 2);
+  packages:[string] (id: 3);
 }
 
 table OutputTypesResult {
@@ -707,6 +813,10 @@ table InvocationSummary {
   /// When the inputs were all there; started_at - ready_at is the wait for
   /// a free lane (parallel limit, serial Card).
   ready_at:int64 = null (id: 14);
+  /// The program the kernel ran the Card's binaries with (binfmt_misc), for a
+  /// Card built for another system (its `system` setting); absent when it ran
+  /// natively.
+  emulator:string (id: 15);
 }
 
 table StageTime {
@@ -827,6 +937,9 @@ union ReplyPayload {
   OutputTypesResult = 26,
   VersionResult = 27,
   VersionGraph = 28,
+  VersionCanvas = 29,
+  VersionDiff = 30,
+  NixSourceResolved = 31,
 }
 
 // ---- Notifications -----------------------------------------------------------

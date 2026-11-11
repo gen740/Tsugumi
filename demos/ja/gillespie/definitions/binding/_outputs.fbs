@@ -1,0 +1,4 @@
+namespace gillespie;
+table Binding { totals:[long]; ssa:[double]; se:[double]; exact:[double]; ode:[double]; }
+table Outputs { binding:Binding (required); }
+root_type Outputs;

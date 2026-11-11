@@ -6,7 +6,7 @@ import Testing
 private func demoIds() throws -> [String] {
   var repo = URL(fileURLWithPath: #filePath)
   for _ in 0..<4 { repo.deleteLastPathComponent() }
-  let index = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("demos/index.json"))) as? [String: Any]
+  let index = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appendingPathComponent("demos/ja/index.json"))) as? [String: Any]
   return (index?["demos"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
 }
 

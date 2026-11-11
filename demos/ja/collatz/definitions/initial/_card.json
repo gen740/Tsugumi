@@ -1,0 +1,10 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "value",
+      "type": "uint64",
+      "data": 27
+    }
+  ]
+}

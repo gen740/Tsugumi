@@ -88,7 +88,16 @@ extension ProjectSession {
   func cardDetails(_ k: CardKey) -> [String] {
     var lines = cardDescription(k).map { [$0] } ?? []
     if kind(k) == .draft, let c = cardMeta(k)?["content"]?.string, !c.isEmpty { lines.append(c) }
+    lines += openComments(k).map {
+      $0.author == "agent" ? String(localized: "コメント（Agent）: \($0.text)") : String(localized: "コメント: \($0.text)")
+    }
     return lines
+  }
+
+  /// Whether a wire is drawn dotted: either end is a Draft, with no code
+  /// behind it yet (`to` is nil at the bar of a Card in Card's outputs or inputs).
+  func isDraftWire(from: CardKey, to: CardKey?) -> Bool {
+    kind(from) == .draft || to.map { kind($0) == .draft } ?? false
   }
 
   /// Whether a Card does not run because it needs a Draft's output: a
@@ -210,7 +219,8 @@ extension ProjectSession {
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
       draftEditing: editing, untitled: draftUntitled(k),
-      portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil)
+      portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
+      openComments: CardComment.list(in: m).filter { !$0.resolved }.count)
   }
 
   /// Where a Card is drawn: with the grid on, one saved off the grid (placed

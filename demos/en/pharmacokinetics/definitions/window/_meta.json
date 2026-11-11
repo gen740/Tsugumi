@@ -1,0 +1,5 @@
+{
+  "description": "Compare steady-state peaks and troughs with the range",
+  "content": "Overlays the concentration in the last dosing interval by time since the dose, and compares peaks, troughs and the share of time inside the (invented) therapeutic range for each dosing plan.",
+  "outputs": []
+}

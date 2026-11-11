@@ -1,0 +1,27 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "results"
+    }
+  ],
+  "params": [
+    {
+      "name": "top",
+      "type": "uint64",
+      "data": 12
+    },
+    {
+      "name": "known",
+      "type": "string[]",
+      "data": [
+        "FKBP5",
+        "DUSP1",
+        "TSC22D3",
+        "KLF15",
+        "PER1",
+        "CRISPLD2"
+      ]
+    }
+  ]
+}

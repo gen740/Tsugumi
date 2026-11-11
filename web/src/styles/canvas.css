@@ -28,6 +28,18 @@
 @keyframes cv-dash { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -14; } }
 .cv-marquee { position: absolute; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); pointer-events: none; }
 .cv-cut { position: absolute; transform: translate(-50%, -50%); z-index: 5; }
+/* The file the Agent is writing, by its Card (dark in both themes, as the code it shows). */
+.cv-writing { position: absolute; box-sizing: border-box; padding: calc(var(--s) * 10px); overflow: hidden; pointer-events: none; z-index: 40;
+  border-radius: calc(var(--s) * 8px); border: 1px solid color-mix(in srgb, var(--bird, var(--tsugumi-cream)) 55%, transparent); background: #171717; color: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 calc(var(--s) * 3px) calc(var(--s) * 12px) rgba(0, 0, 0, 0.3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(var(--s) * 10.5px); }
+.cv-writing-head { display: flex; justify-content: space-between; gap: calc(var(--s) * 8px); height: calc(var(--s) * 12px); margin-bottom: calc(var(--s) * 3px); font-size: calc(var(--s) * 9.5px); line-height: calc(var(--s) * 12px); color: rgba(255, 255, 255, 0.55); }
+.cv-writing-state { flex: none; }
+/* Too long: the beginning of a file's path goes, and of the line being written; the end of the others. */
+.cv-writing-file, .cv-writing-row { display: block; min-width: 0; overflow: hidden; white-space: pre; text-overflow: ellipsis; }
+.cv-writing-row { height: calc(var(--s) * 13.5px); margin-bottom: calc(var(--s) * 2px); line-height: calc(var(--s) * 13.5px); }
+.cv-writing-file, .cv-writing-row.writing { direction: rtl; text-align: left; }
+.cv-writing-file > span, .cv-writing-row.writing > span { direction: ltr; unicode-bidi: isolate; }
+.cv-writing-line { position: absolute; width: 0; border-left: 1.2px dashed color-mix(in srgb, var(--bird, var(--tsugumi-cream)) 60%, transparent); pointer-events: none; z-index: 39; }
 .cv-link-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--purple) 75%, transparent); pointer-events: none; }
 .cv-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cv-center { display: inline-flex; align-items: center; justify-content: center; flex: none; }
@@ -43,6 +55,8 @@
 .cv-card-header { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cv-state { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
+.cv-comments { position: absolute; transform: translate(-70%, -50%); display: inline-flex; align-items: center; justify-content: center; border: 0; background: var(--accent); color: #fff; font-weight: 600; pointer-events: auto; cursor: pointer; font-variant-numeric: tabular-nums; }
+.cv-comments:disabled { cursor: default; opacity: 1; }
 .cv-collapse { border: 0; background: none; padding: 0 1px; display: inline-flex; align-items: center; cursor: pointer; flex: none; }
 .cv-draft-text { flex: none; box-sizing: border-box; overflow: hidden; }
 .cv-draft-text span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }

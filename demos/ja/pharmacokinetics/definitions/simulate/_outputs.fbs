@@ -1,0 +1,19 @@
+namespace pk;
+table Curves {
+  doses_mg:[double];
+  intervals_h:[double];
+  half_life_h:double;
+  ka_per_h:double;
+  volume_l:double;
+  bioavailability:double;
+  low_mg_l:double;
+  high_mg_l:double;
+  days:double;
+  t_h:[double];
+  conc:[double];
+  first_trough:[double];
+  last_trough:[double];
+  last_dose_h:[double];
+}
+table Outputs { curves:Curves (required); }
+root_type Outputs;

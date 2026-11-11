@@ -64,6 +64,9 @@ struct GuideBubble: Equatable {
   var farewell = false
   /// The answer says more than the bubble: it points the user to the chat (or the panel).
   var more = false
+  /// Said by the app (a demo picked from the first questions), not by a model:
+  /// its Other demos asks those questions again.
+  var local = false
 }
 
 /// The guide reads the project on the user's screen; on Home there is none.
@@ -84,9 +87,12 @@ private struct GuideTransport: ToolTransport {
 
 /// The guide bird in the bottom-right corner of every main window: one
 /// conversation for the whole app with a model of the user's own (the same
-/// connection and key as the Agent; without a key there is no guide at all).
+/// connection and key as the Agent). Without a connection it answers from a
+/// fixed script (GuideScript): one demo's tour, and a pointer to Settings.
 /// It explains what is on the screen and leads demo tours; it only reads,
 /// and what it offers to do is done by the user's own press of a button.
+/// What it points at and says stays in the windows it is about: Home for the
+/// guide's own, a project's for the chat of that project (`speaks(in:)`).
 @MainActor
 @Observable
 final class GuideController {
@@ -114,8 +120,12 @@ final class GuideController {
   /// What the window the user asks from shows.
   enum Screen: Equatable { case home, demos, project }
 
-  /// A model connection the guide can use (a key for the chosen provider).
+  /// The bird is there: with a model connection, or answering from its script.
   private(set) var available = false
+  /// A model connection the guide can use (a key for the chosen provider).
+  private(set) var connected = false
+  /// No connection: Tsugumi answers from GuideScript and calls no model.
+  var scripted: Bool { available && !connected }
   private(set) var items: [Item] = []
   private(set) var busy = false
   private(set) var failed = false
@@ -128,16 +138,31 @@ final class GuideController {
   private(set) var highlight: String?
   /// The bird's speech bubble (nil: it sits quietly in its corner).
   private(set) var bubble: GuideBubble?
-  /// A Card settings window to open ("card:<path>"), taken by the main window that shows the project.
+  /// What to open for the user to look at, taken by the main window that shows
+  /// the project: "card:<path>" (that Card's settings), a panel under the canvas
+  /// ("logs", "timeline", "terminal") or "versions".
   var openRequest: String?
+
+  /// The panel under the canvas an `open` names.
+  nonisolated static func panel(_ open: String) -> BottomPanel? {
+    switch open {
+    case "logs": return .log
+    case "timeline": return .timeline
+    case "terminal": return .terminal
+    default: return nil
+    }
+  }
   /// A workflow scope to show (pointing into a Card in Card), taken by the project's window.
   var scopeRequest: [String]?
-  /// Windows where the bird is out (its homes show no bird meanwhile: one Tsugumi).
-  var awayWindows = 0
+  /// Windows where the bird is out, by the project they show ("": Home). Its
+  /// homes for that project show no bird meanwhile: one Tsugumi per project.
+  private var awayWindows: [String: Int] = [:]
+  func birdAway(_ project: String?) -> Bool { awayWindows[project ?? "", default: 0] > 0 }
+  func birdLeft(_ project: String?, by change: Int) { awayWindows[project ?? "", default: 0] += change }
   /// The chat's answer the bubble points to was asked for: the chat shows it marked.
   private(set) var chatFlash: Date?
 
-  /// The bubble's "詳しくはチャットに": the chat (or on Home the panel) shows the whole answer.
+  /// The bubble's "More in the chat": the chat (or on Home the panel) shows the whole answer.
   func showDetails() {
     if speakingChat != nil { chatFlash = Date() } else { open = true }
   }
@@ -152,13 +177,27 @@ final class GuideController {
 
   /// The first start's question (provider and key, or skip) was answered.
   private(set) var setupDone: Bool
-  /// "デモを見ますか？" was answered (見る or あとで).
+  /// The offer of a demo was answered (Show Me or Later).
   private(set) var demoAnswered: Bool
 
   /// The first start asks for a key: nothing usable is set and it was never answered.
-  var needsSetup: Bool { !setupDone && !available && !Self.quiet }
-  /// The guide greets and offers the demo once, when it first has a connection.
+  var needsSetup: Bool { !setupDone && !connected && !Self.quiet }
+  /// The guide greets and offers the demo once (without a connection, the scripted tour).
   var offersDemo: Bool { available && !demoAnswered && !Self.quiet }
+  /// The main window (its Workspace id) that asks "Would you like to see the guide?": the
+  /// user's own save of a key (or sign-in) has just made the guide usable.
+  var demoInvite: UUID?
+  @ObservationIgnored private var inviteOnConnect = false
+
+  /// The first questions on Home, written by the app (no model): what to try,
+  /// then a field or the Drafts, then a demo.
+  enum OfferStep: Equatable { case start, fields, field(String), drafts }
+  var offerStep: OfferStep = .start
+  /// Other demos by a demo the app pointed at: the questions are out again.
+  private(set) var asksAgain = false
+  /// The corner shows the first questions.
+  var asksDemo: Bool { available && !Self.quiet && (!demoAnswered || asksAgain) }
+  static var otherDemos: String { String(localized: "ほかのデモ") }
 
   /// Scripted checks and smoke runs: no first-start questions over the windows.
   static let quiet = ProcessInfo.processInfo.environment["TSUGUMI_UI_SCRIPT"] != nil
@@ -221,17 +260,29 @@ final class GuideController {
   }
 
   private func apply(_ usable: Bool) {
-    available = catalog != nil && usable
-    if available && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
-    if !available {
-      open = false
-      if busy { cancel() }
-      clearHighlight()
+    available = catalog != nil
+    connected = available && usable
+    if connected && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
+    // A key the user just saved connected the guide: the main window in front
+    // asks whether to see the demo (with the model now, not the script).
+    if inviteOnConnect {
+      inviteOnConnect = false
+      if connected && !Self.quiet { demoInvite = AppModel.shared.frontMainWindow?.id }
     }
+    if !connected && busy { cancel() }
   }
 
-  /// The first start was answered: with a key that connected, or skipped.
-  func finishSetup() {
+  /// The user saved a key or signed in (Settings): when that is what makes the
+  /// guide usable, the main window in front asks whether to see the demo.
+  func connectionSaved() {
+    inviteOnConnect = !connected
+    refreshAvailability()
+  }
+
+  /// The first start was answered: with a key that connected (the main window
+  /// then asks whether to see the demo), or skipped.
+  func finishSetup(connected: Bool = false) {
+    if connected { inviteOnConnect = true }
     setupDone = true
     UserDefaults.standard.set(true, forKey: "guide.setupDone")
     refreshAvailability()
@@ -241,6 +292,7 @@ final class GuideController {
   func resetIntroduction() {
     setupDone = false
     demoAnswered = false
+    offerStep = .start
     UserDefaults.standard.set(false, forKey: "guide.setupDone")
     UserDefaults.standard.set(false, forKey: "guide.demoAnswered")
     refreshAvailability()
@@ -251,11 +303,21 @@ final class GuideController {
     contextScreen = screen
     contextSession = session
     contextTab = tab
+    if let session { shownTabs[session.identity.id] = ShownTab(tab: tab) }
   }
+
+  /// The workflow tab each open project last showed (the bubble's buttons act on it).
+  private struct ShownTab { weak var tab: WorkflowTab? }
+  @ObservationIgnored private var shownTabs: [String: ShownTab] = [:]
 
   /// A choice tapped in the bubble or under a reply: the user's answer, to
   /// whichever Tsugumi offered it (a project's chat, or the guide on Home).
   func choose(_ choice: String) {
+    if bubble?.local == true, choice == Self.otherDemos {
+      dismissBubble()
+      asksAgain = true
+      return
+    }
     if let chat = speakingChat {
       chat.send(choice)
     } else {
@@ -269,7 +331,19 @@ final class GuideController {
   @ObservationIgnored private(set) weak var speakingChat: ChatController?
   /// The project and workflow the flying bird's buttons act on.
   var flyerSession: ProjectSession? { speakingChat?.session ?? contextSession }
-  var flyerTab: WorkflowTab? { contextTab }
+  var flyerTab: WorkflowTab? { flyerSession.flatMap { shownTabs[$0.identity.id]?.tab } ?? contextTab }
+
+  /// Whether what the bird says now belongs in a window showing this project
+  /// (nil: Home; another project's window goes on undisturbed).
+  func speaks(in project: String?) -> Bool { speakingChat?.session.identity.url.path == project }
+
+  /// The project of this chat closed: what it was saying goes with it.
+  func chatClosed(_ chat: ChatController) {
+    shownTabs[chat.session.identity.id] = nil
+    guard speakingChat === chat else { return }
+    speakingChat = nil
+    dismissBubble()
+  }
 
   /// The chat's Tsugumi called guide_show: the bird flies and speaks for it.
   func chatShow(_ chat: ChatController, arguments: String) {
@@ -281,7 +355,7 @@ final class GuideController {
   /// A guide_show of either Tsugumi: where the bird goes, what opens, what it says.
   private func show(_ shown: GuideShow) {
     if shown.endTour { endTour() }
-    if let o = shown.open, o.hasPrefix("card:") { openRequest = o }
+    if let o = shown.open, o.hasPrefix("card:") || o == "versions" || Self.panel(o) != nil { openRequest = o }
     point(at: shown.highlight)
     bubble = GuideBubble(say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight,
                          farewell: shown.endTour)
@@ -319,10 +393,32 @@ final class GuideController {
     clearHighlight()
   }
 
-  /// "デモを見ますか？": either answer is kept, so it is never asked again.
+  /// The offer of a demo: either answer is kept, so it is never asked again.
   func answerDemoOffer() {
     demoAnswered = true
+    asksAgain = false
     UserDefaults.standard.set(true, forKey: "guide.demoAnswered")
+  }
+
+  /// A demo picked from the first questions: the bird flies to its card in the
+  /// demo list and offers to open it (the app says it; no model).
+  func pickDemo(_ d: DemoEntry) {
+    answerDemoOffer()
+    speakingChat = nil
+    let say = d.field == nil
+      ? String(localized: "「\(d.title)」です。Card の形だけができていて、中身を AI が書きます。開いたら、チャットのツグミと一緒に実装させてみましょう。")
+      : String(localized: "「\(d.title)」です。開くと、チャットのツグミが Card の動きと結果を一緒に見ていきます。")
+    show(GuideShow(highlight: "demo:\(d.id)", say: say, choices: [Self.otherDemos],
+                   actions: [GuideAction(kind: .openDemo, label: String(localized: "このデモを開く"), demo: d.id)]))
+    bubble?.local = true
+  }
+
+  /// Ask for a Recommendation in a field: the guide picks one of its demos.
+  func recommend(in field: String) {
+    answerDemoOffer()
+    demosRequested = true
+    ask(String(localized: "「\(field)」のおすすめは？"), screen: .demos, session: nil, tab: nil,
+        note: "[Interest] The user asks which demo of the field \"\(field)\" to see; pick one of its demos.")
   }
 
   func toggleFromMenu() {
@@ -360,13 +456,22 @@ final class GuideController {
     guard !text.isEmpty else { return }
     answerDemoOffer()
     demosRequested = true
+    if scripted {
+      play(GuideScript.shared.demo(for: text) + "/pick", asked: text, chat: nil)
+      return
+    }
     ask(text, screen: .demos, session: nil, tab: nil, note: "[Interest] The user answered what interests them; pick a demo for it.")
   }
 
   /// A question of the user, with what their window shows.
   func ask(_ text: String, screen: Screen, session: ProjectSession?, tab: WorkflowTab?, note: String? = nil) {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard available, !busy, !text.isEmpty, let agent = makeAgent() else { return }
+    guard available, !busy, !text.isEmpty else { return }
+    if scripted {
+      answerScripted(text, chat: nil)
+      return
+    }
+    guard let agent = makeAgent() else { return }
     readSession = session
     items.append(Item(role: "user", text: text))
     let prompt = (note.map { $0 + "\n" } ?? "") + text + "\n\n" + screenNote(screen, session: session, tab: tab)
@@ -378,8 +483,13 @@ final class GuideController {
   }
 
   /// Something the app tells the guide (a tour step, a run that ended); one
-  /// that comes while it answers waits for the answer to end.
-  private func tell(_ prompt: String, display: String, session: ProjectSession?) {
+  /// that comes while it answers waits for the answer to end. Without a
+  /// connection the chat shows `script`'s step instead (nil: nothing).
+  private func tell(_ prompt: String, display: String, session: ProjectSession?, script: String? = nil) {
+    if scripted {
+      if let script, let session { play(script, asked: display, chat: AppModel.shared.chat(for: session)) }
+      return
+    }
     // In the demo's copy, Tsugumi of its chat leads the tour.
     if let session {
       AppModel.shared.chat(for: session).tell(prompt: prompt, display: display)
@@ -409,7 +519,7 @@ final class GuideController {
   }
 
   func retry() {
-    guard available, !busy, let agent = makeAgent() else { return }
+    guard connected, !busy, let agent = makeAgent() else { return }
     begin()
     Task {
       await agent.setProvider(AgentSettings.guide())
@@ -468,7 +578,7 @@ final class GuideController {
       if let last = items.last, last.role == "assistant" { items.removeLast() }
     case .retrying(let s):
       status = String(localized: "再試行中: \(s)")
-    case .compacted, .helper:
+    case .compacting, .compacted, .helper:
       break
     case .finished:
       ended()
@@ -574,10 +684,80 @@ final class GuideController {
     items = out
   }
 
+  // MARK: - Without a model connection
+
+  /// The step of the script shown last (its choices are the ones out).
+  @ObservationIgnored private var scriptAt: String?
+
+  /// A message without a connection: $demo in a project's chat begins the
+  /// tour; a tapped choice leads to its step (in the tour's chat, or on Home
+  /// after Home's steps); anything else gets the one fixed reply (pointing to
+  /// Settings and $demo), with the step's choices still there to go on.
+  func answerScripted(_ text: String, chat: ChatController?) {
+    let script = GuideScript.shared
+    if let chat, text.split(whereSeparator: \.isWhitespace).contains("$demo") {
+      startScriptedTour(asked: text, chat: chat)
+      return
+    }
+    let here = chat.map { touring($0.session) } ?? scriptAt.map { script.homeSteps.contains($0) } ?? false
+    let current = here ? scriptAt.flatMap { script.steps[$0] } : nil
+    if let next = current?.next[text] {
+      play(next, asked: text, chat: chat)
+      return
+    }
+    var reply = script.noConnection
+    reply.show.highlight = current == nil ? nil : highlight
+    reply.show.choices = current?.show.choices ?? []
+    // In the tour's own chat the tour is already there.
+    if chat != nil, current != nil { reply.show.actions.removeAll { $0.kind == .openDemo } }
+    present(reply, asked: text, chat: chat)
+  }
+
+  /// $demo without a connection: in a copy of a demo the script has a tour
+  /// of (by its name), the tour begins there (elsewhere the reply says where it can).
+  private func startScriptedTour(asked: String, chat: ChatController) {
+    let s = chat.session
+    let toured = Set(GuideScript.shared.tours.map(\.demo))
+    guard let demo = AppModel.shared.demos.first(where: { toured.contains($0.id) && $0.title == s.scopeName([]) }) else {
+      play("otherProject", asked: asked, chat: chat)
+      return
+    }
+    answerDemoOffer()
+    tour = Tour(demo: demo.id, title: demo.title, path: s.identity.url.path, started: true)
+    saveTour()
+    seen = runKey(s)
+    seenActive = s.runActive
+    play(GuideScript.shared.step("start", of: demo.id), asked: asked, chat: chat)
+  }
+
+  private func play(_ id: String, asked: String?, chat: ChatController?) {
+    guard let step = GuideScript.shared.steps[id] else { return }
+    scriptAt = id
+    present(step, asked: asked, chat: chat)
+  }
+
+  /// A step of the script as an answer: in the chat (its bird speaks only in
+  /// the tour's copy) or in the panel, and in the bubble.
+  private func present(_ step: GuideScript.Step, asked: String?, chat: ChatController?) {
+    if let chat {
+      chat.showScripted(asked: asked, reply: step.text, shown: step.show)
+      guard touring(chat.session) else { return }
+      speakingChat = chat
+    } else {
+      speakingChat = nil
+      for i in items.indices { items[i].actions = []; items[i].choices = [] }
+      if let asked { items.append(Item(role: "user", text: asked)) }
+      items.append(Item(role: "assistant", text: step.text, actions: step.show.actions, choices: step.show.choices))
+    }
+    show(step.show)
+    bubble?.more = Self.saysMore(step.text, than: step.show.say)
+    leaveAfterFarewell()
+  }
+
   // MARK: - Pointing
 
   /// Where the bird flies and the ring is drawn, until the bubble is closed or it moves on.
-  private func point(at target: String?) {
+  func point(at target: String?) {
     highlightTask?.cancel()
     highlight = target
     // A demo's card is in Home's demo list: it opens to show it.
@@ -610,8 +790,10 @@ final class GuideController {
   /// [Screen]: what the user's window shows, for the guide to answer about.
   func screenNote(_ screen: Screen, session: ProjectSession?, tab: WorkflowTab?) -> String {
     var lines = ["[Screen]"]
+    var inProject = false
     switch (screen, session) {
     case (.project, let s?):
+      inProject = true
       lines.append("screen: the project \"\(s.scopeName([]))\" (folder \(s.identity.url.path))")
       if let tab {
         lines.append("workflow shown: " + (tab.scope.isEmpty ? "the root workflow" : "the Card in Card \(tab.scope.joined(separator: "/"))"))
@@ -630,14 +812,19 @@ final class GuideController {
     case (.demos, _):
       lines.append("screen: Home, the demo list")
     default:
-      lines.append("screen: Home (recent projects, new project, open, デモを見る)")
+      lines.append("screen: Home (recent projects, new project, open, \(String(localized: "デモを見る")))")
     }
     if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
       lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")
     }
-    lines.append("demos (id, title, tags: description):")
-    for d in AppModel.shared.demos {
-      lines.append("- \(d.id) \"\(d.title)\", \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
+    if inProject {
+      lines.append("demos (ids; their descriptions come on Home): " + AppModel.shared.demos.map(\.id).joined(separator: ", "))
+    } else {
+      lines.append("demos (id, title, field, tags: description):")
+      for d in AppModel.shared.demos {
+        lines.append("- \(d.id) \"\(d.title)\"\(d.field.map { ", field \($0)" } ?? ""), \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
+      }
     }
     return lines.joined(separator: "\n")
   }
@@ -698,14 +885,16 @@ final class GuideController {
       seen = runKey(s)
       seenActive = s.runActive
       tell(Agent.guideText("tourStart", ["demo": t.demo, "title": t.title]),
-           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s)
+           display: String(localized: "デモ「\(t.title)」の案内を始めます"), session: s,
+           script: GuideScript.shared.step("start", of: t.demo))
       return
     }
     if resumeAsked, s.connected {
       resumeAsked = false
       seen = runKey(s)
       seenActive = s.runActive
-      tell(Agent.guideText("tourResume", ["demo": t.demo]), display: String(localized: "デモの案内を続けます"), session: s)
+      tell(Agent.guideText("tourResume", ["demo": t.demo]), display: String(localized: "デモの案内を続けます"), session: s,
+           script: scriptAt.flatMap { $0.hasPrefix(t.demo + "/") ? $0 : nil } ?? GuideScript.shared.step("resume", of: t.demo))
       return
     }
     let now = runKey(s)
@@ -730,8 +919,10 @@ final class GuideController {
     if s.runActive {
       // The bird watches the run; Tsugumi is told only how it ended.
     } else if seenActive || !before.hasPrefix(run + ":"), s.runStatus != nil {
+      let step = scriptAt.flatMap { GuideScript.shared.steps[$0] }
       tell(Agent.guideText("event", ["event": Agent.guideText("runEnded", ["run": run, "state": state])]),
-           display: String(localized: "実行が終わりました（\(s.runStatus?.state.label ?? state)）"), session: s)
+           display: String(localized: "実行が終わりました（\(s.runStatus?.state.label ?? state)）"), session: s,
+           script: s.runStatus?.state == .succeeded ? step?.ranOk : step?.ranElse)
     }
   }
 

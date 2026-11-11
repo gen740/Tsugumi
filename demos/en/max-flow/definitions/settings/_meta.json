@@ -1,0 +1,10 @@
+{
+  "description": "How to make the network",
+  "content": "Passes on the random seed, the number and width of layers, the probability of an edge between adjacent layers, and the maximum capacity.",
+  "outputs": [
+    {
+      "name": "settings",
+      "description": "Settings for making the network"
+    }
+  ]
+}

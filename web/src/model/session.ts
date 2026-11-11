@@ -5,15 +5,17 @@
 // saved (a run in progress, a lost connection).
 import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
-import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, uuid, webSocketTransport } from '../shared/rpc'
+import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../shared/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
+import { arrangeCards } from './arrange'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { cardPermissions } from './permissions'
+import { L, language } from '../i18n'
 
 export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
@@ -62,7 +64,45 @@ export const stageRecords = (list: R.StageTimeT[]): StageRecord[] =>
     return st === undefined ? [] : [{ stage: st, outcome: t.outcome, start: t.start !== null ? Number(t.start) : undefined, end: t.end !== null ? Number(t.end) : undefined }]
   })
 
-/** Latest invocation of a Card in the current run, as the core reports it. */
+/** What the user and the Agent write about a Card (_meta.json), and the record
+ *  of who did what ("agent" or "user"; absent when not recorded). */
+export interface CardComment {
+  id: string
+  text: string
+  resolved: boolean
+  /** One line on what was done about it. */
+  resolution?: string
+  author?: string
+  editedBy?: string
+  stateBy?: string
+  /** The Cards the save that resolved it changed. */
+  cards: string[]
+}
+
+export function cardComments(meta: J | undefined): CardComment[] {
+  return (arr(get(meta, 'comments')) ?? []).flatMap((c) => {
+    const id = str(get(c, 'id')), text = str(get(c, 'text'))
+    return id && text !== undefined ? [{
+      id, text, resolved: bool(get(c, 'resolved')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
+      author: str(get(c, 'author')), editedBy: str(get(c, 'editedBy')), stateBy: str(get(c, 'stateBy')),
+      cards: (arr(get(c, 'cards')) ?? []).map((x) => str(x)).filter((x): x is string => !!x),
+    }] : []
+  })
+}
+
+/** Who did something to a comment, for the sentences that say so. */
+export const commentActor = (by: string | undefined) => (by === 'agent' ? 'Agent' : by === 'user' ? L('あなた') : undefined)
+/** "Resolved by the Agent", or undefined when who did it is not recorded. */
+export const commentDone = (by: string | undefined, what: string) => (by === 'agent' ? L('Agent が{0}', what) : by === 'user' ? L('あなたが{0}', what) : undefined)
+
+/** What a version or a save did to a comment, and who did it when that is recorded. */
+export function commentChange(change: string, by?: string): string {
+  const what = ({ added: L('追加'), edited: L('編集'), resolved: L('解決'), reopened: L('開き直し'), removed: L('削除') } as Record<string, string>)[change] ?? change
+  const who = commentActor(by)
+  return who ? L('{0}（{1}）', what, who) : what
+}
+
+/** Latest invocation of a Card in the current run, as the core reports it. *//** Latest invocation of a Card in the current run, as the core reports it. */
 export interface CardRunState {
   state: D.CardState
   /** Number of the latest invocation in this run (1, 2, …); 0 = not run. */
@@ -192,11 +232,11 @@ export function displaySummary(d: DisplaySnapshot): string {
       return line.replace(/^[#>*\-` ]+|[#>*\-` ]+$/g, '').replace(/\*\*/g, '')
     }
     case 'scalar': return `${v.label} = ${Number(v.value.toPrecision(6))}`
-    case 'lineChart': return `折れ線 ${v.series.length} 系列 · ${Math.max(0, ...v.series.map((x) => x.x.length))} 点`
-    case 'table': return `表 ${v.columns.length} 列 × ${v.rows.length} 行`
-    case 'image': return v.alt || '画像'
-    case 'points': return `点群 ${v.x.length} 点`
-    case 'module': return plotTitle(v.name, v.json) ?? `モジュール ${v.name}`
+    case 'lineChart': return L('折れ線 {0} 系列 · {1} 点', v.series.length, Math.max(0, ...v.series.map((x) => x.x.length)))
+    case 'table': return L('表 {0} 列 × {1} 行', v.columns.length, v.rows.length)
+    case 'image': return v.alt || L('画像')
+    case 'points': return L('点群 {0} 点', v.x.length)
+    case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
   }
 }
 
@@ -208,15 +248,19 @@ function plotTitle(name: string, json: string): string | undefined {
   try { v = JSON.parse(json) } catch { v = undefined }
   const t = name === 'plotly' ? v?.layout?.title : v?.title
   const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
-  return text || (name === 'plotly' ? 'Plotly のグラフ' : 'Vega-Lite のグラフ')
+  return text || (name === 'plotly' ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
 }
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
+/** A file's new content: text, or bytes for a file taken in with another project. */
+type SourceEdit = string | Uint8Array
+const sourceBytes = (e: SourceEdit) => (typeof e === 'string' ? new TextEncoder().encode(e) : e)
+
 interface Snapshot {
   project: J
   layout: J
-  sources: Map<string, string>
+  sources: Map<string, SourceEdit>
   removals: Set<string>
   definitions: Map<string, DefinitionDraft>
   externals: Map<string, ExternalProject>
@@ -232,8 +276,8 @@ interface DocState {
 
 /** A source file's content before or after an edit ('confirmed': the
  *  confirmed file, read before the edit is saved, for undo). */
-type SourceValue = { kind: 'absent' } | { kind: 'text'; text: string } | { kind: 'confirmed' }
-const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !== 'text' || a.text === (b as { text: string }).text)
+type SourceValue = { kind: 'absent' } | { kind: 'text'; text: SourceEdit } | { kind: 'confirmed' }
+const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !== 'text' || a.text === (b as { text: SourceEdit }).text)
 
 /** One saved operation: undo applies `before` over what is there now, so
  *  changes made since by the Agent or another window stay. */
@@ -268,7 +312,19 @@ export const errorText = (e: unknown): string => {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** A failure to reach the tsugumid, as opposed to one while reading the project. */
+class Unreached extends Error {
+  constructor(readonly cause: unknown) {
+    super(errorText(cause))
+  }
+}
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
+
+/** What a version's summary is written from: its message and what it changed. */
+export function versionSummaryInput(c: Pick<R.VersionCommitT, 'message' | 'changed'>, diff: Pick<R.VersionDiffT, 'text' | 'truncated'>): string {
+  const cards = (c.changed ?? []).map((k) => s(k) || 'the Workflow itself').join(', ')
+  return `Commit message: ${s(c.message).trim()}\nChanged Cards: ${cards}\n\nDiff${diff.truncated ? ' (cut short)' : ''}:\n${s(diff.text)}`
+}
 
 export class ProjectSession extends Observable {
   readonly viewId: string
@@ -278,6 +334,12 @@ export class ProjectSession extends Observable {
   environment: EnvironmentState = { state: 'stopped' }
   connected = false
   connectionMessage?: string
+  /** The last connection failed before the project could be read (tsugumid was not reached), not while reading it. */
+  connectionFailed = false
+  /** Opens the transport to a tsugumid (the tests give their own). */
+  openTransport: (url: string) => Promise<Transport> = webSocketTransport
+  /** The waits between tries to reach a tsugumid that has just started (ms). */
+  connectRetryDelays = [200, 400, 800, 1600, 2000]
   private client?: RPCClient
   private subscription?: string
   private lastSeq = 0n
@@ -304,7 +366,7 @@ export class ProjectSession extends Observable {
   // Draft
   project: J = obj()
   layout: J = obj()
-  sourceEdits = new Map<string, string>() // path -> new text
+  sourceEdits = new Map<string, SourceEdit>() // path -> new content
   sourceRemovals = new Set<string>()
   definitionEdits = new Map<string, DefinitionDraft>()
   /** The Draft being written on the canvas (geometry opens its Card up). */
@@ -340,6 +402,7 @@ export class ProjectSession extends Observable {
   cameras = new Map<CardKey, { x: number; y: number; zoom: number }>()
   private viewRev = 0n
   private viewSaveTimer?: ReturnType<typeof setTimeout>
+  private closed = false
 
   // Runs
   runStatus?: R.RunStatusT
@@ -417,7 +480,7 @@ export class ProjectSession extends Observable {
   }
 
   get syncState(): SyncState {
-    if (!this.connected) return this.dirty ? { kind: 'failed', message: this.connectionMessage ?? '接続していません' } : { kind: 'offline' }
+    if (!this.connected) return this.dirty ? { kind: 'failed', message: this.connectionMessage ?? L('接続していません') } : { kind: 'offline' }
     if (this.saving) return { kind: 'saving' }
     if (this.saveError) return { kind: 'failed', message: this.saveError }
     if (this.savingAfterRun && this.dirty) return { kind: 'waitingForRun' }
@@ -490,6 +553,7 @@ export class ProjectSession extends Observable {
   }
 
   private async openConnection() {
+    if (this.closed) return
     this.connectionMessage = undefined
     this.changed()
     try {
@@ -497,9 +561,12 @@ export class ProjectSession extends Observable {
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
-      const c = new RPCClient(await webSocketTransport(env.endpoint!))
-      await c.connect(env.token)
+      const c = await this.reach(env.endpoint!, env.token)
       const opened = await c.open(this.viewId)
+      if (this.closed) {
+        c.close()
+        return
+      }
       this.client = c
       this.projectId = env.projectId
       this.endpoint = env.endpoint
@@ -521,12 +588,30 @@ export class ProjectSession extends Observable {
       }
       if (this.dirty) this.scheduleSave()
       this.changed()
-      await this.refreshVisibleDisplays()
+      await Promise.all([this.refreshVisibleDisplays(), this.restoreCardStates(c)])
     } catch (e) {
       this.connected = false
-      this.connectionMessage = errorText(e)
+      this.connectionFailed = e instanceof Unreached
+      this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
       this.changed()
+    }
+  }
+
+  /** Connects to a tsugumid that has just started. Its port may not be
+   *  reachable at once (WSL2 forwards a new port to Windows a moment later),
+   *  so a connection that cannot be made is tried again for a few seconds. */
+  private async reach(endpoint: string, token: string | undefined): Promise<RPCClient> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const c = new RPCClient(await this.openTransport(endpoint))
+        await c.connect(token, language())
+        return c
+      } catch (e) {
+        if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
+        if (this.closed || attempt >= this.connectRetryDelays.length) throw new Unreached(e)
+        await sleep(this.connectRetryDelays[attempt])
+      }
     }
   }
 
@@ -542,6 +627,7 @@ export class ProjectSession extends Observable {
     this.changed()
     void (async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
+        if (this.closed) break
         await this.openConnection()
         if (this.connected) break
         await sleep(Math.min(5000, 250 * (attempt + 1)))
@@ -558,6 +644,17 @@ export class ProjectSession extends Observable {
     this.changed()
     await api('/api/env/stop', { path: this.dir }).catch(() => {})
     await this.openConnection()
+  }
+
+  /** The project was left: no more connections, whatever is under way. */
+  close() {
+    this.closed = true
+    this.offEvents?.()
+    clearTimeout(this.viewSaveTimer)
+    const c = this.client
+    this.client = undefined
+    c?.close()
+    this.connected = false
   }
 
   async stopEnvironment() {
@@ -577,22 +674,56 @@ export class ProjectSession extends Observable {
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
-   *  once per frame: a run with thousands of short invocations causes one
+   *  once per frame (or four times a second with no frames): a run with thousands of short invocations causes one
    *  view update per batch, not per event. */
   private listen(c: RPCClient) {
     c.onNotification = (e) => {
       this.inbox.push(e)
       if (this.inboxScheduled) return
       this.inboxScheduled = true
-      requestAnimationFrame(() => {
+      const apply = () => {
+        cancelAnimationFrame(frame)
+        clearTimeout(timer)
         this.inboxScheduled = false
         const batch = this.inbox
         this.inbox = []
         if (batch.length) this.notificationBatches++
         for (const ev of batch) this.handle(ev)
         this.changed()
+      }
+      const frame = requestAnimationFrame(apply)
+      // A tab in the background has no frames: the run still goes on, and must be seen to.
+      const timer = setTimeout(apply, 250)
+    }
+  }
+
+  /** What a Card's invocation says about the Card, from a notification or from the run's record. */
+  private noteInvocation(inv: R.InvocationSummaryT) {
+    const k = key(segs(inv.card))
+    const prev = this.cardStates.get(k)
+    const n = inv.invocation ?? 0n
+    if (!prev || prev.invocation <= n) {
+      const sent = new Set(inv.outputsSent.map((x) => s(x)))
+      this.cardStates.set(k, {
+        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        // Each notification carries the invocation's stages so far.
+        stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
+        sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
+        startedAt: inv.startedAt !== null ? Number(inv.startedAt) : undefined, endedAt: inv.endedAt !== null ? Number(inv.endedAt) : undefined,
+        readyAt: inv.readyAt !== null ? Number(inv.readyAt) : undefined,
       })
     }
+  }
+
+  /** The Cards of the last run, for a project just opened: their notifications were sent before it was. */
+  private async restoreCardStates(c: RPCClient) {
+    const run = sOpt(this.runStatus?.runId)
+    if (!run) return
+    const page = await c.latestInvocations(run).catch(() => undefined)
+    // A run started meanwhile has its own states.
+    if (!page || sOpt(this.runStatus?.runId) !== run) return
+    for (const inv of page.records) this.noteInvocation(inv)
+    this.changed()
   }
 
   private handle(e: Notification) {
@@ -691,6 +822,9 @@ export class ProjectSession extends Observable {
     }
     this.resolution = r
     this.diagnostics = all
+    // A result belongs to a Card of the document. A Card that comes back asks for
+    // its own again: displayedCards changed (refreshVisibleDisplays).
+    for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
   private applyDelta(d: R.DocumentDeltaT, fromSave = false) {
@@ -700,6 +834,9 @@ export class ProjectSession extends Observable {
       return
     }
     const wasClean = !this.dirty
+    // The Cards that send displays, before this change (definitions and
+    // resolution are replaced below).
+    const shown = [...this.displayedCards].sort().join('|')
     this.rev = d.rev ?? this.rev
     this.executionRev = d.executionRev ?? this.executionRev
     if (d.projectJson !== null) {
@@ -719,7 +856,6 @@ export class ProjectSession extends Observable {
     for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
     this.refreshExternals()
-    const shown = [...this.displayedCards].sort().join('|')
     this.applyResolution(d.resolution, d.diagnostics)
     // A Draft implemented (or any Card that became code or a logger) sends its displays too.
     if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
@@ -750,28 +886,16 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunStatusChanged: {
         const st = (e.value as R.RunStatusChangedT).status
         if (st && (!this.runStatus || s(st.runId) === s(this.runStatus.runId))) this.runStatus = st
+        if (st?.commit && (st.state === D.RunState.succeeded || st.state === D.RunState.failed || st.state === D.RunState.cancelled)) void this.summarizeVersion(s(st.commit))
         break
       }
       case R.RunEventValue.RunCardChanged: {
         const inv = (e.value as R.RunCardChangedT).invocation
         if (!inv) break
-        const k = key(segs(inv.card))
-        const prev = this.cardStates.get(k)
-        const n = inv.invocation ?? 0n
-        if (!prev || prev.invocation <= n) {
-          const sent = new Set(inv.outputsSent.map((x) => s(x)))
-          this.cardStates.set(k, {
-            state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
-            // Each notification carries the invocation's stages so far.
-            stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
-            sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
-            startedAt: inv.startedAt !== null ? Number(inv.startedAt) : undefined, endedAt: inv.endedAt !== null ? Number(inv.endedAt) : undefined,
-            readyAt: inv.readyAt !== null ? Number(inv.readyAt) : undefined,
-          })
-        }
+        this.noteInvocation(inv)
         const lastStart = inv.stages.length ? inv.stages[inv.stages.length - 1].start : null
         this.sampleClock(inv.endedAt ?? (inv.state === D.CardState.running ? lastStart : null))
-        this.recordTimeline(k, inv)
+        this.recordTimeline(key(segs(inv.card)), inv)
         break
       }
       case R.RunEventValue.RunFinished: {
@@ -1092,6 +1216,12 @@ export class ProjectSession extends Observable {
   /** Drops every unsaved edit and follows the latest confirmed document
    *  (only for edits that cannot be saved). */
   discardDraft() {
+    this.dropDraft()
+    // A save on its way answers about the draft that went: nothing of it stays.
+    void this.saveTask?.then(() => this.dropDraft())
+  }
+
+  private dropDraft() {
     this.project = clone(this.confirmedProject)
     this.layout = clone(this.confirmedLayout)
     this.sourceEdits = new Map()
@@ -1101,9 +1231,22 @@ export class ProjectSession extends Observable {
     this.sourceBases = new Map()
     this.draftBase = undefined
     this.externalBases = new Map()
+    this.pendingCardRenames = []
+    this.saveAgain = false
+    this.conflictRetries = 0
     this.saveError = undefined
     this.savingAfterRun = false
     this.changed()
+  }
+
+  /** Before leaving the project: what it holds is saved, or the user is asked why it
+   *  cannot be and may give it up. Whether the project can be left now. */
+  async settleBeforeLeaving(giveUp: (reason: string) => Promise<boolean>): Promise<boolean> {
+    if (this.dirty) await this.save()
+    if (!this.dirty) return true
+    if (!(await giveUp(this.saveError ?? this.connectionMessage ?? L('変更を保存できませんでした。')))) return false
+    this.discardDraft()
+    return true
   }
 
   /** The unsaved edits as text, for copying them out when they cannot be saved. */
@@ -1124,7 +1267,7 @@ export class ProjectSession extends Observable {
       if (e.removed) out += `\n== ${p} removed ==\n`
       else for (const [rel, text] of externalFiles(e)) out += `\n== ${p}${rel} ==\n${text}\n`
     }
-    for (const [p, t] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) out += `\n== ${p} ==\n${t}\n`
+    for (const [p, t] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) out += `\n== ${p} ==\n${typeof t === 'string' ? t : `(${t.length} bytes)`}\n`
     for (const p of [...this.sourceRemovals].sort()) out += `\n== ${p} removed ==\n`
     return out
   }
@@ -1167,10 +1310,18 @@ export class ProjectSession extends Observable {
    *  their way, so the save is tried again once they arrived. */
   private async saveOnce(): Promise<void> {
     const client = this.client
-    if (!this.dirty || !client) return
+    if (!client) return
+    // Nothing left to save (undone, or met by what arrived): no failure is left either.
+    if (!this.dirty) {
+      this.saveError = undefined
+      return
+    }
     await this.fillUndoSources()
     if (this.draftBase && this.draftBase.rev !== this.rev) this.rebase()
-    if (!this.dirty) return
+    if (!this.dirty) {
+      this.saveError = undefined
+      return
+    }
     this.saving = true
     this.changed()
     try {
@@ -1184,9 +1335,14 @@ export class ProjectSession extends Observable {
       const merged = new Map<string, ExternalProject>()
       if (!layoutOnly) {
         if (!jeq(this.project, this.confirmedProject)) changes.push(Change.setProject(serialize(this.project)))
+        // A removed definition takes its folder with it: the core refuses a change to a file in it.
+        const removedFolders: string[] = []
         for (const [id, d] of [...this.definitionEdits].sort(([a], [b]) => a.localeCompare(b))) {
           if (d.removed) {
-            if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) changes.push(Change.removeDefinition(id))
+            if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) {
+              changes.push(Change.removeDefinition(id))
+              removedFolders.push(`definitions/${id}/`)
+            }
           } else {
             changes.push(Change.putDefinition(id, serialize(d.card), d.meta !== undefined ? serialize(d.meta) : null, d.link !== undefined ? serialize(d.link) : null))
           }
@@ -1214,12 +1370,13 @@ export class ProjectSession extends Observable {
             }
           }
         }
+        const goesWithItsDefinition = (p: string) => removedFolders.some((f) => p.startsWith(f))
         for (const [p, text] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) {
-          if (this.sourceRemovals.has(p) || written.has(p)) continue
-          changes.push(Change.putSource(p, new TextEncoder().encode(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
+          if (this.sourceRemovals.has(p) || written.has(p) || goesWithItsDefinition(p)) continue
+          changes.push(Change.putSource(p, sourceBytes(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
         }
         for (const p of [...this.sourceRemovals].sort()) {
-          if (written.has(p)) continue
+          if (written.has(p) || goesWithItsDefinition(p)) continue
           const h = this.sourceBases.get(p) ?? base.hashes.get(p) ?? this.sources.get(p)?.hash
           if (h) changes.push(Change.removeSource(p, h))
         }
@@ -1245,12 +1402,12 @@ export class ProjectSession extends Observable {
               const p = e.args.path
               if (e.kind === D.FailureKind.hash_conflict && p && !this.isExternalDocument(p)) {
                 // A file this window edited was changed elsewhere too: kept, not merged.
-                this.saveError = `${p} は別の場所でも変更されたため保存していません。変更は保持しています。`
+                this.saveError = L('{0} は別の場所でも変更されたため保存していません。変更は保持しています。', p)
                 return
               }
               if (this.conflictRetries >= 8) {
                 this.conflictRetries = 0
-                this.saveError = '他の変更と重なり保存できませんでした。変更は保持しています。'
+                this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
                 return
               }
               // Newer changes are on their way (DocPatched): merge them in and try again.
@@ -1265,7 +1422,7 @@ export class ProjectSession extends Observable {
               this.savingAfterRun = true
               break
             case D.FailureKind.external_change:
-              this.saveError = `${e.args.path ?? 'ファイル'} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。`
+              this.saveError = L('{0} が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。', e.args.path ?? L('ファイル'))
               break
             default:
               this.saveError = errorText(e)
@@ -1277,7 +1434,7 @@ export class ProjectSession extends Observable {
             this.saveError = undefined
             this.forgetSaved(sent, layoutOnly, merged)
           } else {
-            this.saveError = `保存できませんでした: ${errorText(e)}。変更は保持しています。`
+            this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
           }
         }
       }
@@ -1394,9 +1551,9 @@ export class ProjectSession extends Observable {
 
   async run(card: string[], propagate: boolean) {
     const client = this.client
-    if (!client) throw new RPCError('disconnected', '接続していません')
+    if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (this.computationDirty) await this.save()
-    if (this.computationDirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? '変更を保存できないため実行できません。' })
+    if (this.computationDirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? L('変更を保存できないため実行できません。') })
     const parallel = Math.max(1, Math.min(64, prefs.maxConcurrency))
     try {
       const accepted = await client.run(this.rev, uuid(), card, propagate, parallel)
@@ -1604,6 +1761,73 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
+  // ---- Comments on a Card (its _meta.json) ---------------------------------------------
+
+  /** What the user asks of this Card, in the order written. */
+  comments(k: CardKey): CardComment[] {
+    return cardComments(this.cardMeta(k))
+  }
+
+  /** Comments not resolved yet. */
+  openComments(k: CardKey): CardComment[] {
+    return this.comments(k).filter((c) => !c.resolved)
+  }
+
+  /** The Cards of a scope with comments not resolved yet. */
+  cardsWithOpenComments(scope: string[]): CardKey[] {
+    return this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
+      .map((id) => key([...scope, id])).filter((k) => this.openComments(k).length > 0)
+  }
+
+  /** Saved at once; a Card in Card has a _meta.json too. One call is one step of undo. */
+  private editComments(k: CardKey, fn: (list: J[]) => J[]) {
+    this.edit((x) => {
+      const d = x.cardDefinitionDraft(k)
+      if (!d) return
+      const n = cloneDef(d)
+      const meta: JObj = isObj(n.meta) ? n.meta : obj()
+      const list = fn((arr(meta.get('comments')) ?? []).map((c) => clone(c)))
+      meta.set('comments', list.length ? list : undefined)
+      n.meta = meta.size ? meta : undefined
+      x.setCardDefinition(k, n)
+    })
+  }
+
+  addComment(k: CardKey, text: string) {
+    const t = text.trim()
+    if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user']])])
+  }
+
+  editComment(k: CardKey, id: string, text: string) {
+    const t = text.trim()
+    if (t) this.editComments(k, (list) => list.map((c) => {
+      if (str(get(c, 'id')) === id && isObj(c)) {
+        c.set('text', t)
+        c.set('editedBy', 'user')
+      }
+      return c
+    }))
+  }
+
+  /** Marks a comment by hand. Opening one again takes back what was said about it. */
+  setCommentResolved(k: CardKey, id: string, resolved: boolean) {
+    this.editComments(k, (list) => list.map((c) => {
+      if (str(get(c, 'id')) === id && isObj(c)) {
+        c.set('resolved', resolved ? true : undefined)
+        c.set('stateBy', 'user')
+        if (!resolved) {
+          c.set('resolution', undefined)
+          c.set('cards', undefined)
+        }
+      }
+      return c
+    }))
+  }
+
+  removeComment(k: CardKey, id: string) {
+    this.editComments(k, (list) => list.filter((c) => str(get(c, 'id')) !== id))
+  }
+
   /** A setting of the Card (its _card.json). */
   cardSetting(k: CardKey, name: string): J | undefined {
     return get(this.cardDefinition(k), name)
@@ -1751,8 +1975,8 @@ export class ProjectSession extends Observable {
   /** Source text as the draft sees it. */
   async sourceText(p: string): Promise<string> {
     const e = this.sourceEdits.get(p)
-    if (e !== undefined) return e
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (e !== undefined) return typeof e === 'string' ? e : new TextDecoder().decode(e)
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return new TextDecoder().decode(await this.client.readFile(p, this.rev))
   }
 
@@ -1784,17 +2008,37 @@ export class ProjectSession extends Observable {
 
   /** Adds a Card instance to a scope's canvas. */
   appendCard(id: string, scope: string[]) {
+    this.startClean(key([...scope, id]))
     this.updateGraph(scope, (g) => g.set('cards', [...(arr(g.get('cards')) ?? []), obj([['id', id]])]))
   }
 
-  /** A new Card from a template, with its own definition folder. */
-  addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string): CardKey {
+  /** A new Card's name can be one a Card had: nothing of that Card stays with it.
+   *  The core keeps this project's layout up with renames and deletes, but a Card
+   *  in Card's layout or a file written by hand can still hold a frame. */
+  private startClean(k: CardKey) {
+    this.displays.delete(k)
+    this.cardStates.delete(k)
+    this.updateLayout(path(k).slice(0, -1), (l) => this.dropLayoutEntries(k, l))
+  }
+
+  /** The Card's place and frame (and the places of anything inside it). */
+  private dropLayoutEntries(k: CardKey, l: JObj) {
+    const lk = this.layoutKey(k)
+    const cards = l.get('cards')
+    if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
+    const displays = l.get('displays')
+    if (isObj(displays)) displays.set(lk, undefined)
+  }
+
+  /** A new Card from a template, with its own definition folder. `place` says
+   *  where instead of `at`, once the Card's size is known. */
+  addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): CardKey {
     const id = this.uniqueId(name ?? templateBaseName(t), scope)
     const k = key([...scope, id])
     this.edit((x) => {
       x.appendCard(id, scope)
       x.writeTemplate(t, k)
-      x.setPosition(k, at)
+      x.setPosition(k, place ? place(k) : at)
     })
     return k
   }
@@ -1825,7 +2069,16 @@ export class ProjectSession extends Observable {
       copy = await this.copyExternal(`${prefix}externals/${extName}/`, `${toPrefix}externals/${n}/`)
       link = obj([['external', n]])
     }
-    const draft: DefinitionDraft = { card: clone(d.card), meta: clone(d.meta), link: clone(link) }
+    // The copy's comments are comments of its own.
+    const meta = clone(d.meta)
+    if (isObj(meta)) {
+      const comments = arr(meta.get('comments'))
+      if (comments) meta.set('comments', comments.map((c) => {
+        if (isObj(c)) c.set('id', uuid())
+        return c
+      }))
+    }
+    const draft: DefinitionDraft = { card: clone(d.card), meta, link: clone(link) }
     const newKey = key([...scope, newId])
     return {
       id: newId,
@@ -1889,7 +2142,7 @@ export class ProjectSession extends Observable {
   /** Takes in another Tsugumi project as a Card in Card: its folder (read by
    *  the host server, without hidden folders) goes to externals/<name>/. */
   async importProject(folder: string, scope: string[], at: { x: number; y: number }): Promise<CardKey> {
-    const { name: folderName, files } = await api<{ name: string; files: Record<string, string> }>('/api/import/project', { folder })
+    const { name: folderName, files, binary } = await api<{ name: string; files: Record<string, string>; binary: Record<string, string> }>('/api/import/project', { folder })
     const json = (rel: string) => (files[rel] !== undefined ? tryParse(files[rel]) : undefined)
     // The project and the externals in it, each with its documents.
     const projects = Object.keys(files).filter((rel) => {
@@ -1927,6 +2180,10 @@ export class ProjectSession extends Observable {
         x.sourceRemovals.delete(to + rel)
         x.sourceEdits.set(to + rel, text)
       }
+      for (const [rel, base64] of Object.entries(binary)) {
+        x.sourceRemovals.delete(to + rel)
+        x.sourceEdits.set(to + rel, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)))
+      }
       for (const [p, e] of [...docs].sort(([a], [b]) => a.localeCompare(b))) x.createExternal(p, e)
       x.setCardDefinition(k, { card: obj(), link: obj([['external', name]]) })
       x.appendCard(name, scope)
@@ -1956,6 +2213,7 @@ export class ProjectSession extends Observable {
     const made = new Set<CardKey>()
     this.edit((x) => {
       for (const a of applies) a(x)
+      for (const nw of map.values()) x.startClean(key([...scope, nw]))
       x.updateGraph(scope, (g) => {
         const cards = [...(arr(g.get('cards')) ?? [])]
         const conns = [...(arr(g.get('connections')) ?? [])]
@@ -1987,8 +2245,8 @@ export class ProjectSession extends Observable {
   cardNameProblem(k: CardKey, raw: string): string | undefined {
     const nw = raw.trim()
     if (nw === path(k).pop()) return undefined
-    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return '名前に使えるのは英数字と - _ . だけです（128 文字まで）。'
-    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return `「${nw}」はすでに使われています。`
+    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return L('名前に使えるのは英数字と - _ . だけです（128 文字まで）。')
+    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return L('「{0}」はすでに使われています。', nw)
     return undefined
   }
 
@@ -2050,9 +2308,9 @@ export class ProjectSession extends Observable {
     const problem = this.cardNameProblem(k, nw)
     if (problem) throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: problem })
     if (this.dirty) await this.save()
-    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? '変更を保存できませんでした。' })
+    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? L('変更を保存できませんでした。') })
     const rpc = this.client
-    if (!rpc) throw new RPCError('disconnected', '接続していません')
+    if (!rpc) throw new RPCError('disconnected', L('接続していません'))
     const renamedGraph = (g: J) => {
       const out = clone(isObj(g) ? g : obj()) as JObj
       out.set('cards', (arr(out.get('cards')) ?? []).map((c) => (str(get(c, 'id')) === old ? obj([['id', nw]]) : c)))
@@ -2174,14 +2432,7 @@ export class ProjectSession extends Observable {
       })
     }
     x.updateLayout(scope, (l) => {
-      for (const k of keys) {
-        // Layout entries of the Card and of anything inside it.
-        const lk = x.layoutKey(k)
-        const cards = l.get('cards')
-        if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
-        const displays = l.get('displays')
-        if (isObj(displays)) displays.set(lk, undefined)
-      }
+      for (const k of keys) x.dropLayoutEntries(k, l)
     })
     x.updateGroups(scope, (groups) => {
       for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
@@ -2504,7 +2755,7 @@ export class ProjectSession extends Observable {
     this.edit((x) => {
       x.updateLayout(scope, (l) => {
         l.set('notes', [...(arr(l.get('notes')) ?? []), obj([
-          ['id', id], ['scope', ''], ['text', 'メモ'], ['color', 'yellow'],
+          ['id', id], ['scope', ''], ['text', L('メモ')], ['color', 'yellow'],
           ['x', real(p.x)], ['y', real(p.y)], ['width', real(240)], ['height', real(120)],
         ])])
       })
@@ -2572,7 +2823,7 @@ export class ProjectSession extends Observable {
     })
   }
 
-  addGroup(keys: Set<CardKey>, scope: string[], name = 'グループ'): string {
+  addGroup(keys: Set<CardKey>, scope: string[], name = L('グループ')): string {
     const id = 'group-' + uuid().slice(0, 8)
     this.edit((x) => x.updateGroups(scope, (g) => g.push(obj([
       ['id', id], ['scope', ''], ['name', name], ['color', 'blue'], ['cards', [...keys].map((k) => path(k).pop()!).sort()],
@@ -2672,39 +2923,71 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Arranges the Cards of a scope in layers by their distance from the
-   *  sources, following the flow direction (layout only). */
+  /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
+   *  see `arrangeCards`. Sizes and port positions are those of `CardGeometry`. */
   arrange(scope: string[]) {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
-    const incoming = new Map<string, Set<string>>()
-    for (const c of this.connections(scope)) {
-      const f = str(get(c, 'from', 'card')), t = str(get(c, 'to', 'card'))
-      if (f && t && f !== t) {
-        if (!incoming.has(t)) incoming.set(t, new Set())
-        incoming.get(t)!.add(f)
-      }
+    const cards = ids.map((id) => {
+      const g = this.geometry(key([...scope, id]))
+      const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
+      return { id, ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true) }
+    })
+    const wires = this.connections(scope).flatMap((c) => {
+      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
+      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+    })
+    const frames = ids.flatMap((id) => {
+      const k = key([...scope, id]), f = this.displayFrame(k)
+      if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
+      return [{ id, width: dbl(get(f, 'width')) ?? 320, height: dbl(get(f, 'height')) ?? 170 }]
+    })
+    const notes = this.notes(scope).flatMap((n) => {
+      const id = str(get(n, 'id'))
+      return id ? [{ id, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
+    })
+    const bar = (side: string) => {
+      const list = scope.length ? get(this.boundary(key(scope)), side) : undefined
+      return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
-    const depth = new Map<string, number>()
-    const level = (id: string, seen: Set<string>): number => {
-      const d = depth.get(id)
-      if (d !== undefined) return d
-      const preds = [...(incoming.get(id) ?? [])].filter((p) => !seen.has(p))
-      const v = preds.length === 0 ? 0 : Math.max(...preds.map((p) => level(p, new Set([...seen, id])))) + 1
-      depth.set(id, v)
-      return v
-    }
-    for (const id of ids) level(id, new Set())
-    const layers = new Map<number, string[]>()
-    for (const id of ids) layers.set(depth.get(id) ?? 0, [...(layers.get(depth.get(id) ?? 0) ?? []), id])
-    const vertical = this.flow === 'topToBottom'
+    const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
     this.edit((x) => {
-      for (const [lvl, members] of layers) {
-        members.forEach((id, i) => {
-          const across = i * 260 - (members.length - 1) * 130
-          const along = lvl * (vertical ? 200 : 270)
-          x.setPosition(key([...scope, id]), vertical ? { x: across, y: along } : { x: along, y: across * 0.6 })
-        })
-      }
+      for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
+      x.updateLayout(scope, (l) => {
+        if (placed.frames.length) {
+          let displays = l.get('displays')
+          if (!isObj(displays)) {
+            displays = obj()
+            l.set('displays', displays)
+          }
+          for (const f of placed.frames) {
+            const lk = this.layoutKey(key([...scope, f.id]))
+            let d = (displays as JObj).get(lk)
+            if (!isObj(d)) {
+              d = obj()
+              ;(displays as JObj).set(lk, d)
+            }
+            ;(d as JObj).set('x', real(f.x))
+            ;(d as JObj).set('y', real(f.y))
+            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+            const size = frames.find((x) => x.id === f.id)!
+            ;(d as JObj).set('width', real(size.width))
+            ;(d as JObj).set('height', real(size.height))
+          }
+        }
+        if (placed.notes.length) {
+          l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
+            const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
+            const copy = clone(n)
+            if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
+              copy.set('x', real(at.x))
+              copy.set('y', real(at.y))
+            }
+            return copy
+          }))
+        }
+        // The bars of a Card in Card go back to following the Cards.
+        l.set('boundary', undefined)
+      })
     })
   }
 
@@ -2786,8 +3069,22 @@ auto run(Card::Input& input) -> Card::Output {
     }
   }
 
+  /** Why a Card that ran has no result to show. */
+  noResultNote(k: CardKey): string | undefined {
+    switch (this.cardStates.get(k)?.state) {
+      case D.CardState.failed: return L('失敗したので結果はありません')
+      case D.CardState.blocked: return L('上流の Card が失敗したので実行していません')
+      default: return undefined
+    }
+  }
+
+  async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    return this.client.resolveNixSource(ref)
+  }
+
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.clearCache(uuid())
   }
 
@@ -2795,6 +3092,8 @@ auto run(Card::Input& input) -> Card::Output {
 
   /** The project's versions as last read (core/src/versions.cc). */
   versionGraph?: R.VersionGraphT
+  /** Why the last read of it failed. */
+  versionGraphError?: string
   /** Made or copied by this page: it becomes a repository when it connects. */
   makeRepositoryOnConnect = false
 
@@ -2802,21 +3101,84 @@ auto run(Card::Input& input) -> Card::Output {
     if (!this.client) return
     try {
       this.versionGraph = await this.client.versionGraph()
+      this.versionGraphError = undefined
+    } catch (e) {
+      this.versionGraphError = errorText(e)
+    }
+    this.changed()
+  }
+
+  /** A version's Cards and wires (a commit never changes: read once). */
+  versionCanvases = new Map<string, R.VersionCanvasT>()
+  versionSummaryBusy = new Set<string>()
+  versionSummaryErrors = new Map<string, string>()
+  private versionSummaryTried = new Set<string>()
+
+  async loadVersionCanvas(commit: string) {
+    if (!this.client || this.versionCanvases.has(commit)) return
+    try {
+      this.versionCanvases.set(commit, await this.client.versionCanvas(commit))
+      this.changed()
     } catch {}
+  }
+
+  /** Switched in the version tree; the server keeps it and refuses while off. */
+  versionSummaries = false
+
+  async loadVersionSummaries() {
+    const v = await api<{ versionSummaries?: boolean }>('/api/settings').catch(() => null)
+    this.versionSummaries = !!v?.versionSummaries
+    this.changed()
+  }
+
+  async setVersionSummaries(on: boolean) {
+    await api('/api/settings', { versionSummaries: on })
+    this.versionSummaries = on
+    this.versionSummaryTried.clear()
+    this.versionSummaryErrors.clear()
+    this.changed()
+  }
+
+  /** Has a small model write what `commit` changed, once, while switched on:
+   *  as a run of it ends and when it is hovered without a summary. Only its
+   *  code and settings go out (VersionDiff); the sentence goes to its note. */
+  async summarizeVersion(commit: string) {
+    if (!this.client || this.versionSummaryTried.has(commit)) return
+    await this.loadVersionSummaries()
+    if (!this.versionSummaries || this.versionSummaryTried.has(commit)) return
+    this.versionSummaryTried.add(commit)
+    this.versionSummaryBusy.add(commit)
+    this.changed()
+    try {
+      await this.refreshVersions()
+      const c = this.versionGraph?.commits.find((x) => x && s(x.id) === commit)
+      if (c && !c.changeSummary) {
+        const diff = await this.client.versionDiff(commit)
+        // Nothing a summary may read changed (the layout, data files).
+        if (s(diff.text)) {
+          const { text } = await api<{ text: string }>('/api/versions/summarize', { input: versionSummaryInput(c, diff) })
+          await this.client.versionSummary(uuid(), 'ui', commit, text)
+          await this.refreshVersions()
+        }
+      }
+    } catch (e) {
+      this.versionSummaryErrors.set(commit, String((e as Error)?.message ?? e))
+    }
+    this.versionSummaryBusy.delete(commit)
     this.changed()
   }
 
   async makeRepository() {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     await this.client.versionInit(uuid(), 'ui')
     await this.refreshVersions()
   }
 
   /** Names what is saved now as a version (a commit and an annotated tag). */
   async markVersion(name: string, message: string) {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     if (this.dirty) await this.save()
-    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionMark(uuid(), 'ui', name, message)
     await this.refreshVersions()
   }
@@ -2824,15 +3186,15 @@ auto run(Card::Input& input) -> Card::Output {
   /** Starts from `commit`: the documents become that version's; a change and
    *  run from there opens a branch, and nothing later is lost. */
   async startFrom(commit: string) {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
-    if (this.runActive) throw new Error('実行中は別の版に移れません。')
-    if (this.dirty) throw new Error('未保存の変更があります。保存してから選んでください。')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    if (this.runActive) throw new Error(L('実行中は別の版に移れません。'))
+    if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()
   }
 
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {
-    if (!this.client) throw new RPCError('disconnected', '接続していません')
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.deleteHistory(uuid(), endedBefore ? endedBefore.getTime() : null)
   }
 
@@ -2894,7 +3256,7 @@ auto run(Card::Input& input) -> Card::Output {
   cardDetails(k: CardKey): string[] {
     const desc = this.cardDescription(k)
     const content = this.kind(k) === 'draft' ? str(get(this.cardMeta(k), 'content')) : undefined
-    return [desc, content].filter((x): x is string => !!x)
+    return [desc, content, ...this.openComments(k).map((c) => L('{0}: {1}', c.author === 'agent' ? L('コメント（Agent）') : L('コメント'), c.text))].filter((x): x is string => !!x)
   }
 
   /** Whether a Card does not run because it needs a Draft's output. */
@@ -2930,8 +3292,8 @@ auto run(Card::Input& input) -> Card::Output {
   /** One line describing the latest result of a Card. */
   resultSummary(k: CardKey): string | undefined {
     const st = this.cardStates.get(k)
-    if (st && st.state === D.CardState.failed) return st.failure ?? '失敗'
-    if (st && st.state === D.CardState.blocked) return st.failure ?? '入力が届きません'
+    if (st && st.state === D.CardState.failed) return st.failure ?? L('失敗')
+    if (st && st.state === D.CardState.blocked) return st.failure ?? L('入力が届きません')
     const d = this.displays.get(k)
     return d ? displaySummary(d) : undefined
   }
@@ -3002,13 +3364,13 @@ auto run(Card::Input& input) -> Card::Output {
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
       inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
-      result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? 'Draft のため実行しない' : undefined,
+      result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
-      draftEditing: editing, untitled: this.draftUntitled(k),
+      draftEditing: editing, untitled: this.draftUntitled(k), openComments: cardComments(m).filter((c) => !c.resolved).length,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
   }
@@ -3047,7 +3409,7 @@ export type CardKind = 'trigger' | 'input' | 'fork' | 'branch' | 'merge' | 'logg
 const KINDS: CardKind[] = ['trigger', 'input', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: '開始', input: '入力', fork: '分配', branch: '分岐', merge: '合流', logger: '記録', draft: 'Draft', subgraph: 'Card in Card', code: '処理',
+  trigger: L('開始'), input: L('入力'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
@@ -3055,6 +3417,9 @@ export const KIND_ICON: Record<CardKind, string> = {
   merge: 'arrow.triangle.merge', logger: 'list.bullet.rectangle', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
+
+/** A kind as the daemon names it (VersionCanvasCard.kind). */
+export const cardKindNamed = (name: string): CardKind => ((KINDS as string[]).includes(name) ? name as CardKind : 'code')
 
 export function definitionKind(def: J | undefined): CardKind {
   const t = str(get(def, 'template'))
@@ -3066,43 +3431,43 @@ export function definitionKind(def: J | undefined): CardKind {
  *  gets a definition folder of its own (definitions/<id>/). */
 export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'python', label: 'Python の処理' }, { id: 'cpp', label: 'C++ の処理' }, { id: 'input', label: '入力値' },
-  { id: 'draft', label: 'Draft（未実装の計画）' }, { id: 'trigger', label: '開始' }, { id: 'fork', label: '分配' },
-  { id: 'branch', label: '分岐' }, { id: 'merge', label: '合流' }, { id: 'logger', label: '記録' },
+  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
+  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
 export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
-  { id: 'yellow', label: '黄' }, { id: 'blue', label: '青' }, { id: 'green', label: '緑' }, { id: 'pink', label: '桃' }, { id: 'gray', label: '灰' },
+  { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },
 ]
 
 export const RUN_STATE: Record<number, { label: string; icon: string; color: string }> = {
-  [D.RunState.idle]: { label: '待機中', icon: 'circle', color: 'secondary' },
-  [D.RunState.queued]: { label: '待機列', icon: 'hourglass', color: 'orange' },
-  [D.RunState.preparing]: { label: '準備中', icon: 'hourglass', color: 'orange' },
-  [D.RunState.running]: { label: '実行中', icon: 'play.circle.fill', color: 'orange' },
-  [D.RunState.cancelling]: { label: '停止中', icon: 'stop.circle', color: 'orange' },
-  [D.RunState.succeeded]: { label: '成功', icon: 'checkmark.circle.fill', color: 'green' },
-  [D.RunState.failed]: { label: '失敗', icon: 'xmark.circle.fill', color: 'red' },
-  [D.RunState.cancelled]: { label: '停止済み', icon: 'stop.circle.fill', color: 'brown' },
+  [D.RunState.idle]: { label: L('待機中'), icon: 'circle', color: 'secondary' },
+  [D.RunState.queued]: { label: L('待機列'), icon: 'hourglass', color: 'orange' },
+  [D.RunState.preparing]: { label: L('準備中'), icon: 'hourglass', color: 'orange' },
+  [D.RunState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
+  [D.RunState.cancelling]: { label: L('停止中'), icon: 'stop.circle', color: 'orange' },
+  [D.RunState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'green' },
+  [D.RunState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'red' },
+  [D.RunState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
 }
-export const runState = (st: D.RunState | undefined) => RUN_STATE[st ?? D.RunState.idle] ?? { label: '未実行', icon: 'circle', color: 'secondary' }
+export const runState = (st: D.RunState | undefined) => RUN_STATE[st ?? D.RunState.idle] ?? { label: L('未実行'), icon: 'circle', color: 'secondary' }
 
 export const CARD_STATE: Record<number, { label: string; icon: string; color: string }> = {
-  [D.CardState.not_started]: { label: '未実行', icon: 'circle.dotted', color: 'secondary' },
-  [D.CardState.waiting]: { label: '入力待ち', icon: 'hourglass', color: 'orange' },
-  [D.CardState.ready]: { label: '実行待ち', icon: 'hourglass', color: 'orange' },
-  [D.CardState.preparing]: { label: '準備中', icon: 'gearshape', color: 'orange' },
-  [D.CardState.running]: { label: '実行中', icon: 'play.circle.fill', color: 'orange' },
-  [D.CardState.succeeded]: { label: '成功', icon: 'checkmark.circle.fill', color: 'green' },
-  [D.CardState.failed]: { label: '失敗', icon: 'xmark.circle.fill', color: 'red' },
-  [D.CardState.blocked]: { label: 'ブロック', icon: 'nosign', color: 'purple' },
-  [D.CardState.cancelled]: { label: '停止済み', icon: 'stop.circle.fill', color: 'brown' },
-  [D.CardState.skipped]: { label: 'スキップ', icon: 'arrow.uturn.right.circle', color: 'gray' },
+  [D.CardState.not_started]: { label: L('未実行'), icon: 'circle.dotted', color: 'secondary' },
+  [D.CardState.waiting]: { label: L('入力待ち'), icon: 'hourglass', color: 'orange' },
+  [D.CardState.ready]: { label: L('実行待ち'), icon: 'hourglass', color: 'orange' },
+  [D.CardState.preparing]: { label: L('準備中'), icon: 'gearshape', color: 'orange' },
+  [D.CardState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
+  [D.CardState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'green' },
+  [D.CardState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'red' },
+  [D.CardState.blocked]: { label: L('ブロック'), icon: 'nosign', color: 'purple' },
+  [D.CardState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
+  [D.CardState.skipped]: { label: L('スキップ'), icon: 'arrow.uturn.right.circle', color: 'gray' },
 }
-export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: '不明', icon: 'circle.dotted', color: 'secondary' }
+export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: L('不明'), icon: 'circle.dotted', color: 'secondary' }
 
 export function formatMillis(ms: bigint | number | null | undefined): string {
   if (ms === null || ms === undefined) return ''

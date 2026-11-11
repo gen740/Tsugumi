@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "comments.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
@@ -261,9 +262,9 @@ std::vector<std::string> Service::capabilities() {
       "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
-      "RunHistory", "RunInvocations", "RunRecord", "RunValueRead", "ArtifactList",
+      "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
-      "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph"};
+      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
@@ -299,6 +300,10 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   }
   if (h->expected_project_id() && h->expected_project_id()->str() != store_->project_id())
     return failure(FailureKind::permission_denied, "this endpoint serves a different project");
+  {
+    std::lock_guard<std::mutex> l(subs_mu_);
+    english_[in.conn] = h->language() && h->language()->str() == "en";
+  }
   FBB b;
   auto caps = capabilities();
   std::vector<flatbuffers::Offset<flatbuffers::String>> cv;
@@ -315,6 +320,13 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 void Service::disconnected(ConnId conn) {
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
+  english_.erase(conn);
+}
+
+bool Service::english(ConnId conn) {
+  std::lock_guard<std::mutex> l(subs_mu_);
+  auto it = english_.find(conn);
+  return it != english_.end() && it->second;
 }
 
 void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)) {
@@ -349,6 +361,9 @@ void Service::dispatch(RequestIn req) {
     case P::VersionMarkRequest: return on_lane(m, std::move(req), &Service::version_mark);
     case P::VersionCheckoutRequest: return on_lane(m, std::move(req), &Service::version_checkout);
     case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
+    case P::VersionCanvasRequest: return on_lane(r, std::move(req), &Service::version_canvas);
+    case P::VersionDiffRequest: return on_lane(r, std::move(req), &Service::version_diff);
+    case P::VersionSummaryRequest: return on_lane(m, std::move(req), &Service::version_summary);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
@@ -358,6 +373,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
+    case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
     case P::RunPlanRequest: return on_lane(r, std::move(req), &Service::run_plan);
@@ -365,6 +381,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunStatusRequest: return on_lane(r, std::move(req), &Service::run_status);
     case P::RunHistoryRequest: return on_lane(r, std::move(req), &Service::run_history);
     case P::RunInvocationsRequest: return on_lane(r, std::move(req), &Service::run_invocations);
+    case P::RunLatestInvocationsRequest: return on_lane(r, std::move(req), &Service::run_latest_invocations);
     case P::RunRecordRequest: return on_lane(r, std::move(req), &Service::run_record);
     case P::RunValueReadRequest: return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest: return on_lane(r, std::move(req), &Service::artifact_list);
@@ -664,11 +681,27 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
+flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::VersionComment>>> comment_changes(
+    FBB& b, const std::vector<comments::Change>& changes) {
+  std::vector<flatbuffers::Offset<R::VersionComment>> out;
+  for (const auto& c : changes) {
+    std::vector<flatbuffers::Offset<flatbuffers::String>> cards;
+    for (const auto& k : c.cards) cards.push_back(b.CreateString(k));
+    out.push_back(R::CreateVersionComment(b, b.CreateString(c.card), b.CreateString(c.text), b.CreateString(c.change),
+                                          c.resolution.empty() ? 0 : b.CreateString(c.resolution),
+                                          c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVector(cards)));
+  }
+  return b.CreateVector(out);
+}
+
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base,
+                                               const std::vector<comments::Change>& comments = {}) {
   flatbuffers::Offset<R::DocumentDelta> delta;
   if (d) delta = delta_offset(b, *d);
+  auto told = comments.empty() ? 0 : comment_changes(b, comments);
   R::SaveResultBuilder sb(b);
   if (d) sb.add_delta(delta);
+  if (!comments.empty()) sb.add_comments(told);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
@@ -750,9 +783,15 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         ch.kind = ChangeIn::Kind::PutDefinition;
         ch.id = p->id()->str();
         ch.json = p->card_json()->str();
-        if (p->meta_json()) ch.meta_json = p->meta_json()->str();
-        if (p->link_json()) ch.link_json = p->link_json()->str();
-        ch.keep_meta = p->keep_meta();
+        // An empty optional document is one not given (a model fills in every
+        // field). Neither file is ever empty. The _meta.json stays: it may hold
+        // the user's intent, and leaving a field blank must not remove that.
+        if (p->meta_json() && p->meta_json()->size() > 0) ch.meta_json = p->meta_json()->str();
+        if (p->link_json() && p->link_json()->size() > 0) ch.link_json = p->link_json()->str();
+        if (p->fill_description() && p->fill_description()->size() > 0) ch.fill_description = p->fill_description()->str();
+        if (p->fill_context() && p->fill_context()->size() > 0) ch.fill_context = p->fill_context()->str();
+        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0) ||
+                       (!ch.meta_json && (ch.fill_description || ch.fill_context));
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:
@@ -826,6 +865,11 @@ void Service::save(RequestIn& req) {
     // each widening (the client asks, then lists them).
     if (r->origin()->str() == "agent" && staged.effective) {
       store_->resolve_staged(staged);
+      // Who did what to the comments is recorded, whatever the model wrote.
+      if (comments::stamp_model_save(*base, store_->reader(*base), staged, store_->reader(*staged.doc, &staged.ops), changes)) {
+        staged = store_->stage(changes, op_id, r->origin()->str());
+        store_->resolve_staged(staged);
+      }
       // Checked first, so that the user is not asked to approve a save that is refused anyway.
       auto incomplete = permissions::incomplete_draft_intents(*base, store_->reader(*base), *staged.doc,
                                                               store_->reader(*staged.doc, &staged.ops));
@@ -853,10 +897,15 @@ void Service::save(RequestIn& req) {
         throw Failed(FailureKind::busy, "a run is in progress; computational changes are rejected until it ends",
                      {{"run_id", *active->run_id}});
     }
+    // What the Agent's save did to the comments, told back in its result.
+    std::vector<comments::Change> comment_record;
+    if (r->origin()->str() == "agent" && staged.effective)
+      comment_record = comments::changes(comments::of(*base, store_->reader(*base)),
+                                         comments::of(*staged.doc, store_->reader(*staged.doc, &staged.ops)));
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
+      auto sr = save_result(b, d, *base, comment_record);
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
@@ -880,6 +929,7 @@ void Service::save(RequestIn& req) {
         log::error("history: renaming " + from + " to " + to + " failed: " + e.what());
       }
     }
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, renamed);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -917,6 +967,7 @@ void Service::reload(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -944,7 +995,7 @@ std::string version_receipt(const std::string& op_id, const std::string& commit,
 }
 }  // namespace
 
-void Service::note_run_end(const RunStatusData& s) {
+void Service::note_run_end(const RunStatusData& s, const std::string& summary) {
   if (!s.commit || !s.run_id || !s.terminal()) return;
   VersionRunNote n;
   n.run_id = *s.run_id;
@@ -953,6 +1004,7 @@ void Service::note_run_end(const RunStatusData& s) {
   int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
+  n.summary = summary;
   try {
     versions_->note_run(*s.commit, n);
   } catch (const std::exception& e) {
@@ -967,7 +1019,7 @@ void Service::version_init(RequestIn& req) {
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
-    auto commit = versions_->init();
+    auto commit = versions_->init(english(req.conn));
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
     reply(req, receipt_reply(req.request_id, receipt, false));
@@ -1021,7 +1073,7 @@ void Service::version_checkout(RequestIn& req) {
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
     if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
-    versions_->checkout(r->commit()->str());
+    versions_->checkout(r->commit()->str(), english(req.conn));
     // The files are those of the version now: read them like a reload.
     auto staged = store_->stage_reload(op_id, r->origin()->str());
     std::string receipt;
@@ -1031,6 +1083,7 @@ void Service::version_checkout(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1057,13 +1110,60 @@ void Service::version_graph(RequestIn& req) {
   for (const auto& c : g.commits) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
     for (const auto& n : c.runs)
-      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds));
+      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds,
+                                         n.summary.empty() ? 0 : b.CreateString(n.summary)));
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
-                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
+                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed),
+                                             c.change_summary.empty() ? 0 : b.CreateString(c.change_summary), comment_changes(b, c.comments)));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
+}
+
+void Service::version_canvas(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionCanvasRequest();
+  auto canvas = versions_->canvas(r->commit()->str());
+  FBB b;
+  std::vector<flatbuffers::Offset<R::VersionCanvasCard>> cards;
+  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), c.x, c.y, b.CreateString(c.kind), c.fan, c.collapsed));
+  std::vector<flatbuffers::Offset<R::VersionCanvasWire>> wires;
+  for (const auto& [from, to] : canvas.wires) wires.push_back(R::CreateVersionCanvasWire(b, b.CreateString(from), b.CreateString(to)));
+  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires), b.CreateString(canvas.flow));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas, vc.Union()));
+}
+
+void Service::version_diff(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionDiffRequest();
+  auto d = versions_->diff(r->commit()->str());
+  FBB b;
+  auto vd = R::CreateVersionDiff(b, b.CreateString(d.text), d.truncated);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff, vd.Union()));
+}
+
+void Service::version_summary(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionSummaryRequest();
+  std::string op_id = r->op_id()->str();
+  std::string digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "version", digest)) return;
+  try {
+    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    std::string commit = r->commit()->str();
+    std::string summary = r->summary()->str();
+    if (summary.empty() || summary.size() > 2000) throw Failed(FailureKind::invalid_request, "a summary is 1 to 2000 bytes");
+    versions_->set_summary(commit, summary);
+    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "version", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto f = FailureData::make(FailureKind::internal_error, e.what());
+    store_failure_receipt(op_id, "version", digest, f);
+    throw Failed(f);
+  }
 }
 
 void Service::import_definitions(RequestIn& req) {
@@ -1148,6 +1248,7 @@ void Service::import_definitions(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::ProjectImportResult, ir.Union());
       return receipt;
     });
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1627,6 +1728,18 @@ void Service::attached_folder_read(RequestIn& req) {
   uint64_t offset = r->offset().value_or(0);
   reply(req, wire::file_page(req.request_id, target.filename().string(), wire::page_of(bytes, offset, limit), offset,
                              bytes.size(), crypto::sha256_hex(bytes)));
+}
+
+void Service::nix_source_resolve(RequestIn& req) {
+  auto info = nix_->resolve_flake(req.request()->value_as_NixSourceResolveRequest()->ref()->str());
+  FBB b;
+  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
+  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
+  auto ref = b.CreateString(info.ref);
+  auto rev = b.CreateString(info.rev);
+  auto hash = b.CreateString(info.nar_hash);
+  auto res = R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved, res.Union()));
 }
 
 void Service::output_types(RequestIn& req) {

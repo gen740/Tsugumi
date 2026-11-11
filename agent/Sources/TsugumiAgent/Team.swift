@@ -12,11 +12,19 @@ extension Agent {
     public let name: String
     public let cards: [String]
     public let instruction: String
+    /// How the helpers meet ("runs": "together"): it writes and checks its Cards but
+    /// never runs, and the main Agent runs once after all have reported.
+    public let runsTogether: Bool
+    /// Its first message: its task's start and what the app read for it.
+    var brief = ""
+    /// The revision the app read that at.
+    var rev: String?
 
-    public init(name: String, cards: [String], instruction: String) {
+    public init(name: String, cards: [String], instruction: String, runsTogether: Bool = false) {
       self.name = name
       self.cards = cards
       self.instruction = instruction
+      self.runsTogether = runsTogether
     }
 
     /// What a save's changes touch beyond the helper's Cards (nil: nothing).
@@ -30,7 +38,7 @@ extension Agent {
         case "PutDefinition":
           let id = value["id"] as? String ?? ""
           if !cards.contains(id) { out.append("the definition \(id)") }
-        case "PutSource", "RemoveSource":
+        case "PutSource", "PatchSource", "RemoveSource":
           let path = value["path"] as? String ?? ""
           let parts = path.split(separator: "/").map(String.init)
           if !(parts.count >= 3 && parts[0] == "definitions" && cards.contains(parts[1]) && !parts.contains("..")) {
@@ -54,13 +62,26 @@ extension Agent {
     description: Shared.data.delegateTool.description, inputSchema: Shared.data.delegateTool.inputSchema,
     mutating: false)
 
+  /// The labels of the controls the bird names, in the app's language (its
+  /// Localizable.strings, keyed by the Japanese text), so that the prompts need
+  /// no wording of any language.
+  static var controlsNote: String {
+    let list = Shared.data.guide.controls.map { "\($0.id) \"\(Bundle.main.localizedString(forKey: $0.label, value: $0.label, table: nil))\"" }
+    return Shared.fill(Shared.data.guide.text("controlsNote"), ["controls": list.joined(separator: ", ")])
+  }
+
   /// The rules, and for a helper its task.
   var system: String {
-    if role == .guide { return Self.guidePrompt }
+    if role == .guide { return Self.guidePrompt + "\n\n" + Self.controlsNote }
     // The main Agent is Tsugumi of the chat: it also guides (guide_show, tours).
-    guard let helper else { return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") }
-    return Self.systemPrompt + "\n\n" + Shared.fill(Shared.data.helper.prompt, [
-      "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction])
+    guard let helper else {
+      return Self.systemPrompt + "\n\n" + Shared.data.guide.text("chatNote") + "\n\n" + Self.controlsNote
+        + (searches ? "\n\n" + Shared.data.webSearch.note : "")
+    }
+    let h = Shared.data.helper
+    return Self.systemPrompt + "\n\n" + Shared.fill(h.prompt, [
+      "name": helper.name, "cards": helper.cards.joined(separator: ", "), "instruction": helper.instruction,
+      "running": helper.runsTogether ? h.together : h.each, "report": helper.runsTogether ? h.togetherReport : h.eachReport])
   }
 
   /// The tasks of a delegate call, or why they cannot be done.
@@ -68,6 +89,8 @@ extension Agent {
     guard let obj = try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any],
           let raw = obj["tasks"] as? [[String: Any]] else { return .failure(.init("tasks is not a list of tasks")) }
     guard (2...8).contains(raw.count) else { return .failure(.init("\(raw.count) tasks")) }
+    let runs = obj["runs"] as? String ?? "each"
+    guard runs == "each" || runs == "together" else { return .failure(.init("runs is \(runs)")) }
     var helpers: [Helper] = []
     var owner: [String: String] = [:]
     for t in raw {
@@ -79,12 +102,16 @@ extension Agent {
       }
       guard !helpers.contains(where: { $0.name == name }) else { return .failure(.init("two tasks named \(name)")) }
       guard !cards.isEmpty, !instruction.isEmpty else { return .failure(.init("\(name) has no Cards or no instruction")) }
+      // A helper sees nothing else: a placeholder here is not filled in by anyone.
+      guard instruction.range(of: "__[A-Z][A-Z_]*__", options: .regularExpression) == nil else {
+        return .failure(.init("the instruction of \(name) has a placeholder; write each instruction out in full"))
+      }
       for c in cards {
         guard !c.isEmpty, !c.contains("/") else { return .failure(.init("\(c) is not a root-level Card id")) }
         if let other = owner[c] { return .failure(.init("\(c) is in both \(other) and \(name)")) }
         owner[c] = name
       }
-      helpers.append(Helper(name: name, cards: cards, instruction: instruction))
+      helpers.append(Helper(name: name, cards: cards, instruction: instruction, runsTogether: runs == "together"))
     }
     return .success(helpers)
   }
@@ -107,10 +134,30 @@ extension Agent {
     // afterwards); a new delegate call starts them afresh.
     let dir = storage.deletingPathExtension().appendingPathExtension("helpers")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    // Each starts from what the app reads for it here, not from reading the project.
+    let started: [Helper]
+    do {
+      let snapshot = try await readValue("project_inspect", [:])
+      let rev = (snapshot["rev"] as? NSNumber)?.stringValue ?? snapshot["rev"] as? String
+      var list: [Helper] = []
+      for var h in helpers {
+        h.brief = await Self.helperBrief(h, snapshot: snapshot) { path in
+          (try? await self.readValue("project_file_read", ["path": path]))?["bytes"] as? String
+        }
+        h.rev = rev
+        list.append(h)
+      }
+      started = list
+    } catch {
+      return (Shared.fill(Shared.data.helper.unread, ["why": "\(error)"]), true)
+    }
     let line = ApprovalLine(approverForHelpers)
     let (catalog, transport, config, references, folders) = (self.catalog, self.transport, self.providerConfig, self.references, self.folders)
+    let warmed = await MessagesProvider(config: config).warmCache(system: Self.systemPrompt, tools: helperTools)
+    conversation.usage.cacheReadTokens += warmed.cacheReadTokens
+    conversation.usage.cacheWriteTokens += warmed.cacheWriteTokens
     let reports = await withTaskGroup(of: (Int, HelperReport).self) { group in
-      for (i, h) in helpers.enumerated() {
+      for (i, h) in started.enumerated() {
         let file = dir.appendingPathComponent(h.name + ".json")
         try? FileManager.default.removeItem(at: file)
         guard let agent = try? Agent(catalog: catalog, transport: transport, provider: config, storage: file,
@@ -139,7 +186,11 @@ extension Agent {
       "## \(h.name) (\(h.cards.joined(separator: ", "))): \(r.outcome)\n\(r.report.isEmpty ? "(no report)" : r.report)"
     }.joined(separator: "\n\n")
     let none = !reports.contains { $0.outcome == "finished" }
-    return ("Reports of the helpers. Check each Card with run_record before reporting to the user.\n\n" + text, none)
+    let together = helpers.contains(where: \.runsTogether)
+    // The helpers' saves moved the revision on: the next save or run starts from here.
+    let now = (try? await readValue("project_inspect", [:]))?["rev"] as? NSNumber
+    let revision = now.map { " " + Shared.fill(Shared.data.helper.revision, ["rev": $0.stringValue]) } ?? ""
+    return ((together ? Shared.data.helper.reportsTogether : Shared.data.helper.reportsEach) + revision + "\n\n" + text, none)
   }
 
   struct HelperReport: Sendable {
@@ -152,7 +203,7 @@ extension Agent {
   func work(events: @escaping @Sendable (AgentEvent) -> Void) async -> HelperReport {
     conversation = Conversation()
     conversation.title = helper?.name
-    conversation.messages.append(ChatMessage(role: "user", content: [.text("Do your task (in the rules above) and end with your report.")]))
+    conversation.messages.append(ChatMessage(role: "user", content: [.text(helper?.brief ?? "")]))
     do { try conversation.save(storage) } catch {
       events(.error("\(error)"))
       return HelperReport(outcome: "failed: \(error)", report: "", usage: conversation.usage)
@@ -171,6 +222,121 @@ extension Agent {
     let report = last?.content.compactMap { b -> String? in if case .text(let t) = b { return t }; return nil }
       .joined(separator: "\n") ?? ""
     return HelperReport(outcome: outcome.value, report: report, usage: conversation.usage)
+  }
+
+  /// The value of a read the app makes itself; a failure is thrown.
+  func readValue(_ tool: String, _ args: [String: Any]) async throws -> [String: Any] {
+    guard let spec = catalog.tool(named: tool) else { throw DelegateError("unknown tool \(tool)") }
+    let codec = self.codec
+    nonisolated(unsafe) let args = args
+    let (type, table) = try await transport.call(payloadType: spec.payloadType) { b in
+      try codec.build(spec.object, args, into: &b)
+    }
+    let reply = try JSONSerialization.jsonObject(with: Data(renderReply(type, table).utf8)) as? [String: Any]
+    let value = reply?["value"] as? [String: Any] ?? [:]
+    if type == "Failure" { throw DelegateError("\(tool): \(value["kind"] ?? "") \(value["diagnostic"] ?? "")") }
+    return value
+  }
+
+  /// How much of a Card that feeds a helper's the helper gets to read, in
+  /// bytes: one file, and all of them together; longer ones it gets by name.
+  static let briefFileLimit = 8000
+  static let briefFilesLimit = 20_000
+
+  /// What a helper starts from, in place of reading the whole project: of a
+  /// ProjectSnapshot's value, its Cards, the wires at them, the Cards that feed
+  /// them (through the ones that only hand a value on, such as a fork) with the
+  /// types and code of those, and who reads their outputs. As the web Agent's
+  /// (tests/fixtures/agent-behavior.json).
+  static func helperBrief(_ h: Helper, snapshot: [String: Any], read: (String) async -> String?) async -> String {
+    func parsed(_ json: Any?) -> [String: Any]? {
+      guard let text = json as? String else { return nil }
+      return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+    }
+    let canvas = parsed(snapshot["project_json"])?["canvas"] as? [String: Any]
+    let wires = canvas?["connections"] as? [[String: Any]] ?? []
+    func from(_ w: [String: Any]) -> [String: Any] { w["from"] as? [String: Any] ?? [:] }
+    func to(_ w: [String: Any]) -> [String: Any] { w["to"] as? [String: Any] ?? [:] }
+    func card(_ end: [String: Any]) -> String { end["card"] as? String ?? "" }
+    func name(_ end: [String: Any]) -> String { "\(card(end)).\(end["port"] as? String ?? "")" }
+    let definitions = snapshot["definitions"] as? [[String: Any]] ?? []
+    func definition(_ id: String) -> [String: Any]? { definitions.first { $0["id"] as? String == id } }
+    let sources = snapshot["sources"] as? [[String: Any]] ?? []
+    func files(_ id: String) -> [[String: Any]] {
+      sources.filter {
+        $0["kind"] as? String == "file" && ($0["exists"] as? Bool) != false
+          && ($0["path"] as? String ?? "").hasPrefix("definitions/\(id)/")
+      }
+    }
+    func ports(_ list: Any?) -> String {
+      let all = (list as? [[String: Any]] ?? []).map { p in
+        "\(p["name"] as? String ?? "") (\(p["kind"] as? String ?? "") \(p["root_type"] as? String ?? "")\((p["optional"] as? Bool) == true ? ", optional" : ""))"
+      }
+      return all.isEmpty ? "none" : all.joined(separator: ", ")
+    }
+    func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    func about(_ id: String) -> [String] {
+      guard let d = definition(id) else { return ["## \(id)", "It is not in the project yet."] }
+      var out = ["## \(id)", "_card.json:", trimmed(d["card_json"] as? String ?? "")]
+      if let meta = d["meta_json"] as? String, !meta.isEmpty { out += ["_meta.json:", trimmed(meta)] }
+      let resolved = (snapshot["resolution"] as? [[String: Any]] ?? []).first {
+        (($0["card"] as? [String: Any])?["segments"] as? [String]) == [id]
+      }
+      if let r = resolved {
+        out.append("ports: in \(ports(r["inputs"])); out \(ports(r["outputs"]))")
+        let problems = (r["diagnostics"] as? [[String: Any]] ?? []).filter { $0["code"] as? String != "draft" }
+          .map { "\($0["code"] as? String ?? ""): \($0["message"] as? String ?? "")" }
+        if !problems.isEmpty { out.append("problems: \(problems.joined(separator: "; "))") }
+      }
+      return out
+    }
+    var lines = ["# Your Cards"]
+    for id in h.cards {
+      lines += about(id)
+      let at = wires.filter { card(from($0)) == id || card(to($0)) == id }.map { "\(name(from($0))) -> \(name(to($0)))" }
+      if !at.isEmpty { lines.append("wires: \(at.joined(separator: ", "))") }
+      let own = files(id).map { "\($0["path"] as? String ?? "") (hash \($0["hash"] as? String ?? ""))" }
+      if !own.isEmpty { lines.append("files: \(own.joined(separator: ", "))") }
+    }
+    // Back along the wires, to the Cards that make the values.
+    var feeding: [String] = []
+    func back(_ id: String) {
+      for w in wires where card(to(w)) == id {
+        let source = card(from(w))
+        if source.isEmpty || h.cards.contains(source) || feeding.contains(source) { continue }
+        feeding.append(source)
+        if files(source).isEmpty, parsed(definition(source)?["card_json"])?["template"] as? String != "draft" { back(source) }
+      }
+    }
+    h.cards.forEach(back)
+    var left = briefFilesLimit
+    if !feeding.isEmpty { lines += ["", "# What feeds them"] }
+    for id in feeding {
+      lines += about(id)
+      for f in files(id) {
+        // (what _card.json and _meta.json say is above, and a Card's build is its own)
+        let path = f["path"] as? String ?? ""
+        if path == "definitions/\(id)/default.nix" { continue }
+        let size = (f["size_bytes"] as? NSNumber)?.intValue ?? 0
+        let text = size <= briefFileLimit && size <= left ? await read(path) : nil
+        if let text {
+          left -= size
+          lines += ["--- \(path)", text.hasSuffix("\n") ? String(text.dropLast()) : text]
+        } else {
+          lines.append("--- \(path) (\(size) bytes, not shown: read it by its path)")
+        }
+      }
+    }
+    let readers = wires.filter { h.cards.contains(card(from($0))) && !h.cards.contains(card(to($0))) }
+    if !readers.isEmpty { lines += ["", "# What reads their outputs"] }
+    for w in readers {
+      let meta = parsed(definition(card(to(w)))?["meta_json"])
+      let port = (meta?["inputs"] as? [[String: Any]] ?? []).first { $0["name"] as? String == to(w)["port"] as? String }?["description"] as? String
+      let description = meta?["description"] as? String
+      lines.append("\(name(to(w)))\(port.map { ": \($0)" } ?? "") (\(card(to(w)))\(description.map { ": \($0)" } ?? ""))")
+    }
+    let rev = (snapshot["rev"] as? NSNumber)?.stringValue ?? snapshot["rev"] as? String ?? ""
+    return Shared.fill(Shared.data.helper.brief, ["rev": rev, "project": lines.joined(separator: "\n")])
   }
 
   /// `kind` of a rendered Failure.

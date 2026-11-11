@@ -1,0 +1,11 @@
+{
+  "description": "Draw the Mandelbrot set",
+  "content": "Takes size from settings. Splits the complex plane from −2.2 to 0.8 (real) and −1.5 to 1.5 (imaginary) into size×size, counts iterations to divergence up to 200, and shows it as a PNG with smooth colouring (diverged points get a log log |z| correction to their count). The range and the maximum number of iterations are parameters. Asserts that c=0 belongs to the set and c=1+1i does not, and logs the fraction of points in the set. Uses numpy and pillow, with the loop written as numpy array operations.",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size and seed"
+    }
+  ],
+  "outputs": []
+}

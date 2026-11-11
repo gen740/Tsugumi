@@ -1,44 +1,41 @@
-# 操作ガイド
+# Usage
 
-はじめに読み込む必要はありません。デモを開いて**ツグミの案内どおりに進めれば、画面の使い方はだいたい分かります**。
-分からないことがあれば、右のチャットでそのまま聞いてください。Agent は開いているプロジェクトと画面の操作を知っています。
+You do not need to read this first. Open a demo and **follow the thrush's guide, and you will mostly learn how the screen works**.
+If something is unclear, ask in the chat on the right. The Agent knows the open project and the operations on screen.
 
-## はじめの 5 分
+## The first five minutes
 
-1. **アプリを開く。** はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選びます。
-2. **デモのコピーを開く。** ホームの「デモを見る」から「コピーを開く」を選びます。手元に編集できるコピーができます。最初のプロジェクトを開くときだけ、実行環境の準備に 1 分ほどかかります。
-3. **案内してもらう。** チャットに `$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタンを指しながら一歩ずつ説明します（設定の「API」に API キーを登録するか、ChatGPT のプランでサインインすると使えます）。
-4. **動かして、変える。** 「実行」を押して結果を見たら、Card の値やコードを変えて、その Card だけ実行し直します。
+The steps are in the README's [First steps](../index.md#first-steps). The first time you open the app, after entering an API key (which you can skip), the thrush in the bottom right asks "What would you like to do?" and takes you to a demo chosen by field or from the Drafts.
 
-## 画面
+## The screen
 
-| 場所 | あるもの |
+| Where | What is there |
 | --- | --- |
-| 中央（Canvas） | Card と線、出力の表示 |
-| 右（チャット） | Agent（ツグミ）への依頼と質問 |
-| 左（サイドバー） | Workflow の階層と Card の一覧 |
-| 下（パネル） | 実行の状態、ログ、タイムライン |
+| Centre (Canvas) | Cards, wires and the outputs' displays |
+| Right (chat) | Requests and questions to the Agent (the thrush) |
+| Left (sidebar) | The hierarchy of Workflows and the list of Cards |
+| Bottom (panel) | The run's state, logs and the timeline |
 
-## よく使う操作
+## Operations you use most
 
-| したいこと | 操作 |
+| To | Do |
 | --- | --- |
-| 実行・停止 | Canvas 上部のボタン |
-| Draft を置く | `E` を押して、カードに内容を書く（名前はなくてもよい） |
-| Card を置く | Canvas を右クリックして「Card を追加」 |
-| つなぐ | 出力ポートからドラッグする（Draft にはどこに落としてもつながる） |
-| Card の中身を見る・直す | `s`、または右クリックの「設定」（ソース・入出力・Nix 定義・実行履歴） |
-| この Card だけ実行する | 右クリックの「この Card だけ実行（最後の入力）」 |
-| この Card から下流まで実行する | 右クリックの「ここから下流を実行」 |
-| Agent に実装を任せる | Draft があるときに右上に出る「Card を生成」 |
-| 子 Workflow の中へ入る | ダブルクリック |
-| 動かす・広げる | ドラッグでパン、ピンチか `⌘` + スクロールで拡大縮小 |
-| 複製・範囲選択 | `⌘D`、`Shift` + ドラッグ |
-| Home へ戻る | Canvas 右上の家のボタンか `⌘⇧H`（必要な保存の後に戻る。実行中は戻れない） |
+| Run or stop | The buttons at the top of the Canvas |
+| Place a Draft | Press `E` and write its content on the card (a name is optional) |
+| Place a Card | Right-click the Canvas and choose "Add Card" |
+| Connect | Drag from an output port (dropped anywhere on a Draft, it connects) |
+| See or fix what is inside a Card | `s`, or "Settings" in the context menu (source, ports, Nix definition, run history) |
+| Run only this Card | "Run Only This Card (Last Inputs)" in the context menu |
+| Run from this Card downstream | "Run from Here Downstream" in the context menu |
+| Leave implementation to the Agent | "Generate Cards", at the top right when there are Drafts |
+| Go inside a child Workflow | Double-click |
+| Move and zoom | Drag to pan; pinch or `⌘` + scroll to zoom |
+| Duplicate, select a range | `c`; `Shift` + drag |
+| Go back Home | The house button at the top right of the Canvas, or `⌘⇧H` (after any save that is needed; not while running) |
 
-## もっと知りたいとき
+## To learn more
 
-- 最初の Card を自分で作る: [はじめての Card](cardguide.md)
-- 各デモが何をしているか、何を試せるか: [同梱デモのしくみ](demos.md)
-- 画面と操作の仕様をすべて: [macOS UI の構成と操作仕様](ui-view.md)
-- インストール、API キーの扱い: [インストールと開発用ビルド](install.md)、[モデルに送られるもの](security.md#モデルに送られるもの)
+- Make your first Card yourself: [Your first Card](cardguide.md)
+- What each demo does and what you can try: [The bundled demos](demos.md)
+- How the screen is organised, and the settings: [the UI in Features](features.md#8-ui-the-workbench)
+- Installation, and how API keys are handled: [Installation and development builds](install.md), [What is sent to the model](security.md#what-is-sent-to-the-model)

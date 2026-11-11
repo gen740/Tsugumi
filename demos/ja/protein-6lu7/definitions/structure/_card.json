@@ -1,0 +1,16 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "ligand_chain",
+      "type": "string",
+      "data": "C"
+    }
+  ]
+}

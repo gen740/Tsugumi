@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   # Documents alone need no Swift build. The app does read four of them
-  # (Help > Tsugumi を知る, macOS/Tests checks that it finds them).
+  # (Help > Learn about Tsugumi, macOS/Tests checks that it finds them).
   changes:
     name: What changed
     runs-on: ubuntu-24.04
@@ -32,7 +32,7 @@ jobs:
           app=true
           if files="$(git diff --name-only "$BASE" HEAD)" && [ -n "$files" ]; then
             others="$(grep -vE '^docs/|^[A-Z_]+\.md$' <<<"$files" || true)"
-            read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Name|Author)\.md)$' <<<"$files" || true)"
+            read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Rationale|Vision)\.md)$' <<<"$files" || true)"
             if [ -z "$others$read_by_app" ]; then app=false; fi
           fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
@@ -59,6 +59,12 @@ jobs:
             ctest --test-dir build --output-on-failure'
       - name: Web UI typecheck, behavior contracts and build (Python tests cover RPC and server)
         run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm test && npm run build'
+      - name: The tsugumi command builds (nix/cli.nix)
+        run: nix build .#cli --no-link
+      # docs/site/js/player.js bundles web/src (canvasKit.ts, cardNode.tsx...) and the gallery and Home
+      # thumbnails run it: a change there needs `node docs/site/player/build.mjs`. (The pages are checked by test_docs.py.)
+      - name: Documentation site player is up to date (docs/site/js/player.js, player.css, player-data/)
+        run: nix develop -c node docs/site/player/build.mjs --check
       - name: Python tests
         run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
 

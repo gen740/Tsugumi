@@ -1,4 +1,4 @@
-# README の live-stream.png: 乱数歩行を Dawn の折れ線で逐次表示している画面
+# For checking the Dawn line chart: the random walk while it is drawn, and when it is done
 size 1440 900
 chat hide
 wait 2

@@ -1,0 +1,10 @@
+{
+  "description": "Choose the subjects",
+  "content": "Narrows the subjects by the range of age (age_min, age_max) and the ECOG limit (ecog_max; 3 means no limit), and shows the numbers of people and deaths next to the whole.",
+  "outputs": [
+    {
+      "name": "cohort",
+      "description": "CSV of the people chosen"
+    }
+  ]
+}

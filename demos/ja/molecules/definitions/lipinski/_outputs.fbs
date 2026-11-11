@@ -1,0 +1,13 @@
+namespace mol;
+table Checked {
+  names:[string];
+  formula:[string];
+  mw:[double];
+  logp:[double];
+  tpsa:[double];
+  violations:[int];
+  broken:[string];
+  max_violations:ulong;
+}
+table Outputs { checked:Checked (required); }
+root_type Outputs;

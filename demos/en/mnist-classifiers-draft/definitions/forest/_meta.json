@@ -1,0 +1,16 @@
+{
+  "description": "Tell the digits apart with a random forest",
+  "content": "A majority vote of decision trees, each varied a little by random numbers. Use scikit-learn's RandomForestClassifier (n_jobs=1). trees (default 100), max_depth (default 20) and seed (default 0) are parameters. Add feature_importances_ to the figure as a 28×28 image. data is the path of prepare's npz file: train_images and test_images are 784-dimensional arrays scaled to 0–1, train_labels and test_labels are digits, digest is a fingerprint of the test images. Set OMP_NUM_THREADS=1 at the top of main.py (before the imports) to run on one thread. Measure training and prediction times as differences of time.process_time(). The type of the output result is the same for all seven classifiers, and compare reads it with one type, so _outputs.fbs is, without changing a character, \"namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;\". model is the Card's id, settings a string of the parameters' values, digest the value received as it is, and predictions the predictions for every test image. Show the accuracy, the times and a breakdown of the mistakes (a 10×10 table of true and predicted) in a matplotlib figure. Assert: that the length of predictions equals the number of test images, that every prediction is 0–9, that the accuracy is at least 0.92, that there are trees trees and none is deeper than max_depth, that on every test image model.predict agrees with the digit of the largest mean of the trees' predict_proba, and that feature_importances_ sums to 1 (to 1e-9). Use numpy, matplotlib and scikit-learn.",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare's subset (the path of the npz file)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "Accuracy, CPU time, settings, and predictions for every test image"
+    }
+  ]
+}

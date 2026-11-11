@@ -5,8 +5,10 @@
 // root is decoded into the typed schema. Unknown members are rejected.
 // Writing: schemas whose fields are all required are encoded with the compact
 // JSON writer. Document files (tsugumi.json, layout.json, _card.json,
-// _meta.json) are never re-encoded: their confirmed bytes are the validated
-// client text, which also keeps the original integer spellings.
+// _meta.json) are not re-encoded: their confirmed bytes are the validated client
+// text, which also keeps the original integer spellings. One exception: a save
+// that renames or deletes a Card rewrites layout.json when it still names that
+// Card (document::layout_following_cards), keeping every value's spelling.
 #pragma once
 
 #include <hosq/hosq.hh>
@@ -68,9 +70,19 @@ struct DatabaseConnection {
   Opt<"url", v::String> url;
 };
 
+// A Nix source outside nixpkgs that this project opts in to. Its Cards read it
+// as inputs.sources.<name>. `type` says how it is read: "flake" for now, whose
+// `ref` is locked (a commit and its narHash).
+struct NixSource {
+  Opt<"name", v::String> name;
+  Opt<"type", v::String> type;
+  Opt<"ref", v::String> ref;
+};
+
 struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
+  Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
   Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
@@ -121,6 +133,9 @@ struct CardDefinition {
   Opt<"sandbox", v::Bool> sandbox;
   Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
   Opt<"network", v::Bool> network;           // Experimental, default false
+  // The Nix system the Card is built for and runs as: "x86_64-linux" or
+  // "aarch64-linux". Default: this machine's. Another one runs emulated.
+  Opt<"system", v::String> system;
   Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
@@ -137,6 +152,20 @@ struct PortNote {
   Opt<"description", v::String> description;
 };
 
+// What the user and the Agent write about a Card already written. author,
+// editedBy, stateBy ("agent" or "user") and cards are the record of who did what;
+// a model's save has them stamped (comments.hh).
+struct CardComment {
+  Opt<"id", v::String> id;
+  Opt<"text", v::String> text;
+  Opt<"resolved", v::Bool> resolved;
+  Opt<"resolution", v::String> resolution;  // one line on what was done about it
+  Opt<"author", v::String> author;
+  Opt<"editedBy", v::String> edited_by;
+  Opt<"stateBy", v::String> state_by;
+  Opt<"cards", v::Array<v::String>> cards;  // what the save that resolved it changed
+};
+
 // _meta.json: the intent of a definition, for every kind of Card (a Card in
 // Card too); kept when a Draft is implemented. The summary is only here.
 struct CardMeta {
@@ -146,6 +175,7 @@ struct CardMeta {
   Opt<"origin", v::String> origin;            // where an imported definition came from
   Opt<"inputs", v::Array<Obj<PortNote>>> inputs;
   Opt<"outputs", v::Array<Obj<PortNote>>> outputs;
+  Opt<"comments", v::Array<Obj<CardComment>>> comments;
 };
 
 // ---- layout.json -------------------------------------------------------------
@@ -191,8 +221,8 @@ struct CardGroup {
   Opt<"outputs", v::Array<Obj<GroupPort>>> outputs;     // outputs shown on the group frame
 };
 
-// Where the inner canvas of a Card in Card shows its boundary bars ("この Card
-// の入力" / "の出力"); placed automatically when absent.
+// Where the inner canvas of a Card in Card shows its boundary bars ("This Card's
+// input" / "output"); placed automatically when absent.
 struct BoundaryLayout {
   Opt<"inputs", Obj<Position>> inputs;
   Opt<"outputs", Obj<Position>> outputs;
@@ -278,6 +308,7 @@ struct InvocationDetailJson {
   t::Int64<"worker_reused"> worker_reused;
   t::Array<"outputs_sent", v::String> outputs_sent;
   t::Int64<"ready_at"> ready_at;
+  t::String<"emulator"> emulator;  // "" = ran natively
 };
 
 struct InputSourceJson {
@@ -350,6 +381,7 @@ struct BuildCache {
 struct ManifestRun {
   Opt<"package", v::String> package;
   Opt<"bash", v::String> bash;
+  Opt<"worker", v::String> worker;  // a package of another system: the worker built for it
 };
 
 struct CardManifest {
@@ -469,6 +501,9 @@ hosq::json::GenericDom<> capture(std::string_view json_text);
 hosq::json::GenericDom<> string_value(const std::string& s);
 // JSON object text from (key, captured value) pairs, in the given order.
 std::string object_text(const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>& members);
+// The form the clients write document files in: two spaces, a final newline.
+// `compact` is validated JSON without whitespace between its tokens.
+std::string pretty_text(std::string_view compact);
 bool is_null(const hosq::json::GenericDom<>& value);
 
 // Value of an optional field.

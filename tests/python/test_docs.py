@@ -23,7 +23,7 @@ DOCS = ROOT / "docs"
 PAGES = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "INSTALL.md", ROOT / "THIRD_PARTY_NOTICES.md", *sorted(p for p in DOCS.glob("*.md") if p.name != "index.md")]
 
 # Paths made by a build or at run time, and files of an earlier setup named as history.
-NOT_IN_GIT = {"web/src/gen", "web/dist", "web/node_modules", "agent/guide/", "tests/python/stress_shutdown.py"}
+NOT_IN_GIT = {"web/src/gen", "web/dist", "web/node_modules", "agent/guide/"}
 
 
 def strip_code(s: str) -> str:
@@ -81,7 +81,7 @@ def test_every_test_file_is_in_the_test_table():
 
 
 def test_every_demo_is_explained():
-    demos = json.loads((ROOT / "demos/index.json").read_text())
+    demos = json.loads((ROOT / "demos/ja/index.json").read_text())
     demos = demos if isinstance(demos, list) else demos["demos"]
     explained = (DOCS / "Demos.md").read_text()
     missing = [d["path"] for d in demos if d["path"].split("/")[-1] not in explained]
@@ -119,7 +119,7 @@ def guide_files() -> dict[str, dict[str, str]]:
     """The page's files: {variant: {path: content}}; "" is the Python Card."""
     page = (DOCS / "CardGuide.md").read_text()
     files: dict[str, dict[str, str]] = {}
-    for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
+    for m in re.finditer(r"^`([^`\n]+)`(?: \(([^)\n]+)\))?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
         files.setdefault(m.group(2) or "", {})[m.group(1)] = m.group(3)
     return files
 
@@ -166,7 +166,7 @@ def test_llms_txt_guides_agents_to_every_document():
     documents = re.findall(r"^\| \[[^\]]+\]\(([^)]+)\) \|", (DOCS / "README.md").read_text(), flags=re.M)
     expected = {f"pages/{Path(d).stem.lower().replace('_', '-')}.md" for d in documents}
     assert not expected - listed
-    assert guide.index("## リポジトリ") < guide.index("## Optional"), "Optional comes last: agents may skip it"
+    assert guide.index("## Repository") < guide.index("## Optional"), "Optional comes last: agents may skip it"
 
 
 def test_markdown_pages_have_links_that_work_on_the_site():

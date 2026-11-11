@@ -54,7 +54,7 @@ function card(g, r, name, { state = 'idle', draft = false, dim = 0 } = {}) {
 const wireBetween = (a, b) => { const k = Math.max(26, Math.abs(b.x - a.x) * 0.5); return curve(a, pt(a.x + k, a.y), pt(b.x - k, b.y), b, 20) }
 const label = (g, s, at, size = 20, o = 1, color) => text(g, s, at, size, { opacity: o, family: HAND, color: color ?? hex(Palette.cream) })
 
-// ---- 足場: AI が難問に挑み、人が確かめられる形で残る ----
+// ---- Footholds: AI takes on hard problems and leaves them in a form people can check ----
 
 export const Summit = {
   peak: pt(590, 200),
@@ -96,7 +96,7 @@ export const Summit = {
   },
 }
 
-// ---- 速度: AI の出力は、読む速さを追い越していく ----
+// ---- Speed: the AI's output outpaces how fast we read ----
 
 export const Outpace = {
   draw(g, p, t) {
@@ -124,7 +124,7 @@ export const Outpace = {
     for (let l = 0; l < 7; l++) { g.fillStyle = hex(0x7c8b92, 0.8); g.fillRect(-16, -22 + l * 7, l % 3 === 2 ? 20 : 32, 1.8) }
     g.restore()
     // two speeds
-    const bars = [['AI が試した数', clamp01(lin(p, 0.15, 2.4)), 0x8fc6d6], ['人が理解した数', 0.14 * clamp01(lin(p, 0.15, 3)), 0xf0b57a]]
+    const bars = [['Tried by AI', clamp01(lin(p, 0.15, 2.4)), 0x8fc6d6], ['Understood by people', 0.14 * clamp01(lin(p, 0.15, 3)), 0xf0b57a]]
     bars.forEach(([name, v, color], i) => {
       const r = rect(290, 176 + i * 52, 440, 16)
       text(g, name, pt(r.x, r.y - 11), 14, { weight: 600, align: 'left' })
@@ -135,7 +135,7 @@ export const Outpace = {
   },
 }
 
-// ---- Level 3: 任せていた人が、突然引き継ぎを求められる ----
+// ---- Level 3: someone who had handed over is suddenly asked to take over ----
 
 export const Driver = {
   draw(g, p, t) {
@@ -193,14 +193,14 @@ export const Driver = {
       g.translate(500, 282)
       g.scale(pulse, pulse)
       fillRound(g, rect(-196, -28, 392, 56), 14, hex(0xc8493a))
-      text(g, 'ここからは、あなたが判断してください', pt(0, 0), 19, { weight: 700, color: '#fff' })
+      text(g, 'From here on, you decide', pt(0, 0), 19, { weight: 700, color: '#fff' })
       g.restore()
     })
     if (p > 2.45) for (let i = 0; i < 3; i++) text(g, '?', pt(650 + i * 32, 400 - i * 26 + Math.sin(t * 2 + i) * 3), 28 + i * 6, { weight: 800, opacity: span(p, 2.45 + i * 0.12, 2.65 + i * 0.12) * 0.9 })
   },
 }
 
-// ---- きれいなグラフ: 選ばれた点だけの線と、全部の点の線 ----
+// ---- A clean graph: the line through the chosen points, and through all of them ----
 
 export const Curve = {
   frame: rect(210, 170, 580, 470),
@@ -239,7 +239,7 @@ export const Curve = {
     const line = (mm, bb, color, w) => stroke(g, [at(pt(0, bb)), at(pt(1, mm + bb))], color, w)
     if (show > 0.5) line(m, c0, hex(0xf6ead2, 0.95), 3)
     text(g, `r = ${r.toFixed(2)}`, pt(maxX(F) - 30, F.y + 34), 22, { weight: 700, align: 'right', opacity: show, mono: true })
-    text(g, others > 0.5 ? '除かれていた点も入れると' : '選ばれた点だけ', pt(F.x + 56, F.y + 34), 16, { weight: 600, align: 'left', opacity: show })
+    text(g, others > 0.5 ? 'With the excluded points' : 'Only the chosen points', pt(F.x + 56, F.y + 34), 16, { weight: 600, align: 'left', opacity: show })
     // and with the seed changed, the line moves
     const rng = seeded(61)
     const more = span(p, 2.1, 2.9)
@@ -249,13 +249,119 @@ export const Curve = {
         const f = Curve.fit(sample)
         line(f.m, f.b, hex(0xf0b57a, 0.32 * span(more, k / 9, (k + 2) / 9)), 1.6)
       }
-      text(g, 'シードや条件を変えて、確かめる', pt(F.x + 56, F.y + 62), 15, { color: hex(0xf0b57a), align: 'left', opacity: more })
+      text(g, 'Change the seed and conditions, and check', pt(F.x + 56, F.y + 62), 15, { color: hex(0xf0b57a), align: 'left', opacity: more })
     }
     void t
   },
 }
 
-// ---- 同じ一つ: 人が描くもの、AI が編集するもの、実際に動くものが重なる ----
+// ---- AI-driven science: questions come from people, AI runs the trials, people give the meaning ----
+
+export const Driven = {
+  steps: ['hypothesis', 'test', 'change conditions'],
+  draw(g, p, t) {
+    Wall.drawGround(g, 1)
+    const f = pt(200, GROUND), c = pt(650, 400), R = 170
+    const sh = Person.draw(g, f, t, { scale: 1.2, reach: pt(80, -150) })
+    // the question goes out as a thread
+    const out = span(p, 0.25, 0.9)
+    const start = pt(f.x + 86, f.y - 150)
+    if (out > 0.01) stroke(g, wireBetween(start, pt(c.x - R, c.y)).slice(0, Math.ceil(out * 21)), hex(wire), 2.6)
+    const bubble = 1 - span(p, 1.9, 2.3)
+    faded(g, span(p, 0, 0.4) * bubble, () => {
+      fillRound(g, rect(f.x - 58, sh - 118, 116, 52), 14, hex(0xf4ecdc))
+      text(g, 'Question', pt(f.x, sh - 92), 22, { weight: 700, color: '#1b1d1f' })
+    })
+    // the loop the AI keeps turning
+    const loop = span(p, 0.7, 1.2)
+    faded(g, loop, () => {
+      gem(g, c, 50, t)
+      const ring = Array.from({ length: 61 }, (_, i) => { const a = (i / 60) * Math.PI * 2; return pt(c.x + Math.cos(a) * R, c.y + Math.sin(a) * R) })
+      stroke(g, ring, hex(Palette.cream, 0.25), 2)
+      Driven.steps.forEach((name, i) => {
+        const a = -Math.PI / 2 + (i / 3) * Math.PI * 2, q = pt(c.x + Math.cos(a) * R, c.y + Math.sin(a) * R)
+        const w = name.length * 19 + 28
+        fillRound(g, rect(q.x - w / 2, q.y - 20, w, 40), 12, hex(0x2b2c30))
+        strokeRound(g, rect(q.x - w / 2, q.y - 20, w, 40), 12, hex(0x6d7177), 1.3)
+        text(g, name, q, 18, { weight: 600, color: hex(0xe8e8ea) })
+      })
+      const speed = mix(0.5, 3.2, span(p, 1, 2))
+      for (let i = 0; i < 4; i++) {
+        const a = t * speed + (i / 4) * Math.PI * 2
+        ellipse(g, c.x + Math.cos(a) * R, c.y + Math.sin(a) * R, 6, 6, hex(amber))
+      }
+    })
+    const n = Math.floor(lin(p, 0.9, 2.4) * 128)
+    if (n > 0) text(g, `Trial ${Math.min(128, n)}`, pt(c.x, c.y + R + 54), 20, { weight: 700, mono: true, opacity: loop })
+    // what comes back, and what only the person gives it
+    const back = span(p, 1.9, 2.5)
+    if (back > 0.01) {
+      for (let i = 0; i < 5; i++) {
+        const u = clamp01(back * 1.4 - i * 0.08)
+        sheet(g, mixP(pt(c.x - 40, c.y + 10), pt(f.x + 120 + (i % 2) * 8, GROUND - 12 - i * 9), easeOut(u)), (i - 2) * 0.05, u)
+      }
+    }
+    ;['Give meaning', 'Take responsibility', 'Ask the next question'].forEach((s, i) => {
+      text(g, s, pt(f.x + 92, 300 + i * 40), 20, { weight: 700, align: 'center', color: hex(0xf0b57a), opacity: span(p, 2.3 + i * 0.2, 2.55 + i * 0.2) })
+    })
+  },
+}
+
+// ---- Within reach, and understood: in driving, and in research ----
+
+export const Grasp = {
+  draw(g, p, t) {
+    Wall.drawGround(g, 1)
+    const research = span(p, 1.5, 2.1), L = pt(285, 400), Rt = pt(715, 400)
+    const title = (x, a, b) => {
+      text(g, a, pt(x, 214), 24, { weight: 700, opacity: 1 - research })
+      text(g, b, pt(x, 214), 24, { weight: 700, opacity: research })
+    }
+    title(L.x, 'Can hold the wheel', 'Can check the conclusion')
+    title(Rt.x, 'Knows the situation', 'Knows the process')
+    // the wheel, with a hand on it
+    faded(g, 1 - research, () => {
+      strokeRound(g, rect(L.x - 84, L.y - 84, 168, 168), 84, hex(0x7d8a8d), 15)
+      ellipse(g, L.x, L.y, 22, 22, hex(0x3b4648))
+      stroke(g, [pt(L.x - 78, L.y), pt(L.x + 78, L.y)], hex(0x7d8a8d), 9)
+      stroke(g, [pt(L.x, L.y), pt(L.x, L.y + 78)], hex(0x7d8a8d), 9)
+      const u = span(p, 0.1, 0.55)
+      const hand = mixP(pt(L.x - 150, L.y + 120), pt(L.x - 78, L.y - 22), easeOut(u))
+      stroke(g, [pt(L.x - 190, L.y + 180), hand], hex(Person.coat[1]), 15)
+      ellipse(g, hand.x, hand.y, 16, 16, hex(Person.skin))
+    })
+    // the report, with its stamp
+    faded(g, research, () => {
+      const page = rect(L.x - 76, L.y - 100, 152, 200)
+      fillRound(g, page, 5, hex(0xe9edf0))
+      for (let l = 0; l < 6; l++) { g.fillStyle = hex(0x7c8b92, 0.8); g.fillRect(page.x + 18, page.y + 24 + l * 18, l % 3 === 2 ? 70 : 116, 3) }
+      CasA.check(g, pt(L.x + 34, L.y + 62), 22 * pop(span(p, 1.8, 2.2)), hex(green))
+    })
+    // what the road ahead looks like when you come back to it
+    const clear = 0.3 * span(p, 0.5, 1.4)
+    faded(g, 1 - research, () => {
+      const w = rect(Rt.x - 130, Rt.y - 90, 260, 180)
+      fillRound(g, w, 16, hex(0x24363b))
+      poly(g, [pt(Rt.x - 110, maxY(w)), pt(Rt.x - 12, w.y + 60), pt(Rt.x + 12, w.y + 60), pt(Rt.x + 110, maxY(w))], hex(0x4b5a5c))
+      fillRound(g, w, 16, hex(0xdfe5e6, 0.82 * (1 - clear)))
+    })
+    // the steps behind the conclusion, unseen
+    faded(g, research, () => {
+      ;['load', 'filter', 'fit'].forEach((name, i) => card(g, rect(Rt.x - 90, Rt.y - 110 + i * 78, 180, 64), name, { dim: 0.8 }))
+      fillRound(g, rect(Rt.x - 124, Rt.y - 124, 248, 248), 16, hex(0xdfe5e6, 0.2 + 0.04 * Math.sin(t * 1.3)))
+    })
+    if (p > 0.6) text(g, '?', pt(Rt.x, Rt.y), 72, { weight: 800, color: '#1b1d1f', opacity: 0.7 * span(p, 0.6, 1) })
+    // how far each has come
+    const bars = [[L.x, span(p, 0.1, 0.55), green], [Rt.x, clear, amber]]
+    bars.forEach(([x, v, color]) => {
+      const r = rect(x - 150, 590, 300, 16)
+      fillRound(g, r, 8, 'rgba(255,255,255,0.08)')
+      if (v > 0.004) fillRound(g, rect(r.x, r.y, Math.max(12, r.w * v), r.h), 8, hex(color))
+    })
+  },
+}
+
+// ---- One and the same: what people draw, what AI edits and what runs overlap ----
 
 export const OneGraph = {
   names: ['load', 'bands', 'rgb'],
@@ -264,7 +370,7 @@ export const OneGraph = {
   draw(g, p, t) {
     Wall.drawGround(g, 1)
     const merge = span(p, 1.0, 2.0)
-    const layers = [['人が描く', -150], ['AI が編集する', 0], ['実際に動く', 150]]
+    const layers = [['People draw', -150], ['AI edits', 0], ['It runs', 150]]
     layers.forEach(([name, dy], i) => {
       const y = OneGraph.y + dy * (1 - merge)
       const o = span(p, i * 0.22, 0.25 + i * 0.22)
@@ -291,12 +397,12 @@ export const OneGraph = {
       })
     })
     const m = span(p, 2.7, 3)
-    text(g, '三つは、同じ Workflow', pt(500, 520), 26, { weight: 700, opacity: m })
+    text(g, 'All three: one Workflow', pt(500, 520), 26, { weight: 700, opacity: m })
     void t
   },
 }
 
-// ---- 途中から: 保存された入力で、その Card から ----
+// ---- From the middle: from that Card, with the saved inputs ----
 
 export const Partial = {
   names: ['load', 'clean', 'fit', 'plot'],
@@ -338,9 +444,9 @@ export const Partial = {
       const r = Partial.box(2)
       text(g, '✎', pt(midX(r) + 8, r.y - 22), 30, { color: hex(0xf0b57a), opacity: pen })
     }
-    label(g, '保存された入力', pt(midX(Partial.box(2)), 470), 19, span(p, 1.2, 1.45) * (1 - span(p, 2.5, 2.7)))
+    label(g, 'Saved inputs', pt(midX(Partial.box(2)), 470), 19, span(p, 1.2, 1.45) * (1 - span(p, 2.5, 2.7)))
     const lastStep = span(p, 2.55, 2.85)
-    label(g, '最後は、全体を通して確かめる', pt(500, 240), 24, lastStep, hex(0xf0b57a))
+    label(g, 'Finally, check it all the way through', pt(500, 240), 24, lastStep, hex(0xf0b57a))
     if (lastStep > 0) {
       const f = lin(p, 2.55, 3)
       const a = Partial.box(0), d = Partial.box(3)
@@ -351,7 +457,7 @@ export const Partial = {
   },
 }
 
-// ---- 枝分かれ: 一つの結果から、別の仮説へ ----
+// ---- Branching: from one result to another hypothesis ----
 
 export const Branches = {
   lines: [
@@ -394,13 +500,13 @@ export const Branches = {
         g.restore()
       })
     })
-    label(g, '別のモデルを試す', pt(700, 318), 19, span(p, 1.6, 1.9))
-    label(g, '以前の方針へ戻って、条件を変える', pt(700, 732), 19, span(p, 2.45, 2.75))
+    label(g, 'Try another model', pt(700, 318), 19, span(p, 1.6, 1.9))
+    label(g, 'Go back to an earlier approach, change conditions', pt(700, 732), 19, span(p, 2.45, 2.75))
     if (p < 3) drawBird(g, pt(tip.x - 12, tip.y - 2), 0.1, flying ? Motion.flying(t, 0.12) : Motion.idle(t * 0.5), heading < 0)
   },
 }
 
-// ---- 引き継ぎ: 意図とコードと環境を、毬ごと渡す ----
+// ---- Handing over: the intention, the code and the environment, temari and all ----
 
 export const Handoff = {
   box: (k) => rect(250 + k * 180, 250, 140, 66),
@@ -412,7 +518,7 @@ export const Handoff = {
     const ball = pt(mix(270, 730, roll), GROUND - 24 - Math.abs(Math.sin(roll * Math.PI * 3)) * 14 * (1 - roll))
     const given = roll > 0.97
     // the work: three Cards on the thread
-    const names = ['集計', '確認', 'レポート']
+    const names = ['aggregate', 'check', 'report']
     const shown = span(p, 0, 0.5)
     for (let k = 0; k < 3; k++) {
       const r = Handoff.box(k)
@@ -434,11 +540,11 @@ export const Handoff = {
       const r = Handoff.box(1)
       text(g, '✎', pt(midX(r) + 6, r.y - 18), 28, { color: hex(0xf0b57a), opacity: edit * (1 - span(p, 2.6, 2.85)) })
     }
-    label(g, '動かして確かめられる形で、渡す', pt(500, 170), 24, span(p, 2.45, 2.8), hex(0xf0b57a))
+    label(g, 'Hand it over in a form that runs and can be checked', pt(500, 170), 24, span(p, 2.45, 2.8), hex(0xf0b57a))
   },
 }
 
-// ---- 教材: 条件を変えると、結論がどう動くか ----
+// ---- Teaching material: how the conclusion moves when conditions change ----
 
 export const Teach = {
   frame: rect(370, 170, 470, 360),
@@ -465,7 +571,7 @@ export const Teach = {
     const knob = pt(S.x + v * S.w, midY(S))
     fillRound(g, rect(S.x, S.y, v * S.w, S.h), 3, hex(0xf0b57a))
     ellipse(g, knob.x, knob.y, 9, 9, hex(0xf6ead2))
-    text(g, '背景の見積もり', pt(S.x, S.y - 16), 14, { weight: 600, align: 'left' })
+    text(g, 'Background estimate', pt(S.x, S.y - 16), 14, { weight: 600, align: 'left' })
     const f = pt(272, GROUND)
     const understood = span(p, 2.3, 2.8)
     Person.draw(g, f, t, { scale: 1.2, reach: pt(102, -214), tilt: 0 })
@@ -476,7 +582,7 @@ export const Teach = {
   },
 }
 
-// ---- 鳥のツグミ: 跳ねては止まり、確かめる。そして語らない ----
+// ---- The thrush: it hops, stops and checks. And says nothing ----
 
 export const Tsugumi = {
   stops: [120, 300, 480, 640],
@@ -551,19 +657,21 @@ const entries = {
   summit: { draw: Summit.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [1.0, 2.1, 3], deck: square },
   outpace: { draw: Outpace.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [1.2, 3], deck: square },
   driver: { draw: Driver.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
-  curve: { draw: Curve.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
+  curve: { draw: Curve.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, stops: [0.9, 3], deck: square },
+  driven: { draw: Driven.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, stops: [1.6, 3], deck: square },
+  grasp: { draw: Grasp.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, stops: [1.5, 3], deck: square },
   oneGraph: { draw: OneGraph.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   partial: { draw: Partial.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   branches: { draw: Branches.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   handoff: { draw: Handoff.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.9, deck: square },
   teach: { draw: Teach.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
-  // 名前の後半: 跳ねては止まる鳥、語らない鳥
+  // the second half of the name: the bird that hops and stops, the bird that says nothing
   walk: { draw: Tsugumi.draw, from: 0, to: 1.8, ...plain, route: gutter(120, 760), pace: 1.2, stops: [0.55, 1.8], deck: square },
   hush: { draw: Tsugumi.draw, from: 1.9, to: 4, ...plain, route: gutter(120, 760), pace: 1, stops: [2.3, 3.1, 4], deck: square },
 }
 Object.assign(Figures, entries)
 
-// ---- 「私にしかない深さ」の図: 言葉は添えない ----
+// ---- The figures of where it started: no words are added ----
 
 /** The night over a scene: the same stars from frame to frame. */
 function stars(g, t, o = 1, top = 110, bottom = 640) {
@@ -606,7 +714,7 @@ function telescope(g, c, angle, k = 1) {
   g.restore()
 }
 
-/** 触れがたい宇宙: 遠い光が届くが、ノイズに埋もれている。 */
+/** A universe hard to touch: distant light arrives, buried in noise. */
 export const Orbit = {
   draw(g, p, t) {
     stars(g, t)
@@ -637,7 +745,7 @@ export const Orbit = {
   },
 }
 
-/** みんなのもの: 誰の頭の上にも、同じ宇宙がある。 */
+/** Everyone's: the same universe above every head. */
 export const Sky = {
   people: [[150, 0xa9c9c3], [320, 0xe2c49a], [500, 0xc9a0b4], [670, 0x9fb070], [850, 0x9db4d8]],
   draw(g, p, t) {
@@ -655,7 +763,7 @@ export const Sky = {
   },
 }
 
-/** 手の届くところ: 降ってきたデータが、手元で像になる。 */
+/** Within reach: data falling from the sky becomes an image in your hands. */
 export const Reach = {
   draw(g, p, t) {
     stars(g, t, 0.8)
@@ -696,7 +804,7 @@ export const Reach = {
   },
 }
 
-/** 人にできること: AI は仕上がったものを積んでいく。手の中には毬がある。 */
+/** What people can do: AI stacks up finished things. In the hands is a temari. */
 export const Asking = {
   draw(g, p, t) {
     Wall.drawGround(g, 1)
@@ -715,31 +823,42 @@ export const Asking = {
   },
 }
 
-/** 数えきれない試作と、足りないあと一歩。そして、つながる。 */
+/** Countless prototypes, always one step short. And then, it connects. */
 export const Trials = {
-  mini: (col, row) => rect(120 + col * 210, 180 + row * 150, 180, 110),
+  box: (k) => rect(92 + k * 170, 300, 138, 78),
   draw(g, p, t) {
     Wall.drawGround(g, 0.8)
-    const grid = 1 - span(p, 1.5, 1.85)
-    const order = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1], [0, 2], [1, 2], [2, 2], [3, 2]]
+    const box = Trials.box, grid = 1 - span(p, 1.5, 1.85)
     if (grid > 0.01) {
-      order.forEach(([c, r], i) => {
-        const o = span(p, i * 0.09, 0.12 + i * 0.09) * grid
-        faded(g, o, () => {
-          const m = Trials.mini(c, r)
-          const parts = 2 + Math.min(3, Math.floor(i / 3))  // each try gets further
-          const x = (k) => m.x + 10 + (k * (m.w - 40)) / 4
-          for (let k = 0; k < 5; k++) {
-            const box = rect(x(k), m.y + 40, 22, 22)
-            const built = k < parts
-            if (k > 0 && k < parts) stroke(g, [pt(x(k - 1) + 22, m.y + 51), pt(x(k), m.y + 51)], hex(wire, 0.85), 1.6)
-            if (built) { fillRound(g, box, 4, hex(0x2b2c30)); strokeRound(g, box, 4, hex(0x6d7177), 1) } else strokeRound(g, box, 4, hex(0x9aa0a8, 0.4), 1, [3, 3])
+      faded(g, grid, () => {
+        // every earlier try, each stopped at the same place
+        const earlier = Math.floor(lin(p, 0.05, 1.4) * 7)
+        for (let i = 0; i < earlier; i++) {
+          const y = 266 - i * 21
+          faded(g, 0.42 - i * 0.045, () => {
+            for (let k = 0; k < 5; k++) {
+              const r = rect(box(k).x, y, 138, 14)
+              if (k < 4) fillRound(g, r, 4, hex(0x6d7177))
+              else strokeRound(g, r, 4, hex(0x9aa0a8), 1, [4, 3])
+              if (k < 3) stroke(g, [pt(maxX(r), y + 7), pt(box(k + 1).x, y + 7)], hex(wire), 1.6)
+            }
+          })
+        }
+        // this try: it gets as far as the others, and the last one stays empty
+        const u = (t * 0.2) % 1, built = span(u, 0, 0.55) * 4, leaving = span(u, 0.9, 1)
+        faded(g, 1 - leaving, () => {
+          for (let k = 0; k < 4; k++) {
+            if (built > k) card(g, box(k), '')
+            else card(g, box(k), '', { draft: true, dim: 0.5 })
+            if (k < 3 && built > k + 1) stroke(g, [pt(maxX(box(k)), 339), pt(box(k + 1).x, 339)], hex(wire), 2.4)
           }
+          const reach = span(u, 0.55, 0.68)
+          if (reach > 0) stroke(g, [pt(maxX(box(3)), 339), pt(maxX(box(3)) + 16 * reach, 339)], hex(wire), 2.4)
         })
+        card(g, box(4), '', { draft: true })
+        const pulse = 0.5 + 0.5 * Math.sin(t * 3), gap = span(u, 0.62, 0.72) * (1 - leaving)
+        strokeRound(g, rect(box(4).x - 6, 294, 150, 90), 14, hex(0xf0b57a, (0.35 + 0.5 * pulse) * gap), 2.4)
       })
-      const m = Trials.mini(3, 2)
-      const pulse = 0.5 + 0.5 * Math.sin(t * 3)
-      faded(g, span(p, 1.05, 1.2) * grid, () => ellipse(g, m.x + 10 + (4 * (m.w - 40)) / 4 + 11, m.y + 51, 8 + pulse * 5, 8 + pulse * 5, hex(0xf0b57a, 0.3 + 0.25 * pulse)))
     }
     // the one that holds together
     const whole = span(p, 1.75, 2.05)
@@ -764,12 +883,12 @@ export const Trials = {
     }
     const lit = span(p, 2.7, 3)
     const a = pt(110, GROUND)
-    faded(g, whole, () => Person.draw(g, a, t, { scale: 0.86, tilt: -0.06 }))
+    Person.draw(g, a, t, { scale: 0.86, tilt: -0.06, puzzled: span(p, 0.7, 1.4) * grid })
     if (lit > 0.01) text(g, '!', pt(a.x + 28, a.y - 206), 32, { weight: 800, color: hex(0xf6d79a), opacity: lit })
   },
 }
 
-/** 同志へ: それぞれの手から糸が出て、星をつないでいく。 */
+/** To fellows: a thread from each hand, joining the stars. */
 export const Fellows = {
   stars: [pt(170, 250), pt(320, 170), pt(480, 230), pt(640, 150), pt(800, 260)],
   people: [[160, 0xa9c9c3], [330, 0xe2c49a], [500, 0xc9a0b4], [670, 0x9fb070], [840, 0x9db4d8]],
@@ -793,6 +912,148 @@ export const Fellows = {
   },
 }
 
+// ---- Take Cassiopeia A: the constellation, the star that went, its light reaching the Earth, the remnant still spreading,
+// and the photons a telescope takes in, in three bands laid together again. Drawn in a 1920 x 1080 frame, set in the figure. ----
+
+const CAS = pt(1330, 330), EARTH = pt(330, 860), W_STARS = [pt(560, 300), pt(700, 400), pt(850, 290), pt(1000, 410), pt(1130, 280)]
+const BANDS = [['0.6–1.65 keV', 0xff4a3a, 0xff8a7a], ['1.65–2.25 keV', 0x52e05a, 0x8ff09a], ['2.25–7.5 keV', 0x4f86ff, 0x8fb4ff]]
+let tinted = null
+/** The remnant through each band's colour, to be laid together again ('lighter'). */
+function tintedCasa() {
+  if (tinted || !casaImage.complete || !casaImage.naturalWidth) return tinted
+  tinted = BANDS.map(([, c]) => {
+    const k = document.createElement('canvas')
+    k.width = k.height = 360
+    const o = k.getContext('2d')
+    o.drawImage(casaImage, 0, 0, 360, 360)
+    o.globalCompositeOperation = 'multiply'
+    o.fillStyle = hex(c)
+    o.fillRect(0, 0, 360, 360)
+    return k
+  })
+  return tinted
+}
+function disc(g, image, c, r, o, mode = 'source-over') {
+  if (o <= 0.01 || !image) return
+  g.save()
+  g.globalAlpha *= o
+  g.globalCompositeOperation = mode
+  g.beginPath(); g.arc(c.x, c.y, r, 0, Math.PI * 2); g.clip()
+  g.drawImage(image, c.x - r * 1.2, c.y - r * 1.2, r * 2.4, r * 2.4)
+  g.restore()
+}
+function arrowOut(g, c, a, r0, r1, o) {
+  if (o <= 0.01) return
+  const p0 = pt(c.x + Math.cos(a) * r0, c.y + Math.sin(a) * r0), p1 = pt(c.x + Math.cos(a) * r1, c.y + Math.sin(a) * r1)
+  g.save(); g.globalAlpha *= o; g.strokeStyle = hex(0xf6d79a); g.lineWidth = 4; g.lineCap = 'round'
+  g.beginPath(); g.moveTo(p0.x, p0.y); g.lineTo(p1.x, p1.y)
+  for (const s of [-0.5, 0.5]) { g.moveTo(p1.x, p1.y); g.lineTo(p1.x - Math.cos(a + s) * 16, p1.y - Math.sin(a + s) * 16) }
+  g.stroke(); g.restore()
+}
+/** Where the view is for each `p`: on the constellation, back to take in the Earth, close on the remnant, aside for the telescope. */
+const CAS_VIEW = [[0, 1, 960, 470], [1, 1.18, 1060, 420], [1.15, 1.18, 1060, 420], [1.45, 0.92, 860, 560], [2.05, 0.92, 860, 560], [2.5, 2.4, CAS.x, CAS.y + 10], [3.0, 2.4, CAS.x, CAS.y + 10], [3.35, 1.5, CAS.x - 260, CAS.y + 150]]
+function casView(p) {
+  for (let i = 1; i < CAS_VIEW.length; i++) {
+    if (p > CAS_VIEW[i][0]) continue
+    const [p0, k0, x0, y0] = CAS_VIEW[i - 1], [p1, k1, x1, y1] = CAS_VIEW[i]
+    const u = smooth((p - p0) / (p1 - p0)), k = Math.exp(mix(Math.log(k0), Math.log(k1), u))
+    const w = Math.abs(k1 - k0) < 1e-3 ? u : (1 / k0 - 1 / k) / (1 / k0 - 1 / k1)  // what it goes to moves straight across
+    return [k, mix(x0, x1, w), mix(y0, y1, w)]
+  }
+  return CAS_VIEW[CAS_VIEW.length - 1].slice(1)
+}
+
+export const CasASky = {
+  draw(g, p, t) {
+    g.save()
+    g.translate(0, 158.75)
+    g.scale(1000 / 1920, 1000 / 1920)
+    const [k, cx, cy] = casView(p)
+    g.translate(960 - cx * k, 540 - cy * k)
+    g.scale(k, k)
+    const rng = seeded(91)
+    for (let i = 0; i < 420; i++) {
+      const x = rng(-500, 2400), y = rng(-300, 1400), r = rng(0.5, 1.8) / Math.sqrt(k), ph = rng(0, 6.28)
+      ellipse(g, x, y, r, r, hex(0xf3ede2, 0.2 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.1 + ph))))
+    }
+    // Cassiopeia, star to star, and where Cassiopeia A is
+    const wOut = 1 - span(p, 2.05, 2.4)
+    for (let i = 0; i < 4; i++) {
+      const u = clamp01(lin(p, 0.05, 0.75) * 4 - i)
+      if (u > 0) stroke(g, [W_STARS[i], mixP(W_STARS[i], W_STARS[i + 1], u)], hex(0x9fd3e6, 0.5 * wOut), 2 / k)
+    }
+    for (const q of W_STARS) { glow(g, q.x, q.y, 16, 16, 0xf3ede2, 0.5 * wOut); ellipse(g, q.x, q.y, 4.5, 4.5, hex(0xf8f2e6, wOut)) }
+    text(g, 'Cassiopeia', pt(845, 480), 40, { weight: 600, color: hex(0x9fd3e6), opacity: 0.85 * span(p, 0.5, 0.8) * wOut })
+    const mark = span(p, 0.75, 0.95) * (1 - span(p, 1.0, 1.1))
+    if (mark > 0.01) {
+      g.save(); g.globalAlpha *= mark; g.strokeStyle = hex(0xf6d79a); g.lineWidth = 2.4 / k; g.setLineDash([6 / k, 6 / k])
+      g.beginPath(); g.arc(CAS.x, CAS.y, 32, 0, Math.PI * 2); g.stroke(); g.restore()
+      text(g, 'Cassiopeia A', pt(CAS.x, CAS.y - 64), 40, { weight: 700, color: hex(0xf6d79a), opacity: mark })
+    }
+    // the star, and the moment it went
+    const star = 1 - span(p, 1.05, 1.12)
+    if (star > 0.01) { glow(g, CAS.x, CAS.y, 22, 22, 0xf3ede2, 0.6 * star); ellipse(g, CAS.x, CAS.y, 4, 4, hex(0xffffff, star)) }
+    const blast = span(p, 1.02, 1.12) * (1 - span(p, 1.2, 1.55))
+    if (blast > 0.01) {
+      glow(g, CAS.x, CAS.y, 260 * blast + 40, 260 * blast + 40, 0xfff2d0, 0.95 * blast)
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2, r1 = 60 + 140 * blast
+        stroke(g, [pt(CAS.x + Math.cos(a) * 20, CAS.y + Math.sin(a) * 20), pt(CAS.x + Math.cos(a) * r1, CAS.y + Math.sin(a) * r1)], hex(0xfff6e0, 0.6 * blast), 3)
+      }
+    }
+    // its light, on its way here, and here
+    const far = Math.hypot(EARTH.x - CAS.x, EARTH.y - CAS.y)
+    const go = lin(p, 1.1, 1.75), ring = 1 - span(p, 1.75, 1.9)
+    if (go > 0 && ring > 0.01) { g.save(); g.globalAlpha *= 0.75 * ring; g.strokeStyle = hex(0xfff0c8); g.lineWidth = 5; g.beginPath(); g.arc(CAS.x, CAS.y, far * go, 0, Math.PI * 2); g.stroke(); g.restore() }
+    const earth = span(p, 1.15, 1.35) * (1 - span(p, 2.05, 2.3))
+    if (earth > 0.01) {
+      const hit = span(p, 1.72, 1.76) * (1 - span(p, 1.85, 2.1))
+      faded(g, earth, () => {
+        glow(g, EARTH.x, EARTH.y, 70, 70, 0xfff0c8, 0.8 * hit)
+        ellipse(g, EARTH.x, EARTH.y, 34, 34, hex(0x3f7fb8)); ellipse(g, EARTH.x - 9, EARTH.y - 6, 13, 9, hex(0x5fbf6a)); ellipse(g, EARTH.x + 12, EARTH.y + 10, 9, 6, hex(0x5fbf6a))
+        text(g, 'Earth', pt(EARTH.x, EARTH.y + 70), 36, { weight: 600, color: hex(0xd7ecef) })
+      })
+    }
+    // what is left of it, still spreading
+    const left = span(p, 1.8, 2.1)
+    const r = 84 * left * (1 + 0.12 * smooth(lin(p, 2.3, 3)))
+    const split = span(p, 3.4, 3.6) * (1 - span(p, 3.75, 3.95))
+    if (left > 0.01) {
+      glow(g, CAS.x, CAS.y, r * 1.8, r * 1.8, 0x8f6fd0, 0.3 * left)
+      disc(g, casaImage, CAS, r, 1 - split)
+    }
+    const spread = span(p, 2.4, 2.55) * (1 - span(p, 2.95, 3.1))
+    for (let i = 0; i < 8; i++) {
+      const d = (t * 0.6 + i * 0.37) % 1
+      arrowOut(g, CAS, (i / 8) * Math.PI * 2 + 0.2, r * (1.05 + 0.1 * d), r * (1.3 + 0.1 * d), spread)
+    }
+    text(g, 'thousands of km/s', pt(CAS.x + r * 1.25, CAS.y - r * 1.15), 26, { weight: 700, color: hex(0xf6d79a), opacity: span(p, 2.55, 2.7) * spread })
+    // the observation: photons into the telescope, in three bands, laid together again
+    const tel = pt(CAS.x - 520, CAS.y + 330), angle = Math.atan2(CAS.y - tel.y, CAS.x - tel.x)
+    const tIn = span(p, 3.0, 3.2)
+    if (tIn > 0.01) {
+      faded(g, tIn, () => telescope(g, tel, angle, 0.62))
+      const mouth = pt(tel.x + Math.cos(angle) * 76, tel.y + Math.sin(angle) * 76)
+      const flow = span(p, 3.1, 3.2) * (1 - span(p, 3.6, 3.75))
+      for (let i = 0; i < 30; i++) {
+        const u = (t * 0.45 + i / 30) % 1
+        const q = mixP(CAS, mouth, u), n = Math.sin(i * 12.9) * 18 * (1 - u)
+        ellipse(g, q.x + n, q.y + n * 0.6, 3, 3, hex([0xff5a48, 0x5fe065, 0x5b8bf0][i % 3], 0.9 * flow * Math.sin(u * Math.PI)))
+      }
+    }
+    const bands = split > 0.01 ? tintedCasa() : null
+    if (bands) {
+      const offs = [pt(-1, -0.6), pt(1, -0.6), pt(0, 1)]
+      bands.forEach((image, i) => {
+        const c = pt(CAS.x + offs[i].x * r * 1.25 * split, CAS.y + offs[i].y * r * 1.25 * split)
+        disc(g, image, c, r, Math.min(1, split * 1.4), 'lighter')
+        text(g, BANDS[i][0], pt(c.x, c.y + (offs[i].y > 0 ? r + 26 : -r - 20)), 20, { weight: 600, color: hex(BANDS[i][2]), opacity: span(split, 0.7, 1) })
+      })
+    }
+    g.restore()
+  },
+}
+
 Object.assign(Figures, {
   asking: { draw: Asking.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
   orbit: { draw: Orbit.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 0.8, deck: square },
@@ -801,4 +1062,5 @@ Object.assign(Figures, {
   trials: { draw: Trials.draw, from: 0, to: 1.5, ...plain, route: gutter(120, 760), pace: 1.2, deck: square },
   formed: { draw: Trials.draw, from: 1.5, to: 3, ...plain, route: gutter(120, 760), pace: 1.3, birdAway: [0, 1], deck: square },
   fellows: { draw: Fellows.draw, from: 0, to: 3, ...plain, route: gutter(120, 760), pace: 1, deck: square },
+  casaSky: { draw: CasASky.draw, from: 0, to: 4, ...plain, route: gutter(120, 760), pace: 1.1, stops: [1, 2.1, 3, 4], deck: square },
 })

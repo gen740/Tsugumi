@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace bcg;
+table Regression { value:string; }
+table Outputs { regression:Regression (required, tsugumi: "file"); }
+root_type Outputs;

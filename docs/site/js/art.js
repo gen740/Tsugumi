@@ -156,6 +156,14 @@ export function text(g, s, at, size, { weight = 400, color = hex(Palette.cream),
   lines.forEach((line, i) => g.fillText(line, at.x, at.y + (i - (lines.length - 1) / 2) * size * 1.3))
   g.restore()
 }
+/** The width of a line of text as `text` would draw it. */
+export function textWidth(g, s, size, { weight = 400, mono = false, family = null } = {}) {
+  g.save()
+  g.font = `${weight} ${size}px ${family ?? (mono ? MONO : SANS)}`
+  const w = Math.max(...String(s).split('\n').map((line) => g.measureText(line).width))
+  g.restore()
+  return w
+}
 /** A child's handwriting: each character a little turned, sized and lifted differently. */
 export function childText(g, s, at, size, color, { opacity = 1, seed = 1, leading = false } = {}) {
   if (opacity <= 0.002) return

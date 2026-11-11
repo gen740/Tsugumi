@@ -1,0 +1,10 @@
+{
+  "description": "A non-linear reaction and the rate equation",
+  "content": "Simulates A + B ⇌ C at different volumes and compares the mean fraction bound with the exact solution from detailed balance and with the rate equation's equilibrium.",
+  "outputs": [
+    {
+      "name": "binding",
+      "description": "Fraction bound by molecule count: simulation, exact solution and rate equation"
+    }
+  ]
+}

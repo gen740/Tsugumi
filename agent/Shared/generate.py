@@ -1,18 +1,51 @@
 """Writes agent/Sources/TsugumiAgent/Shared.swift from the files of this
 folder, which the web Agent imports as they are: the system prompts (the Agent's and the guide's), the RPC
-requests offered as tools and the Agent's own texts. Run it after changing
-them (tests/python/test_agent_contract.py checks that it was)."""
+requests offered as tools, the Agent's own texts and the guide's script without a
+model connection. It also writes the list of
+the Python SDK's methods into the system prompt, so that the model need not read
+the SDK. Run it after changing them or the SDK
+(tests/python/test_agent_contract.py checks that it was)."""
 
+import ast
 import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent / "Sources" / "TsugumiAgent" / "Shared.swift"
+SDK = HERE.parents[1] / "sdk" / "python" / "tsugumi" / "__init__.py"
+PROMPT = HERE / "system-prompt.md"
+# The list stands in the system prompt between these two lines.
+SDK_BEGIN = "    The whole SDK (ctx is a Context; generated from its source):\n"
+SDK_END = "    raise tsugumi.Failure("
+
+
+def sdk_list() -> str:
+    """One line per public member of the SDK's Context: its signature and the
+    first line of its documentation."""
+    tree = ast.parse(SDK.read_text())
+    context = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Context")
+    properties, methods = [], []
+    for m in context.body:
+        if not isinstance(m, ast.FunctionDef) or m.name.startswith("_"):
+            continue
+        if any(isinstance(d, ast.Name) and d.id == "property" for d in m.decorator_list):
+            properties.append(f"ctx.{m.name}")
+            continue
+        args = ast.unparse(m.args).removeprefix("self").removeprefix(", ")
+        doc = (ast.get_docstring(m) or "").split("\n")[0]
+        methods.append(f"      ctx.{m.name}({args})" + (f"  # {doc}" if doc else "") + "\n")
+    return "      " + ", ".join(properties) + "\n" + "".join(methods)
+
+
+def prompt() -> str:
+    text = PROMPT.read_text()
+    begin = text.index(SDK_BEGIN) + len(SDK_BEGIN)
+    return text[:begin] + sdk_list() + text[text.index(SDK_END, begin):]
 
 
 def swift() -> str:
     def raw(name: str) -> str:
-        text = (HERE / name).read_text().rstrip("\n")
+        text = (prompt() if name == PROMPT.name else (HERE / name).read_text()).rstrip("\n")
         assert '"""#' not in text, name
         return f'#"""\n{text}\n"""#'
 
@@ -21,14 +54,18 @@ def swift() -> str:
         "enum Shared {\n"
         f"  static let systemPrompt = {raw('system-prompt.md')}\n\n"
         f"  static let guidePrompt = {raw('guide-prompt.md')}\n\n"
+        f"  static let versionSummaryPrompt = {raw('version-summary-prompt.md')}\n\n"
         f"  static let demoSkill = {raw('demo-skill.md')}\n\n"
-        f"  static let agentJSON = {raw('agent.json')}\n"
+        f"  static let agentJSON = {raw('agent.json')}\n\n"
+        f"  static let guideScript = {raw('guide-script.json')}\n\n"
+        f"  static let guideScriptEnglish = {raw('guide-script.en.json')}\n"
         "}\n"
     )
 
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
-        sys.exit(0 if OUT.read_text() == swift() else 1)
+        sys.exit(0 if OUT.read_text() == swift() and PROMPT.read_text() == prompt() else 1)
+    PROMPT.write_text(prompt())
     OUT.write_text(swift())
     print(f"wrote {OUT}")

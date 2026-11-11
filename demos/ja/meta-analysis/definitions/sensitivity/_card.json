@@ -1,0 +1,26 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "trials"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "sensitivity",
+  "filesystem": true,
+  "params": [
+    {
+      "name": "estimators",
+      "type": "string[]",
+      "data": [
+        "DL",
+        "HE",
+        "HS",
+        "SJ",
+        "ML",
+        "REML",
+        "PM"
+      ]
+    }
+  ]
+}

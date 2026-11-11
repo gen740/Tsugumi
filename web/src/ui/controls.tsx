@@ -3,6 +3,7 @@
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 type BtnStyle = 'bordered' | 'prominent' | 'borderless' | 'link' | 'destructive' | 'danger'
 
@@ -123,15 +124,15 @@ export function Stepper({ value, onChange, min, max, step = 1, label }: { value:
     <div className="stepper">
       <span>{label}</span>
       <div className="stepper-buttons">
-        <button type="button" disabled={value <= min} onClick={() => onChange(Math.max(min, value - step))} aria-label="減らす">−</button>
-        <button type="button" disabled={value >= max} onClick={() => onChange(Math.min(max, value + step))} aria-label="増やす">+</button>
+        <button type="button" disabled={value <= min} onClick={() => onChange(Math.max(min, value - step))} aria-label={L('減らす')}>−</button>
+        <button type="button" disabled={value >= max} onClick={() => onChange(Math.min(max, value + step))} aria-label={L('増やす')}>+</button>
       </div>
     </div>
   )
 }
 
 export function Spinner({ small }: { small?: boolean }) {
-  return <span className={`spinner${small ? ' spinner-small' : ''}`} role="progressbar" aria-label="読み込み中" />
+  return <span className={`spinner${small ? ' spinner-small' : ''}`} role="progressbar" aria-label={L('読み込み中')} />
 }
 
 export function Progress({ value, total, width = 80, help }: { value: number; total: number; width?: number; help?: string }) {
@@ -349,7 +350,7 @@ export function Popover({ open, onClose, anchor, children, width, height }: {
 }
 
 /** A modal sheet over its window (or the page). */
-export function Sheet({ children, onClose, width }: { children: ReactNode; onClose: () => void; width?: number }) {
+export function Sheet({ children, onClose, width, backdropCloses = true }: { children: ReactNode; onClose: () => void; width?: number; backdropCloses?: boolean }) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -361,7 +362,7 @@ export function Sheet({ children, onClose, width }: { children: ReactNode; onClo
     return () => window.removeEventListener('keydown', key, true)
   }, [onClose])
   return createPortal(
-    <div className="sheet-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="sheet-backdrop" onMouseDown={(e) => backdropCloses && e.target === e.currentTarget && onClose()}>
       <div className="sheet" style={{ width }} role="dialog" aria-modal>{children}</div>
     </div>,
     document.body,
@@ -376,7 +377,7 @@ export function Confirm({ title, message, confirm, onConfirm, onCancel }: { titl
         <div className="confirm-title">{title}</div>
         {message && <div className="secondary">{message}</div>}
         <div className="row end gap8">
-          <Button onClick={onCancel}>キャンセル</Button>
+          <Button onClick={onCancel}>{L('キャンセル')}</Button>
           <Button kind="danger" onClick={() => { onCancel(); onConfirm() }}>{confirm}</Button>
         </div>
       </div>
@@ -393,7 +394,7 @@ export function Prompt({ title, initial, placeholder, confirm, onConfirm, onCanc
         <div className="confirm-title">{title}</div>
         <TextField value={v} onChange={setV} placeholder={placeholder} autoFocus />
         <div className="row end gap8">
-          <Button onClick={onCancel}>キャンセル</Button>
+          <Button onClick={onCancel}>{L('キャンセル')}</Button>
           <Button kind="prominent" type="submit" disabled={!v}>{confirm}</Button>
         </div>
       </form>

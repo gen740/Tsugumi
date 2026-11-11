@@ -114,6 +114,9 @@ struct InvocationSummaryData {
   std::optional<bool> worker_reused;
   std::vector<std::string> outputs_sent;
   std::optional<int64_t> ready_at;
+  // The program the kernel ran the Card's binaries with, for a Card built for
+  // another system (binfmt_misc); "" when it ran natively.
+  std::string emulator;
 };
 
 // A value travelling on a port. `type` is the port message type.

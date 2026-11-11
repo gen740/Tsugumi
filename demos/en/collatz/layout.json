@@ -1,0 +1,67 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "initial": {
+      "x": 0.0,
+      "y": 190.0
+    },
+    "both": {
+      "x": 0.0,
+      "y": 380.0
+    },
+    "collatz-cpp": {
+      "x": -390.0,
+      "y": 570.0
+    },
+    "collatz-py": {
+      "x": -130.0,
+      "y": 570.0
+    },
+    "compare": {
+      "x": 0.0,
+      "y": 760.0
+    },
+    "record": {
+      "x": 0.0,
+      "y": 950.0
+    },
+    "collatz-jl": {
+      "x": 130.0,
+      "y": 570.0
+    },
+    "collatz-r": {
+      "x": 390.0,
+      "y": 570.0
+    }
+  },
+  "displays": {
+    "compare": {
+      "x": 260.0,
+      "y": 760.0,
+      "width": 360.0,
+      "height": 90.0
+    },
+    "record": {
+      "x": 260.0,
+      "y": 950.0,
+      "width": 360.0,
+      "height": 150.0
+    }
+  },
+  "notes": [
+    {
+      "id": "n1",
+      "scope": "",
+      "color": "yellow",
+      "x": -600.0,
+      "y": 0.0,
+      "width": 470.0,
+      "height": 470.0,
+      "text": "## The Collatz conjecture\n\nThe conjecture (unsolved) that repeating the following operation $T$ on a positive integer $n$ always reaches $1$, wherever it starts.\n\n$$\nT(n) = \\begin{cases} n/2 & n \\equiv 0 \\pmod 2 \\\\ 3n+1 & n \\equiv 1 \\pmod 2 \\end{cases}\n$$\n\nMake the sequence by the recurrence $a_0 = n$, $a_{k+1} = T(a_k)$, and count the smallest $k$ with $a_k = 1$ (the stopping time). For $n = 27$ it reaches $1$ in $111$ steps, with a maximum of $9232$ on the way.\n\n- **collatz-cpp**, **collatz-py**, **collatz-jl**, **collatz-r**: the same loop written in C++, Python, Julia and R as Cards in Cards (go inside to edit). Julia and R Cards run in a separate process per invocation and remember nothing, so they pass the sequence so far on in the message. R handles values exactly only below $2^{53}$\n- **compare**: checks that the four sequences agree\n- **record**: writes the sequence to `collatz.csv` and keeps it as an artifact\n\nTry changing the value of **initial**, and maxRuns (the limit on repetitions) of **check** inside."
+    }
+  ]
+}

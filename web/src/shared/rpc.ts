@@ -12,6 +12,7 @@ import { ReplyT } from '../gen/tsugumi/rpc/reply'
 import { RequestPayload } from '../gen/tsugumi/rpc/request-payload'
 import { RequestT } from '../gen/tsugumi/rpc/request'
 import { NotificationT } from '../gen/tsugumi/rpc/notification'
+import { L } from '../i18n'
 
 export { D, R, RequestPayload }
 
@@ -48,7 +49,7 @@ export class RPCError extends Error {
   }
 }
 
-export const disconnected = () => new RPCError('disconnected', 'tsugumid との接続が切れました')
+export const disconnected = () => new RPCError('disconnected', L('tsugumid との接続が切れました'))
 
 export interface Transport {
   send(frame: Uint8Array): void
@@ -93,8 +94,8 @@ export class RPCClient {
   }
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
-  async connect(token: string | undefined, clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
+  async connect(token: string | undefined, language: 'ja' | 'en', clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
+    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null, language })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }
@@ -357,6 +358,14 @@ export class RPCClient {
       Object.assign(new R.ProjectImportRequestT(), { baseRev, opId, origin, sourceGrant, definitions }),
     )
   }
+  /** Each Card's latest invocation of a run. */
+  latestInvocations(runId: string) {
+    return this.call<R.InvocationPageT>(RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId }))
+  }
+  /** Looks a flake up for nixSources (nothing is saved). */
+  resolveNixSource(ref: string) {
+    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)
+  }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
@@ -364,6 +373,15 @@ export class RPCClient {
   // ---- Versions (git): core/src/versions.cc
   versionGraph(limit = 500) {
     return this.call<R.VersionGraphT>(RequestPayload.VersionGraphRequest, Object.assign(new R.VersionGraphRequestT(), { limit }))
+  }
+  versionCanvas(commit: string) {
+    return this.call<R.VersionCanvasT>(RequestPayload.VersionCanvasRequest, Object.assign(new R.VersionCanvasRequestT(), { commit }))
+  }
+  versionDiff(commit: string) {
+    return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit }))
+  }
+  versionSummary(opId: string, origin: string, commit: string, summary: string) {
+    return this.call<R.VersionResultT>(RequestPayload.VersionSummaryRequest, Object.assign(new R.VersionSummaryRequestT(), { opId, origin, commit, summary }))
   }
   versionInit(opId: string, origin: string) {
     return this.call<R.VersionResultT>(RequestPayload.VersionInitRequest, Object.assign(new R.VersionInitRequestT(), { opId, origin }))

@@ -1,13 +1,16 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import { draftRequest } from '../shared/agentShared'
+import { commentRequest, draftRequest, toolSummary } from '../shared/agentShared'
 import { get, str } from '../shared/json'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
-import { guide, GuideAction, parseShow } from './guide'
+import { guide, GuideAction, type GuideShow, parseShow } from './guide'
+import { HelperTeam } from './helperBirds'
+import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
+import { L } from '../i18n'
 
 export interface ChatItem {
   id: string
@@ -35,7 +38,7 @@ export interface SearchHit {
 }
 
 export type Reference = { kind: 'card' | 'display'; card: CardKey }
-export const refLabel = (r: Reference) => (r.kind === 'card' ? `Card ${r.card}` : `可視化 ${r.card}`)
+export const refLabel = (r: Reference) => (r.kind === 'card' ? `Card ${r.card}` : L('可視化 {0}', r.card))
 const refEq = (a: Reference, b: Reference) => a.kind === b.kind && a.card === b.card
 
 export interface Skill {
@@ -55,6 +58,10 @@ export interface ProviderInfo {
   remote: boolean
   /** Requests use the user's ChatGPT plan (Sign in with ChatGPT). */
   plan: boolean
+  /** What goes into the requests, from the model menu: the effort the model
+   *  takes (none: its default) and Fast mode. */
+  effort?: string
+  fast?: boolean
   /** Display names of the models (the ChatGPT account's catalog). */
   modelNames: Record<string, string>
 }
@@ -62,6 +69,8 @@ export interface ProviderInfo {
 /** The Agent's error at the ChatGPT plan's usage limit (web/server/chatgpt.ts). */
 export const USAGE_LIMIT_TEXT = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 export const USAGE_URL = 'https://chatgpt.com/settings/usage'
+/** The Agent's error when the conversation cannot be made to fit the model's context (web/server/agent.ts). */
+export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's context"
 
 interface ContentBlock {
   type: string
@@ -70,6 +79,10 @@ interface ContentBlock {
   input?: string
   content?: string
   is_error?: boolean
+  /** A web search the provider ran. */
+  query?: string
+  sources?: { url: string; title?: string }[]
+  error?: string
 }
 
 interface Message {
@@ -85,9 +98,13 @@ interface Conversation {
   summary?: string
 }
 
+const COMPACTING = L('会話を圧縮しています…')
+
 export class ChatController extends Observable {
   items: ChatItem[] = []
   busy = false
+  /** Stop was pressed and that answer has not reported its end yet. */
+  private stopping = false
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
@@ -96,6 +113,8 @@ export class ChatController extends Observable {
   failed = false
   /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
   usageLimited = false
+  /** The last turn could not make the conversation fit the model's context. */
+  contextFull = false
   /** The last turn stopped at the step limit and can go on. */
   stoppedAtLimit = false
   sessions: SessionInfo[] = []
@@ -109,11 +128,13 @@ export class ChatController extends Observable {
   available: boolean
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
+  private readonly offEvents: () => void
+
   constructor(readonly session: ProjectSession, private readonly app: AppModel) {
     super()
     this.available = app.status?.chatAvailable ?? true
-    if (!this.available) this.status = app.status?.chatError ?? 'RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。'
-    onServerEvent((e) => {
+    if (!this.available) this.status = app.status?.chatError ?? L('RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。')
+    this.offEvents = onServerEvent((e) => {
       if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
       // Claude Code's saves (the plugin) are approved here, whichever conversation is open.
       else if (e.type === 'chat' && e.project === session.dir && e.session === 'external' && (e.event.kind === 'permission' || e.event.kind === 'permissionAnswered')) this.handle(e.event)
@@ -121,6 +142,14 @@ export class ChatController extends Observable {
       if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
     })
     void this.init()
+  }
+
+  /** The project was left: this chat hears nothing more. */
+  close() {
+    this.offEvents()
+    this.permission = undefined
+    this.team.endAll('stopped', Date.now() / 1000)
+    guide.chatClosed(this)
   }
 
   private get base() {
@@ -161,6 +190,7 @@ export class ChatController extends Observable {
     this.busy = false
     this.failed = false
     this.usageLimited = false
+    this.contextFull = false
     this.stoppedAtLimit = false
     if (this.available) this.status = undefined
     this.currentId = id
@@ -197,11 +227,15 @@ export class ChatController extends Observable {
       for (const b of m.content) {
         if (b.type === 'text') out.push({ id: uuid(), role: m.role, text: b.text ?? '', archived })
         else if (b.type === 'tool_use') out.push({ id: uuid(), role: 'tool', text: b.input ?? '', tool: { name: b.name ?? '' }, archived })
+        else if (b.type === 'web_search') {
+          const sources = (b.sources ?? []).map((s) => (s.title ? `${s.title} — ${s.url}` : s.url)).join('\n')
+          out.push({ id: uuid(), role: 'tool', text: `${JSON.stringify({ query: b.query ?? '' })}\n→ ${b.error ? `failed: ${b.error}` : sources || 'no results'}`, tool: { name: 'web_search', ok: !b.error }, archived })
+        }
         else if (b.type === 'tool_result') {
           const j = [...out].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
           if (j) {
             j.tool!.ok = !b.is_error
-            j.text += '\n→ ' + (b.content ?? '').slice(0, 400)
+            j.text += '\n→ ' + toolSummary(b.content ?? '')
           }
         }
       }
@@ -304,6 +338,8 @@ export class ChatController extends Observable {
 
   send(text: string, selection: CardKey[] = []) {
     if (!text.trim() || !this.available) return
+    // No model connection: Tsugumi answers from its script.
+    if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
     let prompt = text
     for (const sk of this.skillsIn(text)) prompt += `\n\n[Skill ${sk.name}]\n${sk.content}`
     if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
@@ -325,7 +361,7 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void api('/api/chat/send', { ...this.base, prompt, title: display, display, folders: this.folders }).catch((e) => this.fail(e))
+    void api('/api/chat/send', { ...this.base, prompt, title: display.split('\n')[0], display, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
@@ -336,21 +372,33 @@ export class ChatController extends Observable {
       const meta = s.cardMeta(k)
       return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '', context: str(get(meta, 'context')) ?? '' }
     })
-    const names = cards.map((k) => path(k).pop() ?? k).join('、')
-    this.sendRequest(`Draft ${cards.length} 枚（${names}）から Card を生成します`, draftRequest(scope, items))
+    const names = cards.map((k) => path(k).pop() ?? k).join(L('、'))
+    this.sendRequest(L('Draft {0} 枚（{1}）から Card を生成します', cards.length, names), draftRequest(scope, items))
+  }
+
+  /** Asks the Agent to do what the open comments on these Cards ask. */
+  generateFromComments(scope: string[], cards: CardKey[]) {
+    const s = this.session
+    const items = cards.map((k) => ({
+      key: k, definition: path(k).pop() ?? '-', comments: s.openComments(k).map(({ id, text }) => ({ id, text })),
+    }))
+    const count = items.reduce((n, c) => n + c.comments.length, 0)
+    const asked = items.flatMap((c) => c.comments.map((x) => `${c.definition}: ${x.text}`))
+    this.sendRequest([L('コメント {0} 件に従って Card を生成します', count), ...asked].join('\n'), commentRequest(scope, items))
   }
 
   cancel() {
     void api('/api/chat/cancel', this.base).catch(() => {})
+    this.stopping = true
     this.busy = false
-    this.status = '回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。'
+    this.status = L('回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。')
     this.changed()
   }
 
   /** Goes on after the step limit stopped the Agent. */
   continueWork() {
     if (!this.available) return
-    this.items = [...this.items, { id: uuid(), role: 'user', text: '（止まったところから続けます）' }]
+    this.items = [...this.items, { id: uuid(), role: 'user', text: L('（止まったところから続けます）') }]
     this.begin()
     void api('/api/chat/continue', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
@@ -362,18 +410,28 @@ export class ChatController extends Observable {
 
   compact() {
     this.begin()
-    this.status = '会話を圧縮しています…'
+    this.status = COMPACTING
     this.changed()
     void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
-  /** Demo mode ($demo, or a demo tour): the bird flies about the screen for
-   *  this chat; it ends with the tour's farewell. Otherwise the chat is a chat. */
+  /** Demo mode ($demo, or a demo tour): the bird leads the user about the
+   *  screen for this chat; it ends with the tour's farewell. Otherwise the chat
+   *  is a chat, whose bird flies only to show where a feature asked about is. */
   demoMode = false
 
   /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
   choices: string[] = []
   offered: GuideAction[] = []
+  /** Without a model connection: Tsugumi's fixed reply (guideScript) to what
+   *  was asked or what the app noted, with its choices and buttons. */
+  showScripted(asked: string | undefined, reply: string, shown: GuideShow) {
+    this.items = [...this.items, ...(asked ? [{ id: uuid(), role: 'user', text: asked }] : []), { id: uuid(), role: 'assistant', text: reply }]
+    this.choices = shown.choices
+    this.offered = shown.actions
+    this.changed()
+  }
+
   /** Notes of the app (a demo tour's runs) that came while it answered. */
   private notes: { prompt: string; display: string }[] = []
 
@@ -411,6 +469,7 @@ export class ChatController extends Observable {
     this.busy = true
     this.failed = false
     this.usageLimited = false
+    this.contextFull = false
     this.stoppedAtLimit = false
     this.status = undefined
     this.changed()
@@ -419,7 +478,7 @@ export class ChatController extends Observable {
   private fail(e: unknown) {
     this.busy = false
     this.failed = true
-    this.status = `エラー: ${(e as Error).message ?? e}`
+    this.status = L('エラー: {0}', (e as Error).message ?? e)
     this.changed()
   }
 
@@ -432,7 +491,50 @@ export class ChatController extends Observable {
     void api('/api/chat/permission', { id: p.id, allow, always }).catch((e) => this.fail(e))
   }
 
+  /** The files being written, by who writes them ('': the Agent, or a helper's name). */
+  readonly writers = new Map<string, LiveCodePlayer>()
+
+  /** The helpers of the last delegate call, a bird each. */
+  readonly team = new HelperTeam((who) => this.writers.get(who))
+
+  private writer(who = '') {
+    let w = this.writers.get(who)
+    if (!w) this.writers.set(who, (w = new LiveCodePlayer()))
+    return w
+  }
+
+  /** What an event means for the file being written; true: nothing else to do. */
+  private noteWriting(who: string, e: any) {
+    const now = Date.now() / 1000
+    switch (e.kind) {
+      case 'toolInput':
+        // Many a second, so nothing else changes: the panel looks for itself.
+        this.writer(who).input(e.index, e.delta, now)
+        if (!who && !this.demoMode) guide.writer = this.writer()
+        return true
+      case 'toolFinished':
+        if (writesSources(e.name)) {
+          this.writer(who).ended(e.ok, now)
+          if (e.ok && e.name === 'project_save') this.writer(who).saved(now)
+        }
+        return false
+      case 'toolStarted':
+        // What was written is not on the screen once it runs.
+        if (e.name === 'run') this.writer(who).stop()
+        return false
+      case 'finished':
+        this.writer(who).ended(true, now)
+        return false
+      case 'discardText': case 'retrying': case 'error': case 'stepLimit':
+        this.writer(who).ended(false, now)
+        return false
+    }
+    return false
+  }
+
   private handle(e: any) {
+    if (this.noteWriting('', e)) return
+    if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
       case 'discardText': {
         // The reply is asked again: what it had streamed goes.
@@ -461,8 +563,9 @@ export class ChatController extends Observable {
           const shown = parseShow(e.arguments)
           this.choices = shown.choices
           this.offered = shown.actions
-          // The bird moves only in demo mode; after the farewell the chat is a chat again.
-          if (this.demoMode) guide.chatShow(this, e.arguments)
+          // The bird flies for it: in demo mode, and outside it to show where a
+          // feature the user asked about is (the rules keep it to that).
+          guide.chatShow(this, e.arguments)
           if (shown.endTour) this.demoMode = false
           break
         }
@@ -482,67 +585,93 @@ export class ChatController extends Observable {
         }
         break
       }
+      case 'compacting':
+        // The next reply waits for it (over a minute with a long conversation).
+        this.status = COMPACTING
+        break
       case 'compacted':
         // Earlier messages were summarized for the model; the whole text stays
         // in the conversation, so nothing is announced.
+        if (this.status === COMPACTING) this.status = undefined
         this.reloadCurrent()
         break
       case 'retrying':
-        this.status = `再試行中: ${e.message}`
+        this.status = L('再試行中: {0}', e.message)
         break
       case 'error':
+        // The stopped answer ended after the next one began, which goes on.
+        if (e.message === 'cancelled' && this.stopping && this.busy) {
+          this.stopping = false
+          break
+        }
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll(e.message === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
         if (e.message === 'cancelled') this.notes = []
         this.busy = false
         this.failed = e.message !== 'cancelled'
         this.usageLimited = e.message === USAGE_LIMIT_TEXT
-        this.status = e.message === 'cancelled' ? '回答を停止しました（Workflow の実行は止めていません）。'
-          : this.usageLimited ? 'Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。' : `エラー: ${e.message}`
+        this.contextFull = e.message === CONTEXT_FULL_TEXT
+        this.status = e.message === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
+          : this.usageLimited ? L('Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。')
+          : this.contextFull ? L('この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。')
+          : L('エラー: {0}', e.message)
         this.refreshAfterTurn()
         break
       case 'finished':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll('done', Date.now() / 1000)
         this.busy = false
-        // A note left by a retry (e.g. a reply cut at the output limit) is no longer current.
-        if (this.status?.startsWith('再試行中')) this.status = undefined
+        // A note left by a retry (e.g. a reply cut at the output limit) or the compaction is no longer current.
+        if (this.status?.startsWith(L('再試行中')) || this.status === COMPACTING) this.status = undefined
         this.refreshAfterTurn()
         queueMicrotask(() => this.flushNotes())
         break
       case 'stepLimit':
+        this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
+        this.team.endAll('limit', Date.now() / 1000)
         this.busy = false
         this.stoppedAtLimit = true
-        this.status = `${e.steps} 手の上限で中断しました。「続ける」で続きから再開できます。`
-          + (e.unconfirmedRun ? ` 実行 ${String(e.unconfirmedRun).slice(0, 8)} の結果はまだ確かめていません。` : '')
+        this.status = L('{0} 手の上限で中断しました。「続ける」で続きから再開できます。', e.steps)
+          + (e.unconfirmedRun ? L(' 実行 {0} の結果はまだ確かめていません。', String(e.unconfirmedRun).slice(0, 8)) : '')
         this.refreshAfterTurn()
         break
     }
     this.changed()
   }
 
-  /** A delegate call: a row per helper. */
+  /** A delegate call: a bird and a row per helper. */
   private startHelpers(args: string) {
-    let tasks: { name?: string }[] = []
+    let tasks: { name?: string; cards?: unknown }[] = []
     try {
       tasks = JSON.parse(args)?.tasks ?? []
     } catch {}
-    this.items = [...this.items, ...tasks.filter((t) => t?.name).map((t) => ({ id: uuid(), role: 'helper', text: '', helper: String(t.name) }))]
+    const named = tasks.filter((t) => t?.name).map((t) => ({
+      name: String(t.name),
+      cards: Array.isArray(t.cards) ? t.cards.filter((c): c is string => typeof c === 'string') : [],
+    }))
+    this.team.start(named, Date.now() / 1000)
+    guide.team = this.team
+    this.items = [...this.items, ...named.map((t) => ({ id: uuid(), role: 'helper', text: '', helper: t.name }))]
   }
 
-  /** What a helper does, in its row. */
+  /** What a helper does: its bird and its row. */
   private handleHelper(name: string, e: any) {
+    this.team.note(name, e, Date.now() / 1000)
     const i = this.items.map((x) => x.role === 'helper' && x.helper === name).lastIndexOf(true)
     if (i < 0) return
     const it = this.items[i]
     let next: ChatItem | undefined
     if (e.kind === 'toolStarted') next = { ...it, tool: { name: e.name }, text: e.arguments }
     else if (e.kind === 'toolFinished' && it.tool?.name === e.name) next = { ...it, tool: { name: e.name, ok: e.ok } }
-    else if (e.kind === 'finished') next = { ...it, ended: '終わりました' }
-    else if (e.kind === 'stepLimit') next = { ...it, ended: '手数の上限で止まりました' }
-    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? '止めました' : `エラー: ${e.message}` }
+    else if (e.kind === 'finished') next = { ...it, ended: L('終わりました') }
+    else if (e.kind === 'stepLimit') next = { ...it, ended: L('手数の上限で止まりました') }
+    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? L('止めました') : L('エラー: {0}', e.message) }
     if (next) this.items = [...this.items.slice(0, i), next, ...this.items.slice(i + 1)]
   }
 

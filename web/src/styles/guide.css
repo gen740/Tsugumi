@@ -64,12 +64,17 @@ span[data-guide] { display: inline-flex; }
 .guide-flyer { position: fixed; inset: 0; pointer-events: none; z-index: 1500; }
 .guide-flying-bird { position: fixed; width: 90px; height: 64px; transition: left 0.9s ease-in-out, top 0.9s ease-in-out, width 0.9s ease-in-out, height 0.9s ease-in-out; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)); }
 .guide-flying-bird.left .guide-bird { transform: scaleX(-1); }
-.guide-flying-bird.moving:not(.still) { animation: guide-flap 0.18s linear infinite; }
+.guide-flying-bird.moving:not(.still) { animation: guide-flap 0.286s ease-in-out infinite; }
 .guide-flying-bird:not(.moving):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
-@keyframes guide-flap { 50% { transform: translateY(-3px) scaleY(0.9); } }
+/* In flight the wing beats around the shoulder, as the app's GuideAvatar does
+   (flap = (sin(22t) + 1) / 2, the wing turned up to -0.45 rad), and the body bobs with it. */
+.guide-bird .guide-wing { transform-box: view-box; transform-origin: 545px 402px; }
+.guide-flying-bird.moving:not(.still) .guide-wing, .helper-bird.flying:not(.still) .guide-wing { animation: guide-wing 0.286s ease-in-out infinite; }
+@keyframes guide-flap { 50% { transform: translateY(-2px); } }
+@keyframes guide-wing { 50% { transform: rotate(-26deg); } }
 .guide-flyer-bubble { position: fixed; pointer-events: auto; animation: guide-pop 0.2s ease-out; }
 @keyframes guide-pop { from { opacity: 0; transform: scale(0.92); } }
-@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble, .guide-wing { transition: none !important; animation: none !important; } }
 .guide-reply-field { display: flex; align-items: center; gap: 4px; }
 .guide-reply-field .field { flex: 1; min-width: 0; font-size: 12.5px; padding: 3px 7px; }
 
@@ -80,4 +85,30 @@ body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }
 .guide-flying-bird.draggable { pointer-events: auto; cursor: grab; }
 .guide-flying-bird.draggable:active { cursor: grabbing; }
 .guide-flash { border-radius: 6px; box-shadow: inset 3px 0 0 var(--tsugumi-rufous); background: color-mix(in srgb, var(--tsugumi-rufous) 12%, transparent); transition: background 0.6s; }
-.guide-work-line { position: fixed; max-width: 220px; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.guide-work-line { position: fixed; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+
+/* The helpers' birds on the canvas (ui/helperBirds), in the colour `--bird`, and
+   the Agent's among them. */
+.helper-bird { position: absolute; pointer-events: none; z-index: 41; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
+.helper-bird.right .guide-bird { transform: scaleX(-1); }
+.helper-bird.flying:not(.still) { animation: guide-flap 0.286s ease-in-out infinite; }
+.helper-bird:not(.flying):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
+.helper-trail { z-index: 41; }
+.helper-halo { position: absolute; pointer-events: none; z-index: 41; border-radius: 50%; background: color-mix(in srgb, var(--bird) 32%, transparent); }
+.helper-name { position: absolute; pointer-events: none; z-index: 42; padding: 1px 5px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 14px; white-space: nowrap;
+  color: var(--bird); background: var(--material); backdrop-filter: blur(16px) saturate(1.4); transform: translateY(-50%); }
+.helper-line { position: absolute; pointer-events: none; z-index: 43; box-sizing: border-box; padding: 6px 10px; border-radius: 9px; font-size: 11.5px; line-height: 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid color-mix(in srgb, var(--bird) 45%, transparent); }
+.helper-edge { position: absolute; pointer-events: none; z-index: 43; display: inline-flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px; color: var(--bird);
+  background: var(--material); transform: translate(-50%, -50%); }
+.helper-edge-dot, .helper-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.helper-edge-dot { background: var(--bird); }
+.helper-dot { width: 7px; height: 7px; }
+@media (prefers-reduced-motion: reduce) { .helper-bird { animation: none !important; } }
+.guide-flying-bird.lead .helper-halo { left: 9%; right: 9%; bottom: -9%; height: 25%; background: color-mix(in srgb, var(--bird) 45%, transparent); z-index: auto; }
+.guide-flying-bird.lead .helper-name { left: calc(100% + 4px); top: 36%; font-size: 11px; font-weight: 700; z-index: auto; }
+.guide-work-line.lead { border: 1px solid color-mix(in srgb, var(--bird) 55%, transparent); }
+.helper-row { display: flex; align-items: center; gap: 6px; padding-left: 10px; min-width: 0; color: var(--secondary); }
+.helper-row .spinner { width: 12px; height: 12px; border-width: 1.5px; flex: none; }
+.helper-row > .caption { flex: none; }
+.helper-row > .ellipsis { flex: 0 1 auto; min-width: 0; }

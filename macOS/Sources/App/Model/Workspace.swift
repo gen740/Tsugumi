@@ -1,10 +1,11 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Observation
 import TsugumiRPC
 
 /// Window values for the scenes that show one project (and optionally a
-/// Card or scope in it). Codable so windows restore across launches.
+/// Card or scope in it). SwiftUI wants them Codable; no window is restored (TsugumiApp).
 struct ProjectRef: Codable, Hashable {
   var path: String
   /// Definition to show first (Card definitions window).
@@ -18,12 +19,13 @@ struct WorkflowRef: Codable, Hashable {
 }
 
 enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
-  case general, nix, source, ports, executions, artifacts, context
+  case general, comments, nix, source, ports, executions, artifacts, context
   var id: String { rawValue }
 
   var title: String {
     switch self {
     case .general: return String(localized: "一般")
+    case .comments: return String(localized: "コメント")
     case .nix: return String(localized: "Nix 定義")
     case .source: return String(localized: "ソース")
     case .ports: return String(localized: "入出力")
@@ -36,6 +38,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .general: return "slider.horizontal.3"
+    case .comments: return "bubble.left"
     case .nix: return "snowflake"
     case .source: return "doc.text"
     case .ports: return "arrow.left.arrow.right"
@@ -119,7 +122,16 @@ enum BottomPanel: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class Workspace {
+  let id = UUID()
+  /// The window showing it (a main window: to bring it forward, to tell when it closes).
+  @ObservationIgnored weak var window: NSWindow?
   var session: ProjectSession?
+  /// "New project" asked for this window: its Home opens the sheet.
+  var requestNewProject = false
+  /// What this window could not do, shown as an alert.
+  var alert: String?
+  /// Why the changes cannot be saved, when leaving was asked for: the way out is to give them up.
+  var unsavedReason: String?
   var tabs: [WorkflowTab] = []
   var activeTab: UUID?
   var showChat = true

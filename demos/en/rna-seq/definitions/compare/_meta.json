@@ -1,0 +1,10 @@
+{
+  "description": "Compare DESeq2 and edgeR",
+  "content": "Overlays the two methods' log2FC and counts the genes that meet the FDR threshold in both, and in only one.",
+  "outputs": [
+    {
+      "name": "agreement",
+      "description": "CSV of the number of genes per class"
+    }
+  ]
+}

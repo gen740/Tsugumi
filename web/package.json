@@ -18,6 +18,8 @@
     "test": "node scripts/test.mjs"
   },
   "dependencies": {
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0",
     "flatbuffers": "25.9.23",
     "katex": "0.19.0",
     "marked": "18.1.1",
@@ -33,7 +35,14 @@
     "@types/react": "18.3.27",
     "@types/react-dom": "18.3.7",
     "@webgpu/types": "^0.1.66",
+    "dom-to-svg": "^0.12.2",
     "esbuild": "0.25.12",
     "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
+  },
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
   }
 }

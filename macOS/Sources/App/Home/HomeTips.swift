@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// What the bird says on home: how to use the app, and where its name comes
-/// from (docs/Name.md). English in tools/en_strings.py.
+/// from ("The name" in docs/Philosophy.md). English in tools/en_strings.py.
 enum HomeTips {
   static let all: [String] = [
     String(localized: "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ"),

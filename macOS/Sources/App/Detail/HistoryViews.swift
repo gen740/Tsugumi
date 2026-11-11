@@ -159,6 +159,8 @@ struct CardExecutionView: View {
           LabeledContent("開始", value: formatMillis(s.startedAt))
           LabeledContent("終了", value: formatMillis(s.endedAt))
           if let d = s.durationMs { LabeledContent("所要時間", value: formatDuration(Double(d) / 1000)) }
+          // A Card built for another system (its `system` setting): what ran it.
+          if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
           if !s.waitingInputs.isEmpty {
             LabeledContent("待っていた入力", value: s.waitingInputs.compactMap { $0?.port }.joined(separator: ", "))
           }
@@ -167,7 +169,7 @@ struct CardExecutionView: View {
           LabeledContent("失敗の種類", value: String(describing: f.kind))
           Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
         }
-        LabeledContent("集計", value: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)")
+        LabeledContent("集計", value: String(localized: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)"))
         if let srcs = r.record?.inputSources, !srcs.isEmpty {
           Section("入力元") {
             ForEach(Array(srcs.compactMap { $0 }.enumerated()), id: \.offset) { _, s in

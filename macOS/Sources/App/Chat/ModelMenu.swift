@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TsugumiAgent
 
 /// Runs on the main thread soon, also while an NSMenu is open: menu tracking
 /// serves run loop blocks and timers in the common modes, but neither the main
@@ -87,12 +88,18 @@ final class ModelListRefresher {
 final class ModelMenu: NSObject, NSMenuDelegate {
   var onOpen: (() -> Void)?
   var onChoose: ((String, String) -> Void)?
+  /// The effort chosen ("": the model's default), and Fast mode turned on or off.
+  var onEffort: ((String) -> Void)?
+  var onFast: ((Bool) -> Void)?
   weak var anchor: NSView?
   let menu = NSMenu()
   private var connections: [ChatPanel.Connection] = []
   private var provider = ""
   private var model = ""
   private var names: [String: String] = [:]
+  /// What goes into the requests of the model in use.
+  private var effort: String?
+  private var fast = false
 
   override init() {
     super.init()
@@ -119,6 +126,12 @@ final class ModelMenu: NSObject, NSMenuDelegate {
     rebuild()
   }
 
+  func setChoices(effort: String?, fast: Bool) {
+    self.effort = effort
+    self.fast = fast
+    rebuild()
+  }
+
   func setCurrent(provider: String, model: String) {
     self.provider = provider
     self.model = model
@@ -127,8 +140,9 @@ final class ModelMenu: NSObject, NSMenuDelegate {
 
   /// The items, also while the menu is open.
   private func rebuild() {
-    var items: [NSMenuItem] = []
+    var items = connections.isEmpty ? [] : choiceItems()
     for c in connections {
+      if !items.isEmpty { items.append(.separator()) }
       items.append(NSMenuItem.sectionHeader(title: c.name))
       for m in c.models {
         let item = NSMenuItem(title: names[m] ?? m, action: #selector(picked(_:)), keyEquivalent: "")
@@ -144,10 +158,58 @@ final class ModelMenu: NSObject, NSMenuDelegate {
       items.append(none)
     }
     let same = menu.items.count == items.count && zip(menu.items, items).allSatisfy {
-      $0.title == $1.title && $0.state == $1.state && ($0.representedObject as? [String]) == ($1.representedObject as? [String])
+      $0.title == $1.title && $0.state == $1.state && $0.isEnabled == $1.isEnabled && ($0.representedObject as? [String]) == ($1.representedObject as? [String])
     }
     if !same { menu.items = items }
   }
+
+  /// The effort and Fast mode of the model in use: above the models, whose
+  /// lists are long and change. What cannot be chosen says why.
+  private func choiceItems() -> [NSMenuItem] {
+    let options = ModelOptions(connection: provider, model: model)
+    var items = [NSMenuItem.sectionHeader(title: "Effort")]
+    if options.efforts.isEmpty {
+      items.append(unavailable(String(localized: "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）")))
+    } else {
+      let title = options.defaultEffort.map { String(localized: "既定（\($0)）") } ?? String(localized: "既定")
+      items.append(effortItem(title, level: ""))
+      items += options.efforts.map { effortItem($0, level: $0) }
+    }
+    items.append(.separator())
+    if let price = options.fastPrice {
+      let times = String(format: "%g", price)
+      let item = NSMenuItem(title: String(localized: "Fast mode（料金は通常の \(times) 倍）"), action: #selector(toggledFast), keyEquivalent: "")
+      item.target = self
+      item.state = fast ? .on : .off
+      items.append(item)
+    } else {
+      items.append(unavailable(provider == "chatgpt" ? String(localized: "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）")
+        : provider == "openai" ? String(localized: "Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）")
+        : String(localized: "Fast mode: Claude Opus 5.5 でだけ選べます")))
+    }
+    return items
+  }
+
+  private func unavailable(_ title: String) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    item.isEnabled = false
+    return item
+  }
+
+  private func effortItem(_ title: String, level: String) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: #selector(pickedEffort(_:)), keyEquivalent: "")
+    item.target = self
+    item.representedObject = ["effort", level]
+    item.state = (effort ?? "") == level ? .on : .off
+    return item
+  }
+
+  @objc private func pickedEffort(_ item: NSMenuItem) {
+    guard let pick = item.representedObject as? [String], pick.count == 2 else { return }
+    onEffort?(pick[1])
+  }
+
+  @objc private func toggledFast() { onFast?(!fast) }
 
   @objc private func picked(_ item: NSMenuItem) {
     guard let pick = item.representedObject as? [String], pick.count == 2 else { return }

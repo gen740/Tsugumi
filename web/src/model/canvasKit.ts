@@ -5,6 +5,7 @@ import { D } from '../shared/rpc'
 import type { FlowDirection } from './prefs'
 import type { CardKind } from './session'
 import type { PermissionKind } from './permissions'
+import { L } from '../i18n'
 
 export type Pt = { x: number; y: number }
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -13,14 +14,14 @@ export type Rect = { x: number; y: number; width: number; height: number }
 export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, done }
 
 export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
-  [Stage.waiting]: { label: '入力待ち', active: '入力待ち', icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: 'SDK 準備', active: 'SDK 準備中', icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
-  [Stage.evaluate]: { label: 'Nix 評価', active: 'Nix 評価中', icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
-  [Stage.build]: { label: 'build', active: 'build 中', icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
-  [Stage.execute]: { label: 'run', active: '実行中', icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.stdout },
-  [Stage.validate]: { label: 'validate', active: '出力を検証中', icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
-  [Stage.save]: { label: '保存', active: '保存中', icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
-  [Stage.done]: { label: '完了', active: '完了', icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
+  [Stage.waiting]: { label: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
+  [Stage.prepare]: { label: L('SDK 準備'), active: L('SDK 準備中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
+  [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
+  [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.stdout },
+  [Stage.validate]: { label: 'validate', active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
+  [Stage.save]: { label: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
+  [Stage.done]: { label: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
 }
 
 export function stageOfPhase(p: D.Phase): Stage | undefined {
@@ -48,8 +49,8 @@ export function stageParts(s: Stage): Stage[] {
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'cached' | 'reused' | 'failed' | 'cancelled' | 'notRun'
 export const STAGE_STATUS_LABEL: Record<StageStatus, string> = {
-  pending: '未開始', running: '進行中', done: '完了', cached: 'キャッシュを利用（処理なし）',
-  reused: 'この Run で準備済みのものを再利用', failed: '失敗', cancelled: '停止', notRun: '実行されませんでした',
+  pending: L('未開始'), running: L('進行中'), done: L('完了'), cached: L('キャッシュを利用（処理なし）'),
+  reused: L('この Run で準備済みのものを再利用'), failed: L('失敗'), cancelled: L('停止'), notRun: L('実行されませんでした'),
 }
 
 export interface StageItem {
@@ -126,12 +127,19 @@ export interface CardNodeData {
   untitled?: boolean
   /** The canvas grid's spacing while the grid is on: the ports follow it. */
   portGrid?: number
+  /** Comments on the Card not resolved yet. */
+  openComments?: number
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'
 
 export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'start'
 export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' ? k : 'card')
+
+/** Whether a wire is drawn dotted: either end is a Draft, with no code behind
+ *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
+export const isDraftWire = (kind: (card: string) => CardKind | undefined, from: string, to?: string): boolean =>
+  kind(from) === 'draft' || (to !== undefined && kind(to) === 'draft')
 
 /** The nearest grid line. Not `Math.round`: that goes up on a tie and Swift's
  *  `.rounded()` goes away from zero, and a Card on a negative half would land
@@ -209,7 +217,9 @@ export class CardGeometry {
       case 'fork': return { width: this.fanWidth(this.outputs.length), height: this.fanLength(this.outputs.length) }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       // The start Card: its name and a run button, nothing more.
-      case 'start': return { width: 116, height: 34 }
+      case 'start':
+        if (!this.grid) return { width: 116, height: 34 }
+        return { width: gridLengthNear(116, this.grid), height: this.flow === 'leftToRight' ? 2 * CardGeometry.rowPitch(this.grid) : 34 }
       default: return { width: 0, height: 0 }
     }
   }
@@ -353,16 +363,18 @@ export class CardGeometry {
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
 
-  /** The outline (Card box, diamond, triangle) inside `r`, as SVG path data. */
-  outline(r: Rect): string {
+  /** The outline (Card box, diamond, triangle) inside `r`, as SVG path data.
+   *  `cornerScale` shrinks the corners that stay the same at every zoom, for a
+   *  drawing much smaller than the canvas. */
+  outline(r: Rect, cornerScale = 1): string {
     const P = (x: number, y: number): Pt => ({ x, y })
     switch (this.shape) {
       case 'card':
-        return roundedRect(r, 9)
+        return roundedRect(r, 9 * cornerScale)
       case 'start':
         return roundedRect(r, r.height / 2)
       case 'branch':
-        return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6)
+        return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
       default: {
         // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
         // twice so it stays sharp: the ports of that side are on its very tip.

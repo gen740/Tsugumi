@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace quake;
+table SectionDir { value:string; }
+table Outputs { section:SectionDir (required, tsugumi: "directory"); }
+root_type Outputs;

@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace lung;
+table Fit { value:string; }
+table Outputs { fit:Fit (required, tsugumi: "directory"); }
+root_type Outputs;

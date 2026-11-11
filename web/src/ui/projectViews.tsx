@@ -1,6 +1,7 @@
 // The Card database and the project's settings panes.
 import { useEffect, useState } from 'react'
 import { app } from '../model/app'
+import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
@@ -10,6 +11,7 @@ import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 // ---- Card database -----------------------------------------------------------------
 
@@ -55,19 +57,19 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       card = parse(cardText)
       meta = metaText.trim() ? parse(metaText) : undefined
     } catch (e) {
-      setParseError(`JSON として読めません: ${errorText(e)}`)
+      setParseError(L('JSON として読めません: {0}', errorText(e)))
       return
     }
     setParseError(undefined)
     session.edit((x) => x.setEffectiveDefinition(id, { card, meta }))
     await session.save()
-    setMessage(session.saveError ? `保存できませんでした: ${session.saveError}` : `適用しました（revision ${session.rev}）。`)
+    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : L('適用しました（revision {0}）。', session.rev))
     load(id)
   }
 
   const detail = (() => {
     const id = selected
-    if (!id || !session.definitions.has(id)) return <Empty key="none" title="定義を選んでください" icon="square.stack" description="ドラッグして Canvas に配置できます。" />
+    if (!id || !session.definitions.has(id)) return <Empty key="none" title={L('定義を選んでください')} icon="square.stack" description={L('ドラッグして Canvas に配置できます。')} />
     const unapplied = cardText !== base.card || metaText !== base.meta
     const isUnplaced = unplaced.has(id)
     return (
@@ -75,28 +77,28 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         <div className="row center">
           <span className="title2 selectable">{id}</span>
           <span className="spacer" />
-          {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />未適用の変更</span>}
+          {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
-        <div className="callout secondary">Card「{id}」の定義（definitions/{id}/）です。</div>
-        <div className="headline">_card.json（設定・params・入力）</div>
+        <div className="callout secondary">{L('Card「{0}」の定義（definitions/{0}/）です。', id)}</div>
+        <div className="headline">{L('_card.json（設定・params・入力）')}</div>
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
-        <div className="headline">_meta.json（説明・計画・追加コンテキスト、任意）</div>
+        <div className="headline">{L('_meta.json（説明・計画・追加コンテキスト、任意）')}</div>
         <CodeEditor text={metaText} onChange={setMetaText} language="json" documentId={`db:${id}/_meta.json`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
         {parseError && <span className="label selectable" style={{ color: 'var(--red)' }}><Icon name="xmark.octagon" />{parseError}</span>}
         {message && <div className="callout secondary selectable">{message}</div>}
         <div className="row gap8 center">
           <Button disabled={!session.isEditable || !isUnplaced} onClick={() => {
             const k = session.placeDefinition(id, { x: 40, y: 40 })
-            setMessage(`${k} を Workflow に配置しました（未保存）。`)
-          }}>Canvas に配置</Button>
-          <Button disabled={isUnplaced} help="Card の設定画面で開きます"
-            onClick={() => app.openWindow(session, { kind: 'card', card: key([id]), category: 'source' })}>ソースを開く…</Button>
+            setMessage(L('{0} を Workflow に配置しました（未保存）。', k))
+          }}>{L('Canvas に配置')}</Button>
+          <Button disabled={isUnplaced} help={L('Card の設定画面で開きます')}
+            onClick={() => app.openWindow(session, { kind: 'card', card: key([id]), category: 'source' })}>{L('ソースを開く…')}</Button>
           <Button kind="destructive" disabled={!isUnplaced || !session.isEditable}
-            help={isUnplaced ? '定義とソースを削除' : 'Card を削除すると定義も削除されます'}
-            onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>削除</Button>
+            help={isUnplaced ? L('定義とソースを削除') : L('Card を削除すると定義も削除されます')}
+            onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>{L('削除')}</Button>
           <span className="spacer" />
-          <Button onClick={() => load()}>再読込</Button>
-          <Button kind="prominent" disabled={!unapplied || !session.isEditable} onClick={() => void apply(id)}>適用</Button>
+          <Button onClick={() => load()}>{L('再読込')}</Button>
+          <Button kind="prominent" disabled={!unapplied || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
         </div>
       </div>
     )
@@ -107,13 +109,13 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       {[
         <div key="list" className="col fill">
           <div className="row gap6 center pad6">
-            <TextField value={search} onChange={setSearch} placeholder="検索" style={{ flex: 1 }} />
-            <MenuButton icon="plus" help="Card を追加" disabled={!session.isEditable} items={() => TEMPLATES.map((t) => ({
+            <TextField value={search} onChange={setSearch} placeholder={L('検索')} style={{ flex: 1 }} />
+            <MenuButton icon="plus" help={L('Card を追加')} disabled={!session.isEditable} items={() => TEMPLATES.map((t) => ({
               label: t.label,
               action: () => setSelected(path(session.addCard(t.id, [], { x: 40, y: 40 }))[0]),
             }))} />
           </div>
-          <div className="list flex1" role="listbox" aria-label="定義">
+          <div className="list flex1" role="listbox" aria-label={L('定義')}>
             {ids.map((id) => {
               const kind = definitionKind(session.definitions.get(id))
               return (
@@ -123,7 +125,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
                   <Icon name={KIND_ICON[kind]} className="secondary" />
                   <div className="col min0">
                     <span className="ellipsis">{id}</span>
-                    <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? ' · 未配置' : '')}</span>
+                    <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? L(' · 未配置') : '')}</span>
                   </div>
                 </div>
               )
@@ -140,11 +142,11 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
 export type ProjectSettingsPane = 'general' | 'canvas' | 'databases' | 'history' | 'cache'
 export const PROJECT_SETTINGS_PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
-  { id: 'general', title: '名前と実行環境', icon: 'folder.badge.gearshape' },
+  { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' },
   { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
-  { id: 'databases', title: 'データベース接続先', icon: 'cylinder.split.1x2' },
-  { id: 'history', title: '実行履歴', icon: 'clock.arrow.circlepath' },
-  { id: 'cache', title: 'ビルドキャッシュ', icon: 'shippingbox' },
+  { id: 'databases', title: L('データベース接続先'), icon: 'cylinder.split.1x2' },
+  { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
+  { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
 ]
 
 /** One of a project's settings panes (also shown in the settings window). */
@@ -164,7 +166,7 @@ export function WorkflowSettingsView({ session, initial }: { session: ProjectSes
   const [pane, setPane] = useState<ProjectSettingsPane>(initial ?? 'general')
   return (
     <div className="split-view">
-      <nav className="split-nav" aria-label="設定">
+      <nav className="split-nav" aria-label={L('設定')}>
         {PROJECT_SETTINGS_PANES.map((p) => (
           <button key={p.id} type="button" className={`nav-row${p.id === pane ? ' selected' : ''}`} aria-current={p.id === pane} onClick={() => setPane(p.id)}>
             <Icon name={p.icon} />{p.title}
@@ -181,6 +183,79 @@ const setProject = (x: ProjectSession, k: string, v: J) => {
   ;(x.project as JObj).set(k, v)
 }
 
+/** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
+function NixSourceSettings({ session }: { session: ProjectSession }) {
+  useObserve(session)
+  const sources = arr(get(session.project, 'nixSources')) ?? []
+  const [address, setAddress] = useState('')
+  const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
+  const [working, setWorking] = useState(false)
+  const [message, setMessage] = useState<string>()
+  const resolve = async (ref: string) => {
+    setWorking(true)
+    setMessage(undefined)
+    try {
+      const r = await session.resolveNixSource(ref)
+      return { ref: String(r.ref), packages: r.packages.map(String) }
+    } catch (e) {
+      setMessage(L('取得できませんでした: {0}', errorText(e)))
+      return undefined
+    } finally {
+      setWorking(false)
+    }
+  }
+  const save = async (list: J[]) => {
+    session.edit((x) => setProject(x, 'nixSources', list))
+    await session.save()
+    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
+  }
+  const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
+  const look = async () => {
+    const r = await resolve(address.trim())
+    if (r) setFound({ name: sourceName(address.trim()), ...r })
+  }
+  const add = async () => {
+    if (!found) return
+    await save([...sources, entry(found.name, found.ref)])
+    setFound(undefined)
+    setAddress('')
+  }
+  const update = async (name: string, ref: string) => {
+    const r = await resolve(unlockedRef(ref))
+    if (r) await save(sources.map((s) => (str(get(s, 'name')) === name ? entry(name, r.ref) : s)))
+  }
+  const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
+  return (
+    <Section title={L('外部ソース')} footer={L('追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。')}>
+      {sources.map((s) => {
+        const name = str(get(s, 'name')) ?? ''
+        const ref = str(get(s, 'ref')) ?? ''
+        return (
+          <Row key={name} label={name}>
+            <code className="secondary" title={ref}>{unlockedRef(ref)} {shortCommit(ref)}</code>
+            <Button disabled={working || !session.isEditable} onClick={() => void update(name, ref)}>{L('更新')}</Button>
+            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => void save(sources.filter((x) => x !== s))}>{L('削除')}</Button>
+          </Row>
+        )
+      })}
+      <Row label="flake">
+        <TextField value={address} onChange={(v) => { setAddress(v); setFound(undefined) }} placeholder="github:owner/repo" mono style={{ width: 260 }} disabled={working || !session.isEditable} />
+        <Button disabled={working || !address.trim() || !session.isEditable} onClick={() => void look()}>{L('取得')}</Button>
+        {working && <Spinner small />}
+      </Row>
+      {found && (
+        <>
+          <Row label={L('名前')}><TextField value={found.name} onChange={(name) => setFound({ ...found, name })} mono style={{ width: 160 }} /></Row>
+          <Row label={L('コミット')}><code className="secondary" title={found.ref}>{shortCommit(found.ref) ?? found.ref}</code></Row>
+          <Row label="package"><code className="secondary">{found.packages.join(', ') || L('この環境の package はありません')}</code></Row>
+          <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">{L('同じ名前があります')}</span>}</Row>
+        </>
+      )}
+      {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}
+    </Section>
+  )
+}
+
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
@@ -193,7 +268,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
       setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
     })
     await session.save()
-    setMessage(session.saveError ?? '保存しました。')
+    setMessage(session.saveError ?? L('保存しました。'))
   }
   return (
     <div className="col fill" onKeyDown={(e) => {
@@ -202,25 +277,26 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     }}>
       <div className="scroll flex1">
         <Form>
-          <Section footer="このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。">
-            <Row label="プロジェクト名"><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
-            <Row label="実行環境（Nixpkgs）"><TextField value={pkgs} onChange={setPkgs} placeholder={pin ?? 'tsugumi:default'} style={{ width: 260 }} /></Row>
+          <Section footer={L('このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。')}>
+            <Row label={L('プロジェクト名')}><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
+            <Row label={L('実行環境（Nixpkgs）')}><TextField value={pkgs} onChange={setPkgs} placeholder={pin ?? 'tsugumi:default'} style={{ width: 260 }} /></Row>
             {(!pkgs || pkgs === 'tsugumi:default') && (
-              <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}><Icon name="exclamationmark.triangle" />Nixpkgs が固定されていません。Tsugumi を更新すると、このプロジェクトの Card のパッケージも変わります。</span></Row>
+              <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}><Icon name="exclamationmark.triangle" />{L('Nixpkgs が固定されていません。Tsugumi を更新すると、このプロジェクトの Card のパッケージも変わります。')}</span></Row>
             )}
             {pin && pkgs !== pin && (
-              <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? 'この Tsugumi の Nixpkgs に固定' : 'この Tsugumi の Nixpkgs に更新'}</Button></Row>
+              <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? L('この Tsugumi の Nixpkgs に固定') : L('この Tsugumi の Nixpkgs に更新')}</Button></Row>
             )}
           </Section>
+          <NixSourceSettings session={session} />
           <Section>
-            <Value label="場所" value={session.dir} />
+            <Value label={L('場所')} value={session.dir} />
           </Section>
         </Form>
       </div>
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>保存</Button>
+        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )
@@ -231,8 +307,8 @@ function CanvasProjectSettings({ session }: { session: ProjectSession }) {
   return (
     <div className="scroll fill">
       <Form>
-        <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。</span>}>
-          <Row label="流れの向き" help="このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。">
+        <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />{L('変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。')}</span>}>
+          <Row label={L('流れの向き')} help={L('このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。')}>
             <Select<FlowDirection> value={session.flow} onChange={(f) => session.setFlow(f)}
               options={(Object.keys(FLOW_LABELS) as FlowDirection[]).map((f) => ({ value: f, label: FLOW_LABELS[f] }))} />
           </Row>
@@ -257,28 +333,28 @@ function DatabaseSettings({ session }: { session: ProjectSession }) {
   const save = async () => {
     session.edit((x) => setProject(x, 'databaseConnections', rows.map((r) => obj([['name', r.name], ['url', r.url]]))))
     await session.save()
-    setMessage(session.saveError ?? '保存しました。')
+    setMessage(session.saveError ?? L('保存しました。'))
     if (!session.saveError) load()
   }
   return (
     <div className="col fill">
-      <div className="callout secondary pad12">記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。</div>
+      <div className="callout secondary pad12">{L('記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。')}</div>
       <div className="table flex1">
-        <div className="table-head"><span>名前</span><span>URL</span><span /></div>
+        <div className="table-head"><span>{L('名前')}</span><span>URL</span><span /></div>
         {rows.map((r) => (
           <div key={r.id} className="table-row">
             <TextField small value={r.name} onChange={(v) => setRows(rows.map((x) => (x.id === r.id ? { ...x, name: v } : x)))} />
             <TextField small value={r.url} placeholder="postgresql://…" onChange={(v) => setRows(rows.map((x) => (x.id === r.id ? { ...x, url: v } : x)))} />
-            <Button kind="borderless" iconOnly icon="minus.circle" help="削除" onClick={() => setRows(rows.filter((x) => x.id !== r.id))} />
+            <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => setRows(rows.filter((x) => x.id !== r.id))} />
           </div>
         ))}
       </div>
       <div className="detail-foot">
-        <Button onClick={() => setRows([...rows, { id: Date.now(), name: `db${rows.length + 1}`, url: '' }])}>追加</Button>
+        <Button onClick={() => setRows([...rows, { id: Date.now(), name: `db${rows.length + 1}`, url: '' }])}>{L('追加')}</Button>
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button onClick={load}>再読込</Button>
-        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>保存</Button>
+        <Button onClick={load}>{L('再読込')}</Button>
+        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )
@@ -302,7 +378,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     session.edit((x) => setProject(x, 'saveRunHistory', on))
     await session.save()
     setFailed(!!session.saveError)
-    setMessage(session.saveError ? `保存できませんでした: ${session.saveError}` : undefined)
+    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
   }
   const del = async () => {
     setWorking(true)
@@ -310,10 +386,10 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     try {
       const r = await session.deleteRunHistory(scope === 'all' ? null : new Date(before))
       setFailed(false)
-      setMessage(`${r.deletedRuns ?? 0n} 件の実行を削除し、${formatBytes(r.freedBytes ?? 0n)} を解放しました。`)
+      setMessage(L('{0} 件の実行を削除し、{1} を解放しました。', r.deletedRuns ?? 0n, formatBytes(r.freedBytes ?? 0n)))
     } catch (e) {
       setFailed(true)
-      setMessage(`削除できませんでした: ${errorText(e)}`)
+      setMessage(L('削除できませんでした: {0}', errorText(e)))
     }
     setWorking(false)
   }
@@ -321,18 +397,18 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer="実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。">
-            <Row label="実行履歴をプロジェクトに保存する">
+          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
+            <Row label={L('実行履歴をプロジェクトに保存する')}>
               <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
             </Row>
           </Section>
-          <Section title="削除" footer="実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。">
-            <Row label="対象">
+          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+            <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
-                options={[{ value: 'before', label: '指定した日時より前に終わった実行' }, { value: 'all', label: 'すべての実行' }]} />
+                options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />
             </Row>
             {scope === 'before' && (
-              <Row label="日時">
+              <Row label={L('日時')}>
                 <input type="datetime-local" className="field" value={before} onChange={(e) => setBefore(e.target.value)} />
               </Row>
             )}
@@ -343,9 +419,9 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
         {message && <span className="callout selectable" style={{ color: failed ? 'var(--red)' : 'var(--secondary)' }}>{message}</span>}
         <span className="spacer" />
         {working && <Spinner small />}
-        <Button kind="destructive" disabled={working || session.runActive || !session.connected || (scope === 'before' && !before)} onClick={() => setConfirm(true)}>削除…</Button>
+        <Button kind="destructive" disabled={working || session.runActive || !session.connected || (scope === 'before' && !before)} onClick={() => setConfirm(true)}>{L('削除…')}</Button>
       </div>
-      {confirm && <Confirm title={scope === 'all' ? 'すべての実行履歴を削除しますか？' : 'この日時より前に終わった実行を削除しますか？'} confirm="削除"
+      {confirm && <Confirm title={scope === 'all' ? L('すべての実行履歴を削除しますか？') : L('この日時より前に終わった実行を削除しますか？')} confirm={L('削除')}
         onConfirm={() => void del()} onCancel={() => setConfirm(false)} />}
     </div>
   )
@@ -362,29 +438,29 @@ function CacheSettings({ session }: { session: ProjectSession }) {
     try {
       setResult(await session.clearBuildCache())
     } catch (e) {
-      setMessage(`削除できませんでした: ${errorText(e)}`)
+      setMessage(L('削除できませんでした: {0}', errorText(e)))
     }
     setWorking(false)
   }
   return (
     <div className="col fill pad16 gap12">
-      <div>このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。</div>
-      <div className="callout secondary">実行中・SDK 準備中は削除できません。</div>
+      <div>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')}</div>
+      <div className="callout secondary">{L('実行中・SDK 準備中は削除できません。')}</div>
       {result && (
         <div className="groupbox col gap4">
-          <div className="headline">結果</div>
-          <Value label="削除" value={`${result.deleted.length} 件`} />
-          <Value label="保持" value={`${result.retained.length} 件`} />
-          {result.freedBytes !== null && <Value label="解放" value={formatBytes(result.freedBytes)} />}
+          <div className="headline">{L('結果')}</div>
+          <Value label={L('削除')} value={L('{0} 件', result.deleted.length)} />
+          <Value label={L('保持')} value={L('{0} 件', result.retained.length)} />
+          {result.freedBytes !== null && <Value label={L('解放')} value={formatBytes(result.freedBytes)} />}
         </div>
       )}
       {message && <div className="selectable" style={{ color: 'var(--red)' }}>{message}</div>}
       <span className="flex1" />
       <div className="row end gap8">
         {working && <Spinner small />}
-        <Button kind="destructive" disabled={working || session.runActive || !session.connected} onClick={() => setConfirm(true)}>削除</Button>
+        <Button kind="destructive" disabled={working || session.runActive || !session.connected} onClick={() => setConfirm(true)}>{L('削除')}</Button>
       </div>
-      {confirm && <Confirm title="ビルドキャッシュを削除しますか？" confirm="削除" onConfirm={() => void clear()} onCancel={() => setConfirm(false)} />}
+      {confirm && <Confirm title={L('ビルドキャッシュを削除しますか？')} confirm={L('削除')} onConfirm={() => void clear()} onCancel={() => setConfirm(false)} />}
     </div>
   )
 }

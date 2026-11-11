@@ -1,0 +1,4 @@
+namespace heat;
+table Settings { seed:ulong; cells:ulong; alpha:double; final_time:double; noise:double; }
+table Outputs { settings:Settings (required); }
+root_type Outputs;

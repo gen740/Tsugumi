@@ -1,0 +1,8 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ]
+}

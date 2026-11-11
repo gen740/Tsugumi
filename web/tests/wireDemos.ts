@@ -133,7 +133,7 @@ function scopes(name: string, dir: string, grid?: number): Scene[] {
 
 /** `report` with share directly above the column of generate, aggregate, render and archive. */
 function stacked(shareX: number): Scene {
-  const dir = path.join(root, 'demos/report')
+  const dir = path.join(root, 'demos/ja/report')
   return scene(`report stacked, share at ${shareX}`, dir, undefined, {
     start: { x: 0, y: -190 }, settings: { x: 0, y: 0 }, share: { x: shareX, y: 285 },
     generate: { x: 0, y: 380 }, aggregate: { x: 0, y: 570 }, render: { x: 0, y: 760 }, archive: { x: 0, y: 950 },
@@ -142,19 +142,19 @@ function stacked(shareX: number): Scene {
 
 /** `report` with its fork lowered, so that its output is `gap` above generate's input. */
 function forkNearGenerate(gap: number): Scene {
-  return scene(`report, fork ${gap} above generate`, path.join(root, 'demos/report'), undefined, { share: { x: 300, y: 380 - gap - 40 } }).scene
+  return scene(`report, fork ${gap} above generate`, path.join(root, 'demos/ja/report'), undefined, { share: { x: 300, y: 380 - gap - 40 } }).scene
 }
 
 /** `casa` with the box of its fork ending just where the next Card begins, on a grid of 20. */
 function forkAgainstCard(): Scene {
-  return scene('casa, fork against rgb', path.join(root, 'demos/casa'), undefined, { share: { x: 840, y: 40 }, rgb: { x: 940, y: 0 }, spectrum: { x: 1200, y: 0 } }, 20).scene
+  return scene('casa, fork against rgb', path.join(root, 'demos/ja/casa'), undefined, { share: { x: 840, y: 40 }, rgb: { x: 940, y: 0 }, spectrum: { x: 1200, y: 0 } }, 20).scene
 }
 
 const length = (pts: Pt[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0)
 
 /** Cards the path enters and leaves again. A branch's port sits inside its box:
  *  a stay that starts or ends the path is the wire reaching its port. */
-function crossed(pts: Pt[], obstacles: Rect[]): number {
+export function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {
     const n = Math.max(1, Math.ceil(Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) / 2))
@@ -202,8 +202,8 @@ function wireCrossings(routes: { pts: Pt[] }[], wires: Wire[]): number {
   return n
 }
 
-const index: { demos: { path: string }[] } = read(path.join(root, 'demos/index.json'))
-const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', d.path)))
+const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
+const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
 const arrangements = [-60, 20, 60, 100, 150, 200].map(stacked)
 const everything = [...demos, ...arrangements, forkNearGenerate(20), forkNearGenerate(-20)]
 
@@ -236,7 +236,7 @@ function measure(label: string, scenes: Scene[]): string[] {
 // ---- Every wire of every demo --------------------------------------------------------
 assert.deepEqual(measure('grid off', everything), [], 'no wire crosses a Card')
 // The grid is on by default, and it moves and resizes every Card: as the app draws them.
-const grids = [20, 30].map((grid) => ({ grid, scenes: index.demos.flatMap((d) => scopes(`${d.path}, grid ${grid}`, path.join(root, 'demos', d.path), grid)) }))
+const grids = [20, 30].map((grid) => ({ grid, scenes: index.demos.flatMap((d) => scopes(`${d.path}, grid ${grid}`, path.join(root, 'demos', 'ja', d.path), grid)) }))
 for (const { grid, scenes } of grids) assert.deepEqual(measure(`grid ${grid}`, scenes), [], `no wire crosses a Card on a grid of ${grid}`)
 assert.deepEqual(measure('fork against a Card', [forkAgainstCard()]), [], 'a wire out of a fork does not go on through the Card that begins where its box ends')
 
@@ -294,11 +294,18 @@ for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWit
 type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[]; paths: (Pt[] | null)[] }
 const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
   .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(), ...grids[0].scenes.filter((s) => s.name === 'casa, grid 20' || s.name === 'rna-seq, grid 20'))
-const cases: Case[] = shared.map((s) => {
+const routed = (s: { flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }) => {
   const routes = new WireRouter(s.flow, s.obstacles).routeAll(s.wires)
-  return { name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routes.map((r) => (r.curved ? null : r.pts)) }
-})
+  return routes.map((r) => (r.curved ? null : r.pts))
+}
 const fixture = path.join(root, 'tests/fixtures/wire-routes.json')
-if (process.env.WIRE_ROUTES_WRITE) fs.writeFileSync(fixture, JSON.stringify(cases) + '\n')
-assert.deepEqual(cases, read(fixture), 'the paths Mac also has to find (WIRE_ROUTES_WRITE=1 npm test writes them)')
+// The scenes are samples kept in the file, so moving a Card of a demo does not
+// change this check. WIRE_ROUTES_WRITE=1 npm test takes new samples from the demos.
+if (process.env.WIRE_ROUTES_WRITE) {
+  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routed(s) }))
+  fs.writeFileSync(fixture, JSON.stringify(samples) + '\n')
+}
+const cases: Case[] = read(fixture)
+assert.ok(cases.length > 0)
+for (const c of cases) assert.deepEqual(routed(c), c.paths, `the paths Mac also has to find: ${c.name} (a change to the router on purpose: WIRE_ROUTES_WRITE=1 npm test)`)
 console.log('wire routes: passed')

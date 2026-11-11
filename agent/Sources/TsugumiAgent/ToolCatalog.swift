@@ -12,6 +12,8 @@ public struct ToolSpec {
   /// Mutating requests carry an op_id that the Agent assigns once per tool
   /// call; re-sending the same call reuses it and never runs twice.
   public let mutating: Bool
+  /// Run by the model provider (web search): it has no tool_use of ours.
+  public var server = false
 }
 
 /// Tool definitions generated from the published RPC schema (tsugumi.bfbs).
@@ -36,7 +38,7 @@ public struct ToolCatalog {
         throw AgentError.schema("request \(r) not found")
       }
       let gen = SchemaGenerator(schema: schema)
-      let input = gen.object(index, depth: 0, skip: ToolCatalog.agentFields)
+      let input = gen.object(index, depth: 0, skip: ToolCatalog.agentFields.union(Shared.data.notForModels[r] ?? []))
       let doc = obj.documentation.joined(separator: " ").trimmingCharacters(in: .whitespaces)
       out.append(ToolSpec(name: ToolCatalog.toolName(r), requestName: full, payloadType: UInt8(v.value), object: index,
                           description: "\(r.replacingOccurrences(of: "Request", with: "")): \(doc)",
@@ -64,41 +66,74 @@ extension Shared {
   struct Data {
     struct Tool { let name: String, description: String, inputSchema: [String: Any] }
     struct Draft { let root: String, child: String, card: String, text: String }
-    struct Helper { let prompt: String, outside: String, invalid: String }
+    struct Comment { let card: String, comment: String, text: String }
+    struct Helper {
+      let prompt: String, outside: String, invalid: String
+      let each: String, eachReport: String, together: String, togetherReport: String
+      let runRefused: String, reportsEach: String, reportsTogether: String
+      let brief: String, unread: String, revision: String
+    }
     /// The guide (Agent.Role.guide): the tools it reads with, its own tool and the app's notes to it.
     struct Guide {
       let tools: [String]
       let showTool: Tool
       let texts: [String: String]
+      /// The controls the bird names: highlight id and the label's source (Japanese) text.
+      let controls: [(id: String, label: String)]
       func text(_ k: String) -> String { texts[k]! }
+    }
+    /// The provider's web search: how each API names it, and what the model and the user read.
+    struct WebSearch {
+      let name: String, anthropicType: String, openAIType: String, openAIInclude: String, note: String
+      /// The heading over a search's sources, by language ("ja", "en").
+      let sources: [String: String]
+      let maxUses: Int
     }
     let requests: [String]
     let agentFields: Set<String>
+    /// Fields of a request that the apps use and the model is not offered.
+    let notForModels: [String: [String]]
     let referenceTool: Tool
     let delegateTool: Tool
     let helper: Helper
     let guide: Guide
     let draft: Draft
+    let comment: Comment
+    let webSearch: WebSearch
     let permissionDeclined: String
+    let invalidArguments: String
   }
 
   static let data: Data = {
     let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
     let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
+    let cm = o["commentRequest"] as! [String: String]
     let dt = o["delegateTool"] as! [String: Any], h = o["helper"] as! [String: String]
     let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
+    let w = o["webSearch"] as! [String: Any]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
+                notForModels: o["notForModels"] as! [String: [String]],
                 referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
                                      inputSchema: t["inputSchema"] as! [String: Any]),
                 delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
                                     inputSchema: dt["inputSchema"] as! [String: Any]),
-                helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!),
+                helper: .init(prompt: h["prompt"]!, outside: h["outside"]!, invalid: h["invalid"]!,
+                              each: h["each"]!, eachReport: h["eachReport"]!, together: h["together"]!,
+                              togetherReport: h["togetherReport"]!, runRefused: h["runRefused"]!,
+                              reportsEach: h["reportsEach"]!, reportsTogether: h["reportsTogether"]!,
+                              brief: h["brief"]!, unread: h["unread"]!, revision: h["revision"]!),
                 guide: .init(tools: g["tools"] as! [String],
                              showTool: .init(name: gt["name"] as! String, description: gt["description"] as! String,
                                              inputSchema: gt["inputSchema"] as! [String: Any]),
-                             texts: g.compactMapValues { $0 as? String }),
+                             texts: g.compactMapValues { $0 as? String },
+                             controls: (g["controls"] as! [[String: String]]).map { ($0["id"]!, $0["label"]!) }),
                 draft: .init(root: d["root"]!, child: d["child"]!, card: d["card"]!, text: d["text"]!),
-                permissionDeclined: o["permissionDeclined"] as! String)
+                comment: .init(card: cm["card"]!, comment: cm["comment"]!, text: cm["text"]!),
+                webSearch: .init(name: w["name"] as! String, anthropicType: w["anthropicType"] as! String,
+                                 openAIType: w["openAIType"] as! String, openAIInclude: w["openAIInclude"] as! String,
+                                 note: w["note"] as! String, sources: w["sources"] as! [String: String], maxUses: w["maxUses"] as! Int),
+                permissionDeclined: o["permissionDeclined"] as! String,
+                invalidArguments: o["invalidArguments"] as! String)
   }()
 
   /// `{name}` in a text replaced by its value, in one pass (values are not read again).

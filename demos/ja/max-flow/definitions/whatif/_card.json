@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "cut"
+    }
+  ],
+  "params": [
+    {
+      "name": "edge",
+      "type": "string",
+      "data": ""
+    },
+    {
+      "name": "raise_by",
+      "type": "uint64",
+      "data": 10
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "name": "RNA-seq: airway and dexamethasone",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "filter"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "normalize"
+      },
+      {
+        "id": "pca"
+      },
+      {
+        "id": "deseq"
+      },
+      {
+        "id": "fan"
+      },
+      {
+        "id": "volcano"
+      },
+      {
+        "id": "thresholds"
+      },
+      {
+        "id": "top"
+      },
+      {
+        "id": "edger"
+      },
+      {
+        "id": "compare"
+      },
+      {
+        "id": "design"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "airway"
+        },
+        "to": {
+          "card": "filter",
+          "port": "airway"
+        }
+      },
+      {
+        "from": {
+          "card": "filter",
+          "port": "counts"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "normalize"
+        },
+        "to": {
+          "card": "normalize",
+          "port": "counts"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "deseq"
+        },
+        "to": {
+          "card": "deseq",
+          "port": "counts"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "edger"
+        },
+        "to": {
+          "card": "edger",
+          "port": "counts"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "design"
+        },
+        "to": {
+          "card": "design",
+          "port": "counts"
+        }
+      },
+      {
+        "from": {
+          "card": "normalize",
+          "port": "normalized"
+        },
+        "to": {
+          "card": "pca",
+          "port": "normalized"
+        }
+      },
+      {
+        "from": {
+          "card": "deseq",
+          "port": "results"
+        },
+        "to": {
+          "card": "fan",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "fan",
+          "port": "volcano"
+        },
+        "to": {
+          "card": "volcano",
+          "port": "results"
+        }
+      },
+      {
+        "from": {
+          "card": "fan",
+          "port": "thresholds"
+        },
+        "to": {
+          "card": "thresholds",
+          "port": "results"
+        }
+      },
+      {
+        "from": {
+          "card": "fan",
+          "port": "top"
+        },
+        "to": {
+          "card": "top",
+          "port": "results"
+        }
+      },
+      {
+        "from": {
+          "card": "fan",
+          "port": "compare"
+        },
+        "to": {
+          "card": "compare",
+          "port": "deseq2"
+        }
+      },
+      {
+        "from": {
+          "card": "fan",
+          "port": "design"
+        },
+        "to": {
+          "card": "design",
+          "port": "results"
+        }
+      },
+      {
+        "from": {
+          "card": "edger",
+          "port": "results"
+        },
+        "to": {
+          "card": "compare",
+          "port": "edger"
+        }
+      }
+    ]
+  }
+}

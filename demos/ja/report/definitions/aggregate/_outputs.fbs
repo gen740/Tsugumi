@@ -1,0 +1,5 @@
+namespace report;
+table RegionTotal { region:string; revenue:ulong; units:ulong; }
+table Summary { rows:ulong; revenue:ulong; regions:[RegionTotal]; }
+table Outputs { summary:Summary (required); }
+root_type Outputs;

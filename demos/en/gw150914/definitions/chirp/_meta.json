@@ -1,0 +1,10 @@
+{
+  "description": "Overlay the chirp",
+  "content": "Shifts L1 within ±10 ms (its sign may flip too) to find the delay at which it best overlaps H1, overlays them, and shows an image with H1's spectrogram revealing the chirp (the frequency rising). Also finds a rough SNR against the noise, kept in the image and a table.",
+  "outputs": [
+    {
+      "name": "plots",
+      "description": "The result of overlaying the chirp"
+    }
+  ]
+}

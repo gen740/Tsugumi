@@ -1,0 +1,13 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "rgb",
+        "spectrum"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 200
+}

@@ -1,12 +1,11 @@
-// The figures of the story pages, ported from the app's Tsugumi を知る window
+// The figures of the story pages, ported from the app's Learn about Tsugumi window
 // (macOS/Sources/App/Explainer/): a scene is a pure function of its story
 // position `p` (where the reading line is in the figure) and the clock `t`
 // (idle motion only), so scrolling back plays it back. In 1000-wide coordinates.
 import {
   Palette, Polyline, birdGape, childText, clamp01, curve, drawBird, drawBranch, drawTemari, easeInOut, easeOut, ellipse, faded,
   fillRect, fillRound, glow, hex, lin, mix, mixColor, mixP, mixR, Motion, poly, pop, pose, pt, rect, rgb, roundRect, seeded, smooth, span,
-  stroke, strokeRound, temariLead, text, trace,
-} from './art.js'
+  stroke, strokeRound, temariLead, text, trace,, textWidth } from './art.js'
 
 export const scene = { since: -1 }
 const artW = 1600, artH = 900
@@ -284,10 +283,10 @@ export const Wall = {
   },
 
   drawStones(g, p) {
-    for (const [label, y, at] of [['再現できない', 632, 1.45], ['過程が見えない', 534, 2.05], ['データを渡せない', 436, 2.65]]) {
+    for (const [label, y, at] of [['Not reproducible', 632, 1.45], ['Process unseen', 534, 2.05], ['Data cannot go', 436, 2.65]]) {
       const u = pop(lin(p, at - 0.12, at + 0.12))
       if (u <= 0.01) continue
-      const w = label.length * 20 + 28, h = 46  // the size of its words, so it lies on the heap wherever the heap has narrowed
+      const w = textWidth(g, label, 19, { weight: 700 }) + 36, h = 46  // the size of its words, so it lies on the heap wherever the heap has narrowed
       g.save()
       g.translate(500, y)
       g.scale(u, u)
@@ -307,12 +306,12 @@ export const Wall = {
   drawBeads(g, p, t, line) {
     const o = span(p, 4.7, 5.05)
     if (o <= 0.01) return
-    const beads = [['何をしてほしいか', true], ['何を実行したか', false], ['次にどこを変えるか', true]]
+    const beads = [['What I want done', true], ['What was run', false], ['What to change next', true]]
     beads.forEach(([label, toAI], i) => {
       let f = (t * 0.075 + i / 3) % 1
       if (!toAI) f = 1 - f
       const q = line.at(f)
-      const w = label.length * 15 + 34, h = 30
+      const w = textWidth(g, label, 14.5, { weight: 600 }) + 54, h = 30
       faded(g, o * smooth(Math.min(f, 1 - f) / 0.06), () => {
         const r = rect(q.x - w / 2, q.y - h - 8, w, h)
         fillRound(g, rect(r.x, r.y + 3, w, h), 15, 'rgba(0,0,0,0.25)')
@@ -324,13 +323,13 @@ export const Wall = {
   },
 }
 
-// ---- もし、書いた通りのものがそのまま形になったら？ ----
+// ---- What if what you wrote took shape just as it is? ----
 
 export const CasA = {
   boxes: [
-    { hand: 'データを\nダウンロード', name: 'load', summary: '観測データを Nix で固定する', input: 'start', output: 'events', stack: 'Nix · FITS' },
-    { hand: 'エネルギーで\n区切る', name: 'bands', summary: 'エネルギー帯で分ける', input: 'input', output: 'images', stack: 'Python · numpy · astropy' },
-    { hand: '描画する', name: 'rgb', summary: 'RGB画像にする', input: 'input', output: 'rgb', stack: 'Python · pillow' },
+    { hand: 'download\nthe data', name: 'load', summary: 'Pin the observation with Nix', input: 'start', output: 'events', stack: 'Nix · FITS' },
+    { hand: 'split it\nby energy', name: 'bands', summary: 'Split into energy bands', input: 'input', output: 'images', stack: 'Python · numpy · astropy' },
+    { hand: 'plot it', name: 'rgb', summary: 'Make an RGB image', input: 'input', output: 'rgb', stack: 'Python · pillow' },
   ],
   paper: rect(70, 150, 860, 590),
   canvas: rect(24, 110, 952, 690),
@@ -435,14 +434,14 @@ export const CasA = {
       g.translate(midX(B), midY(B))
       g.scale(1 - 0.06 * pressed, 1 - 0.06 * pressed)
       fillRound(g, rect(-B.w / 2, -B.h / 2, B.w, B.h), 7, hex(pressed > 0.1 ? 0x5a9cff : 0x2f7cf6))
-      text(g, '▶  実行', pt(0, 0), 14, { weight: 600, color: '#fff' })
+      text(g, '▶  Run', pt(0, 0), 14, { weight: 600, color: '#fff' })
       g.restore()
       const sx = maxX(B) + 14, sy = midY(B)
       if (p >= CasA.run(0)[0]) {
         const doneAll = CasA.state(2, p) === 'done'
         const elapsed = doneAll ? 2.41 : ((p - CasA.run(0)[0]) / (CasA.run(2)[1] - CasA.run(0)[0])) * 2.41
-        text(g, doneAll ? '✓ 成功' : '◌ 実行中', pt(sx, sy), 13, { weight: 600, color: hex(doneAll ? Ink.done : Ink.badge), align: 'left' })
-        text(g, `00:00:${elapsed.toFixed(2).padStart(5, '0')}`, pt(sx + 72, sy), 13, { color: hex(0xc8c8cc), align: 'left', mono: true })
+        text(g, doneAll ? '✓ Succeeded' : '◌ Running', pt(sx, sy), 13, { weight: 600, color: hex(doneAll ? Ink.done : Ink.badge), align: 'left' })
+        text(g, `00:00:${elapsed.toFixed(2).padStart(5, '0')}`, pt(sx + 98, sy), 13, { color: hex(0xc8c8cc), align: 'left', mono: true })
       }
     })
   },
@@ -454,7 +453,7 @@ export const CasA = {
     g.beginPath()
     g.rect(0, 0, 140 + 520 * w, artH)
     g.clip()
-    childText(g, 'Cas A を 3 色で見たい！', pt(140, 222), 38, Ink.penC, { seed: 3, leading: true })
+    childText(g, 'Cas A in 3 colours!', pt(140, 222), 38, Ink.penC, { seed: 3, leading: true })
     const under = new Polyline(Array.from({ length: 31 }, (_, i) => { const s = i / 30; return pt(136 + s * 450, 258 + Math.sin(s * 9) * 3.5 + s * 6) }))
     stroke(g, under.upTo(lin(p, 0.55, 0.9)), hex(0xd9844a, 0.85), 5)
     g.restore()
@@ -533,12 +532,18 @@ export const CasA = {
     const n = 28
     const sketch = Array.from({ length: n + 1 }, (_, i) => {
       const s = i / n
-      return pt(mix(a.x, b.x, s), a.y + Math.sin(s * 7 + k) * 5 * (1 - u) - Math.sin(s * Math.PI) * 10 * (1 - u))
+      // a pen stroke: almost straight, a slight bow and a small tremor, no hump
+      return pt(mix(a.x, b.x, s), a.y + (Math.sin(s * 9 + k * 2) * 1.2 - 3) * Math.sin(s * Math.PI) * (1 - u))
     })
     const target = CasA.wire(CasA.outPort(CasA.cardRect(k - 1)), CasA.inPort(CasA.cardRect(k)))
     CasA.drawWire(g, new Polyline(sketch.map((q, i) => mixP(q, target[i], u))), p, t, k, u, drawnF)
     const head = (1 - span(u, 0, 0.35)) * span(drawnF, 0.8, 1)
-    if (head > 0.01) faded(g, head, () => stroke(g, [pt(b.x - 14, b.y - 10), b, pt(b.x - 13, b.y + 11)], Ink.penC, 3))
+    if (head > 0.01) {
+      // the head follows the line's last direction, its two barbs a touch uneven like a hand's
+      const tail = sketch[n - 3], dir = Math.atan2(b.y - tail.y, b.x - tail.x)
+      const barb = (da, len) => pt(b.x - Math.cos(dir + da) * len, b.y - Math.sin(dir + da) * len)
+      faded(g, head, () => stroke(g, [barb(-0.55, 13), b, barb(0.5, 12)], Ink.penC, 3))
+    }
   },
 
   drawWire(g, line, p, t, into, ink, drawn) {
@@ -664,9 +669,9 @@ export const CasA = {
       text(g, real ? '</>' : '✎', pt(r.x + 18, r.y + 17), 10, { weight: 600, color: sub, mono: true })
       text(g, box.name, pt(r.x + 34, r.y + 17), 14, { weight: 600, color: title, align: 'left' })
       if (!real) {
-        const br = rect(r.x + 34 + box.name.length * 8.4 + 8, r.y + 9, 44, 16)
+        const br = rect(r.x + 34 + box.name.length * 8.4 + 8, r.y + 9, 40, 16)
         fillRound(g, br, 8, hex(Ink.badge, 0.22))
-        text(g, '未実装', pt(midX(br), midY(br)), 9.5, { weight: 600, color: hex(0xf3c088) })
+        text(g, 'Draft', pt(midX(br), midY(br)), 9.5, { weight: 600, color: hex(0xf3c088) })
       }
       const sr = pt(maxX(r) - 16, r.y + 17)
       if (st === 'running') {
@@ -685,7 +690,7 @@ export const CasA = {
       const ip = CasA.inPort(r), op = CasA.outPort(r)
       fillRect(g, rect(ip.x - 3.5, ip.y - 3.5, 7, 7), hex(0xd8d8dc))
       ellipse(g, op.x, op.y, 4, 4, hex(0x3b82f6))
-      if (real) text(g, st === 'done' ? '実行 #1 · 成功' : box.stack, pt(r.x + 14, r.y + 81), 9.5, { color: st === 'done' ? hex(Ink.done, 0.9) : sub, align: 'left' })
+      if (real) text(g, st === 'done' ? 'Run #1 · succeeded' : box.stack, pt(r.x + 14, r.y + 81), 9.5, { color: st === 'done' ? hex(Ink.done, 0.9) : sub, align: 'left' })
     })
     if (made <= 0) faceOf(false)
     else if (made >= 1) {
@@ -746,11 +751,11 @@ export const CasA = {
       const r = rect(435, 452 - (1 - tb) * 12, 210, 118)
       const c1 = CasA.cardRect(1)
       CasA.connector(g, pt(midX(c1), maxY(c1)), pt(midX(r), r.y))
-      CasA.panel(g, r, 'bands', '実行 #1')
+      CasA.panel(g, r, 'bands', 'Run #1')
       const cols = [r.x + 12, r.x + 76, maxX(r) - 12], head = hex(0xc8c8cc), cell = hex(0xe0e0e4)
-      text(g, '帯域', pt(cols[0], r.y + 36), 9.5, { weight: 600, color: head, align: 'left' })
-      text(g, 'エネルギー (eV)', pt(cols[1], r.y + 36), 9.5, { weight: 600, color: head, align: 'left' })
-      text(g, '光子数', pt(cols[2], r.y + 36), 9.5, { weight: 600, color: head, align: 'right' })
+      text(g, 'Band', pt(cols[0], r.y + 36), 9.5, { weight: 600, color: head, align: 'left' })
+      text(g, 'Energy (eV)', pt(cols[1], r.y + 36), 9.5, { weight: 600, color: head, align: 'left' })
+      text(g, 'Photons', pt(cols[2], r.y + 36), 9.5, { weight: 600, color: head, align: 'right' })
       ;[['soft', '600–1650', '101,187', 0xe0574f], ['medium', '1650–2250', '157,471', 0x5fb35a], ['hard', '2250–7500', '110,852', 0x4a7fd6]].forEach((row, i) => {
         const y = r.y + 56 + i * 18
         const o = span(p, end1 + 0.05 + i * 0.04, end1 + 0.12 + i * 0.04)
@@ -765,7 +770,7 @@ export const CasA = {
       const r = rect(675, 452 - (1 - ti) * 12, 210, 244)
       const c2 = CasA.cardRect(2)
       CasA.connector(g, pt(midX(c2), maxY(c2)), pt(midX(r), r.y))
-      CasA.panel(g, r, 'rgb', '実行 #1')
+      CasA.panel(g, r, 'rgb', 'Run #1')
       const img = rect(r.x + 6, r.y + 34, r.w - 12, r.w - 12)
       fillRect(g, img, '#000')
       const develop = span(p, end2 + 0.05, end2 + 0.45)
@@ -787,7 +792,7 @@ export const CasA = {
   drawHandLabels(g, p) {
     const o = span(p, 5.1, 5.45)
     if (o <= 0.01) return
-    const words = ['データをダウンロード', 'エネルギーで区切る', '描画する']
+    const words = ['download the data', 'split it by energy', 'plot it']
     for (let k = 0; k < 3; k++) {
       const r = CasA.cardRect(k)
       const ok = o * span(p, 5.1 + k * 0.08, 5.3 + k * 0.08)
@@ -800,7 +805,7 @@ export const CasA = {
 export const casaImage = new Image()
 casaImage.src = new URL('../assets/casa-rgb-25628.png', import.meta.url).href
 
-// ---- この道具を作った人: Yasuda Auditorium under stars joined into a network ----
+// ---- The author: Yasuda Auditorium under stars joined into a network ----
 
 export const Author = {
   groundY: 640,
@@ -948,24 +953,24 @@ export const Author = {
   },
 }
 
-// ---- 名前の由来: the thread becomes the wires between Cards ----
+// ---- The name: the thread becomes the wires between Cards ----
 
 export const Name = {
   feet: pt(318, 556), scale: 0.36, temari: { center: pt(196, 664), radius: 34 },
-  card: (k) => rect(520 + k * 160, 418, 124, 56),
+  card: (k) => rect(480 + k * 150, 418, 124, 56),
   names: ['load', 'bands', 'rgb'],
 
   draw(g, p, t) {
     Wall.drawGround(g, 1)
     drawBranch(g, 90, 560, Name.feet.y + 3, t)
     const out = 1 - span(p, 1.25, 1.45)
-    for (const [w, x, at] of [['継ぐ', 250, 0.6], ['積む', 470, 0.75], ['組む', 690, 0.9]]) {
+    for (const [w, x, at] of [['carry on', 250, 0.6], ['stack', 470, 0.75], ['assemble', 690, 0.9]]) {
       const u = pop(lin(p, at - 0.1, at + 0.1))
       if (u <= 0.01 || out <= 0.01) continue
       g.save()
       g.translate(x, 190)
       g.scale(u, u)
-      text(g, w, pt(0, 0), 66, { weight: 700, opacity: 0.92 * out })
+      text(g, w, pt(0, 0), 48, { weight: 700, opacity: 0.92 * out })
       g.restore()
     }
     const spin = span(p, 1.35, 1.6) * (1 - span(p, 2.25, 2.5))
@@ -974,13 +979,13 @@ export const Name = {
       g.save()
       g.translate(470, 190)
       g.scale(s, s)
-      text(g, '紡ぐ', pt(0, 0), 92, { weight: 800, color: hex(0xf0b57a), opacity: spin })
+      text(g, 'spin', pt(0, 0), 92, { weight: 800, color: hex(0xf0b57a), opacity: spin })
       g.restore()
     }
     const mark = span(p, 2.3, 2.6)
     if (mark > 0.01) {
       text(g, 'Tsugumi', pt(500, 190), 76, { weight: 700, opacity: mark })
-      text(g, 'つぐみ', pt(500, 252), 22, { weight: 500, color: Ink.mist, opacity: mark })
+      text(g, 'tsugumi · the thrush', pt(500, 252), 22, { weight: 500, color: Ink.mist, opacity: mark })
     }
     const birdPose = pose({ blink: Motion.blink(t, 3.4), tilt: 0.03 * Math.sin(t * 0.9) })
     const gape = birdGape(Name.feet, Name.scale, birdPose)
@@ -1021,9 +1026,9 @@ export const Figures = {
   author: { draw: Author.draw, from: 0, to: 1, crop: rect(0, 90, 1000, 620), route: [[pt(40, 90), 0], [pt(40, 710), 1]], deck: { crop: rect(120, 20, 760, 760) } },
   wall: {
     draw: Wall.draw, from: 0.15, to: 3.3, crop: wallCrop, route: [[pt(40, 150), 0], [pt(40, 760), 1]], pace: 0.55,
-    flights: [{ item: '再現性を担保できない', label: '再現できない', to: pt(500, 632), at: 1.45 },
-      { item: '結論に至るプロセスが見えない', label: '過程が見えない', to: pt(500, 534), at: 2.05 },
-      { item: 'データを AI に渡すのが怖い', label: 'データを渡せない', to: pt(500, 436), at: 2.65 }],
+    flights: [{ item: 'Reproducibility is not assured', label: 'Not reproducible', to: pt(500, 632), at: 1.45 },
+      { item: 'The path to the conclusion is invisible', label: 'Process unseen', to: pt(500, 534), at: 2.05 },
+      { item: 'Handing data to an AI is frightening', label: 'Data cannot go', to: pt(500, 436), at: 2.65 }],
     stops: [3.0, 3.3], deck: { crop: wallTall },
   },
   thread: {
@@ -1045,7 +1050,7 @@ export const Figures = {
     draw: CasA.draw, from: 2.6, to: 5.5, crop: casaCrop, pace: 1.9, birdOverCards: true,
     route: wiring([[pt(10, 95), 0], [pt(14, 330), 0.03], [pt(CasA.startRect.x, midY(CasA.startRect)), 0.045]], [[pt(915, 430), 0.5], [pt(918, 700), 0.78], [pt(160, 800), 1]]),
     occluders: cardsOccluding,
-    cues: [{ item: '実装する。', from: 2.75, to: 3.98 }, { item: '確かめる。', from: 4.0, to: 5.0 }],
+    cues: [{ item: 'Implement.', from: 2.75, to: 3.98 }, { item: 'Check.', from: 4.0, to: 5.0 }],
     doodleDone: true, listStops: [2.6, 3.98, 5.5],
     deck: { wide: true },
   },
@@ -1055,10 +1060,10 @@ export const Figures = {
       [nameGape, 0.36], [pt(Name.card(0).x, midY(Name.card(0))), 0.46], [pt(maxX(Name.card(0)), midY(Name.card(0))), 0.5],
       [pt(Name.card(1).x, midY(Name.card(1))), 0.57], [pt(maxX(Name.card(1)), midY(Name.card(1))), 0.62],
       [pt(Name.card(2).x, midY(Name.card(2))), 0.68], [pt(maxX(Name.card(2)), midY(Name.card(2))), 0.73],
-      [pt(985, 480), 0.77], [pt(975, 700), 0.88], [pt(160, 728), 1]],
+      [pt(925, 480), 0.77], [pt(918, 670), 0.86], [pt(860, 722), 0.9], [pt(160, 728), 1]],
     occluders: () => [Name.card(0), Name.card(1), Name.card(2)],
     birdAway: [0, 1], pace: 1.1,
-    // 名前 / 「つぐみ」 / 継ぐ・積む・組む / 紡ぐ、そして手毬と糸
+    // the name / "tsugumi" / carry on, stack, assemble / spin, and the temari and thread
     stops: [0.45, 0.5, 1.12, 2.7], deck: { crop: rect(60, -40, 900, 840) },
   },
 }

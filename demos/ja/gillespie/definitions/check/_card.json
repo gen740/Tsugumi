@@ -1,0 +1,21 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "stationary"
+    },
+    {
+      "name": "scaling"
+    },
+    {
+      "name": "binding"
+    }
+  ],
+  "params": [
+    {
+      "name": "limit_sigma",
+      "type": "double",
+      "data": 4.0
+    }
+  ]
+}

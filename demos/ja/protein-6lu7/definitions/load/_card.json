@@ -1,0 +1,26 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "filesystem": true,
+  "network": true,
+  "params": [
+    {
+      "name": "urls",
+      "type": "string[]",
+      "data": [
+        "https://files.rcsb.org/download/6LU7.pdb"
+      ]
+    },
+    {
+      "name": "names",
+      "type": "string[]",
+      "data": [
+        "6LU7.pdb"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Predict the years held out",
+  "content": "Fits only up to the year fit_until, predicts the years held out by simulation, and compares the fitting error with the prediction error.",
+  "outputs": [
+    {
+      "name": "forecast",
+      "description": "Log RMSE of fitting and of prediction for each model"
+    }
+  ]
+}

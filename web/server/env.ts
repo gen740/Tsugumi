@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { L } from './i18n'
 
 export interface Binaries {
   tsugumid: string
@@ -14,9 +15,47 @@ export interface Binaries {
 
 export type EnvState =
   | { state: 'stopped' }
-  | { state: 'starting'; message: string }
-  | { state: 'ready'; endpoint: string; token: string; projectId: string; unix: string; pid: number; readyFile: string }
+  // stage: the step of a start in the VM (vm.ts), and how far along it is.
+  | { state: 'starting'; message: string; stage?: string; fraction?: number }
+  // unix: the Agent's raw socket; a tsugumid in the VM (vm.ts) has only the endpoint.
+  | { state: 'ready'; endpoint: string; token: string; projectId: string; unix?: string; pid?: number; readyFile: string }
   | { state: 'failed'; message: string; recovery: string; log: string }
+
+/** Where the server runs each project's tsugumid: on this host
+ *  (EnvironmentManager) or in the Mac's shared VM (VMEnvironmentManager, vm.ts). */
+export interface Environments {
+  observe(fn: (key: string, s: EnvState) => void): () => boolean
+  controlDir(key: string): string
+  state(dir: string): EnvState
+  start(dir: string): Promise<EnvState>
+  stop(dir: string): Promise<void>
+  stopAll(): Promise<void[]>
+  /** The folders a project's chats may read now. */
+  attachFolders(dir: string, key: string, folders: string[]): void | Promise<void>
+  grantImport(dir: string, source: string): string
+  list(): { key: string; project: string; state: EnvState }[]
+}
+
+/** Copies what ProjectImport reads of a project into the control folder and
+ *  lists it in grants.json, under the path tsugumid will read it from. */
+export function writeGrant(control: string, source: string, seenAs: (grant: string, dest: string) => string): string {
+  const grant = randomUUID()
+  const dest = path.join(control, 'grants', grant)
+  fs.mkdirSync(dest, { recursive: true })
+  for (const item of ['tsugumi.json', 'layout.json', 'definitions']) {
+    const src = path.join(source, item)
+    if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, item), { recursive: true })
+  }
+  const grantsFile = path.join(control, 'grants.json')
+  let grants: { grants: Record<string, string> } = { grants: {} }
+  try {
+    grants = JSON.parse(fs.readFileSync(grantsFile, 'utf8'))
+  } catch {}
+  grants.grants[grant] = seenAs(grant, dest)
+  fs.writeFileSync(grantsFile + '.tmp', JSON.stringify(grants))
+  fs.renameSync(grantsFile + '.tmp', grantsFile)
+  return grant
+}
 
 interface Env {
   key: string
@@ -27,6 +66,7 @@ interface Env {
   log: string
   state: EnvState
   starting?: Promise<EnvState>
+  stopping?: Promise<void>
 }
 
 /** Stable identity of a project folder: its real path (aliases share it). */
@@ -36,7 +76,7 @@ export function projectKey(dir: string): { key: string; real: string } {
   return { key: createHash('sha256').update(`${st.dev}:${st.ino}`).digest('hex').slice(0, 16), real }
 }
 
-export class EnvironmentManager {
+export class EnvironmentManager implements Environments {
   private envs = new Map<string, Env>()
   private listeners = new Set<(key: string, s: EnvState) => void>()
 
@@ -80,6 +120,8 @@ export class EnvironmentManager {
   /** Starts (or reuses) the project's tsugumid and waits for server.ready. */
   start(dir: string): Promise<EnvState> {
     const e = this.env(dir)
+    // Opened again while it stops: a new one starts once the old one has gone.
+    if (e.stopping) return e.stopping.then(() => this.start(dir))
     if (e.state.state === 'ready' && e.proc && e.proc.exitCode === null) return Promise.resolve(e.state)
     if (e.starting) return e.starting
     e.starting = this.launch(e).finally(() => (e.starting = undefined))
@@ -89,20 +131,20 @@ export class EnvironmentManager {
   private async launch(e: Env): Promise<EnvState> {
     for (const [what, p] of [['tsugumid', this.bins.tsugumid], ['tsugumi-worker', this.bins.worker]] as const) {
       if (!fs.existsSync(p)) {
-        const s: EnvState = { state: 'failed', message: `${what} が見つかりません: ${p}`, recovery: 'リポジトリで core をビルドしてください（README の「Web UI」）。', log: '' }
+        const s: EnvState = { state: 'failed', message: L('{0} が見つかりません: {1}', what, p), recovery: L('リポジトリで core をビルドしてください（README の「Web UI」）。'), log: '' }
         this.set(e, s)
         return s
       }
     }
-    this.set(e, { state: 'starting', message: 'tsugumid を起動しています' })
+    this.set(e, { state: 'starting', message: L('tsugumid を起動しています') })
     fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
     fs.chmodSync(e.control, 0o700)
     fs.mkdirSync(e.sockDir, { recursive: true, mode: 0o700 })
     // In the shared temp directory another user could have made it first.
     const st = fs.lstatSync(e.sockDir)
     if (!st.isDirectory() || st.uid !== process.getuid!() || (st.mode & 0o077) !== 0) {
-      const s: EnvState = { state: 'failed', message: `ソケットのフォルダ ${e.sockDir} が自分専用ではありません（所有者かアクセス権が違います）`,
-        recovery: 'このフォルダを削除してから、もう一度開いてください。', log: '' }
+      const s: EnvState = { state: 'failed', message: L('ソケットのフォルダ {0} が自分専用ではありません（所有者かアクセス権が違います）', e.sockDir),
+        recovery: L('このフォルダを削除してから、もう一度開いてください。'), log: '' }
       this.set(e, s)
       return s
     }
@@ -129,7 +171,7 @@ export class EnvironmentManager {
       if (e.state.state === 'ready' || e.state.state === 'starting') {
         this.set(e, code === 0 || sig === 'SIGTERM'
           ? { state: 'stopped' }
-          : { state: 'failed', message: `tsugumid が終了しました（${sig ?? code}）`, recovery: '再試行すると起動し直します。未保存の変更は画面に保持しています。', log: e.log })
+          : { state: 'failed', message: L('tsugumid が終了しました（{0}）', sig ?? code), recovery: L('再試行すると起動し直します。未保存の変更は画面に保持しています。'), log: e.log })
       }
     })
     const deadline = Date.now() + 60_000
@@ -137,8 +179,8 @@ export class EnvironmentManager {
       if (proc.exitCode !== null || proc.signalCode !== null) {
         const s: EnvState = {
           state: 'failed',
-          message: 'tsugumid が起動中に終了しました',
-          recovery: e.log.includes('already owns') ? '同じプロジェクトを別の tsugumid（macOS アプリなど）が使っています。そちらを閉じてから再試行してください。' : 'ログを確認してください。',
+          message: L('tsugumid が起動中に終了しました'),
+          recovery: e.log.includes('already owns') ? L('同じプロジェクトを別の tsugumid（macOS アプリなど）が使っています。そちらを閉じてから再試行してください。') : L('ログを確認してください。'),
           log: e.log,
         }
         this.set(e, s)
@@ -153,7 +195,7 @@ export class EnvironmentManager {
       await new Promise((r) => setTimeout(r, 50))
     }
     proc.kill('SIGKILL')
-    const s: EnvState = { state: 'failed', message: 'tsugumid が 60 秒以内に準備できませんでした', recovery: '再試行してください。', log: e.log }
+    const s: EnvState = { state: 'failed', message: L('tsugumid が 60 秒以内に準備できませんでした'), recovery: L('再試行してください。'), log: e.log }
     this.set(e, s)
     return s
   }
@@ -166,14 +208,15 @@ export class EnvironmentManager {
       this.set(e, { state: 'stopped' })
       return
     }
-    await new Promise<void>((resolve) => {
+    e.stopping ??= new Promise<void>((resolve) => {
       const t = setTimeout(() => p.kill('SIGKILL'), 20_000)
       p.once('exit', () => {
         clearTimeout(t)
         resolve()
       })
       p.kill('SIGTERM')
-    })
+    }).finally(() => (e.stopping = undefined))
+    await e.stopping
     this.set(e, { state: 'stopped' })
   }
 
@@ -184,23 +227,17 @@ export class EnvironmentManager {
   /** Registers a read-only snapshot of an external project for ProjectImport.
    *  The copy is fixed at this moment; core only reads granted copies. */
   grantImport(dir: string, source: string): string {
-    const e = this.env(dir)
-    const grant = randomUUID()
-    const dest = path.join(e.control, 'grants', grant)
-    fs.mkdirSync(dest, { recursive: true })
-    for (const item of ['tsugumi.json', 'layout.json', 'definitions']) {
-      const src = path.join(source, item)
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, item), { recursive: true })
-    }
-    const grantsFile = path.join(e.control, 'grants.json')
-    let grants: { grants: Record<string, string> } = { grants: {} }
-    try {
-      grants = JSON.parse(fs.readFileSync(grantsFile, 'utf8'))
-    } catch {}
-    grants.grants[grant] = dest
-    fs.writeFileSync(grantsFile + '.tmp', JSON.stringify(grants))
-    fs.renameSync(grantsFile + '.tmp', grantsFile)
-    return grant
+    return writeGrant(this.env(dir).control, source, (_grant, dest) => dest)
+  }
+
+  /** tsugumid on this host reads only the folders listed in its control
+   *  folder (attached.json), written here alone. */
+  attachFolders(_dir: string, key: string, folders: string[]) {
+    const control = this.controlDir(key)
+    fs.mkdirSync(control, { recursive: true, mode: 0o700 })
+    const file = path.join(control, 'attached.json')
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ folders }), { mode: 0o600 })
+    fs.renameSync(file + '.tmp', file)
   }
 
   list(): { key: string; project: string; state: EnvState }[] {

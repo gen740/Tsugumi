@@ -104,6 +104,20 @@ std::optional<std::string> check_param_value(ParamType t, const hosq::json::Gene
   return std::string("expected ") + param_type_name(t) + " (integers must be in range, no implicit conversion)";
 }
 
+Template template_of(const DefinitionDoc* def) {
+  if (!def) return Template::Draft;
+  if (def->link) return Template::Subgraph;
+  const auto* t = schema::get(def->card.template_name);
+  if (!t || *t == "none" || t->empty()) return Template::Code;
+  static const std::map<std::string, Template> m = {
+      {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
+      {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
+      {"draft", Template::Draft},
+  };
+  auto it = m.find(*t);
+  return it == m.end() ? Template::Code : it->second;
+}
+
 std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v) {
   schema::v::Array<schema::v::String> a;
   if (schema::decode(v, a)) return {};
@@ -173,20 +187,6 @@ class Builder {
     std::string to_port;
   };
 
-  Template template_of(const DefinitionDoc* def) {
-    if (!def) return Template::Draft;
-    if (def->link) return Template::Subgraph;
-    const auto* t = schema::get(def->card.template_name);
-    if (!t || *t == "none" || t->empty()) return Template::Code;
-    static const std::map<std::string, Template> m = {
-        {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
-        {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
-        {"draft", Template::Draft},
-    };
-    auto it = m.find(*t);
-    return it == m.end() ? Template::Code : it->second;
-  }
-
   void timeout(Node& n, const char* key, const hosq::json::GenericDom<>* v, std::optional<uint64_t>& out) {
     if (!v) return;
     if (schema::is_null(*v)) {
@@ -241,6 +241,10 @@ class Builder {
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
     boolean(d.markdown, s.markdown);
+    if (const auto* v = schema::get(d.system)) {
+      if (*v == "x86_64-linux" || *v == "aarch64-linux") s.system = *v == native_system() ? "" : *v;
+      else n.diags.push_back(diag(n.path, "invalid_setting", "system must be x86_64-linux or aarch64-linux"));
+    }
     if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
     if (const auto* folders = schema::get(d.host_folders)) {
       std::set<std::string> names;
@@ -369,6 +373,10 @@ class Builder {
   // ("externals/<p>/", nested further inside its own externals).
   void scope(const schema::Project& project, const std::string& prefix, const CardPath& scope_path, int depth) {
     std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
+    std::vector<NixSourceRef> sources;
+    if (project.nix_sources->has_value())
+      for (const auto& s : project.nix_sources->value())
+        sources.push_back({s.name->value(), s.type->value(), s.ref->value()});
     for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
       n.path = scope_path;
@@ -376,6 +384,7 @@ class Builder {
       n.def_dir = prefix + "definitions/" + card.id->value() + "/";
       n.project_dir = prefix;
       n.pkgs_path = pkgs;
+      n.nix_sources = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
         auto it = doc_.definitions.find(card.id->value());

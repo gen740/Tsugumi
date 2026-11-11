@@ -1,0 +1,4 @@
+namespace gillespie;
+table Settings { seed:ulong; synthesis:double; degradation:double; volume:double; runs:ulong; }
+table Outputs { settings:Settings (required); }
+root_type Outputs;

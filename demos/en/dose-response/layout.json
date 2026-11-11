@@ -1,0 +1,77 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "generate": {
+      "x": 200,
+      "y": 0
+    },
+    "share": {
+      "x": 720,
+      "y": 0
+    },
+    "fit": {
+      "x": 980,
+      "y": 0
+    },
+    "bootstrap": {
+      "x": 1560,
+      "y": 0
+    },
+    "compare": {
+      "x": 2220,
+      "y": 0
+    },
+    "range": {
+      "x": 980,
+      "y": 640
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Dose–response curve (made-up data)\n\n**This plate is synthetic data made from random numbers.** Compounds A and B are made up, and this is not medical advice.\n\nThe response is modelled as a four-parameter logistic (Hill curve) of the concentration $x$:\n\n$$y = b + \\frac{t - b}{1 + (\\mathrm{EC}_{50}/x)^{h}}$$\n\n**fit** fits it by least squares and **bootstrap** adds 95% intervals. The true values are known, so you can check whether they were recovered.\n\nChange noise_sd, concentrations and top_um of **generate** and run again. With top_um at 1, B's curve never levels off and its interval opens up (**range** shows the same while changing the highest concentration).\n\nThe residual bootstrap assumes that the noise does not depend on the concentration and that the 4PL shape is right.",
+      "x": 160,
+      "y": -470,
+      "width": 620,
+      "height": 440
+    }
+  ],
+  "displays": {
+    "generate": {
+      "x": 160,
+      "y": 200,
+      "width": 520,
+      "height": 340
+    },
+    "fit": {
+      "x": 940,
+      "y": 200,
+      "width": 520,
+      "height": 340
+    },
+    "bootstrap": {
+      "x": 1520,
+      "y": 200,
+      "width": 640,
+      "height": 400
+    },
+    "compare": {
+      "x": 2180,
+      "y": 200,
+      "width": 640,
+      "height": 340
+    },
+    "range": {
+      "x": 940,
+      "y": 840,
+      "width": 640,
+      "height": 380
+    }
+  }
+}

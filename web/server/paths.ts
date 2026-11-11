@@ -24,11 +24,13 @@ export interface ServerInfo {
 /** The header that carries ServerInfo.agentKey. */
 export const AGENT_KEY_HEADER = 'x-tsugumi-agent'
 
-/** The routes the agent key reaches: what the plugin's MCP server calls. */
+/** The routes the agent key reaches: what the plugin's MCP server calls, and
+ *  another run of the tsugumi command asking this server to open a page. */
 export const AGENT_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/project/open',
   'POST /api/project/create',
   'POST /api/agent/tools',
   'POST /api/agent/open',
   'POST /api/agent/call',
+  'POST /api/page/open',
 ])

@@ -1,0 +1,95 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "begin": {
+      "x": 160,
+      "y": 0
+    },
+    "generate": {
+      "x": 360,
+      "y": 0
+    },
+    "share": {
+      "x": 980,
+      "y": 0
+    },
+    "preprocess": {
+      "x": 1200,
+      "y": 0
+    },
+    "segment": {
+      "x": 2020,
+      "y": 0
+    },
+    "score": {
+      "x": 2840,
+      "y": 0
+    },
+    "sweep": {
+      "x": 1200,
+      "y": 640
+    },
+    "mitosis": {
+      "x": 360,
+      "y": 640
+    },
+    "real": {
+      "x": 640,
+      "y": 640
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Counting cells\n\n**The images in the upper row are synthetic data made from random numbers.** Their centres are known, so the counting can be scored.\n\nOtsu's threshold is the value that best separates the variance of background and foreground. Only counting connected regions makes touching cells one.\n\nTaking the maxima of the distance transform $d(p)$ (the distance from a foreground point $p$ to the background) as cell centres and applying watershed to $-d$ separates them.\n\n$$\\mathrm{precision} = \\frac{TP}{TP + FP},\\qquad \\mathrm{recall} = \\frac{TP}{TP + FN}$$\n\nChange cells and noise of **generate** and run again, or look at the table of **sweep**, to see from where counting fails. The real image in the lower row has no ground truth, so check its outlines by eye.\n\nThe synthetic cells are nearly round, easier than real cells. Scores here do not guarantee scores on real images.",
+      "x": 320,
+      "y": -560,
+      "width": 640,
+      "height": 510
+    }
+  ],
+  "displays": {
+    "generate": {
+      "x": 320,
+      "y": 200,
+      "width": 620,
+      "height": 340
+    },
+    "preprocess": {
+      "x": 1160,
+      "y": 200,
+      "width": 780,
+      "height": 310
+    },
+    "segment": {
+      "x": 1980,
+      "y": 200,
+      "width": 780,
+      "height": 310
+    },
+    "score": {
+      "x": 2800,
+      "y": 200,
+      "width": 820,
+      "height": 480
+    },
+    "sweep": {
+      "x": 1160,
+      "y": 840,
+      "width": 820,
+      "height": 400
+    },
+    "real": {
+      "x": 320,
+      "y": 840,
+      "width": 640,
+      "height": 390
+    }
+  }
+}

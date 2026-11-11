@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace airway;
+table Design { value:string; }
+table Outputs { design:Design (required, tsugumi: "file"); }
+root_type Outputs;

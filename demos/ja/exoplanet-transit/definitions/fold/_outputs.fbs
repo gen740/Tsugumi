@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace exo;
+table FoldedDir { value:string; }
+table Outputs { folded:FoldedDir (required, tsugumi: "directory"); }
+root_type Outputs;

@@ -1,119 +1,118 @@
-# 同梱デモのしくみ
+# The bundled demos
 
-アプリに同梱しているデモが、どんな Card をどうつなぎ、実行すると何が起きるのかをまとめます。
-ホーム画面の「デモを見る」から「コピーを開く」を選ぶと、`~/Documents/Tsugumi/<demo>` に編集できるコピーができます（同梱の原本は変わりません）。
-画面の操作は[操作ガイド](Usage.md)、Card の種類と実行の規則は[主要機能](features.md#2-card-と-workflow)を参照してください。
+What Cards each bundled demo connects, how, and what happens when it runs.
+Choose "Open a Copy" from "Browse Demos" on the home screen and an editable copy is made in `~/Documents/Tsugumi/<demo>` (the bundled original is not changed).
+The demos come as a Japanese set and an English set (`demos/ja`, `demos/en`), the same demos with their text in one language; the app shows the set of its language. The values below are from the English set, and the Japanese set gives the same numbers.
+Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
-| デモ | 題材 | このデモで分かること |
+| Demo | Subject | What it shows |
 | --- | --- | --- |
-| [データからレポートへ](#データからレポートへreport) | 売上表の集計とレポート | seed による再現、失敗と `blocked`、保存入力での単体再実行、成果物、子 Workflow |
-| [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--rcollatz) | コラッツ数列 | 4 言語での独立実装の照合、分岐・合流・ループ、`maxRuns`、整数あふれの検出 |
-| [Live Stream](#live-streamlive-stream) | ランダムウォークの逐次描画 | フィードバックループによるストリーム、即時の停止、Dawn の折れ線 |
-| [Plots](#plotsplots) | ランダムウォークの拡散 | ふつうの matplotlib（`plt.show()`・`FuncAnimation`）がそのまま Card に描かれ、Plotly と Altair は対話できるグラフになる |
-| [Cas A · Chandra RGB](#cas-a--chandra-rgbcasa) | 超新星残骸の X 線観測 | Nix で固定した観測データ、Card 単位の再実行、版の履歴 |
-| [科学デモ](#科学デモ公開データの取得と解析) | 重力波・タンパク質・系外惑星・地震 | 公開データの取得（大きさと SHA-256）と解析・図示 |
-| [MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers) | 手書き数字の分類（kNN から CNN まで 7 種） | 1 つの入力から 7 つの分岐が別々の Nix 環境で同時に動いて合流し、1 つの分岐だけを条件を変えて実行し直せる |
-| [Newton 法](#newton-法newton) | 複素平面での Newton 法 | 初期値で行き先と収束の速さが変わり、重根や周期軌道では 2 次収束を失う |
-| [薬物動態](#薬物動態pharmacokinetics) | 架空の薬物の血中濃度 | 投与間隔で蓄積と山谷が変わり、数値解を閉じた式で確かめる（教材であり服薬の指針ではない） |
-| [最大流と最小カット](#最大流と最小カットmax-flow) | 最大流と最小カット | 最大流 = 最小カットを 3 通りで確かめ、ボトルネックだけが流量を変えることを見る |
-| [濃度–反応曲線](#濃度反応曲線dose-response) | 濃度–反応曲線（合成データ） | 4 パラメータのロジスティックのあてはめとブートストラップ区間。濃度範囲が EC50 を挟まないと区間が開く |
-| [分子の物性](#分子の物性molecules) | 公開された分子の物性（RDKit） | SMILES から物性・構造・類似度を求める。分子を貼り付けて試せて、不正な SMILES は理由を示す |
-| [細胞画像の計数](#細胞画像の計数cell-count) | 細胞画像の計数（合成データと実画像） | 正解のある画像で閾値と watershed を採点し、どこで破綻するかを見る |
-| [生存時間解析](#生存時間解析survival) | 肺がんの生存時間（survival パッケージの lung） | 対象者と調整変数でハザード比がどう動くかを並べて見る。比例ハザードの仮定も確かめる |
-| [メタ解析: BCG ワクチン](#メタ解析-bcg-ワクチンmeta-analysis) | BCG ワクチンのメタ解析（metafor の dat.bcg） | 固定効果と変量効果、異質性、1 試験を除いたときの動き、緯度によるメタ回帰 |
-| [RNA-seq: airway とデキサメタゾン](#rna-seq-airway-とデキサメタゾンrna-seq) | RNA-seq（airway とデキサメタゾン） | DESeq2 と edgeR を別の分岐で比べ、細胞株の項を入れるかで遺伝子の数が大きく変わるのを見る |
-| [集計と層別で逆転する相関](#集計と層別で逆転する相関simpson) | シンプソンのパラドックス（ペンギンと Berkeley の入学） | 集計と層別で向きが逆転する相関と、どちらを読むかは問い次第であること |
-| [蓄電池の最適運用](#蓄電池の最適運用battery) | 蓄電池の充放電計画（合成の料金） | 動的計画法の最適計画が容量と料金でどう変わるか。定額の料金では動かさないのが最適になる |
-| [化学反応のゆらぎ](#化学反応のゆらぎgillespie) | Gillespie の確率シミュレーション | 率方程式との違い、定常分布を理論と照合し、分子数が減るとゆらぎが増えるのを見る |
-| [熱伝導の逆問題](#熱伝導の逆問題heat-inverse) | 測定から初期温度を復元する | 素朴な逆解が破綻し、Tikhonov 正則化の強さと測定時刻で復元がどう変わるか |
-| [生態系のモデル比較](#生態系のモデル比較ecology-models) | ノウサギとオオヤマネコの毛皮の記録（1900–1920） | 捕食モデルのあてはめと AICc・未知の年の予測による比較。良い値が機構の正しさを意味しないこと |
-| [Draft 版](#draft-版agent-に実装させる) | 上の科学デモと Cas A の計画だけ | Draft から Agent が Card を生成し、実行して確かめる |
-| [力学系ギャラリー](#力学系ギャラリーdynamics-draft) | 6 つの力学系 | 独立した Draft を Agent が helper に手分けして同時に実装する |
-| [MNIST · 分類器くらべ（Draft）](#mnist--分類器くらべdraftmnist-classifiers-draft) | 手書き数字の分類（7 種） | データまで実装済みの計画から、7 つの分類器を helper が同時に実装し、Agent が比較をまとめる |
+| [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
+| [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
+| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, Dawn line charts |
+| [Plots](#plots-plots) | Diffusion of random walks | Ordinary matplotlib (`plt.show()`, `FuncAnimation`) drawn straight into a Card; Plotly and Altair become interactive charts |
+| [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
+| [Science demos](#science-demos-fetching-and-analysing-public-data) | Gravitational waves, a protein, an exoplanet, earthquakes | Fetching public data (sizes and SHA-256), analysing and plotting it |
+| [MNIST · comparing classifiers](#mnist--comparing-classifiers-mnist-classifiers) | Classifying handwritten digits (seven methods, from kNN to a CNN) | Seven branches from one input running at once in separate Nix environments and merging; rerunning just one branch with other conditions |
+| [Newton's method](#newtons-method-newton) | Newton's method on the complex plane | The starting point decides where it goes and how fast; multiple roots and periodic orbits lose quadratic convergence |
+| [Pharmacokinetics](#pharmacokinetics-pharmacokinetics) | Blood concentration of a made-up drug | The dosing interval changes accumulation, peaks and troughs; the numerical solution is checked against closed forms (teaching material, not dosing guidance) |
+| [Maximum flow and minimum cut](#maximum-flow-and-minimum-cut-max-flow) | Maximum flow and minimum cut | Checking max flow = min cut three ways, and that only bottlenecks change the flow |
+| [Dose–response curve](#doseresponse-curve-dose-response) | A dose–response curve (synthetic data) | Fitting a four-parameter logistic, with bootstrap intervals; the interval opens up when the concentration range does not bracket the EC50 |
+| [Molecular properties](#molecular-properties-molecules) | Properties of published molecules (RDKit) | Properties, structures and similarity from SMILES; paste a molecule to try it, and an invalid SMILES says why |
+| [Counting cells in images](#counting-cells-in-images-cell-count) | Counting cells (synthetic data and a real image) | Scoring thresholding and watershed on images with known answers, and seeing where they break down |
+| [Survival analysis](#survival-analysis-survival) | Survival in lung cancer (`lung` from the survival package) | How the hazard ratio moves with the subjects and the adjustment, side by side; checking the proportional hazards assumption |
+| [Meta-analysis: the BCG vaccine](#meta-analysis-the-bcg-vaccine-meta-analysis) | A meta-analysis of the BCG vaccine (`dat.bcg` from metafor) | Fixed and random effects, heterogeneity, leaving one trial out, meta-regression on latitude |
+| [RNA-seq: airway and dexamethasone](#rna-seq-airway-and-dexamethasone-rna-seq) | RNA-seq (airway and dexamethasone) | DESeq2 and edgeR compared on separate branches; whether to include the cell line changes the number of genes a lot |
+| [A correlation that reverses when stratified](#a-correlation-that-reverses-when-stratified-simpson) | Simpson's paradox (penguins, and admissions at Berkeley) | Correlations that reverse direction between the aggregate and the strata, and that which to read depends on the question |
+| [Scheduling a battery](#scheduling-a-battery-battery) | Charging and discharging a battery (synthetic prices) | How the optimal plan from dynamic programming changes with capacity and prices; at a flat price, not using it is optimal |
+| [Fluctuations in chemical reactions](#fluctuations-in-chemical-reactions-gillespie) | Gillespie's stochastic simulation | How it differs from rate equations; stationary distributions checked against theory; fluctuations growing as molecule numbers shrink |
+| [An inverse problem in heat conduction](#an-inverse-problem-in-heat-conduction-heat-inverse) | Recovering an initial temperature from measurements | The naive inverse breaks down; how the strength of Tikhonov regularisation and the measurement time change the recovery |
+| [Comparing ecological models](#comparing-ecological-models-ecology-models) | Fur records of hares and lynx (1900–1920) | Fitting predator–prey models and comparing them by AICc and by forecasting unseen years; a good score does not mean the mechanism is right |
+| [Draft versions](#draft-versions-for-the-agent-to-implement) | Only the plans of the science demos above and of Cas A | The Agent generates Cards from Drafts, runs them and checks |
+| [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
+| [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-図の矢印は Card の線（`出力ポート → 入力ポート`）です。Card の種類は、trigger（実行の起点）、input（Canvas で値を書き換える入力）、fork（分配）、branch（条件分岐）、merge（合流）、subgraph（Card in Card）、コード Card（C++ / Python / bash）です。
-どの Card にも `_meta.json` に概要があり、Canvas（trigger・fork・merge・branch はホバー）と Card 設定で読めます。
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards (C++ / Python / bash / R / Julia).
+A fork Card only hands values out as the arrows show, so it is left out of each demo's table.
+Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, fork, merge and branch) and in the Card's settings.
 
-## 基本のデモ
+## The basics
 
-### データからレポートへ（`report`）
+### Data to report (`report`)
 
-seed から売上表を作り、地域ごとに集計して Markdown のレポートにし、最後に子 Workflow でまとめて保管します。
-Python の Card が中心の、いちばん短い Workflow です。
+Makes a sales table from a seed, aggregates it by region into a Markdown report, and finally files it away in a child Workflow.
+The shortest Workflow, mostly Python Cards.
 
 ```text
-start → settings ─ share ─┬→ generate ─csv→ aggregate ─summary→ render ─report→ archive（子 Workflow）
+start → settings ─ share ─┬→ generate ─csv→ aggregate ─summary→ render ─report→ archive (child Workflow)
                           └──────────────── config ──────────────→ render
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | `seed`（42）・`rows`（500）・`heading` を流す |
-| `share` | fork | 設定を `generate` と `render` に配る |
-| `generate` | Python | `seed` の乱数で地域・商品・数量・単価の CSV を `rows` 行書く。同じ `seed` なら同じ CSV になる |
-| `aggregate` | Python | 地域ごとに売上と数量を合計する。`fail_on_purpose` を On にすると、わざと失敗する（`recordIO` で入出力値を記録） |
-| `render` | Python | `report.md` と `summary.json` をディレクトリに書き、レポートを表示する（`retainArtifact` で成果物を保持） |
-| `archive` | subgraph | 中の bash の Card `copy` が、レポートのディレクトリを複製して `ARCHIVED_AT` を添える |
+| `settings` | input | Sends `seed` (42), `rows` (500) and `heading` |
+| `generate` | Python | Writes a CSV of `rows` rows of region, product, quantity and unit price with random numbers from `seed`. The same `seed` gives the same CSV |
+| `aggregate` | Python | Totals sales and quantity per region. With `fail_on_purpose` On, it fails on purpose (`recordIO` records its input and output values) |
+| `render` | Python | Writes `report.md` and `summary.json` into a directory and displays the report (`retainArtifact` keeps the artifact) |
+| `archive` | subgraph | The bash Card inside, `copy`, duplicates the report's directory and adds `ARCHIVED_AT` |
 
-**試すこと**
-- `seed` や `heading` を変えて実行する。同じ `seed` なら集計は同じで、見出しだけが変わる。
-- `aggregate` の `fail_on_purpose` を On にして実行する。`aggregate` のログに理由が出て、下流の `render` は `blocked` になる。Off に戻し、`aggregate` だけを実行し直すと、保存された入力で即座に成功する。
-- `archive` をダブルクリックして子 Workflow に入り、成果物のディレクトリをプレビュー・書き出す。成果物は実行キャッシュを消しても残る。
+**Try**
+- Change `seed` or `heading` and run. With the same `seed` the aggregate is the same and only the heading changes.
+- Turn `fail_on_purpose` of `aggregate` On and run. `aggregate`'s log gives the reason, and `render` downstream is `blocked`. Turn it Off and rerun only `aggregate`: with the saved inputs it succeeds at once.
+- Double-click `archive` to go into the child Workflow, and preview and export the artifact's directory. Artifacts remain even after the run cache is cleared.
 
-### Collatz (C++ / Python / Julia / R)（`collatz`）
+### Collatz (C++ / Python / Julia / R) (`collatz`)
 
-同じコラッツの反復を C++・Python・Julia・R で別々に実装し、4 つの数列が一致するかを確かめます。
-反復そのものを Card の線で描いているので、分岐・合流・ループの動きを Canvas でたどれます。
+The same Collatz iteration implemented separately in C++, Python, Julia and R, checking that the four sequences agree.
+The iteration itself is drawn with the Cards' wires, so the behaviour of branches, merges and loops can be followed on the Canvas.
 
 ```text
-                        ┌→ collatz-cpp（子 Workflow）─┐
-start → initial ─ both ─┼→ collatz-py （子 Workflow）─┼→ compare ─sequence→ record
-                        ├→ collatz-jl （子 Workflow）─┤
-                        └→ collatz-r  （子 Workflow）─┘
+                        ┌→ collatz-cpp (child Workflow) ─┐
+start → initial ─ both ─┼→ collatz-py  (child Workflow) ─┼→ compare ─sequence→ record
+                        ├→ collatz-jl  (child Workflow) ─┤
+                        └→ collatz-r   (child Workflow) ─┘
 ```
 
-外側の Card:
+The outer Cards:
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `initial` | input | 初期値（27）を流す |
-| `both` | fork | 同じ値を 4 つの言語の側に配る |
-| `collatz-cpp` / `collatz-py` / `collatz-jl` / `collatz-r` | subgraph | 中の Workflow で反復し、1 に着くまでの数列を返す |
-| `compare` | Python | 4 つの数列が完全に一致することを確かめ、数列を次へ渡す |
-| `record` | Python | 数列を `collatz.csv`（`k, a_k, parity`）に書き、成果物として残す |
+| `initial` | input | Sends the starting value (27) |
+| `collatz-cpp` / `collatz-py` / `collatz-jl` / `collatz-r` | subgraph | Iterates in the Workflow inside and returns the sequence until it reaches 1 |
+| `compare` | Python | Checks that the four sequences agree exactly and passes the sequence on |
+| `record` | Python | Writes the sequence to `collatz.csv` (`k, a_k, parity`) and keeps it as an artifact |
 
-子 Workflow の中（4 つとも同じ形）:
+Inside the child Workflow (the same shape in all four):
 
 ```text
-（境界の入力 n）→ loop ─ split ─┬→ check ─value / even→ route ─a（偶数）→ halve ─┐
-                  ↑              └→ collect →（境界の出力 sequence）        └b（奇数）→ triple ─┤
-                  └──────────────────────────── half / triple ───────────────────────────────┘
+(boundary input n) → loop ─ split ─┬→ check ─value / even→ route ─a (even)→ halve ─┐
+                      ↑             └→ collect → (boundary output sequence) └b (odd)→ triple ─┤
+                      └──────────────────────────── half / triple ──────────────────────────┘
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `loop` | merge | 最初の値と、`halve`・`triple` から戻る値を合流させる |
-| `split` | fork | 値を `check` と `collect` に配る |
-| `check` | コード | 値が 1 なら何も出さない（ループが終わる）。そうでなければ値と偶奇を出す。`maxRuns`（200）が反復の上限 |
-| `route` | branch | 偶数なら `a`（`halve`）、奇数なら `b`（`triple`）の片側だけを発火させる |
-| `halve` / `triple` | コード | `n/2` と `3n+1` を計算する。`triple` は 64 bit 整数を超えると `integer overflow` で失敗する |
-| `collect` | コード | 届いた値をためて表示し、1 が届いたら数列を出す。C++ と Python は常駐 worker の状態を `onRunStart` で実行ごとに空にする |
+| `loop` | merge | Merges the first value with the values coming back from `halve` and `triple` |
+| `check` | code | Outputs nothing if the value is 1 (ending the loop); otherwise outputs the value and its parity. `maxRuns` (200) bounds the iterations |
+| `route` | branch | Fires only `a` (`halve`) for even, or only `b` (`triple`) for odd |
+| `halve` / `triple` | code | Compute `n/2` and `3n+1`. `triple` fails with `integer overflow` beyond 64-bit integers |
+| `collect` | code | Collects and displays the values that arrive, and outputs the sequence when 1 arrives. C++ and Python clear the resident worker's state for each run in `onRunStart` |
 
-**Julia と R の側の違い。** Julia と R の Card は呼び出しごとに別のプロセスで動き、何も覚えていません（[制限](Limitations.md)）。そのため `collect` は値をためられず、`loop` に戻る値が「ここまでの数列」（`Walk`: `value` と `path`）を運び、`collect` は 1 が届いたときに `path` をそのまま数列として出します。メッセージが過程を持つので、どの Card の記録を見ても、そこまでの数列が読めます。
+**How the Julia and R sides differ.** Julia and R Cards run in a separate process per invocation and remember nothing ([Limitations](Limitations.md)). So `collect` cannot collect values; instead the value going back to `loop` carries "the sequence so far" (`Walk`: `value` and `path`), and `collect` outputs `path` as the sequence when 1 arrives. Because the message carries the process, the record of any Card shows the sequence up to that point.
 
-**R の範囲。** R の数は double なので、整数は 2^53 未満しか正確に扱えません。それ以上の値はワーカーが文字列で渡すので、R の `check`・`halve` は黙って丸めずに失敗し、`triple` は `3n+1` が 2^53 に届くときに計算の前に失敗します。この範囲でも 4 つの数列は一致します。Julia は 64 bit 整数（`UInt64`）のまま計算し、`triple` は C++ や Python と同じく `3n+1` が 64 bit を超えると `integer overflow` で失敗します。
+**R's range.** R's numbers are doubles, so integers are exact only below 2^53. Larger values are passed by the worker as strings, so R's `check` and `halve` fail rather than round silently, and `triple` fails before computing when `3n+1` would reach 2^53. Within this range the four sequences agree. Julia computes in 64-bit integers (`UInt64`), and its `triple`, like C++ and Python, fails with `integer overflow` when `3n+1` exceeds 64 bits.
 
-**試すこと**
-- そのまま実行する。27 は 111 手（112 個の値）で 1 に着き、途中の最大値は 9232。`compare` が一致を報告する。
-- `initial` を 2 にすると、奇数側の `triple` は一度も選ばれず `skipped` になる。
-- 中の `check` の `maxRuns` を小さくすると、反復上限（`execution_limit`）で止まる。`3n+1` が 64 bit を超える初期値では `integer overflow` を検出する。
-- `initial` を 2^60 のような大きな値にすると、R の `check` が「2^53 未満ではない」ことを理由に失敗する（Julia・C++・Python は 61 個の値を返す）。
-- `collatz-jl` や `collatz-r` を開いて `collect` の記録を見る。呼び出しごとの表示が、そこまでの数列になっている。
+**Try**
+- Run it as it is. 27 reaches 1 in 111 steps (112 values), with a maximum of 9232 on the way. `compare` reports that they agree.
+- Set `initial` to 2: the odd side's `triple` is never chosen and is `skipped`.
+- Make `maxRuns` of `check` inside smaller: it stops at the iteration limit (`execution_limit`). With a starting value for which `3n+1` exceeds 64 bits, `integer overflow` is detected.
+- Set `initial` to a large value such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
+- Open `collatz-jl` or `collatz-r` and look at the record of `collect`: each invocation's display is the sequence so far.
 
-### Live Stream（`live-stream`）
+### Live Stream (`live-stream`)
 
-100 ms ごとにランダムウォークの値を 1 つ作り、直近の値を折れ線でリアルタイムに描きます。
-「次の状態」を自分に戻すフィードバックループで、終わりのある流れを作っています。
+Makes one value of a random walk every 100 ms and draws the latest values as a line chart in real time.
+A feedback loop that sends "the next state" back to itself makes a stream that ends.
 
 ```text
 start → settings ─state→ loop → generate ─sample→ plot
@@ -121,21 +120,21 @@ start → settings ─state→ loop → generate ─sample→ plot
                           └─ next ──┘
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | `seed`（7）・`samples`（200）・`interval_ms`（100）と初期状態を流す |
-| `loop` | merge | 初期状態と、`generate` が返す次の状態を合流させる |
-| `generate` | C++ | `interval_ms` だけ待ってから、`seed` と番号で決まる乱数で 1 歩進め、値と次の状態を出す。`samples` 個で次の状態を出さなくなり、流れが終わる。待つ間も停止を確かめる |
-| `plot` | Python | 直近 `window`（60）個の値とその平均を、Dawn（WebGPU / Metal）の折れ線で描く |
+| `settings` | input | Sends `seed` (7), `samples` (200), `interval_ms` (100) and the initial state |
+| `loop` | merge | Merges the initial state with the next state `generate` returns |
+| `generate` | C++ | Waits `interval_ms`, then takes one step with a random number decided by `seed` and the index, and outputs the value and the next state. After `samples` it stops outputting the next state and the stream ends. It checks for stopping while waiting too |
+| `plot` | Python | Draws the latest `window` (60) values and their mean with a Dawn (WebGPU / Metal) line chart |
 
-**試すこと**
-- 実行して、途中で停止（Cancel）する。即座に止まり、その時点までのグラフが残る。
-- `interval_ms`・`seed`・`samples` や `plot` の `window` を変えて実行し直す。系列はリセットされ、並列度 1 でも 2 でも、値が欠けたり順序が入れ替わったりしない。
+**Try**
+- Run it and stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.
+- Change `interval_ms`, `seed`, `samples` or `window` of `plot` and run again. The series resets, and with parallelism 1 or 2 no value goes missing or out of order.
 
-### Plots（`plots`）
+### Plots (`plots`)
 
-ランダムウォークを作り、ほかの場所で書くのと同じ matplotlib・Plotly・Altair のコードで図にします。
-Tsugumi 専用の描画呼び出しは使っていません。Python の Card は SDK の matplotlib backend を使うので、`plt.show()` で描いた図がそのまま Card の表示に出ます。Plotly の `fig.show()` と Altair の `chart.show()` は、対話できるグラフとして出ます。
+Makes random walks and plots them with the same matplotlib, Plotly and Altair code you would write anywhere else.
+No Tsugumi-specific drawing calls are used. Python Cards use the SDK's matplotlib backend, so a figure drawn with `plt.show()` appears as the Card's display. Plotly's `fig.show()` and Altair's `chart.show()` appear as interactive charts.
 
 ```text
 start → settings ─walk→ simulate ─walks→ share ─┬→ summary
@@ -144,72 +143,72 @@ start → settings ─walk→ simulate ─walks→ share ─┬→ summary
                                                 └→ spread
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | `seed`（7）・`walkers`（400）・`steps`（200）を流す |
-| `simulate` | Python | numpy で `walkers` 本の ±1 のランダムウォークを `steps` 歩ぶん作る |
-| `share` | fork | 同じ軌跡を 4 つの図に配る |
-| `summary` | Python | `plt.show()` で、40 本の軌跡と ±2√t の帯、最終位置のヒストグラムと正規分布を 1 枚に描く |
-| `diffusion` | Python | `FuncAnimation` で、時刻ごとの分布が √t で広がる様子をライブで再生する（`frames` コマ） |
-| `explore` | Python | Plotly の `fig.show()` で、各ウォーカーの最終位置と最も遠くまで行った距離を散布図にする（色は 0 より上にいた時間の割合） |
-| `spread` | Python | Altair の `chart.show()` で、平均二乗距離が t に比例して増える様子を理論値と並べて描く |
+| `settings` | input | Sends `seed` (7), `walkers` (400) and `steps` (200) |
+| `simulate` | Python | Makes `walkers` ±1 random walks of `steps` steps with numpy |
+| `summary` | Python | With `plt.show()`, draws 40 trajectories with the ±2√t band, and a histogram of final positions with the normal distribution, in one figure |
+| `diffusion` | Python | With `FuncAnimation`, plays live how the distribution at each time spreads as √t (`frames` frames) |
+| `explore` | Python | With Plotly's `fig.show()`, a scatter plot of each walker's final position and farthest distance (coloured by the fraction of time above 0) |
+| `spread` | Python | With Altair's `chart.show()`, draws the mean squared distance growing in proportion to t, next to the theoretical value |
 
-**試すこと**
-- 実行すると、`diffusion` の表示がアニメーションとして動き、最後のコマが残る。
-- `explore` と `spread` の表示を拡大し、ズーム・ホバー（ウォーカーごとの値）・凡例を操作する。
-- `walkers`・`steps`・`seed` や `frames` を変えて実行し直す。
+**Try**
+- Run it: `diffusion`'s display plays as an animation, and the last frame stays.
+- Enlarge the displays of `explore` and `spread`, and try zooming, hovering (values per walker) and the legend.
+- Change `walkers`, `steps`, `seed` or `frames` and run again.
 
-### Cas A · Chandra RGB（`casa`）
+### Cas A · Chandra RGB (`casa`)
 
-超新星残骸カシオペヤ座 A の X 線イベントデータ（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
-同じ光子のエネルギースペクトルも描き、どの元素の輝線がどの色になったのかを確かめます。
+Pins with Nix the X-ray event data of the supernova remnant Cassiopeia A (Chandra) and the analysis tool CIAO, and splits the photons into three energy bands for an RGB image.
+It also draws the energy spectrum of the same photons, to check which element's lines became which colour.
 
 ```text
-start → load ─events→ bands ─images→ share ─┬→ rgb
-                                            └→ spectrum
+start → begin ─┬→ ciao ─tool──┐
+               └→ load ─events┴→ bands ─images→ share ─┬→ rgb
+                                                       └→ spectrum
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `load` | bash | `default.nix` で、HEASARC の観測ファイルを hash で固定して取得・展開する（explicit FTPS）。ダウンロードは最初の 1 回だけで、以後は Nix store のファイルを使う。実行中はネットワークを使わない |
-| `bands` | Python | 光子を 600–1650 / 1650–2250 / 2250–7500 eV の 3 帯域に分け、Cas A の中心（RA 350.8584°, Dec +58.8113°）に合わせた 360×360 の格子で数える。帯域ごとの FITS と `provenance.json` を書き、光子数を表で示す |
-| `share` | fork | 帯域のディレクトリを `rgb` と `spectrum` に配る |
-| `rgb` | Python | 3 帯域を R・G・B に割り当て、asinh で伸長した PNG を作る（`percentile` 99.5、`q` 10）。表示条件と PNG の SHA-256 を記録する |
-| `spectrum` | Python | 同じ格子の範囲の光子のエネルギーをヒストグラムにして matplotlib で描く。3 帯域を色で塗り、Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける |
+| `ciao` | bash | In `default.nix`, builds the CIAO 4.18 source pinned by hash and passes on the store path and version. The build happens only the first time and takes a few minutes. The expression is read from [gen740/ciao](https://github.com/gen740/ciao), pinned by commit and hash (`nixSources` of `tsugumi.json`; [external Nix sources](features.md#external-nix-sources-inputssources)) |
+| `load` | bash | In `default.nix`, fetches and unpacks HEASARC's observation file pinned by hash (explicit FTPS). The download happens only the first time; after that the file in the Nix store is used. It uses no network while running |
+| `bands` | Python | Splits the photons into three bands, 600–1650 / 1650–2250 / 2250–7500 eV, and counts them with CIAO's `dmcopy` on a 360×360 grid centred on Cas A (RA 350.8584°, Dec +58.8113°). The total counted is checked against the number read with astropy, without CIAO. Writes a FITS file per band and `provenance.json`, and shows the photon counts as a table |
+| `rgb` | Python | Assigns the three bands to R, G and B and makes a PNG stretched with asinh (`percentile` 99.5, `q` 10). Records the display conditions and the PNG's SHA-256 |
+| `spectrum` | Python | Draws a histogram of the energies of the photons in the same grid with matplotlib. Shades the three bands and marks the lines of Mg, Si, S, Ar, Ca and Fe |
 
-**試すこと**
-- そのまま実行する。既定の観測は ObsID 25628（2.1 ks、13 MB）。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示す。
-- `load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB）に変えると、深い観測で鮮明な画像になる（値は `load` の説明にある）。最初の実行だけ取得に時間がかかる。
-- `bands` の帯域や `rgb` の伸長、`spectrum` の範囲・刻みを変えて、その Card だけを実行し直す。スペクトルを見ると、緑の帯域がちょうど Si の輝線を含み、S から上は青に入ることが分かる。
-- 版のツリーを開く。帯域や格子・伸長を試した過程（失敗した枝、採用しなかった枝、採用した版 `rgb-v1`、その上にスペクトルを足した版）が入っている（[版の管理](Versions.md#デモの履歴)）。
+**Try**
+- Run it as it is. The default observation is ObsID 25628 (2.1 ks, 13 MB). `bands` shows the photon counts per band (red 101,187 / green 157,471 / blue 110,852) as a table.
+- Change `obsid`, `file` and `hash` of `load` to ObsID 114 (2000, 50 ks, 520 MB) or ObsID 19606 (2019, 49 ks, 349 MB): the deeper observations give a sharper image, and about twenty years of change can be compared (the values are on the sticky note and in `load`'s description). Only the first run takes time to fetch.
+- Change the bands of `bands`, the stretch of `rgb`, or the range and binning of `spectrum`, and rerun just that Card. The spectrum shows that the green band contains exactly the Si line, and everything from S up falls in blue.
+- Open the version tree. It holds the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top, and the version that pinned CIAO ([Versions](Versions.md#demo-histories)).
 
-## 科学デモ（公開データの取得と解析）
+## Science demos (fetching and analysing public data)
 
-4 つのデモは同じ形をしています。`load` が公開元からデータを取得し、続く 2 つの Card が解析して図や表にします。
+Four demos with the same shape: `load` fetches data from its publisher, and the two Cards that follow analyse it into figures and tables.
 
 ```text
-start → load ─data→（解析 1）→（解析 2）
+start → load ─data→ (analysis 1) → (analysis 2)
 ```
 
-`load` はネットワークへのアクセスを許可した Python の Card（`network: true`）で、`urls` と `names` のファイルを取得してフォルダとして渡し、それぞれの大きさと SHA-256 を表示します。
-Cas A の `load` が Nix で取得を固定するのに対し、こちらは実行のたびに取得します。
+`load` is a Python Card allowed the network (`network: true`). It fetches the files of `urls` and `names`, passes them on as a folder, and shows the size and SHA-256 of each.
+Where Cas A's `load` pins the fetch with Nix, these fetch on every run.
 
-| デモ | 取得するデータ | 解析 1 | 解析 2 |
+| Demo | Data fetched | Analysis 1 | Analysis 2 |
 | --- | --- | --- | --- |
-| **GW150914 · 重力波**（`gw150914`） | GWOSC の H1・L1 のひずみデータ（4 kHz、32 秒の HDF5） | `whiten`: 4 秒区間の Welch 法の PSD で白色化し、`f_low`〜`f_high`（35〜350 Hz）のバンドパスを掛けて、イベント前後の波形を描く | `chirp`: L1 を ±10 ms ずらして H1 と最もよく重なる時間差を求めて重ね描きし、H1 のスペクトログラムでチャープを見せる。大まかな SNR も求める |
-| **6LU7 · タンパク質と結合ポケット**（`protein-6lu7`） | RCSB PDB の 6LU7（SARS-CoV-2 メインプロテアーゼと阻害剤 N3） | `structure`: Cα 原子と阻害剤（鎖 C）の座標を取り出し、3D 点群（Cα は青、阻害剤は赤）で表示する | `pocket`: 阻害剤から `cutoff`（4 Å）以内の残基を表にし、コンタクトマップにポケットの残基を印す。触媒の His41・Cys145 が入ることを確かめられる |
-| **Kepler-6 b · 系外惑星トランジット**（`exoplanet-transit`） | MAST の Kepler-6（KIC 10874614）の第 3 四半期のライトカーブ（FITS） | `detrend`: 品質フラグ 0 の点を規格化し、`window_days` 日の移動中央値でトレンドを除いて、Box Least Squares で周期を探す | `fold`: 周期で位相を折り畳み、減光の深さ δ から惑星半径比 Rp/R* = √δ を求める（周期約 3.23 日、深さ約 1%） |
-| **日本海溝 · 震源断面と b 値**（`seismic-trench`） | USGS の 2000〜2024 年、北緯 34〜42 度・東経 138〜146 度、M4 以上の震源（CSV） | `section`: `lat_min`〜`lat_max` の緯度帯を切り出し、震央の地図と、沈み込む太平洋プレートが見える経度–深さの断面を描く | `b_value`: 累積頻度 log10 N(≥M) を描き、`mc` 以上について最尤法（Aki–宇津）で Gutenberg–Richter 則の b 値を求める |
+| **GW150914 · gravitational waves** (`gw150914`) | GWOSC's H1 and L1 strain data (4 kHz, 32 s of HDF5) | `whiten`: whitens with the PSD of a 4 s Welch estimate, applies a band-pass from `f_low` to `f_high` (35–350 Hz), and plots the waveform around the event | `chirp`: shifts L1 by ±10 ms to find the delay that best overlaps H1, overlays them, and shows the chirp in H1's spectrogram. Also estimates a rough SNR |
+| **6LU7 · a protein and its binding pocket** (`protein-6lu7`) | 6LU7 from RCSB PDB (the SARS-CoV-2 main protease with the inhibitor N3) | `structure`: takes out the coordinates of the Cα atoms and the inhibitor (chain C) and shows them as a 3D point cloud (Cα blue, inhibitor red) | `pocket`: tables the residues within `cutoff` (4 Å) of the inhibitor and marks the pocket's residues on a contact map. You can check that the catalytic His41 and Cys145 are among them |
+| **Kepler-6 b · an exoplanet transit** (`exoplanet-transit`) | MAST's quarter-3 light curve of Kepler-6 (KIC 10874614) (FITS) | `detrend`: normalises the points with quality flag 0, removes the trend with a moving median of `window_days` days, and searches for the period with Box Least Squares | `fold`: folds the phase by the period and finds the planet-to-star radius ratio Rp/R* = √δ from the depth δ of the dip (a period of about 3.23 days, a depth of about 1%) |
+| **Japan Trench · hypocentre sections and the b-value** (`seismic-trench`) | USGS hypocentres of M4 and above, 2000–2024, 34–42°N and 138–146°E (CSV) | `section`: cuts out the band of latitude from `lat_min` to `lat_max` and draws a map of epicentres and a longitude–depth section in which the subducting Pacific plate shows | `b_value`: plots the cumulative frequency log10 N(≥M) and finds the b-value of the Gutenberg–Richter law by maximum likelihood (Aki–Utsu) above `mc` |
 
-**試すこと**: そのまま実行してから、解析の Card のパラメータ（通過帯域、`cutoff`、`window_days`、緯度帯、`mc` など）を変えて、その Card だけを実行し直す。取得し直さずに、保存された入力で解析だけをやり直せます。
+**Try**: run it as it is, then change a parameter of an analysis Card (the pass band, `cutoff`, `window_days`, the band of latitude, `mc` and so on) and rerun just that Card. The analysis alone is redone with the saved inputs, without fetching again.
 
-## 手元で完結する計算のデモ
+## Demos that compute locally
 
-実行中にネットワークを使わないデモです。データは合成するか、パッケージに同梱のものを使うか、Nix で固定します（取得はビルドのときに 1 回だけ）。実行は `TSUGUMI_TEST_DEMO_RUNS=1` のテストで確かめています。
+Demos that use no network while running. Their data is synthesised, comes bundled with a package, or is pinned with Nix (fetched once, at build time). Their runs are checked by tests with `TSUGUMI_TEST_DEMO_RUNS=1`.
 
-### MNIST · 手書き数字の分類器くらべ（`mnist-classifiers`）
+### MNIST · comparing classifiers (`mnist-classifiers`)
 
-```
+```text
 start → load → prepare → share ─┬→ knn ──────┐
                                 ├→ logistic ─┤
                                 ├→ svm ──────┤
@@ -217,43 +216,40 @@ start → load → prepare → share ─┬→ knn ──────┐
                                 ├→ boosting ─┼→ compare → views ─┬→ tradeoff
                                 ├→ mlp ──────┤                   ├→ recall
                                 ├→ cnn ──────┤                   └→ hard
-                                └────────────┘（テスト画像とラベル）
+                                └────────────┘ (test images and labels)
 ```
 
-| Card | 中身 | すること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `start` | trigger | 実行の起点 |
-| `load` | Python（numpy, matplotlib） | MNIST の IDX 4 ファイルを `default.nix` の `fetchurl` と hash で固定する。ヘッダーと枚数を確かめ、数字ごとの見本を並べて出典とともに表示する。実行中にネットワークは使わない |
-| `prepare` | Python（numpy） | `seed`・`train_size`（既定 10000）・`test_size`（既定 2000）で層化抽出し、画素を 0〜1 に揃えて npz（File ポート、成果物として保持）で渡す。数字ごとの枚数を表示する |
-| `share` | fork | 7 つの分類器と `compare` に同じ部分データを渡す |
-| `knn` | scikit-learn | k 近傍法（`k`）。間違えた数字とその近傍を表示する |
-| `logistic` | scikit-learn | ロジスティック回帰（`c`, `max_iter`）。数字ごとの重みの画像を表示する |
-| `svm` | scikit-learn | RBF カーネルの SVM（`c`, `gamma`）。数字ごとのサポートベクター数を表示する |
-| `forest` | scikit-learn | ランダムフォレスト（`trees`, `max_depth`, `seed`）。効いた画素の画像を表示する |
-| `boosting` | xgboost | 勾配ブースティング（`rounds`, `max_depth`, `eta`, `seed`）。回数ごとのテスト誤り率を表示する |
-| `mlp` | torch（CPU） | 隠れ層 2 つの全結合ネット（`hidden`, `epochs`, `seed`）。損失の推移を表示する |
-| `cnn` | torch（CPU） | 畳み込み 2 層の小さなネット（`channels`, `epochs`, `seed`）。1 層目がテスト画像から取り出したものを表示する |
-| `compare` | Python（numpy） | 全分岐を待つ。同じテスト画像か（digest）を確かめ、正解率を予測から計算し直して照合し、順位表と、1 位と 2 位の差に意味があるかを文章で表示する |
-| `views` | fork | 比較結果を 3 つの図に渡す |
-| `tradeoff` | Plotly | 正解率と学習時間・予測時間の散布図（対数軸、パレート最適を線で結ぶ、ホバーで詳細） |
-| `recall` | matplotlib | モデル × 数字の再現率の表 |
-| `hard` | matplotlib | 間違えたモデルが多いテスト画像 32 枚と、多かった誤答 |
+| `load` | Python (numpy, matplotlib) | Pins the four MNIST IDX files with `fetchurl` and hashes in `default.nix`. Checks the headers and counts, and shows samples of each digit with the source. Uses no network while running |
+| `prepare` | Python (numpy) | Draws a stratified sample by `seed`, `train_size` (default 10000) and `test_size` (default 2000), scales pixels to 0–1 and passes them as an npz (a File port, kept as an artifact). Shows the count per digit |
+| `knn` | scikit-learn | k-nearest neighbours (`k`). Shows the digits it got wrong and their neighbours |
+| `logistic` | scikit-learn | Logistic regression (`c`, `max_iter`). Shows each digit's weights as an image |
+| `svm` | scikit-learn | An SVM with an RBF kernel (`c`, `gamma`). Shows the number of support vectors per digit |
+| `forest` | scikit-learn | A random forest (`trees`, `max_depth`, `seed`). Shows an image of the pixels that mattered |
+| `boosting` | xgboost | Gradient boosting (`rounds`, `max_depth`, `eta`, `seed`). Shows the test error rate per round |
+| `mlp` | torch (CPU) | A fully connected network with two hidden layers (`hidden`, `epochs`, `seed`). Shows how the loss went |
+| `cnn` | torch (CPU) | A small network with two convolutional layers (`channels`, `epochs`, `seed`). Shows what the first layer picks out of test images |
+| `compare` | Python (numpy) | Waits for all branches. Checks that they used the same test images (digest), recomputes the accuracy from the predictions to cross-check, and shows a ranking and, in words, whether the gap between first and second means anything |
+| `tradeoff` | Plotly | A scatter plot of accuracy against training and prediction time (log axes, Pareto-optimal points joined by a line, details on hover) |
+| `recall` | matplotlib | A table of recall by model × digit |
+| `hard` | matplotlib | The 32 test images that the most models got wrong, and the most common wrong answers |
 
-分類器の Card は共通して、正解率・1 スレッドの CPU 時間（学習と予測）・間違いの内訳を表示し、型付きのメッセージ（`Result`）でテスト全枚の予測を `compare` に渡します。
+Each classifier Card shows its accuracy, single-thread CPU time (training and prediction) and a breakdown of its mistakes, and passes its predictions for all test images to `compare` as a typed message (`Result`).
 
-**試すこと**
+**Try**
 
-- そのまま実行する。7 つの分岐が同時に動きます（同時に動く数は設定の「並列実行数」、既定 4）。
-- `forest` の `max_depth` を 3 にして、その Card だけを実行する。他の分岐は動かず、`forest` の正解率だけが 0.9475 から 0.7570 に下がります。
-- 比べ直すときは `forest` から先を実行する（「ここから下流を実行」）。動くのは `forest` と `compare` から先だけで、`compare` は新しい `forest` の結果と、他の分岐・`share` の保存された入力で比べます。変えていない分岐は動かないので、その正解率は同じです。
-- `knn` の `k`、`svm` の `gamma`、`cnn` の `epochs` を変える。
-- `prepare` の `train_size` を増やして、どの分類器が枚数の恩恵を受け、どれの時間が伸びるかを見る（`svm` と `knn` の予測時間が伸びます）。
+- Run it as it is. The seven branches run at the same time (how many at once is "Parallel runs" in the settings, default 4). The accuracy on 2000 test images is `svm` 0.9705, `cnn` 0.9680, `mlp` 0.9625, `knn` 0.9500, `forest` 0.9475, `boosting` 0.9455 and `logistic` 0.9210, and `compare` says the gap between `svm` and `cnn` does not reach twice the noise.
+- Set `max_depth` of `forest` to 3 and run just that Card. No other branch runs, and only `forest`'s accuracy drops, from 0.9475 to 0.7570.
+- To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `share`. The branches you did not change do not run, so their accuracy is the same.
+- Change `k` of `knn`, `gamma` of `svm` or `epochs` of `cnn`.
+- Increase `train_size` of `prepare` and see which classifiers benefit from more images and whose time grows (`svm`'s and `knn`'s prediction times grow).
 
-データは LeCun・Cortes・Burges の MNIST で、PyTorch のミラー `https://ossci-datasets.s3.amazonaws.com/mnist/` から取得します。
+The data is MNIST by LeCun, Cortes and Burges, fetched from PyTorch's mirror `https://ossci-datasets.s3.amazonaws.com/mnist/`.
 
-### Newton 法（`newton`）
+### Newton's method (`newton`)
 
-$z^3 - 1 = 0$ を複素平面で解き、初期値が行き先と収束の速さをどう決めるかを見ます。2 次収束の見積もりと収束先の地図に加えて、2 次収束を失う場合と収束しない場合を並べます。
+Solves $z^3 - 1 = 0$ on the complex plane to see how the starting point decides where it goes and how fast it converges. Alongside estimates of quadratic convergence and a map of where each point converges, it shows cases that lose quadratic convergence and cases that do not converge.
 
 ```text
 start → settings → roots ─ share ─┬→ orbits ─errors→ order
@@ -261,26 +257,26 @@ start → settings → roots ─ share ─┬→ orbits ─errors→ order
                                   └→ trouble
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | 多項式の実数係数 `coeffs`（高次から、既定は `[1, 0, 0, -1]`）、減衰係数 `damping`、`tolerance`、`max_iter` を流す |
-| `roots` | Python | Newton 法を使わず、コンパニオン行列の固有値（`numpy.roots`）で根と重複度、臨界点を求める。根と係数の関係で確かめ、$z^n = c$ の形なら閉じた式とも比べる |
-| `share` | fork | 問題を `orbits`・`basins`・`trouble` に配る |
-| `orbits` | Python | `start_re`・`start_im` の初期値ごとに、誤差を反復に対して対数軸で描く |
-| `order` | Python | 誤差の列から収束の次数 $q$ と定数を見積もり、重複度と $\lambda$ から決まる理論値と並べて表にする |
-| `basins` | Python | 格子の全点を初期値にして、どの根に着くかと反復の回数を描く。`center_re`・`center_im`・`half_width` で拡大できる |
-| `trouble` | Python | 基準の場合、臨界点の近く（`offset`）、重根、$\lambda = 2$ で 2 次に戻した重根、周期 2 の閉路を並べる（多項式は固定） |
+| `settings` | input | Sends the polynomial's real coefficients `coeffs` (highest degree first; default `[1, 0, 0, -1]`), the damping factor `damping`, `tolerance` and `max_iter` |
+| `roots` | Python | Finds the roots, their multiplicities and the critical points without Newton's method, from the eigenvalues of the companion matrix (`numpy.roots`). Checks them by the relations between roots and coefficients, and for the form $z^n = c$ against the closed form too |
+| `orbits` | Python | Plots the error against the iteration on a log axis, for each starting point `start_re`, `start_im` |
+| `order` | Python | Estimates the order of convergence $q$ and its constant from the sequence of errors, and tables them next to the theoretical values set by the multiplicity and $\lambda$ |
+| `basins` | Python | Starts from every point of a grid and draws which root it reaches and in how many iterations. Zoom in with `center_re`, `center_im` and `half_width` |
+| `trouble` | Python | Shows side by side the reference case, near a critical point (`offset`), a multiple root, a multiple root brought back to quadratic with $\lambda = 2$, and a cycle of period 2 (the polynomials are fixed) |
 
-**試すこと**
-- `basins` の `center_re` を -0.8、`half_width` を 0.2 にして、その Card だけを実行し直す。境界のどこを拡大しても 3 色が集まっている。
-- `trouble` の `offset` を 1e-5 にする。最初の一歩が $1/(3 z_0^2)$ まで飛ばされ、遠くでは 1 回に 2/3 ずつしか戻らないので、反復が 37 回から 60 回に増える（既定の `max_iter` ちょうど。さらに小さくすると `max_iter` を増やす必要がある）。
-- `settings` の `damping` を 0.5 にして全体を実行する。どの初期値でも次数が 1、比が 0.5 になり、地図の境界の形も変わる。
-- `settings` の `coeffs` を `[1, 0, -3, 2]`（$(z-1)^2(z+2)$）にする。重複度 2 の根で次数が 1、比が 0.5 に落ち、誤差はおよそ $10^{-8}$ で止まる。
-- `settings` の `coeffs` を `[1, 0, -2, 2]`（$z^3 - 2z + 2$）にする。0 の周りに黒い領域（周期 2 の閉路に吸い込まれて収束しない初期値）が現れる。
+**Try**
+- Run it as it is. The errors in `orbits` fall quadratically on the log axis, and the estimated order in `order` lines up with the theory. `basins` draws the fractal boundaries between where points converge.
+- Set `center_re` of `basins` to -0.8 and `half_width` to 0.2 and rerun just that Card. Wherever you zoom on the boundary, all three colours gather.
+- Set `offset` of `trouble` to 1e-5. The first step is thrown out to $1/(3 z_0^2)$, and far away it comes back only by 2/3 per step, so the iterations go from 37 to 60 (exactly the default `max_iter`; smaller still, `max_iter` must be increased).
+- Set `damping` of `settings` to 0.5 and run the whole. From every starting point the order becomes 1 with ratio 0.5, and the shape of the boundaries on the map changes too.
+- Set `coeffs` of `settings` to `[1, 0, -3, 2]` ($(z-1)^2(z+2)$). At the root of multiplicity 2 the order drops to 1 with ratio 0.5, and the error stops at about $10^{-8}$.
+- Set `coeffs` of `settings` to `[1, 0, -2, 2]` ($z^3 - 2z + 2$). A black region appears around 0 (starting points drawn into a cycle of period 2 that never converge).
 
-### 薬物動態（`pharmacokinetics`）
+### Pharmacokinetics (`pharmacokinetics`)
 
-架空の薬物「ツグミシン」の 1 コンパートメント経口モデルで、投与間隔を変えると濃度がどう動くかを比べます。**教育用の架空のモデルです。実在の薬の値ではなく、医療上の助言や投与の指針でもありません。** 有効域も作り物です。
+Compares how concentration moves with the dosing interval, in a one-compartment oral model of a made-up drug, "Tsugumicin". **This is a made-up model for teaching. Its values are not those of any real drug, and it is neither medical advice nor dosing guidance.** The therapeutic range is invented too.
 
 ```text
 start → settings → simulate ─curves→ share ─┬→ check
@@ -288,24 +284,23 @@ start → settings → simulate ─curves→ share ─┬→ check
                                             └→ missed
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | 比べる投与計画（`doses_mg`・`intervals_h`）、`half_life_h`、`ka_per_h`、`volume_l`、`bioavailability`、作り物の有効域（`low_mg_l`・`high_mg_l`）、`days` を流す |
-| `simulate` | Python | 微分方程式を投与ごとに区切って `solve_ivp` で解き、投与計画を並べて濃度の推移を Plotly で描く |
-| `share` | fork | 結果を `check`・`window`・`missed` に配る |
-| `check` | Python | 閉じた式の重ね合わせ、定常状態の蓄積比 $R$、平均濃度を数値解と比べて表にする。差が大きければ失敗する |
-| `window` | Python | 最後の投与間隔の濃度を重ね、山、谷、有効域の中にいる時間の割合を比べる |
-| `missed` | Python | `missed_at_h` 以降の投与を `missed_count` 回抜いたときの濃度を、閉じた式で投与計画ごとに描く |
+| `settings` | input | Sends the dosing plans to compare (`doses_mg`, `intervals_h`), `half_life_h`, `ka_per_h`, `volume_l`, `bioavailability`, the invented therapeutic range (`low_mg_l`, `high_mg_l`) and `days` |
+| `simulate` | Python | Solves the differential equation with `solve_ivp`, split at each dose, and plots the concentration over time for the plans side by side with Plotly |
+| `check` | Python | Tables the superposition of closed forms, the steady-state accumulation ratio $R$ and the mean concentration against the numerical solution. Fails if they differ much |
+| `window` | Python | Overlays the concentration in the last dosing interval and compares peaks, troughs and the fraction of time inside the therapeutic range |
+| `missed` | Python | Plots, with closed forms, the concentration per plan when `missed_count` doses from `missed_at_h` on are missed |
 
-**試すこと**
-- そのまま実行して `window` を見る。400 mg を 24 時間ごとと 200 mg を 12 時間ごとは平均濃度が同じ（`check` の表）で、間隔を詰めると山と谷の差が縮む。
-- `missed` の `missed_count` を 2 にして、その Card だけを実行し直す。1 日量が同じなら、間隔が長い計画ほど有効域の下にいる時間が大きく増える。
-- `settings` の `half_life_h` を 16 にして全体を実行する。蓄積比が大きくなり、定常に着くまでの時間も延びる。
-- `settings` の `days` を短くすると、定常に着かないことが `check` の「定常への到達」に出る。
+**Try**
+- Run it as it is and look at `window`. 400 mg every 24 hours and 200 mg every 12 hours give the same mean concentration (the table in `check`), and shortening the interval narrows the gap between peak and trough.
+- Set `missed_count` of `missed` to 2 and rerun just that Card. For the same daily dose, the longer the interval, the more the time below the range grows.
+- Set `half_life_h` of `settings` to 16 and run the whole. The accumulation ratio grows, and so does the time to reach steady state.
+- Shorten `days` of `settings` and "reaching steady state" in `check` shows that it does not get there.
 
-### 最大流と最小カット（`max-flow`）
+### Maximum flow and minimum cut (`max-flow`)
 
-seed から作った架空の層状ネットワークで、最大流と最小カットが等しいことを確かめます。どの辺の容量を増やせば最大流が増え、どの辺では増えないのかを、比べて見られます。
+On a made-up layered network made from a seed, checks that the maximum flow equals the minimum cut. You can compare which edges increase the maximum flow when widened, and which do not.
 
 ```text
 start → settings → network → flow → cut ─ share ─┬→ verify
@@ -313,27 +308,26 @@ start → settings → network → flow → cut ─ share ─┬→ verify
                                                  └→ sweep
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | `seed`（53）、`layers`、`width`、`edge_probability`、`max_capacity` を流す |
-| `network` | Python | seed から層状の容量つき有向グラフを作る（架空のデータ） |
-| `flow` | Python | networkx で最大流を求め、各辺の流量/容量を図に描く。容量と保存則を確かめる |
-| `cut` | Python | networkx で最小カットを求め、$s$ 側、$t$ 側、カットの辺を図に描く。最大流 = 最小カットでなければ失敗する |
-| `share` | fork | 結果を `verify`・`whatif`・`sweep` に配る |
-| `verify` | Python | scipy の `maximum_flow` と全カットの総当たりで同じ値が出ることを確かめ、最小カットの数を数える |
-| `whatif` | Python | カット上の辺とカット外の辺の容量を `raise_by` だけ増やし、最大流と新しいカットを表で比べる。`edge`（例: `a1->b1`）で辺を選べる |
-| `sweep` | Python | すべての辺について、容量を `raise_by` だけ増やしたときの最大流の増分を棒で並べる |
+| `settings` | input | Sends `seed` (53), `layers`, `width`, `edge_probability` and `max_capacity` |
+| `network` | Python | Makes a layered directed graph with capacities from the seed (made-up data) |
+| `flow` | Python | Finds the maximum flow with networkx and draws each edge's flow/capacity. Checks capacities and conservation |
+| `cut` | Python | Finds the minimum cut with networkx and draws the $s$ side, the $t$ side and the cut's edges. Fails unless max flow = min cut |
+| `verify` | Python | Checks that scipy's `maximum_flow` and brute force over all cuts give the same value, and counts the minimum cuts |
+| `whatif` | Python | Raises the capacity of an edge on the cut and one off it by `raise_by`, and tables the maximum flow and the new cut. `edge` (for example `a1->b1`) chooses the edge |
+| `sweep` | Python | For every edge, bars the increase in maximum flow when its capacity is raised by `raise_by` |
 
-**試すこと**
-- そのまま実行して `sweep` を見る。カットの 3 本のうち増えるのは 2 本だけで、`a2->b2` は別の最小カットが残っているので増えない（`verify` が最小カット 2 個と数える）。
-- `whatif` の `edge` を `s->a2` にして、`raise_by` を 1000 にする。容量いっぱいに流れている辺でも、カット外なら最大流は増えない。
-- `whatif` の `edge` を `b3->c3` にする。10 増やしても 8 しか増えない。次のカットが詰まるからで、`raise_by` を増やしても増分はそこで止まる。
-- `settings` の `seed` を変えて全体を実行する。別のネットワークでも `verify` の値はすべて一致する。
+**Try**
+- Run it as it is and look at `sweep`. Of the cut's three edges only two increase it; `a2->b2` does not, because another minimum cut remains (`verify` counts two minimum cuts).
+- Set `edge` of `whatif` to `s->a2` and `raise_by` to 1000. Even an edge running at full capacity does not increase the maximum flow if it is off the cut.
+- Set `edge` of `whatif` to `b3->c3`. Raising it by 10 increases the flow by only 8, because the next cut gets in the way; increasing `raise_by` further gains nothing beyond that.
+- Change `seed` of `settings` and run the whole. On another network, the values in `verify` still all agree.
 
-### 濃度–反応曲線（`dose-response`）
+### Dose–response curve (`dose-response`)
 
-架空の化合物 A・B のプレートを乱数で作り（合成データ）、4 パラメータロジスティック（Hill 曲線）を当てはめて、EC50 と Hill 勾配に信頼区間を付けます。
-真の値を知っているので、回復できたかをその場で確かめられます。実在の薬ではなく、医療上の助言でもありません。
+Makes plates of made-up compounds A and B with random numbers (synthetic data), fits a four-parameter logistic (Hill curve), and puts confidence intervals on the EC50 and the Hill slope.
+The true values are known, so you can check on the spot whether they were recovered. These are not real drugs, and this is not medical advice.
 
 ```text
 start → generate ─plate→ share ┬→ fit ─fit─────────→ bootstrap ─intervals→ compare
@@ -341,24 +335,24 @@ start → generate ─plate→ share ┬→ fit ─fit────────�
                                └→ range
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `generate` | Python | `seed` の乱数で、真の曲線に正規ノイズを乗せた反応を作る。濃度は `top_um` から `dilution` 倍ずつ薄めた `concentrations` 点、各濃度 `replicates` 反復 |
-| `share` | fork | プレートを `fit`・`bootstrap`・`range` に配る |
-| `fit` | Python | scipy の `curve_fit` で bottom・top・log10 EC50・Hill 勾配を求め、データと曲線を描く |
-| `bootstrap` | Python | 残差ブートストラップ（`n_boot` 回）で EC50 と Hill 勾配の 95% 区間を求め、真の値が入るかを表にする。区間が測定範囲を出ると、理由を添えて警告する |
-| `compare` | Python | EC50 の比（相対力価）と区間、Hill 勾配の差を示す。区間が 1 を含めば「差は言えない」と表示する |
-| `range` | Python | 最高濃度だけを変えた合成プレートを作り直し、EC50 の区間の幅を最高濃度に対して描く |
+| `generate` | Python | Makes responses with normal noise on the true curve, from random numbers by `seed`. `concentrations` concentrations, diluted by `dilution` from `top_um`, with `replicates` replicates each |
+| `fit` | Python | Finds bottom, top, log10 EC50 and the Hill slope with scipy's `curve_fit`, and plots the data and the curve |
+| `bootstrap` | Python | Finds 95% intervals for the EC50 and the Hill slope by residual bootstrap (`n_boot` times), and tables whether they contain the true values. If an interval leaves the measured range, it warns, with the reason |
+| `compare` | Python | Shows the ratio of EC50s (relative potency) with its interval, and the difference of Hill slopes. If the interval contains 1, it says "no difference can be claimed" |
+| `range` | Python | Remakes synthetic plates changing only the highest concentration, and plots the width of the EC50 interval against it |
 
-**試すこと**
-- `generate` の `noise_sd` を 12 にして実行する。区間が広がる（B の EC50 で 1.2 倍から 1.7 倍）。
-- `generate` の `top_um` を 1 にして実行する。B の曲線は上がりきらず、区間の幅が 1000 倍を超えて `bootstrap` が「濃度範囲が EC50 を挟んでいません」と警告し、`compare` は「力価の差は言えない」と表示する。
-- `concentrations` や `replicates` を減らす。`bootstrap` の `n_boot` を変えて、その Card だけを実行し直す。
+**Try**
+- Run it as it is. The 95% intervals of the EC50 and Hill slope contain the true values, and the relative potency (true value 15) comes out as 14.4 (11.6 – 18.6).
+- Set `noise_sd` of `generate` to 12 and run. The intervals widen (for B's EC50, from 1.2-fold to 1.7-fold).
+- Set `top_um` of `generate` to 1 and run. B's curve never levels off, the interval's width exceeds 1000-fold, `bootstrap` warns "the concentration range does not bracket the EC50", and `compare` says "no difference in potency can be claimed".
+- Reduce `concentrations` or `replicates`. Change `n_boot` of `bootstrap` and rerun just that Card.
 
-### 分子の物性（`molecules`）
+### Molecular properties (`molecules`)
 
-分子を文字列で表す SMILES から、RDKit で物性を計算し、構造式、Lipinski の Rule of Five、分子量と logP の地図、構造の似かたを並べます。
-Canvas の `paste` に SMILES を貼れば、その分子が全部の Card に加わります。
+From SMILES, which writes a molecule as a string, computes properties with RDKit and lays out structural formulas, Lipinski's Rule of Five, a map of molecular weight and logP, and how alike the structures are.
+Paste a SMILES into `paste` on the Canvas and that molecule joins every Card.
 
 ```text
 start → paste ─pasted→ properties ─molecules→ share ┬→ structures
@@ -366,26 +360,26 @@ start → paste ─pasted→ properties ─molecules→ share ┬→ structures
                                                     └→ similarity
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `paste` | input | 試したい分子の `name` と `smiles` を流す（既定は dopamine。`smiles` を空にすると一覧だけになる） |
-| `properties` | Python | `molecules`（「名前: SMILES」の一覧）と貼られた分子を読み、分子量・logP（Crippen）・TPSA・HBD・HBA・回転可能結合を表にする。読めない SMILES は理由を示して飛ばす |
-| `share` | fork | 物性を 3 つの Card に配る |
-| `structures` | Python | 構造式を名前と分子式を添えて格子状に描く |
-| `lipinski` | Python | 分子量 ≤ 500、logP ≤ 5、NH+OH ≤ 5、N+O ≤ 10 を確かめ、違反が `max_violations` 以下なら通過とする |
-| `chemspace` | Python（Plotly） | 分子量と logP の散布図。ホバーで名前・分子式・TPSA・違反した規則が分かる |
-| `similarity` | Python | Morgan フィンガープリント（半径 `radius`）の Tanimoto 係数をヒートマップにする |
+| `paste` | input | Sends `name` and `smiles` of a molecule to try (dopamine by default; with `smiles` empty, only the list is used) |
+| `properties` | Python | Reads `molecules` (a list of "name: SMILES") and the pasted molecule, and tables molecular weight, logP (Crippen), TPSA, HBD, HBA and rotatable bonds. A SMILES that cannot be read is skipped, with the reason |
+| `structures` | Python | Draws the structural formulas in a grid, with names and molecular formulas |
+| `lipinski` | Python | Checks molecular weight ≤ 500, logP ≤ 5, NH+OH ≤ 5 and N+O ≤ 10, and passes a molecule with at most `max_violations` violations |
+| `chemspace` | Python (Plotly) | A scatter plot of molecular weight and logP. Hover to see the name, molecular formula, TPSA and the rules violated |
+| `similarity` | Python | A heat map of the Tanimoto coefficients of Morgan fingerprints (radius `radius`) |
 
-**試すこと**
-- `paste` の `smiles` に別の SMILES を貼って実行する。
-- `paste` の `smiles` を `C1CC(` や `C(C)(C)(C)(C)C` にして実行する。落ちずに、`properties` の表の上に読めない理由が出て、ほかの分子は計算される。
-- `lipinski` の `max_violations` を 0 にして、その Card だけを実行し直す。cholesterol が不通過になる。
-- `similarity` の `radius` を 0 にして、その Card だけを実行し直す。見分けが粗くなり、似かたの平均が上がる。
+**Try**
+- Run it as it is. A table of the properties of 15 molecules and their structural formulas appear. Only atorvastatin and cyclosporin A fail the Rule of Five, and the most alike are morphine and codeine (Tanimoto 0.76).
+- Paste another SMILES into `smiles` of `paste` and run.
+- Set `smiles` of `paste` to `C1CC(` or `C(C)(C)(C)(C)C` and run. It does not crash: the reason it cannot be read appears above `properties`' table, and the other molecules are computed.
+- Set `max_violations` of `lipinski` to 0 and rerun just that Card. Cholesterol fails.
+- Set `radius` of `similarity` to 0 and rerun just that Card. The distinctions become coarse, and the average similarity rises.
 
-### 細胞画像の計数（`cell-count`）
+### Counting cells in images (`cell-count`)
 
-中心が分かっている蛍光風の合成画像（synthetic）を作り、閾値と watershed で細胞を数えて採点します。
-接した細胞を切り分けると何が得られるか、どこから数えられなくなるかが分かります。下の列では同じ手順を実際の核の画像にかけます（正解がないので採点はしません）。
+Makes synthetic fluorescence-like images whose centres are known, counts the cells with thresholding and watershed, and scores the counts.
+You see what separating touching cells gains, and from where counting fails. The lower row applies the same procedure to a real image of nuclei (with no ground truth, it is not scored).
 
 ```text
 start → begin ┬→ generate ─scene→ share ┬→ preprocess ─cleaned→ segment ─labels→ score
@@ -394,27 +388,26 @@ start → begin ┬→ generate ─scene→ share ┬→ preprocess ─cleaned�
               └→ mitosis ─image→ real
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `begin` | fork | 実行の起点を合成画像と実画像の両方に配る |
-| `generate` | Python | `seed` の乱数で `cells` 個の細胞を置く（`touching_pairs` 組は接する）。照明のむら `unevenness` とノイズ `noise` を乗せる |
-| `share` | fork | 画像と真の中心を `preprocess`・`score`・`sweep` に配る |
-| `preprocess` | Python | グレースケール開放で背景を見積もって引き、ガウスぼかしをかける |
-| `segment` | Python | 大津の閾値で前景を求めて領域に番号を振り（閾値のみ）、距離変換の極大を種に watershed で切り分ける |
-| `score` | Python | 重心を真の中心と 1 対 1 に対応づけ、個数の誤差・適合率・再現率・F1 を出す。見つけたもの・余分なもの・見逃したものを両方の方法で重ね描きする |
-| `sweep` | Python | 細胞の数とノイズを変えた画像を作り直し、同じ手順の F1 を表にする |
-| `mitosis` | bash | ヒト培養細胞の核の蛍光画像を Nix のハッシュで固定して渡す（Moffat et al., Cell 2006、CC0。scikit-image のデータ集から。取得は Nix のビルド時に 1 回だけで、実行中はネットワークを使わない） |
-| `real` | Python | 同じ手順を実画像にかけ、個数と輪郭を示す |
+| `generate` | Python | Places `cells` cells with random numbers from `seed` (`touching_pairs` pairs touch). Adds uneven illumination `unevenness` and noise `noise` |
+| `preprocess` | Python | Estimates and subtracts the background with a greyscale opening, and applies a Gaussian blur |
+| `segment` | Python | Finds the foreground with Otsu's threshold and numbers its regions (threshold only), then separates them with watershed seeded at maxima of the distance transform |
+| `score` | Python | Matches centroids one to one with the true centres and gives the count error, precision, recall and F1. Overlays what was found, what was extra and what was missed, for both methods |
+| `sweep` | Python | Remakes images with other numbers of cells and noise levels, and tables the same procedure's F1 |
+| `mitosis` | bash | Passes a fluorescence image of the nuclei of cultured human cells, pinned by its Nix hash (Moffat et al., Cell 2006, CC0; from scikit-image's data set; fetched once at Nix build time, no network while running) |
+| `real` | Python | Applies the same procedure to the real image and shows the counts and outlines |
 
-**試すこと**
-- `generate` の `cells` を 320 にして実行する。閾値のみの再現率は 0.24 に落ち、watershed は 0.79 を保つ。
-- `generate` の `noise` を上げる。`sweep` の表の左上のとおり、細胞が少ないほど閾値が雑音に落ちて数えすぎる。
-- `segment` の `min_distance` を変えて、その Card だけを実行し直す。大きくすると切り分けが減る。
+**Try**
+- Run it as it is. Against a true count of 80, threshold only finds 60 (recall 0.75) and watershed 74 (recall 0.93). On the real image of nuclei, threshold only finds 271 and watershed 311 (with no ground truth, check the outlines by eye).
+- Set `cells` of `generate` to 320 and run. Threshold only's recall falls to 0.24, while watershed keeps 0.79.
+- Raise `noise` of `generate`. As the top left of `sweep`'s table shows, the fewer the cells, the more the threshold falls into the noise and overcounts.
+- Change `min_distance` of `segment` and rerun just that Card. Larger values separate less.
 
-### 生存時間解析（`survival`）
+### Survival analysis (`survival`)
 
-survival パッケージ同梱の `lung`（NCCTG 進行肺がん試験の実データ、228 人。Loprinzi et al., J Clin Oncol 1994）で、Kaplan–Meier 曲線、log-rank 検定、Cox モデルを求めます。
-同じハザード比が「誰を含めるか」「何で調整するか」でどれだけ動くかを、Canvas の 1 枚の図で並べます。古い試験データの中の関連で、原因を示すものでも助言でもありません。
+With `lung`, bundled with the survival package (real data from the NCCTG advanced lung cancer trial, 228 patients; Loprinzi et al., J Clin Oncol 1994), finds Kaplan–Meier curves, the log-rank test and a Cox model.
+How much the same hazard ratio moves with "who is included" and "what is adjusted for" is laid out in one figure on the Canvas. These are associations in old trial data; they show no cause and are not advice.
 
 ```text
 start → load ─lung→ share ─┬→ cohort ─cohort→ split ─┬→ km
@@ -422,27 +415,26 @@ start → load ─lung→ share ─┬→ cohort ─cohort→ split ─┬→ km
                            └→ specs
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `load` | R | `lung` に `event`・`female` の列を足して CSV にし、変数の中央値・範囲・欠損を表で示す |
-| `share` | fork | データを `cohort` と `specs` に配る |
-| `cohort` | R | `age_min`・`age_max`・`ecog_max` で対象者を選ぶ。人数と死亡数を全体と並べる |
-| `split` | fork | 選んだ人を `km` と `cox` に配る |
-| `km` | R | `group`（sex / ecog / age）で分けた Kaplan–Meier 曲線、中央値、log-rank 検定。曲線の値を `curves.csv` に残す |
-| `cox` | R | `covariates` の変数で Cox モデルを当てはめ、ハザード比と 95% 信頼区間を表で示す |
-| `zph` | R | `cox.zph` のスケール化 Schoenfeld 残差を描き、変数ごとと全体の p 値を示す |
-| `specs` | R | `exposure` のハザード比を `subsets` × `adjustments` のすべての組み合わせで求め、森林図のように並べる |
+| `load` | R | Adds `event` and `female` columns to `lung`, writes it as CSV, and tables each variable's median, range and missing values |
+| `cohort` | R | Chooses subjects by `age_min`, `age_max` and `ecog_max`. Shows the numbers of people and deaths next to the whole |
+| `km` | R | Kaplan–Meier curves split by `group` (sex / ecog / age), medians and the log-rank test. Keeps the curves' values in `curves.csv` |
+| `cox` | R | Fits a Cox model with the variables in `covariates` and tables hazard ratios with 95% confidence intervals |
+| `zph` | R | Plots the scaled Schoenfeld residuals of `cox.zph` and shows p-values per variable and overall |
+| `specs` | R | Finds the hazard ratio of `exposure` for every combination of `subsets` × `adjustments` and lays them out like a forest plot |
 
-**試すこと**
-- `specs` の図を読む。女性のハザード比は全員で 0.59 ですが、65 歳未満で ECOG まで調整すると 0.76（信頼区間は 1 をまたぐ）、ECOG 2 以上で 4 変数を調整すると 0.39 になります。後者は体重減少の欠損で 51 人が 46 人に減っています。
-- `km` の `group` を `ecog` にして実行する。log-rank の χ² が 10.33 から 18.98 に変わる。
-- `cox` の `covariates` に `ph.karno` を入れ、`cox` から先を実行する。`zph` の全体の p 値が 0.216 から 0.016 に下がり、比例ハザードの仮定が怪しくなる（単体の実行では `zph` の入力は更新されないので、`cox` からつなげて実行する）。
-- `cohort` の `age_min` を 65 にして実行し、`km` と `cox` の変化を見る。
+**Try**
+- Run it as it is. Median survival is 426 days for women and 270 for men, and the log-rank χ² is 10.33. `specs` lays out the hazard ratios of 24 combinations of subjects and adjustments.
+- Read the figure in `specs`. The hazard ratio for women is 0.59 for everyone, but 0.76 (with an interval crossing 1) under 65 adjusted up to ECOG, and 0.39 for ECOG 2 and above adjusted for four variables. In the latter, missing weight-loss values reduce 51 people to 46.
+- Set `group` of `km` to `ecog` and run. The log-rank χ² changes from 10.33 to 18.98.
+- Add `ph.karno` to `covariates` of `cox` and run from `cox` onwards. The overall p-value of `zph` falls from 0.216 to 0.016, and the proportional hazards assumption becomes doubtful (in a single-Card run `zph`'s input is not updated, so run on from `cox`).
+- Set `age_min` of `cohort` to 65, run, and look at how `km` and `cox` change.
 
-### メタ解析: BCG ワクチン（`meta-analysis`）
+### Meta-analysis: the BCG vaccine (`meta-analysis`)
 
-metafor 同梱の `dat.bcg`（結核に対する BCG ワクチンの 13 試験、Colditz et al., JAMA 1994）で、固定効果と変量効果の併合、異質性、緯度に対するメタ回帰を比べます。
-1 試験を除く、推定量を変えるといった選択で、結論がどれだけ動くかを Canvas で見られます。統計手法の例で、接種についての助言ではありません。
+With `dat.bcg`, bundled with metafor (13 trials of the BCG vaccine against tuberculosis; Colditz et al., JAMA 1994), compares fixed-effect and random-effects pooling, heterogeneity and a meta-regression on latitude.
+How much the conclusion moves with choices such as leaving one trial out or changing the estimator can be seen on the Canvas. This is an example of statistical method, not advice about vaccination.
 
 ```text
 start → trials ─trials→ share ─┬→ pool
@@ -451,25 +443,24 @@ start → trials ─trials→ share ─┬→ pool
                                └→ sensitivity
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `trials` | R | 人数から各試験の log リスク比と分散（`escalc`）を求め、表と CSV にする |
-| `share` | fork | 同じ効果量を 4 つの解析に配る |
-| `pool` | R | 固定効果と変量効果（`method`）で併合し、両方の菱形を載せた森林図と I²・τ²・Q を示す。`exclude` に試験番号を書くと除く |
-| `funnel` | R | ファンネルプロットに回帰検定と trim and fill の結果を添える |
-| `moderator` | R | `moderator`（既定は緯度の絶対値）でメタ回帰を行い、傾き・残差 τ²・説明された割合を図に示す |
-| `sensitivity` | R | 1 試験ずつ除いたとき（固定効果と DL）と、τ² の推定量を変えたときの併合リスク比を並べる |
+| `trials` | R | Finds each trial's log risk ratio and variance from the counts (`escalc`), as a table and a CSV |
+| `pool` | R | Pools with fixed effect and random effects (`method`), and shows a forest plot with both diamonds, and I², τ² and Q. Trial numbers written in `exclude` are left out |
+| `funnel` | R | A funnel plot with the regression test and the result of trim and fill |
+| `moderator` | R | Runs a meta-regression on `moderator` (by default the absolute latitude) and shows the slope, the residual τ² and the proportion explained in a figure |
+| `sensitivity` | R | Lays out the pooled risk ratio when each trial is left out in turn (fixed effect and DL), and with other estimators of τ² |
 
-**試すこと**
-- `pool` の森林図で、固定効果 0.65 と変量効果 0.49 の菱形を比べる。I² は 92.1%。
-- `pool` の `exclude` を `[8]`（TPT Madras、最も大きい試験）にして `pool` だけを実行する。固定効果は 0.65 から 0.48 に動く。
-- `pool` の `method` を `REML` にする。τ² は 0.309 から 0.313 に変わるが、併合リスク比はほとんど動かない。
-- `moderator` で、緯度が τ² を 0.313 から 0.076 に減らすのを見る。`moderator` を `year` にして比べる。
+**Try**
+- In the forest plot of `pool`, compare the fixed-effect diamond, 0.65, with the random-effects diamond, 0.49. I² is 92.1%.
+- Set `exclude` of `pool` to `[8]` (TPT Madras, the largest trial) and run only `pool`. The fixed effect moves from 0.65 to 0.48.
+- Set `method` of `pool` to `REML`. τ² changes from 0.309 to 0.313, but the pooled risk ratio hardly moves.
+- In `moderator`, see latitude reduce τ² from 0.313 to 0.076. Set `moderator` to `year` to compare.
 
-### RNA-seq: airway とデキサメタゾン（`rna-seq`）
+### RNA-seq: airway and dexamethasone (`rna-seq`)
 
-Bioconductor の airway（気道平滑筋細胞の 4 細胞株をデキサメタゾンで処理した実データ。Himes et al., PLoS One 2014、GEO GSE52778）で、発現が動く遺伝子を DESeq2 と edgeR で求めます。
-「発現変動遺伝子の数」は閾値とデザインでどれだけ変わるのかを、それぞれの Card で確かめられます。細胞培養の実験で、治療の効果を示すものでも医学的な助言でもありません。
+With Bioconductor's airway (real data from four airway smooth muscle cell lines treated with dexamethasone; Himes et al., PLoS One 2014, GEO GSE52778), finds differentially expressed genes with DESeq2 and edgeR.
+How much "the number of differentially expressed genes" changes with thresholds and design can be checked in each Card. This is a cell-culture experiment; it shows no effect of treatment and is not medical advice.
 
 ```text
 start → load ─airway→ filter ─counts→ share ─┬→ normalize ─normalized→ pca
@@ -482,32 +473,31 @@ start → load ─airway→ filter ─counts→ share ─┬→ normalize ─nor
                                              └→ design
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `load` | R | airway のカウント行列（63,677 遺伝子 × 8 サンプル）と遺伝子名を CSV にし、サンプルの一覧を表で示す |
-| `filter` | R | 合計リード数が `min_total` 未満の遺伝子を除き、分布と基準を図で示す |
-| `share` | fork | カウントを 4 つの Card に配る |
-| `normalize` | R | 中央値の比でサイズ因子を求め、正規化の前後の分布を比べる。PCA のために vst を渡す |
-| `pca` | R | 分散の大きい `top_genes` 個の遺伝子で主成分分析を行い、処理と細胞株で塗り分ける |
-| `deseq` | R | `paired` で `~ cell + dex` か `~ dex` を選び、DESeq2 の結果を CSV にして MA プロットを描く |
-| `fan` | fork | DESeq2 の結果を配る |
-| `volcano` | R | `fdr`・`lfc` の閾値で数え、`known` の遺伝子に名前を付けて火山プロットを描く |
-| `thresholds` | R | FDR と log2FC の格子ごとの遺伝子の数を表にする |
-| `top` | R | FDR の順に上位 `top` 個を表にし、`known` の既知の応答遺伝子の順位を添える |
-| `edger` | R | 同じカウントを edgeR の準尤度 F 検定で検定する |
-| `compare` | R | DESeq2 と edgeR の log2FC を重ね、両方と片方だけの遺伝子を数える |
-| `design` | R | `~ dex` でも DESeq2 を実行し、`~ cell + dex` と推定値・統計量を並べる |
+| `load` | R | Writes airway's count matrix (63,677 genes × 8 samples) and gene names as CSV, and tables the samples |
+| `filter` | R | Removes genes whose total reads are below `min_total`, and shows the distribution and the cut-off in a figure |
+| `normalize` | R | Finds size factors by median of ratios and compares the distributions before and after normalisation. Passes the vst on for the PCA |
+| `pca` | R | Runs a principal component analysis on the `top_genes` most variable genes, coloured by treatment and cell line |
+| `deseq` | R | Chooses `~ cell + dex` or `~ dex` by `paired`, writes DESeq2's results as CSV and draws an MA plot |
+| `volcano` | R | Counts by the `fdr` and `lfc` thresholds and draws a volcano plot, naming the genes in `known` |
+| `thresholds` | R | Tables the number of genes for each point of a grid of FDR and log2FC |
+| `top` | R | Tables the top `top` genes by FDR, with the ranks of the known responsive genes in `known` |
+| `edger` | R | Tests the same counts with edgeR's quasi-likelihood F test |
+| `compare` | R | Overlays the log2FC of DESeq2 and edgeR, and counts the genes found by both and by only one |
+| `design` | R | Also runs DESeq2 with `~ dex`, and lays its estimates and statistics next to those of `~ cell + dex` |
 
-**試すこと**
-- `design` の図を読む。細胞株の項を入れると FDR < 0.05 の遺伝子は 2713 から 4030 に増える。log2FC はほぼ同じで、統計量だけが大きくなる。
-- `volcano` の `lfc` を 1 から 2 に、`fdr` を変えて `volcano` だけを実行する。`thresholds` の表にある数と同じになる。
-- `filter` の `min_total` を 100 にして、`filter` から先を実行する。
-- `top` で FKBP5、DUSP1、TSC22D3 の順位を見る。遺伝子ごとの FDR の順位と倍率の大きさは同じ順ではない（FKBP5 は 16.5 倍で 143 位、DUSP1 は 7.7 倍で 3 位）。
+**Try**
+- Run it as it is (the first time, the Nix builds of DESeq2, edgeR and airway take a while). `compare` shows 3985 genes on which DESeq2 and edgeR agree.
+- Read the figure in `design`. Including the cell line term increases the genes with FDR < 0.05 from 2713 to 4030. The log2FC hardly changes; only the statistics grow.
+- Change `lfc` of `volcano` from 1 to 2, or change `fdr`, and run only `volcano`. The counts match those in `thresholds`' table.
+- Set `min_total` of `filter` to 100 and run from `filter` onwards.
+- In `top`, look at the ranks of FKBP5, DUSP1 and TSC22D3. Ranking genes by FDR and by the size of their fold change do not give the same order (FKBP5 is 16.5-fold at rank 143; DUSP1 is 7.7-fold at rank 3).
 
-### 集計と層別で逆転する相関（`simpson`）
+### A correlation that reverses when stratified (`simpson`)
 
-全体で見た関係と層に分けた関係で、符号が逆になることがあります。2 つの実データで確かめます。ペンギンのくちばしの長さと厚さ（palmerpenguins、Gorman et al. 2014）と、1973 年の Berkeley の出願（R の `UCBAdmissions`）です。
-どちらの値を読むべきかはデータだけでは決まらず、因果の問いで決まることをノートに書いています。
+A relationship seen in the whole can reverse its sign when split into strata. This is checked on two real datasets: the bill length and depth of penguins (palmerpenguins, Gorman et al. 2014) and applications to Berkeley in 1973 (R's `UCBAdmissions`).
+A note says that which value to read is not decided by the data alone, but by the causal question.
 
 ```text
 start → branches ─┬→ penguins ─penguins→ share ─┬→ correlate ─points, correlations→ figure
@@ -515,23 +505,22 @@ start → branches ─┬→ penguins ─penguins→ share ─┬→ correlate �
                   └→ admissions ─admissions→ applications
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `branches` | fork | 実行を 2 つの枝に配る |
-| `penguins` | R | くちばしの長さと厚さがそろう 342 羽を CSV にし、種と島ごとの数を表で示す |
-| `share` | fork | データを `correlate` と `survey` に配る |
-| `correlate` | R | `stratify`（species / sex / island）で分け、全体と各層の r、信頼区間、傾きを表にする |
-| `figure` | R | 同じ点に全体の回帰直線（破線）と層ごとの回帰直線を重ねる |
-| `survey` | R | 3 つの層別の r を 1 枚に並べ、どこで逆転するかを示す |
-| `admissions` | R | 学科ごとと全体の合格率とオッズ比、Mantel–Haenszel の共通オッズ比を表にする |
-| `applications` | R | 合格率を応募者数の大きさの点で描き、全体の合格率を破線で重ねる |
+| `penguins` | R | Writes the 342 birds with both bill length and depth as CSV, and tables the counts by species and island |
+| `correlate` | R | Splits by `stratify` (species / sex / island) and tables r, its confidence interval and the slope for the whole and each stratum |
+| `figure` | R | Overlays on the same points the regression line for the whole (dashed) and the lines for each stratum |
+| `survey` | R | Lays out r for the three stratifications in one figure, showing where it reverses |
+| `admissions` | R | Tables the admission rates and odds ratios per department and overall, and the Mantel–Haenszel common odds ratio |
+| `applications` | R | Plots admission rates as points sized by the number of applicants, with the overall rate as a dashed line |
 
-**試すこと**
-- `correlate` の `stratify` を `sex` にして、`correlate` から先を実行する。r は全層で負のままで、逆転しない。
-- `stratify` を `island` にする。Biscoe では負のまま、Dream と Torgersen では正になる。
-- `admissions` の表で、全体のオッズ比 1.84 が学科で調整すると 0.90 になるのを見る。`applications` の図で、応募先の偏りを見る。
+**Try**
+- Run it as it is. The r of bill length and depth is −0.24 overall, but 0.39, 0.65 and 0.64 within species: the direction reverses.
+- Set `stratify` of `correlate` to `sex` and run from `correlate` onwards. r stays negative in every stratum and does not reverse.
+- Set `stratify` to `island`. It stays negative on Biscoe, and turns positive on Dream and Torgersen.
+- In `admissions`' table, see the overall odds ratio of 1.84 become 0.90 when adjusted for department. In `applications`' figure, see how applications were skewed.
 
-### 蓄電池の最適運用（`battery`）
+### Scheduling a battery (`battery`)
 
 ```text
 start → settings → market ─ share ─┬→ schedule
@@ -540,23 +529,23 @@ start → settings → market ─ share ─┬→ schedule
                                    └→ check
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | 容量 `capacity_kwh`（10）、電力の上限 `power_kw`（3）、往復効率 `round_trip_efficiency`（0.9）、売電の比 `export_ratio`（0.5）、蓄電量の刻み `soc_step_kwh`（0.1）、`seed`（7）、`days`（7）を流す |
-| `market` | Julia | seed から家の消費・太陽光・3 種類の料金（定額・時間帯別・市場連動）を 1 時間ごとに作る。すべて架空のデータと図に明記する |
-| `share` | fork | 条件とデータを 4 つの Card に配る |
-| `schedule` | Julia | 蓄電量を状態とする動的計画法で、電気代が最小の充放電を求める。`tariff` の料金での料金・充放電・蓄電量を図に示す |
-| `capacities` | Julia | 容量を変えて解き、節約額と追加 1 kWh あたりの節約、容量ごとの運転の違いを示す |
-| `tariffs` | Julia | 同じ電池を 4 つの契約で動かし、節約額・サイクル数・蓄電量の動きを比べる |
-| `check` | Julia | 短い時間と小さな電池で全探索と比べ、定額で売電も同額なら動かないこと、刻みを細かくしたときの差を表にする。外れれば失敗する |
+| `settings` | input | Sends the capacity `capacity_kwh` (10), the power limit `power_kw` (3), the round-trip efficiency `round_trip_efficiency` (0.9), the export ratio `export_ratio` (0.5), the step of stored energy `soc_step_kwh` (0.1), `seed` (7) and `days` (7) |
+| `market` | Julia | From the seed, makes a house's consumption, solar generation and three tariffs (flat, time-of-use, market-linked) per hour. States in the data and figures that all of it is made up |
+| `schedule` | Julia | Finds the charging and discharging with the lowest electricity bill by dynamic programming with the stored energy as the state. Shows the price, charging and discharging, and stored energy under the `tariff` tariff |
+| `capacities` | Julia | Solves for other capacities and shows the saving, the saving per additional kWh, and how operation differs by capacity |
+| `tariffs` | Julia | Runs the same battery under four contracts and compares the saving, the number of cycles and how the stored energy moves |
+| `check` | Julia | Compares with exhaustive search over a short period and a small battery, checks that at a flat price with exports at the same price it does not run, and tables the difference with a finer step. Fails if anything is off |
 
-**試すこと**
-- `schedule` の `tariff` を `flat`・`tou`・`spot` に変えて、その Card だけを実行し直す。
-- `settings` の `round_trip_efficiency` を下げて実行する。時間帯別の料金は、効率が安値 / 高値（18 / 42）を下回ると往復で得をしなくなる。
-- `settings` の `export_ratio` を 1 にすると売電が買電と同額になり、太陽光をためる意味がなくなる。
-- `capacities` の `capacities_kwh` を変えて、どこで頭打ちになるかを見る。
+**Try**
+- Run it as it is. Over the made-up week, with exports at half price, it saves about 786 yen even at the flat tariff, about 1478 yen with time-of-use and about 1442 yen market-linked. `check` shows dynamic programming agreeing with exhaustive search.
+- Change `tariff` of `schedule` to `flat`, `tou` or `spot` and rerun just that Card.
+- Lower `round_trip_efficiency` of `settings` and run. With time-of-use prices, once the efficiency falls below cheap / expensive (18 / 42), the round trip no longer pays.
+- Set `export_ratio` of `settings` to 1 and exports earn the same as imports cost, so storing solar is pointless. At the flat tariff the saving is 0 yen with 0 cycles: the battery does not run.
+- Change `capacities_kwh` of `capacities` and see where it levels off.
 
-### 化学反応のゆらぎ（`gillespie`）
+### Fluctuations in chemical reactions (`gillespie`)
 
 ```text
 start → settings ─ share ─┬→ trajectories
@@ -565,23 +554,23 @@ start → settings ─ share ─┬→ trajectories
                           └→ binding ────┘
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | 合成の速さ `synthesis`（2）、分解の速さ `degradation`（0.1）、体積 `volume`（1）、本数 `runs`（2000）、`seed`（1）を流す |
-| `share` | fork | 条件を 4 つの Card に配る |
-| `trajectories` | Julia | Gillespie 法で `runs` 本を計算し、`shown_runs` 本の軌道・全本の平均・率方程式の解を重ねる |
-| `stationary` | Julia | 十分に時間がたった終点の分布を、理論のポアソン分布と比べる。平均・分散・ファノ因子を次へ渡す |
-| `scaling` | Julia | 体積を変えて変動係数を測り、理論の 1/√N と比べる。濃度に直した軌道も体積ごとに示す |
-| `binding` | Julia | A + B ⇌ C を体積を変えて計算し、結合割合を厳密解（詳細釣り合い）と率方程式と比べる |
-| `check` | Julia | 3 つの結果を閉じた式と比べ、標準誤差で何個分ずれたかを表にする。`limit_sigma` を超えると失敗する |
+| `settings` | input | Sends the synthesis rate `synthesis` (2), the degradation rate `degradation` (0.1), the volume `volume` (1), the number of runs `runs` (2000) and `seed` (1) |
+| `trajectories` | Julia | Computes `runs` runs with Gillespie's method and overlays `shown_runs` trajectories, the mean of all runs and the solution of the rate equation |
+| `stationary` | Julia | Compares the distribution of end points after enough time with the theoretical Poisson distribution. Passes on the mean, variance and Fano factor |
+| `scaling` | Julia | Measures the coefficient of variation at other volumes and compares it with the theoretical 1/√N. Also shows the trajectories converted to concentrations, per volume |
+| `binding` | Julia | Computes A + B ⇌ C at other volumes and compares the fraction bound with the exact solution (detailed balance) and the rate equation |
+| `check` | Julia | Compares the three results with closed forms and tables how many standard errors off they are. Fails beyond `limit_sigma` |
 
-**試すこと**
-- `settings` の `volume` を 0.1 にして実行する。平均 2 個のポアソン分布になり、軌道は 0 にも落ちる。ファノ因子は 1 のまま。
-- `trajectories` の `shown_runs` を増やして、その Card だけを実行し直す。
-- `binding` の `on_rate` や `concentration` を変えて、率方程式からのずれを見る。
-- `check` の `limit_sigma` を小さくして、統計のゆらぎでどこまで外れるかを見る。
+**Try**
+- Run it as it is. The trajectories fluctuate, but the mean of 2000 runs follows the rate equation. The stationary mean and variance are close to the theoretical 20 (20.15, 20.46), and the Fano factor is 1.015. With two of each, A + B ⇌ C has a fraction bound of 0.57, off from the rate equation's 0.50 (it approaches it as the volume grows).
+- Set `volume` of `settings` to 0.1 and run. It becomes a Poisson distribution with mean 2, and trajectories drop to 0 too. The Fano factor stays 1.
+- Increase `shown_runs` of `trajectories` and rerun just that Card.
+- Change `on_rate` or `concentration` of `binding` and see how far it departs from the rate equation.
+- Make `limit_sigma` of `check` smaller and see how far statistical fluctuation takes it off.
 
-### 熱伝導の逆問題（`heat-inverse`）
+### An inverse problem in heat conduction (`heat-inverse`)
 
 ```text
 start → settings → forward ─ share ─┬→ spectrum
@@ -592,25 +581,25 @@ start → settings → forward ─ share ─┬→ spectrum
                                     └→ check
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `settings` | input | 格子 `cells`（100）、熱拡散率 `alpha`（1）、測定の時刻 `final_time`（0.002）、ノイズ `noise`（0.2 ℃）、`seed`（3）を流す |
-| `forward` | Julia | 架空の初期温度を作り、両端断熱の差分行列の固有分解で時刻 T の温度を計算して、ノイズをのせる。総熱量の保存を確かめる |
-| `share` | fork | 測定を 6 つの Card に配る |
-| `spectrum` | Julia | 特異値の減衰を時刻ごとに示し、測定の成分がノイズに埋もれるモードの番号を示す |
-| `naive` | Julia | 行列の逆をそのまま掛けると発散することを示す（ノイズなしでも丸め誤差で発散する） |
-| `tikhonov` | Julia | λ を掃引し、L 曲線と誤差を示す。食い違い原理・L 字の角・真の値に最も近い λ を比べる |
-| `reconstruct` | Julia | 選んだ λ（`lambda` が 0 なら食い違い原理の値）と、小さすぎ・大きすぎの λ の復元を真の値と並べる |
-| `horizon` | Julia | 同じノイズで測定の時刻を変えて復元し、遅いほど細部が失われることを示す |
-| `check` | Julia | 総熱量の保存、余弦モードの解析解、陰解法との一致、ノイズなし・早い時刻での復元、最大値原理を表で確かめる。外れれば失敗する |
+| `settings` | input | Sends the grid `cells` (100), the thermal diffusivity `alpha` (1), the measurement time `final_time` (0.002), the noise `noise` (0.2 °C) and `seed` (3) |
+| `forward` | Julia | Makes a made-up initial temperature, computes the temperature at time T by eigendecomposition of the finite-difference matrix with insulated ends, and adds noise. Checks that the total heat is conserved |
+| `spectrum` | Julia | Shows how the singular values decay at each time, and the index of the mode where the measurement's components sink into the noise |
+| `naive` | Julia | Shows that multiplying by the inverse matrix as it is diverges (even without noise, by rounding error) |
+| `tikhonov` | Julia | Sweeps λ and shows the L-curve and the error. Compares the discrepancy principle, the corner of the L and the λ closest to the truth |
+| `reconstruct` | Julia | Lays the recovery with the chosen λ (the discrepancy principle's value when `lambda` is 0), and with too small and too large a λ, next to the truth |
+| `horizon` | Julia | Recovers from the same noise at other measurement times, showing that the later it is, the more detail is lost |
+| `check` | Julia | Tables checks of the conservation of total heat, the analytic solution of a cosine mode, agreement with an implicit scheme, recovery without noise at an early time, and the maximum principle. Fails if anything is off |
 
-**試すこと**
-- `settings` の `final_time` を 0.02 にして実行する。同じノイズでも復元の誤差が大きくなる。
-- `reconstruct` の `lambda` を変えて、その Card だけを実行し直す。0 に戻すと食い違い原理の値を使う。
-- `settings` の `noise` を 0、`final_time` を 0.00005 にすると、復元は真の値に戻る。
-- `horizon` の `times` を変えて、ぎざぎざが消える時刻を探す。
+**Try**
+- Run it as it is. The naive inverse diverges to as much as 3.8e+33 °C, while Tikhonov regularisation recovers the shape with an error of 5.1 °C. In `horizon`, the later the measurement, the fewer modes stay above the noise (from 37 to 3), and the error grows from 1.9 °C to 10.6 °C.
+- Set `final_time` of `settings` to 0.02 and run. With the same noise, the recovery's error grows.
+- Change `lambda` of `reconstruct` and rerun just that Card. Back at 0, it uses the discrepancy principle's value.
+- Set `noise` of `settings` to 0 and `final_time` to 0.00005, and the recovery returns to the truth.
+- Change `times` of `horizon` and find the time at which the jaggedness disappears.
 
-### 生態系のモデル比較（`ecology-models`）
+### Comparing ecological models (`ecology-models`)
 
 ```text
 start → load ─ share ─┬→ fit ─ fits-share ─┬→ check
@@ -619,56 +608,54 @@ start → load ─ share ─┬→ fit ─ fits-share ─┬→ check
                       └→ forecast ────────────→ scores
 ```
 
-| Card | 種類 | していること |
+| Card | Kind | What it does |
 | --- | --- | --- |
-| `load` | Julia | ハドソン湾会社の毛皮の記録（千枚、1900〜1920 年）を Card に同梱した CSV から読み、出典とともに示す |
-| `share` | fork | 記録を `fit` と `forecast` に配る |
-| `fit` | Julia | 3 つのモデルを RK4 で解きながら、対数の二乗誤差を Nelder-Mead で最小化する（対数空間、`restarts` 通りの初期値、`fit_until` 年まで）。AIC・AICc・BIC を求めて記録に重ねる |
-| `forecast` | Julia | `fit_until`（1914）年までで当てはめ、残した年を予測して誤差を比べる |
-| `fits-share` | fork | 当てはめの結果を 3 つの Card に配る |
-| `scores` | Julia | 対数 RMSE、AIC、AICc、BIC、予測誤差、同じ解に届いた初期値の数、最良の値を表にする |
-| `phase` | Julia | 各モデルの最良の解を `years` 年先まで延ばし、相図で比べる |
-| `check` | Julia | ロトカ・ヴォルテラの保存量で RK4 を確かめ、当てはめた値を Stan の事例研究の事後分布と比べる |
+| `load` | Julia | Reads the Hudson's Bay Company fur records (thousands of pelts, 1900–1920) from a CSV bundled with the Card, and shows them with the source |
+| `fit` | Julia | Minimises the squared error of logs with Nelder–Mead while solving three models with RK4 (in log space, from `restarts` starting points, up to the year `fit_until`). Finds AIC, AICc and BIC and overlays the fits on the records |
+| `forecast` | Julia | Fits up to `fit_until` (1914) and compares the errors in forecasting the years held out |
+| `scores` | Julia | Tables log RMSE, AIC, AICc, BIC, forecast error, the number of starting points that reached the same solution, and the best values |
+| `phase` | Julia | Extends each model's best solution `years` years ahead and compares them in a phase diagram |
+| `check` | Julia | Checks RK4 against the Lotka–Volterra conserved quantity, and compares the fitted values with the posterior of the Stan case study |
 
-**試すこと**
-- `forecast` の `fit_until` を 1908〜1918 に変えて、その Card だけを実行し直す。残す年が長いほど予測は難しくなる。
-- `fit` の `restarts` を減らしたり増やしたりして、`scores` の「同じ解に届いた初期値」と誤差を見る。
-- `phase` の `years` を増やして、ロジスティックの渦がどこへ向かうかを見る。
+**Try**
+- Run it as it is. Over these 21 years the three models fit almost equally (log RMSE 0.219), AICc favours Lotka–Volterra with the fewest parameters, and Holling's handling time h goes towards 0. The error of forecasts fitted up to 1914 is also smaller for Lotka–Volterra (0.353, against 0.421 for the others). The sticky note says that a good AIC does not mean the mechanism is right, and that pelts are not population counts.
+- Change `fit_until` of `forecast` between 1908 and 1918 and rerun just that Card. The more years held out, the harder the forecast.
+- Lower or raise `restarts` of `fit` and look at "starting points that reached the same solution" and the errors in `scores`.
+- Increase `years` of `phase` and see where the logistic spiral heads.
 
-## Draft 版（Agent に実装させる）
+## Draft versions (for the Agent to implement)
 
-`casa-draft`・`gw150914-draft`・`protein-6lu7-draft`・`exoplanet-transit-draft`・`seismic-trench-draft` は、上のデモと同じ計画を Draft だけで持つプロジェクトです。
-開始 Card と 3 つの Draft があり、各 Draft の説明には、何を受け取り、何をして、何を渡すかが書かれています（実装済みのデモの Card の説明と同じ文です）。
+`casa-draft`, `gw150914-draft`, `protein-6lu7-draft`, `exoplanet-transit-draft` and `seismic-trench-draft` are projects that hold the same plans as the demos above, as Drafts only (`casa-draft` is the plan up to the RGB image, without CIAO and `spectrum`).
+Each has a start Card and three Drafts, and each Draft's description says what it receives, what it does and what it passes on (almost the same text as the descriptions of the implemented demos' Cards).
 
-Canvas の右上の「Card を生成」を押すと、Agent が Draft の説明と前後の接続を読み、コード・出力型・Nix の環境定義を作って保存し、実行して確かめます。
-途中で失敗したり取り消したりしても、中途半端な変更は保存されず、計画は残ります。
-実際の Claude API で `casa-draft` を実装させた記録は [AgentRun.md](AgentRun.md) にあります。
+Press "Generate Cards" at the top right of the Canvas and the Agent makes Cards from the Drafts, runs them and checks ([Generating Cards from Drafts](features.md#generating-cards-from-drafts)).
+A record of having the real Claude API implement `casa-draft` is in [Evidence](Evidence.md#a-run-with-the-real-claude-api).
 
-## 力学系ギャラリー（`dynamics-draft`）
+## Dynamical systems gallery (`dynamics-draft`)
 
-互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装するデモです。
+A demo in which the Agent splits six independent Drafts among helpers and implements them at the same time.
 
 ```text
-start → settings ─ share ─┬→ lorenz      ローレンツ・アトラクタ（RK4、x–z 平面の濃淡）
-                          ├→ mandelbrot  マンデルブロ集合（滑らかな色付け）
-                          ├→ logistic    ロジスティック写像の分岐図
-                          ├→ life        ライフゲーム（トーラスの盤で 200 世代）
-                          ├→ grayscott   Gray–Scott の反応拡散の模様
-                          └→ pendulum    二重振り子のカオス（初期角を 1e−6 ずらした 2 本）
+start → settings ─ share ─┬→ lorenz      the Lorenz attractor (RK4, density in the x–z plane)
+                          ├→ mandelbrot  the Mandelbrot set (smooth colouring)
+                          ├→ logistic    the bifurcation diagram of the logistic map
+                          ├→ life        the Game of Life (200 generations on a torus)
+                          ├→ grayscott   Gray–Scott reaction–diffusion patterns
+                          └→ pendulum    a chaotic double pendulum (two runs with initial angles 1e−6 apart)
 ```
 
-`settings` は画像の大きさ（`size` 480）と乱数の種（`seed` 7）を 6 つの Draft に配るだけで、Draft 同士は線でつながっていません。
-各 Draft の説明には、計算の手順と、結果が正しいことを確かめる `assert`（ライフゲームのグライダーが 4 世代で斜めに 1 マス動く、二重振り子のエネルギー誤差が小さい、など）が書かれています。
+`settings` only hands the image size (`size` 480) and the random seed (`seed` 7) to the six Drafts; the Drafts are not connected to each other.
+Each Draft's description gives the steps of the computation and `assert`s that check the result is right (a glider in the Game of Life moving one cell diagonally in four generations, the double pendulum's energy error being small, and so on).
 
-「Card を生成」を押すと、Agent は 6 つの Draft を helper に分けます。helper ごとに色の違うツグミが自分の Card を同時に書き、実行して確かめます。helper の報告がそろうと、Agent がそれぞれの Card を確かめてまとめて報告します（[手分け](features.md#9-agent)）。
+Press "Generate Cards" and the Agent splits the six Drafts among helpers, and a thrush of a different colour for each helper writes and checks its own Card at the same time ([Splitting the work](features.md#splitting-the-work-delegate)).
 
-## MNIST · 分類器くらべ（Draft）（`mnist-classifiers-draft`）
+## MNIST · comparing classifiers (Draft) (`mnist-classifiers-draft`)
 
-[MNIST · 手書き数字の分類器くらべ](#mnist--手書き数字の分類器くらべmnist-classifiers)と同じ問題を、Agent に実装させるデモです。力学系ギャラリーと違い、helper たちの仕事は最後に 1 つの比較へ合流します。
+A demo that has the Agent implement the same problem as [MNIST · comparing classifiers](#mnist--comparing-classifiers-mnist-classifiers). Unlike the dynamical systems gallery, the helpers' work merges into one comparison at the end.
 
 ```text
 start → load → prepare → share ─┬→ knn ──────┐
-          （実装済み）           ├→ logistic ─┤
+          (implemented)         ├→ logistic ─┤
                                 ├→ svm ──────┤
                                 ├→ forest ───┤
                                 ├→ boosting ─┼→ compare
@@ -677,42 +664,13 @@ start → load → prepare → share ─┬→ knn ──────┐
                                 └────────────┘
 ```
 
-| Card | 状態 | 誰が書くか |
+| Card | State | Who writes it |
 | --- | --- | --- |
-| `load`, `prepare` | 実装済み。本物の MNIST を Nix のハッシュで固定し、訓練 5000 枚・テスト 1000 枚に層化して渡す | 最初から入っている |
-| `knn`, `logistic`, `svm`, `forest`, `boosting`, `mlp`, `cnn` | Draft。互いに線がなく、環境（scikit-learn, xgboost, torch）も分かれる | helper が 1 つずつ同時に |
-| `compare` | Draft。7 つの結果を待って順位表と散布図を作る | helper の報告のあとで Agent が |
+| `load`, `prepare` | Implemented. Pins the real MNIST by its Nix hash and passes on a stratified 5000 training and 1000 test images | There from the start |
+| `knn`, `logistic`, `svm`, `forest`, `boosting`, `mlp`, `cnn` | Drafts. No wires between them, and separate environments (scikit-learn, xgboost, torch) | Helpers, one each, at the same time |
+| `compare` | A Draft. Waits for the seven results and makes a ranking and a scatter plot | The Agent, after the helpers report |
 
-- **合流できる理由:** 各 Draft の説明に、出力 `result` の型（`mnist.Result`）をそのまま書いてあります。helper は互いの書くものを見られないので、この約束がないと `compare` が 1 つの型で読めません。
-- **確かめること:** 各 Draft の説明には、計算の手順と `assert` があります。枚数と 0〜9 の範囲、正解率の下限に加えて、手法ごとに結果が決まる性質を確かめます（kNN と numpy の総当たりの一致、ロジスティック回帰の予測と重み付き和の一致、フォレストの予測と木の平均の一致、ネットのパラメータ数の式など）。`compare` は digest の一致と、正解率を予測から計算し直した値との一致を確かめます。
-- **枚数が小さい理由:** 1 つのプロジェクトで実行できるのは一度に 1 つなので、helper の実行は順番を待ちます（1 回の待ちの上限は 900 秒）。完成版と同じ訓練 10000 枚・テスト 2000 枚では 1 回の実行に 52〜122 秒かかり、訓練 5000 枚・テスト 1000 枚では 20〜37 秒でした（M3 Max の Seatbelt、他の処理が動いている状態。共通 VM では 17〜24 秒）。常駐する worker のメモリは 1 つ 0.6 GiB 以下です。
-- **答え:** このデモと完成版の `mnist-classifiers` は、Agent の `reference_read` の一覧にも読み取りにも出ません。
-
-## 試せる操作と、確認できる結果
-
-| デモ | 試せる操作 | 確認できる結果 |
-| --- | --- | --- |
-| **データからレポートへ**（`report`） | そのまま実行する。`settings` の `seed` や `heading` を変えて再実行する。`aggregate` の `fail_on_purpose` を On にして実行し、Off に戻して `aggregate` だけを単体再実行する。`archive` をダブルクリックして子 Workflow に入り、成果物をプレビュー・書き出す | 同じ `seed` なら常に同じ集計結果になり、`heading` の変更がレポート見出しに反映される。意図的に失敗させると `aggregate` のエラーログに理由が出て下流の `render` は `blocked` になる。単体再実行では保存済み入力を使って即座に成功する。生成されたディレクトリ成果物は環境を初期化しても残る |
-| **Collatz (C++ / Python / Julia / R)**（`collatz`） | そのまま実行する。`initial` の初期値や、各言語側の `check` の `maxRuns`（反復上限）を変更して実行する | 初期値 `27` は 111 ステップ（初期値を含め 112 個の値）で `1` に到達し、`compare` が C++・Python・Julia・R の完全一致を報告する。`maxRuns` を小さくすると反復上限（`execution_limit`）で止まり、`3n+1` が 64 bit 整数を超える初期値では `integer overflow` を検出する。初期値 `2` では奇数側（`triple`）が `skipped` になる |
-| **Plots**（`plots`） | そのまま実行する。`settings` の `seed`・`walkers`・`steps` や、`diffusion` の `frames`（アニメーションのコマ数）を変えて再実行する。`explore`・`spread` の表示を拡大してズーム・ホバーする | ウィンドウ向けに書いた matplotlib のコードがそのまま Card の表示に描かれる。`summary` は `plt.show()` で 400 本のランダムウォークのうち 40 本の軌跡と、全体の最終位置の分布（正規分布との比較）を示し、`diffusion` は `FuncAnimation` で広がりが √t で増える様子をライブで再生する。`explore`（Plotly）と `spread`（Altair）は対話できるグラフで、ウォーカーごとの値や平均二乗距離を確かめられる |
-| **Cas A · Chandra RGB**（`casa`） | そのまま実行する。`bands` の帯域や `rgb` の `percentile`・`q` を変えて、その Card だけを実行し直す。`load` の `obsid`・`file`・`hash` を ObsID 114（50 ks、520 MB の深い観測）に変える。`spectrum` の範囲や刻み（`min_ev`・`max_ev`・`bin_ev`）を変える | 最初の実行で観測（ObsID 25628、13 MB）を Nix が 1 度だけ取得し、以後はストアのファイルを使う。`bands` が帯域ごとの光子数（赤 101,187 / 緑 157,471 / 青 110,852）を表で示し、`rgb` が Cas A を中心にした 360×360 の RGB 画像を表示する。`spectrum` は同じ光子のエネルギースペクトルを matplotlib で描き、3 帯域を色で塗って Mg・Si・S・Ar・Ca・Fe の輝線に印を付ける（緑の帯域が Si の輝線を含むことが分かる） |
-| **科学デモ**（`gw150914`・`protein-6lu7`・`exoplanet-transit`・`seismic-trench`） | そのまま実行する（`load` が公開元からデータを取得するため、ネットワークへのアクセスを許可した Card を含む）。途中の Card のパラメータを変えて、その Card だけを実行し直す | 取得したファイルの大きさと SHA-256 が表示され、重力波のチャープ、タンパク質の結合ポケット、トランジットの折りたたみ、震源断面と b 値が図で表示される |
-| **MNIST · 手書き数字の分類器くらべ**（`mnist-classifiers`） | そのまま実行する。`forest` の `max_depth` を 3 にしてその Card だけを実行し、`forest` から先を実行して比べ直す。`knn` の `k`、`cnn` の `epochs`、`prepare` の `train_size` を変える | 7 つの分岐が同じテスト 2000 枚で比べられ、既定では `svm` 0.9705、`cnn` 0.9680、`mlp` 0.9625、`knn` 0.9500、`forest` 0.9475、`boosting` 0.9455、`logistic` 0.9210。`svm` と `cnn` の差は揺らぎの 2 倍に届かないと `compare` が述べる。`max_depth` 3 の `forest` は 0.7570 で、他の分岐は動かない |
-| **Newton 法**（`newton`） | そのまま実行する。`orbits` の初期値、`basins` の拡大、`trouble` の `offset` を変えてその Card だけを実行し直す。`settings` の `coeffs`（`[1, 0, -3, 2]` で重根、`[1, 0, -2, 2]` で閉路）や `damping` を変えて全体を実行する | `orbits` の誤差が対数軸で 2 次に落ち、`order` の表で推定次数が理論値と並ぶ。`basins` にフラクタルの境界が描かれ、`roots` で閉じた式との差が表示される。`trouble` では重根で次数 1 に落ち、$z^3 - 2z + 2$ の $z_0 = 0$ が収束しない |
-| **薬物動態**（`pharmacokinetics`、架空の薬物の教育用モデル） | そのまま実行し、`simulate` の表示を拡大してズーム・ホバーする。`settings` の `doses_mg`・`intervals_h`・`half_life_h` を変えて全体を実行する。`missed` の `missed_at_h`・`missed_count` を変えてその Card だけを実行し直す | 投与計画ごとの濃度が定常状態へ近づく様子を並べて見られる。`check` で数値解と閉じた式の差と蓄積比が表になり、`window` で山、谷、作り物の有効域の中にいる時間の割合、`missed` で飲み忘れの影響が表示される |
-| **最大流と最小カット**（`max-flow`） | そのまま実行する。`whatif` の `edge`・`raise_by`、`sweep` の `raise_by` を変えてその Card だけを実行し直す。`settings` の `seed` を変えて全体を実行する | `flow` と `cut` の図に流量とカットの辺が描かれ、最大流と最小カットの値が一致する。`verify` で scipy と全カットの総当たりも同じ値になる。`whatif` と `sweep` で、カット外の辺を太くしても最大流が変わらないことを確かめられる |
-| **濃度–反応曲線**（`dose-response`） | そのまま実行する。`generate` の `noise_sd`・`concentrations`・`top_um` を変えて再実行する。`bootstrap` の `n_boot` を変えて、その Card だけを実行し直す | 架空の化合物 A・B の合成データで、EC50 と Hill 勾配の 95% 区間が真の値を含み、相対力価（真の値 15）が 14.4（11.6 – 18.6）と出る。`top_um` を 1 にすると B の区間が 1000 倍を超え、濃度範囲が EC50 を挟んでいないと Card が警告する。`range` は同じことを最高濃度を変えながら 1 枚の図で示す |
-| **分子の物性**（`molecules`） | そのまま実行する。`paste` の `smiles` に SMILES を貼って再実行する。`lipinski` の `max_violations` や `similarity` の `radius` を変えて、その Card だけを実行し直す。`chemspace` の表示を拡大してホバーする | 15 分子の物性の表と構造式が出る。Rule of Five は atorvastatin と cyclosporin A だけが不通過、いちばん似ているのは morphine と codeine（Tanimoto 0.76）。読めない SMILES は落ちずに、理由が表の上に表示される |
-| **細胞画像の計数**（`cell-count`） | そのまま実行する。`generate` の `cells`・`noise` を変えて再実行する。`segment` の `min_distance` を変えて、その Card だけを実行し直す | 真の個数 80 に対して閾値のみは 60 個（再現率 0.75）、watershed は 74 個（再現率 0.93）。見つけたものと見逃したものが画像に重なる。`sweep` の表で、混みすぎると見逃し、少ない細胞に強いノイズで数えすぎることが分かる。実際の核の画像では閾値のみ 271 個、watershed 311 個（正解がないので輪郭を目で確かめる） |
-| **生存時間解析**（`survival`） | そのまま実行する。`cohort` の `age_min`・`ecog_max`、`km` の `group`、`cox` の `covariates`、`specs` の `subsets`・`adjustments` を変えて再実行する | 女性と男性の生存期間の中央値（426 日と 270 日）、log-rank の χ² = 10.33、Cox のハザード比。`specs` が対象者と調整の 24 通りのハザード比を森林図で並べ、`zph` が比例ハザードの確認を示す |
-| **メタ解析: BCG ワクチン**（`meta-analysis`） | そのまま実行する。`pool` の `method`（DL・REML など）と `exclude`（除く試験番号）、`moderator` の `moderator`（`ablat`・`year`）を変えて再実行する | 13 試験の森林図に固定効果（RR 0.65）と変量効果（RR 0.49）の菱形が載り、I² = 92.1%、τ² = 0.309 が出る。`moderator` は緯度の傾きと残差 τ²、`sensitivity` は 1 試験を除いたときと推定量を変えたときの併合値を並べる |
-| **RNA-seq: airway**（`rna-seq`） | そのまま実行する（初回は DESeq2・edgeR・airway の Nix ビルドに時間がかかる）。`deseq` の `paired`、`volcano` の `fdr`・`lfc`、`filter` の `min_total` を変えて再実行する | 細胞株の項を入れると FDR < 0.05 の遺伝子が 2713 から 4030 に増える。DUSP1・FKBP5・TSC22D3 などの既知の応答遺伝子が上昇側に現れる。`compare` は DESeq2 と edgeR で一致する 3985 遺伝子を示す |
-| **集計と層別で逆転する相関**（`simpson`） | そのまま実行する。`correlate` の `stratify`（species・sex・island）を変えて、`correlate` から先を実行し直す | くちばしの長さと厚さの r は全体で −0.24、種ごとでは 0.39・0.65・0.64。性別では逆転せず、島では一部だけ逆転する。Berkeley の出願は全体のオッズ比 1.84 が学科で調整すると 0.90 になる |
-| **蓄電池の最適運用**（`battery`） | そのまま実行する。`schedule` の `tariff` を変えてその Card だけを再実行する。`settings` の `capacity_kwh`・`round_trip_efficiency`・`export_ratio` を変えて再実行する | 架空の 1 週間で、定額で売電も同額なら節約 0 円・0 サイクルで電池は動かない。売電が半額なら定額でも約 786 円、時間帯別で約 1478 円、市場連動で約 1442 円の節約になる。容量を増やすと節約は頭打ちになる。`check` は動的計画法と全探索の一致を示す |
-| **化学反応のゆらぎ**（`gillespie`） | そのまま実行する。`settings` の `volume`・`synthesis`・`degradation`・`runs` を変えて再実行する。`scaling` の `volumes` を変えてその Card だけを再実行する | 軌道は揺れ、2000 本の平均は率方程式に乗る。定常の平均と分散は理論の 20 に近く（20.15、20.46）、ファノ因子は 1.015。変動係数は 1/√N に沿って分子が少ないほど大きくなる。A + B ⇌ C は各 2 個で結合割合 0.57、率方程式の 0.50 から外れ、体積を増やすと近づく |
-| **熱伝導の逆問題**（`heat-inverse`） | そのまま実行する。`settings` の `final_time`・`noise` を変えて再実行する。`reconstruct` の `lambda` を変えてその Card だけを再実行する | 素朴な逆解は最大 3.8e+33 ℃ に発散し、Tikhonov 正則化は誤差 5.1 ℃ で形を取り戻す。λ が小さすぎても大きすぎても悪くなる。測定が遅いほどノイズより上に残るモードが減り（37 個から 3 個）、誤差は 1.9 ℃ から 10.6 ℃ に増える。ノイズなし・早い時刻なら真の値に戻る |
-| **生態系のモデル比較**（`ecology-models`） | そのまま実行する。`forecast` の `fit_until` を変えてその Card だけを再実行する。`fit` の `restarts`、`phase` の `years` を変える | この 21 年では 3 つのモデルの当てはめはほぼ同じ（対数 RMSE 0.219）で、AICc はパラメータの少ないロトカ・ヴォルテラが最良、ホリングの処理時間 h は 0 に近づく。1914 年までで当てはめた予測の誤差もロトカ・ヴォルテラが小さい（0.353、他は 0.421）。先まで延ばすと閉じた軌道と渦に分かれる。note は、AIC が良くても仕組みが正しいとは言えないこと、毛皮は個体数ではないことを述べる |
-| **Draft 版**（`casa-draft` ほか、名前が `-draft` のもの） | 開いて Canvas の「Card を生成」を押し、Agent に実装させる | 開始 Card と 3 つの Draft（何を受け取り何を渡すかの計画）だけの状態から、Agent が Card を実装し、実行して確かめる |
-| **力学系ギャラリー**（`dynamics-draft`） | 開いて「Card を生成」を押す | 互いに依存しない 6 つの Draft（ローレンツ・アトラクタ、マンデルブロ集合、ロジスティック写像、ライフゲーム、Gray–Scott、二重振り子）を、Agent が helper に手分けさせる。helper ごとに色の違う鶫が自分の Card を同時に書き、実行して確かめ、Agent が最後にまとめて報告する |
-| **MNIST · 分類器くらべ（Draft）**（`mnist-classifiers-draft`） | 開いて「Card を生成」を押す | `load` と `prepare` を実行したあと、7 つの分類器を helper が同時に書いて確かめ、Agent が `compare` を書いて順位表と散布図を出す |
-| **Live Stream**（`live-stream`） | 実行し、途中で停止（Cancel）する。`interval_ms` / `seed` / `samples` や `plot` の表示幅（`window`）を変えて再実行する | 100 ms 間隔のランダムウォークが WebGPU（Dawn / Metal）の折れ線グラフで滑らかにリアルタイム描画される（直近 60 点）。停止を押すと即座に中断し、その時点までのグラフが残る。再実行すると系列がリセットされ、並列度 1 でも 2 でも 200 点が欠落・順序逆転なく描画される |
+- **Why they can merge:** each Draft's description writes out the type of the output `result` (`mnist.Result`). Helpers cannot see what the others write, so without this agreement `compare` could not read them with one type.
+- **What is checked:** each Draft's description has the steps of the computation and `assert`s. Besides the counts, the 0–9 range and a minimum accuracy, they check properties that each method's result must have (kNN agreeing with brute force in numpy, logistic regression's predictions agreeing with the weighted sums, the forest's predictions agreeing with the average of its trees, formulas for the networks' parameter counts and so on). `compare` checks that the digests agree and that the accuracies agree with values recomputed from the predictions.
+- **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
+- **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.

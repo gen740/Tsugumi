@@ -1,0 +1,21 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "section"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "mc",
+      "type": "double",
+      "data": 4.5
+    },
+    {
+      "name": "bin_width",
+      "type": "double",
+      "data": 0.1
+    }
+  ]
+}

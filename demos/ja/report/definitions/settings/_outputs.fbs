@@ -1,0 +1,4 @@
+namespace report;
+table Config { seed:ulong; rows:ulong; heading:string; }
+table Outputs { config:Config (required); }
+root_type Outputs;

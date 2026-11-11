@@ -1,0 +1,118 @@
+{
+  "name": "Survival analysis",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "cohort"
+      },
+      {
+        "id": "split"
+      },
+      {
+        "id": "km"
+      },
+      {
+        "id": "cox"
+      },
+      {
+        "id": "zph"
+      },
+      {
+        "id": "specs"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "lung"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "cohort"
+        },
+        "to": {
+          "card": "cohort",
+          "port": "lung"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "specs"
+        },
+        "to": {
+          "card": "specs",
+          "port": "lung"
+        }
+      },
+      {
+        "from": {
+          "card": "cohort",
+          "port": "cohort"
+        },
+        "to": {
+          "card": "split",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "split",
+          "port": "km"
+        },
+        "to": {
+          "card": "km",
+          "port": "cohort"
+        }
+      },
+      {
+        "from": {
+          "card": "split",
+          "port": "cox"
+        },
+        "to": {
+          "card": "cox",
+          "port": "cohort"
+        }
+      },
+      {
+        "from": {
+          "card": "cox",
+          "port": "fit"
+        },
+        "to": {
+          "card": "zph",
+          "port": "fit"
+        }
+      }
+    ]
+  }
+}

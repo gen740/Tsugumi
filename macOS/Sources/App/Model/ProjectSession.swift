@@ -180,6 +180,8 @@ final class ProjectSession {
   // Connection
   private(set) var environment: EnvironmentState = .stopped
   private(set) var connected = false
+  /// Closed for good (close): it will not connect again.
+  private(set) var closed = false
   private(set) var connectionMessage: String?
   @ObservationIgnored private var client: RPCClient?
   @ObservationIgnored private var subscription: String?
@@ -357,6 +359,11 @@ final class ProjectSession {
   // Versions (git): the graph as last read, and whether this project is new
   // (made or copied by the app), so it becomes a repository when it connects.
   var versionGraph: Tsugumi_RPC_VersionGraphT?
+  /// A version's Cards and wires (a commit never changes: read once).
+  var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]
+  var versionSummaryBusy: Set<String> = []
+  var versionSummaryErrors: [String: String] = [:]
+  var versionSummaryTried: Set<String> = []
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
@@ -418,6 +425,7 @@ final class ProjectSession {
   /// VM, so its slot is free. Unsaved edits were saved before (the caller
   /// does not close a dirty session).
   func close() async {
+    closed = true
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil
@@ -434,14 +442,17 @@ final class ProjectSession {
 
   /// A tsugumid to use instead of starting the environment (tests).
   @ObservationIgnored var endpointOverride: Endpoint?
+  /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
+  var connectionFailed = false
+  /// The waits between tries to reach a tsugumid that has just started (seconds).
+  @ObservationIgnored var connectRetryDelays: [Double] = [0.2, 0.4, 0.8, 1.6, 2.0]
 
   private func connect() async {
     connectionMessage = nil
     do {
       let ep: Endpoint
       if let o = endpointOverride { ep = o } else { ep = try await environments.start(identity) }
-      let c = RPCClient(endpoint: ep.url)
-      _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+      let c = try await reach(ep)
       let opened = try await c.open(viewId: viewId)
       client = c
       projectId = ep.projectId
@@ -456,10 +467,45 @@ final class ProjectSession {
       }
       if dirty { scheduleSave() }
       await refreshVisibleDisplays()
+      await restoreCardStates(c)
     } catch {
       connected = false
+      connectionFailed = error is Unreached
       connectionMessage = "\(error)"
     }
+  }
+
+  /// A failure to reach the tsugumid, as opposed to one while reading the project.
+  struct Unreached: Error, CustomStringConvertible {
+    let underlying: Error
+    var description: String { "\(underlying)" }
+  }
+
+  /// Connects to a tsugumid that has just started. Its port may not be
+  /// reachable at once, so a connection that cannot be made is tried again for
+  /// a few seconds (the web page does the same: WSL2 forwards a new port late).
+  private func reach(_ ep: Endpoint) async throws -> RPCClient {
+    var attempt = 0
+    while true {
+      let c = RPCClient(endpoint: ep.url)
+      do {
+        _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+        return c
+      } catch where Self.unreachable(error) {
+        await c.close()
+        guard !closed, attempt < connectRetryDelays.count else { throw Unreached(underlying: error) }
+        try? await Task.sleep(for: .seconds(connectRetryDelays[attempt]))
+        attempt += 1
+      }
+    }
+  }
+
+  /// The tsugumid was not reached: the connection could not be made or ended
+  /// before the hello was answered.
+  nonisolated static func unreachable(_ error: Error) -> Bool {
+    if case RPCError.disconnected = error { return true }
+    guard let e = error as? URLError else { return false }
+    return [.cannotConnectToHost, .networkConnectionLost, .timedOut, .cannotFindHost, .notConnectedToInternet].contains(e.code)
   }
 
   /// Reconnects after a lost connection: Hello -> Open -> re-read state.
@@ -623,6 +669,39 @@ final class ProjectSession {
     }
     resolution = r
     diagnostics = all
+    // A result belongs to a Card of the document. A Card that comes back asks for
+    // its own again: displayedCards changed (refreshVisibleDisplays).
+    for k in displays.keys where r[k] == nil { displays[k] = nil }
+  }
+
+  /// What a Card's invocation says about the Card, from a notification or from the run's record.
+  private func noteInvocation(_ inv: Tsugumi_RPC_InvocationSummaryT) {
+    let k = key(inv.card.path)
+    let prev = cardStates[k]
+    let n = inv.invocation ?? 0
+    if prev == nil || prev!.invocation <= n {
+      var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+      // Each notification carries the invocation's stages so far.
+      next.stages = inv.stages.compactMap { $0 }.compactMap { t in
+        Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
+      }
+      next.cached = inv.buildCached == true
+      next.workerReused = inv.workerReused == true
+      next.sent = Set(inv.outputsSent.compactMap { $0 })
+      next.sentInRun = (prev?.sentInRun ?? []).union(next.sent)
+      next.startedAt = inv.startedAt
+      next.endedAt = inv.endedAt
+      next.readyAt = inv.readyAt
+      cardStates[k] = next
+    }
+  }
+
+  /// The Cards of the last run, for a project just opened: their notifications were sent before it was.
+  private func restoreCardStates(_ c: RPCClient) async {
+    guard let run = runStatus?.runId, let page = try? await c.latestInvocations(runId: run),
+      runStatus?.runId == run  // a run started meanwhile has its own states
+    else { return }
+    for inv in page.records.compactMap({ $0 }) { noteInvocation(inv) }
   }
 
   private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
@@ -691,30 +770,14 @@ final class ProjectSession {
       }
     case .runcardchanged:
       if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
-        let k = key(inv.card.path)
-        let prev = cardStates[k]
-        let n = inv.invocation ?? 0
-        if prev == nil || prev!.invocation <= n {
-          var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
-          // Each notification carries the invocation's stages so far.
-          next.stages = inv.stages.compactMap { $0 }.compactMap { t in
-            Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
-          }
-          next.cached = inv.buildCached == true
-          next.workerReused = inv.workerReused == true
-          next.sent = Set(inv.outputsSent.compactMap { $0 })
-          next.sentInRun = (prev?.sentInRun ?? []).union(next.sent)
-          next.startedAt = inv.startedAt
-          next.endedAt = inv.endedAt
-          next.readyAt = inv.readyAt
-          cardStates[k] = next
-        }
+        noteInvocation(inv)
         sampleClock(inv.endedAt ?? (inv.state == .running ? inv.stages.last??.start : nil))
-        recordTimeline(k, inv)
+        recordTimeline(key(inv.card.path), inv)
       }
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
+      if let commit = runStatus?.commit { Task { await summarizeVersion(commit) } }
       if dirty { scheduleSave() }
     default:
       break
@@ -975,6 +1038,17 @@ final class ProjectSession {
   /// Drops every unsaved edit and follows the latest confirmed document
   /// (only for edits that cannot be saved).
   func discardDraft() {
+    dropDraft()
+    // A save on its way answers about the draft that went: nothing of it stays.
+    if let saving = saveTask {
+      Task { [weak self] in
+        await saving.value
+        self?.dropDraft()
+      }
+    }
+  }
+
+  private func dropDraft() {
     project = confirmedProject
     layout = confirmedLayout
     sourceEdits = [:]
@@ -984,6 +1058,9 @@ final class ProjectSession {
     sourceBases = [:]
     draftBase = nil
     externalBases = [:]
+    pendingCardRenames = []
+    saveAgain = false
+    conflictRetries = 0
     saveError = nil
     savingAfterRun = false
   }
@@ -1019,10 +1096,18 @@ final class ProjectSession {
   /// meanwhile are merged in first; a conflict means newer changes are on
   /// their way, so the save is tried again once they arrived.
   private func saveOnce() async {
-    guard dirty, let client else { return }
+    guard let client else { return }
+    // Nothing left to save (undone, or met by what arrived): no failure is left either.
+    guard dirty else {
+      saveError = nil
+      return
+    }
     await fillUndoSources()
     if let b = draftBase, b.rev != rev { rebase() }
-    guard dirty else { return }
+    guard dirty else {
+      saveError = nil
+      return
+    }
     saving = true
     defer { saving = false }
     let base = draftBase ?? makeBase()
@@ -1035,9 +1120,14 @@ final class ProjectSession {
     var merged: [String: ExternalProject] = [:]
     if !layoutOnly {
       if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
+      // A removed definition takes its folder with it: the core refuses a change to a file in it.
+      var removedFolders: [String] = []
       for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
         if d.removed {
-          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil { changes.append(Change.removeDefinition(id: id)) }
+          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil {
+            changes.append(Change.removeDefinition(id: id))
+            removedFolders.append("definitions/\(id)/")
+          }
         } else {
           changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
                                               linkJSON: d.link?.serialized()))
@@ -1062,10 +1152,12 @@ final class ProjectSession {
           }
         }
       }
-      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key }) where !sourceRemovals.contains(p) && !written.contains(p) {
+      func goesWithItsDefinition(_ p: String) -> Bool { removedFolders.contains { p.hasPrefix($0) } }
+      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key })
+      where !sourceRemovals.contains(p) && !written.contains(p) && !goesWithItsDefinition(p) {
         changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
       }
-      for p in sourceRemovals.sorted() where !written.contains(p) {
+      for p in sourceRemovals.sorted() where !written.contains(p) && !goesWithItsDefinition(p) {
         if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
       }
     }
@@ -1212,6 +1304,27 @@ final class ProjectSession {
   /// Cards whose displays the canvas shows: what a Card shows is up to its
   /// code (the display SDK), so every Card that can run may send displays.
   var displayedCards: Set<CardKey> { Set(resolution.keys.filter { [.code, .logger].contains(kind($0)) }) }
+
+  /// A Card that took a name another Card had starts without that Card's result and run state.
+  func forgetResult(_ k: CardKey) {
+    displays[k] = nil
+    cardStates[k] = nil
+  }
+
+  /// Why a Card that ran has no result to show.
+  func noResultNote(_ k: CardKey) -> String? {
+    switch cardStates[k]?.state {
+    case .failed: return String(localized: "失敗したので結果はありません")
+    case .blocked: return String(localized: "上流の Card が失敗したので実行していません")
+    default: return nil
+    }
+  }
+
+  /// Looks a flake up for nixSources (nothing is saved).
+  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
+    guard let client else { throw RPCError.disconnected }
+    return try await client.resolveNixSource(ref: ref)
+  }
 
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
@@ -1426,6 +1539,72 @@ final class ProjectSession {
     fn(&meta)
     d.meta = meta
     setCardDefinition(k, d)
+  }
+
+  // MARK: - Comments on a Card (its _meta.json)
+
+  /// What the user asks of this Card, in the order written.
+  func comments(_ k: CardKey) -> [CardComment] { CardComment.list(in: cardMeta(k)) }
+
+  /// Comments not resolved yet.
+  func openComments(_ k: CardKey) -> [CardComment] { comments(k).filter { !$0.resolved } }
+
+  /// The Cards of a scope with comments not resolved yet.
+  func cardsWithOpenComments(in scope: [String]) -> [CardKey] {
+    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !openComments($0).isEmpty }
+  }
+
+  /// Saved at once; a Card in Card has a _meta.json too. One call is one step of undo.
+  private func editComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
+    edit { x in
+      guard var d = x.cardDefinitionDraft(k) else { return }
+      var meta = d.meta ?? .object([])
+      let list = fn(meta["comments"]?.array ?? [])
+      meta["comments"] = list.isEmpty ? nil : .array(list)
+      d.meta = meta.object?.isEmpty ?? true ? nil : meta
+      x.setCardDefinition(k, d)
+    }
+  }
+
+  func addComment(_ k: CardKey, _ text: String) {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user"))])] }
+  }
+
+  func editComment(_ k: CardKey, id: String, text: String) {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    editComments(k) { list in
+      list.map { c in
+        guard c["id"]?.string == id else { return c }
+        var n = c
+        n["text"] = .string(t)
+        n["editedBy"] = .string("user")
+        return n
+      }
+    }
+  }
+
+  /// Marks a comment by hand. Opening one again takes back what was said about it.
+  func setCommentResolved(_ k: CardKey, id: String, _ resolved: Bool) {
+    editComments(k) { list in
+      list.map { c in
+        guard c["id"]?.string == id else { return c }
+        var n = c
+        n["resolved"] = resolved ? .bool(true) : nil
+        n["stateBy"] = .string("user")
+        if !resolved {
+          n["resolution"] = nil
+          n["cards"] = nil
+        }
+        return n
+      }
+    }
+  }
+
+  func removeComment(_ k: CardKey, id: String) {
+    editComments(k) { $0.filter { $0["id"]?.string != id } }
   }
 
   /// A setting of the Card (its _card.json).

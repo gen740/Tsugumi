@@ -68,6 +68,7 @@ void Service::run(RequestIn& req) {
     p.digest = digest;
     p.card = wire::card_arg(r->card());
     p.propagate = r->propagate().value_or(true);
+    p.english = english(req.conn);
     p.max_concurrency = r->max_concurrency().value_or(4);
     p.nix_jobs = r->nix_jobs().value_or(1);
     p.nix_cores = r->nix_cores().value_or(1);
@@ -86,7 +87,7 @@ void Service::run(RequestIn& req) {
     // The version it runs: what is saved, committed when it changed. A git
     // problem never stops a run (it then records no version).
     try {
-      p.commit = versions_->commit_all("実行: " + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
+      p.commit = versions_->commit_all((p.english ? "Run: " : "実行: ") + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
     } catch (const std::exception& e) {
       log::warn(std::string("versions: no commit for this run: ") + e.what());
     }
@@ -253,6 +254,25 @@ void Service::run_history(RequestIn& req) {
   if (more) pb.add_next_cursor(cur);
   auto off = pb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::RunPage, off.Union()));
+}
+
+void Service::run_latest_invocations(RequestIn& req) {
+  const auto* r = req.request()->value_as_RunLatestInvocationsRequest();
+  require_uuid(r->run_id(), "run_id");
+  std::string run_id = r->run_id()->str();
+  auto rows = history_->read([&](sql::Db& db) {
+    if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
+    return History::latest_invocations(db, run_id);
+  });
+  for (auto& s : rows) history_->overlay(s);
+  FBB b;
+  std::vector<flatbuffers::Offset<R::InvocationSummary>> out;
+  for (const auto& s : rows) out.push_back(wire::invocation(b, s));
+  auto v = b.CreateVector(out);
+  R::InvocationPageBuilder pb(b);
+  pb.add_records(v);
+  auto off = pb.Finish();
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage, off.Union()));
 }
 
 void Service::run_invocations(RequestIn& req) {

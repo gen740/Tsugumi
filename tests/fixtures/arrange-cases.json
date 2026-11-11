@@ -1,0 +1,56 @@
+[
+{"name":"empty","flow":"topToBottom","cards":[],"wires":[],"frames":[],"notes":[]},
+{"name":"note-only","flow":"topToBottom","cards":[],"wires":[],"frames":[],"notes":[{"id":"n","width":240,"height":120},{"id":"m","width":300,"height":200}]},
+{"name":"isolated","flow":"topToBottom","cards":[
+  {"id":"a","kind":"draft","summary":false,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"b","kind":"code","summary":true,"params":0,"inputs":["x"],"outputs":["y"],"display":false},
+  {"id":"c","kind":"input","summary":false,"params":3,"inputs":[],"outputs":["v"],"display":true},
+  {"id":"d","kind":"logger","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false},
+  {"id":"e","kind":"code","summary":false,"params":0,"inputs":[],"outputs":[],"display":false}
+],"wires":[],"frames":[{"id":"c","width":320,"height":170}],"notes":[{"id":"n","width":240,"height":120}]},
+{"name":"many-isolated","flow":"leftToRight","cards":[
+  {"id":"a","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"b","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"c","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"d","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"e","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"f","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"g","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"h","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"i","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"j","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},
+  {"id":"k","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false},{"id":"l","kind":"code","summary":true,"params":0,"inputs":[],"outputs":[],"display":false}
+],"wires":[],"frames":[],"notes":[]},
+{"name":"collapsed","flow":"topToBottom","cards":[
+  {"id":"a","kind":"code","summary":true,"params":0,"inputs":[],"outputs":["p","q"],"display":false,"collapsed":true},
+  {"id":"b","kind":"code","summary":true,"params":0,"inputs":["p"],"outputs":["r"],"display":false,"collapsed":true},
+  {"id":"c","kind":"code","summary":true,"params":0,"inputs":["q"],"outputs":["s"],"display":true},
+  {"id":"d","kind":"merge","summary":false,"params":0,"inputs":["r","s"],"outputs":["out"],"display":false},
+  {"id":"e","kind":"code","summary":true,"params":0,"inputs":["in"],"outputs":[],"display":false,"collapsed":true}
+],"wires":[{"from":"a","fromPort":"p","to":"b","toPort":"p"},{"from":"a","fromPort":"q","to":"c","toPort":"q"},{"from":"b","fromPort":"r","to":"d","toPort":"r"},{"from":"c","fromPort":"s","to":"d","toPort":"s"},{"from":"d","fromPort":"out","to":"e","toPort":"in"}],
+"frames":[{"id":"c","width":320,"height":170}],"notes":[]},
+{"name":"cycle-without-source","flow":"topToBottom","cards":[
+  {"id":"a","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false},
+  {"id":"b","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false},
+  {"id":"c","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false}
+],"wires":[{"from":"a","fromPort":"o","to":"b","toPort":"i"},{"from":"b","fromPort":"o","to":"c","toPort":"i"},{"from":"c","fromPort":"o","to":"a","toPort":"i"},{"from":"a","fromPort":"o","to":"a","toPort":"i"}],"frames":[],"notes":[]},
+{"name":"feedback-with-branch","flow":"topToBottom","cards":[
+  {"id":"init","kind":"input","summary":false,"params":2,"inputs":[],"outputs":["v"],"display":false},
+  {"id":"loop","kind":"merge","summary":false,"params":0,"inputs":["init","next"],"outputs":["out"],"display":false},
+  {"id":"step","kind":"code","summary":true,"params":0,"inputs":["v"],"outputs":["v"],"display":false},
+  {"id":"test","kind":"branch","summary":false,"params":0,"inputs":["value","condition"],"outputs":["a","b"],"display":false},
+  {"id":"check","kind":"code","summary":true,"params":0,"inputs":["v"],"outputs":["ok"],"display":false},
+  {"id":"done","kind":"logger","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false}
+],"wires":[{"from":"init","fromPort":"v","to":"loop","toPort":"init"},{"from":"loop","fromPort":"out","to":"step","toPort":"v"},{"from":"step","fromPort":"v","to":"test","toPort":"value"},{"from":"step","fromPort":"v","to":"check","toPort":"v"},{"from":"check","fromPort":"ok","to":"test","toPort":"condition"},{"from":"test","fromPort":"a","to":"loop","toPort":"next"},{"from":"test","fromPort":"b","to":"done","toPort":"in"}],"frames":[],"notes":[{"id":"n","width":240,"height":120}]},
+{"name":"inner-scope","flow":"topToBottom","cards":[
+  {"id":"p","kind":"code","summary":true,"params":0,"inputs":["a"],"outputs":["x"],"display":true},
+  {"id":"q","kind":"code","summary":true,"params":0,"inputs":["b"],"outputs":["y"],"display":false},
+  {"id":"r","kind":"code","summary":true,"params":0,"inputs":["x","y"],"outputs":["z"],"display":false}
+],"wires":[{"from":"p","fromPort":"x","to":"r","toPort":"x"},{"from":"q","fromPort":"y","to":"r","toPort":"y"}],"frames":[{"id":"p","width":320,"height":170}],"notes":[{"id":"n","width":240,"height":120}],
+"boundary":{"inputs":[{"card":"p","port":"a"},{"card":"q","port":"b"}],"outputs":[{"card":"r","port":"z"}]}},
+{"name":"crossing-ports","flow":"topToBottom","cards":[
+  {"id":"s","kind":"code","summary":true,"params":0,"inputs":[],"outputs":["left","right"],"display":false},
+  {"id":"l","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false},
+  {"id":"r","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false},
+  {"id":"j","kind":"code","summary":true,"params":0,"inputs":["fromRight","fromLeft"],"outputs":[],"display":false}
+],"wires":[{"from":"s","fromPort":"right","to":"r","toPort":"i"},{"from":"s","fromPort":"left","to":"l","toPort":"i"},{"from":"l","fromPort":"o","to":"j","toPort":"fromLeft"},{"from":"r","fromPort":"o","to":"j","toPort":"fromRight"}],"frames":[],"notes":[]},
+{"name":"unknown-ends-are-ignored","flow":"leftToRight","cards":[
+  {"id":"a","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false},
+  {"id":"b","kind":"code","summary":true,"params":0,"inputs":["i"],"outputs":["o"],"display":false}
+],"wires":[{"from":"a","fromPort":"nope","to":"b","toPort":"gone"},{"from":"a","fromPort":"o","to":"ghost","toPort":"i"}],"frames":[],"notes":[]}
+]

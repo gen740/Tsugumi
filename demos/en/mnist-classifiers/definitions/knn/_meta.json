@@ -1,0 +1,10 @@
+{
+  "description": "k-nearest neighbours",
+  "content": "Takes the subset from prepare, finds by brute force the distance from each test image to the training images, and decides the digit by a majority vote of the k nearest (scikit-learn, 1 thread). Training only memorises, so the time shows in prediction. Shows the accuracy, the time, a breakdown of the mistakes and the digits it got wrong with their neighbours, and passes predictions for every test image to compare.",
+  "outputs": [
+    {
+      "name": "result",
+      "description": "Accuracy, CPU time, settings, and predictions for every test image"
+    }
+  ]
+}

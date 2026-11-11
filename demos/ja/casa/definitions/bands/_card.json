@@ -1,0 +1,54 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "input"
+    },
+    {
+      "name": "ciao"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "red_min_ev",
+      "type": "double",
+      "data": 600
+    },
+    {
+      "name": "green_min_ev",
+      "type": "double",
+      "data": 1650
+    },
+    {
+      "name": "blue_min_ev",
+      "type": "double",
+      "data": 2250
+    },
+    {
+      "name": "max_ev",
+      "type": "double",
+      "data": 7500
+    },
+    {
+      "name": "ra",
+      "type": "double",
+      "data": 350.8584
+    },
+    {
+      "name": "dec",
+      "type": "double",
+      "data": 58.8113
+    },
+    {
+      "name": "bin_size",
+      "type": "double",
+      "data": 2
+    },
+    {
+      "name": "pixels",
+      "type": "uint64",
+      "data": 360
+    }
+  ]
+}

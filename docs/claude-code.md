@@ -1,55 +1,47 @@
-# Claude Code から使う
+# Using it from Claude Code
 
-Tsugumi のプロジェクトを Claude Code から開き、Card の作成・編集・実行・結果の確認を任せられます（Claude Code の plugin `tsugumi`、`plugins/tsugumi/`）。
-作業の様子は [Web UI](WebUI.md) にそのまま出ます。Claude Code が保存した Card は Canvas で変わり、実行は進み具合ごと表示され、ツグミが Claude Code の作業している Card のそばへ飛んでいきます。利用者は同じ画面を見ながら、自分でも触れます。
+You can open a Tsugumi project from Claude Code and leave it to make, edit and run Cards and check the results (the Claude Code plugin `tsugumi`, `plugins/tsugumi/`). It has been verified on a Mac and on Windows (WSL2).
+The work shows in the [Web UI](WebUI.md) as it happens: Cards Claude Code saves change on the Canvas, runs show their progress, and the thrush flies next to the Card Claude Code is working on. You watch the same screen and can work on it yourself.
 
-## 仕組み
+## How it works
 
 ```text
-Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI のサーバー ── tsugumid
-                                                                       └─ イベント ── ブラウザ（Canvas・ツグミ・承認）
+Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumid
+                                                                       └─ events ── browser (Canvas, thrush, approvals)
 ```
 
-- plugin の MCP サーバー（`web/server/mcp.ts`）は `tsugumid` に直接つながりません。Web UI のサーバーに頼み、サーバーがチャットの Agent と同じ道具（`project_inspect`・`project_save`・`run`・`run_record`・`log_range` など）を、同じ検査（引数の検査、`op_id`、リビジョンの競合、実行の待ち合わせ）で実行します。保存の `origin` は `agent` です。
-- サーバーは呼び出しをページにも知らせます（`agentWork`）。ページはチャットの Agent のときと同じく、ツグミをその Card へ飛ばし、「generate の記録を見ています」のような一言を添えます。10 秒ほど呼び出しがなければ、ツグミはチャットの左上に戻ります。モデルのキーを Tsugumi に登録していなくても、Claude Code が作業する間はツグミが出ます。
-- 実行のアニメーション（Card の状態、配線を流れる様子）は `tsugumid` から届くので、誰が実行しても同じように出ます。
-- Card に新しくネットワーク・隔離なしの実行・ホストのフォルダを与える保存は、チャットの Agent と同じく利用者の承認を待ちます。承認の画面は Web UI のチャットに「Claude Code が Card の権限を広げようとしています」として出ます。Web UI のページが開いていなければ承認できないので、保存はされず、Claude Code には利用者に説明するよう伝えます。
-- チャットに添えたフォルダの読み取り（`attached_folder_read`）、ヘルパーへの分担（`delegate`）、ツグミの吹き出し（`guide_show`）はチャットのものなので、Claude Code には渡しません。Claude Code は自分のファイル操作や subagent を使います。
+- The plugin's MCP server (`web/server/mcp.ts`) does not connect to `tsugumid` directly. It asks the Web UI's server, which runs the same tools as the chat's Agent (`project_inspect`, `project_save`, `run`, `run_record`, `log_range` and the rest) with the same checks (argument validation, `op_id`, revision conflicts, waiting for runs). The `origin` of its saves is `agent`.
+- The server also tells the page about each call (`agentWork`). As with the chat's Agent, the page flies the thrush to that Card and adds a word such as "Reading generate's record". After about ten seconds without calls, the thrush returns to the top left of the chat. The thrush appears while Claude Code works even if no model key is registered in Tsugumi.
+- The run animation (Card states, values flowing along wires) comes from `tsugumid`, so it looks the same whoever runs it.
+- A save that newly gives a Card the network, running without isolation or a host folder waits for the user's approval, as for the chat's Agent. The approval appears in the Web UI's chat as "Claude Code wants to widen a Card's permissions". Without an open Web UI page there is no way to approve, so the save is not made, and Claude Code is told to explain this to the user.
+- Reading a folder attached to the chat (`attached_folder_read`), handing work to helpers (`delegate`) and the thrush's speech bubble (`guide_show`) belong to the chat and are not given to Claude Code, which uses its own file operations and subagents.
 
-## 準備
+## Setup
 
-1. Tsugumi のリポジトリを手元に置き、core と Web UI をビルドします（[Web UI のビルド](WebUI.md#ビルドと起動)と同じです）。
+1. Keep a copy of the Tsugumi repository and build the core and the Web UI as in [Building and starting the Web UI](WebUI.md#building-and-starting).
 
-   ```bash
-   nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker'
-   ```
-
-   ```bash
-   cd web && npm install && nix develop --command npm run gen && npm run build
-   ```
-
-2. Claude Code で、このリポジトリを marketplace として加え、plugin を入れます。
+2. In Claude Code, add this repository as a marketplace and install the plugin:
 
    ```text
    /plugin marketplace add gen740/Tsugumi
    /plugin install tsugumi@tsugumi
    ```
 
-   入れるときに「Tsugumi checkout」として、1 でビルドしたリポジトリのフォルダを指定します（あとから `/plugin configure tsugumi@tsugumi` で変えられます）。plugin は Claude Code のキャッシュにコピーされ、ビルドしたものはその中にないため、このフォルダから MCP サーバーを起動します。`node` が見つからなければ、そのフォルダの Nix の開発環境（`nix develop`）の `node` を使います。
+   When installing, give the folder of the repository you built in step 1 as "Tsugumi checkout" (change it later with `/plugin configure tsugumi@tsugumi`). The plugin is copied into Claude Code's cache, which does not contain what you built, so the MCP server is started from this folder. If `node` is not found, the `node` of that folder's Nix development shell (`nix develop`) is used.
 
-## 使い方
+## Using it
 
-- `/tsugumi:open <プロジェクトのフォルダ>` か、「この Tsugumi のプロジェクトで…して」と頼みます。Claude Code は `tsugumi_open` でプロジェクトを開いてから作業します。
-- `tsugumi_open` は、動いている Web UI のサーバー（データフォルダの `server.json`）を探し、なければ起動します（Claude Code を閉じても動き続けます。止めるときはそのプロセスを止めます）。ブラウザのページが開いていればそのページがプロジェクトを開き、なければサーバーがブラウザで開きます（`server.json` の鍵はページの鍵ではなく、Card の権限を広げる保存の承認に答えられないためです）。
-- 新しいプロジェクトは `tsugumi_open` の `create: true` で作れます（まだないフォルダに限ります）。
-- 最初の `tsugumi_open` は、道具を使うときの決まり（チャットの Agent と同じ `agent/Shared/system-prompt.md`）を返します。
+- Use `/tsugumi:open <project folder>`, or ask "in this Tsugumi project, do …". Claude Code opens the project with `tsugumi_open` before working.
+- `tsugumi_open` looks for a running Web UI server (`server.json` in the data folder) and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §8](security.md#the-agents-permission-boundary)).
+- A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
+- The first `tsugumi_open` returns the rules for using the tools (`agent/Shared/system-prompt.md`, the same as the chat's Agent).
 
-| 環境変数（MCP サーバー） | 内容 |
+| Environment variable (MCP server) | Meaning |
 | --- | --- |
-| `TSUGUMI_WEB_DATA` | Web UI のデータフォルダ（`server.json` を探す場所）。サーバーと同じ値にします |
-| `TSUGUMI_WEB_PORT` | 起動するサーバーのポート（既定は空いているポート） |
+| `TSUGUMI_WEB_DATA` | The Web UI's data folder (where to look for `server.json`). Use the same value as the server |
+| `TSUGUMI_WEB_PORT` | The port of a server it starts (by default, a free port) |
 
-## 対応していないこと
+## What is not supported
 
-- macOS アプリには対応していません。Claude Code が作業するプロジェクトは Web UI で開きます。
-- Card の実行は、Web UI で実行できる環境（このホストの `tsugumid` と worker）に限られます。
+- The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.
+- Cards run in the environment of the Web UI server `tsugumi_open` found (inside the shared VM if the `tsugumi` command's server is running on a Mac). If no server is running, a server is started from the repository you built, and `tsugumid` runs directly on this host.

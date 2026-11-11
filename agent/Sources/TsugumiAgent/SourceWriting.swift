@@ -1,9 +1,8 @@
 import Foundation
 
-/// A file as it arrives in the arguments of a save (`project_save`,
-/// `project_validate`) while the model writes them: `path` is nil until its
-/// key has come, `text` is what has come of `bytes`, and `done` says the
-/// change is complete.
+/// A file as it arrives in the arguments of a save (`project_save`) while the
+/// model writes them: `path` is nil until its key has come, `text` is what has
+/// come of `bytes`, and `done` says the change is complete.
 public struct SourceWriting: Equatable, Sendable {
   public var path: String?
   public var text = ""

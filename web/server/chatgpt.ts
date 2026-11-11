@@ -12,6 +12,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import { L } from './i18n'
 
 export interface ChatGPTEndpoints {
   issuer: string
@@ -126,6 +127,8 @@ async function postForm(url: string, form: Record<string, string>) {
   try { obj = JSON.parse(text) } catch {}
   return { status: r.status, obj }
 }
+
+export interface PlanAccessToken { clientId: string; value: string }
 
 export interface SignInResult { account: AccountInfo; welcome: boolean }
 
@@ -260,8 +263,8 @@ export class ChatGPTAuth {
       }
       const ok = !u.searchParams.has('error')
       const body = ok
-        ? 'サインインしました。このタブを閉じて Tsugumi に戻ってください。 / Signed in. Close this tab and return to Tsugumi.'
-        : 'サインインは完了しませんでした。Tsugumi に戻ってください。 / The sign-in did not finish. Return to Tsugumi.'
+        ? L('サインインしました。このタブを閉じて Tsugumi に戻ってください。 / Signed in. Close this tab and return to Tsugumi.')
+        : L('サインインは完了しませんでした。Tsugumi に戻ってください。 / The sign-in did not finish. Return to Tsugumi.')
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', connection: 'close' })
       res.end(`<!doctype html><meta charset=utf-8><title>Tsugumi</title><body style="font: 15px -apple-system, sans-serif; margin: 3em"><p>${body}</p>`)
       settle.resolve(u.searchParams)
@@ -380,19 +383,23 @@ export class ChatGPTAuth {
 
   /** The active account's access token, refreshed near its expiry. `stale` is
    *  a token the API refused: refreshed unless a refresh already replaced it. */
-  async accessToken(stale?: string): Promise<string> {
+  async accessToken(stale?: PlanAccessToken): Promise<PlanAccessToken> {
     const s = this.load()
     const a = s?.accounts.find((x) => x.client_id === s.active_client_id)
     if (!s || !a) throw new ChatGPTError('signInRequired', 'no ChatGPT account is signed in')
+    if (stale && stale.clientId !== a.client_id) throw new ChatGPTError('failed', 'the active account changed; try again')
     if (!signedIn(a)) throw new ChatGPTError('signInRequired', 'signed out')
     if (!planEnabled(a)) throw new ChatGPTError('planNotEnabled')
-    if (!stale && !expiresSoon(a)) return a.access_token!
+    if (stale ? a.access_token !== stale.value : !expiresSoon(a)) return { clientId: a.client_id, value: a.access_token! }
     const id = a.client_id
     return this.locked(async () => {
       // Read again: another refresh may have replaced the tokens meanwhile.
-      const cur = this.load()?.accounts.find((x) => x.client_id === id)
+      const record = this.load()
+      if (record?.active_client_id !== id) throw new ChatGPTError('failed', 'the active account changed; try again')
+      const cur = record.accounts.find((x) => x.client_id === id)
       if (!cur || !signedIn(cur)) throw new ChatGPTError('signInRequired', 'signed out')
-      if (stale ? cur.access_token !== stale : !expiresSoon(cur)) return cur.access_token!
+      if (!planEnabled(cur)) throw new ChatGPTError('planNotEnabled')
+      if (stale ? cur.access_token !== stale.value : !expiresSoon(cur)) return { clientId: id, value: cur.access_token! }
       let r: { status: number; obj: any }
       try {
         r = await postForm(this.endpoints.token, { grant_type: 'refresh_token', client_id: id, refresh_token: cur.refresh_token!, resource: this.endpoints.resource })
@@ -421,7 +428,7 @@ export class ChatGPTAuth {
       x.saved_at = new Date().toISOString()
       this.save(s2)
       if (!planEnabled(x)) throw new ChatGPTError('planNotEnabled')
-      return x.access_token!
+      return { clientId: id, value: x.access_token! }
     })
   }
 

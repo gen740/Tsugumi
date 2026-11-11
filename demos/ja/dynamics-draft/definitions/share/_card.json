@@ -1,0 +1,17 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "lorenz",
+        "mandelbrot",
+        "logistic",
+        "life",
+        "grayscott",
+        "pendulum"
+      ]
+    }
+  ]
+}

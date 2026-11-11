@@ -120,7 +120,7 @@ struct RunLogView: View {
       .padding(.horizontal, 6)
       ScrollViewReader { proxy in
         ScrollView {
-          Text(log.isEmpty ? emptyReason : log)
+          Text(log.isEmpty ? emptyReason : terminalText(log))
             .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: .monospaced))
             .foregroundStyle(log.isEmpty ? .secondary : .primary)
             .textSelection(.enabled)
@@ -192,7 +192,7 @@ struct RunLogView: View {
 
 /// Invocations of one run on a shared time axis, one row per Card, each bar
 /// split into its stages. Drag over a time range to zoom into it, scroll
-/// sideways to move along time, 「全体」 to see the whole run again. Hover a bar
+/// sideways to move along time, "All" to see the whole run again. Hover a bar
 /// for its Card, invocation, stage and times; click it to show the Card.
 struct RunTimelineView: View {
   let session: ProjectSession
