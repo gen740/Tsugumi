@@ -9,8 +9,9 @@ import TsugumiLauncher
 struct ProjectTerminalPanel: View {
   let session: ProjectSession
   var onClose: (() -> Void)?
-  @State private var generation = 0
-  @State private var ended: String?
+  @State private var tabs = [TerminalTab(number: 1)]
+  @State private var selection = 1
+  @State private var nextNumber = 2
 
   var body: some View {
     VStack(spacing: 0) {
@@ -20,33 +21,78 @@ struct ProjectTerminalPanel: View {
         Text(verbatim: "/project").font(.callout.monospaced()).foregroundStyle(.secondary)
         Text("実行環境内（このプロジェクトだけが見えます）").font(.caption).foregroundStyle(.secondary).lineLimit(1)
         Spacer()
-        if let ended {
-          Text(ended).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }
-        Button { ended = nil; generation += 1 } label: { Label("新しいターミナル", systemImage: "plus") }
+        Button {
+          tabs.append(TerminalTab(number: nextNumber))
+          selection = nextNumber
+          nextNumber += 1
+        } label: { Label("新しいターミナル", systemImage: "plus") }
           .controlSize(.small)
-          .help("ターミナルを開き直します（実行中のコマンドは終了します）")
+          .help("別のターミナルを開きます（実行中のコマンドは続きます）")
         if let onClose {
           Button(action: onClose) { Image(systemName: "xmark").font(.caption) }
-            .buttonStyle(.borderless).help("閉じる（下部のアイコンでも開閉できます）")
+            .buttonStyle(.borderless).help("すべてのターミナルを閉じます（実行中のコマンドは終了します）")
         }
       }
       .padding(.horizontal, 8).padding(.vertical, 4)
+      ScrollView(.horizontal) {
+        HStack(spacing: 4) {
+          ForEach(tabs) { tab in
+            HStack(spacing: 4) {
+              Button { selection = tab.number } label: {
+                Text("ターミナル \(tab.number)")
+                if let ended = tab.ended { Text(ended).foregroundStyle(.secondary) }
+              }
+              .buttonStyle(.borderless)
+              .accessibilityAddTraits(selection == tab.number ? .isSelected : [])
+              Button {
+                guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+                tabs.remove(at: index)
+                if selection == tab.number { selection = tabs.isEmpty ? 0 : tabs[min(index, tabs.count - 1)].number }
+              } label: { Image(systemName: "xmark").font(.caption2) }
+                .buttonStyle(.borderless).help("ターミナルを閉じます（実行中のコマンドは終了します）")
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(selection == tab.number ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 5))
+          }
+        }.padding(.horizontal, 8)
+      }.fixedSize(horizontal: false, vertical: true)
       Divider()
-      if session.connected {
-        TerminalHost(identity: session.identity, onEnd: { ended = $0 })
-          .id(generation)
+      if tabs.isEmpty {
+        ContentUnavailableView("ターミナルがありません", systemImage: "terminal",
+                               description: Text("新しいターミナルを開いてください。"))
+      } else if session.connected {
+        // Keep every host mounted: selecting another tab must not close its shell.
+        ZStack {
+          ForEach(tabs) { tab in
+            TerminalHost(identity: session.identity, active: selection == tab.number, onEnd: { ended in
+              if let index = tabs.firstIndex(where: { $0.id == tab.id }) { tabs[index].ended = ended }
+            })
+            .opacity(selection == tab.number ? 1 : 0)
+            .allowsHitTesting(selection == tab.number)
+            .accessibilityHidden(selection != tab.number)
+          }
+        }
       } else {
-        ContentUnavailableView("実行環境に接続していません", systemImage: "terminal",
-                               description: Text("プロジェクトの実行環境が起動するとターミナルを使えます。"))
+        ContentUnavailableView("実行環境への接続を待っています", systemImage: "terminal",
+                               description: Text("接続するとターミナルが自動で開きます。"))
       }
+    }
+    .onChange(of: session.connected) { _, connected in
+      if connected { for index in tabs.indices { tabs[index].ended = nil } }
     }
   }
 }
 
+private struct TerminalTab: Identifiable {
+  let number: Int
+  var id: Int { number }
+  var ended: String?
+}
+
 /// SwiftTerm's view, connected to a terminal of tsugumi-vmd over vsock.
-private struct TerminalHost: NSViewRepresentable {
+struct TerminalHost: NSViewRepresentable {
   let identity: ProjectIdentity
+  let active: Bool
   let onEnd: (String) -> Void
 
   func makeCoordinator() -> Coordinator { Coordinator(identity: identity, onEnd: onEnd) }
@@ -60,7 +106,14 @@ private struct TerminalHost: NSViewRepresentable {
     return v
   }
 
-  func updateNSView(_ nsView: TerminalView, context: Context) {}
+  func updateNSView(_ nsView: TerminalView, context: Context) {
+    if active && !context.coordinator.active, nsView.window?.isKeyWindow == true {
+      nsView.window?.makeFirstResponder(nsView)
+    } else if !active, nsView.window?.firstResponder === nsView {
+      nsView.window?.makeFirstResponder(nil)
+    }
+    context.coordinator.active = active
+  }
 
   static func dismantleNSView(_ nsView: TerminalView, coordinator: Coordinator) { coordinator.close() }
 
@@ -70,30 +123,50 @@ private struct TerminalHost: NSViewRepresentable {
     weak var view: TerminalView?
     private var fd: Int32 = -1
     private var sessionId: UInt64?
+    var active = false
+    private var closed = false
+    var opening: Task<Void, Never>?
+    private let openTerminal: (ProjectIdentity, Int, Int) async throws -> (fd: Int32, session: UInt64)
     private let writeQueue = DispatchQueue(label: "app.tsugumi.terminal.write")
 
-    init(identity: ProjectIdentity, onEnd: @escaping (String) -> Void) {
+    init(identity: ProjectIdentity, onEnd: @escaping (String) -> Void,
+         openTerminal: @escaping (ProjectIdentity, Int, Int) async throws -> (fd: Int32, session: UInt64) = { identity, rows, cols in
+           try await AppModel.shared.environments.openTerminal(identity, rows: rows, cols: cols)
+         }) {
       self.identity = identity
       self.onEnd = onEnd
+      self.openTerminal = openTerminal
     }
 
     func open() {
       let size = view?.getTerminal().getDims() ?? (cols: 80, rows: 24)
-      Task { @MainActor in
+      opening = Task { @MainActor in
         do {
-          let (fd, sid) = try await AppModel.shared.environments.openTerminal(identity, rows: size.rows, cols: size.cols)
+          let (fd, sid) = try await openTerminal(identity, size.rows, size.cols)
+          // A tab can close while the VM is still opening its shell.
+          guard !closed else {
+            shutdown(fd, SHUT_RDWR)
+            Darwin.close(fd)
+            return
+          }
           self.fd = fd
           self.sessionId = sid
           read(fd)
         } catch {
+          guard !closed else { return }
           view?.feed(text: "\r\n\(String(localized: "ターミナルを開けませんでした")): \(error)\r\n")
           onEnd(String(localized: "開けませんでした"))
         }
       }
     }
 
-    private func read(_ fd: Int32) {
+    private func read(_ socket: Int32) {
+      // The reader owns a duplicate so a closed tab's descriptor cannot be
+      // reused underneath it by a newly opened tab.
+      let fd = dup(socket)
+      guard fd >= 0 else { close(); onEnd(String(localized: "開けませんでした")); return }
       Thread.detachNewThread { [weak self] in
+        defer { Darwin.close(fd) }
         var buf = [UInt8](repeating: 0, count: 16384)
         while true {
           let n = Darwin.read(fd, &buf, buf.count)
@@ -102,13 +175,17 @@ private struct TerminalHost: NSViewRepresentable {
           DispatchQueue.main.async { self?.view?.feed(byteArray: bytes[...]) }
         }
         DispatchQueue.main.async {
-          self?.view?.feed(text: "\r\n[\(String(localized: "ターミナルは終了しました"))]\r\n")
-          self?.onEnd(String(localized: "終了しました"))
+          guard let self, !self.closed else { return }
+          self.view?.feed(text: "\r\n[\(String(localized: "ターミナルは終了しました"))]\r\n")
+          self.close()
+          self.onEnd(String(localized: "終了しました"))
         }
       }
     }
 
     func close() {
+      closed = true
+      sessionId = nil
       if fd >= 0 {
         shutdown(fd, SHUT_RDWR)
         Darwin.close(fd)
@@ -121,10 +198,12 @@ private struct TerminalHost: NSViewRepresentable {
     // MARK: TerminalViewDelegate
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
-      let fd = self.fd
+      guard self.fd >= 0 else { return }
+      let fd = dup(self.fd)
       guard fd >= 0 else { return }
       let bytes = Array(data)
       writeQueue.async {
+        defer { Darwin.close(fd) }
         var off = 0
         while off < bytes.count {
           let n = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + off, bytes.count - off) }
