@@ -35,7 +35,7 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
 protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid (include/tsugumi/core public API, src implementation)
-sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python SDK and embedded shim, R and Julia SDKs (separate process), Nix SDK, tsugumi-worker
+sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R and Julia SDKs and embedded shims, Nix SDK, tsugumi-worker
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
                    Container/ (image definitions, builds, versions), Tests/
 ui/renderer/       Dawn rendering layer (C API, dylib)
@@ -142,3 +142,16 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `tests/prompt/` | Offline prompt probe scoring |
 
 For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+
+### R and Julia worker measurement
+
+`tests/python/measure_language_workers.py` runs each unchanged R/Julia branch of the Collatz demo alone, starting at 27 (112 values, 335 language Card invocations). Run it with `TSUGUMI_SDK_DIR` and `TSUGUMI_WORKER` pointing at the old and new SDK/worker, keeping the daemon and nixpkgs fixed. It checks the final sequence length and prints each run's wall time, stage totals and worker reuse count.
+
+On an Apple silicon macOS development host, with sandboxing disabled, the second run in the same daemon measured:
+
+| Language | Before: wall | Resident: wall | Before: execute total | Resident: execute total |
+| --- | ---: | ---: | ---: | ---: |
+| R 4.6.1 | 102.284 s | 0.357 s | 161.112 s | 0.270 s |
+| Julia 1.13.2 | 119.070 s | 0.493 s | 186.880 s | 0.364 s |
+
+This comparison used the SDK at `03837b42` as the baseline and nixpkgs `1c89083e451e891152365b799595cf7790a43325`. The sum of execute stages includes concurrent Cards, so it can exceed wall time. These are two runs per configuration on one development machine, not a cross-platform benchmark. The resident first runs took 17.125 s (R) and 10.667 s (Julia), including new shim builds; their execute totals were 3.186 s and 5.273 s. The baseline first runs used already-built packages and took 97.803 s and 123.141 s. No Python/C++ demo Cards or UI rendering are included in this measurement.

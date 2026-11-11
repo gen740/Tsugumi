@@ -243,7 +243,7 @@ auto run(Card::Input& input) -> Card::Output {
 
 ### R
 
-R has no FlatBuffers code generator, so an R Card runs in a separate process and exchanges port values as JSON (the worker converts them by the port's type).
+An R Card embeds R in the resident worker. Messages are lists: the worker converts them in memory using the port’s FlatBuffers type. No interpreter process or JSON files are created for each invocation.
 
 `definitions/multiply/_card.json` (R)
 
@@ -278,7 +278,7 @@ Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot
 
 ### Julia
 
-A Julia Card also runs in a separate process and exchanges values as JSON.
+A Julia Card embeds Julia in the resident worker. Messages are Dicts, converted in memory using each port’s FlatBuffers type.
 
 `definitions/multiply/_card.json` (Julia)
 
@@ -309,7 +309,15 @@ function main(ctx)
 end
 ```
 
-It runs with the standard library alone. Packages from the General registry are pinned at build time with `packages = [ "JuMP" ];`. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+It runs with the standard library alone. The Nix helper retains `packages = [ "JuMP" ];`, but the pinned nixpkgs implementation uses import-from-derivation, which the Card evaluator disables; registry package resolution is currently rejected before the build. This is an existing limitation, independent of interpreter reuse. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+
+### R and Julia worker lifecycle
+
+With `reuseWorker` enabled (the default), a Card loads its source once and keeps module-level state across invocations and runs. Set `reuseWorker: false` in `_card.json` for a fresh interpreter on every invocation. Changing the package replaces the worker. Source loading happens before any invocation; read inputs and params inside `main(ctx)` or the optional `on_run_start(ctx)` hook. The hook runs once before the first invocation of each run and can reset per-run state.
+
+Every invocation receives a fresh context. Do not retain the context or use its functions from background threads: interpreter calls and host callbacks belong to the worker's main thread. `ctx$cancelled()` / `cancelled(ctx)` allow cooperative stopping; `ctx$remaining_ms()` / `remaining_ms(ctx)` return the remaining deadline in milliseconds, or `-1` without a deadline. A stop or expired deadline also terminates an uncooperative worker. Exceptions fail the invocation and appear in its log.
+
+Displays publish immediately, including before a long calculation finishes. Each new display replaces the previous one. File and Directory inputs still use the worker's read-only paths, and outputs belong in the invocation's `output_directory`; those paths change on the next call. Nix continues to pin the interpreter and packages.
 
 ## What to read next
 

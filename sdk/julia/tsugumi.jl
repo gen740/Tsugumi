@@ -6,14 +6,12 @@
 #       display_markdown(ctx, "**$n**")
 #   end
 #
-# Port messages and params are Dicts, read from and written as JSON (the worker
-# converts them to and from FlatBuffers by the port's type). A Card has one
-# display: the last display_* of the invocation. Julia's standard library has
-# no plotting: `display_vegalite` draws an interactive chart from a Vega-Lite
-# spec written as a Dict.
+# The worker uses the same FlatBuffers ABI as C++/Python. Its in-memory adapter
+# presents messages as Dicts; no files or subprocess protocol carry values.
+# Module state persists with reuseWorker. Displays publish during the call.
 module Tsugumi
 
-export input, path, output, display_text, display_markdown, display_table, display_image, display_module, display_vegalite
+export input, path, output, display_text, display_markdown, display_table, display_image, display_module, display_vegalite, cancelled, remaining_ms
 
 # ---- JSON (the standard library has none) ------------------------------------
 
@@ -120,7 +118,10 @@ write_json(io, v::AbstractFloat) = isfinite(v) ? print(io, Float64(v)) : print(i
 write_json(io, ::Nothing) = print(io, "null")
 function write_json(io, v::AbstractDict)
     print(io, '{')
-    for (n, (key, value)) in enumerate(pairs(v))
+    # FlatBuffers requires a union discriminator before its value. Dict order is unspecified.
+    ordered = sort!(collect(keys(v)); by=key -> (!endswith(string(key), "_type"), string(key)))
+    for (n, key) in enumerate(ordered)
+        value = v[key]
         n > 1 && print(io, ',')
         write_json(io, string(key))
         print(io, ':')
@@ -153,36 +154,54 @@ json_text(v) = (io = IOBuffer(); write_json(io, v); String(take!(io)))
 
 # ---- The Card's side of the worker ---------------------------------------------
 
+const HOST = ENV["TSUGUMI_NATIVE_LIBRARY"]
+
 struct Context
     params::Dict{String,Any}
     output_directory::String
     temporary_directory::String
-    outputs::Dict{String,Any}
+    working_directory::String
+    run_id::String
+    card::String
+    invocation::UInt64
 end
 
-Context() = Context(parse_json(get(ENV, "TSUGUMI_PARAMS_JSON", "{}")), get(ENV, "TSUGUMI_OUTPUT_DIR", ""),
-                    get(ENV, "TSUGUMI_TMP_DIR", ""), Dict{String,Any}())
+function info(field)
+    value = ccall((:tsugumi_native_info, HOST), Cstring, (Cint,), field)
+    value == C_NULL && error("no active Card invocation")
+    return unsafe_string(value)
+end
 
-# The message of an input port.
+function Context()
+    value = ccall((:tsugumi_native_params, HOST), Cstring, ())
+    value == C_NULL && error("no active Card invocation")
+    Context(parse_json(unsafe_string(value)), info(4), info(3), info(2), info(0), info(1),
+            ccall((:tsugumi_native_invocation, HOST), UInt64, ()))
+end
+
 function input(ctx::Context, port::AbstractString)
-    file = get(ENV, "JSON_" * uppercase(port), nothing)
-    file === nothing && error("no input port named $port")
-    return parse_json(read(file, String))
+    value = ccall((:tsugumi_native_input, HOST), Cstring, (Cstring,), port)
+    value == C_NULL && return nothing
+    return parse_json(unsafe_string(value))
 end
 
-# The path a File or Directory input carries.
 function path(ctx::Context, port::AbstractString)
-    p = get(ENV, "FILE_" * uppercase(port), get(ENV, "DIR_" * uppercase(port), nothing))
-    p === nothing && error("no File or Directory input port named $port")
-    return p
+    ccall((:tsugumi_native_input_kind, HOST), Cint, (Cstring,), port) in (1, 2) || error("no File or Directory input port named $port")
+    value = input(ctx, port)
+    value !== nothing && get(value, "value", nothing) isa AbstractString || error("no File or Directory input port named $port")
+    return value["value"]
 end
 
-output(ctx::Context, port::AbstractString, message) = (ctx.outputs[port] = message; nothing)
+function output(ctx::Context, port::AbstractString, message)
+    ccall((:tsugumi_native_output, HOST), Cint, (Cstring, Cstring), port, json_text(message)) == 0 || error("output was rejected by the worker: $port")
+    return nothing
+end
+
+cancelled(ctx::Context) = ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0
+remaining_ms(ctx::Context) = ccall((:tsugumi_native_remaining_ms, HOST), Int64, ())
 
 function show_member(member)
-    target = ENV["TSUGUMI_DISPLAY"]
-    write(target * ".new", json_text(member))
-    mv(target * ".new", target; force=true)
+    ccall((:tsugumi_native_display, HOST), Cint, (Cstring,), json_text(member)) == 0 || error("display was rejected by the worker")
     return nothing
 end
 
@@ -197,13 +216,22 @@ function display_table(ctx::Context, columns, rows)
     return show_member(Dict("table" => Dict("columns" => collect(string.(columns)), "rows" => [collect(string.(row)) for row in rows])))
 end
 
-finish(ctx::Context) = isempty(ctx.outputs) ? nothing : write(ENV["TSUGUMI_OUTPUT"], json_text(ctx.outputs))
-
-end  # module Tsugumi
-
-using .Tsugumi
-include(joinpath(ARGS[1], "main.jl"))
-let ctx = Tsugumi.Context()
-    Base.invokelatest(main, ctx)
-    Tsugumi.finish(ctx)
+function invoke(hook::Bool)
+    try
+        ctx = Context()
+        if hook
+            if isdefined(Main, :on_run_start)
+                Base.invokelatest(Main.on_run_start, ctx)
+            end
+        else
+            Base.invokelatest(Main.main, ctx)
+        end
+        return true
+    catch error
+        message = sprint(showerror, error, catch_backtrace())
+        ccall((:tsugumi_native_fail, HOST), Cvoid, (Cstring,), message)
+        return false
+    end
 end
+
+end # module Tsugumi

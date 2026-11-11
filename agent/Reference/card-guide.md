@@ -192,7 +192,7 @@ Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, 
 
 `_card.json`: `{"language": "r", ...}`; `default.nix`: `run = inputs.tsugumi.rCard { src = ./src; packages = ps: [
 ps.survival ps.ggplot2 ]; };` (from nixpkgs' `rPackages`). No `sdk`, no generated classes: messages and params are
-lists, exchanged as JSON and checked against the port's type by the worker.
+lists, converted in memory and checked against the port's FlatBuffers type by the resident worker.
 
 ```r
 main <- function(ctx) {
@@ -205,15 +205,15 @@ main <- function(ctx) {
 
 `ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
 goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
-integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+integer outside the exact double range (±(2^53 − 1)) is read as a decimal string, including the full signed and unsigned 64-bit ranges.
 A `long`/`ulong` field takes an R integer (`27L`) or a string of digits (`sprintf("%.0f", x)`), not a double: `27` is written as
 `27.0` and the type rejects it.
 
 ### Julia (`src/main.jl`)
 
 `_card.json`: `{"language": "julia", ...}`; `default.nix`: `run = inputs.tsugumi.juliaCard { src = ./src; };`, with
-`packages = [ "JuMP" ];` for General registry packages (fixed at build time). Prefer the standard library when it
-does the job: packages take long to build.
+the standard library. The existing `packages = [ "JuMP" ];` path uses nixpkgs import-from-derivation and is
+currently rejected by the Card evaluator; do not rely on registry package resolution.
 
 ```julia
 function main(ctx)

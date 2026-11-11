@@ -141,7 +141,7 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++ / Python Cards are called by a resident worker that loads their shared library (R and Julia Cards start a process per invocation, so this does not reach them). Even with a fresh worker per invocation, the next worker is started and its library loaded ahead of time.
+The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++, Python, R and Julia Cards are called by a resident worker that loads their shared library and keeps the interpreter and module state across invocations. Even with a fresh worker per invocation, the next worker is started and its library loaded ahead of time.
 
 A reused worker's state carries across runs, and the initialisation it needs can be written in `onRunStart` / `on_run_start`. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 

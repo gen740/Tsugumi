@@ -6,49 +6,54 @@
 #     ctx$plot(hist(rnorm(100)), alt = "a histogram")
 #   }
 #
-# Port messages and params are lists, read from and written as JSON (the worker
-# converts them to and from FlatBuffers by the port's type). A length-1 vector
+# The worker passes FlatBuffers through the Card ABI. Its in-memory adapter
+# presents messages as lists without temporary JSON files. A length-1 vector
 # is written as a scalar: wrap a vector field in I() to keep it an array.
-# An integer from 2^53 to 2^63, which a double cannot hold, is read as a string
-# and written back from one (jsonlite rounds larger ones to a double). NA and
-# NaN are written as null.
-# A Card has one display: the last ctx$display_* or ctx$plot of the invocation.
+# Integers too large for an exact R double are decimal strings; NA/NaN are null.
+# Module-level state persists while reuseWorker is enabled. Each call gets a
+# fresh ctx; display functions publish immediately.
 
-ctx <- local({
-  written <- list()
-  params_json <- Sys.getenv("TSUGUMI_PARAMS_JSON", "{}")
-
-  port_env <- function(prefix, port) Sys.getenv(paste0(prefix, toupper(port)), NA_character_)
-  to_json <- function(x) jsonlite::toJSON(x, auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "null")
+.tsugumi_context <- function() {
+  # FlatBuffers reads a union's discriminator before its value.
+  order_unions <- function(x) {
+    if (is.list(x) && !is.data.frame(x)) {
+      x <- lapply(x, order_unions)
+      if (!is.null(names(x))) x <- x[order(!endsWith(names(x), "_type"))]
+    }
+    x
+  }
+  to_json <- function(x) jsonlite::toJSON(order_unions(x), auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "null")
   from_json <- function(x) jsonlite::fromJSON(x, simplifyVector = TRUE, bigint_as_char = TRUE)
 
   show <- function(member) {
-    next_file <- paste0(Sys.getenv("TSUGUMI_DISPLAY"), ".new")
-    writeLines(to_json(member), next_file, useBytes = TRUE)
-    file.rename(next_file, Sys.getenv("TSUGUMI_DISPLAY"))
+    if (!.Call("tsugumi_display", as.character(to_json(member)))) stop("display was rejected by the worker")
     invisible(NULL)
   }
 
   self <- list(
-    params = from_json(params_json),
-    output_directory = Sys.getenv("TSUGUMI_OUTPUT_DIR"),
-    temporary_directory = Sys.getenv("TSUGUMI_TMP_DIR"),
+    params = from_json(.Call("tsugumi_params")),
+    run_id = .Call("tsugumi_info", 0L),
+    card = .Call("tsugumi_info", 1L),
+    invocation = .Call("tsugumi_invocation"),
+    working_directory = .Call("tsugumi_info", 2L),
+    temporary_directory = .Call("tsugumi_info", 3L),
+    output_directory = .Call("tsugumi_info", 4L),
+    cancelled = function() .Call("tsugumi_cancelled"),
+    remaining_ms = function() .Call("tsugumi_remaining"),
 
-    # The message of an input port, as a list.
     input = function(port) {
-      file <- port_env("JSON_", port)
-      if (is.na(file)) stop("no input port named ", port)
-      from_json(file)
+      value <- .Call("tsugumi_input", as.character(port))
+      if (is.null(value)) return(NULL)
+      from_json(value)
     },
-    # The path a File or Directory input carries.
     path = function(port) {
-      p <- port_env("FILE_", port)
-      if (is.na(p)) p <- port_env("DIR_", port)
-      if (is.na(p)) stop("no File or Directory input port named ", port)
-      p
+      if (!(.Call("tsugumi_input_kind", as.character(port)) %in% c(1L, 2L))) stop("no File or Directory input port named ", port)
+      value <- self$input(port)$value
+      if (!is.character(value) || length(value) != 1L) stop("no File or Directory input port named ", port)
+      value
     },
     output = function(port, message) {
-      written[[port]] <<- message
+      if (!.Call("tsugumi_output", as.character(port), as.character(to_json(message)))) stop("output was rejected by the worker: ", port)
       invisible(NULL)
     },
     display_text = function(text) show(list(text = paste(text, collapse = "\n"))),
@@ -69,7 +74,7 @@ ctx <- local({
     display_module = function(name, data) show(list(module = list(name = name, data = data))),
     # Draws `expr` (base graphics or a ggplot) as the Card's image.
     plot = function(expr, alt = "", width = 8, height = 5, res = 160) {
-      file <- tempfile(fileext = ".png", tmpdir = Sys.getenv("TSUGUMI_TMP_DIR"))
+      file <- tempfile(fileext = ".png", tmpdir = self$temporary_directory)
       grDevices::png(file, width = width, height = height, units = "in", res = res, type = "cairo")
       tryCatch({
         drawn <- withVisible(expr)
@@ -78,12 +83,18 @@ ctx <- local({
       show(list(image = list(path = file, alt = alt)))
     }
   )
-  self$finish <- function() {
-    if (length(written)) writeLines(to_json(written), Sys.getenv("TSUGUMI_OUTPUT"), useBytes = TRUE)
-  }
   self
-})
+}
 
-source(file.path(commandArgs(TRUE)[1], "main.R"), keep.source = FALSE)
-main(ctx)
-ctx$finish()
+.tsugumi_invoke <- function(hook) {
+  tryCatch({
+    ctx <- .tsugumi_context()
+    if (hook) {
+      if (exists("on_run_start", envir = .GlobalEnv, inherits = FALSE)) on_run_start(ctx)
+    } else main(ctx)
+    TRUE
+  }, error = function(error) {
+    .Call("tsugumi_fail", conditionMessage(error))
+    FALSE
+  })
+}
