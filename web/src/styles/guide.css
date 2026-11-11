@@ -64,12 +64,17 @@ span[data-guide] { display: inline-flex; }
 .guide-flyer { position: fixed; inset: 0; pointer-events: none; z-index: 1500; }
 .guide-flying-bird { position: fixed; width: 90px; height: 64px; transition: left 0.9s ease-in-out, top 0.9s ease-in-out, width 0.9s ease-in-out, height 0.9s ease-in-out; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)); }
 .guide-flying-bird.left .guide-bird { transform: scaleX(-1); }
-.guide-flying-bird.moving:not(.still) { animation: guide-flap 0.18s linear infinite; }
+.guide-flying-bird.moving:not(.still) { animation: guide-flap 0.286s ease-in-out infinite; }
 .guide-flying-bird:not(.moving):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
-@keyframes guide-flap { 50% { transform: translateY(-3px) scaleY(0.9); } }
+/* In flight the wing beats around the shoulder, as the app's GuideAvatar does
+   (flap = (sin(22t) + 1) / 2, the wing turned up to -0.45 rad), and the body bobs with it. */
+.guide-bird .guide-wing { transform-box: view-box; transform-origin: 545px 402px; }
+.guide-flying-bird.moving:not(.still) .guide-wing, .helper-bird.flying:not(.still) .guide-wing { animation: guide-wing 0.286s ease-in-out infinite; }
+@keyframes guide-flap { 50% { transform: translateY(-2px); } }
+@keyframes guide-wing { 50% { transform: rotate(-26deg); } }
 .guide-flyer-bubble { position: fixed; pointer-events: auto; animation: guide-pop 0.2s ease-out; }
 @keyframes guide-pop { from { opacity: 0; transform: scale(0.92); } }
-@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .guide-flying-bird, .guide-flyer-bubble, .guide-wing { transition: none !important; animation: none !important; } }
 .guide-reply-field { display: flex; align-items: center; gap: 4px; }
 .guide-reply-field .field { flex: 1; min-width: 0; font-size: 12.5px; padding: 3px 7px; }
 
@@ -86,7 +91,7 @@ body.guide-handoff [data-guide-loading] .tsugumi-bird { opacity: 0; }
    the Agent's among them. */
 .helper-bird { position: absolute; pointer-events: none; z-index: 41; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
 .helper-bird.right .guide-bird { transform: scaleX(-1); }
-.helper-bird.flying:not(.still) { animation: guide-flap 0.18s linear infinite; }
+.helper-bird.flying:not(.still) { animation: guide-flap 0.286s ease-in-out infinite; }
 .helper-bird:not(.flying):not(.still) { animation: guide-hop 2.6s ease-in-out infinite; }
 .helper-trail { z-index: 41; }
 .helper-halo { position: absolute; pointer-events: none; z-index: 41; border-radius: 50%; background: color-mix(in srgb, var(--bird) 32%, transparent); }

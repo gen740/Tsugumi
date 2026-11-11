@@ -437,7 +437,12 @@ export function GuideBird() {
   const art = useBird()
   return (
     <svg viewBox="130 270 680 470" aria-hidden className="guide-bird">
-      {art && <g transform="translate(940 0) scale(-1 1)" dangerouslySetInnerHTML={{ __html: art.bird }} />}
+      {art && (
+        <g transform="translate(940 0) scale(-1 1)">
+          <g dangerouslySetInnerHTML={{ __html: art.bird }} />
+          <g className="guide-wing" dangerouslySetInnerHTML={{ __html: art.wing }} />
+        </g>
+      )}
     </svg>
   )
 }
