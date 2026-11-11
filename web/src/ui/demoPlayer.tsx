@@ -581,7 +581,7 @@ function ReplayElapsed({ frame, totalMs }: { frame: Frame; totalMs?: number }) {
 }
 
 export function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
-  const label = frame.mode === 'playing' ? L('実行中') : frame.mode === 'done' ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('待機中')
+  const label = frame.mode === 'playing' ? L('再生中') : frame.mode === 'done' ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('待機中')
   const icon = frame.mode === 'playing' ? 'play.circle.fill' : frame.mode === 'done' ? 'checkmark.circle.fill' : 'circle'
   const color = frame.mode === 'playing' ? 'orange' : frame.mode === 'done' ? 'green' : 'secondary'
   const real = data.run?.realOrder
