@@ -17,7 +17,7 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows through WSL2)"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows verified through WSL2)"></a>
   <a href="https://github.com/gen740/tsugumi-hackathon"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan (the submitted snapshot)"></a>
   <a href="docs/Philosophy.md#how-it-was-built"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="Documentation written for both people and AI"></a>
@@ -27,7 +27,7 @@
 
 **Run the analysis you sketched with AI, as it is, and check it with your own hands.**
 
-Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, through WSL2, as far as opening a demo).
+Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, verified through WSL2).
 You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
 You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.
 
@@ -218,7 +218,7 @@ The first start takes a few minutes to prepare. The signature (ad hoc), the envi
 
 The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
 
-If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI ([Using it from Claude Code](docs/claude-code.md)).
+If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI (verified on a Mac and on Windows in WSL2; [Using it from Claude Code](docs/claude-code.md)).
 
 ### Bundled demos
 

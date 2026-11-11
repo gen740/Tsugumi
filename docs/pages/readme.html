@@ -45,13 +45,13 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="Latest release"></a>
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="install.html"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows through WSL2)"></a>
+  <a href="install.html"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows verified through WSL2)"></a>
   <a href="https://github.com/gen740/tsugumi-hackathon"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan (the submitted snapshot)"></a>
   <a href="philosophy.html#how-it-was-built"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="../llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="Documentation written for both people and AI"></a>
 </p><h1 id="tsugumi">Tsugumi</h1>
 <p><strong>Run the analysis you sketched with AI, as it is, and check it with your own hands.</strong></p>
-<p>Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, through WSL2, as far as opening a demo).
+<p>Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, verified through WSL2).
 You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
 You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.</p>
 <p><strong>Who made it, and why</strong></p>
@@ -183,7 +183,7 @@ In a project, the chat is the thrush. Write <code>$demo</code> and it flies arou
 <li><strong>Connect the Agent (optional).</strong> Register an Anthropic or OpenAI API key under &quot;API&quot; in the settings, or sign in with &quot;Continue with ChatGPT&quot;, and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs (<a href="security.html#what-is-sent-to-the-model">what is sent to the model</a>). Without the Agent, everything (making, editing and running Cards) can still be done on screen.</li>
 </ol>
 <p>The app and the Web UI are in Japanese by default; choose English under &quot;General&quot; in the settings.</p>
-<p>If you use Claude Code, the <code>tsugumi</code> plugin lets Claude Code work on a project in the Web UI (<a href="claude-code.html">Using it from Claude Code</a>).</p>
+<p>If you use Claude Code, the <code>tsugumi</code> plugin lets Claude Code work on a project in the Web UI (verified on a Mac and on Windows in WSL2; <a href="claude-code.html">Using it from Claude Code</a>).</p>
 <h3 id="bundled-demos">Bundled demos</h3>
 <p>Each one replays the record of a real run. Click one to open it in the <a href="https://gen740.github.io/Tsugumi/#demos" rel="noopener">web version</a>, where you can read what is inside its Cards and their sources. There are 31 demos, Draft versions included; how each works is in <a href="demos.html">The bundled demos</a>.</p>
 <h4 id="the-basics">The basics</h4>
