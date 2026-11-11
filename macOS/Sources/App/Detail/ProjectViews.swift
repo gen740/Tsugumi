@@ -196,7 +196,12 @@ private struct NixSourceSettings: View {
             Button("更新") {
               Task {
                 guard let r = await resolve(NixSources.unlockedRef(ref)) else { return }
-                await save(sources.map { $0["name"]?.string == name ? entry(name, r.ref) : $0 })
+                await save(sources.map { source in
+                  guard source["name"]?.string == name else { return source }
+                  var updated = source
+                  updated["ref"] = .string(r.ref)
+                  return updated
+                })
               }
             }
             Button("削除", role: .destructive) {

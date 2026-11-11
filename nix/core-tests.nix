@@ -91,6 +91,7 @@ clangStdenv.mkDerivation {
           flatbuffers
           bash
           coreutils
+          openssl
           git
           nodejs
           jq

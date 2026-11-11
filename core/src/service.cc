@@ -168,6 +168,7 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   mutation_lane_ = std::make_unique<Lane>(1, opts_.limits.mutation_queue_limit,
                                           std::chrono::milliseconds(opts_.limits.queue_wait_ms));
   read_pool_ = std::make_unique<Lane>(6, 1024, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
+  shell_lane_ = std::make_unique<Lane>(2, 8, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
 }
 
 Service::~Service() { shutdown(); }
@@ -199,6 +200,12 @@ void Service::open() {
 }
 
 void Service::shutdown() {
+  {
+    std::lock_guard lock(shell_mu_);
+    shell_stopping_ = true;
+    for (const auto& [key, cancelled] : shell_cancellations_) cancelled->store(true);
+  }
+  if (shell_lane_) shell_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   workers_.reset();  // the project's resident and standby workers end
   if (exporter_.joinable()) {
@@ -262,7 +269,7 @@ std::vector<std::string> Service::capabilities() {
       "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
-      "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
+      "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
       "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
@@ -318,6 +325,11 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 }
 
 void Service::disconnected(ConnId conn) {
+  {
+    std::lock_guard lock(shell_mu_);
+    for (const auto& [key, cancelled] : shell_cancellations_)
+      if (key.first == conn) cancelled->store(true);
+  }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
   english_.erase(conn);
@@ -382,6 +394,9 @@ void Service::dispatch(RequestIn req) {
     case P::RunHistoryRequest: return on_lane(r, std::move(req), &Service::run_history);
     case P::RunInvocationsRequest: return on_lane(r, std::move(req), &Service::run_invocations);
     case P::RunLatestInvocationsRequest: return on_lane(r, std::move(req), &Service::run_latest_invocations);
+    case P::ProjectShellRequest: return dispatch_shell(std::move(req));
+    case P::RunEnvironmentsRequest: return on_lane(r, std::move(req), &Service::run_environments);
+    case P::RunEnvironmentPathsRequest: return on_lane(r, std::move(req), &Service::run_environment_paths);
     case P::RunRecordRequest: return on_lane(r, std::move(req), &Service::run_record);
     case P::RunValueReadRequest: return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest: return on_lane(r, std::move(req), &Service::artifact_list);
@@ -410,6 +425,7 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
     case R::ReceiptValue::ProjectCacheClearResult: type = R::ReplyPayload::ProjectCacheClearResult; tname = "Tsugumi.RPC.ProjectCacheClearResult"; break;
     case R::ReceiptValue::CardSDKPrepareResult: type = R::ReplyPayload::CardSDKPrepareResult; tname = "Tsugumi.RPC.CardSDKPrepareResult"; break;
     case R::ReceiptValue::RunHistoryDeleteResult: type = R::ReplyPayload::RunHistoryDeleteResult; tname = "Tsugumi.RPC.RunHistoryDeleteResult"; break;
+    case R::ReceiptValue::ProjectShellResult: type = R::ReplyPayload::ProjectShellResult; tname = "Tsugumi.RPC.ProjectShellResult"; break;
     case R::ReceiptValue::VersionResult: type = R::ReplyPayload::VersionResult; tname = "Tsugumi.RPC.VersionResult"; break;
     default: type = R::ReplyPayload::Failure; tname = "Tsugumi.Data.Failure"; break;
   }
@@ -437,6 +453,17 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
 bool Service::replay_or_join(RequestIn& req, const std::string& op_id, const std::string& kind,
                              const std::string& digest) {
   if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (kind == "shell") {
+    // A running shell has a durable uncertainty receipt. In this process,
+    // duplicate callers wait for its final result instead of reading that marker.
+    std::lock_guard lock(ops_mu_);
+    if (auto it = pending_ops_.find(op_id); it != pending_ops_.end()) {
+      if (it->second.digest != kind + ":" + digest)
+        throw Failed(FailureKind::operation_conflict, "op_id is pending for a different request");
+      it->second.waiters.emplace_back(req.conn, req.request_id);
+      return true;
+    }
+  }
   std::optional<Receipt> rc = store_->receipt(op_id);
   if (!rc) {
     auto row = history_->read([&](sql::Db& db) { return History::receipt(db, op_id); });
@@ -1405,16 +1432,21 @@ void Service::operation_get(RequestIn& req) {
   std::string op_id = r->op_id()->str();
   if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
   std::optional<std::string> bytes;
+  bool shell_receipt = false;
   if (auto rc = store_->receipt(op_id)) bytes = rc->bytes;
   if (!bytes) {
     auto row = history_->read([&](sql::Db& db) { return History::receipt(db, op_id); });
-    if (row) bytes = row->bytes;
+    if (row) {
+      bytes = row->bytes;
+      shell_receipt = row->kind == "shell";
+    }
   }
   bool pending = false;
-  if (!bytes) {
+  if (!bytes || shell_receipt) {
     std::lock_guard<std::mutex> l(ops_mu_);
     pending = pending_ops_.count(op_id) > 0;
   }
+  if (shell_receipt && pending) bytes.reset();
   FBB b;
   flatbuffers::Offset<R::OperationReceipt> rc;
   if (bytes) {

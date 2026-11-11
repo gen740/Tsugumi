@@ -235,6 +235,7 @@ union ReceiptValue {
   Failure: Tsugumi.Data.Failure = 6,
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
+  ProjectShellResult = 9,
 }
 
 table OperationReceipt {
@@ -323,7 +324,13 @@ table ProjectImportRequest {
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
 /// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
-/// its current commit and hash, and the packages it has for this system. Slow
+/// its current commit and hash, and the packages it has for this system.
+/// To customize an approved package, save nixSources[].overrides =
+/// {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}.
+/// Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}}
+/// fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval.
+/// Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected.
+/// Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow
 /// the first time: it evaluates them, fetching what they need.
 table NixSourceResolveRequest { ref:string (id: 0, required); }
 
@@ -477,6 +484,31 @@ table RunCancelRequest { run_id:string (id: 0, required); }
 /// -> RunStatus. Omitted run_id: the active run, else the last one, else idle.
 table RunStatusRequest { run_id:string (id: 0); }
 
+/// -> ProjectShellResult. Runs in the project VM as the project user, with the
+/// project directory as cwd. Available only when the isolated project launcher enables it.
+/// timeout_ms defaults to 10000 and must be between 1 and 30000. Each output
+/// stream is capped at 262144 bytes. Disconnecting cancels the process group.
+/// An operation ID is never executed twice, even after an interrupted daemon.
+/// Agent use requires explicit Shell access in addition to Read, Write and Run.
+/// After editing project definitions or tsugumi.json with a command, use ProjectReload
+/// before inspecting or running the changed project through core.
+table ProjectShellRequest {
+  op_id:string (id: 0, required);
+  command:string (id: 1, required);
+  timeout_ms:uint32 = null (id: 2);
+}
+
+table ProjectShellResult {
+  stdout:[ubyte] (id: 0, required);
+  stderr:[ubyte] (id: 1, required);
+  exit_code:int32 = -1 (id: 2);
+  signal:int32 (id: 3);
+  cancelled:bool (id: 4);
+  timed_out:bool (id: 5);
+  stdout_truncated:bool (id: 6);
+  stderr_truncated:bool (id: 7);
+}
+
 /// -> RunPage, newest accepted first.
 table RunHistoryRequest {
   card:Tsugumi.Data.CardPath (id: 0);
@@ -496,6 +528,42 @@ table RunInvocationsRequest {
 /// -> InvocationPage. Each Card's latest invocation of a run, for a client that
 /// opens the project after the run: it did not get RunCardChanged for them.
 table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
+
+/// -> BuildEnvironmentPage. Recorded environments, in first-use order; no Nix evaluation.
+/// offset defaults to 0; limit defaults to 100 (maximum 500).
+table RunEnvironmentsRequest {
+  run_id:string (id: 0, required);
+  offset:uint64 = null (id: 1);
+  limit:uint32 = null (id: 2);
+}
+
+/// -> EnvironmentPathPage. Runtime closure, including the manifest, in store-path order.
+/// These are runtime references, not the full set of build-time dependencies.
+table RunEnvironmentPathsRequest {
+  run_id:string (id: 0, required);
+  environment_id:string (id: 1, required);
+  offset:uint64 = null (id: 2);
+  limit:uint32 = null (id: 3);
+}
+
+table BuildEnvironment {
+  id:string (id: 0, required);
+  derivation:string (id: 1, required);
+  manifest:string (id: 2, required);
+  system:string (id: 3, required);
+  path_count:uint64 (id: 4);
+}
+
+table BuildEnvironmentPage {
+  environments:[BuildEnvironment] (id: 0, required);
+  next_offset:uint64 = null (id: 1);
+}
+
+table EnvironmentPathPage {
+  paths:[string] (id: 0, required);
+  total:uint64 (id: 1);
+  next_offset:uint64 = null (id: 2);
+}
 
 /// -> RecordResult. invocation and follow_latest = true are exclusive.
 table RunRecordRequest {
@@ -601,6 +669,9 @@ union RequestPayload {
   VersionSummaryRequest = 39,
   NixSourceResolveRequest = 40,
   RunLatestInvocationsRequest = 41,
+  RunEnvironmentsRequest = 42,
+  RunEnvironmentPathsRequest = 43,
+  ProjectShellRequest = 44,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -817,6 +888,8 @@ table InvocationSummary {
   /// Card built for another system (its `system` setting); absent when it ran
   /// natively.
   emulator:string (id: 15);
+  /// Recorded Nix environment, queryable through RunEnvironmentsRequest.
+  environment_id:string (id: 16);
 }
 
 table StageTime {
@@ -940,6 +1013,9 @@ union ReplyPayload {
   VersionCanvas = 29,
   VersionDiff = 30,
   NixSourceResolved = 31,
+  BuildEnvironmentPage = 32,
+  EnvironmentPathPage = 33,
+  ProjectShellResult = 34,
 }
 
 // ---- Notifications -----------------------------------------------------------

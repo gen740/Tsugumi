@@ -41,6 +41,7 @@ struct Options {
   stdfs::path history_dir;
   stdfs::path host_folders;
   stdfs::path chat_folders;
+  bool project_shell = false;
   std::string fault;
 };
 
@@ -79,6 +80,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--history-dir") o.history_dir = next();
     else if (a == "--host-folders") o.host_folders = next();
     else if (a == "--chat-folders") o.chat_folders = next();
+    else if (a == "--project-shell") o.project_shell = true;
     else if (a == "--help") return std::nullopt;
     else throw std::runtime_error("unknown option " + a);
   }
@@ -166,6 +168,7 @@ int run_daemon(int argc, char** argv) {
   so.history_dir = opt.history_dir;
   so.host_folders = opt.host_folders;
   so.chat_folders = opt.chat_folders;
+  so.project_shell = opt.project_shell;
   // Block termination signals before threads start; they are taken with sigwait.
   sigset_t set;
   sigemptyset(&set);

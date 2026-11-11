@@ -11,10 +11,12 @@ std::vector<std::string> widenings(const Resolution* before, const Resolution& a
   std::set<std::string> sources;
   if (before)
     for (const auto& n : before->nodes)
-      for (const auto& s : n.nix_sources) sources.insert(s.ref);
+      for (const auto& s : n.nix_sources) sources.insert(s.ref + "\n" + s.overrides);
   for (const auto& n : after.nodes)
     for (const auto& s : n.nix_sources)
-      if (sources.insert(s.ref).second) out.push_back("nix_source " + s.name + " " + s.ref);
+      if (sources.insert(s.ref + "\n" + s.overrides).second)
+        out.push_back("nix_source " + s.name + " " + s.ref +
+                      (s.overrides == "{}" ? "" : " overrides " + s.overrides));
   for (const auto& n : after.nodes) {
     auto key = path_key(n.path);
     const Node* b = before ? before->find(n.path) : nullptr;

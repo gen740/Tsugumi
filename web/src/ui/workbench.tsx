@@ -66,6 +66,15 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   useObserve(workspace, session)
   const tab = workspace.active
   useEffect(() => {
+    const reveal = (card: CardKey) => {
+      workspace.openTab(path(card).slice(0, -1))
+      const tab = workspace.active
+      if (tab) { tab.setSelection([card]); requestAnimationFrame(() => canvasFor(session, tab).reveal(card)) }
+    }
+    app.cardNavigators.set(session, reveal)
+    return () => { if (app.cardNavigators.get(session) === reveal) app.cardNavigators.delete(session) }
+  }, [workspace, session])
+  useEffect(() => {
     document.title = session.scopeName([])
   })
   const problem = hasProblem(session)

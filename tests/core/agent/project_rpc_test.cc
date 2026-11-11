@@ -1,6 +1,8 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include "project_fixture.hh"
 
+#include <unistd.h>
+
 namespace tsugumi::test {
 namespace {
 
@@ -501,6 +503,150 @@ TEST_F(AgentProjectFixture, ConcurrentPluginToolsDoNotBlockTheUsersApproval) {
     EXPECT_TRUE(tool.get().Code().empty());
   }
   EXPECT_EQ(model.Requests().size(), 8u);
+}
+
+TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("shell-permission");
+  for (auto access : {A::Access::Read, A::Access::Write, A::Access::Run})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  const auto denied =
+      Tool(conversation, "project_shell", R"({"command":"printf allowed"})");
+  EXPECT_EQ(denied.Code(), "grant_required");
+  EXPECT_NE(Events(conversation).Json().find("Shell"), std::string::npos);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Shell);
+  const auto result =
+      Tool(conversation, "project_shell",
+           R"({"command":"printf allowed; printf diagnostic >&2; exit 3"})");
+  ASSERT_TRUE(result.Code().empty());
+  const auto text = JsonString(result.Json(), "/text");
+  EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
+  EXPECT_EQ(JsonString(text, "/value/stdout"), "allowed");
+  EXPECT_EQ(JsonString(text, "/value/stderr"), "diagnostic");
+  EXPECT_NE(text.find("\"exit_code\":3"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("shell-history");
+  for (auto access :
+       {A::Access::Read, A::Access::Write, A::Access::Run, A::Access::Shell})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  ModelServer model;
+  model.Queue(AnthropicTool("shell", "project_shell",
+                            R"({"command":"printf shell-history-output"})"));
+  model.Queue(AnthropicText("The command finished."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run the command.").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("The command finished."),
+            std::string::npos);
+  const auto events = Events(conversation).Json();
+  EXPECT_NE(events.find("toolStarted"), std::string::npos);
+  EXPECT_NE(events.find("printf shell-history-output"), std::string::npos);
+  EXPECT_NE(events.find("shell-history-output"), std::string::npos);
+  ASSERT_EQ(model.Requests().size(), 2u);
+  EXPECT_NE(model.Requests()[1].find("ProjectShellResult"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("shell-cancel");
+  for (auto access :
+       {A::Access::Read, A::Access::Write, A::Access::Run, A::Access::Shell})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  ModelServer model;
+  model.Queue(AnthropicTool(
+      "shell", "project_shell",
+      R"({"command":"printf ready > shell-ready; sleep 2; printf escaped > shell-escaped","timeout_ms":10000})"));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Start a command, then wait.").Code().empty());
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (!std::filesystem::exists(directory.path / "project/shell-ready") &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  ASSERT_TRUE(std::filesystem::exists(directory.path / "project/shell-ready"));
+  ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
+                   [&](Builder& b) {
+                     return A::CreateConversationCancelRequest(
+                                b, b.CreateString(conversation))
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  WaitUntilIdle(conversation);
+  std::this_thread::sleep_for(2100ms);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/shell-escaped"));
+  EXPECT_NE(Events(conversation).Json().find("cancelled"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture,
+       ExternalShellCallsHaveVisibleHistoryAndCanBeCancelled) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("external-shell-cancel");
+  for (auto access :
+       {A::Access::Read, A::Access::Write, A::Access::Run, A::Access::Shell})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  auto pending = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "project_shell",
+        R"({"command":"printf ready > external-ready; sleep 1; printf escaped > external-escaped"})");
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (!std::filesystem::exists(directory.path / "project/external-ready") &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  ASSERT_TRUE(
+      std::filesystem::exists(directory.path / "project/external-ready"));
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest,
+                   [&](Builder& b) {
+                     return A::CreateConversationCancelRequest(
+                                b, b.CreateString(conversation))
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+  EXPECT_EQ(pending.get().Code(), "cancelled");
+  std::this_thread::sleep_for(1100ms);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/external-escaped"));
+  const auto events = Events(conversation).Json();
+  EXPECT_NE(events.find("toolStarted"), std::string::npos);
+  EXPECT_NE(events.find("toolFinished"), std::string::npos);
+  EXPECT_NE(events.find("printf ready > external-ready"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("external-shell-revoke");
+  for (auto access : {A::Access::Read, A::Access::Write, A::Access::Run})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  const auto grant =
+      Grant(conversation, A::GrantScope::Conversation, A::Access::Shell);
+  auto pending = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "project_shell",
+        R"({"command":"printf ready > revoke-ready; sleep 1; printf escaped > revoke-escaped"})");
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (!std::filesystem::exists(directory.path / "project/revoke-ready") &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  ASSERT_TRUE(std::filesystem::exists(directory.path / "project/revoke-ready"));
+  Revoke(grant);
+  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+  EXPECT_EQ(pending.get().Code(), "cancelled");
+  std::this_thread::sleep_for(1100ms);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/revoke-escaped"));
+  EXPECT_EQ(Tool(conversation, "project_shell", R"({"command":"true"})").Code(),
+            "grant_required");
 }
 
 }  // namespace

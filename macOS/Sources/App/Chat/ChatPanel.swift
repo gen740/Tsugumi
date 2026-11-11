@@ -481,7 +481,7 @@ struct ChatPanel: View {
       if chat.busy && item.id == chat.items.last?.id {
         StreamingText(text: item.text)
       } else {
-        ChatMarkdown(text: item.text).opacity(item.archived ? 0.6 : 1)
+        ChatMarkdown(text: item.text).modifier(EvidenceMarkup(text: item.text, session: session, tab: tab)).opacity(item.archived ? 0.6 : 1)
       }
     }
   }

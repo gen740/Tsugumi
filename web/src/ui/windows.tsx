@@ -10,6 +10,7 @@ import { CardDatabaseView, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
 import { VersionTreeView } from './versions'
 import { L } from '../i18n'
+import { EvidenceView } from './evidence'
 
 function title(w: DetailWindow): string {
   const s = w.session
@@ -18,6 +19,7 @@ function title(w: DetailWindow): string {
     case 'card': return L('Card 設定 · {0}', name(w.what.card))
     case 'definitions': return L('Card 定義')
     case 'versions': return L('版の履歴')
+    case 'evidence': return L('根拠の記録')
     case 'executions': return L('実行履歴 · {0}', name(w.what.card))
     case 'artifacts': return L('成果物 · {0}', name(w.what.card))
     case 'workflowSettings': return L('Workflow 設定 · {0}', s?.scopeName([]) ?? '')
@@ -37,6 +39,7 @@ function Content({ w }: { w: DetailWindow }) {
     case 'card': return <CardSettingsEditor session={s} card={what.card} initial={what.category} onClose={close} />
     case 'definitions': return <CardDatabaseView session={s} definition={what.definition} />
     case 'versions': return <VersionTreeView session={s} />
+    case 'evidence': return <EvidenceView session={s} href={what.href} />
     case 'executions': return <CardExecutionView session={s} cardKey={what.card} />
     case 'artifacts': return <CardArtifactsView session={s} cardKey={what.card} />
     case 'workflowSettings': return <WorkflowSettingsView session={s} />

@@ -72,10 +72,11 @@ export const EXTERNAL_DEFINITION_DRAG = 'tsugumi-external-definition:'
 export const EXTERNAL_DRAG = 'tsugumi-external:'
 
 /** A child workflow in a window of its own (a browser window on the same core). */
-export function openWorkflowWindow(session: ProjectSession, scope: string[]) {
+export function openWorkflowWindow(session: ProjectSession, scope: string[], selected?: CardKey) {
   const u = new URL(location.href)
   u.search = ''
   u.searchParams.set('project', session.dir)
   u.searchParams.set('scope', scope.join('/'))
+  if (selected) u.searchParams.set('selected', selected)
   window.open(u.toString(), '_blank', 'popup,width=1100,height=720')
 }

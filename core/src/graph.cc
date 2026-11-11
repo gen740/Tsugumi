@@ -7,6 +7,7 @@
 #include <deque>
 #include <limits>
 #include <set>
+#include <stdexcept>
 #include <tuple>
 
 namespace tsugumi {
@@ -77,6 +78,37 @@ std::string param_fbs_type(ParamType t) {
 }
 
 namespace {
+
+// Source approval and evaluator caches identify values, not JSON whitespace or
+// object ordering. Number spellings stay intact: Nix distinguishes int/float.
+auto source_value_json(const hosq::json::GenericDom<>& value) -> std::string {
+  const auto raw = schema::text(value);
+  const auto first = raw.find_first_not_of(" \t\r\n");
+  if (raw[first] == '{') {
+    schema::v::Mapping<schema::v::String, schema::Json> object;
+    if (auto error = schema::decode(value, object)) throw std::runtime_error(error->message);
+    std::map<std::string, hosq::json::GenericDom<>> sorted;
+    for (const auto& [key, child] : object.value())
+      sorted.emplace(key, schema::capture(source_value_json(child)));
+    schema::v::Mapping<schema::v::String, schema::Json> normalized;
+    for (auto& [key, child] : sorted) normalized.value().emplace_back(key, std::move(child));
+    return schema::encode(normalized);
+  }
+  if (raw[first] == '[') {
+    schema::v::Array<schema::Json> array;
+    if (auto error = schema::decode(value, array)) throw std::runtime_error(error->message);
+    for (auto& child : array.value()) child = schema::capture(source_value_json(child));
+    return schema::encode(array);
+  }
+  if (raw[first] == '"') {
+    schema::v::String string;
+    if (auto error = schema::decode(value, string)) throw std::runtime_error(error->message);
+    return schema::encode(string);
+  }
+  schema::Json scalar;
+  scalar.value() = value;
+  return schema::encode(scalar);
+}
 
 template <class E>
 bool decodes_as(const hosq::json::GenericDom<>& v) {
@@ -376,8 +408,10 @@ class Builder {
     std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
     std::vector<NixSourceRef> sources;
     if (project.nix_sources->has_value())
-      for (const auto& s : project.nix_sources->value())
-        sources.push_back({s.name->value(), s.type->value(), s.ref->value()});
+      for (const auto& s : project.nix_sources->value()) {
+        sources.push_back({s.name->value(), s.type->value(), s.ref->value(),
+                           schema::get(s.overrides) ? source_value_json(*schema::get(s.overrides)) : "{}"});
+      }
     for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
       n.path = scope_path;

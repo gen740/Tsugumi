@@ -34,6 +34,7 @@ struct CardBuild {
   // The worker that loads a package of another system, built with the Card's
   // nixpkgs for that system; "" for tsugumid's own worker.
   std::string worker;
+  BuildEnvironmentData environment;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };

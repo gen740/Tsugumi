@@ -107,11 +107,18 @@ struct WorkflowWindow: View {
   let ref: WorkflowRef
   @State private var workspace = Workspace()
   @State private var error: String?
+  @State private var didRevealSelection = false
 
   var body: some View {
     Group {
       if let s = workspace.session {
         WorkflowTabs(workspace: workspace, session: s, onSwitchProject: nil)
+          .onChange(of: s.rev) { _, _ in
+            if !didRevealSelection, let selected = ref.selected, let tab = workspace.active, s.instance(selected) != nil {
+              didRevealSelection = true
+              DispatchQueue.main.async { NotificationCenter.default.post(name: .canvasReveal, object: tab.id, userInfo: ["card": selected]) }
+            }
+          }
       } else if let error {
         ContentUnavailableView("開けません", systemImage: "exclamationmark.triangle", description: Text(error))
       } else {
@@ -123,7 +130,11 @@ struct WorkflowWindow: View {
         let s = try model.session(for: URL(fileURLWithPath: ref.path))
         workspace.open(s)
         workspace.tabs.first?.scope = ref.scope
-        workspace.tabs.first?.selection = []
+        workspace.tabs.first?.selection = ref.selected.map { [$0] } ?? []
+        if let selected = ref.selected, let tab = workspace.tabs.first, s.instance(selected) != nil {
+          didRevealSelection = true
+          DispatchQueue.main.async { NotificationCenter.default.post(name: .canvasReveal, object: tab.id, userInfo: ["card": selected]) }
+        }
         workspace.showChat = false
       } catch { self.error = "\(error)" }
     }

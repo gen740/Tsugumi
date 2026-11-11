@@ -113,6 +113,9 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
   fs::write_atomic(product, manifest, 0444);
   NixResult result;
   result.out = product.string();
+  result.derivation = result.out + ".drv";
+  result.system = call.system.empty() ? "mock-system" : call.system;
+  result.closure = {result.out, result.out + "-dependency"};
   result.manifest = std::move(manifest);
   result.built = !cached;
   if (!call.root_dir.empty()) {

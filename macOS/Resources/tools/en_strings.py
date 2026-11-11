@@ -31,6 +31,12 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '根拠の記録': 'Evidence record',
+    'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
+    '位置': 'Position',
+    '先頭 64 KiB を表示': 'Showing the first 64 KiB',
+    'バイナリの成果物です': 'This artifact contains binary data',
+
 "進行中の実行を表示しています": "Showing the active run",
 "過去の実行を表示しています。別の実行が進行中です。": "Showing a previous run. Another run is active.",
 "進行中の実行を表示": "Show Active Run",

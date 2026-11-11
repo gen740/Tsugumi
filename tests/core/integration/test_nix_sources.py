@@ -171,3 +171,139 @@ def test_an_address_is_looked_up_for_the_settings(core_factory, tmp_path):
             c.call("NixSourceResolveRequest", ref=wrong)
     after = c.call("ProjectInspectRequest")
     assert after.rev == before.rev and text(after.projectJson) == text(before.projectJson)
+
+
+def test_external_package_customization_preserves_original_and_changes_derivation(core_factory, tmp_path):
+    """Approved JSON overrides run in the flake evaluator and preserve unmodified packages."""
+    root = tmp_path / "customized"
+    definitions = dict(DEFS)
+    definitions["inspect"] = {
+        "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+        "_nix": nix('''let
+          original = inputs.sources.original.packages.ciao;
+          customized = inputs.sources.customized.packages.ciao;
+        in { run = "echo ${original.name} ${customized.name} ${builtins.toString (original.drvPath != customized.drvPath)}"; }'''),
+    }
+    write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
+    opt_in(root, [dict(SOURCE, name="original"),
+                  dict(SOURCE, name="customized", overrides={"ciao": {"overrideAttrs": {"name": "custom-ciao"}}})])
+    assert "ciao-4.18.0 custom-ciao 1" in run(core_factory, root, "c")[0]
+
+
+def test_customization_reports_unknown_packages(core_factory, tmp_path):
+    """An unknown overridden package fails with a usable explanation."""
+    root = tmp_path / "unknown-package"
+    project(root, "reads", [dict(SOURCE, overrides={"missing": {"overrideAttrs": {"name": "custom"}}})])
+    assert "unknown package missing" in run(core_factory, root, "c", expected=RunState.failed)[1]
+
+
+def test_changing_overrides_requires_user_approval(core_factory, tmp_path):
+    """An Agent cannot change an approved source's customization without new approval."""
+    root = tmp_path / "approval"
+    project(root, "reads", [SOURCE])
+    c = core_factory(project_root=root).connect()
+    doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
+    doc["nixSources"][0]["overrides"] = {"ciao": {"overrideAttrs": {"version": "1", "name": "changed"}}}
+    with pytest.raises(RpcFailure) as error:
+        save(c, [change("SetProject", json=json.dumps(doc))], origin="agent")
+    assert error.value.kind == "approval_required"
+    requested = permissions(error.value)
+    assert any("overrides" in permission for permission in requested)
+    # Approval of the original flake does not approve a different source URL,
+    # patches, or build arguments for its customized package.
+    with pytest.raises(RpcFailure) as old_approval:
+        save(c, [change("SetProject", json=json.dumps(doc))], approved=[f"nix_source ciao {REF}"])
+    assert old_approval.value.kind == "approval_required"
+    save(c, [change("SetProject", json=json.dumps(doc))], approved=requested)
+    assert json.loads(text(c.call("ProjectInspectRequest").projectJson))["nixSources"] == doc["nixSources"]
+    save(c, [change("SetProject", json=json.dumps(doc))])
+    save(c, [change("SetProject", json=json.dumps(doc, sort_keys=True, indent=2))])
+
+
+def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, tmp_path, monkeypatch):
+    """A Card runs the customized package with pinned downloads and keeps its original usable."""
+    from harness.nix_source import source_fixture
+    with source_fixture(tmp_path, monkeypatch) as (source, fetched):
+        root = tmp_path / "fixture-project"
+        definitions = dict(DEFS)
+        definitions["inspect"] = {
+            "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+            "_nix": nix('''{
+              run = "cat ${inputs.sources.fixture.packages.sample}/value ${inputs.sources.original.packages.sample}/value";
+            }'''),
+        }
+        write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
+        custom = {"sample": {"override": {"message": "custom", "src": fetched("source.txt")},
+                             "overrideAttrs": {"patches": [fetched("patch.txt")]}}}
+        opt_in(root, [dict(source, overrides=custom), dict(source, name="original")])
+        c = core_factory(project_root=root).connect()
+        def output():
+            run_id, status = run_and_wait(c, ["start"], timeout=120)
+            assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+            return text(c.call("LogRangeRequest", runId=run_id, card=path("c"), stream=1).text)
+        assert output() == "custom\npinned source\npinned patch\noriginal\n"
+        # The same process has cached both packages. A new override must not
+        # reuse the earlier customized result or alter the unmodified source.
+        custom["sample"]["override"]["message"] = "changed"
+        doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
+        doc["nixSources"][0]["overrides"] = custom
+        save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
+        assert output() == "changed\npinned source\npinned patch\noriginal\n"
+        custom["sample"]["override"]["src"]["fetchurl"]["sha256"] = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        doc["nixSources"][0]["overrides"] = custom
+        save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
+        run_id, status = run_and_wait(c, ["start"], timeout=120)
+        assert status.state == RunState.failed
+        assert "hash mismatch" in text(status.failure.diagnostic)
+
+
+@pytest.mark.parametrize("customization", [
+    {"ciao": {"override": {}}},
+    {"ciao": {"overrideAttrs": {"src": {"fetchurl": {"url": "https://invalid.example/source"}}}}},
+])
+def test_unsupported_customization_has_an_actionable_error(core_factory, tmp_path, customization):
+    """Unsupported functions and unpinned fetches explain which configuration to change."""
+    root = tmp_path / "unsupported"
+    project(root, "reads", [dict(SOURCE, overrides=customization)])
+    _, error = run(core_factory, root, "c", expected=RunState.failed)
+    expected = "does not support override" if "override" in customization["ciao"] else "fetchurl needs url and sha256"
+    assert expected in error
+
+
+@pytest.mark.parametrize("overrides", [[], "let pkgs = import <nixpkgs>; in pkgs", {"ciao": {"override": "x: x"}},
+                                       {"ciao": {"overrideAttrs": {}, "unknown": {}}}])
+def test_invalid_override_shapes_are_rejected_before_saving(core_factory, tmp_path, overrides):
+    """The customization boundary accepts JSON argument maps, never arbitrary Nix expressions."""
+    root = tmp_path / "invalid-override"
+    builtin_project(root)
+    c = core_factory(project_root=root).connect()
+    before = c.call("ProjectInspectRequest")
+    doc = json.loads(text(before.projectJson))
+    doc["nixSources"] = [dict(SOURCE, overrides=overrides)]
+    with pytest.raises(RpcFailure) as error:
+        save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
+    assert error.value.kind == "invalid_document"
+    assert c.call("ProjectInspectRequest").rev == before.rev
+
+
+def test_nested_project_cannot_inherit_outer_customizations(core_factory, tmp_path):
+    """External package customizations remain scoped to the project that approved them."""
+    root = tmp_path / "scoped"
+    write(root, DEFS, [card("start", "start"),
+                       card_in_card("inner", [card("c", "reads")], [],
+                                    {"inputs": {"start": {"card": "c", "port": "start"}}, "outputs": {}})],
+          [conn("start", "out", "inner", "start")])
+    opt_in(root, [dict(SOURCE, overrides={"ciao": {"overrideAttrs": {"name": "outer-only"}}})])
+    assert "attribute 'ciao' missing" in run(core_factory, root, "inner", "c", expected=RunState.failed)[1]
+
+
+def test_card_override_attempt_points_to_supported_project_configuration(core_factory, tmp_path):
+    """A direct Card-side override explains the supported approved customization API."""
+    root = tmp_path / "card-side-override"
+    definitions = dict(DEFS)
+    definitions["custom"] = {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+                             "_nix": nix('''let p = inputs.sources.ciao.packages.ciao.overrideAttrs (_: { name = "custom"; });
+                                            in { run = "echo ${p.name}"; }''')}
+    write(root, definitions, [card("start", "start"), card("c", "custom")], [conn("start", "out", "c", "start")])
+    opt_in(root, [SOURCE])
+    assert "nixSources[].overrides.<package>.overrideAttrs" in run(core_factory, root, "c", expected=RunState.failed)[1]

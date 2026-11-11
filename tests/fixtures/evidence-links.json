@@ -1,0 +1,125 @@
+[
+  {
+    "href": "card:spectrum",
+    "kind": "card",
+    "card": [
+      "spectrum"
+    ]
+  },
+  {
+    "href": "card:outer/inner",
+    "kind": "card",
+    "card": [
+      "outer",
+      "inner"
+    ]
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc",
+    "kind": "run"
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc/outer/inner#2",
+    "kind": "run",
+    "card": [
+      "outer",
+      "inner"
+    ],
+    "invocation": "2"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc/spectrum?invocation=2&stream=stderr&offset=128",
+    "kind": "log",
+    "card": [
+      "spectrum"
+    ],
+    "invocation": "2",
+    "offset": "128"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc?stream=journal",
+    "kind": "log",
+    "offset": "0"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=opaque%3Aid&path=reports%2Fplot.png",
+    "kind": "artifact",
+    "artifact": "opaque:id",
+    "member": "reports/plot.png"
+  },
+  {
+    "href": "card:../secret"
+  },
+  {
+    "href": "card:/absolute"
+  },
+  {
+    "href": "card://another-project/spectrum"
+  },
+  {
+    "href": "card:spectrum?project=/tmp/other"
+  },
+  {
+    "href": "run:missing"
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc#1"
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc/spectrum#0"
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc/spectrum#18446744073709551616"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc?stream=unknown"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc?offset=-1"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc?offset=1&offset=2"
+  },
+  {
+    "href": "log:12345678-1234-1234-1234-123456789abc?invocation=1"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=..%2Fsecret"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&project=other"
+  },
+  {
+    "href": "https://example.com"
+  },
+  {
+    "href": "javascript:alert(1)"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a+b.txt",
+    "kind": "artifact",
+    "artifact": "x",
+    "member": "a b.txt"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a%2Bb.txt",
+    "kind": "artifact",
+    "artifact": "x",
+    "member": "a+b.txt"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a%20b.txt",
+    "kind": "artifact",
+    "artifact": "x",
+    "member": "a b.txt"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%2"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%FF"
+  },
+  {
+    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%C0%AF"
+  }
+]

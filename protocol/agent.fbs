@@ -5,7 +5,7 @@
 namespace Tsugumi.Agent;
 
 enum Action:ubyte { Resume, Retry, Continue, Compact, Reset }
-enum Access:ubyte { Read, Write, Run, CardPermissions }
+enum Access:ubyte { Read, Write, Run, CardPermissions, Shell }
 enum GrantScope:ubyte { Conversation, Server }
 
 table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }

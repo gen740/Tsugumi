@@ -29,7 +29,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export function App() {
   useObserve(app)
   const [workspace] = useState(() => new Workspace())
-  useObserve(workspace)
+  useObserve(workspace, workspace.session)
+  const requestedCard = useRef(new URLSearchParams(location.search).get('selected'))
+  const requestedProject = useRef(new URLSearchParams(location.search).get('project'))
   const [switchError, setSwitchError] = useState<string>()
   // Leaving was asked for and the changes cannot be saved: the way out is to give them up.
   const [unsaved, setUnsaved] = useState<{ reason: string; answer: (giveUp: boolean) => void }>()
@@ -37,6 +39,14 @@ export function App() {
   const params = new URLSearchParams(location.search)
   const detachedScope = params.get('scope')
   const detached = detachedScope !== null
+
+  useEffect(() => {
+    const card = requestedCard.current, session = workspace.session, tab = workspace.active
+    if (!card || !session?.resolution.has(card) || session.dir !== requestedProject.current || !tab) return
+    requestedCard.current = null
+    tab.setSelection([card])
+    requestAnimationFrame(() => canvasFor(session, tab).reveal(card))
+  }, [workspace.session, workspace.session?.rev, workspace.active])
 
   const open = async (dir: string, scope?: string[]) => {
     try {
@@ -48,6 +58,7 @@ export function App() {
       u.searchParams.set('project', s.dir)
       if (!scope) u.searchParams.delete('scope')
       u.searchParams.delete('fresh')
+      u.searchParams.delete('selected')
       history.replaceState(null, '', u)
     } catch (e) {
       app.setError(e)

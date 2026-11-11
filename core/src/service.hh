@@ -60,6 +60,7 @@ struct ServiceOptions {
   // only through AttachedFolderRead, never by a Card. Empty: the paths as
   // they are.
   std::filesystem::path chat_folders;
+  bool project_shell = false;  // enabled by the isolated project launcher
   Limits limits;
 };
 
@@ -134,7 +135,11 @@ class Service : public RequestSink {
   void run_history(RequestIn& req);
   void run_invocations(RequestIn& req);
   void run_latest_invocations(RequestIn& req);
+  auto dispatch_shell(RequestIn req) -> void;
+  auto project_shell(RequestIn& req, const std::atomic<bool>& cancelled) -> void;
   void run_record(RequestIn& req);
+  auto run_environments(RequestIn& req) -> void;
+  auto run_environment_paths(RequestIn& req) -> void;
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
@@ -180,6 +185,10 @@ class Service : public RequestSink {
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;
+  std::unique_ptr<Lane> shell_lane_;
+  std::mutex shell_mu_;
+  bool shell_stopping_ = false;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> shell_cancellations_;
   Server* server_ = nullptr;
 
   std::mutex ops_mu_;

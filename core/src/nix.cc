@@ -66,8 +66,9 @@ std::string entry_nix() {
 # always run before this one; paths are relative to the Card's own project. They are imported lazily: only what is
 # referenced is evaluated, and branches that may not run are never offered.
 #
-# inputs.sources.<name> is a tarball the Card's project opts in to (tsugumi.json
-# nixSources), fetched by its hash when it is referenced.
+# inputs.sources.<name> contains the selected packages of a pinned flake the
+# project opts in to through nixSources. Approved JSON customizations are applied
+# in the source evaluator before these derivation references are reconstructed.
 pkgs: { sdk, gen, upstream, card }:
 let
   # upstream.json is read here only: it names folders of this evaluator, so it
@@ -79,6 +80,8 @@ let
     packages = builtins.mapAttrs (_: p:
       let
         package = {
+          override = _: throw "External package functions stay in their source evaluator. Set nixSources[].overrides.<package>.override in tsugumi.json (JSON arguments). packages already selects the target system.";
+          overrideAttrs = _: throw "Set nixSources[].overrides.<package>.overrideAttrs in tsugumi.json (JSON attributes; a pinned fetch is { fetchurl = { url; sha256; }; }). Functions cannot cross the source evaluator boundary.";
           type = "derivation";
           inherit (p) name;
           outputName = p.output;
@@ -476,6 +479,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
       if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
       NixCall lookup;
       lookup.system = n.settings.system;
+      lookup.source_overrides = s.overrides;
       lookup.cancel = req.cancel;
       if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
       lookup.log = req.log;
@@ -596,6 +600,11 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   b.emulator = emulator;
   if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
   if (const auto* p = schema::get(m.post_run)) b.post_run = *p;
+  b.environment.derivation = res.derivation;
+  b.environment.manifest = res.out;
+  b.environment.system = res.system;
+  b.environment.paths = std::move(res.closure);
+  b.environment.id = crypto::sha256_hex(res.derivation + "\n" + res.out + "\n" + res.system);
   b.key = res.out;
   b.cached = !res.built;
   return b;

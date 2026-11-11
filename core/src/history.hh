@@ -71,6 +71,8 @@ class History {
   auto read(F&& f) -> decltype(f(std::declval<sql::Db&>()));
 
   // --- write helpers (call inside a Work) ---
+  static auto put_environment(sql::Db& db, const std::string& run_id, const BuildEnvironmentData& environment)
+      -> void;
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);

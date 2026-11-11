@@ -82,6 +82,7 @@ struct InputDef {
 
 struct NixSourceRef {
   std::string name, type, ref;
+  std::string overrides = "{}";
 };
 
 struct Node {

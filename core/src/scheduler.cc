@@ -1163,9 +1163,21 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
     }
+    s.environment_id = rt.build->environment.id;
     s.build_cached = rt.build->cached;
     s.emulator = rt.build->emulator;
     stage_begin(s, Phase::execute);
+    // The environment and its invocation association must survive a crash
+    // before the worker can execute any code, including a reused build.
+    try {
+      svc_.history().write_sync([&](sql::Db& db) {
+        History::put_environment(db, run_id_, rt.build->environment);
+        History::put_status(db, s);
+      });
+    } catch (...) {
+      s.environment_id.clear();
+      throw;
+    }
     card_status(s);
     set_state(RunState::running);
     // Cards run as nobody: switched to by root (container), or mapped in
@@ -1515,7 +1527,9 @@ void Scheduler::recover_interrupted() {
       r->status.ended_at = now_ms();
       History::update_run(db, r->status);
       // In-progress invocations become interrupted failures; nothing is re-run.
-      auto st = db.prepare("SELECT card, invocation, started_at FROM statuses WHERE run_id=?");
+      auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id FROM statuses AS s "
+                           "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
+                           "AND e.invocation=s.invocation WHERE s.run_id=?");
       st.bind(1, run_id);
       std::vector<InvocationRecordData> recs;
       while (st.step()) {
@@ -1533,6 +1547,7 @@ void Scheduler::recover_interrupted() {
         rec.summary.card = p;
         rec.summary.invocation = st.u64(1);
         rec.summary.started_at = st.opt_i64(2);
+        rec.summary.environment_id = st.text(3);
         rec.summary.state = CardState::failed;
         rec.summary.failure = r->status.failure;
         recs.push_back(std::move(rec));

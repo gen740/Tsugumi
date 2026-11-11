@@ -59,6 +59,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
   *d.ready_at = s.ready_at.value_or(-1);
   *d.emulator = s.emulator;
+  *d.environment_id = s.environment_id;
   return schema::encode(d);
 }
 
@@ -77,6 +78,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
   if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
   s.emulator = *d.emulator;
+  s.environment_id = *d.environment_id;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -171,6 +173,12 @@ std::string run_tables(const std::string& p) {
   accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
   source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
   has_artifacts INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(build_environments(
+  run_id TEXT NOT NULL, id TEXT NOT NULL, derivation TEXT NOT NULL, manifest TEXT NOT NULL,
+  system TEXT NOT NULL, path_count INTEGER NOT NULL, PRIMARY KEY(run_id, id));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(environment_paths(
+  run_id TEXT NOT NULL, environment_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL,
+  PRIMARY KEY(run_id, environment_id, position));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
@@ -294,6 +302,9 @@ History::~History() {
 void History::init_schema(sql::Db& db) {
   db.exec(run_tables("") + R"SQL(
 CREATE INDEX IF NOT EXISTS logs_card ON logs(run_id, card, stream, card_off);
+CREATE TABLE IF NOT EXISTS active_environments(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, environment_id TEXT NOT NULL,
+  PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
@@ -393,6 +404,23 @@ void History::writer_loop() {
   }
 }
 
+auto History::put_environment(sql::Db& db, const std::string& run_id, const BuildEnvironmentData& e) -> void {
+  db.prepare("INSERT OR IGNORE INTO build_environments VALUES(?,?,?,?,?,?)")
+      .bind(1, run_id)
+      .bind(2, e.id)
+      .bind(3, e.derivation)
+      .bind(4, e.manifest)
+      .bind(5, e.system)
+      .bind(6, static_cast<uint64_t>(e.paths.size()))
+      .run();
+  if (!db.changes()) return;
+  auto insert = db.prepare("INSERT INTO environment_paths VALUES(?,?,?,?)");
+  for (size_t i = 0; i < e.paths.size(); ++i) {
+    insert.bind(1, run_id).bind(2, e.id).bind(3, static_cast<uint64_t>(i)).bind(4, e.paths[i]).run();
+    insert.reset();
+  }
+}
+
 void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id) {
   db.prepare("INSERT INTO runs(run_id, op_id, state, rev, execution_rev, accepted_at, started_at, "
              "ended_at, failure, source_hash, target, propagate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -415,6 +443,9 @@ void History::update_run(sql::Db& db, const RunStatusData& s) {
 }
 
 void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
+  if (!s.environment_id.empty())
+    db.prepare("INSERT OR REPLACE INTO active_environments VALUES(?,?,?,?)")
+        .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, s.environment_id).run();
   auto st = db.prepare(
       "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at) "
       "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
@@ -450,6 +481,8 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   st.bind(15, detail_json(s));
   st.run();
   // The completion removes exactly this invocation's progress status, never a newer one.
+  db.prepare("DELETE FROM active_environments WHERE run_id=? AND card=? AND invocation=?")
+      .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
@@ -1004,7 +1037,7 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 namespace {
 
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "2";
+constexpr const char* kCopyVersion = "3";
 
 // The copy: the run tables (same names and columns as the history, so runs
 // move between the two with the same column lists, kCopied) and its format.
@@ -1016,15 +1049,24 @@ struct Copied {
   const char* table;
   const char* cols;
   const char* order;
+  bool has_card = true;
 };
 // Parents first: a run is complete in the other database once it commits.
 constexpr Copied kCopied[] = {
-    {"runs", "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
-             "target, propagate, has_artifacts", "seq"},
+    {"runs",
+     "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
+     "target, propagate, has_artifacts",
+     "seq", false},
+    {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
+    {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
-    {"invocations", "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
-                    "record_io, input_sources, display, build_cached, detail", "rowid"},
-    {"ivalues", "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id", "rowid"},
+    {"invocations",
+     "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
+     "record_io, input_sources, display, build_cached, detail",
+     "rowid"},
+    {"ivalues",
+     "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id",
+     "rowid"},
     {"logs", "run_id, card, invocation, stream, run_off, card_off, inv_off, data", "id"},
     {"artifacts", "artifact_id, run_id, card, invocation, output, kind, name, members", "rowid"},
     {"displays", "run_id, card, revision, data", "rowid"},
@@ -1225,7 +1267,10 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
     for (const auto& s : schemas) {
       for (const auto& c : kCopied)
         db->exec("DELETE FROM " + s + "." + c.table + " WHERE run_id IN (SELECT run_id FROM temp.moving)");
-      if (s == "main") db->exec("DELETE FROM main.statuses WHERE run_id IN (SELECT run_id FROM temp.moving)");
+      if (s == "main") {
+        db->exec("DELETE FROM main.statuses WHERE run_id IN (SELECT run_id FROM temp.moving)");
+        db->exec("DELETE FROM main.active_environments WHERE run_id IN (SELECT run_id FROM temp.moving)");
+      }
     }
     // Saved inputs here may still name types, so only the copy drops unused ones.
     if (has_copy) db->exec("DELETE FROM ex.schemas WHERE hash NOT IN (SELECT schema_hash FROM ex.ivalues)");
@@ -1265,10 +1310,11 @@ void History::rename_card(const std::filesystem::path& copy, const std::string& 
   Txn t(*db);
   for (const auto& s : schemas) {
     for (const auto& c : kCopied)
-      if (std::string(c.table) != "runs") rewrite(s, c.table, "card");
+      if (c.has_card) rewrite(s, c.table, "card");
     rewrite(s, "runs", "target");
     if (s == "main") {
       rewrite(s, "statuses", "card");
+      rewrite(s, "active_environments", "card");
       rewrite(s, "last_inputs", "card");
     }
   }

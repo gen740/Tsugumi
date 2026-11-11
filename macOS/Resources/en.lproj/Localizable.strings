@@ -270,6 +270,7 @@
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
+"このプロジェクトに根拠の記録がありません" = "This evidence is not available in this project";
 "このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。" = "Deletes the registrations of this project's Card builds (Nix GC roots) and the build work files. What is in the shared Nix store stays and is deleted, as unregistered, by “Clean shared store” in the app settings. Documents, the run history and kept artifacts are not deleted. The next run evaluates again and uses what is still in the store without building.";
 "このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。" = "The direction this project's Cards are laid out in (saved in layout.json, applied at once). Lines and “Arrange” follow it.";
 "このプロジェクトの tsugumid が起動中に終了しました" = "tsugumid exited during startup";
@@ -487,6 +488,7 @@
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
+"バイナリの成果物です" = "This artifact contains binary data";
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
@@ -594,6 +596,7 @@
 "会話を圧縮しています…" = "Compacting the conversation…";
 "会話を表示中" = "Conversation open";
 "会話を閉じます" = "Closes the conversation";
+"位置" = "Position";
 "何が起きたか" = "What happened";
 "何を受け取り、何を出し、どう処理するかを書きます" = "Write what it takes, what it gives and how";
 "作成" = "Create";
@@ -638,6 +641,7 @@
 "偶数？" = "Even?";
 "先に変更を保存してください" = "Save your changes first";
 "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" = "Save your changes first (generation starts from the saved wiring and Draft content)";
+"先頭 64 KiB を表示" = "Showing the first 64 KiB";
 "入出力" = "Ports";
 "入出力を記録" = "Record I/O";
 "入力" = "Inputs";
@@ -988,6 +992,7 @@
 "枝: %@" = "Branch: %@";
 "枝の外（次の変更で新しい枝）" = "Not on a branch (the next change starts one)";
 "枠を削除（Card は残ります）" = "Remove Frame (the Card stays)";
+"根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
 "検証" = "Validate";

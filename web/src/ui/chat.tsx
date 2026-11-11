@@ -17,6 +17,7 @@ import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { EvidenceContext, evidenceLink } from './evidence'
 import { ChatChoices, GuideNest } from './guide'
 import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
@@ -27,7 +28,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
   const [showList, setShowList] = useState(false)
 
   return (
-    <div className="chat-panel">
+    <EvidenceContext.Provider value={{ session, tab }}><div className="chat-panel">
       <div className="chat-header">
         {!detached && <GuideNest busy={chat.busy} />}
         <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? L('会話に戻る') : L('会話の一覧と検索')} onClick={() => setShowList(!showList)} />
@@ -44,7 +45,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
         ]} />
       </div>
       {showList ? <SessionList chat={chat} onPick={() => setShowList(false)} /> : <Conversation session={session} chat={chat} tab={tab} />}
-    </div>
+    </div></EvidenceContext.Provider>
   )
 }
 
@@ -616,7 +617,7 @@ function StreamingText({ text }: { text: string }) {
     const t = setTimeout(() => setShown((s) => Math.min(text.length, s + Math.max(2, Math.floor((text.length - s) / 15)))), 16)
     return () => clearTimeout(t)
   }, [shown, text.length])
-  return <Markdown text={text.slice(0, shown)} className="selectable chat-assistant" renderCode={codeBlock} fadeIn />
+  return <Markdown text={text.slice(0, shown)} className="selectable chat-assistant" renderCode={codeBlock} renderLink={evidenceLink} fadeIn />
 }
 
 /** A finished answer as Markdown with math; very long answers are folded. */
@@ -625,7 +626,7 @@ function ChatMarkdown({ text }: { text: string }) {
   const long = text.length > 6000 && !expanded
   return (
     <div className="col gap8">
-      <Markdown text={long ? fold(text) : text} className="selectable chat-assistant" renderCode={codeBlock} />
+      <Markdown text={long ? fold(text) : text} className="selectable chat-assistant" renderCode={codeBlock} renderLink={evidenceLink} />
       {long && <button type="button" className="link caption chat-more" onClick={() => setExpanded(true)}>{L('続きを表示')}</button>}
     </div>
   )

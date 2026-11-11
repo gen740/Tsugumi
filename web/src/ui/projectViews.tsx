@@ -222,7 +222,12 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   }
   const update = async (name: string, ref: string) => {
     const r = await resolve(unlockedRef(ref))
-    if (r) await save(sources.map((s) => (str(get(s, 'name')) === name ? entry(name, r.ref) : s)))
+    if (r) await save(sources.map((s) => {
+      if (str(get(s, 'name')) !== name || !isObj(s)) return s
+      const updated = new JObj(s.entries())
+      updated.set('ref', r.ref)
+      return updated
+    }))
   }
   const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
   return (

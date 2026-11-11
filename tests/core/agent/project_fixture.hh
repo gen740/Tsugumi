@@ -13,18 +13,26 @@ class AgentProjectFixture : public AgentFixture {
     project.Stop();
   }
 
-  auto StartProject() -> void {
+  auto StartProject(bool shell = false) -> void {
     Write(
         directory.path / "project/tsugumi.json",
         R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[],"connections":[]}})");
     Write(directory.path / "project/layout.json", "{}");
-    project.Start(
-        {TSUGUMI_PROJECT_BINARY, "--project",
-         (directory.path / "project").string(), "--unix",
-         (directory.path / "project.sock").string(), "--listen", "127.0.0.1:0",
-         "--control-dir", (directory.path / "project-control").string(),
-         "--worker", TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
-        directory.path / "project.log");
+    std::vector<std::string> args{TSUGUMI_PROJECT_BINARY,
+                                  "--project",
+                                  (directory.path / "project").string(),
+                                  "--unix",
+                                  (directory.path / "project.sock").string(),
+                                  "--listen",
+                                  "127.0.0.1:0",
+                                  "--control-dir",
+                                  (directory.path / "project-control").string(),
+                                  "--worker",
+                                  TSUGUMI_WORKER_BINARY,
+                                  "--sdk-dir",
+                                  TSUGUMI_TEST_SDK};
+    if (shell) args.push_back("--project-shell");
+    project.Start(args, directory.path / "project.log");
     project_ready =
         Readiness(project, directory.path / "project-control/server.ready",
                   directory.path / "project.log");

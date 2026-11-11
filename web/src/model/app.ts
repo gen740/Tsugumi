@@ -12,6 +12,7 @@ export type WindowKind =
   | { kind: 'card'; card: CardKey; category?: CardEditorCategory }
   | { kind: 'definitions'; definition?: string }
   | { kind: 'versions' }
+  | { kind: 'evidence'; href: string }
   | { kind: 'executions'; card: CardKey }
   | { kind: 'artifacts'; card: CardKey }
   | { kind: 'workflowSettings' }
@@ -31,7 +32,7 @@ export interface DetailWindow {
 }
 
 const SIZES: Record<WindowKind['kind'], [number, number]> = {
-  card: [860, 620], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
+  evidence: [900, 600], card: [860, 620], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
   workflowSettings: [680, 480], visual: [900, 600], chat: [460, 720], appSettings: [760, 520],
 }
 
@@ -43,6 +44,7 @@ export class AppModel extends Observable {
   requestOpenProject = false
   sessions = new Map<string, ProjectSession>()
   windows: DetailWindow[] = []
+  readonly cardNavigators = new Map<ProjectSession, (card: CardKey) => void>()
   private chats = new Map<string, ChatController>()
   // Above the canvas overlays (z-index 20–50), below popovers and sheets.
   private z = 1000

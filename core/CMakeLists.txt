@@ -42,6 +42,7 @@ add_library(tsugumi_core STATIC
   src/scheduler.cc
   src/service.cc
   src/service_run.cc
+  src/service_shell.cc
   src/daemon.cc
   ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
 )

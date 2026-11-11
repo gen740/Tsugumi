@@ -267,7 +267,8 @@ struct NixEvaluator::Impl {
     } done{this};
     if (!flake_state) open_flakes();
     std::string system = c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
-    if (auto it = flakes.find(ref + "|" + system); it != flakes.end()) {
+    const auto customization = "|" + c.source_overrides;
+    if (auto it = flakes.find(ref + "|" + system + customization); it != flakes.end()) {
       if (hold(it->second)) return it->second;
       // Collected since: this state remembers derivations it would not write again.
       flakes.clear();
@@ -286,6 +287,29 @@ struct NixEvaluator::Impl {
     std::string expr = R"(
       let
         f = builtins.getFlake )" + quote(locked) + R"(;
+        custom = builtins.fromJSON )" + quote(c.source_overrides) + R"(;
+        # JSON values only: no caller-provided expression runs in the source evaluator.
+        convert = v:
+          if builtins.isList v then map convert v
+          else if builtins.isAttrs v then
+            if builtins.attrNames v == [ "fetchurl" ] then
+              let spec = v.fetchurl; in
+              if !(spec ? url && spec ? sha256) then
+                throw "nixSources overrides: fetchurl needs url and sha256"
+              else builtins.fetchurl { inherit (spec) url sha256; }
+            else builtins.mapAttrs (_: convert) v
+          else v;
+        customize = name: package:
+          let
+            config = custom.${name} or {};
+            args = convert (config.override or {});
+            attrs = convert (config.overrideAttrs or {});
+            overridden = if !(config ? override) then package
+              else if package ? override then package.override args
+              else throw "nixSources overrides: package ${name} does not support override; use overrideAttrs when available";
+          in if !(config ? overrideAttrs) then overridden
+             else if overridden ? overrideAttrs then overridden.overrideAttrs (_: attrs)
+             else throw "nixSources overrides: package ${name} does not support overrideAttrs";
         plain = builtins.unsafeDiscardStringContext;
         read = d: builtins.tryEval (builtins.deepSeq [ d.drvPath d.outPath ] {
           name = d.name or "";
@@ -293,7 +317,15 @@ struct NixEvaluator::Impl {
           out = plain d.outPath;
           output = d.outputName or "out";
         });
-        all = builtins.mapAttrs (_: read) (f.packages.)" + quote(system) + R"( or { });
+        packages = f.packages.)" + quote(system) + R"( or { };
+        missing = builtins.filter (name: !(builtins.hasAttr name packages)) (builtins.attrNames custom);
+        all = if missing != [] then throw "nixSources overrides: unknown package ${builtins.head missing}"
+          else builtins.mapAttrs (name: package:
+            if builtins.hasAttr name custom then
+              let d = customize name package;
+              in { success = true; value = { name = d.name or ""; drv = plain d.drvPath;
+                    out = plain d.outPath; output = d.outputName or "out"; }; }
+            else read package) packages;
       in {
         ref = )" + quote(locked) + R"(;
         rev = f.rev or "";
@@ -314,8 +346,8 @@ struct NixEvaluator::Impl {
     for (const auto& [attr, p] : json.at("packages").items()) info.packages.push_back(attr);
     info.json = json.dump();
     hold(info);
-    flakes[ref + "|" + system] = info;
-    flakes[locked + "|" + system] = info;
+    flakes[ref + "|" + system + customization] = info;
+    flakes[locked + "|" + system + customization] = info;
     return info;
   }
 
@@ -354,6 +386,12 @@ struct NixEvaluator::Impl {
       r.built = true;
     }
     r.out = store->printStorePath(out);
+    r.derivation = store->printStorePath(drv_path);
+    r.system = c.system.empty() ? eval_settings->getCurrentSystem() : c.system;
+    nix::StorePathSet closure;
+    store->computeFSClosure(out, closure);
+    for (const auto& path : closure) r.closure.push_back(store->printStorePath(path));
+    std::sort(r.closure.begin(), r.closure.end());
     if (!c.root_dir.empty()) {
       r.root = c.root_dir / (c.root_prefix + std::string(out.to_string()));
       add_root(r.out, r.root);

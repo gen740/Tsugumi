@@ -306,6 +306,82 @@ void Service::run_invocations(RequestIn& req) {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage, off.Union()));
 }
 
+auto Service::run_environments(RequestIn& req) -> void {
+  const auto* r = req.request()->value_as_RunEnvironmentsRequest();
+  require_uuid(r->run_id(), "run_id");
+  const auto run = r->run_id()->str();
+  const auto offset = r->offset().value_or(0);
+  const auto limit = page_limit(r->limit());
+  if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  FBB b;
+  std::vector<flatbuffers::Offset<R::BuildEnvironment>> rows;
+  bool more = false;
+  history_->read([&](sql::Db& db) {
+    if (!History::run(db, run)) throw Failed(FailureKind::not_found, "unknown run");
+    auto q = db.prepare(
+        "SELECT id, derivation, manifest, system, path_count FROM build_environments "
+        "WHERE run_id=? ORDER BY rowid LIMIT ? OFFSET ?");
+    q.bind(1, run).bind(2, static_cast<int>(limit + 1)).bind(3, offset);
+    while (q.step()) {
+      const auto id = q.text(0), derivation = q.text(1), manifest = q.text(2), system = q.text(3);
+      const auto bytes = id.size() + derivation.size() + manifest.size() + system.size() + 128;
+      if (bytes > kPagePayload)
+        throw Failed(FailureKind::resource_limit, "recorded environment exceeds the page size");
+      if (rows.size() == limit || b.GetSize() + bytes > kPagePayload) {
+        more = true;
+        break;
+      }
+      rows.push_back(R::CreateBuildEnvironment(b, b.CreateString(id), b.CreateString(derivation),
+                                               b.CreateString(manifest), b.CreateString(system), q.u64(4)));
+    }
+  });
+  auto values = b.CreateVector(rows);
+  R::BuildEnvironmentPageBuilder page(b);
+  page.add_environments(values);
+  if (more) page.add_next_offset(offset + rows.size());
+  auto off = page.Finish();
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::BuildEnvironmentPage, off.Union()));
+}
+
+auto Service::run_environment_paths(RequestIn& req) -> void {
+  const auto* r = req.request()->value_as_RunEnvironmentPathsRequest();
+  require_uuid(r->run_id(), "run_id");
+  const auto run = r->run_id()->str();
+  const auto id = r->environment_id()->str();
+  const auto offset = r->offset().value_or(0);
+  const auto limit = page_limit(r->limit());
+  if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  FBB b;
+  std::vector<flatbuffers::Offset<flatbuffers::String>> paths;
+  uint64_t total = 0;
+  history_->read([&](sql::Db& db) {
+    auto environment = db.prepare("SELECT path_count FROM build_environments WHERE run_id=? AND id=?");
+    environment.bind(1, run).bind(2, id);
+    if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
+    total = environment.u64(0);
+    auto q = db.prepare(
+        "SELECT path FROM environment_paths WHERE run_id=? AND environment_id=? "
+        "AND position>=? ORDER BY position LIMIT ?");
+    q.bind(1, run).bind(2, id).bind(3, offset).bind(4, static_cast<int>(limit));
+    while (q.step()) {
+      const auto path = q.text(0);
+      if (path.size() + 16 > kPagePayload)
+        throw Failed(FailureKind::resource_limit, "recorded store path exceeds the page size");
+      if (b.GetSize() + path.size() + 16 > kPagePayload) break;
+      paths.push_back(b.CreateString(path));
+    }
+  });
+  if (paths.empty() && offset < total)
+    throw Failed(FailureKind::integrity_error, "recorded environment has missing store paths");
+  auto values = b.CreateVector(paths);
+  R::EnvironmentPathPageBuilder page(b);
+  page.add_paths(values);
+  page.add_total(total);
+  if (offset < total && paths.size() < total - offset) page.add_next_offset(offset + paths.size());
+  auto off = page.Finish();
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::EnvironmentPathPage, off.Union()));
+}
+
 void Service::run_record(RequestIn& req) {
   const auto* r = req.request()->value_as_RunRecordRequest();
   require_uuid(r->run_id(), "run_id");

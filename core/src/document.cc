@@ -116,6 +116,29 @@ void check_boundary(const schema::Project& p, const std::string& where) {
   }
 }
 
+auto check_nix_sources(const schema::Project& p) -> void {
+  if (p.nix_sources->has_value()) {
+    static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
+    static const std::regex ref_re(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
+    std::set<std::string> sources;
+    for (const auto& s : p.nix_sources->value()) {
+      if (!s.name->has_value() || !s.type->has_value() || !s.ref->has_value())
+        invalid("nixSources entries need name, type and ref");
+      const auto& name = s.name->value();
+      if (!std::regex_match(name, name_re)) invalid("nixSources: \"" + name + "\" is not a name");
+      if (s.type->value() != "flake") invalid("nixSources: " + name + ": type must be flake");
+      if (!std::regex_match(s.ref->value(), ref_re))
+        invalid("nixSources: " + name + ": ref must be a locked flake reference with a narHash");
+      if (const auto* overrides = schema::get(s.overrides)) {
+        schema::v::Mapping<schema::v::String, schema::Obj<schema::ExternalPackageOverride>> checked;
+        if (auto error = schema::decode(*overrides, checked))
+          invalid("nixSources: " + name + ": invalid overrides: " + error->message);
+      }
+      if (!sources.insert(name).second) invalid("nixSources: duplicate name " + name);
+    }
+  }
+}
+
 }  // namespace
 
 schema::Project parse_project_json(const std::string& text) {
@@ -129,21 +152,7 @@ schema::Project parse_project_json(const std::string& text) {
     if (!db.name->has_value() || !db.url->has_value()) invalid("databaseConnections entries need name and url");
     if (!names.insert(db.name->value()).second) invalid("duplicate database connection " + db.name->value());
   }
-  if (p.nix_sources->has_value()) {
-    static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
-    static const std::regex ref_re(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
-    std::set<std::string> sources;
-    for (const auto& s : p.nix_sources->value()) {
-      if (!s.name->has_value() || !s.type->has_value() || !s.ref->has_value())
-        invalid("nixSources entries need name, type and ref");
-      const auto& name = s.name->value();
-      if (!std::regex_match(name, name_re)) invalid("nixSources: \"" + name + "\" is not a name");
-      if (s.type->value() != "flake") invalid("nixSources: " + name + ": type must be flake");
-      if (!std::regex_match(s.ref->value(), ref_re))
-        invalid("nixSources: " + name + ": ref must be a locked flake reference with a narHash");
-      if (!sources.insert(name).second) invalid("nixSources: duplicate name " + name);
-    }
-  }
+  check_nix_sources(p);
   check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
   check_boundary(p, "tsugumi.json");
   return p;
@@ -151,6 +160,7 @@ schema::Project parse_project_json(const std::string& text) {
 
 schema::Project parse_external_project(const std::string& rel, const std::string& text) {
   auto p = decode_doc<schema::Project>(rel, text);
+  check_nix_sources(p);
   if (!p.canvas->has_value()) invalid(rel + ": \"canvas\" is required", {{"path", rel}});
   check_graph_shape(p.canvas->value(), rel + " canvas");
   check_boundary(p, rel);

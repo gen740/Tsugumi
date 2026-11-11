@@ -503,7 +503,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--listen-unix-ws", "/run/tsugumi/rpc/s", "--control-dir", "/control",
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
-               "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat"};
+               "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
   // The pages that may connect (the Mac's tsugumi command): comma-separated.
   // Without any, as for the app, a browser's request is refused.
   for (size_t at = 0; at < origins.size();) {

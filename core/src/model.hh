@@ -98,6 +98,11 @@ struct StageTimeData {
   std::optional<int64_t> end;
 };
 
+struct BuildEnvironmentData {
+  std::string id, derivation, manifest, system;
+  std::vector<std::string> paths;
+};
+
 struct InvocationSummaryData {
   std::string run_id;
   CardPath card;
@@ -117,6 +122,7 @@ struct InvocationSummaryData {
   // The program the kernel ran the Card's binaries with, for a Card built for
   // another system (binfmt_misc); "" when it ran natively.
   std::string emulator;
+  std::string environment_id;
 };
 
 // A value travelling on a port. `type` is the port message type.

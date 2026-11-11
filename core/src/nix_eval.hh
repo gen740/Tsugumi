@@ -23,6 +23,7 @@ struct NixCall {
   // Confirmed definition sources, also available to alternative build backends
   // without parsing the Nix expression above.
   std::filesystem::path definition_dir;
+  std::string source_overrides = "{}";  // approved JSON package customizations
   std::string system;    // the Nix system to evaluate for; "" = this machine's
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
@@ -37,6 +38,8 @@ struct NixCall {
 struct NixResult {
   std::string out;       // store path of the Card manifest
   std::string manifest;  // its contents
+  std::string derivation, system;
+  std::vector<std::string> closure;  // runtime references, including the manifest
   bool built = false;    // false: the result was already in the store
   std::filesystem::path root;
 };
@@ -67,8 +70,10 @@ class NixEvaluator {
 
   // A flake a project opted in to, evaluated apart from every Card: its own
   // state has getFlake and runs as `nix build` does (pure, no IFD). A Card only
-  // ever gets the result. `ref` may be unlocked; the result's is locked. `call`
-  // gives the cancel, deadline and log only.
+  // ever gets the result. `ref` may be unlocked; the result's is locked.
+  // `call.source_overrides` contains approved JSON override/overrideAttrs maps,
+  // applied here before derivations cross into the restricted Card evaluator.
+  // It also supplies the target system, cancellation, deadline and log.
   FlakeInfo flake(const NixCall& call, const std::string& ref);
   bool valid(const std::string& store_path);
 

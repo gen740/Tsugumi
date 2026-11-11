@@ -16,6 +16,7 @@ struct ProjectRef: Codable, Hashable {
 struct WorkflowRef: Codable, Hashable {
   var path: String
   var scope: [String]
+  var selected: CardKey? = nil
 }
 
 enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {

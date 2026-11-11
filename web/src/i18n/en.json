@@ -1232,5 +1232,10 @@
  "Draft {0} 枚から Card を生成します": "Generating Cards from {0} Drafts",
  "再試行すると接続し直します。実行中の処理は継続しています。": "Retry to reconnect. Work in progress continues.",
  "実行環境との接続が切れました。": "Lost the connection to the environment.",
- "選択した Card のコメントに従って生成します": "Generating Cards from comments on the selected Cards"
+ "選択した Card のコメントに従って生成します": "Generating Cards from comments on the selected Cards",
+ "根拠の記録": "Evidence record",
+ "このプロジェクトに根拠の記録がありません": "This evidence is not available in this project",
+ "位置": "Position",
+ "先頭 64 KiB を表示": "Showing the first 64 KiB",
+ "バイナリの成果物です": "This artifact contains binary data"
 }

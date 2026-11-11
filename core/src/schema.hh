@@ -73,10 +73,16 @@ struct DatabaseConnection {
 // A Nix source outside nixpkgs that this project opts in to. Its Cards read it
 // as inputs.sources.<name>. `type` says how it is read: "flake" for now, whose
 // `ref` is locked (a commit and its narHash).
+struct ExternalPackageOverride {
+  Opt<"override", v::Mapping<v::String, Json>> arguments;
+  Opt<"overrideAttrs", v::Mapping<v::String, Json>> attributes;
+};
+
 struct NixSource {
   Opt<"name", v::String> name;
   Opt<"type", v::String> type;
   Opt<"ref", v::String> ref;
+  Opt<"overrides", Json> overrides;
 };
 
 struct Project {
@@ -309,6 +315,7 @@ struct InvocationDetailJson {
   t::Array<"outputs_sent", v::String> outputs_sent;
   t::Int64<"ready_at"> ready_at;
   t::String<"emulator"> emulator;  // "" = ran natively
+  t::String<"environment_id"> environment_id;
 };
 
 struct InputSourceJson {

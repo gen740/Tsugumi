@@ -40,6 +40,7 @@ private struct SelectableText: ViewModifier {
 }
 
 private struct BlockView: View {
+  @Environment(\.evidenceLinks) private var links
   let block: MarkdownDocument.Block
   let fontSize: CGFloat
   var lineLimit: Int?
@@ -48,10 +49,10 @@ private struct BlockView: View {
   var body: some View {
     switch block {
     case .paragraph(let inlines):
-      InlineText.make(inlines, size: fontSize).lineLimit(lineLimit).fixedSize(horizontal: false, vertical: true)
+      InlineText.make(inlines, size: fontSize, links: links).lineLimit(lineLimit).fixedSize(horizontal: false, vertical: true)
     case .heading(let level, let inlines):
       let scale: CGFloat = level == 1 ? 1.5 : level == 2 ? 1.3 : level == 3 ? 1.15 : 1.0
-      InlineText.make(inlines, size: fontSize * scale, bold: true)
+      InlineText.make(inlines, size: fontSize * scale, bold: true, links: links)
         .padding(.top, fontSize * (level <= 2 ? 0.35 : 0.15))
         .fixedSize(horizontal: false, vertical: true)
     case .code(let code, let language) where codeTools:
@@ -96,10 +97,10 @@ private struct BlockView: View {
     case .table(let head, let rows):
       ScrollView(.horizontal, showsIndicators: false) {
         Grid(alignment: .leading, horizontalSpacing: fontSize, verticalSpacing: fontSize * 0.3) {
-          GridRow { ForEach(Array(head.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize, bold: true) } }
+          GridRow { ForEach(Array(head.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize, bold: true, links: links) } }
           Divider()
           ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
-            GridRow { ForEach(Array(r.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize) } }
+            GridRow { ForEach(Array(r.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize, links: links) } }
           }
         }
         .padding(.vertical, fontSize * 0.2)
@@ -131,15 +132,15 @@ private struct MathBlock: View {
 /// inline math (an image on the text's baseline).
 @MainActor
 enum InlineText {
-  static func make(_ inlines: [MarkdownDocument.Inline], size: CGFloat, bold: Bool = false) -> SwiftUI.Text {
+  static func make(_ inlines: [MarkdownDocument.Inline], size: CGFloat, bold: Bool = false, links: Set<String> = []) -> SwiftUI.Text {
     var out = SwiftUI.Text(verbatim: "")
     for i in inlines {
-      out = SwiftUI.Text("\(out)\(piece(i, size: size, bold: bold))")
+      out = SwiftUI.Text("\(out)\(piece(i, size: size, bold: bold, links: links))")
     }
     return out
   }
 
-  private static func piece(_ i: MarkdownDocument.Inline, size: CGFloat, bold: Bool) -> SwiftUI.Text {
+  private static func piece(_ i: MarkdownDocument.Inline, size: CGFloat, bold: Bool, links: Set<String>) -> SwiftUI.Text {
     switch i {
     case .text(let s, let style):
       var a = AttributedString(s)
@@ -156,7 +157,8 @@ enum InlineText {
     case .link(let label, let url):
       var a = AttributedString(label)
       a.font = .system(size: size, weight: bold ? .semibold : .regular)
-      if let u = URL(string: url) { a.link = u }
+      if let u = URL(string: url), (["http", "https", "mailto"].contains(u.scheme?.lowercased() ?? "") || links.contains(url)) { a.link = u }
+      else if EvidenceTarget.recognizes(url) { a.foregroundColor = Color.secondary }
       return SwiftUI.Text(a)
     case .math(let tex):
       if let m = MathImages.image(tex, size: size, display: false) {

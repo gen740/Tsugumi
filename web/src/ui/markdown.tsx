@@ -157,10 +157,12 @@ function MathBlock({ tex }: { tex: string }) {
 
 const safeHref = (href: string) => (/^(https?:|mailto:)/i.test(href) ? href : undefined)
 
+type LinkRenderer = (href: string, label: ReactNode) => ReactNode | undefined
+
 type CodeRenderer = (code: string, language: string) => ReactNode
 
 class Walker {
-  constructor(readonly math: string[], readonly display: Set<number>, readonly code?: CodeRenderer) {}
+  constructor(readonly math: string[], readonly display: Set<number>, readonly code?: CodeRenderer, readonly link?: LinkRenderer) {}
 
   /** Puts the math placeholders of a text run back as math. */
   text(s: string, key: string): ReactNode[] {
@@ -195,6 +197,8 @@ class Walker {
         case 'br': out.push(<br key={k} />); break
         case 'link': {
           const l = t as Tokens.Link
+          const custom = this.link?.(l.href, this.inlines(l.tokens, k))
+          if (custom !== undefined) { out.push(<span key={k}>{custom}</span>); break }
           const href = safeHref(l.href)
           out.push(href ? <a key={k} href={href} target="_blank" rel="noreferrer noopener">{this.inlines(l.tokens, k)}</a> : <span key={k}>{this.inlines(l.tokens, k)}</span>)
           break
@@ -294,8 +298,8 @@ class Walker {
 /** Markdown with math. `renderCode` draws code blocks (the chat's, with the
  *  language and a copy button); `fadeIn` fades new blocks in (an answer
  *  being written). */
-export function Markdown({ text, className, renderCode, fadeIn }: { text: string; className?: string; renderCode?: CodeRenderer; fadeIn?: boolean }) {
+export function Markdown({ text, className, renderCode, renderLink, fadeIn }: { text: string; className?: string; renderCode?: CodeRenderer; renderLink?: LinkRenderer; fadeIn?: boolean }) {
   const doc = parse(text)
-  const blocks = new Walker(doc.math, doc.displayed, renderCode).blocks(doc.tokens, 'b')
+  const blocks = new Walker(doc.math, doc.displayed, renderCode, renderLink).blocks(doc.tokens, 'b')
   return <div className={`markdown${fadeIn ? ' md-fade' : ''} ${className ?? ''}`}>{blocks}</div>
 }
