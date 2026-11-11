@@ -1,4 +1,5 @@
 #include "graph.hh"
+#include "database.hh"
 #include "nix_refs.hh"
 
 #include <map>
@@ -274,6 +275,8 @@ class Builder {
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
     boolean(d.markdown, s.markdown);
+    str(d.database_connection, s.database_connection);
+    str(d.database_table, s.database_table);
     if (const auto* v = schema::get(d.system)) {
       if (*v == "x86_64-linux" || *v == "aarch64-linux") s.system = *v == native_system() ? "" : *v;
       else n.diags.push_back(diag(n.path, "invalid_setting", "system must be x86_64-linux or aarch64-linux"));
@@ -429,6 +432,17 @@ class Builder {
       }
       n.kind = template_of(def);
       read_settings(n, def);
+      if (!n.settings.database_connection.empty()) {
+        if (const auto* connections = schema::get(project.database_connections))
+          for (const auto& db : *connections)
+            if (db.name->value() == n.settings.database_connection) n.settings.database_url = db.url->value();
+        if (n.kind != Template::Logger || n.settings.database_url.empty())
+          n.exec_diags.push_back(diag(n.path, "invalid_setting", "logger database connection is not registered"));
+        if (!database::valid_table(n.settings.database_table))
+          n.exec_diags.push_back(diag(n.path, "invalid_setting", "logger databaseTable must be an SQL identifier"));
+        if (n.settings.database_url.starts_with("postgresql:") && !n.settings.network)
+          n.exec_diags.push_back(diag(n.path, "invalid_setting", "PostgreSQL logging requires network permission"));
+      }
       switch (n.kind) {
         case Template::Code:
           if (n.settings.language != "cpp" && n.settings.language != "python" &&

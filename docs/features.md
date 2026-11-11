@@ -36,9 +36,34 @@ macOS (host)                                       Shared Linux VM (one per app)
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Sends a value following the type in `_outputs.fbs`, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | fork / branch / merge | Distribution, conditional branching (only one of `a` / `b` fires, depending on `condition`) and merging (a union type named by input port). There is no dedicated Card for bounded feedback loops: a loop is made by sending a value back through a merge, and the `maxRuns` of the Cards on the loop bounds its iterations |
-| logger | Puts the values it receives in the Card's log and display (Markdown can be shown too; recording to an external database is planned in [#160](https://github.com/gen740/Tsugumi/issues/160)) |
+| logger | Puts the values it receives in the Card's log and display, optionally as Markdown, and can record JSON with run/Card provenance in SQLite or PostgreSQL (see below) |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (its ports follow the wires and have no types). The Agent can later generate its implementation |
+
+### Recording logger values in a database
+
+In Project Settings, register a named `databaseConnections` entry. In a logger Card's settings, choose that connection and a table (`databaseConnection` and `databaseTable` in `_card.json`). Leaving the connection empty keeps ordinary logging and display only.
+
+- **SQLite:** `sqlite:measurements.sqlite` creates `.tsugumi/logger/measurements.sqlite` inside the logger's own project (also inside a Card in Card). The filename is a single SQL identifier plus `.sqlite`; paths and symbolic links are rejected. This dedicated directory keeps writes away from source documents and Tsugumi's own history databases.
+- **PostgreSQL:** `postgresql://db.example.org/science` requires the Card's network permission. TLS certificate and hostname verification are on by default (`sslmode=verify-full`, using system roots). `?sslmode=disable` is available for a local test server. Host, port, database and `sslmode` are the only URL options; usernames, passwords, service files and other libpq options are not project settings. The runtime links libpq 17 or newer.
+
+Save the connection, then register its user and password in **Database credentials (this device only)** in the same settings page. The host writes an owner-only `0600` file under the launcher's control folder, outside the project; credentials are never returned by RPC, exposed to Agent tools, or included in versions or run records. Deleting credentials removes that host file. Changing a connection URL requires registering credentials again, so a saved password cannot be forwarded to a different target. Other machines need their own credentials.
+
+For a standalone `tsugumid`, `--database-credentials-dir DIR` chooses an existing directory outside the project (the default is `<control-dir>/database-credentials`). Put a `0600` file named `<connection-name>.json` there containing `{"url":"postgresql://db.example.org/science","user":"logger","password":"..."}`. Keep this file outside version control. Do not set `PG*` environment overrides on the daemon; the logger rejects them so implicit libpq settings cannot redirect a connection.
+
+The logger creates the chosen table if absent and appends one row per invocation:
+
+| Column | SQLite | PostgreSQL | Meaning |
+| --- | --- | --- | --- |
+| `run_id` | TEXT | TEXT | Tsugumi Run ID |
+| `card` | TEXT | TEXT | Full Card path, including nested Cards |
+| `invocation` | INTEGER | BIGINT | Invocation number within the Run |
+| `timestamp_ms` | INTEGER | BIGINT | Write time, Unix milliseconds |
+| `value_json` | TEXT, JSON checked | JSONB | Received FlatBuffer value as JSON |
+
+The primary key is `(run_id, card, invocation)`. Existing tables must have this schema. Values are bound as SQL parameters; table names are ASCII SQL identifiers of at most 63 characters. A write failure fails the invocation and adds a diagnostic to its log. Connection, lock and statement waits are bounded to five seconds each. Database writes and Tsugumi's history commit are separate: a crash after the database commit can leave a recorded row for an interrupted Run. The Run/Card/invocation key lets a reader reconcile it.
+
+An Agent needs approval to enable database writes, change the destination or table, or enable PostgreSQL networking. This applies inside a Card in Card too. Registering credentials is a host UI action, not an Agent tool.
 
 ### Typed ports
 

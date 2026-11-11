@@ -84,6 +84,7 @@ if(TSUGUMI_BUILD_CORE)
   find_package(flatbuffers CONFIG REQUIRED)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+  pkg_check_modules(LIBPQ REQUIRED IMPORTED_TARGET libpq>=17)
   # A project's versions are a git repository (core/src/versions.cc).
   pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
   # The embedded Nix evaluator: the same Nix version as the environment's daemon.

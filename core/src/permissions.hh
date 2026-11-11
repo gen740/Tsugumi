@@ -1,5 +1,5 @@
 // What a Card may do beyond computing: reach the network, run without the
-// sandbox, see folders of the host, have Nix read a source outside nixpkgs.
+// sandbox, see folders of the host, write a database, or have Nix read a source outside nixpkgs.
 // A save that widens these for any Card (a new Card counts from nothing) lists
 // them, so a client can ask the user.
 // And what a model's save must leave behind when it implements a Draft.
@@ -12,7 +12,7 @@
 
 namespace tsugumi::permissions {
 
-// "network <card>", "sandbox_off <card>", "host_folder_read <card> <path>",
+// "database_write <card> <connection> <url> <table>", "network <card>", "sandbox_off <card>", "host_folder_read <card> <path>",
 // "host_folder_write <card> <path>" for each widening from `before` (null:
 // nothing) to `after`, in node order, after "nix_source <name> <ref>"
 // for each source of a project that `before` did not have.

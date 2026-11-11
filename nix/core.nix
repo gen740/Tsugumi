@@ -7,6 +7,7 @@
   pkg-config,
   flatbuffers,
   sqlite,
+  postgresql,
   libgit2,
   curl,
   nix,
@@ -78,6 +79,7 @@ clangStdenv.mkDerivation {
   buildInputs = [
     flatbuffers
     sqlite
+    postgresql
     libgit2
     curl
     nix.libs.nix-expr

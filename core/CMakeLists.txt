@@ -25,6 +25,7 @@ add_library(tsugumi_core STATIC
   src/util/sqlite.cc
   src/types.cc
   src/document.cc
+  src/database.cc
   src/graph.cc
   src/nix_refs.cc
   src/comments.cc
@@ -50,7 +51,7 @@ target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval)
+  PkgConfig::SQLITE3 PkgConfig::LIBPQ PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval)
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
 endif()

@@ -67,6 +67,14 @@ export class CardEditorModel extends Observable {
   get definitionId(): string | undefined {
     return path(this.cardKey).pop()
   }
+  get databaseConnections(): string[] {
+    const prefix = this.session.projectPrefix(path(this.cardKey).slice(0, -1))
+    const project = prefix ? this.session.external(prefix)?.project : this.session.project
+    return (arr(get(project, 'databaseConnections')) ?? []).flatMap((c) => {
+      const name = str(get(c, 'name')); return name ? [name] : []
+    })
+  }
+
   get kind() {
     return this.session.kind(this.cardKey)
   }
@@ -626,6 +634,15 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           )}
           {numberField('maxRuns', L('最大実行回数'), '1')}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
+          {kind === 'logger' && <>
+            <Row label={L('記録先 DB')}><Select {...string('databaseConnection', '')} options={[
+              { value: '', label: L('保存しない') }, ...model.databaseConnections.map((name) => ({ value: name, label: name })),
+            ]} /></Row>
+            {!!str(get(def, 'databaseConnection')) && <>
+              <Row label={L('テーブル')}><TextField {...string('databaseTable', '')} placeholder="measurements" /></Row>
+              {toggle('network', L('ネットワークを許可'), false, L('PostgreSQL への記録にはネットワークの許可が必要です。'))}
+            </>}
+          </>}
           {kind === 'logger' && toggle('markdown', L('Markdown として表示'), false,
             L('オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。'))}
           {kind === 'code' && (

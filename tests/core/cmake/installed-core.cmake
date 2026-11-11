@@ -24,6 +24,7 @@ find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+pkg_check_modules(LIBPQ REQUIRED IMPORTED_TARGET libpq>=17)
 pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
 add_library(hosq INTERFACE)
 target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
@@ -38,7 +39,7 @@ set_target_properties(tsugumi_core PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_core.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_core INTERFACE tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads)
+  PkgConfig::SQLITE3 PkgConfig::LIBPQ PkgConfig::LIBGIT2 Threads::Threads)
 if(NOT APPLE)
   pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
   target_link_libraries(tsugumi_core INTERFACE PkgConfig::CRYPTO)

@@ -1,3 +1,4 @@
+import { api } from '../api'
 // The Card database and the project's settings panes.
 import { useEffect, useState } from 'react'
 import { app } from '../model/app'
@@ -324,6 +325,15 @@ function CanvasProjectSettings({ session }: { session: ProjectSession }) {
 }
 
 function DatabaseSettings({ session }: { session: ProjectSession }) {
+  const [credentialName, setCredentialName] = useState('')
+  const [user, setUser] = useState('')
+  const [password, setPassword] = useState('')
+  const credential = async (remove = false) => {
+    try {
+      await api('/api/database/credential', { path: session.dir, name: credentialName, user, password, remove })
+      setUser(''); setPassword(''); setMessage(L('認証情報を更新しました。'))
+    } catch (e) { setMessage(String(e)) }
+  }
   const read = () => (arr(get(session.project, 'databaseConnections')) ?? []).map((c, i) => ({ id: i, name: str(get(c, 'name')) ?? '', url: str(get(c, 'url')) ?? '' }))
   const [rows, setRows] = useState(read)
   const [base, setBase] = useState(rows)
@@ -344,6 +354,7 @@ function DatabaseSettings({ session }: { session: ProjectSession }) {
   return (
     <div className="col fill">
       <div className="callout secondary pad12">{L('記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。')}</div>
+      <div className="callout secondary pad12">{L('SQLite: sqlite:measurements.sqlite。PostgreSQL: postgresql://host/database。URL に認証情報を含めず、接続先を保存してから下で登録してください。')}</div>
       <div className="table flex1">
         <div className="table-head"><span>{L('名前')}</span><span>URL</span><span /></div>
         {rows.map((r) => (
@@ -354,6 +365,16 @@ function DatabaseSettings({ session }: { session: ProjectSession }) {
           </div>
         ))}
       </div>
+      <Section title={L('DB 認証情報（この端末のみ）')}>
+        <Row label={L('接続先')}><Select value={credentialName} onChange={setCredentialName} options={[
+          { value: '', label: L('選択してください') }, ...base.filter((r) => r.url.startsWith('postgresql://')).map((r) => ({ value: r.name, label: r.name })),
+        ]} /></Row>
+        <Row label={L('ユーザー')}><TextField value={user} onChange={setUser} /></Row>
+        <Row label={L('パスワード')}><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" /></Row>
+        <div className="row"><Button disabled={!credentialName || !user || !password} onClick={() => void credential()}>{L('認証情報を保存')}</Button>
+          <Button disabled={!credentialName} onClick={() => void credential(true)}>{L('認証情報を削除')}</Button></div>
+        <p className="secondary callout">{L('プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。')}</p>
+      </Section>
       <div className="detail-foot">
         <Button onClick={() => setRows([...rows, { id: Date.now(), name: `db${rows.length + 1}`, url: '' }])}>{L('追加')}</Button>
         {message && <span className="callout secondary selectable">{message}</span>}

@@ -1,4 +1,5 @@
 #include "scheduler.hh"
+#include "database.hh"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -1093,6 +1094,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         std::string text;
         std::string err;
         if (!types::flatbuffer_to_json(*v->type, v->bytes, &text, &err)) throw Failed(FailureKind::output_invalid, err);
+        if (!node.settings.database_connection.empty()) {
+          try {
+            database::write(svc_.store().root(), svc_.options().database_credentials_dir, node,
+                            run_id_, s.invocation, text, now_ms());
+          } catch (const std::exception& e) {
+            throw Failed(FailureKind::persistence_failed, e.what());
+          }
+        }
         card_log(node.path, s.invocation, LogStream::stdout, text + "\n");
         DisplayData d;
         d.card = node.path;

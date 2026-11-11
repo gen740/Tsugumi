@@ -330,12 +330,17 @@ private struct DatabaseSettings: View {
   @State private var rows: [Row] = []
   @State private var base: [Row] = []
   @State private var message: String?
+  @State private var credentialName = ""
+  @State private var databaseUser = ""
+  @State private var databasePassword = ""
 
   var body: some View {
     let changed = rows.map { [$0.name, $0.url] } != base.map { [$0.name, $0.url] }
     VStack(alignment: .leading, spacing: 8) {
       Text("記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。")
         .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 8)
+      Text("SQLite: sqlite:measurements.sqlite。PostgreSQL: postgresql://host/database。URL に認証情報を含めず、接続先を保存してから下で登録してください。")
+        .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 12)
       Table($rows) {
         TableColumn("名前") { $r in TextField("", text: $r.name) }
         TableColumn("URL") { $r in TextField("", text: $r.url, prompt: Text("postgresql://…")) }
@@ -344,6 +349,23 @@ private struct DatabaseSettings: View {
         }
         .width(30)
       }
+      Form {
+        Section("DB 認証情報（この端末のみ）") {
+          Picker("接続先", selection: $credentialName) {
+            Text("選択してください").tag("")
+            ForEach(base.filter { $0.url.hasPrefix("postgresql://") }) { row in Text(row.name).tag(row.name) }
+          }
+          TextField("ユーザー", text: $databaseUser)
+          SecureField("パスワード", text: $databasePassword)
+          HStack {
+            Button("認証情報を保存") { saveCredential() }
+              .disabled(credentialName.isEmpty || databaseUser.isEmpty || databasePassword.isEmpty)
+            Button("認証情報を削除") { saveCredential(remove: true) }.disabled(credentialName.isEmpty)
+          }
+          Text("プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。")
+            .font(.callout).foregroundStyle(.secondary)
+        }
+      }.padding(.horizontal, 12)
       HStack {
         Button("追加") { rows.append(Row(name: "db\(rows.count + 1)", url: "")) }
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
@@ -354,6 +376,32 @@ private struct DatabaseSettings: View {
       .padding(12)
     }
     .onAppear(perform: load)
+  }
+
+  private func saveCredential(remove: Bool = false) {
+    guard let row = base.first(where: { $0.name == credentialName }),
+          row.name.range(of: "^(?![.][.]?$)[A-Za-z0-9_.-]{1,128}$", options: .regularExpression) != nil else { return }
+    do {
+      let directory = session.environments.controlDir(session.identity).appendingPathComponent("database-credentials")
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                              attributes: [.posixPermissions: 0o700])
+      let file = directory.appendingPathComponent(row.name + ".json")
+      if remove {
+        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+      } else {
+        let data = try JSONSerialization.data(withJSONObject: ["url": row.url, "user": databaseUser, "password": databasePassword])
+        let temporary = directory.appendingPathComponent(UUID().uuidString + ".tmp")
+        let fd = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw CocoaError(.fileWriteNoPermission) }
+        defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temporary) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        try handle.write(contentsOf: data)
+        if Darwin.rename(temporary.path, file.path) != 0 { throw CocoaError(.fileWriteUnknown) }
+      }
+      databaseUser = ""
+      databasePassword = ""
+      message = String(localized: "認証情報を更新しました。")
+    } catch { message = error.localizedDescription }
   }
 
   private func load() {

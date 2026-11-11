@@ -82,6 +82,7 @@
               ninja
               flatbuffers
               sqlite
+              postgresql
               libgit2
               curl
               gtest

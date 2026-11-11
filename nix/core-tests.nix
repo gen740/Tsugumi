@@ -7,6 +7,7 @@
   makeWrapper,
   flatbuffers,
   sqlite,
+  postgresql,
   libgit2,
   curl,
   gtest,
@@ -46,6 +47,7 @@ clangStdenv.mkDerivation {
   buildInputs = [
     flatbuffers
     sqlite
+    postgresql
     libgit2
     curl
     gtest
@@ -89,6 +91,7 @@ clangStdenv.mkDerivation {
             ps.websockets
           ]))
           flatbuffers
+          postgresql
           bash
           coreutils
           openssl

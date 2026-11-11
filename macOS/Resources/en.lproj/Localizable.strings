@@ -100,6 +100,7 @@
 "ChatGPT プラン（Sign in with ChatGPT）" = "ChatGPT plan (Sign in with ChatGPT)";
 "Continue with ChatGPT" = "Continue with ChatGPT";
 "Continue with ChatGPT（別のアカウント）" = "Continue with ChatGPT (another account)";
+"DB 認証情報（この端末のみ）" = "Database credentials (this device only)";
 "Draft %lld 枚（%@）から Card を生成します" = "Generating Cards from %lld Drafts (%@)";
 "Draft Card を追加" = "Add Draft Card";
 "Draft から Card を生成" = "Generate Cards from Drafts";
@@ -142,6 +143,7 @@
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "OpenAI の API キー" = "OpenAI API key";
 "Plotly のグラフ" = "Plotly chart";
+"PostgreSQL への記録にはネットワークの許可が必要です。" = "PostgreSQL logging requires network permission.";
 "Python の処理" = "Python step";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で送信" = "Return sends";
@@ -154,6 +156,7 @@
 "SDK 準備" = "SDK preparation";
 "SDK 準備・Nix 評価・build" = "SDK preparation, Nix evaluation, build";
 "SDK 準備中" = "Preparing the SDK";
+"SQLite: sqlite:measurements.sqlite。PostgreSQL: postgresql://host/database。URL に認証情報を含めず、接続先を保存してから下で登録してください。" = "SQLite: sqlite:measurements.sqlite. PostgreSQL: postgresql://host/database. Keep credentials out of the URL. Save the connection before registering credentials below.";
 "Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）" = "No Skills (add a folder in Settings > Skills, or use the project's skills/)";
 "Skill はまだありません" = "No Skills yet";
 "Skill を再読込" = "Reload Skills";
@@ -463,6 +466,7 @@
 "ツールの詳細" = "Tool details";
 "テキスト検索" = "Text search";
 "テキスト検索…" = "Text Search…";
+"テーブル" = "Table";
 "テーマ" = "Theme";
 "デフォルト" = "Default";
 "デフォルトに戻す" = "Use the Default";
@@ -488,10 +492,12 @@
 "ネットワークへのアクセス" = "Network access";
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
+"ネットワークを許可" = "Allow network access";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
+"パスワード" = "Password";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
 "パラメータ" = "Parameters";
 "ビルドの期限（秒）" = "Build timeout (s)";
@@ -519,6 +525,7 @@
 "プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）" = "Preview (select, drag, collapse and zoom; the project is not changed)";
 "プロジェクト" = "Project";
 "プロジェクトが大きすぎます（64 MB まで）。" = "The project is too large (up to 64 MB).";
+"プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。" = "Not saved in the project or its history. Register again after changing the connection URL.";
 "プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。" = "Runs in the project's .tsugumi/runs.sqlite are read again the next time it opens.";
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
@@ -549,6 +556,7 @@
 "モデルが文を返しませんでした。" = "The model returned no text.";
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
+"ユーザー" = "User";
 "ライト" = "Light";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
@@ -1102,6 +1110,7 @@
 "記録された出来事はありません" = "No events were recorded";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";
 "記録と成果物" = "Recording and artifacts";
+"記録先 DB" = "Database destination";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you would like to try.";
@@ -1114,6 +1123,9 @@
 "詳しいログ" = "Detailed log";
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
+"認証情報を保存" = "Save credentials";
+"認証情報を削除" = "Delete credentials";
+"認証情報を更新しました。" = "Credentials updated.";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
 "読み直す" = "Reload";
@@ -1148,6 +1160,7 @@
 "選択した Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the selected Cards in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "選択した Card の詳細" = "Details of the selected Card";
 "選択した Card を参照に追加" = "Add selected Cards as references";
+"選択してください" = "Select a connection";
 "選択をグループ化" = "Group Selection";
 "選択対象を削除" = "Delete Selection";
 "選択済み" = "Selected";

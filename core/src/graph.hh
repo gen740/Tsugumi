@@ -55,6 +55,8 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = true;
   bool network = false;
+  std::string database_connection, database_table;
+  std::string database_url;  // Resolved in the Card's own project scope.
   bool markdown = false;  // logger: shows the text it receives as Markdown
   std::string system;     // "" = native_system(); another one runs emulated (binfmt)
   std::vector<HostFolder> host_folders;

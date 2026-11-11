@@ -42,6 +42,11 @@ final class CardEditorModel {
 
   /// The Card's definition folder name (its id).
   var definitionId: String? { path(cardKey).last }
+  var databaseConnections: [String] {
+    let prefix = session.projectPrefix(Array(path(cardKey).dropLast())) ?? ""
+    let project = prefix.isEmpty ? session.project : session.external(prefix)?.project
+    return (project?["databaseConnections"]?.array ?? []).compactMap { $0["name"]?.string }
+  }
   var kind: CardKind { session.kind(cardKey) }
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
@@ -529,6 +534,15 @@ private struct GeneralCategory: View {
           numberField("maxRuns", label: "最大実行回数", fallback: "1")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
           if model.kind == .logger {
+            Picker("記録先 DB", selection: string("databaseConnection", fallback: "")) {
+              Text("保存しない").tag("")
+              ForEach(model.databaseConnections, id: \.self) { Text($0).tag($0) }
+            }
+            if !(model.definition?["databaseConnection"]?.string ?? "").isEmpty {
+              TextField("テーブル", text: string("databaseTable"), prompt: Text(verbatim: "measurements"))
+              toggle("network", label: "ネットワークを許可", fallback: false)
+                .help("PostgreSQL への記録にはネットワークの許可が必要です。")
+            }
             toggle("markdown", label: "Markdown として表示", fallback: false)
               .help("オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。")
           }

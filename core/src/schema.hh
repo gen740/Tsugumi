@@ -142,6 +142,8 @@ struct CardDefinition {
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
+  Opt<"databaseConnection", v::String> database_connection;
+  Opt<"databaseTable", v::String> database_table;
   Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };

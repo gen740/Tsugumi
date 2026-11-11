@@ -63,3 +63,16 @@ const session = () => {
   assert.ok(s.cardDefinitionDraft('nested')?.link !== undefined, 'it stays a link')
 }
 console.log('summary behavior: passed')
+
+{
+  const s = session()
+  s.project = parse('{"name":"db","databaseConnections":[{"name":"metrics","url":"sqlite:metrics.sqlite"}],"canvas":{"cards":[],"connections":[]}}')
+  const logger = s.addCard('logger', [], { x: 0, y: 0 })
+  const editor = new CardEditorModel(s, logger)
+  assert.deepEqual(editor.databaseConnections, ['metrics'])
+  editor.setSetting('databaseConnection', 'metrics')
+  editor.setSetting('databaseTable', 'measurements')
+  assert.ok(await editor.apply())
+  assert.equal(str(get(s.cardDefinition(logger), 'databaseConnection')), 'metrics')
+  assert.equal(str(get(s.cardDefinition(logger), 'databaseTable')), 'measurements')
+}

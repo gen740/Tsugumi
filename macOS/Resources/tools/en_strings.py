@@ -31,6 +31,20 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"記録先 DB": "Database destination",
+"テーブル": "Table",
+"ネットワークを許可": "Allow network access",
+"PostgreSQL への記録にはネットワークの許可が必要です。": "PostgreSQL logging requires network permission.",
+"SQLite: sqlite:measurements.sqlite。PostgreSQL: postgresql://host/database。URL に認証情報を含めず、接続先を保存してから下で登録してください。": "SQLite: sqlite:measurements.sqlite. PostgreSQL: postgresql://host/database. Keep credentials out of the URL. Save the connection before registering credentials below.",
+"DB 認証情報（この端末のみ）": "Database credentials (this device only)",
+"選択してください": "Select a connection",
+"ユーザー": "User",
+"パスワード": "Password",
+"認証情報を保存": "Save credentials",
+"認証情報を削除": "Delete credentials",
+"認証情報を更新しました。": "Credentials updated.",
+"プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。": "Not saved in the project or its history. Register again after changing the connection URL.",
+
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

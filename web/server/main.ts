@@ -434,6 +434,26 @@ const routes: Record<string, Handler> = {
     remember(dir)
     return { path: dir, key: projectKey(dir).key, name: projectName(dir) }
   },
+  'POST /api/database/credential': (b) => {
+    const dir = projectDir(b.path)
+    const name = String(b.name ?? '')
+    const project = JSON.parse(fs.readFileSync(path.join(dir, 'tsugumi.json'), 'utf8'))
+    const connection = project.databaseConnections?.find((c: any) => c.name === name)
+    if (!/^(?!\.\.?$)[A-Za-z0-9_.-]{1,128}$/.test(name) || !connection?.url?.startsWith('postgresql://'))
+      throw new HttpError(400, 'Save a PostgreSQL connection first')
+    const folder = path.join(envs.controlDir(projectKey(dir).key), 'database-credentials')
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 })
+    const file = path.join(folder, name + '.json')
+    if (b.remove === true) { fs.rmSync(file, { force: true }); return {} }
+    if (typeof b.user !== 'string' || !b.user || typeof b.password !== 'string' || !b.password ||
+        b.user.length + b.password.length > 32000) throw new HttpError(400, 'User and password are required')
+    const temporary = path.join(folder, randomUUID() + '.tmp')
+    try {
+      fs.writeFileSync(temporary, JSON.stringify({ url: connection.url, user: b.user, password: b.password }), { mode: 0o600, flag: 'wx' })
+      fs.renameSync(temporary, file)
+    } finally { fs.rmSync(temporary, { force: true }) }
+    return {}
+  },
   'POST /api/project/create': (b) => ({ path: createProject(String(b.parent), String(b.name), b.flow) }),
   'POST /api/project/duplicate': (b) => ({ path: duplicateProject(projectDir(b.path), b.parent, b.name) }),
   'POST /api/recents/forget': (b) => forgetRecents(b.paths),

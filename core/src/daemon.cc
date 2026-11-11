@@ -39,6 +39,7 @@ struct Options {
   uint32_t cpus = 2;
   stdfs::path gcroots_dir;
   stdfs::path history_dir;
+  stdfs::path database_credentials_dir;
   stdfs::path host_folders;
   stdfs::path chat_folders;
   bool project_shell = false;
@@ -50,7 +51,7 @@ void usage() {
                "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
                "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
-               "                [--host-folders DIR] [--chat-folders DIR]\n");
+               "                [--host-folders DIR] [--chat-folders DIR] [--database-credentials-dir DIR]\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -78,6 +79,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--history-dir") o.history_dir = next();
+    else if (a == "--database-credentials-dir") o.database_credentials_dir = next();
     else if (a == "--host-folders") o.host_folders = next();
     else if (a == "--chat-folders") o.chat_folders = next();
     else if (a == "--project-shell") o.project_shell = true;
@@ -166,6 +168,8 @@ int run_daemon(int argc, char** argv) {
   so.env_cpus = opt.cpus;
   so.gcroots_dir = opt.gcroots_dir;
   so.history_dir = opt.history_dir;
+  so.database_credentials_dir = opt.database_credentials_dir.empty() && !opt.control_dir.empty()
+      ? opt.control_dir / "database-credentials" : opt.database_credentials_dir;
   so.host_folders = opt.host_folders;
   so.chat_folders = opt.chat_folders;
   so.project_shell = opt.project_shell;

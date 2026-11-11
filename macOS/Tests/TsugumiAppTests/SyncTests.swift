@@ -1004,6 +1004,31 @@ import Testing
     await s.close()
   }
 
+  @Test func loggerSettingsSelectRegisteredDatabase() async throws {
+    let dir = try Self.project()
+    let file = dir.appendingPathComponent("tsugumi.json")
+    var project = try JSONValue.parse(String(decoding: Data(contentsOf: file), as: UTF8.self))
+    project["databaseConnections"] = .array([.object([
+      ("name", .string("metrics")), ("url", .string("sqlite:metrics.sqlite")),
+    ])])
+    try Data(project.serialized().utf8).write(to: file)
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let editor = CardEditorModel(session: s, cardKey: "a")
+    #expect(editor.databaseConnections == ["metrics"])
+    editor.definition?["databaseConnection"] = .string("metrics")
+    editor.definition?["databaseTable"] = .string("measurements")
+    #expect(await editor.apply())
+    let saved = try JSONValue.parse(String(decoding: Data(contentsOf: dir.appendingPathComponent("definitions/a/_card.json")), as: UTF8.self))
+    #expect(saved["databaseConnection"]?.string == "metrics")
+    #expect(saved["databaseTable"]?.string == "measurements")
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)

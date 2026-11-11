@@ -1,4 +1,5 @@
 #include "document.hh"
+#include "database.hh"
 
 #include <regex>
 #include <set>
@@ -150,6 +151,9 @@ schema::Project parse_project_json(const std::string& text) {
   std::set<std::string> names;
   for (const auto& db : p.database_connections->value()) {
     if (!db.name->has_value() || !db.url->has_value()) invalid("databaseConnections entries need name and url");
+    if (!valid_id(db.name->value())) invalid("database connection name must be an identifier");
+    try { database::validate_url(db.url->value()); }
+    catch (const std::exception& e) { invalid(e.what()); }
     if (!names.insert(db.name->value()).second) invalid("duplicate database connection " + db.name->value());
   }
   check_nix_sources(p);
@@ -160,6 +164,15 @@ schema::Project parse_project_json(const std::string& text) {
 
 schema::Project parse_external_project(const std::string& rel, const std::string& text) {
   auto p = decode_doc<schema::Project>(rel, text);
+  if (const auto* connections = schema::get(p.database_connections)) {
+    std::set<std::string> names;
+    for (const auto& db : *connections) {
+      if (!db.name->has_value() || !db.url->has_value() || !valid_id(db.name->value()) ||
+          !names.insert(db.name->value()).second) invalid("invalid database connection");
+      try { database::validate_url(db.url->value()); }
+      catch (const std::exception& e) { invalid(e.what()); }
+    }
+  }
   check_nix_sources(p);
   if (!p.canvas->has_value()) invalid(rel + ": \"canvas\" is required", {{"path", rel}});
   check_graph_shape(p.canvas->value(), rel + " canvas");

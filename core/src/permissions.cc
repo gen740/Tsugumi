@@ -21,6 +21,11 @@ std::vector<std::string> widenings(const Resolution* before, const Resolution& a
     auto key = path_key(n.path);
     const Node* b = before ? before->find(n.path) : nullptr;
     const auto& s = n.settings;
+    if (!s.database_url.empty() &&
+        !(b && b->settings.database_url == s.database_url &&
+          b->settings.database_table == s.database_table &&
+          b->settings.database_connection == s.database_connection))
+      out.push_back("database_write " + key + " " + s.database_connection + " " + s.database_url + " " + s.database_table);
     if (s.network && !(b && b->settings.network)) out.push_back("network " + key);
     if (!s.sandbox && (!b || b->settings.sandbox)) out.push_back("sandbox_off " + key);
     for (const auto& f : s.host_folders) {
