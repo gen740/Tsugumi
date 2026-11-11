@@ -41,6 +41,8 @@ import TsugumiRPC
 ///   modelpick <item title>          (presses that item of the chat's model menu)
 ///   guideshow <json>                (the bird does what a guide_show with these arguments asks)
 ///   guideclose                      (its bubble is closed; it flies home)
+///   perf <name> pan|zoom|idle <n>   (moves the canvas n times and logs what a move costs: CanvasPerf)
+///   stopenv                         (stops the project's environment: without it, it keeps its place in the shared VM)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -436,6 +438,17 @@ final class UIScript {
         // tool takes the picture of a window behind others just the same.
         say("capture \(w[1]) \(target?.windowNumber ?? -1)")
         try? await Task.sleep(for: .milliseconds(1800))
+      case "stopenv":
+        // A script's last step: the project's environment is left running otherwise (and the shared VM holds 16).
+        session?.stopEnvironment()
+        try? await Task.sleep(for: .seconds(3))
+      case "perf":
+        if let s = session, let t = workspace?.active, w.count >= 4, let n = Int(w[3]) {
+          let k = key(t.scope)
+          let result = await CanvasPerf.run(mode: w[2], steps: n, window: mainWindow,
+                                            get: { s.cameras[k] ?? (40, 40, 1) }, set: { s.cameras[k] = $0 })
+          say("perf \(w[1]) \(result)")
+        }
       case "zoom":
         if let s = session, let t = workspace?.active, let z = Double(w[1]) {
           let k = key(t.scope)

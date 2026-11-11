@@ -5,8 +5,8 @@ import WebKit
 /// A Plotly figure or a Vega-Lite chart (a module display), drawn by the
 /// module viewer (`ui/modules`, with the bundled plotly.js / Vega) in a web
 /// view that reaches nothing but its own files: a Card's plot is untrusted.
-/// Interactive (zoom, hover, legend) in the expanded view; on the canvas it
-/// is drawn still and lets the mouse through to the canvas.
+/// Interactive (zoom, hover, legend) in the expanded view; on the canvas a
+/// picture of it is shown instead (ModuleThumbnail).
 struct ModuleViewer: View {
   static let modules: Set<String> = ["plotly", "vega-lite"]
 

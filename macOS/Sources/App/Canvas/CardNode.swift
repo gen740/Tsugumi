@@ -238,7 +238,7 @@ extension ProjectSession {
 }
 
 extension DisplaySnapshot {
-  var summary: String {
+  static func summary(of value: DisplayValue) -> String {
     switch value {
     case .text(let t): return t.split(separator: "\n").first.map(String.init) ?? ""
     case .markdown(let t):

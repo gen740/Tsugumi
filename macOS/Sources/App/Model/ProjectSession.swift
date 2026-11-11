@@ -165,6 +165,17 @@ struct DisplaySnapshot {
   let invocation: UInt64
   let revision: UInt64
   let value: DisplayValue
+  /// What the Card's result row says of it. Worked out once, here: the canvas
+  /// asks at every move, and a figure's title is found by parsing its JSON.
+  let summary: String
+
+  init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
+    self.runId = runId
+    self.invocation = invocation
+    self.revision = revision
+    self.value = value
+    summary = Self.summary(of: value)
+  }
 }
 
 /// One open project: shared by every window showing it. Owns the RPC
@@ -353,6 +364,10 @@ final class ProjectSession {
   private(set) var initialScope: [String] = []
   private(set) var initialSelection: Set<CardKey> = []
   var cameras: [CardKey: (x: Double, y: Double, zoom: Double)] = [:]
+  /// A scope's camera, read without observing it: the canvas lays itself out
+  /// with it and follows its moves by a transform (CanvasPan), instead of
+  /// drawing every Card again at every move.
+  func cameraUnobserved(_ k: CardKey) -> (x: Double, y: Double, zoom: Double)? { _cameras[k] }
   @ObservationIgnored private var viewRev: UInt64 = 0
   @ObservationIgnored private var viewSaveTask: Task<Void, Never>?
 

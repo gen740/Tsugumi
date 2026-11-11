@@ -1000,6 +1000,7 @@ EN = {
 'Plotly のグラフ': 'Plotly chart',
 'Vega-Lite のグラフ': 'Vega-Lite chart',
 'このビルドにはグラフの表示部品（modules）がありません': 'This build has no chart viewer (modules)',
+'グラフの描画が終わりませんでした': 'The chart did not finish drawing',
 '見つからないフォルダ: ': 'Missing folders: ',
 '配色': 'Colors',
 '高コントラスト': 'High contrast',

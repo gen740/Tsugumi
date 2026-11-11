@@ -42,41 +42,134 @@ struct GraphCanvas: View {
   @State private var noteDrag: (id: String, by: CGSize)?
   /// The selection being moved from one of its notes or frames (screen translation); saved once, on release.
   @State private var selectionDrag: CGSize?
-  var camera: (x: Double, y: Double, zoom: Double) { session.cameras[scopeKey] ?? (40, 40, 1) }
+  /// Laid out again when this changes (the zoom has stopped, or a pan went far: CanvasPanHost).
+  @State private var redrawn = 0
+  /// Counts the passes of the body (CanvasPanHost takes the content of a new pass only,
+  /// and the camera of the latest one, for what its views report in its terms: `live`).
+  private final class Passes {
+    var count = 0
+    var base = CanvasCamera()
+    func next(_ base: CanvasCamera) -> Int {
+      self.base = base
+      count += 1
+      return count
+    }
+  }
+  /// The wires' paths as last routed. Routing is by far the costliest part of
+  /// a pass (seconds, with a couple of hundred wires), and most passes change
+  /// nothing it depends on (the Cards', frames' and ports' places). When it is
+  /// quick it is done in the pass, so the wires of a Card being dragged follow
+  /// it; when it is not, it is done off the main thread: until it is, the
+  /// wires whose ends have not moved keep their paths and the others are
+  /// plain curves, and `onRouted` then has the canvas drawn with the new ones.
+  private final class Routes {
+    private struct Inputs: Equatable {
+      struct Ends: Equatable {
+        let a: CGPoint
+        let b: CGPoint
+      }
+      let flow: FlowDirection
+      let obstacles: [CGRect]
+      let ends: [Ends]
+
+      func route() -> [Path] {
+        var router = WireRouter(flow: flow, obstacles: obstacles)
+        return router.routeAll(ends.map { ($0.a, $0.b) })
+      }
+    }
+    /// What `routed` was made from, and how long that took.
+    private var made: Inputs?
+    private var routed: [Path] = []
+    private var seconds = 0.0
+    private var wanted: Inputs?
+    private var working = false
+    private var onRouted: (() -> Void)?
+    /// Within this, routing is done in the pass.
+    private static let quick = 0.006
+
+    func paths(flow: FlowDirection, obstacles: [CGRect], ends: [(a: CGPoint, b: CGPoint)], onRouted: @escaping () -> Void) -> [Path] {
+      let inputs = Inputs(flow: flow, obstacles: obstacles, ends: ends.map { Inputs.Ends(a: $0.a, b: $0.b) })
+      if inputs == made { return routed }
+      // Not routed yet, a few wires are taken to be quick; after that, what the last routing took says.
+      if made == nil ? ends.count <= 40 : seconds < Self.quick {
+        let start = ContinuousClock.now
+        routed = inputs.route()
+        seconds = Self.seconds(ContinuousClock.now - start)
+        made = inputs
+        wanted = nil
+        return routed
+      }
+      wanted = inputs
+      self.onRouted = onRouted
+      work()
+      let plain = WireRouter(flow: flow, obstacles: [])
+      return inputs.ends.indices.map { i in
+        if let made, i < made.ends.count, i < routed.count, made.ends[i] == inputs.ends[i] { return routed[i] }
+        return plain.curve(inputs.ends[i].a, inputs.ends[i].b)
+      }
+    }
+
+    /// One routing at a time; what is wanted by the time it ends, if it changed meanwhile, is routed next.
+    private func work() {
+      guard !working, let inputs = wanted, inputs != made else { return }
+      working = true
+      Task.detached(priority: .userInitiated) {
+        let start = ContinuousClock.now
+        let paths = inputs.route()
+        let took = Self.seconds(ContinuousClock.now - start)
+        await MainActor.run {
+          self.routed = paths
+          self.made = inputs
+          self.seconds = took
+          self.working = false
+          self.work()
+          self.onRouted?()
+        }
+      }
+    }
+
+    private nonisolated static func seconds(_ d: Duration) -> Double {
+      Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+    }
+  }
+  @State private var routes = Routes()
+  /// How far beyond the canvas, on every side, the content is laid out (CanvasPanHost).
+  private static let overscan: CGFloat = 300
+  @State private var passes = Passes()
+  /// The camera as it is now, read without observing it: the content is laid
+  /// out for the camera of when the body last ran, and CanvasPanHost shows it
+  /// through the camera of the moment.
+  var camera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
   var body: some View {
     let routed = routedWires()
+    let _ = redrawn
     GeometryReader { geo in
       ZStack(alignment: .topLeading) {
         background
-        ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
-          groupFrame(id)
-        }
-        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
-                  animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
-        if let b = boundary { boundaryBars(b) }
-        ForEach(cardKeys, id: \.self) { k in cardView(k) }
-        ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
-        // The link's ports, where the link meets the Card and the frame.
-        ForEach(outputKeys, id: \.self) { k in
-          let ends = displayLinkEnds(card: outlineRect(k), frame: frameRect(k))
-          ForEach([ends.a, ends.b], id: \.x) { p in
-            Circle().fill(Color.purple.opacity(0.75))
-              .frame(width: 7, height: 7)
-              .position(screen(p))
-              .allowsHitTesting(false)
+        CanvasPanHost(session: session, scope: scopeKey, base: cam, pass: passes.next(cam), margin: Self.overscan,
+                      solid: solid(routed), onSettled: { redrawn += 1 }) {
+          // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
+          let m = Self.overscan
+          let toLayer = cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
+          ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+              ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
+                groupFrame(id)
+              }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(m)
+            WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(toLayer), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
+                      animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
+            ZStack(alignment: .topLeading) { panned(routed) }
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+              .coordinateSpace(name: "canvas")
+              .padding(m)
           }
         }
-        ForEach(noteIds, id: \.self) { id in noteView(id) }
-        // The Agent at work: threads being drawn and the tsugumi.
-        // (one bird per helper while the Agent has work delegated)
-        ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
-          // One Tsugumi: while the guide's bird is out here (demo mode), the Agent's bird is not drawn too.
-          PresenceLayer(presence: p, geometry: presenceGeometry(routed),
-                        avatar: GuideController.shared.birdAway(session.identity.url.path) ? .none : prefs.agentAvatar,
-                        lead: p === session.presence && !session.helperPresences.isEmpty)
-        }
+        // In the view's own space (where the pointer is), not the canvas's.
         if let p = pending {
           Path { path in
             path.move(to: screen(portWorld(p.from.0, p.from.1, output: p.fromOutput)))
@@ -90,14 +183,6 @@ struct GraphCanvas: View {
           Rectangle().fill(Color.accentColor.opacity(0.08)).overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.6)))
             .frame(width: r.width, height: r.height).offset(x: r.minX, y: r.minY)
             .allowsHitTesting(false)
-        }
-        if let i = tab.selectedConnection, let mid = routed.first(where: { $0.connection == i })?.path.applying(cam.transform).midPoint {
-          Button { if session.isEditable { session.removeConnection(at: i, in: tab.scope); tab.selectedConnection = nil } } label: {
-            Label("切断", systemImage: "scissors").font(.caption)
-          }
-          .buttonStyle(.borderedProminent).controlSize(.small)
-          .disabled(!session.isEditable)
-          .position(mid)
         }
         if let hover, !interacting {
           HoverBubble(content: hoverContent(hover))
@@ -207,6 +292,66 @@ struct GraphCanvas: View {
     }
   }
 
+  /// What moves with the canvas, above the wires: laid out for the camera of this pass (CanvasPanHost).
+  @ViewBuilder private func panned(_ routed: [RoutedWire]) -> some View {
+    if let b = boundary { boundaryBars(b) }
+    ForEach(cardKeys, id: \.self) { k in cardView(k) }
+    ForEach(outputKeys, id: \.self) { k in outputFrame(k) }
+    // The link's ports, where the link meets the Card and the frame.
+    ForEach(outputKeys, id: \.self) { k in
+      let ends = displayLinkEnds(card: outlineRect(k), frame: frameRect(k))
+      ForEach([ends.a, ends.b], id: \.x) { p in
+        Circle().fill(Color.purple.opacity(0.75))
+          .frame(width: 7, height: 7)
+          .position(screen(p))
+          .allowsHitTesting(false)
+      }
+    }
+    ForEach(noteIds, id: \.self) { id in noteView(id) }
+    // The Agent at work: threads being drawn and the tsugumi.
+    // (one bird per helper while the Agent has work delegated)
+    ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
+      // One Tsugumi: while the guide's bird is out here (demo mode), the Agent's bird is not drawn too.
+      PresenceLayer(presence: p, geometry: presenceGeometry(routed),
+                    avatar: GuideController.shared.birdAway(session.identity.url.path) ? .none : prefs.agentAvatar,
+                    lead: p === session.presence && !session.helperPresences.isEmpty)
+    }
+    if let i = tab.selectedConnection, let mid = routed.first(where: { $0.connection == i })?.path.applying(cam.transform).midPoint {
+      Button { if session.isEditable { session.removeConnection(at: i, in: tab.scope); tab.selectedConnection = nil } } label: {
+        Label("切断", systemImage: "scissors").font(.caption)
+      }
+      .buttonStyle(.borderedProminent).controlSize(.small)
+      .disabled(!session.isEditable)
+      .position(mid)
+    }
+  }
+
+  /// A point the content reports (in the terms of the pass that laid it out) as the canvas shows it now.
+  private func live(_ p: CGPoint) -> CGPoint {
+    let base = passes.base, now = camera
+    let scale = now.zoom / base.zoom
+    return CGPoint(x: p.x * scale + now.x - base.x * scale, y: p.y * scale + now.y - base.y * scale)
+  }
+
+  /// What of the content takes the mouse (world units, with room for ports and handles): CanvasPanHost.
+  private func solid(_ routed: [RoutedWire]) -> [CGRect] {
+    var rects = cardKeys.map { cardRect($0).insetBy(dx: -14, dy: -14) }
+    rects += outputKeys.map { frameRect($0).insetBy(dx: -12, dy: -12) }
+    rects += session.notes(in: tab.scope).map { noteRect($0).insetBy(dx: -12, dy: -12) }
+    for g in session.groups(in: tab.scope) {
+      let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
+      var rect = members.reduce(CGRect.null) { $0.union(cardRect($1)) }
+      if rect.isNull { rect = CGRect(x: 0, y: 0, width: 200, height: 100) }
+      rects.append(rect.insetBy(dx: -18, dy: -18).insetBy(dx: 0, dy: -11).offsetBy(dx: 0, dy: -11))
+    }
+    if let b = boundary { rects += [b.top, b.bottom] }
+    // The button that cuts the selected wire, at its middle.
+    if let i = tab.selectedConnection, let mid = routed.first(where: { $0.connection == i })?.path.midPoint {
+      rects.append(CGRect(x: mid.x, y: mid.y, width: 0, height: 0).insetBy(dx: -60 / camera.zoom, dy: -20 / camera.zoom))
+    }
+    return rects
+  }
+
   private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil || selectionDrag != nil }
 
   // MARK: - Data
@@ -289,7 +434,7 @@ struct GraphCanvas: View {
     obstacles += outputKeys.map(frameRect)
     let b = boundary
     if let b { obstacles += [b.top, b.bottom] }
-    var router = WireRouter(flow: session.flow, obstacles: obstacles)
+    let flow = session.flow
     // Routed together: a wire's path must not depend on the order of the connections.
     var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
@@ -316,7 +461,7 @@ struct GraphCanvas: View {
                               dotted: session.isDraftWire(from: inner.0, to: nil)))
       }
     }
-    for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }
+    for (i, path) in routes.paths(flow: flow, obstacles: obstacles, ends: ends, onRouted: { redrawn += 1 }).enumerated() { out[i].path = path }
     // Display links: which Card a result frame belongs to (not a computation).
     for k in outputKeys {
       out.append(RoutedWire(connection: nil, path: displayLink(card: outlineRect(k), frame: frameRect(k)), style: .display))
@@ -434,21 +579,7 @@ struct GraphCanvas: View {
   // MARK: - Layers
 
   private var background: some View {
-    Canvas { ctx, sz in
-      guard prefs.showGrid else { return }
-      let step = prefs.gridSize * camera.zoom
-      guard step >= 6 else { return }
-      var x = camera.x.truncatingRemainder(dividingBy: step)
-      let dot = Path(ellipseIn: CGRect(x: 0, y: 0, width: 1.6, height: 1.6))
-      while x < sz.width {
-        var y = camera.y.truncatingRemainder(dividingBy: step)
-        while y < sz.height {
-          ctx.fill(dot.offsetBy(dx: x, dy: y), with: .color(.secondary.opacity(0.35)))
-          y += step
-        }
-        x += step
-      }
-    }
+    CanvasDots(session: session, scope: scopeKey, shown: prefs.showGrid, spacing: prefs.gridSize)
     .background(Color(nsColor: .textBackgroundColor))
     .contentShape(Rectangle())
     .gesture(backgroundDrag)
@@ -467,24 +598,57 @@ struct GraphCanvas: View {
     }
   }
 
+  /// What a Card on the canvas is drawn from (Settled): moving the canvas changes none of it.
+  private struct CardSlot: Equatable {
+    let session: ObjectIdentifier
+    let tab: ObjectIdentifier
+    let card: CardKey
+    let data: CardNodeData
+    let flow: FlowDirection
+    let zoom: Double
+    let selected: Bool
+    let editable: Bool
+    let canRun: Bool
+    let presence: ObjectIdentifier
+  }
+
+  /// What a display frame is drawn from besides the session's own state, which it reads itself.
+  private struct FrameSlot: Equatable {
+    let session: ObjectIdentifier
+    let tab: ObjectIdentifier
+    let card: CardKey
+    let selected: Bool
+    let rect: CGRect
+  }
+
   private func cardView(_ k: CardKey) -> some View {
     let data = session.nodeData(k)
     let g = CardGeometry(data, flow: session.flow)
-    return CardNodeView(data: data, flow: session.flow, zoom: camera.zoom, selected: tab.selection.contains(k),
-                        onParamCommit: data.kind.editsValueOnCanvas ? { name, text in commitParam(k, name, text) } : nil,
-                        paramsEditable: session.isEditable,
-                        onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, true) } },
-                        onPortDrop: { port, pt in finishConnect(from: (k, port), at: pt) },
-                        onInputDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), pt, false) } },
-                        onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: pt) },
-                        onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
-                        onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
-                        onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .comments)) },
-                        onRun: data.kind == .trigger && session.connected && !session.runActive
-                          ? { RunActions.run(session, card: k, propagate: true) } : nil,
-                        draftEdit: draftEdit(k))
-      .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
-      .guideTarget("card:\(k)", radius: 12, zoom: camera.zoom)
+    let flow = session.flow, zoom = camera.zoom, selected = tab.selection.contains(k)
+    let presence = session.presence(forCard: k)
+    let canRun = data.kind == .trigger && session.connected && !session.runActive
+    // A Draft being written is drawn every time: what is typed is read from the session as it changes.
+    let key = data.draftEditing ? nil : CardSlot(
+      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, zoom: zoom,
+      selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
+    return Settled(key: key) {
+      CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
+                   onParamCommit: data.kind.editsValueOnCanvas ? { name, text in commitParam(k, name, text) } : nil,
+                   paramsEditable: session.isEditable,
+                   onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), true) } },
+                   onPortDrop: { port, pt in finishConnect(from: (k, port), at: live(pt)) },
+                   onInputDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), false) } },
+                   onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: live(pt)) },
+                   onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
+                   onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
+                   onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .comments)) },
+                   onRun: canRun
+                     ? { RunActions.run(session, card: k, propagate: true) } : nil,
+                   draftEdit: draftEdit(k))
+        .modifier(CardWriting(presence: presence, card: k, title: data.title, zoom: zoom))
+        .guideTarget("card:\(k)", radius: 12, zoom: zoom)
+    }
+      .equatable()
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
@@ -606,17 +770,22 @@ struct GraphCanvas: View {
 
   private func outputFrame(_ k: CardKey) -> some View {
     let r = frameRect(k)
-    return OutputFrameView(session: session, cardKey: k, selected: tab.selectedFrames.contains(k),
-                           onExpand: { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) },
-                           onClose: { session.closeDisplayFrame(k) },
-                           onResize: { d in
-                             session.updateDisplayFrame(k) { v in
-                               v["x"] = .real(r.minX.rounded())
-                               v["y"] = .real(r.minY.rounded())
-                               v["width"] = .real(max(180, r.width + d.width / camera.zoom).rounded())
-                               v["height"] = .real(max(100, r.height + d.height / camera.zoom).rounded())
-                             }
-                           })
+    let selected = tab.selectedFrames.contains(k)
+    return Settled(key: FrameSlot(session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, selected: selected, rect: r)) {
+      OutputFrameView(session: session, cardKey: k, selected: selected,
+                      onExpand: { openWindow(id: "visual", value: CardRef(path: session.identity.url.path, card: k)) },
+                      onClose: { session.closeDisplayFrame(k) },
+                      onResize: { d in
+                        session.updateDisplayFrame(k) { v in
+                          v["x"] = .real(r.minX.rounded())
+                          v["y"] = .real(r.minY.rounded())
+                          v["width"] = .real(max(180, r.width + d.width / camera.zoom).rounded())
+                          v["height"] = .real(max(100, r.height + d.height / camera.zoom).rounded())
+                        }
+                      })
+        .environment(\.canvasPlace, r)
+    }
+      .equatable()
       .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
       // Follows the pointer while dragged; the layout changes once, on release.
       .offset(frameDrag?.card == k ? frameDrag!.by : .zero)

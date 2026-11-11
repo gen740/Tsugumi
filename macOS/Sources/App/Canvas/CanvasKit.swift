@@ -751,6 +751,179 @@ extension EnvironmentValues {
   @Entry var canvasZoom: CGFloat = 1
 }
 
+/// The canvas's content, laid out for the camera `base` and shown through the
+/// camera as it is now. The content is in a hosting view of its own, and a move
+/// of the canvas changes the bounds of that view's parent and nothing of the
+/// content: to SwiftUI a transform over the content costs time for every view
+/// under it at every move, to AppKit moving a view costs the same whatever is
+/// in it.
+///
+/// Zoomed, the content is scaled as it was drawn (soft for a moment). Once the
+/// zoom has stopped, or a pan has gone further than the content reaches beyond
+/// the canvas (`margin`, on every side), `onSettled` has it laid out again for
+/// the camera of the moment.
+struct CanvasPanHost<Content: View>: NSViewRepresentable {
+  let session: ProjectSession
+  let scope: CardKey
+  let base: CanvasCamera
+  /// Counts the passes that laid the content out: the hosting view takes the content of a new pass only.
+  let pass: Int
+  let margin: CGFloat
+  /// What of the content takes the mouse (the canvas's own units): anywhere
+  /// else a click is the canvas's (its background's gestures and menu).
+  let solid: [CGRect]
+  let onSettled: () -> Void
+  let content: Content
+
+  init(session: ProjectSession, scope: CardKey, base: CanvasCamera, pass: Int, margin: CGFloat, solid: [CGRect],
+       onSettled: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    self.session = session
+    self.scope = scope
+    self.base = base
+    self.pass = pass
+    self.margin = margin
+    self.solid = solid
+    self.onSettled = onSettled
+    self.content = content()
+  }
+
+  final class Mover: NSView {
+    override var isFlipped: Bool { true }
+  }
+
+  final class Container: NSView {
+    let mover = Mover()
+    let hosting = NSHostingView(rootView: AnyView(EmptyView()))
+    var pass = -1
+    var base = CanvasCamera()
+    var now = CanvasCamera()
+    var margin: CGFloat = 0
+    var solid: [CGRect] = []
+    var settle: Task<Void, Never>?
+    override var isFlipped: Bool { true }
+
+    override init(frame: NSRect) {
+      super.init(frame: frame)
+      wantsLayer = true
+      layer?.masksToBounds = true
+      mover.wantsLayer = true
+      addSubview(mover)
+      mover.addSubview(hosting)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+      super.layout()
+      place()
+    }
+
+    /// Where the content is, from the camera of the moment: a point q of it
+    /// (laid out for `base`) is shown at q × scale + d.
+    var shift: (scale: CGFloat, dx: CGFloat, dy: CGFloat) {
+      let scale = now.zoom / base.zoom
+      return (scale, now.x - base.x * scale, now.y - base.y * scale)
+    }
+
+    func place() {
+      var (scale, dx, dy) = shift
+      if scale == 1, let pixel = window?.backingScaleFactor {
+        // A pan keeps the content on whole device pixels.
+        dx = (dx * pixel).rounded() / pixel
+        dy = (dy * pixel).rounded() / pixel
+      }
+      mover.frame = bounds
+      mover.bounds = CGRect(x: -dx / scale, y: -dy / scale, width: bounds.width / scale, height: bounds.height / scale)
+      let whole = CGRect(origin: .zero, size: bounds.size).insetBy(dx: -margin, dy: -margin)
+      if hosting.frame != whole { hosting.frame = whole }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+      let p = superview.map { convert(point, from: $0) } ?? point
+      let world = CGPoint(x: (p.x - now.x) / now.zoom, y: (p.y - now.y) / now.zoom)
+      guard solid.contains(where: { $0.contains(world) }) else { return nil }
+      return super.hitTest(point)
+    }
+  }
+
+  func makeNSView(context: Context) -> Container { Container() }
+
+  static func dismantleNSView(_ view: Container, coordinator: ()) {
+    view.settle?.cancel()
+    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] = nil
+  }
+
+  func updateNSView(_ view: Container, context: Context) {
+    if view.pass != pass {
+      view.pass = pass
+      view.base = base
+      view.margin = margin
+      view.solid = solid
+      let environment = context.environment
+      view.hosting.rootView = AnyView(content.transformEnvironment(\.self) { $0 = environment })
+    }
+    let c = session.cameras[scope] ?? (40, 40, 1)
+    view.now = CanvasCamera(x: c.x, y: c.y, zoom: c.zoom)
+    view.place()
+    // What is in view, for the pictures of displays to be made in that order.
+    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] =
+      CGRect(x: -c.x / c.zoom, y: -c.y / c.zoom, width: view.bounds.width / c.zoom, height: view.bounds.height / c.zoom)
+    view.settle?.cancel()
+    guard view.now != view.base else { return }
+    let (scale, dx, dy) = view.shift
+    // A pan within what the content covers needs nothing more: it is where AppKit has it.
+    // Past that, it is laid out again at once; zoomed, when the canvas has stopped.
+    let beyond = max(abs(dx), abs(dy)) > margin * 0.8
+    guard scale != 1 || beyond else { return }
+    let done = onSettled
+    view.settle = Task { @MainActor in
+      if scale != 1 { try? await Task.sleep(for: .milliseconds(140)) }
+      if !Task.isCancelled { done() }
+    }
+  }
+}
+
+/// The canvas's grid of dots, which follows the camera by itself.
+struct CanvasDots: View {
+  let session: ProjectSession
+  let scope: CardKey
+  let shown: Bool
+  let spacing: Double
+
+  var body: some View {
+    let camera = session.cameras[scope] ?? (40, 40, 1)
+    Canvas { ctx, sz in
+      guard shown else { return }
+      let step = spacing * camera.zoom
+      guard step >= 6 else { return }
+      var x = camera.x.truncatingRemainder(dividingBy: step)
+      let dot = Path(ellipseIn: CGRect(x: 0, y: 0, width: 1.6, height: 1.6))
+      while x < sz.width {
+        var y = camera.y.truncatingRemainder(dividingBy: step)
+        while y < sz.height {
+          ctx.fill(dot.offsetBy(dx: x, dy: y), with: .color(.secondary.opacity(0.35)))
+          y += step
+        }
+        x += step
+      }
+    }
+  }
+}
+
+/// A part of the canvas that is drawn again only when what it shows changes
+/// (`key`), not at every move of the canvas: its place is given outside of it.
+/// The content's closures are those of when the key last changed, so the key
+/// names everything they depend on that is not read when they are called.
+/// Without a key it is drawn again every time.
+struct Settled<Key: Equatable, Content: View>: View, Equatable {
+  let key: Key?
+  @ViewBuilder let content: () -> Content
+
+  nonisolated static func == (a: Self, b: Self) -> Bool { a.key != nil && a.key == b.key }
+
+  var body: some View { content() }
+}
+
 extension View {
   /// Places a view drawn at screen scale (`size` × `zoom`) with its top-left
   /// corner at `topLeft` (screen units), on whole device pixels.

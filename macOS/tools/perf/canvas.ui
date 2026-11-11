@@ -1,0 +1,21 @@
+# What moving the canvas costs (CanvasPerf), with the results of a run on it:
+#
+#   cp -R demos/en/plots /tmp/perf-plots && macOS/tools/run-ui.sh dist/Tsugumi.app macOS/tools/perf/canvas.ui /tmp/perf /tmp/perf-plots
+#
+# The `perf` lines of the output are the measurements; `idle` is what the loop itself costs.
+size 1440 900
+chat hide
+wait 2
+fit
+run
+waitrun
+wait 6
+capture before
+perf idle idle 300
+perf pan pan 600
+perf zoom zoom 600
+wait 3
+perf pan-again pan 600
+perf zoom-again zoom 600
+capture after
+stopenv

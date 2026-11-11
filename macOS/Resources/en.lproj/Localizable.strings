@@ -376,6 +376,7 @@
 "キーを押してください…" = "Press a key…";
 "クリックでスキップ" = "Click to skip";
 "クリックで次のヒント" = "Click for the next tip";
+"グラフの描画が終わりませんでした" = "The chart did not finish drawing";
 "グラフを表示するには？" = "How do I show a chart?";
 "グリッド" = "Grid";
 "グリッドを表示（移動時に吸着）" = "Show grid (snap when moving)";

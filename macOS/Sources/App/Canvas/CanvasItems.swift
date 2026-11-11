@@ -293,7 +293,12 @@ struct DisplayContent: View {
     case .points(let x, let y, let z, let colors)?:
       PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
     case .module(let name, let json)? where ModuleViewer.modules.contains(name):
-      ModuleViewer(name: name, json: json, interactive: large, zoom: zoom)
+      // Interactive in the expanded view; on the canvas a picture of the figure.
+      if large {
+        ModuleViewer(name: name, json: json, interactive: true, zoom: zoom)
+      } else {
+        ModuleThumbnail(name: name, json: json, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom)
+      }
     case .module(let name, let json)?:
       ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
     case nil where large:
