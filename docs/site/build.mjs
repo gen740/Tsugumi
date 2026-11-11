@@ -4,15 +4,14 @@
 // phrases of their text; a phrase or section that is gone fails the build.
 // For agents, each page also has its Markdown next to it (pages/x.md, with links
 // that work on the site) and docs/llms.txt lists them (https://llmstxt.org/).
-// Run after changing a document (tests/python/test_docs.py checks that it was):
+// Run after changing a document:
 //   node docs/site/build.mjs [--check]
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+import { Marked } from '../../web/node_modules/marked/lib/marked.esm.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const modules = process.env.TSUGUMI_WEB_NODE_MODULES ?? path.join(ROOT, 'web/node_modules')
-const { Marked } = await import(pathToFileURL(path.resolve(modules, 'marked/lib/marked.esm.js')).href)
 const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
@@ -136,7 +135,7 @@ const ICON = {
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-/** The same anchors as GitHub's (and tests/python/test_docs.py). */
+/** The same anchors as GitHub's. */
 function slug(heading) {
   return heading.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*]/g, '').trim().toLowerCase()
     .replace(/[^\p{L}\p{N}_\- 　]/gu, '').replace(/ /g, '-')

@@ -61,7 +61,8 @@ clangStdenv.mkDerivation {
       ../core
       ../client
       ../sdk
-      ../protocol
+      # Documentation tooling does not affect the native runtime.
+      (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ../agent/Shared/system-prompt.md
       ../agent/Shared/guide-prompt.md
       ../agent/Shared/demo-skill.md

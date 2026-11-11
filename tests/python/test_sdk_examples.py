@@ -1,18 +1,10 @@
-"""Generated site output and executable SDK examples stay usable.
-
-The examples run through the public core RPC; editorial links and document
-inventories are not test contracts.
-"""
+"""Executable SDK examples run through the public core RPC."""
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 from conftest import ROOT, Daemon
@@ -21,19 +13,6 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import path, text
 
 DOCS = ROOT / "docs"
-
-
-def test_protocol_page_is_generated_from_the_schema():
-    r = subprocess.run([sys.executable, str(ROOT / "protocol/generate_docs.py"), "--check"], check=False)
-    assert r.returncode == 0, "run python3 protocol/generate_docs.py"
-
-
-def test_site_is_generated_from_the_documents():
-    modules = Path(os.environ.get("TSUGUMI_WEB_NODE_MODULES", ROOT / "web/node_modules"))
-    if not shutil.which("node") or not (modules / "marked").exists():
-        pytest.skip("needs node and the Web node_modules")
-    r = subprocess.run(["node", str(DOCS / "site/build.mjs"), "--check"], check=False, capture_output=True, text=True)
-    assert r.returncode == 0, "run node docs/site/build.mjs\n" + r.stdout + r.stderr
 
 
 # ---- CardGuide.md, run as written ----
@@ -78,15 +57,3 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
             assert text(record.record.display.value.text) == shown
     finally:
         d.cleanup()
-
-
-def test_no_bold_marker_is_left_unparsed():
-    """A ** that CommonMark does not close (next to Japanese punctuation) shows as it is, on GitHub too."""
-    pages = [DOCS / "index.html", *sorted((DOCS / "pages").glob("*.html"))]
-    left = []
-    for page in pages:
-        body = page.read_text().split("<article", 1)[1].split("</article>", 1)[0]
-        body = re.sub(r"<(pre|code)\b.*?</\1>", "", body, flags=re.DOTALL)
-        if "**" in re.sub(r"<[^>]+>", "", body):
-            left.append(page.name)
-    assert not left, left

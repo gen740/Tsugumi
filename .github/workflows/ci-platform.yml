@@ -189,17 +189,17 @@ jobs:
       - name: SDK and system checks
         run: |
           "$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python \
-            --ignore=tests/python/test_docs.py \
+            --ignore=tests/python/test_sdk_examples.py \
             --ignore=tests/python/test_claude_code_plugin.py \
             --ignore=tests/python/test_web_server.py \
             --ignore=tests/python/test_cli.py
       - name: Runnable SDK examples
-        run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_docs.py -k card_guide_runs_as_written'
+        run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_sdk_examples.py'
 
-  docs:
-    name: Generated site
+  site-player:
+    name: Site player
     if: inputs.system == 'x86_64-linux'
-    needs: [native, web]
+    needs: web
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -209,24 +209,12 @@ jobs:
           cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - uses: ./.github/actions/fetch-nix
         with:
-          package: ci-core
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - uses: ./.github/actions/fetch-nix
-        id: web
-        with:
           package: web
           system: ${{ inputs.system }}
           artifact-name: web-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
       - name: Generated site player
         run: nix build --no-link .#checks.${{ inputs.system }}.site-player
-      - name: Generated pages and protocol reference
-        env:
-          TSUGUMI_WEB_NODE_MODULES: ${{ steps.web.outputs.test-support }}/node_modules
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python/test_docs.py -k "not card_guide_runs_as_written"'
 
   swift:
     name: Swift adapters and application

@@ -114,7 +114,7 @@ function readProject(root, ports, prefix = '') {
 
 // ---- The written project of docs/CardGuide.md ----------------------------------------------
 
-/** Its Python Card, parsed as guide_files() in tests/python/test_docs.py does. */
+/** Its Python Card, parsed as guide_files() in tests/python/test_sdk_examples.py does. */
 function guideFiles() {
   const page = fs.readFileSync(path.join(ROOT, 'docs', 'CardGuide.md'), 'utf8')
   const out = {}

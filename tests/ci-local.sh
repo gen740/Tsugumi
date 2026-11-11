@@ -34,11 +34,9 @@ linux_job() {
   step "Build or fetch the native runtime, tests and Web CLI"
   nix --extra-experimental-features 'nix-command flakes' build --no-link .#ci-core .#cli
   nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
-  local web web_support system sdk_python
+  local web system sdk_python
   web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
-  web_support=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^testSupport' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
-  export TSUGUMI_WEB_NODE_MODULES="$web_support/node_modules"
   step "Public core, Agent and CLI RPC tests"
   core_checks
   step "Web UI typecheck and behavior contracts"

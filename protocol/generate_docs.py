@@ -1,7 +1,7 @@
 """Writes docs/Protocol.md from protocol/tsugumi.fbs: every request of
 RequestPayload with its doc comment and fields, then the notifications. The
-schema stays the single source; run this after changing it
-(tests/python/test_docs.py checks that it was). --check only compares."""
+schema stays the single source; run this after changing it.
+--check only compares."""
 
 import pathlib
 import re

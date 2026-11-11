@@ -56,7 +56,7 @@ MAX_POINTS = 400     # points of a series
 
 
 def guide_files() -> dict[str, str]:
-    """The Python Card of docs/CardGuide.md, parsed as tests/python/test_docs.py does."""
+    """The Python Card of docs/CardGuide.md, parsed as tests/python/test_sdk_examples.py does."""
     page = (ROOT / "docs" / "CardGuide.md").read_text()
     files: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
