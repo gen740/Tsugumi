@@ -45,9 +45,29 @@ enum CardKind: String {
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case python, cpp, input, draft, trigger, fork, branch, merge, logger
   case switchCard = "switch"
+  case matplotlibLine = "visualization_matplotlib_line"
+  case matplotlibScatter = "visualization_matplotlib_scatter"
+  case matplotlibHistogram = "visualization_matplotlib_histogram"
+  case plotlyLine = "visualization_plotly_line"
+  case plotlyScatter = "visualization_plotly_scatter"
+  case plotlyHistogram = "visualization_plotly_histogram"
+  case altairLine = "visualization_altair_line"
+  case altairScatter = "visualization_altair_scatter"
+  case altairHistogram = "visualization_altair_histogram"
+
   var id: String { rawValue }
+  var visualizationLibrary: String? {
+    rawValue.hasPrefix("visualization_") ? rawValue.components(separatedBy: "_")[1] : nil
+  }
+  var visualizationShape: String {
+    if rawValue.hasSuffix("_line") { return String(localized: "折れ線") }
+    if rawValue.hasSuffix("_scatter") { return String(localized: "散布図") }
+    return String(localized: "ヒストグラム")
+  }
   var label: String {
     switch self {
+    case .matplotlibLine, .matplotlibScatter, .matplotlibHistogram, .plotlyLine, .plotlyScatter, .plotlyHistogram, .altairLine, .altairScatter, .altairHistogram:
+      return "\(visualizationLibrary!.capitalized) · \(visualizationShape)"
     case .draft: return String(localized: "Draft（未実装の計画）")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
@@ -60,10 +80,11 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
+  var symbol: String { visualizationLibrary != nil ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
+    case .matplotlibLine, .matplotlibScatter, .matplotlibHistogram, .plotlyLine, .plotlyScatter, .plotlyHistogram, .altairLine, .altairScatter, .altairHistogram: return "visualization"
     case .python, .cpp: return "card"
     case .trigger: return "start"
     default: return rawValue
@@ -1290,6 +1311,10 @@ extension ProjectSession {
     let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
     func set(_ card: JSONValue, meta: JSONValue? = nil) { setCardDefinition(k, DefinitionDraft(card: card, meta: meta)) }
     switch t {
+    case .matplotlibLine, .matplotlibScatter, .matplotlibHistogram, .plotlyLine, .plotlyScatter, .plotlyHistogram, .altairLine, .altairScatter, .altairHistogram:
+      let files = VisualizationTemplates.files[t.rawValue]!
+      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
+      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:
       set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
     case .trigger, .fork, .branch, .logger:

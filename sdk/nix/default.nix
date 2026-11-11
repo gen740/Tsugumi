@@ -67,8 +67,10 @@ let
   pythonFace = dir: pkgs.runCommand "tsugumi-card-sdk-python" { } ''
     mkdir -p $out
     for f in ${lib.concatStringsSep " " schemas}; do
-      ${flatc} --python -o $out ${dir}/$f.fbs
+      ${flatc} --python --gen-object-api -o $out ${dir}/$f.fbs
     done
+    # Visualization scaffolds resolve their connected input's generated type.
+    cp ${dir}/_contract.json $out/_contract.json
   '';
 
   languagesKnown = [ "cpp" "python" ];

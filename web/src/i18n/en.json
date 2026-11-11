@@ -1237,5 +1237,12 @@
  "このプロジェクトに根拠の記録がありません": "This evidence is not available in this project",
  "位置": "Position",
  "先頭 64 KiB を表示": "Showing the first 64 KiB",
- "バイナリの成果物です": "This artifact contains binary data"
+ "バイナリの成果物です": "This artifact contains binary data",
+ "可視化": "Visualization",
+ "Matplotlib（PNG / SVG / PDF）": "Matplotlib (PNG / SVG / PDF)",
+ "Plotly（対話型 HTML）": "Plotly (interactive HTML)",
+ "Altair（対話型 HTML）": "Altair (interactive HTML)",
+ "折れ線": "Line",
+ "散布図": "Scatter",
+ "ヒストグラム": "Histogram"
 }

@@ -1445,9 +1445,19 @@ struct ScrollCatcher: NSViewRepresentable {
 struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
+  private func visualizationItems(_ library: String) -> some View {
+    ForEach(DefinitionTemplate.allCases.filter { $0.visualizationLibrary == library }) { t in
+      Button(t.visualizationShape) { add(t) }
+    }
+  }
   var body: some View {
     ForEach([DefinitionTemplate.python, .cpp, .draft], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+    }
+    Menu("可視化") {
+      Menu("Matplotlib（PNG / SVG / PDF）") { visualizationItems("matplotlib") }
+      Menu("Plotly（対話型 HTML）") { visualizationItems("plotly") }
+      Menu("Altair（対話型 HTML）") { visualizationItems("altair") }
     }
     Divider()
     ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in

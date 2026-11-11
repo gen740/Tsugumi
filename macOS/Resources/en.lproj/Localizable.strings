@@ -64,6 +64,7 @@
 "Agent が開き直しました" = "Reopened by the Agent";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
+"Altair（対話型 HTML）" = "Altair (interactive HTML)";
 "Anthropic API キー" = "Anthropic API Key";
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
@@ -131,6 +132,7 @@
 "Manage usage（chatgpt.com/settings/usage）" = "Manage usage (chatgpt.com/settings/usage)";
 "Markdown として表示" = "Show as Markdown";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
+"Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
@@ -142,6 +144,7 @@
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "OpenAI の API キー" = "OpenAI API key";
 "Plotly のグラフ" = "Plotly chart";
+"Plotly（対話型 HTML）" = "Plotly (interactive HTML)";
 "Python の処理" = "Python step";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で送信" = "Return sends";
@@ -494,6 +497,7 @@
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
 "パラメータ" = "Parameters";
+"ヒストグラム" = "Histogram";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
@@ -907,6 +911,7 @@
 "折りたたみを切り替える" = "Toggle Collapse";
 "折りたたむ" = "Collapse";
 "折りたたむ（実行には影響しません）" = "Collapse (does not affect runs)";
+"折れ線" = "Line";
 "折れ線 %lld 系列 · %lld 点" = "Line chart, %lld series · %lld points";
 "拡大" = "Zoom In";
 "拡大して表示" = "Show Enlarged";
@@ -925,6 +930,7 @@
 "控えめ" = "Muted";
 "描く" = "Draw";
 "操作" = "Action";
+"散布図" = "Scatter";
 "数値計算・最適化" = "Numerics and optimization";
 "整列" = "Arrange";
 "整列（配置だけを変更）" = "Arrange (layout only)";

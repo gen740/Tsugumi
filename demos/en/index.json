@@ -418,6 +418,17 @@
         "Machine learning",
         "Branch, fork and merge"
       ]
+    },
+    {
+      "id": "visualization",
+      "path": "visualization",
+      "title": "Visualization → report",
+      "description": "Aggregate typed measurements, draw three figures, and pass PNG/SVG/PDF and source data to an offline report.",
+      "tags": [
+        "Python",
+        "Visualization",
+        "Artifacts"
+      ]
     }
   ]
 }

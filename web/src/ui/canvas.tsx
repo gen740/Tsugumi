@@ -25,6 +25,7 @@ import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
+import { visualizationLibraries, visualizationTemplates } from '../model/visualizationTemplates'
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
@@ -784,7 +785,14 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 /** The built-in Cards, for the canvas menu and the + button. */
 export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
   const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  return [item('python'), item('cpp'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
+  const visualization: MenuItem = {
+    label: L('可視化'),
+    submenu: visualizationLibraries.map(library => ({
+      label: library.label,
+      submenu: visualizationTemplates.filter(t => t.library === library.id).map(t => ({ label: t.shape, action: () => add(t.id) })),
+    })),
+  }
+  return [item('python'), item('cpp'), item('draft'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
 }
 export { templateIcon }
 

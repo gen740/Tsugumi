@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace report;
+table Files { value:string; }
+table Outputs { report:Files (required, tsugumi: "directory"); }
+root_type Outputs;
