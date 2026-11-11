@@ -4,9 +4,8 @@ import Testing
 import TsugumiAgent
 import TsugumiRPC
 
-/// The Swift Agent's half of the Swift/web contract (tests/fixtures/; the web
-/// half is web/scripts/contract.mjs): the tool catalog equals the snapshot,
-/// and FlatJSON and the Draft request give the shared cases' results.
+/// Swift's platform codec. Core behavior is exercised through public RPC in
+/// tests/core; this only checks values crossing the UI's FlatBuffers adapter.
 struct ContractTests {
   static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("../../../../tests/fixtures").standardizedFileURL
@@ -29,15 +28,6 @@ struct ContractTests {
     return (try normal(a) as! NSArray).isEqual(try normal(b) as! NSArray)
   }
 
-  @Test func toolCatalogEqualsTheSnapshot() throws {
-    let tools = try ToolCatalog(schema: schema).tools.map {
-      ["name": $0.name, "payloadType": Int($0.payloadType), "description": $0.description, "inputSchema": $0.inputSchema,
-       "mutating": $0.mutating] as [String: Any]
-    }
-    let snapshot = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.fixtures.appendingPathComponent("agent-tools.json")))
-    #expect(try same(tools, snapshot), "the tool catalog differs from tests/fixtures/agent-tools.json")
-  }
-
   @Test func flatJSONCases() throws {
     for c in try #require(fixture["flatjson"] as? [[String: Any]]) {
       let type = try #require(c["type"] as? String), json = try #require(c["json"] as? [String: Any])
@@ -57,28 +47,4 @@ struct ContractTests {
     }
   }
 
-  @Test func approvalRequests() throws {
-    for c in try #require(fixture["approvalRequired"] as? [[String: Any]]) {
-      #expect(Agent.approvalRequired(try #require(c["json"] as? String)) == c["expect"] as? [String], "\(c)")
-    }
-  }
-
-  @Test func draftRequests() throws {
-    for c in try #require(fixture["draftRequest"] as? [[String: Any]]) {
-      let cards = try #require(c["cards"] as? [[String: String]]).map {
-        (key: $0["key"]!, definition: $0["definition"]!, description: $0["description"]!, content: $0["content"]!, context: $0["context"]!)
-      }
-      #expect(Agent.draftRequest(scope: try #require(c["scope"] as? [String]), cards: cards) == c["expect"] as? String)
-    }
-  }
-
-  @Test func commentRequests() throws {
-    for c in try #require(fixture["commentRequest"] as? [[String: Any]]) {
-      let cards = try #require(c["cards"] as? [[String: Any]]).map { card in
-        (key: card["key"] as! String, definition: card["definition"] as! String,
-         comments: (card["comments"] as! [[String: String]]).map { (id: $0["id"]!, text: $0["text"]!) })
-      }
-      #expect(Agent.commentRequest(scope: try #require(c["scope"] as? [String]), cards: cards) == c["expect"] as? String)
-    }
-  }
 }

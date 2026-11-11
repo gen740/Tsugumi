@@ -420,10 +420,8 @@ final class ProjectSession {
     }
   }
 
-  /// Closed for good (the last window left it): the connection ends, the
-  /// project's tsugumid stops and its folders are no longer shared with the
-  /// VM, so its slot is free. Unsaved edits were saved before (the caller
-  /// does not close a dirty session).
+  /// The last window detaches its connection and observations. The resident
+  /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
     listenTask?.cancel()
@@ -436,7 +434,7 @@ final class ProjectSession {
       await environments.stopObserving(identity, t)
       observerToken = nil
     }
-    if endpointOverride == nil { try? await environments.stop(identity) }
+    // The resident host keeps project execution alive after this view closes.
     environment = .stopped
   }
 

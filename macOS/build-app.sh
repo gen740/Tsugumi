@@ -43,20 +43,27 @@ renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
 vm="$dist/tsugumi-vm"
 [ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
+# Native core Agent and RPC client are shared by both UI frontends.
+"$repo/macOS/tools/build-agent.sh"
+
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
-swiftenv=(env -i HOME="$HOME" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
+swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
 # runner), for Apple silicon only (the renderer is arm64): its Bundle.module finds the packages' resource bundles in
 # Contents/Resources. The native build system's looks only next to the app
 # and in the build folder, so its app crashes on any other Mac.
 build_opts=(-c release --build-system swiftbuild --arch arm64)
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product Tsugumi)
+(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
 bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$app/Contents/MacOS/"
+cp "$repo/build-host/generated/bfbs/agent.bfbs" "$app/Contents/Resources/"
+
 # Nothing may look for files where this machine built them (that only works here).
 if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$' | head -3 | grep .; then
   echo "the app refers to paths of this build (above)" >&2
@@ -173,6 +180,9 @@ otool -l "$app/Contents/MacOS/Tsugumi" | awk '/LC_RPATH/ {getline; getline; prin
   install_name_tool -delete_rpath "$p" "$app/Contents/MacOS/Tsugumi"
 done
 for lib in "$app/Contents/Frameworks/"*.dylib; do codesign --force --sign "$identity" "$lib" >/dev/null; done
+codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
+codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-rpc" >/dev/null
+codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true

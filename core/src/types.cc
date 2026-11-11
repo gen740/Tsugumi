@@ -32,13 +32,34 @@ std::unique_ptr<flatbuffers::Parser> make_parser() {
   return p;
 }
 
+auto serialize_schema(flatbuffers::Parser& parser) -> void {
+  struct Restore {
+    std::vector<std::pair<std::string*, std::string>> values;
+    ~Restore() {
+      for (auto& [target, value] : values) *target = std::move(value);
+    }
+  } restore;
+  // The reflection format stores unsigned defaults in signed 64-bit slots.
+  // FlatBuffers' serializer parses their text as signed, losing values above
+  // INT64_MAX unless their bit representation is supplied explicitly.
+  for (auto* object : parser.structs_.vec) for (auto* field : object->fields.vec) {
+    if (field->value.type.base_type != flatbuffers::BASE_TYPE_ULONG || field->IsOptional()) continue;
+    uint64_t value = 0;
+    if (flatbuffers::StringToNumber(field->value.constant.c_str(), &value) && value > INT64_MAX) {
+      restore.values.emplace_back(&field->value.constant, field->value.constant);
+      field->value.constant = std::to_string(static_cast<int64_t>(value));
+    }
+  }
+  parser.Serialize();
+}
+
 std::string serialize_with_root(flatbuffers::Parser& parser, const std::string& root,
                                 std::string* error) {
   if (!parser.SetRootType(root.c_str())) {
     *error = "unknown root type " + root;
     return {};
   }
-  parser.Serialize();
+  serialize_schema(parser);
   return std::string(reinterpret_cast<const char*>(parser.builder_.GetBufferPointer()),
                      parser.builder_.GetSize());
 }
@@ -227,8 +248,8 @@ class Renderer {
           out += " = " + ss.str();
         } else if (bt == BaseType::Bool) {
           out += f->default_integer() ? " = true" : " = false";
-        } else if (t.index() >= 0) {
-          out += " = " + std::to_string(f->default_integer());
+        } else if (bt == BaseType::ULong) {
+          out += " = " + std::to_string(static_cast<uint64_t>(f->default_integer()));
         } else {
           out += " = " + std::to_string(f->default_integer());
         }
@@ -326,7 +347,7 @@ std::optional<std::string> schema_bfbs(const std::string& fbs_text, std::string*
     const auto* sd = parser->root_struct_def_;
     *root = sd->defined_namespace->GetFullyQualifiedName(sd->name);
   }
-  parser->Serialize();
+  serialize_schema(*parser);
   return std::string(reinterpret_cast<const char*>(parser->builder_.GetBufferPointer()), parser->builder_.GetSize());
 }
 
@@ -637,6 +658,20 @@ std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t, std::string
   if (!p->SetRootType(t.root_type.c_str())) {
     *error = "unknown root type " + t.root_type;
     return nullptr;
+  }
+  // Reflection stores integer defaults as signed bits. Restore unsigned text
+  // and deprecated flags before using the deserialized schema to render values.
+  for (auto* object : p->structs_.vec) {
+    const auto name = object->defined_namespace->GetFullyQualifiedName(object->name);
+    const auto* reflected = t.schema()->objects()->LookupByKey(name.c_str());
+    if (!reflected) continue;
+    for (auto* field : object->fields.vec) {
+      const auto* source = reflected->fields()->LookupByKey(field->name.c_str());
+      if (!source) continue;
+      field->deprecated = source->deprecated();
+      if (!source->optional() && source->type()->base_type() == BaseType::ULong)
+        field->value.constant = std::to_string(static_cast<uint64_t>(source->default_integer()));
+    }
   }
   return p;
 }

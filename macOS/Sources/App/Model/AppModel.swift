@@ -79,7 +79,7 @@ final class AppModel {
     let id = s.identity.id
     let current = sessions[id] ?? s
     if let c = chats[id], c.session === current { return c }
-    chats[id]?.cancel()
+    chats[id]?.detach()
     let c = ChatController(session: current)
     chats[id] = c
     return c
@@ -149,7 +149,7 @@ final class AppModel {
   }
 
   /// Main windows showing each project: when the last one leaves it, the
-  /// project's environment is given back (ProjectSession.close).
+  /// project's UI subscriptions are released; core keeps running.
   private var holders: [String: Int] = [:]
 
   func hold(_ s: ProjectSession) { holders[s.identity.id, default: 0] += 1 }
@@ -162,7 +162,7 @@ final class AppModel {
     // Edits that could not be saved stay open: opening it again finds them, quitting asks.
     guard !s.dirty else { return }
     if let c = chats[id] { GuideController.shared.chatClosed(c) }
-    chats[id]?.cancel()
+    chats[id]?.detach()
     chats[id] = nil
     sessions[id] = nil
     await s.close()

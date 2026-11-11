@@ -20,18 +20,67 @@ from pathlib import Path
 
 import pytest
 
-from conftest import TSUGUMID, write_project
+from conftest import BUILD, TSUGUMID, WEB_DIST, write_project
 
 ROOT = Path(__file__).resolve().parents[2]
-MCP = ROOT / "web" / "dist" / "mcp.js"
+MCP = WEB_DIST / "mcp.js"
 
 pytestmark = pytest.mark.skipif(not shutil.which("node") or not MCP.exists() or not TSUGUMID.exists(),
                                 reason="needs node, web/dist (cd web && npm run build) and tsugumid")
 
 
+def isolated_environment(root: Path, **values) -> dict:
+    """Keep resident services and credentials inside this test's own folder."""
+    env = dict(os.environ)
+    for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE", "TSUGUMI_VM_SOURCE"):
+        env.pop(key, None)
+    env.update(TSUGUMI_AGENT_STATE=str(root / "agent-core"),
+               TSUGUMI_SUPPORT_DIR=str(root / "support"),
+               TSUGUMI_AGENTD=os.environ.get("TSUGUMI_AGENTD", str(BUILD / "core" / "tsugumi-agentd")),
+               TSUGUMI_RPC_CLIENT=os.environ.get("TSUGUMI_RPC_CLIENT", str(BUILD / "client" / "tsugumi-rpc")),
+               TSUGUMID=str(TSUGUMID),
+               ANTHROPIC_API_KEY="fixture-no-network", OPENAI_API_KEY="fixture-no-network")
+    env.update(values)
+    return env
+
+
+def stop_resident_services(root: Path):
+    """A UI close intentionally leaves core alive; fixture teardown owns it."""
+    for name in ("agent.ready", "server.ready"):
+        for ready in root.rglob(name):
+            try:
+                record = json.loads(ready.read_text())
+                os.kill(record["pid"], signal.SIGTERM)
+            except (FileNotFoundError, ProcessLookupError, KeyError):
+                pass
+
+
+def page_post(port: int, cookie: str, route: str, body: dict) -> dict:
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request("POST", route, body=json.dumps(body), headers={"Host": f"127.0.0.1:{port}",
+              "content-type": "application/json", "x-tsugumi": "1", "Cookie": cookie})
+    response = c.getresponse()
+    data = json.loads(response.read())
+    c.close()
+    assert response.status == 200, data
+    return data
+
+
+def allow_pending_access(mcp, name: str, arguments: dict, port: int, cookie: str):
+    """The plugin asks; only the authenticated user's page may answer."""
+    text, error = mcp.call(name, arguments)
+    assert error, text
+    request = json.loads(text)
+    assert request["code"] == "grant_required", request
+    result, denied = mcp.call("agent_access_resolve", {"request_id": request["request_id"], "allow": True})
+    assert denied and json.loads(result)["code"] == "permission_denied", result
+    page_post(port, cookie, "/api/agent/access/resolve", {"id": request["request_id"], "allow": True})
+    return request["request_id"]
+
+
 class MCPServer:
     def __init__(self, data: Path, cwd: Path):
-        env = dict(os.environ, TSUGUMI_WEB_DATA=str(data), CLAUDE_PROJECT_DIR=str(cwd))
+        env = isolated_environment(cwd, TSUGUMI_WEB_DATA=str(data), CLAUDE_PROJECT_DIR=str(cwd))
         self.p = subprocess.Popen(["node", str(MCP)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
         self.next = 0
 
@@ -124,6 +173,7 @@ def plugin(tmp_path):
                 time.sleep(0.1)
         except (FileNotFoundError, ProcessLookupError):
             pass
+        stop_resident_services(tmp_path)
 
 
 def test_tools_and_instructions(plugin):
@@ -134,9 +184,9 @@ def test_tools_and_instructions(plugin):
     assert "tsugumi_open" in init["instructions"] and len(init["instructions"]) <= 4096
     names = [t["name"] for t in mcp.request("tools/list")["result"]["tools"]]
     assert names[0] == "tsugumi_open"
-    assert {"project_inspect", "project_save", "run", "run_record", "reference_read"} <= set(names)
-    # What belongs to the chat (its attached folders, helpers and the bird's bubble) is not offered.
-    assert not {"attached_folder_read", "delegate", "guide_show"} & set(names)
+    assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
+    # The plugin sees the same core tool catalog and Agent operations.
+    assert {"attached_folder_read", "delegate", "guide_show"} <= set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
 
@@ -160,6 +210,7 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert info["agentKey"] not in page_key
     page = Events(info["port"], page_key)
     page.start()
+    allow_pending_access(mcp, "project_inspect", {}, info["port"], page_key)
     text, error = mcp.call("project_inspect", {})
     assert not error, text
     snap = json.loads(text)
@@ -167,7 +218,9 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     rev = snap["value"]["rev"]
     project = json.loads(snap["value"]["project_json"])
     project["name"] = "renamed by Claude Code"
-    text, error = mcp.call("project_save", {"base_rev": str(rev), "changes": [{"value_type": "SetProject", "value": {"json": json.dumps(project)}}]})
+    save = {"base_rev": str(rev), "changes": [{"value_type": "SetProject", "value": {"json": json.dumps(project)}}]}
+    allow_pending_access(mcp, "project_save", save, info["port"], page_key)
+    text, error = mcp.call("project_save", save)
     assert not error, text
     assert json.loads(text)["reply"] == "SaveResult"
     assert json.loads((root / "proj" / "tsugumi.json").read_text())["name"] == "renamed by Claude Code"
@@ -179,11 +232,9 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
         if any(e.get("type") == "agentOpen" for e in page.events):
             break
         time.sleep(0.1)
-    work = [e for e in page.events if e.get("type") == "agentWork"]
-    assert [(e["event"]["kind"], e["event"]["name"]) for e in work] == [
-        ("toolStarted", "project_inspect"), ("toolFinished", "project_inspect"),
-        ("toolStarted", "project_save"), ("toolFinished", "project_save")]
-    assert all(e["from"] == "Claude Code" and e["project"] == str((root / "proj").resolve()) for e in work)
+    permissions = [e for e in page.events if e.get("type") == "chat" and e.get("event", {}).get("kind") == "permission"]
+    assert len(permissions) >= 2
+    assert all(e["project"] == str((root / "proj").resolve()) for e in permissions)
     assert any(e.get("type") == "agentOpen" for e in page.events)
     # create: true makes a new project.
     text, error = mcp.call("tsugumi_open", {"folder": "fresh", "create": True, "browser": False})
@@ -251,4 +302,8 @@ def test_the_agent_key_cannot_answer_approvals_or_reach_the_page_routes(plugin):
         assert status(port, method, route, agent) == 401, route
     # A wrong agent key reaches nothing, the page's key everything.
     assert status(port, "POST", "/api/agent/tools", {"X-Tsugumi-Agent": "0" * 64}) == 401
-    assert status(port, "POST", "/api/chat/permission", {"Cookie": page_cookie(data, port)}) == 200
+    cookie = page_cookie(data, port)
+    for route in ("/api/agent/access", "/api/agent/access/resolve", "/api/agent/access/revoke"):
+        assert status(port, "POST", route, agent) == 401, route
+    assert status(port, "POST", "/api/agent/access", {"Cookie": cookie}) == 200
+    # Real approval is covered by allow_pending_access: it needs this page key.

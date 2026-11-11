@@ -244,7 +244,7 @@ final class Updater {
     }
     LSRegisterURL(app as CFURL, true)
     guard relaunch else { return }
-    // Opened once this process has exited (the VM is off by then).
+    // Opened once this UI has exited; ongoing work remains in the resident host.
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
     p.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",

@@ -1,14 +1,12 @@
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
-import net from 'node:net'
 import path from 'node:path'
 import { AGENT, modelChoices } from '../src/shared/agentShared'
-import { BFBS } from '../src/shared/bfbs'
-import { RPCClient, Transport, webSocketTransport } from '../src/shared/rpc'
-import { Agent, externalTools, summarizeVersion, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { type AgentEvent, DEMO_SKILL, guideText, type ProviderConfig } from './agent'
+import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
 import { keychainReader } from './keychain'
 import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
@@ -38,11 +36,10 @@ export interface ChatContext {
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 
 let ctx: ChatContext
-let catalog: ToolCatalog | undefined
-let catalogError: string | undefined
+let core: CoreAgentHost
 
 export function chatStatus() {
-  return { chatAvailable: !catalogError, chatError: catalogError ?? null }
+  return { chatAvailable: true, chatError: null }
 }
 
 type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
@@ -186,13 +183,13 @@ async function saveKey(p: KeyedProvider, raw: string) {
     keychain.forget(PROVIDERS[p].name)
     if (r.code === 0 && (await keychainKey(p)) === key) {
       fs.rmSync(keyFile(p), { force: true })
-      return L('Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。')
+      return L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
     }
   }
   fs.mkdirSync(ctx.support, { recursive: true })
   fs.writeFileSync(keyFile(p), key, { mode: 0o600 })
   fs.chmodSync(keyFile(p), 0o600)
-  return L('{0}（0600）に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。', keyFile(p))
+  return L('{0}（0600）に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。', keyFile(p))
 }
 
 async function deleteKey(p: KeyedProvider) {
@@ -209,7 +206,7 @@ async function deleteKey(p: KeyedProvider) {
 // point the sign-in and the requests at the local fixture (tests only).
 let chatGPTAuth: ChatGPTAuth | undefined
 const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(path.join(ctx.support, 'chatgpt.json'),
-  process.env.TSUGUMI_CHATGPT_ISSUER ? endpointsFor(process.env.TSUGUMI_CHATGPT_ISSUER, OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS))
+  process.env.TSUGUMI_CHATGPT_ISSUER ? endpointsFor(process.env.TSUGUMI_CHATGPT_ISSUER, OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS, (method, fields) => core.user.call(method, fields)))
 /** The last sign-in started from the page: its outcome, once it came. */
 let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
 
@@ -253,21 +250,6 @@ function chatGPTState() {
   return { accounts: chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
 }
 
-/** The references the Agent may read (reference_read): the repository's
- *  demos that are not Draft tasks or their answers, the Python SDK and the Card guide (dist/ is two levels below). */
-function references(): Record<string, string> {
-  const repo = path.resolve(ctx.here, '..', '..')
-  const out: Record<string, string> = {}
-  const add = (name: string, p: string) => {
-    if (fs.existsSync(p)) out[name] = p
-  }
-  // Not the Draft demos nor their answers (referenceDemos).
-  Object.assign(out, referenceDemos(path.join(repo, 'demos', language())))
-  add('sdk/python/tsugumi/__init__.py', path.join(repo, 'sdk', 'python', 'tsugumi', '__init__.py'))
-  add('card-guide.md', path.join(repo, 'agent', 'Reference', 'card-guide.md'))
-  return out
-}
-
 /** Attached folders as sent by the page: existing folders of this host. */
 function cleanFolders(v: unknown): string[] {
   if (!Array.isArray(v)) return []
@@ -286,25 +268,24 @@ function cleanFolders(v: unknown): string[] {
 // app with the same model connection as the Agent (no key, no guide). It
 // reads the project on the page's screen and explains; what it offers to do
 // (guide_show) the user does with a button of the page.
-let guideAgent: Agent | undefined
+let guideAgent: RemoteAgent | undefined
 /** The project the page asked about (its reads go there), if one is open. */
 let guideProject: string | undefined
-const guideFile = () => path.join(ctx.support, 'agent', 'guide', 'conversation.json')
-const guideEvents = (e: AgentEvent) => ctx.broadcast({ type: 'guide', event: e })
-
-async function guide(): Promise<Agent> {
-  if (!catalog) throw ctx.httpError(503, catalogError!)
-  if (!guideAgent) {
-    const rpc = () => {
-      if (!guideProject) throw new Error(guideText('noProject'))
-      return chatFor(guideProject).rpc()
-    }
-    guideAgent = new Agent(catalog, rpc, await guideProvider(), guideFile(), 'guide', references(), undefined, 'guide')
-    // A guide answers in a few steps and never waits on a run.
-    guideAgent.maxSteps = 12
-    guideAgent.statusWait = 0
+const guideEvents = (event: AgentEvent) => {
+  ctx.broadcast({ type: 'guide', event })
+  if (guideProject && (event.kind === 'permission' || event.kind === 'permissionAnswered')) {
+    ctx.broadcast({ type: 'chat', project: guideProject, session: EXTERNAL_SESSION, event })
   }
-  guideAgent.setProvider(await guideProvider())
+}
+
+async function guide(): Promise<RemoteAgent> {
+  if (!guideAgent || guideAgent.project !== guideProject) {
+    guideAgent?.close()
+    guideAgent = await new RemoteAgent(core, 'guide', guideProject, 'guide').open()
+  }
+  await core.configure(await guideProvider(), 'guide')
+  guideAgent.observe(guideEvents)
+  await guideAgent.refresh()
   return guideAgent
 }
 
@@ -330,7 +311,6 @@ export function speechModel(offered: string[], fallback: string): string {
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
  *  signed-in ChatGPT plan, or the local fixture. */
 async function guideAvailable(): Promise<boolean> {
-  if (!catalog) return false
   const s = settings()
   if (s.provider === 'fixture') return true
   if (s.provider === 'chatgpt') return chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled)
@@ -404,226 +384,185 @@ const demoSkill = (): Skill => ({ name: 'demo', description: L('ツグミが画�
 
 function skillsFor(project: string | undefined): Skill[] {
   const out = [demoSkill(), ...(project ? loadSkills(path.join(project, 'skills'), L('プロジェクト')) : [])]
-  for (const f of settings().skillFolders) if (f.enabled) out.push(...loadSkills(f.path, path.basename(f.path)))
+  for (const folder of settings().skillFolders) if (folder.enabled) out.push(...loadSkills(folder.path, path.basename(folder.path)))
   return out
 }
 
-
 // ---- Agent hosting -------------------------------------------------------------
 
-/** Unix socket transport: 4 byte little-endian length + FlatBuffer. */
-function unixTransport(sock: string): Promise<Transport> {
-  return new Promise((resolve, reject) => {
-    const c = net.connect(sock)
-    let buf = Buffer.alloc(0)
-    const t: Transport = {
-      send: (f) => {
-        const head = Buffer.alloc(4)
-        head.writeUInt32LE(f.length)
-        c.write(Buffer.concat([head, Buffer.from(f)]))
-      },
-      close: () => c.destroy(),
-    }
-    c.on('connect', () => resolve(t))
-    c.on('error', (e) => reject(e))
-    c.on('data', (d) => {
-      buf = Buffer.concat([buf, d])
-      while (buf.length >= 4) {
-        const n = buf.readUInt32LE(0)
-        if (buf.length < 4 + n) break
-        t.onFrame?.(new Uint8Array(buf.subarray(4, 4 + n)))
-        buf = buf.subarray(4 + n)
-      }
-    })
-    c.on('close', () => t.onClose?.('closed'))
-  })
-}
-
-/** A save of an Agent waiting for the user: what it would give Cards. */
 interface PermissionWait {
   project: string
   session: string
   asked: string[]
-  resolve: (approved: Set<string>) => void
+  resolve: (allow: boolean) => void
 }
 const permissionWaits = new Map<string, PermissionWait>()
-
-/** The widenings the user approves: the kinds allowed without asking at
- *  once, the others when the page asks (nothing when declined or cancelled). */
-function approve(project: string, session: string, asked: string[], from?: string): Promise<Set<string>> {
-  const allowed = new Set(settings().allowedPermissions)
-  const approved = new Set(asked.filter((p) => allowed.has(p.split(' ')[0])))
-  const ask = asked.filter((p) => !approved.has(p))
-  if (!ask.length) return Promise.resolve(approved)
-  // An agent outside the web UI asks the page; with no page open nobody can answer.
-  if (from && !ctx.listeners()) return Promise.resolve(approved)
-  return new Promise((resolve) => {
-    const id = randomUUID()
-    permissionWaits.set(id, { project, session, asked: ask, resolve: (a) => resolve(new Set([...approved, ...a])) })
-    ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked: ask, from } })
-  })
-}
-
-/** The session id under which Claude Code's calls (the plugin) ask for approvals. */
 const EXTERNAL_SESSION = 'external'
 
-function answerPermission(id: string, allow: boolean, always: string[] = []) {
-  const w = permissionWaits.get(id)
-  if (!w) return
+async function answerPermission(id: string, allow: boolean) {
+  await core.user.call('AccessResolveRequest', { request_id: id, allow })
+  const waiting = permissionWaits.get(id)
   permissionWaits.delete(id)
-  if (allow && always.length) {
-    const s = settings()
-    saveSettings({ ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
-  }
-  w.resolve(allow ? new Set(w.asked) : new Set())
-  ctx.broadcast({ type: 'chat', project: w.project, session: w.session, event: { kind: 'permissionAnswered', id } })
+  waiting?.resolve(allow)
+  if (waiting) ctx.broadcast({ type: 'chat', project: waiting.project, session: waiting.session,
+    event: { kind: 'permissionAnswered', id } })
 }
 
 const waitingFor = (project: string, session: string) =>
   [...permissionWaits.entries()].filter(([, w]) => w.project === project && w.session === session)
 
+async function withAccess<T>(project: string, session: string, run: () => Promise<T>, from?: string): Promise<T> {
+  for (;;) {
+    try { return await run() } catch (error) {
+      if (!(error instanceof CoreAgentError) || error.code !== 'grant_required' || !error.requestId) throw error
+      const id = error.requestId
+      const allowed = new Promise<boolean>((resolve) => {
+        const asked = [`project_access ${project}: ${error.message}`]
+        permissionWaits.set(id, { project, session, asked, resolve })
+        ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, from } })
+      })
+      if (!await allowed) throw new CoreAgentError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
+    }
+  }
+}
+
 class ChatHost {
-  private agents = new Map<string, Agent>()
-  private client?: RPCClient
-  readonly dir: string
+  private conversations = new Map<string, RemoteAgent>()
+  private folders = new Set<string>()
+  constructor(readonly project: string, readonly key: string) {}
 
-  constructor(readonly project: string, readonly key: string) {
-    this.dir = path.join(ctx.support, 'agent', key, 'sessions')
-  }
-
-  /** One authenticated connection per project, reopened after a disconnect. */
-  async rpc(): Promise<RPCClient> {
-    if (this.client && !this.client.closed) return this.client
-    const st = await ctx.envs.start(this.project)
-    if (st.state !== 'ready') throw new Error(st.state === 'failed' ? st.message : 'tsugumid is not running')
-    // On this host its Unix socket, which needs no token; in the VM its WebSocket.
-    const c = new RPCClient(st.unix ? await unixTransport(st.unix) : await webSocketTransport(st.endpoint))
-    await c.connect(st.unix ? undefined : st.token, language())
-    this.client = c
-    return c
-  }
-
-  file(id: string) {
-    return path.join(this.dir, `${id.replace(/[^a-zA-Z0-9-]/g, '')}.json`)
-  }
-
-  async agent(id: string): Promise<Agent> {
-    let a = this.agents.get(id)
+  async agent(id: string): Promise<RemoteAgent> {
+    let a = this.conversations.get(id)
     if (!a) {
-      a = new Agent(catalog!, () => this.rpc(), await chatProvider(), this.file(id), id, references())
-      a.approver = (asked) => approve(this.project, id, asked)
-      this.agents.set(id, a)
-    }
-    return a
-  }
-
-  /** The folders a chat may read. */
-  async attach(a: Agent, folders: string[]) {
-    a.folders = folders
-    const all = [...new Set([...this.agents.values()].flatMap((x) => x.folders))].sort()
-    await ctx.envs.attachFolders(this.project, this.key, all)
-  }
-
-  events(id: string) {
-    return (e: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event: e })
-  }
-
-  /** The Agent that runs Claude Code's tool calls (the plugin): no model of
-   *  its own, the same checks and approvals as the chat's. Its records stay
-   *  out of the chat's sessions. */
-  private outside?: Agent
-  async external(): Promise<Agent> {
-    if (!this.outside) {
-      const file = path.join(ctx.support, 'agent', this.key, 'external.json')
-      fs.mkdirSync(path.dirname(file), { recursive: true })
-      const a = new Agent(catalog!, () => this.rpc(), await provider(), file, EXTERNAL_SESSION, references())
-      a.approver = (asked) => approve(this.project, EXTERNAL_SESSION, asked, 'Claude Code')
-      this.outside = a
-    }
-    return this.outside
-  }
-
-  /** Claude Code's tool calls, for the page (Tsugumi flies to the Card it works on). */
-  externalEvents() {
-    return (e: AgentEvent) => {
-      if (e.kind === 'toolStarted' || e.kind === 'toolFinished') ctx.broadcast({ type: 'agentWork', project: this.project, from: 'Claude Code', event: e })
-    }
-  }
-
-  sessions() {
-    let files: string[] = []
-    try {
-      files = fs.readdirSync(this.dir).filter((f) => f.endsWith('.json'))
-    } catch {}
-    return files.map((f) => {
-      const id = f.slice(0, -5)
-      let c
-      try { c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id) }
-      catch { return { id, title: L('読み込めない会話 ({0})', id), updatedAt: 0, messages: 0 } }
-      const m = [...c.archive, ...c.messages].find((m) => m.role === 'user')
-      const first = m?.display ?? m?.content.flatMap((b) => (b.type === 'text' ? [b.text] : []))[0]
-      return { id, title: c.title ?? (first ? first.slice(0, 60) : L('新しい会話')), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
-    }).sort((a, b) => b.updatedAt - a.updatedAt)
-  }
-
-  cancelAll() {
-    for (const a of this.agents.values()) a.cancel()
-  }
-
-  delete(id: string) {
-    this.agents.get(id)?.cancel()
-    this.agents.delete(id)
-    fs.rmSync(this.file(id), { force: true })
-    // (and its helpers' conversations, from delegate)
-    fs.rmSync(this.file(id).replace(/\.json$/, '') + '.helpers', { recursive: true, force: true })
-  }
-
-  /** Full-text search over every session, compacted parts included. */
-  search(text: string) {
-    const q = text.toLowerCase()
-    const hits: { session: string; title: string; snippet: string }[] = []
-    for (const s of this.sessions()) {
-      let c
-      try { c = loadConversation(this.file(s.id), s.id) } catch { continue }
-      for (const m of [...c.archive, ...c.messages]) {
-        for (const b of m.content) {
-          if (b.type !== 'text') continue
-          const i = b.text.toLowerCase().indexOf(q)
-          if (i < 0) continue
-          hits.push({ session: s.id, title: s.title, snippet: b.text.slice(Math.max(0, i - 40), i + q.length + 60).replace(/\n/g, ' ') })
+      a = await new RemoteAgent(core, id, this.project).open()
+      this.conversations.set(id, a)
+      const access = await core.user.call<{ requests: { id: string; conversation_id: string; project_id: string; state: string }[] }>('AccessListRequest')
+      for (const request of access.requests) {
+        if (request.state === 'pending' && request.conversation_id !== id && core.projectFolder(request.project_id) === this.project) {
+          await showExternalAccess(request.id, this.project)
         }
       }
     }
-    return hits
+    a.observe(this.events(id))
+    await a.refresh()
+    return a
+  }
+
+  async attach(folder: string, existing: string[] = []) {
+    for (const value of [...existing, folder]) this.folders.add(value)
+    await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
+    const project = await core.project(this.project)
+    const resource = `folder:${project}:${createHash('sha256').update(folder).digest('hex')}`
+    await core.user.call('RegisterFolderRequest', { project_id: project, resource_id: resource, folder, title: path.basename(folder) })
+    return resource
+  }
+
+  async detachFolder(folder: string) {
+    this.folders.delete(folder)
+    await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
+  }
+
+  async skillReferences(names: string[]) {
+    const project = await core.project(this.project)
+    const references: { name: string; resource_id: string; path: string }[] = []
+    for (const skill of skillsFor(this.project).filter((s) => s.path !== 'builtin:demo' && names.includes(s.name))) {
+      const relative = path.relative(this.project, skill.path)
+      if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
+        references.push({ name: skill.name, resource_id: project, path: relative })
+      } else {
+        const folder = settings().skillFolders.find((f) => f.enabled && skill.path.startsWith(path.resolve(f.path) + path.sep))
+        if (!folder) continue
+        const resource = await this.attach(path.resolve(folder.path))
+        references.push({ name: skill.name, resource_id: resource, path: path.relative(folder.path, skill.path) })
+      }
+    }
+    return references
+  }
+
+  events(id: string) {
+    return (event: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event })
+  }
+
+  detach() { for (const conversation of this.conversations.values()) conversation.close() }
+
+  async sessions() {
+    return core.user.call('ConversationListRequest', {})
+  }
+
+  async delete(id: string) {
+    await core.user.call('ConversationDeleteRequest', { conversation_id: id })
+    this.conversations.get(id)?.close()
+    this.conversations.delete(id)
+  }
+
+  async search(text: string) { return core.user.call('ConversationSearchRequest', { text }) }
+
+  async externalCall(name: string, args: unknown) {
+    const project = await core.project(this.project)
+    const id = `external-${this.key}`
+    await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' })
+    const op = randomUUID()
+    try {
+      return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
+        arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op })
+    } catch (error) {
+      if (error instanceof CoreAgentError && error.code === 'grant_required' && error.requestId) {
+        const asked = [`project_access ${this.project}: ${error.message}`]
+        permissionWaits.set(error.requestId, { project: this.project, session: EXTERNAL_SESSION, asked, resolve: () => {} })
+        ctx.broadcast({ type: 'chat', project: this.project, session: EXTERNAL_SESSION,
+          event: { kind: 'permission', id: error.requestId, asked, from: 'Claude Code' } })
+        return { text: JSON.stringify({ code: error.code, message: error.message, request_id: error.requestId }), isError: true }
+      }
+      throw error
+    }
   }
 }
 
 const chats = new Map<string, ChatHost>()
 function chatFor(dir: string): ChatHost {
   const { key, real } = projectKey(dir)
-  let c = chats.get(key)
-  if (!c) {
-    c = new ChatHost(real, key)
-    chats.set(key, c)
-  }
-  return c
+  let chat = chats.get(key)
+  if (!chat) { chat = new ChatHost(real, key); chats.set(key, chat) }
+  return chat
 }
 
+/** A disconnected page does not own the lifetime of a core conversation. */
+export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
-/** The project was left: no turn of it goes on. */
-export function cancelChats(dir: string) {
-  chats.get(projectKey(dir).key)?.cancelAll()
+async function showExternalAccess(requestId: string, fallback?: string) {
+  const access = await core.user.call<{ requests: { id: string; project_id: string; access: string; scope: string; reason: string; state: string }[] }>('AccessListRequest')
+  const request = access.requests.find((r) => r.id === requestId && r.state === 'pending')
+  if (!request) return
+  const project = core.projectFolder(request.project_id) ?? fallback
+  if (!project) return
+  const asked = [`project_access ${request.access} [${request.scope}] ${request.project_id}: ${request.reason}`]
+  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, resolve: () => {} })
+  ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
+    event: { kind: 'permission', id: requestId, asked, from: 'Claude Code' } })
+}
+
+async function externalAPI(name: string, args: unknown, project?: string) {
+  try {
+    const result = await core.externalAPI(name, args)
+    if (name === 'agent_access') {
+      const value = JSON.parse(result.text)
+      if (typeof value.id === 'string') await showExternalAccess(value.id, project)
+    }
+    return result
+  } catch (error) {
+    if (!(error instanceof CoreAgentError)) throw error
+    if (error.code === 'grant_required' && error.requestId) await showExternalAccess(error.requestId, project)
+    return { text: JSON.stringify({ code: error.code, message: error.message, request_id: error.requestId }), isError: true }
+  }
 }
 
 const keyedProvider = (v: unknown): KeyedProvider => (v === 'openai' ? 'openai' : 'anthropic')
 
 /** The Agent of a session, ready for a new turn (current connection and folders). */
 async function turnAgent(b: any) {
-  if (!catalog) throw ctx.httpError(503, catalogError!)
   const host = chatFor(ctx.projectDir(b.path))
   const a = await host.agent(String(b.session))
-  a.setProvider(await chatProvider())
-  if (b.folders) await host.attach(a, cleanFolders(b.folders))
+  await core.configure(await chatProvider(), a.id)
   return { host, a }
 }
 
@@ -632,14 +571,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   // The language for the server's own messages, from the start (the app's, once read).
   settings()
   void ctx.desktop?.refresh().then(() => settings(), () => {})
-  try {
-    catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(c.here, 'tsugumi.bfbs')))))
-  } catch (e) {
-    catalogError = L('RPC スキーマを読み込めないため、チャットは使えません（{0}）。通常の操作はすべて UI から行えます。', (e as Error).message)
-  }
+  core = new CoreAgentHost(c.support, c.here, c.envs, language())
   const projectDir = c.projectDir
   return {
-  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
+  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined).map(({ content: _content, ...metadata }) => metadata),
   'GET /api/settings': async () => ({
     ...(await ctx.desktop?.refresh(), settings()),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
@@ -655,12 +590,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const s = settings()
     if (!s.versionSummaries) throw ctx.httpError(400, L('版の要約はオフです。'))
     if (s.provider === 'chatgpt') throw ctx.httpError(400, L('ChatGPT プランでは版の要約を作りません。'))
-    const c = await provider()
-    // Room for the model's own reasoning on a large diff: the answer itself is cut to one line.
-    const small = { ...c, maxTokens: 1500, model: s.provider === 'anthropic' ? 'claude-haiku-5-5' : c.model }
-    const text = await summarizeVersion(small, String(b.input ?? ''), AbortSignal.timeout(60_000))
-    if (!text) throw ctx.httpError(502, L('モデルが文を返しませんでした。'))
-    return { text }
+    const project = await core.project(projectDir(b.path))
+    await core.configure(await provider())
+    return core.user.call('VersionSummarizeRequest', { project_id: project, commit: String(b.commit) })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
@@ -668,7 +600,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/settings/models': async (b) => {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
     if (id === 'fixture') throw ctx.httpError(400, L('fixture にはモデル一覧がありません。'))
-    const list = await listModels(await providerFor(id))
+    const list = await core.models(await providerFor(id))
     // Read after the wait: the other connections' lists come at the same time.
     const next = withModelList(settings(), id, list)
     if (!next) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
@@ -722,66 +654,76 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/sessions': (b) => chatFor(projectDir(b.path)).sessions(),
   'POST /api/chat/conversation': async (b) => {
-    if (!catalog) throw ctx.httpError(503, catalogError!)
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
-    if (b.folders) await host.attach(a, cleanFolders(b.folders))
-    // Resume work left unfinished by a disconnect or restart.
-    if (b.resume && !a.busy) {
-      a.setProvider(await chatProvider())
-      a.resume(host.events(a.id))
-    }
-    const [wait] = waitingFor(host.project, a.id)
-    return { conversation: a.conversation, busy: a.busy, provider: await providerInfo(),
-             permission: wait ? { id: wait[0], asked: wait[1].asked } : null }
+    const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
+    const access = await core.user.call<{ requests: { id: string; state: string; access: string; scope: string; reason: string; project_id: string }[] }>('AccessListRequest', { conversation_id: a.id })
+    const pending = access.requests.find((r) => r.state === 'pending')
+    return { conversation: a.conversation, busy: a.busy, continuable: a.continuable, provider: await providerInfo(),
+      permission: pending ? { id: pending.id, asked: [`project_access ${pending.project_id}: ${pending.access} [${pending.scope}] — ${pending.reason}`] } : wait ? { id: wait[0], asked: wait[1].asked } : null }
   },
   'POST /api/chat/send': async (b) => {
     const { host, a } = await turnAgent(b)
-    a.send(String(b.prompt), String(b.title), host.events(a.id), typeof b.display === 'string' ? b.display : undefined)
+    const turn = randomUUID()
+    const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
+    const skillReferences = await host.skillReferences(skillNames)
+    await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
+      selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
+      selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
+      skill_names: skillNames.filter((name: string) => name === 'demo'),
+      skill_references: skillReferences,
+      attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
+    }))
+      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))
     return { ok: true }
   },
   'POST /api/chat/continue': async (b) => {
     const { host, a } = await turnAgent(b)
-    a.continueAfterLimit(host.events(a.id))
+    await a.action('Continue', host.events(a.id))
     return { ok: true }
   },
   'POST /api/chat/retry': async (b) => {
     const { host, a } = await turnAgent(b)
-    a.retry(host.events(a.id))
+    await a.action('Retry', host.events(a.id))
     return { ok: true }
   },
   'POST /api/chat/compact': async (b) => {
     const { host, a } = await turnAgent(b)
-    a.compact(host.events(a.id))
+    await a.action('Compact', host.events(a.id))
     return { ok: true }
   },
-  'POST /api/chat/permission': (b) => {
-    answerPermission(String(b.id), b.allow === true, Array.isArray(b.always) ? b.always.map(String) : [])
+  'POST /api/chat/permission': async (b) => {
+    await answerPermission(String(b.id), b.allow === true)
     return { ok: true }
   },
   'POST /api/chat/cancel': async (b) => {
     const host = chatFor(projectDir(b.path))
-    for (const [id] of waitingFor(host.project, String(b.session))) answerPermission(id, false)
-    ;(await host.agent(String(b.session))).cancel()
+    await (await host.agent(String(b.session))).cancel()
+    for (const [id] of waitingFor(host.project, String(b.session))) await answerPermission(id, false)
     return { ok: true }
   },
-  'POST /api/chat/delete': (b) => {
-    chatFor(projectDir(b.path)).delete(String(b.session))
-    return { ok: true }
+  'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
+  'POST /api/chat/folder': async (b) => {
+    const [folder] = cleanFolders([b.folder])
+    if (!folder) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', b.folder))
+    const host = chatFor(projectDir(b.path))
+    const resource = await host.attach(folder, cleanFolders(Array.isArray(b.folders) ? b.folders : []))
+    return { folder, resource, name: path.basename(folder) }
   },
-  'POST /api/chat/folder': (b) => {
-    // A folder to attach: it must be an existing folder of this host.
-    const [f] = cleanFolders([b.folder])
-    if (!f) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', b.folder))
-    return { folder: f, name: path.basename(f) }
+  'POST /api/chat/folder/detach': async (b) => {
+    const project = projectDir(b.path)
+    const { key } = projectKey(project)
+    const access = await core.user.call<{ grants: { id: string; project_id: string; active: boolean }[] }>('AccessListRequest')
+    for (const grant of access.grants.filter((g) => g.active && g.project_id === String(b.resource))) {
+      await core.user.call('AccessRevokeRequest', { grant_id: grant.id })
+    }
+    await chatFor(project).detachFolder(String(b.folder))
+    return { ok: true }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
   // Claude Code (the plugin's MCP server) works on a project through these:
   // the chat's tools, run here with the same checks, and shown on the page.
-  'POST /api/agent/tools': () => {
-    if (!catalog) throw ctx.httpError(503, catalogError!)
-    return externalTools(catalog).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
-  },
+  'POST /api/agent/tools': () => core.tools(),
   /** Claude Code opened a project: a page that has it or is on Home shows it (others keep
    *  their projects; none free: a browser opens one, unless `browser: false`). */
   'POST /api/agent/open': (b) => {
@@ -791,12 +733,12 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (opened) ctx.openPage(project)
     return { project, shown, opened }
   },
-  'POST /api/agent/call': async (b) => {
-    if (!catalog) throw ctx.httpError(503, catalogError!)
-    const host = chatFor(projectDir(b.path))
-    const input = typeof b.arguments === 'string' ? b.arguments : JSON.stringify(b.arguments ?? {})
-    return (await host.external()).call(String(b.name), input, host.externalEvents())
-  },
+  'POST /api/agent/call': (b) => String(b.name).startsWith('agent_')
+    ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined)
+    : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments),
+  'POST /api/agent/access': () => core.user.call('AccessListRequest'),
+  'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true); return { ok: true } },
+  'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
   'POST /api/guide': async () => {
     const state = await guideState()
     const a = state.available ? await guide() : undefined
@@ -813,7 +755,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   /** A connection check for the first start: the provider lists its models with the key. */
   'POST /api/guide/check': async () => {
     try {
-      await listModels(await provider())
+      await core.models(await provider())
     } catch (e) {
       throw ctx.httpError(502, String((e as Error).message ?? e))
     }
@@ -821,26 +763,28 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/guide/send': async (b) => {
     if (!(await guideAvailable())) throw ctx.httpError(409, L('ガイドに使える API キーがありません。'))
+    guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     const a = await guide()
     if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))
-    guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
-    a.send(String(b.prompt), String(b.display), guideEvents, String(b.display))
+    const turn = randomUUID()
+    void withAccess(guideProject ?? '', 'guide', () => a.send(String(b.text ?? ''), guideEvents, turn))
+      .catch((e) => guideEvents({ kind: 'error', message: e.message }))
     return { ok: true }
   },
   'POST /api/guide/retry': async () => {
     const a = await guide()
-    if (!a.busy) a.retry(guideEvents)
+    if (!a.busy) await a.action('Retry', guideEvents)
     return { ok: true }
   },
   'POST /api/guide/cancel': async () => {
-    guideAgent?.cancel()
+    await guideAgent?.cancel()
     return { ok: true }
   },
   /** A new conversation (the old one is gone; the tour stays). */
   'POST /api/guide/reset': async () => {
-    guideAgent?.cancel()
+    await guideAgent?.cancel()
     guideAgent = undefined
-    fs.rmSync(guideFile(), { force: true })
+    await core.user.call('ConversationDeleteRequest', { conversation_id: 'guide' })
     return { ok: true }
   },
   }

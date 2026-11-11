@@ -145,31 +145,12 @@ struct OpenConsoleButton: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  private var shuttingDown = false
   /// Unsaved edits were saved (or the user chose to drop them) for this quit.
   private var editsSettled = false
 
-  /// Quitting stops every project (runs are recorded as interrupted) and
-  /// powers the shared VM off before the app exits. Unsaved edits are saved
-  /// first, or dropped only when the user says so.
+  /// Settle unsaved edits; the resident host owns ongoing project execution.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard !shuttingDown else { return .terminateLater }
     if !editsSettled, let reply = MainActor.assumeIsolated({ settleEdits(sender) }) { return reply }
-    guard case .stopped = AppModel.shared.environments.vm.state else {
-      shuttingDown = true
-      // Off the main actor, and the reply through the run loop: terminate
-      // may have been called from a main-actor task, which keeps the main
-      // queue busy while AppKit waits in its own loop for the reply.
-      let environments = AppModel.shared.environments
-      Task.detached {
-        await environments.shutdown()
-        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
-          sender.reply(toApplicationShouldTerminate: true)
-        }
-        CFRunLoopWakeUp(CFRunLoopGetMain())
-      }
-      return .terminateLater
-    }
     return .terminateNow
   }
 

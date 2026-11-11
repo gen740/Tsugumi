@@ -1,0 +1,21 @@
+name: Nix and Tsugumi cache
+description: Read the public caches and upload completed builds from trusted runs.
+inputs:
+  cachix-token:
+    description: Per-cache write token; leave empty for read-only runs.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          extra-substituters = https://tsugumi.cachix.org
+          extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI=
+    - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+      with:
+        name: tsugumi
+        authToken: ${{ inputs.cachix-token }}
+        skipPush: ${{ inputs.cachix-token == '' }}
+        useDaemon: true

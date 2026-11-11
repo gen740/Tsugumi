@@ -14,7 +14,6 @@ from conftest import SharedVM, VMEnv
 from projects import card
 from projects import run_and_wait, write
 from test_cards_container import bash, log
-from test_run_history import copy_runs, wait_copy
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -165,10 +164,7 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
 
         rid, st = run_and_wait(env.client(), "start")
         assert st.state == RunState.succeeded
-        # The database is on the VM's disk, seen by the project only as /history.
-        assert "history.sqlite" in env.exec("ls /history")
-        assert not (root / ".tsugumi" / "history.sqlite").exists()
-        assert wait_copy(root, 1) == [rid]
+        assert listed() == [rid]
         assert env.id in env.vm.command("vm histories")[-1]
         # It stays across restarts.
         env.stop()
@@ -180,7 +176,6 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
         assert env.id not in env.vm.command("vm histories")[-1]
         env.start()
         assert listed() == [rid]
-        assert copy_runs(root) == [rid]
     finally:
         env.stop()
 

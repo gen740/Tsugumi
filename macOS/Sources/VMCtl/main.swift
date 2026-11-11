@@ -38,7 +38,7 @@ guard let support else {
   exit(2)
 }
 setvbuf(stdout, nil, _IOLBF, 0)
-let manager = EnvironmentManager(support: support, resources: resources)
+let manager = EnvironmentManager(support: support, resources: resources, ownsVM: true)
 if echoConsole {
   _ = manager.vm.console.observe { line in FileHandle.standardError.write(Data((line + "\n").utf8)) }
 }

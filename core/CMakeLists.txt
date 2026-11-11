@@ -72,6 +72,67 @@ target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
 
+# Agent state and model execution live in the core, independently of project
+# lifetimes. Frontends only connect to this service through agent.fbs.
+set(_agent_prompts "")
+foreach(prompt system-prompt guide-prompt demo-skill)
+  string(REPLACE "-" "_" symbol ${prompt})
+  set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
+  add_custom_command(OUTPUT ${output}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${PROJECT_SOURCE_DIR}/agent/Shared/${prompt}.md
+      -DOUTPUT=${output} -DSYMBOL=tsugumi_agent_${symbol}
+      -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+    DEPENDS ${PROJECT_SOURCE_DIR}/agent/Shared/${prompt}.md ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+    VERBATIM)
+  list(APPEND _agent_prompts ${output})
+endforeach()
+add_library(tsugumi_agent_core STATIC
+  ${_agent_prompts}
+  src/server.cc
+  src/lanes.cc
+  src/util/crypto.cc
+  src/util/fs.cc
+  src/util/log.cc
+  src/util/sqlite.cc
+  ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
+  src/agent/catalog.cc
+  src/agent/provider.cc
+  src/agent/runtime.cc
+  src/agent/tool_images.cc
+  src/agent/host.cc)
+target_include_directories(tsugumi_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(tsugumi_agent_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+set(TSUGUMI_AGENT_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native Agent service")
+target_link_libraries(tsugumi_agent_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
+  Threads::Threads tsugumi_client CURL::libcurl)
+if(TSUGUMI_AGENT_SQLITE_LIBRARY)
+  target_link_libraries(tsugumi_agent_core PRIVATE ${TSUGUMI_AGENT_SQLITE_LIBRARY})
+else()
+  target_link_libraries(tsugumi_agent_core PRIVATE PkgConfig::SQLITE3)
+endif()
+if(NOT APPLE)
+  target_link_libraries(tsugumi_agent_core PRIVATE PkgConfig::CRYPTO)
+endif()
+add_executable(tsugumi-agentd src/agent/main.cc)
+target_link_libraries(tsugumi-agentd PRIVATE tsugumi_agent_core)
+install(TARGETS tsugumi-agentd RUNTIME DESTINATION bin)
+install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs
+  DESTINATION share/tsugumi/protocol)
+
+# CI builds only its external dependency double and public RPC scenarios
+# against these existing archives. The normal runtime contains no test code.
+set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
+if(TSUGUMI_TEST_SUPPORT_DIR)
+  install(TARGETS tsugumi_core tsugumi_json
+    ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
+  install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
+  install(DIRECTORY src/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-core
+    FILES_MATCHING PATTERN "*.hh")
+  install(FILES src/main.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)
+  install(DIRECTORY ${TSUGUMI_GEN_DIR}/cpp/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
+  install(DIRECTORY ${TSUGUMI_GEN_DIR}/python/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/python)
+endif()
+
 # Supervisor of the shared VM (Linux guest only): one tsugumid per project.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(tsugumi-vmd src/vmd_main.cc)

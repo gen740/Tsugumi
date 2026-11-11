@@ -18,25 +18,42 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-nixdev() { nix --extra-experimental-features 'nix-command flakes' develop -c bash -c "$1"; }
+# Apply the same caches to Nix commands and the embedded evaluator in this run.
+export NIX_CONFIG="${NIX_CONFIG:-}
+extra-substituters = https://tsugumi.cachix.org
+extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI="
 step() { printf '\n== %s\n' "$1"; }
+core_run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
+core_checks() {
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
+  core_run python3 -m pytest -q --core-report -m 'not environment' tests/core
+}
 
 linux_job() {
-  # Card shell steps get the dev shell's bash and tools, as in CI.
-  step "Build tsugumid and run the C++ tests"
-  nixdev 'set -e
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTSUGUMI_BWRAP="$(command -v bwrap)" \
-      -DTSUGUMI_BASH="$(command -v bash)" -DTSUGUMI_CARD_PATH="$PATH"
-    ninja -C build
-    ctest --test-dir build --output-on-failure'
-  step "Web UI typecheck, behavior contracts and build"
-  nixdev 'cd web && npm ci && npm run gen && npm run typecheck && npm test && npm run build'
-  step "The tsugumi command builds (nix/cli.nix)"
-  nix --extra-experimental-features 'nix-command flakes' build .#cli --no-link
+  step "Build or fetch the native runtime, tests and Web CLI"
+  nix --extra-experimental-features 'nix-command flakes' build --no-link .#ci-core .#cli
+  nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+  local web system
+  web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
+  export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
+  step "Public core, Agent and CLI RPC tests"
+  core_checks
+  step "Web UI typecheck and behavior contracts"
+  system=$(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem)
+  nix --extra-experimental-features 'nix-command flakes' build --no-link ".#checks.$system.web"
   step "Documentation site player is up to date"
-  nixdev 'node docs/site/player/build.mjs --check'
+  nix --extra-experimental-features 'nix-command flakes' build --no-link ".#checks.$system.site-player"
+  step "Core integration tests with the real host environment"
+  core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
-  nixdev 'cd tests/python && python3 -m pytest -q'
+  core_run python3 -m pytest -q tests/python
+  if [ "$system" = aarch64-linux ]; then
+    step "Cache the VM runtime"
+    nix --extra-experimental-features 'nix-command flakes' build --no-link .#vm-system
+  fi
+  step "Prompt probe scoring (offline)"
+  python3 -m unittest discover -s tests/prompt
 }
 
 linux_in_container() {
@@ -44,7 +61,9 @@ linux_in_container() {
   step "Linux job in a container ($image)"
   # The tracked files as they are now (a file not yet added is left out, as a
   # commit would leave it out); macOS tar leaves out its ._ resource files.
-  git ls-files -z -c | COPYFILE_DISABLE=1 tar --null -T - -cf - |
+  git ls-files -z -c |
+    python3 -c 'import os, sys; sys.stdout.buffer.write(b"".join(p + b"\0" for p in sys.stdin.buffer.read().split(b"\0") if p and os.path.lexists(p)))' |
+    COPYFILE_DISABLE=1 tar --null -T - -cf - |
     docker run --rm -i --privileged -v tsugumi-ci-nix:/nix "$image" bash -c '
       set -e
       mkdir -p /src && tar -xf - -C /src && cd /src
@@ -55,19 +74,18 @@ linux_in_container() {
 }
 
 mac_job() {
-  # The worker runs the Cards an Agent test builds (TeamTests runs bash Cards).
-  step "Build the host tsugumid and its worker"
-  nixdev 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid tsugumi-worker'
+  step "Build or fetch the native runtime and public RPC tests"
+  nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+  step "Core RPC behavior tests"
+  core_checks
   step "Card isolation on a Mac host (Seatbelt)"
-  nixdev 'cd tests/python && python3 -m pytest -q test_host_isolation.py test_host_sandbox.py'
-  TSUGUMI_FLATC="$(nixdev 'command -v flatc')"
-  export TSUGUMI_FLATC
+  core_run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
   step "Model, RPC, Agent and launcher (macOS/CoreTests)"
-  (cd macOS/CoreTests && swift test)
+  core_run /usr/bin/swift test --package-path macOS/CoreTests
   step "Build the Dawn renderer (the app package links it)"
-  [ -f build-renderer/ui/renderer/libtsugumi_renderer.dylib ] || ui/renderer/build.sh
+  ui/renderer/build.sh
   step "App logic (macOS/Tests)"
-  (cd macOS && swift test)
+  core_run /usr/bin/swift test --package-path macOS
 }
 
 case "${1:-all}" in

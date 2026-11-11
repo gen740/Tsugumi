@@ -1,0 +1,75 @@
+// Core-owned Agent service. This is a separate listener from project RPC.
+// Unix: little-endian uint32 length then one buffer. WebSocket: one binary
+// buffer, subprotocol tsugumi.agent.v1. Tokens authenticate a server-owned
+// principal; clients cannot choose their role or grant themselves access.
+namespace Tsugumi.Agent;
+
+enum Action:ubyte { Resume, Retry, Continue, Compact, Reset }
+enum Access:ubyte { Read, Write, Run, CardPermissions }
+enum GrantScope:ubyte { Conversation, Server }
+
+table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }
+// Provider-specific configuration is JSON; credentials are never returned.
+table ConfigureRequest { provider_json:string (required); conversation_id:string; }
+// Only a trusted user/launcher may register endpoints or credentials.
+table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; }
+table ConversationCreateRequest { conversation_id:string; project_id:string; role:string; }
+table ConversationListRequest { project_id:string; }
+table ConversationGetRequest { conversation_id:string (required); }
+table ConversationDeleteRequest { conversation_id:string (required); }
+table ConversationSearchRequest { project_id:string; text:string (required); }
+table SkillReference { name:string (required); resource_id:string (required); path:string (required); }
+// text is an explicit user message. Project context is read inside core,
+// after authorization, never silently appended by a UI.
+table ConversationSendRequest {
+  conversation_id:string (required); turn_id:string (required); text:string (required);
+  selected_cards:[string]; selected_displays:[string]; skill_names:[string]; intent:string;
+  attached_resources:[string];
+  skill_references:[SkillReference];
+}
+table ConversationActionRequest { conversation_id:string (required); action:Action; }
+table ConversationCancelRequest { conversation_id:string (required); }
+// Durable sequence numbers allow another connection to resume observation.
+table EventsRequest { conversation_id:string (required); after_seq:ulong; limit:uint = 200; }
+table ToolCatalogRequest {}
+table ToolCallRequest { conversation_id:string (required); project_id:string; name:string (required); arguments_json:string (required); op_id:string (required); }
+table AccessRequest { project_id:string (required); conversation_id:string; access:Access; scope:GrantScope; reason:string; }
+// Resolving/revoking grants requires the human principal, including over Unix.
+table AccessResolveRequest { request_id:string (required); allow:bool; }
+table AccessRevokeRequest { grant_id:string (required); }
+table AccessListRequest { conversation_id:string; }
+table DemoListRequest {}
+table DemoReadRequest { path:string (required); }
+table ModelsListRequest { provider_json:string; }
+table VersionSummarizeRequest { project_id:string (required); commit:string (required); }
+table ConversationSummarizeRequest { conversation_id:string (required); provider_json:string; }
+table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
+// Human-only credential provisioning. Tokens never appear in Agent tools or
+// conversation events. The core owns refresh rotation after registration.
+table CredentialImportRequest { registration_json:string (required); replace:bool; }
+table CredentialTokenRequest { client_id:string (required); stale_token:string; }
+table CredentialForgetRequest { client_id:string (required); }
+
+union RequestPayload {
+  HelloRequest, ConfigureRequest, RegisterProjectRequest,
+  ConversationCreateRequest, ConversationListRequest, ConversationGetRequest,
+  ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest,
+  ConversationActionRequest, ConversationCancelRequest, EventsRequest,
+  ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest,
+  AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest,
+  ModelsListRequest, VersionSummarizeRequest, ConversationSummarizeRequest, RegisterFolderRequest,
+  CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest
+}
+table Request { value:RequestPayload; }
+table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
+// Model message blocks, tool arguments and results retain their JSON shape.
+// The operation and its security-sensitive scope are typed above.
+table Result { json:string (required); }
+table Failure { code:string (required); message:string (required); request_id:string; }
+union ReplyPayload { HelloResult, Result, Failure }
+table Reply { value:ReplyPayload; }
+table Event { conversation_id:string (required); seq:ulong; json:string (required); }
+union Payload { Request, Reply, Event }
+table Message { request_id:ulong; payload:Payload; }
+root_type Message;
+file_identifier "TSA1";

@@ -8,6 +8,7 @@ import queue
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,9 +17,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Also support the measurement scripts launched directly from this folder.
+sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "core" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "sdk" / "tsugumi-worker"))
+SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
+WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "web" / "dist"))
 
 EMPTY_PROJECT = {
     "name": "test",
@@ -50,7 +55,7 @@ class Daemon:
     def start(self, expect_exit: bool = False, timeout: float = 20.0) -> "Daemon":
         args = [str(TSUGUMID), "--project", str(self.project), "--unix", self.unix,
                 "--control-dir", str(self.control), "--worker", str(WORKER),
-                "--sdk-dir", str(ROOT / "sdk"), "--allow-missing-origin"]
+                "--sdk-dir", str(SDK), "--allow-missing-origin"]
         if self.listen:
             args += ["--listen", "127.0.0.1:0"]
         args += self.args

@@ -54,6 +54,7 @@
 "API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
+"Agent がアクセスの許可を求めています" = "The Agent is requesting access";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
 "Agent が書きました" = "Written by the Agent";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
@@ -121,6 +122,7 @@
 "Home へ戻る" = "Back to Home";
 "Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: %@" = "To go back to Home, the changes that cannot be saved are discarded. Discarded changes cannot be recovered.\n\nWhy they cannot be saved: %@";
 "JSON として読めません: %@" = "Not readable as JSON: %@";
+"Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。" = "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.";
 "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。" = "Saved in the Keychain. The key is never passed to core or Cards, and is not left in projects, settings or logs.";
 "Mac のフォルダに書く" = "Write to folders of the Mac";
 "Mac のフォルダを読む" = "Read folders of the Mac";
@@ -518,6 +520,7 @@
 "プロジェクトの実行環境が起動するとターミナルを使えます。" = "The terminal can be used once the project's environment is running.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
+"プロジェクトへのアクセスは許可されませんでした。" = "Access to the project was not allowed.";
 "プロジェクトを取り込む" = "Import Project";
 "プロジェクトを複製" = "Duplicate Project";
 "プロジェクトを複製…" = "Duplicate Project…";
@@ -1064,6 +1067,7 @@
 "色" = "Color";
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
 "表示" = "Show";
+"表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
 "表示しない" = "Don't show";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
 "表示中" = "Shown";

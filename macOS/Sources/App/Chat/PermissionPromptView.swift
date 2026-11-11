@@ -12,11 +12,14 @@ struct PermissionPromptView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Label("Agent が Card の権限を広げようとしています", systemImage: "hand.raised")
+      Label(prompt.access.isEmpty ? "Agent が Card の権限を広げようとしています" : "Agent がアクセスの許可を求めています", systemImage: "hand.raised")
         .font(.headline)
-      Text("許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。")
+      Text(prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: 6) {
+        ForEach(prompt.access, id: \.self) { request in
+          Text(String(request.dropFirst("project_access ".count))).textSelection(.enabled)
+        }
         ForEach(prompt.requests) { r in
           HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: r.kind.symbol).frame(width: 18)
@@ -31,7 +34,9 @@ struct PermissionPromptView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
       VStack(alignment: .leading, spacing: 4) {
-        Text("今後は確認しない（設定の「API」でいつでも変えられます）").font(.caption).foregroundStyle(.secondary)
+        if !kinds.isEmpty {
+          Text("今後は確認しない（設定の「API」でいつでも変えられます）").font(.caption).foregroundStyle(.secondary)
+        }
         ForEach(kinds) { k in
           Toggle(k.label, isOn: Binding(get: { always.contains(k) }, set: { on in if on { always.insert(k) } else { always.remove(k) } }))
             .toggleStyle(.checkbox)

@@ -404,7 +404,7 @@ export class GuideController extends Observable {
     if (this.scripted) return this.answerScripted(t)
     this.readSession = session
     this.items.push({ id: ++this.n, role: 'user', text: t })
-    void this.send((note ? note + '\n' : '') + t + '\n\n' + this.screenNote(screen, session, tab), t, session)
+    void this.send(t, t, session)
   }
 
   /** Something the app tells the guide (a tour step, a run that ended); one
@@ -427,13 +427,13 @@ export class GuideController extends Observable {
     }
     if (session) this.readSession = session
     this.items.push({ id: ++this.n, role: 'note', text: display })
-    void this.send(prompt + '\n\n' + this.screenNote('project', this.readSession, this.tourTab), display, this.readSession)
+    void this.send(display, display, this.readSession)
   }
 
   private async send(prompt: string, display: string, session?: ProjectSession) {
     this.begin()
     try {
-      await api('/api/guide/send', { prompt, display, project: session?.dir })
+      await api('/api/guide/send', { text: prompt, project: session?.dir })
     } catch (e) {
       this.busy = false
       this.activity = undefined
@@ -755,48 +755,6 @@ export class GuideController extends Observable {
     if (this.highlight === undefined) return
     this.highlight = undefined
     this.changed()
-  }
-
-  // ---- What the guide sees ---------------------------------------------------------
-
-  /** [Screen]: what the user's screen shows, for the guide to answer about. */
-  screenNote(screen: GuideScreen, s?: ProjectSession, tab?: WorkflowTab): string {
-    const lines = ['[Screen]']
-    if (screen === 'project' && s) {
-      lines.push(`screen: the project "${s.scopeName([])}" (folder ${s.dir})`)
-      if (tab) {
-        lines.push('workflow shown: ' + (tab.scope.length ? `the Card in Card ${tab.scope.join('/')}` : 'the root workflow'))
-        const ids = s.cards(tab.scope).map((c) => str(get(c, 'id'))).filter((x): x is string => x !== undefined)
-        lines.push('Cards in it: ' + (ids.length ? ids.map((id) => `${id} (${s.kind(key([...tab.scope, id]))})`).join(', ') : 'none'))
-        const sel = [...tab.selection].sort()
-        lines.push('selected Cards: ' + (sel.length ? sel.map((k) => this.describe(k, s)).join('; ') : 'none'))
-      }
-      if (s.connected) lines.push(`run: ${s.runStatus ? stateName(s.runStatus.state) : 'none yet'}` + (s.currentRunId ? ` (run ${s.currentRunId})` : ''))
-      else lines.push(`connection: not connected to the project's environment (${s.environment.state})`)
-      if (this.tour && this.same(this.tour.path, s)) lines.push(`tour: this project is the copy of the demo "${this.tour.demo}" being shown`)
-    } else if (screen === 'demos') {
-      lines.push('screen: Home, the demo list')
-    } else {
-      lines.push(`screen: Home (recent projects, new project, open, ${L('デモを見る')})`)
-    }
-    if (this.tour && !(s && this.same(this.tour.path, s))) lines.push(`tour: the demo "${this.tour.demo}" is paused (the user is not in its copy)`)
-    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
-    const demos = app.status?.demos ?? []
-    if (screen === 'project' && s) lines.push('demos (ids; their descriptions come on Home): ' + demos.map((d) => d.id).join(', '))
-    else {
-        lines.push('demos (id, title, field, tags: description):')
-      for (const d of demos) lines.push(`- ${d.id} "${d.title}"${d.field ? `, field ${d.field}` : ''}, ${d.tags.join('/')}: ${d.description.slice(0, 220)}`)
-    }
-    return lines.join('\n')
-  }
-
-  private describe(k: CardKey, s: ProjectSession): string {
-    let d = `${k} (${KIND_LABEL[s.kind(k)]}, "${s.displayName(k)}"`
-    const st = s.cardStates.get(k)
-    if (st) d += `, last state ${cardState(st.state).label}`
-    const r = s.resultSummary(k)
-    if (r) d += `, result: ${r.slice(0, 300)}`
-    return d + ')'
   }
 
   same(p: string, s: ProjectSession) {

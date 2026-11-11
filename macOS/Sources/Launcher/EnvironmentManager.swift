@@ -44,16 +44,19 @@ public actor EnvironmentManager {
   public nonisolated let support: URL
   public nonisolated let vm: SharedVM
   private let image: VMImage?
+  private nonisolated let resident: ResidentVMHost?
+  private var observingHost = false
   public nonisolated let resources: VMResources
   private var observers: [String: [UUID: (EnvironmentState) -> Void]] = [:]
   private var states: [String: EnvironmentState] = [:]
   private var bridges: [String: LoopbackBridge] = [:]
   private var starting: [String: Task<Endpoint, Error>] = [:]
 
-  public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
+  public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default, ownsVM: Bool = false) {
     self.support = support ?? AppChannel.current.supportDirectory
     self.image = image
     self.resources = resources
+    resident = ownsVM ? nil : ResidentVMHost(support: self.support, image: image, resources: resources)
     vm = SharedVM(directory: self.support.appendingPathComponent("vm", isDirectory: true))
   }
 
@@ -83,12 +86,48 @@ public actor EnvironmentManager {
 
   public func state(_ p: ProjectIdentity) -> EnvironmentState { states[p.id] ?? .stopped }
 
+  private func observeHost() async {
+    guard let resident, !observingHost else { return }
+    observingHost = true
+    await resident.observe { [weak self] event in
+      Task { await self?.hostEvent(event) }
+    }
+  }
+
+  private func hostEvent(_ event: [String: Any]) {
+    switch event["event"] as? String {
+    case "vmState", "console": vm.mirrorHostEvent(event)
+    case "progress":
+      if let id = event["key"] as? String, let stage = event["stage"] as? String { set(id, .starting(stage)) }
+    case "stopped":
+      if let id = event["key"] as? String { set(id, .stopped) }
+    default: break
+    }
+  }
+
   // MARK: - Lifecycle
 
   /// Returns the endpoint of a running environment, starting the VM and the
   /// project's tsugumid when needed. Concurrent callers share one start.
   @discardableResult
   public func start(_ p: ProjectIdentity) async throws -> Endpoint {
+    if let resident {
+      await observeHost()
+      set(p.id, .starting(EnvironmentStage.connecting.rawValue))
+      do {
+        let result = try await resident.call("start", ["path": p.url.path, "origins": allowedOrigins, "folders": extraFolders[p.id] ?? []])
+        guard let url = (result["endpoint"] as? String).flatMap(URL.init(string:)),
+              let token = result["token"] as? String, let projectId = result["projectId"] as? String,
+              let serverInstanceId = result["serverInstanceId"] as? String else { throw LauncherError.notReady("VM host returned an invalid endpoint") }
+        let endpoint = Endpoint(url: url, token: token, projectId: projectId, serverInstanceId: serverInstanceId)
+        set(p.id, .ready(endpoint))
+        return endpoint
+      } catch {
+        let launcher = error as? LauncherError
+        set(p.id, .failed(message: "\(error)", recovery: launcher?.recovery ?? "Retry the connection.", log: ""))
+        throw error
+      }
+    }
     // A ready project is reused only while its tsugumid still runs (it may
     // have exited or crashed since; then it is started again).
     if case .ready(let ep) = states[p.id], bridges[p.id] != nil {
@@ -195,6 +234,11 @@ public actor EnvironmentManager {
   /// Stops the project's tsugumid (active runs are recorded as interrupted)
   /// and nothing else; the VM and other projects keep running.
   public func stop(_ p: ProjectIdentity) async throws {
+    if let resident {
+      _ = try await resident.call("stop", ["path": p.url.path])
+      set(p.id, .stopped)
+      return
+    }
     if case .running = vm.state {
       try await vm.request("stop \(p.id)")
       await vm.detach(p.id)
@@ -220,6 +264,11 @@ public actor EnvironmentManager {
   /// The shared store's cleanup (an app setting): what no project's GC root
   /// keeps. Starts the VM when it is not running.
   public func cleanupStore() async throws -> (bytes: UInt64, paths: Int) {
+    if let resident {
+      await observeHost()
+      let result = try await resident.call("cleanupStore", timeout: 3600)
+      return (result["bytes"] as? UInt64 ?? 0, result["paths"] as? Int ?? 0)
+    }
     if case .running = vm.state {} else {
       guard let image else { throw LauncherError.imageMissing }
       try await vm.start(image: image, resources: resources)
@@ -239,6 +288,14 @@ public actor EnvironmentManager {
 
   /// Lists the run histories in the VM. Starts the VM when it is not running.
   public func vmHistories() async throws -> [VMHistory] {
+    if let resident {
+      await observeHost()
+      let result = try await resident.call("histories")
+      return (result["histories"] as? [[String: Any]] ?? []).compactMap { row in
+        guard let id = row["id"] as? String, let bytes = row["bytes"] as? UInt64 else { return nil }
+        return VMHistory(id: id, bytes: bytes, lastStart: (row["lastStart"] as? Double).map(Date.init(timeIntervalSince1970:)), running: row["running"] as? Bool ?? false)
+      }
+    }
     if case .running = vm.state {} else {
       guard let image else { throw LauncherError.imageMissing }
       try await vm.start(image: image, resources: resources)
@@ -255,6 +312,7 @@ public actor EnvironmentManager {
   /// Deletes a stopped project's data in the VM by id (its run history and
   /// build roots), also for a project whose folder is gone.
   public func deleteVMData(id: String) async throws {
+    if let resident { _ = try await resident.call("deleteVMData", ["projectId": id]); return }
     guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
     let status = try await vm.request("status")
     if status.split(separator: " ").contains(where: { $0.hasPrefix("\(id):") }) {
@@ -268,6 +326,7 @@ public actor EnvironmentManager {
   /// history in the VM. Documents, artifacts and the run history copy in the
   /// project folder (.tsugumi/runs.sqlite) stay.
   public func deleteData(_ p: ProjectIdentity) async throws {
+    if let resident { _ = try await resident.call("deleteData", ["path": p.url.path]); set(p.id, .stopped); return }
     try await stop(p)
     if case .running = vm.state { try await vm.request("forget \(p.id)") }
     try removeFolder(envDir(p))
@@ -276,6 +335,7 @@ public actor EnvironmentManager {
   /// A terminal in the project's environment (its uid and namespaces, in
   /// /project): the returned socket carries the terminal's bytes both ways.
   public func openTerminal(_ p: ProjectIdentity, rows: Int, cols: Int) async throws -> (fd: Int32, session: UInt64) {
+    if let resident { return try await resident.terminal(p, rows: rows, cols: cols) }
     guard case .running = vm.state, bridges[p.id] != nil else { throw LauncherError.notReady("the project's environment is not running") }
     let fd = try await vm.connect(port: SharedVM.controlPort)
     do {
@@ -292,11 +352,13 @@ public actor EnvironmentManager {
   }
 
   public nonisolated func resizeTerminal(session: UInt64, rows: Int, cols: Int) async {
+    if let resident { _ = try? await resident.call("resize", ["session": session, "rows": rows, "cols": cols], timeout: 5); return }
     _ = try? await vm.request("resize \(session) \(max(rows, 2)) \(max(cols, 10))", timeout: 5)
   }
 
-  /// Stops every project and the VM (app quit).
+  /// Explicitly stops every project and the VM; closing a UI does not call this.
   public func shutdown() async {
+    if let resident { _ = try? await resident.call("shutdown"); return }
     for (_, b) in bridges { b.close() }
     bridges.removeAll()
     await vm.shutdown()
@@ -314,6 +376,21 @@ public actor EnvironmentManager {
   /// project's control folder. Project folders are not touched. The next
   /// start sets everything up anew.
   public func resetAll() async throws -> ResetReport {
+    if let resident {
+      let result = try await resident.call("resetAll")
+      await resident.disconnect()
+      if let pid = result["hostPid"] as? Int32, pid > 1 {
+        let deadline = Date().addingTimeInterval(5)
+        while kill(pid, 0) == 0 {
+          guard Date() < deadline else { throw LauncherError.notReady("the VM host has not finished resetting") }
+          try await Task.sleep(for: .milliseconds(20))
+        }
+      }
+      var report = ResetReport()
+      report.environments = result["environments"] as? Int ?? 0
+      report.vmRemoved = result["vmRemoved"] as? Bool ?? false
+      return report
+    }
     var report = ResetReport()
     await shutdown()
     // The run history disk stays: projects keep their runs across a reset.
@@ -332,7 +409,12 @@ public actor EnvironmentManager {
 
   /// Registers a read-only snapshot of an external project for ProjectImport.
   /// The copy is fixed at this moment; core only reads granted copies.
-  public func grantImport(_ p: ProjectIdentity, source: URL) throws -> String {
+  public func grantImport(_ p: ProjectIdentity, source: URL) async throws -> String {
+    if let resident {
+      let result = try await resident.call("grantImport", ["path": p.url.path, "source": source.path])
+      guard let grant = result["grant"] as? String else { throw LauncherError.notReady("VM host returned an invalid grant") }
+      return grant
+    }
     let grant = UUID().uuidString.lowercased()
     let control = controlDir(p)
     let dest = control.appendingPathComponent("grants/\(grant)", isDirectory: true)

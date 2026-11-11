@@ -1,5 +1,6 @@
 import FlatBuffers
 import Foundation
+import TsugumiClientC
 
 public typealias Message = Tsugumi_RPC_MessageT
 public typealias RequestPayload = Tsugumi_RPC_RequestPayload
@@ -62,41 +63,108 @@ public struct NotificationEvent: @unchecked Sendable {
   public let payload: Tsugumi_RPC_NotificationPayloadUnion
 }
 
-/// Connection to one tsugumid over WebSocket (`/rpc`, subprotocol tsugumi.rpc.v1).
-/// Requests are multiplexed by request_id; replies resume the awaiting caller,
-/// notifications are delivered through `notifications`.
+private func nativeRPCError(_ code: Int32, _ message: UnsafePointer<CChar>?) -> RPCError {
+  let text = message.map(String.init(cString:)) ?? "RPC transport failed"
+  switch code {
+  case 2: return .timeout
+  case 3: return .protocolViolation(text)
+  case 5, 6: return .unexpectedReply(text)
+  default: return .disconnected
+  }
+}
+
+private final class NativeReply {
+  let continuation: CheckedContinuation<Data, Error>
+  init(_ continuation: CheckedContinuation<Data, Error>) { self.continuation = continuation }
+}
+
+private let nativeReplyCallback: tsugumi_client_callback = { context, bytes, count, code, message in
+  guard let context else { return }
+  let reply = Unmanaged<NativeReply>.fromOpaque(context).takeRetainedValue()
+  if code != 0 { reply.continuation.resume(throwing: nativeRPCError(code, message)) }
+  else { reply.continuation.resume(returning: bytes.map { Data(bytes: $0, count: count) } ?? Data()) }
+}
+
+private final class NativeEvents {
+  var receive: ((Data) -> Void)?
+  var closed: (() -> Void)?
+}
+
+/// This bridge only owns buffers and Swift continuations. The C++ library owns
+/// framing, validation, request correlation, deadlines and disconnect handling.
+private final class NativeRPCTransport: @unchecked Sendable {
+  let handle: OpaquePointer?
+  let events = NativeEvents()
+
+  init(endpoint: URL) { handle = tsugumi_client_create(endpoint.absoluteString, 0) }
+  deinit { tsugumi_client_destroy(handle) }
+
+  func observe(receive: @escaping (Data) -> Void, closed: @escaping () -> Void) {
+    events.receive = receive
+    events.closed = closed
+    let context = Unmanaged.passUnretained(events).toOpaque()
+    tsugumi_client_on_event(handle, { context, bytes, count, _, _ in
+      guard let context, let bytes else { return }
+      Unmanaged<NativeEvents>.fromOpaque(context).takeUnretainedValue().receive?(Data(bytes: bytes, count: count))
+    }, context)
+    tsugumi_client_on_closed(handle, { context, _, _, _, _ in
+      guard let context else { return }
+      Unmanaged<NativeEvents>.fromOpaque(context).takeUnretainedValue().closed?()
+    }, context)
+  }
+
+  func start() async throws {
+    guard let handle else { throw RPCError.disconnected }
+    let _: Data = try await withCheckedThrowingContinuation { continuation in
+      tsugumi_client_start(handle, nativeReplyCallback, Unmanaged.passRetained(NativeReply(continuation)).toOpaque())
+    }
+  }
+
+  func call(_ data: Data, timeout: Duration, continuation: CheckedContinuation<Data, Error>) {
+    guard let handle else { continuation.resume(throwing: RPCError.disconnected); return }
+    let parts = timeout.components
+    let milliseconds = Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15
+    guard milliseconds > 0 else { continuation.resume(throwing: RPCError.timeout); return }
+    let bounded = UInt32(min(Double(UInt32.max), max(1, milliseconds)))
+    data.withUnsafeBytes { bytes in
+      tsugumi_client_call(handle, bytes.bindMemory(to: UInt8.self).baseAddress, data.count, bounded,
+                          nativeReplyCallback, Unmanaged.passRetained(NativeReply(continuation)).toOpaque())
+    }
+  }
+
+  func close() { tsugumi_client_close(handle) }
+}
+
+/// Typed operations on the shared C++ client. Both native socket transports and
+/// the browser's Wasm build use the same connection implementation.
 public actor RPCClient {
   public nonisolated let notifications: AsyncStream<NotificationEvent>
   private let notify: AsyncStream<NotificationEvent>.Continuation
-  private let task: URLSessionWebSocketTask
-  private let session: URLSession
+  private let transport: NativeRPCTransport
   private var nextId: UInt64 = 1
-  private var waiting: [UInt64: CheckedContinuation<Tsugumi_RPC_ReplyT, Error>] = [:]
-  private var rawWaiting: [UInt64: CheckedContinuation<Data, Error>] = [:]
   private var closed = false
+  private var started = false
   public private(set) var hello: Tsugumi_RPC_HelloResultT?
 
   public init(endpoint: URL) {
     var cont: AsyncStream<NotificationEvent>.Continuation!
     notifications = AsyncStream(bufferingPolicy: .unbounded) { cont = $0 }
     notify = cont
-    let config = URLSessionConfiguration.ephemeral
-    config.timeoutIntervalForRequest = 30
-    session = URLSession(configuration: config)
-    task = session.webSocketTask(with: endpoint, protocols: ["tsugumi.rpc.v1"])
-    task.maximumMessageSize = 16 << 20
+    transport = NativeRPCTransport(endpoint: endpoint)
   }
 
   /// Opens the socket and performs SessionHello. The token never appears in URLs.
   public func connect(token: String, clientId: UUID, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
-    task.resume()
-    Task { await self.receiveLoop() }
+    guard !started, !closed else { throw RPCError.disconnected }
+    started = true
+    transport.observe(receive: { [weak self] data in Task { await self?.receiveEvent(data) } },
+                      closed: { [weak self] in Task { await self?.closedByPeer() } })
+    try await transport.start()
     let req = Tsugumi_RPC_SessionHelloRequestT()
     req.protocol_ = 1
     req.clientId = clientId.uuidString.lowercased()
     req.token = token
     req.expectedProjectId = expectedProjectId
-    // What tsugumid writes into the project's git follows the app's language.
     req.language = Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true ? "en" : "ja"
     let result: Tsugumi_RPC_HelloResultT = try await call(.sessionhellorequest, req)
     hello = result
@@ -106,160 +174,89 @@ public actor RPCClient {
   public func close() {
     guard !closed else { return }
     closed = true
-    task.cancel(with: .normalClosure, reason: nil)
-    failAll(RPCError.disconnected)
+    transport.close()
     notify.finish()
   }
 
+  private func closedByPeer() { closed = true; notify.finish() }
   public var isClosed: Bool { closed }
 
-  /// Sends one request and waits for its reply. Failure replies throw RPCFailure.
   public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .seconds(60)) async throws -> R {
     let reply = try await send(type, value, timeout: timeout)
-    guard let v = reply.value?.value as? R else {
+    guard let value = reply.value?.value as? R else {
       throw RPCError.unexpectedReply("expected \(R.self), got \(String(describing: reply.value?.type))")
     }
-    return v
+    return value
+  }
+
+  private func exchange(_ data: Data, timeout: Duration) async throws -> Data {
+    try await withCheckedThrowingContinuation { continuation in
+      // Submit while still on this actor so IDs preserve their issue order.
+      transport.call(data, timeout: timeout, continuation: continuation)
+    }
+  }
+
+  private func requestId() throws -> UInt64 {
+    guard !closed, nextId < UInt64.max else { throw RPCError.disconnected }
+    let id = nextId
+    nextId += 1
+    return id
   }
 
   public func send(_ type: RequestPayload, _ value: NativeObject, timeout: Duration) async throws -> Tsugumi_RPC_ReplyT {
-    if closed { throw RPCError.disconnected }
-    let id = nextId
-    nextId += 1
-    let req = Tsugumi_RPC_RequestT()
-    req.value = Tsugumi_RPC_RequestPayloadUnion(value, type: type)
-    let msg = Message()
-    msg.requestId = id
-    msg.payload = Tsugumi_RPC_PayloadUnion(req, type: .request)
+    let id = try requestId()
+    let request = Tsugumi_RPC_RequestT()
+    request.value = Tsugumi_RPC_RequestPayloadUnion(value, type: type)
+    let message = Message()
+    message.requestId = id
+    message.payload = Tsugumi_RPC_PayloadUnion(request, type: .request)
     var builder = FlatBufferBuilder(initialSize: 1024)
-    var m: Message? = msg
-    let off = Tsugumi_RPC_Message.pack(&builder, obj: &m)
-    Tsugumi_RPC_Message.finish(&builder, end: off)
-    let data = builder.data
-    let reply: Tsugumi_RPC_ReplyT = try await withCheckedThrowingContinuation { cont in
-      waiting[id] = cont
-      task.send(.data(data)) { error in
-        if let error { Task { await self.resolve(id, .failure(error)) } }
-      }
-      Task {
-        try? await Task.sleep(for: timeout)
-        self.resolve(id, .failure(RPCError.timeout))
-      }
+    var object: Message? = message
+    let offset = Tsugumi_RPC_Message.pack(&builder, obj: &object)
+    Tsugumi_RPC_Message.finish(&builder, end: offset)
+    let data = try await exchange(builder.data, timeout: timeout)
+    var buffer = ByteBuffer(data: data)
+    let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+    guard let reply = Message(root).payload?.value as? Tsugumi_RPC_ReplyT else {
+      throw RPCError.unexpectedReply("no reply value")
     }
-    if reply.value?.type == .failure, let f = reply.value?.value as? Tsugumi_Data_FailureT {
-      throw RPCFailure(f)
+    if reply.value?.type == .failure, let failure = reply.value?.value as? Tsugumi_Data_FailureT {
+      throw RPCFailure(failure)
     }
     return reply
   }
 
-  /// Sends a request whose table is written by `build` (used by the Agent's
-  /// schema-driven tool adapter). Returns the reply union type and table.
   public func callRaw(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset,
                       timeout: Duration = .seconds(60)) async throws -> (UInt8, Table) {
-    if closed { throw RPCError.disconnected }
     guard let type = Tsugumi_RPC_RequestPayload(rawValue: payloadType) else {
       throw RPCError.protocolViolation("unknown request type \(payloadType)")
     }
-    let id = nextId
-    nextId += 1
+    let id = try requestId()
     var builder = FlatBufferBuilder(initialSize: 4096)
     let value = try build(&builder)
-    let req = Tsugumi_RPC_Request.createRequest(&builder, valueType: type, valueOffset: value)
-    let msg = Tsugumi_RPC_Message.createMessage(&builder, requestId: id, payloadType: .request, payloadOffset: req)
-    Tsugumi_RPC_Message.finish(&builder, end: msg)
-    let data = builder.data
-    let raw: Data = try await withCheckedThrowingContinuation { cont in
-      rawWaiting[id] = cont
-      task.send(.data(data)) { error in
-        if let error { Task { await self.resolveRaw(id, .failure(error)) } }
-      }
-      Task {
-        try? await Task.sleep(for: timeout)
-        self.resolveRaw(id, .failure(RPCError.timeout))
-      }
-    }
-    var bb = ByteBuffer(data: raw)
-    let m: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &bb, fileId: "TSG1")
-    guard let reply = m.payload(type: Tsugumi_RPC_Reply.self), let t: Tsugumi_RPC_Failure_or_Table = reply.rawValue else {
+    let request = Tsugumi_RPC_Request.createRequest(&builder, valueType: type, valueOffset: value)
+    let message = Tsugumi_RPC_Message.createMessage(&builder, requestId: id, payloadType: .request, payloadOffset: request)
+    Tsugumi_RPC_Message.finish(&builder, end: message)
+    let data = try await exchange(builder.data, timeout: timeout)
+    var buffer = ByteBuffer(data: data)
+    let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+    guard let reply = root.payload(type: Tsugumi_RPC_Reply.self), let value = reply.rawValue else {
       throw RPCError.unexpectedReply("no reply value")
     }
-    return (reply.valueType.rawValue, t.table)
+    return (reply.valueType.rawValue, value.table)
   }
 
-  private func resolveRaw(_ id: UInt64, _ result: Result<Data, Error>) {
-    guard let cont = rawWaiting.removeValue(forKey: id) else { return }
-    cont.resume(with: result)
-  }
-
-  private func resolve(_ id: UInt64, _ result: Result<Tsugumi_RPC_ReplyT, Error>) {
-    guard let cont = waiting.removeValue(forKey: id) else { return }
-    cont.resume(with: result)
-  }
-
-  private func failAll(_ error: Error) {
-    let all = waiting
-    waiting.removeAll()
-    for (_, c) in all { c.resume(throwing: error) }
-    let raw = rawWaiting
-    rawWaiting.removeAll()
-    for (_, c) in raw { c.resume(throwing: error) }
-  }
-
-  private func receiveLoop() async {
-    while !closed {
-      let message: URLSessionWebSocketTask.Message
-      do {
-        message = try await task.receive()
-      } catch {
-        closed = true
-        failAll(RPCError.disconnected)
-        notify.finish()
-        return
-      }
-      guard case .data(let data) = message else {
-        protocolError("text frames are not part of the protocol")
-        return
-      }
-      var bb = ByteBuffer(data: data)
-      let root: Tsugumi_RPC_Message
-      do {
-        root = try getCheckedRoot(byteBuffer: &bb, fileId: "TSG1")
-      } catch {
-        protocolError("reply does not verify: \(error)")
-        return
-      }
-      let msg = Message(root)
-      switch msg.payload?.type {
-      case .reply:
-        guard let id = msg.requestId, let reply = msg.payload?.value as? Tsugumi_RPC_ReplyT else {
-          protocolError("reply without request_id")
-          return
-        }
-        if rawWaiting[id] != nil {
-          resolveRaw(id, .success(data))
-          continue
-        }
-        if waiting[id] == nil {
-          // A reply after our own timeout is dropped; an id we never sent is a violation.
-          if id >= nextId { protocolError("reply to unknown request \(id)"); return }
-          continue
-        }
-        resolve(id, .success(reply))
-      case .notification:
-        guard let n = msg.payload?.value as? Tsugumi_RPC_NotificationT, let p = n.value else { continue }
-        notify.yield(NotificationEvent(subscriptionId: n.subscriptionId, seq: n.seq ?? 0, payload: p))
-      default:
-        protocolError("unexpected message type")
-        return
-      }
-    }
-  }
-
-  private func protocolError(_ s: String) {
-    closed = true
-    task.cancel(with: .protocolError, reason: nil)
-    failAll(RPCError.protocolViolation(s))
-    notify.finish()
+  private func receiveEvent(_ data: Data) {
+    guard !closed else { return }
+    do {
+      var buffer = ByteBuffer(data: data)
+      let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+      let message = Message(root)
+      guard message.payload?.type == .notification,
+            let note = message.payload?.value as? Tsugumi_RPC_NotificationT,
+            let payload = note.value else { throw RPCError.protocolViolation("invalid notification") }
+      notify.yield(NotificationEvent(subscriptionId: note.subscriptionId, seq: note.seq ?? 0, payload: payload))
+    } catch { close() }
   }
 }
 

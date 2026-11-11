@@ -1,10 +1,7 @@
 // What the Mac app does and the page must too: leaving a project closes what
 // belongs to it, a project taken in keeps its binary files, the failure of a
-// read of the versions is said, and helpers read the chat's attached folders.
+// read of the versions is said.
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 import { parse } from '../src/shared/json'
 
 const page = globalThis as Record<string, unknown>
@@ -14,7 +11,6 @@ page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 const { AppModel } = await import('../src/model/app')
-const { Agent } = await import('../server/agent')
 
 const calls: string[] = []
 let answer: unknown = {}
@@ -95,34 +91,6 @@ const session = (dir = '/p', key = 'k') => {
   s.client = { versionGraph: async () => ({ enabled: false, commits: [] }) } as any
   await s.refreshVersions()
   assert.equal(s.versionGraphError, undefined)
-}
-
-// Helpers read the folders attached to the chat, as the Agent that called them does.
-{
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-helpers-'))
-  const a = Object.create(Agent.prototype) as any
-  Object.assign(a, {
-    folders: ['/attached'], storage: path.join(dir, 'c.json'), id: 'c', catalog: { tools: [] }, rpc: async () => ({}), provider: {}, references: {},
-    conversation: { usage: { inputTokens: 0, outputTokens: 0 } }, save() {},
-    readValue: async (tool: string) => (tool === 'project_inspect' ? { rev: 1, project: {}, definitions: [] } : { bytes: '' }),
-  })
-  const work = Agent.prototype.work
-  const seen: string[][] = []
-  Agent.prototype.work = async function (this: any) {
-    seen.push(this.folders)
-    return { outcome: 'finished', report: '', usage: { inputTokens: 0, outputTokens: 0 } }
-  } as any
-  try {
-    const [, error] = await a.delegate(JSON.stringify({ tasks: [
-      { name: 'one', cards: ['a'], instruction: 'Make the Card a from the attached folder.' },
-      { name: 'two', cards: ['b'], instruction: 'Make the Card b from the attached folder.' },
-    ] }), () => {})
-    assert.equal(error, false)
-    assert.deepEqual(seen, [['/attached'], ['/attached']])
-  } finally {
-    Agent.prototype.work = work
-    fs.rmSync(dir, { recursive: true, force: true })
-  }
 }
 
 globalThis.fetch = realFetch

@@ -97,14 +97,11 @@ export class TransientError extends Error {
   }
 }
 
-const ENDED = new Set(['invalid_grant', 'invalid_refresh_token', 'token_expired', 'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused'])
 
 const b64url = (b: Buffer) => b.toString('base64url')
 const random = (n = 32) => b64url(crypto.randomBytes(n))
 const planEnabled = (a: Account) => a.scopes.includes(PLAN_SCOPE)
 const signedIn = (a: Account) => !!a.access_token && !!a.refresh_token
-/** The access token ends within five minutes (or its expiry is unknown). */
-const expiresSoon = (a: Account) => !a.saved_at || !a.expires_in || Date.parse(a.saved_at) + (a.expires_in - 300) * 1000 < Date.now()
 const scopesOf = (s: unknown) => (typeof s === 'string' ? s.split(' ').filter(Boolean).sort() : [])
 
 function errorCode(obj: any): string | undefined {
@@ -136,7 +133,8 @@ export class ChatGPTAuth {
   private chain: Promise<unknown> = Promise.resolve()
   private pending?: { cancel: () => void }
 
-  constructor(readonly file: string, readonly endpoints: ChatGPTEndpoints = OPENAI_ENDPOINTS) {}
+  constructor(readonly file: string, readonly endpoints: ChatGPTEndpoints,
+    private readonly core: (method: string, fields: Record<string, unknown>) => Promise<any>) {}
 
   // ---- Record --------------------------------------------------------------------
 
@@ -334,6 +332,7 @@ export class ChatGPTAuth {
           token_type: t.obj.token_type ?? 'Bearer', expires_in: typeof t.obj.expires_in === 'number' ? t.obj.expires_in : 3600,
           scopes: scopesOf(t.obj.scope ?? cb.get('scope')), saved_at: new Date().toISOString(), welcomed: existing?.welcomed,
         }
+        await this.importCredential(account, true)
         // A new sign-in becomes the active account only now that it is validated.
         await this.update((s) => {
           const i = s.accounts.findIndex((a) => a.client_id === issued)
@@ -364,15 +363,9 @@ export class ChatGPTAuth {
       const s = this.load()
       const a = s?.accounts.find((x) => x.client_id === clientId)
       if (!s || !a) return true
-      let revoked = !a.refresh_token
-      for (let attempt = 0; attempt < 3 && !revoked && a.refresh_token; attempt++) {
-        if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt))
-        try {
-          const r = await postForm(this.endpoints.revoke, { token: a.refresh_token, token_type_hint: 'refresh_token', client_id: clientId })
-          if (r.status === 200) revoked = true
-          else if (r.status < 500) break
-        } catch {}
-      }
+      await this.importCredential(a, false)
+      const result = await this.core('CredentialForgetRequest', { client_id: clientId })
+      const revoked = result.revoked === true
       delete a.access_token, delete a.refresh_token, delete a.id_token, delete a.expires_in, delete a.saved_at
       this.save(s)
       return revoked
@@ -390,46 +383,20 @@ export class ChatGPTAuth {
     if (stale && stale.clientId !== a.client_id) throw new ChatGPTError('failed', 'the active account changed; try again')
     if (!signedIn(a)) throw new ChatGPTError('signInRequired', 'signed out')
     if (!planEnabled(a)) throw new ChatGPTError('planNotEnabled')
-    if (stale ? a.access_token !== stale.value : !expiresSoon(a)) return { clientId: a.client_id, value: a.access_token! }
-    const id = a.client_id
-    return this.locked(async () => {
-      // Read again: another refresh may have replaced the tokens meanwhile.
-      const record = this.load()
-      if (record?.active_client_id !== id) throw new ChatGPTError('failed', 'the active account changed; try again')
-      const cur = record.accounts.find((x) => x.client_id === id)
-      if (!cur || !signedIn(cur)) throw new ChatGPTError('signInRequired', 'signed out')
-      if (!planEnabled(cur)) throw new ChatGPTError('planNotEnabled')
-      if (stale ? cur.access_token !== stale.value : !expiresSoon(cur)) return { clientId: id, value: cur.access_token! }
-      let r: { status: number; obj: any }
-      try {
-        r = await postForm(this.endpoints.token, { grant_type: 'refresh_token', client_id: id, refresh_token: cur.refresh_token!, resource: this.endpoints.resource })
-      } catch (e) {
-        throw new TransientError(0, `token refresh failed: ${(e as Error).message}`)
-      }
-      if (r.status >= 500 || r.status === 429) throw new TransientError(r.status, `token refresh failed (${r.status})`)
-      const s2 = this.load()!
-      const x = s2.accounts.find((y) => y.client_id === id)!
-      if (r.status !== 200) {
-        const code = errorCode(r.obj) ?? `HTTP ${r.status}`
-        if (!ENDED.has(code)) throw new ChatGPTError('failed', `token refresh failed: ${code}`)
-        // The refresh token can no longer be used: sign in again with the same registration.
-        delete x.access_token
-        delete x.refresh_token
-        this.save(s2)
-        throw new ChatGPTError('signInRequired', code)
-      }
-      if (typeof r.obj.access_token !== 'string') throw new ChatGPTError('failed', 'the refresh returned no access token')
-      // The access token, its expiry, the scopes and the rotating refresh token change together.
-      x.access_token = r.obj.access_token
-      x.refresh_token = typeof r.obj.refresh_token === 'string' ? r.obj.refresh_token : x.refresh_token
-      x.expires_in = typeof r.obj.expires_in === 'number' ? r.obj.expires_in : 3600
-      if (typeof r.obj.scope === 'string') x.scopes = scopesOf(r.obj.scope)
-      if (typeof r.obj.id_token === 'string') x.id_token = r.obj.id_token
-      x.saved_at = new Date().toISOString()
-      this.save(s2)
-      if (!planEnabled(x)) throw new ChatGPTError('planNotEnabled')
-      return { clientId: id, value: x.access_token! }
-    })
+    await this.importCredential(a, false)
+    const result = await this.core('CredentialTokenRequest', { client_id: a.client_id, stale_token: stale?.value })
+    if (typeof result.access_token !== 'string') throw new ChatGPTError('signInRequired', 'core has no access token')
+    return { clientId: a.client_id, value: result.access_token }
+  }
+
+  private async importCredential(account: Account, replace: boolean) {
+    if (!account.access_token || !account.refresh_token) return
+    await this.core('CredentialImportRequest', { replace, registration_json: JSON.stringify({
+      client_id: account.client_id, access_token: account.access_token, refresh_token: account.refresh_token,
+      token_endpoint: this.endpoints.token, revocation_endpoint: this.endpoints.revoke, resource: this.endpoints.resource,
+      expires_at_ms: Date.parse(account.saved_at ?? '') + (account.expires_in ?? 0) * 1000 || 0,
+      scope: account.scopes.join(' '),
+    }) })
   }
 
   // ---- ID token ------------------------------------------------------------------

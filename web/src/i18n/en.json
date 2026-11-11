@@ -1231,5 +1231,11 @@
  "（省略可）": " (optional)",
  "（経過時間は Run の受付から、実行環境の時計で計ります）": "(the elapsed time counts from the Run's acceptance, by the environment's clock)",
  "：": ": ",
- "：失敗": ": failed"
+ "：失敗": ": failed",
+ "Agent がアクセスの許可を求めています": "The Agent is requesting access",
+ "{0} がアクセスの許可を求めています": "{0} is requesting access",
+ "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。": "Allow access to the listed resource and scope. Content read may be sent to the connected model.",
+ "プロジェクトへのアクセスは許可されませんでした。": "Access to the project was not allowed.",
+ "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.",
+ "{0}（0600）に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in {0} (0600). The key is used by the Agent service and is not stored in Cards, projects, settings or logs."
 }

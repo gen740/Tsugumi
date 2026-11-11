@@ -76,12 +76,9 @@ private struct GuideNoProject: Error, CustomStringConvertible {
 
 /// The guide's reads go to the project of the window the user asked from.
 private struct GuideTransport: ToolTransport {
-  let replyNames: [UInt8: String]
-
-  func call(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset) async throws -> (replyType: String, table: FlatBuffers.Table) {
-    guard let session = await GuideController.shared.readSession, let rpc = await session.rpc else { throw GuideNoProject() }
-    let (type, table) = try await rpc.callRaw(payloadType: payloadType, build: build)
-    return (replyNames[type] ?? "Unknown", table)
+  @MainActor func project() async throws -> AgentProject? {
+    guard let session = GuideController.shared.readSession else { return nil }
+    return try await RPCToolTransport(session: session).project()
   }
 }
 
@@ -204,8 +201,6 @@ final class GuideController {
     || ProcessInfo.processInfo.environment["TSUGUMI_SMOKE_DEMO"] != nil
 
   @ObservationIgnored private var agent: Agent?
-  @ObservationIgnored private var replyNames: [UInt8: String] = [:]
-  @ObservationIgnored private var catalog: ToolCatalog?
   @ObservationIgnored private(set) weak var readSession: ProjectSession?
   @ObservationIgnored private weak var tourTab: WorkflowTab?
   /// Notes for the guide that came while it answered: sent when it is done.
@@ -221,24 +216,13 @@ final class GuideController {
   @ObservationIgnored private var seen: String?
   @ObservationIgnored private var seenActive = false
   @ObservationIgnored private var highlightTask: Task<Void, Never>?
-  @ObservationIgnored private let storage: URL
 
   private init() {
     let d = UserDefaults.standard
     setupDone = d.bool(forKey: "guide.setupDone")
     demoAnswered = d.bool(forKey: "guide.demoAnswered")
     tour = d.data(forKey: "guide.tour").flatMap { try? JSONDecoder().decode(Tour.self, from: $0) }
-    storage = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("Tsugumi/agent/guide/conversation.json")
-    if let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) {
-      self.catalog = catalog
-      if let e = schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" }) {
-        for v in e.values { replyNames[UInt8(v.value)] = v.name }
-      }
-    }
     refreshAvailability()
-    // An unreadable history is never replaced: the guide says so when asked.
-    if let c = try? Conversation.load(storage) { load(c) }
   }
 
   // MARK: - Connection
@@ -260,7 +244,7 @@ final class GuideController {
   }
 
   private func apply(_ usable: Bool) {
-    available = catalog != nil
+    available = true
     connected = available && usable
     if connected && !setupDone { setupDone = true; UserDefaults.standard.set(true, forKey: "guide.setupDone") }
     // A key the user just saved connected the guide: the main window in front
@@ -343,6 +327,13 @@ final class GuideController {
     guard speakingChat === chat else { return }
     speakingChat = nil
     dismissBubble()
+  }
+
+  func detach(from session: ProjectSession) async {
+    guard readSession === session else { return }
+    await agent?.detach()
+    readSession = nil
+    busy = false
   }
 
   /// The chat's Tsugumi called guide_show: the bird flies and speaks for it.
@@ -430,20 +421,12 @@ final class GuideController {
 
   private func makeAgent() -> Agent? {
     if let agent { return agent }
-    guard let catalog else { return nil }
-    let a: Agent
-    do {
-      a = try Agent(catalog: catalog, transport: GuideTransport(replyNames: replyNames), provider: AgentSettings.guide(),
-                    storage: storage, references: ChatController.references, role: .guide)
-    } catch {
-      failed = true
-      status = String(localized: "うまく答えられませんでした: \(String(describing: error))")
-      return nil
-    }
+    let a = Agent(id: "guide", transport: GuideTransport(), provider: AgentSettings.guide(), role: .guide)
     Task {
-      // A guide answers in a few steps and never waits on a run.
-      await a.setMaxSteps(12)
-      await a.setStatusWait(0)
+      await a.setApprover { asked in
+        guard let session = await GuideController.shared.readSession else { return [] }
+        return await AppModel.shared.chat(for: session).approve(asked)
+      }
     }
     agent = a
     return a
@@ -474,7 +457,7 @@ final class GuideController {
     guard let agent = makeAgent() else { return }
     readSession = session
     items.append(Item(role: "user", text: text))
-    let prompt = (note.map { $0 + "\n" } ?? "") + text + "\n\n" + screenNote(screen, session: session, tab: tab)
+    let prompt = text
     begin()
     Task {
       await agent.setProvider(AgentSettings.guide())
@@ -502,7 +485,7 @@ final class GuideController {
     }
     if let session { readSession = session }
     items.append(Item(role: "note", text: display))
-    let full = prompt + "\n\n" + screenNote(.project, session: readSession, tab: tourTab)
+    let full = display
     begin()
     Task {
       await agent.setProvider(AgentSettings.guide())
@@ -783,57 +766,6 @@ final class GuideController {
     guard let h = highlight else { return false }
     if h == target || (target == "run" && h == "stop") { return true }
     return h.hasPrefix("card:") && !h.dropFirst(5).contains("/") && target.hasPrefix("card:") && target.hasSuffix("/" + h.dropFirst(5))
-  }
-
-  // MARK: - What the guide sees
-
-  /// [Screen]: what the user's window shows, for the guide to answer about.
-  func screenNote(_ screen: Screen, session: ProjectSession?, tab: WorkflowTab?) -> String {
-    var lines = ["[Screen]"]
-    var inProject = false
-    switch (screen, session) {
-    case (.project, let s?):
-      inProject = true
-      lines.append("screen: the project \"\(s.scopeName([]))\" (folder \(s.identity.url.path))")
-      if let tab {
-        lines.append("workflow shown: " + (tab.scope.isEmpty ? "the root workflow" : "the Card in Card \(tab.scope.joined(separator: "/"))"))
-        let cards = s.cards(in: tab.scope).compactMap { $0["id"]?.string }
-        lines.append("Cards in it: " + (cards.isEmpty ? "none" : cards.map { "\($0) (\(s.kind(key(tab.scope + [$0])).rawValue))" }.joined(separator: ", ")))
-        let selected = tab.selection.sorted()
-        lines.append("selected Cards: " + (selected.isEmpty ? "none" : selected.map { describe($0, in: s) }.joined(separator: "; ")))
-      }
-      if s.connected {
-        let state = s.runStatus.map { String(describing: $0.state) } ?? "none yet"
-        lines.append("run: \(state)" + (s.currentRunId.map { " (run \($0))" } ?? ""))
-      } else {
-        lines.append("connection: not connected to the project's environment (\(s.environment.label))")
-      }
-      if let t = tour, Self.same(t.path, s.identity.url) { lines.append("tour: this project is the copy of the demo \"\(t.demo)\" being shown") }
-    case (.demos, _):
-      lines.append("screen: Home, the demo list")
-    default:
-      lines.append("screen: Home (recent projects, new project, open, \(String(localized: "デモを見る")))")
-    }
-    if let t = tour, session.map({ !Self.same(t.path, $0.identity.url) }) ?? true {
-      lines.append("tour: the demo \"\(t.demo)\" is paused (the user is not in its copy)")
-    }
-    // The whole list where a demo is chosen; in a project, only the ids (open_demo).
-    if inProject {
-      lines.append("demos (ids; their descriptions come on Home): " + AppModel.shared.demos.map(\.id).joined(separator: ", "))
-    } else {
-      lines.append("demos (id, title, field, tags: description):")
-      for d in AppModel.shared.demos {
-        lines.append("- \(d.id) \"\(d.title)\"\(d.field.map { ", field \($0)" } ?? ""), \(d.tags.joined(separator: "/")): \(d.description.prefix(220))")
-      }
-    }
-    return lines.joined(separator: "\n")
-  }
-
-  private func describe(_ k: CardKey, in s: ProjectSession) -> String {
-    var d = "\(k) (\(s.kind(k).label), \"\(s.nodeData(k).title)\""
-    if let st = s.cardStates[k] { d += ", last state \(st.state.label)" }
-    if let r = s.resultSummary(k) { d += ", result: \(r.prefix(300))" }
-    return d + ")"
   }
 
   nonisolated static func same(_ path: String, _ url: URL) -> Bool {

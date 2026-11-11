@@ -1,3 +1,4 @@
+import CryptoKit
 import FlatBuffers
 import Foundation
 import Observation
@@ -6,16 +7,15 @@ import TsugumiAgent
 import TsugumiLauncher
 import TsugumiRPC
 
-/// Bridges the Agent's tool calls to this project's authenticated RPC client.
-/// The Agent edits documents only through core RPC, never through UI state.
+/// Registers the selected project endpoint with core's Agent service.
 struct RPCToolTransport: ToolTransport {
   let session: ProjectSession
-  let replyNames: [UInt8: String]
-
-  func call(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset) async throws -> (replyType: String, table: FlatBuffers.Table) {
-    guard let rpc = await session.rpc else { throw RPCError.disconnected }
-    let (type, table) = try await rpc.callRaw(payloadType: payloadType, build: build)
-    return (replyNames[type] ?? "Unknown", table)
+  @MainActor func project() async throws -> AgentProject? {
+    let endpoint: Endpoint
+    if let override = session.endpointOverride { endpoint = override }
+    else { endpoint = try await session.environments.start(session.identity) }
+    return AgentProject(id: endpoint.projectId, endpoint: endpoint.url.absoluteString, token: endpoint.token,
+                        title: session.identity.url.lastPathComponent)
   }
 }
 
@@ -134,6 +134,7 @@ final class ChatController {
   /// Folders of the Mac attached to this chat: shared read-only with the
   /// project's environment, read by the Agent (attached_folder_read) only.
   private(set) var folders: [String] = []
+  private var folderResources: [String: String] = [:]
   private(set) var attaching = false
 
   /// Attaches a folder; the environment starts again to share it.
@@ -143,53 +144,46 @@ final class ChatController {
     attaching = true
     defer { attaching = false }
     folders.append(path)
-    await agent?.setFolders(folders)
     await session.environments.setExtraFolders(session.identity, folders)
     await session.restartEnvironment()
+    do {
+      guard let project = try await RPCToolTransport(session: session).project() else { return }
+      let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": project.id,
+        "endpoint": project.endpoint, "token": project.token, "title": project.title])
+      _ = try await CoreAgentClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
+        "resource_id": resource, "folder": path, "title": url.lastPathComponent])
+      folderResources[path] = resource
+    } catch { status = String(describing: error) }
   }
 
   /// No longer offered to the Agent, which refuses it from now on (the share
   /// itself goes when the environment next starts).
   func detach(folder path: String) {
     folders.removeAll { $0 == path }
-    let (agent, folders) = (self.agent, self.folders)
+    let resource = folderResources.removeValue(forKey: path)
+    let folders = self.folders
     Task {
-      await agent?.setFolders(folders)
-      await session.environments.setExtraFolders(session.identity, folders)
+      do {
+        if let resource {
+          let access = try await CoreAgentClient.shared.call("AccessListRequest")
+          for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
+            if let id = grant["id"] as? String { _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
+          }
+        }
+        await session.environments.setExtraFolders(session.identity, folders)
+      } catch { status = String(describing: error) }
     }
   }
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
   /// Opening a conversation, until its unfinished work (if any) has resumed.
   @ObservationIgnored private var resuming: Task<Void, Never>?
-  @ObservationIgnored private var catalog: ToolCatalog?
-  @ObservationIgnored private var replyNames: [UInt8: String] = [:]
+  @ObservationIgnored private var stopping: Task<Void, Never>?
   @ObservationIgnored private let dir: URL
 
   @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
   var provider: ProviderConfig { connection() }
-
-  /// The references the Agent may read (reference_read): the bundled demos
-  /// that are not Draft tasks or their answers (Agent.referenceDemos), the
-  /// Python SDK and the Card guide; next to the repository in a
-  /// development build.
-  static let references: [String: URL] = {
-    let fm = FileManager.default
-    if let res = Bundle.main.resourceURL, fm.fileExists(atPath: res.appendingPathComponent("reference/card-guide.md").path) {
-      return Agent.referenceDemos(in: res.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
-        "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
-        "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]) { a, _ in a }
-    }
-    #if DEBUG
-    // A development build run from the source tree reads the repository.
-    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
-    return Agent.referenceDemos(in: repo.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
-      "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
-      "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
-    #else
-    return [:]
-    #endif
-  }()
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
@@ -198,17 +192,7 @@ final class ChatController {
     self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
     dir = directory ?? AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
-    guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
-      status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
-      available = false
-      return
-    }
-    self.catalog = catalog
-    if let e = schema.enums.first(where: { $0.name == "Tsugumi.RPC.ReplyPayload" }) {
-      for v in e.values { replyNames[UInt8(v.value)] = v.name }
-    }
     refreshSessions()
-    select(sessions.first?.id ?? UUID().uuidString.lowercased())
     reloadSkills()
   }
 
@@ -216,18 +200,19 @@ final class ChatController {
 
   private func url(_ id: String) -> URL { dir.appendingPathComponent("sessions/\(id).json") }
 
-  /// The saved sessions, newest first.
+  /// Conversations are listed from core and are independent of UI sessions.
   func refreshSessions() {
-    let files = (try? FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
-    sessions = files.filter { $0.pathExtension == "json" }.map { f in
-      guard let c = try? Conversation.read(f) else {
-        return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: f.lastPathComponent,
-                           updatedAt: .distantPast, messages: 0)
-      }
-      return SessionInfo(id: f.deletingPathExtension().lastPathComponent, title: c.title ?? firstText(c) ?? String(localized: "新しい会話"),
-                         updatedAt: c.updatedAt, messages: c.fullHistory.count)
+    Task {
+      do {
+        let value = try await CoreAgentClient.shared.call("ConversationListRequest")
+        sessions = (value["value"] as? [[String: Any]] ?? []).compactMap { item in
+          guard let id = item["id"] as? String else { return nil }
+          return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
+            updatedAt: Date(timeIntervalSince1970: (item["updatedAt"] as? Double ?? 0) / 1000), messages: item["messages"] as? Int ?? 0)
+        }
+        if currentId.isEmpty { select(sessions.first?.id ?? UUID().uuidString.lowercased()) }
+      } catch { status = String(describing: error) }
     }
-    .sorted { $0.updatedAt > $1.updatedAt }
   }
 
   private func firstText(_ c: Conversation) -> String? {
@@ -239,11 +224,9 @@ final class ChatController {
   }
 
   func select(_ id: String) {
-    guard let catalog else { return }
-    // The conversation left behind stops first: it changes nothing after the
-    // new one starts (the new one waits for it).
+    // Observation moves to this conversation; the previous one stays in core.
     let previous = agent
-    if let previous { Task { await previous.cancel() } }
+    if let previous { Task { await previous.detach() } }
     resuming?.cancel()
     resuming = nil
     answer += 1
@@ -253,28 +236,20 @@ final class ChatController {
     status = nil
     demoMode = false
     currentId = id
-    let agent: Agent
-    do {
-      agent = try Agent(catalog: catalog, transport: RPCToolTransport(session: session, replyNames: replyNames),
-                      provider: provider, storage: url(id), references: Self.references)
-    } catch {
-      self.agent = nil
-      items = []
-      failed = true
-      status = String(describing: error)
-      return
-    }
+    thoughts.conversationID = id
+    let agent = Agent(id: id, transport: RPCToolTransport(session: session), provider: provider)
     self.agent = agent
     items = []
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
     resuming = Task {
-      await previous?.cancelAndWait()
+      await previous?.detach()
       await agent.setApprover(approver)
-      await agent.setFolders(self.folders)
+      do { try await agent.open() } catch { self.status = String(describing: error); return }
       let conv = await agent.conversation
       guard !Task.isCancelled else { return }
       usage = conv.usage
+      stoppedAtLimit = await agent.canContinue
       load(conv)
       await resumeWhenConnected(agent)
     }
@@ -328,29 +303,22 @@ final class ChatController {
   }
 
   func delete(_ id: String) {
-    try? FileManager.default.removeItem(at: url(id))
-    // (and its helpers' conversations, from delegate)
-    try? FileManager.default.removeItem(at: url(id).deletingPathExtension().appendingPathExtension("helpers"))
-    refreshSessions()
-    if id == currentId { select(sessions.first?.id ?? UUID().uuidString.lowercased()) }
+    Task {
+      do {
+        _ = try await CoreAgentClient.shared.call("ConversationDeleteRequest", ["conversation_id": id])
+        if id == currentId { currentId = "" }
+        refreshSessions()
+      } catch { status = String(describing: error) }
+    }
   }
 
-  /// Full-text search over every session, compacted parts included.
-  func search(_ text: String) -> [SearchHit] {
+  func search(_ text: String) async -> [SearchHit] {
     guard !text.isEmpty else { return [] }
-    var hits: [SearchHit] = []
-    for s in sessions {
-      guard let c = try? Conversation.read(url(s.id)) else { continue }
-      for m in c.fullHistory {
-        for b in m.content {
-          guard case .text(let t) = b, let r = t.range(of: text, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
-          let lo = t.index(r.lowerBound, offsetBy: -40, limitedBy: t.startIndex) ?? t.startIndex
-          let hi = t.index(r.upperBound, offsetBy: 60, limitedBy: t.endIndex) ?? t.endIndex
-          hits.append(SearchHit(session: s.id, title: s.title, snippet: String(t[lo..<hi]).replacingOccurrences(of: "\n", with: " ")))
-        }
-      }
+    guard let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text]) else { return [] }
+    return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
+      guard let session = item["session"] as? String else { return nil }
+      return SearchHit(session: session, title: item["title"] as? String ?? "", snippet: item["snippet"] as? String ?? "")
     }
-    return hits
   }
 
   // MARK: - Skills and references
@@ -360,47 +328,31 @@ final class ChatController {
                                path: "builtin:demo", content: Agent.demoSkill, source: "Tsugumi")
 
   func reloadSkills() {
-    var out = [Self.demoSkill]
-    out += loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
-    for f in AppPreferences.shared.skillFolders where f.enabled {
-      out += loadSkills(in: URL(fileURLWithPath: f.path), source: URL(fileURLWithPath: f.path).lastPathComponent)
+    skills = [Self.demoSkill] + loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
+    for folder in AppPreferences.shared.skillFolders where folder.enabled {
+      skills += loadSkills(in: URL(fileURLWithPath: folder.path), source: URL(fileURLWithPath: folder.path).lastPathComponent)
     }
-    skills = out
+  }
+
+  private func skillReferences(_ selected: [Skill]) async throws -> [AgentSkillReference] {
+    guard let project = try await RPCToolTransport(session: session).project() else { return [] }
+    let root = session.identity.url.standardizedFileURL.path + "/"
+    var references: [AgentSkillReference] = []
+    for skill in selected where skill.path != "builtin:demo" {
+      if skill.path.hasPrefix(root) {
+        references.append(AgentSkillReference(name: skill.name, resourceID: project.id, path: String(skill.path.dropFirst(root.count))))
+      } else if let folder = AppPreferences.shared.skillFolders.first(where: { $0.enabled && skill.path.hasPrefix(URL(fileURLWithPath: $0.path).standardizedFileURL.path + "/") }) {
+        let url = URL(fileURLWithPath: folder.path).standardizedFileURL
+        if folderResources[url.path] == nil { await attach(folder: url) }
+        guard let resource = folderResources[url.path] else { throw NSError(domain: "Tsugumi", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not register the skill folder"]) }
+        references.append(AgentSkillReference(name: skill.name, resourceID: resource, path: String(skill.path.dropFirst(url.path.count + 1))))
+      }
+    }
+    return references
   }
 
   func addReference(_ r: Reference) {
     if !references.contains(r) { references.append(r) }
-  }
-
-  private func describe(_ r: Reference) -> String {
-    switch r {
-    case .card(let k):
-      var s = "Card \(k) (\(session.kind(k).label), definition \(session.definitionDir(k) ?? "-"), name \"\(session.displayName(k))\""
-      if let st = session.cardStates[k] { s += ", last state \(st.state.label)" }
-      if let r = session.resultSummary(k) { s += ", result: \(r)" }
-      return s + ")"
-    case .display(let k):
-      switch session.displays[k]?.value {
-      case .text(let t)?: return "Display of Card \(k) (text):\n\(t.prefix(4000))"
-      case .markdown(let t)?: return "Display of Card \(k) (Markdown):\n\(t.prefix(4000))"
-      case .scalar(let v, let l)?: return "Display of Card \(k): \(l) = \(v)"
-      case .lineChart(let series)?:
-        let lines = series.map { s in
-          let pts = zip(s.x, s.y).prefix(200).map { "(\($0), \($1))" }.joined(separator: " ")
-          return "series \(s.label): \(pts)"
-        }
-        return "Display of Card \(k) (line chart):\n" + lines.joined(separator: "\n")
-      case .table(let cols, let rows)?:
-        return "Display of Card \(k) (table):\n" + ([cols] + rows.prefix(200)).map { $0.joined(separator: "\t") }.joined(separator: "\n")
-      case .image(let type, let data, let alt)?:
-        return "Display of Card \(k): \(type) image, \(data.count) bytes, \(alt)"
-      case .points(let x, _, _, _)?:
-        return "Display of Card \(k): 3D point cloud with \(x.count) points"
-      case .module(let name, let json)?:
-        return "Display of Card \(k) (module \(name)):\n\(json.prefix(4000))"
-      case nil: return "Display of Card \(k): no result yet"
-      }
-    }
   }
 
   /// `$name` tokens that match a skill.
@@ -419,23 +371,26 @@ final class ChatController {
       return
     }
     guard let agent else { return }
-    var prompt = text
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
-    for s in used { prompt += "\n\n[Skill \(s.name)]\n\(s.content)" }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
-    if !refs.isEmpty { prompt += "\n\n[References]\n" + refs.map(describe).joined(separator: "\n") }
-    if !folders.isEmpty {
-      prompt += "\n\n[Attached folders]\n" + folders.map { "\($0) (read with attached_folder_read, folder: \"\($0)\")" }.joined(separator: "\n")
-    }
     let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
     items.append(Item(role: "user", text: shown))
     references = []
     let events = begin()
+    let stopping = self.stopping
     Task {
-      await agent.setProvider(provider)
-      // The chat shows what was typed, not the skills and references attached to it.
-      await agent.send(prompt: prompt, title: text, display: shown, events: events)
+      await stopping?.value
+      do {
+        let skillReferences = try await skillReferences(used)
+        await agent.setProvider(provider)
+        // Only resource identifiers leave the UI; core reads after authorization.
+        await agent.send(prompt: text, title: text, display: shown,
+                       selectedCards: refs.compactMap { if case .card(let key) = $0 { return key }; return nil },
+                       selectedDisplays: refs.compactMap { if case .display(let key) = $0 { return key }; return nil },
+                       skillNames: used.filter { $0.path == "builtin:demo" }.map(\.name), skillReferences: skillReferences,
+                       attachedResources: Array(folderResources.values), events: events)
+      } catch { events(.error(String(describing: error))) }
     }
   }
 
@@ -463,16 +418,12 @@ final class ChatController {
   /// comes while it answers waits for the answer to end.
   func tell(prompt: String, display: String) {
     // A tour is demo mode: the skill comes with its first note.
-    var prompt = prompt
-    if !demoMode {
-      prompt += "\n\n[Skill demo]\n" + Agent.demoSkill
-      demoMode = true
-    }
+    demoMode = true
     if busy {
-      notes.append((prompt, display))
+      notes.append((display, display))
       return
     }
-    sendRequest(display: display, prompt: prompt)
+    sendRequest(display: display, prompt: display)
   }
 
   private func flushNotes() {
@@ -489,34 +440,23 @@ final class ChatController {
     guard let agent else { return }
     items.append(Item(role: "user", text: display))
     let events = begin()
+    let stopping = self.stopping
     Task {
+      await stopping?.value
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, events: events)
+      await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, skillNames: demoMode ? ["demo"] : [], events: events)
     }
   }
 
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
-    let items = cards.map { k in
-      // A Card's definition folder is named by its id.
-      let meta = session.cardMeta(k)
-      return (key: k, definition: path(k).last ?? "-", description: meta?["description"]?.string ?? "",
-              content: meta?["content"]?.string ?? "", context: meta?["context"]?.string ?? "")
-    }
-    let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
-    sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
-                prompt: Agent.draftRequest(scope: scope, cards: items))
+    sendRequest(display: String(localized: "Draft \(cards.count) 枚から Card を生成します"),
+      prompt: "Implement the selected Draft Cards in scope \(scope): \(cards). Read their definitions after access is granted.")
   }
 
-  /// Asks the Agent to do what the open comments on these Cards ask.
   func generateFromComments(scope: [String], cards: [CardKey]) {
-    let items = cards.map { k in
-      (key: k, definition: path(k).last ?? "-", comments: session.openComments(k).map { (id: $0.id, text: $0.text) })
-    }
-    let count = items.reduce(0) { $0 + $1.comments.count }
-    let asked = items.flatMap { c in c.comments.map { "\(c.definition): \($0.text)" } }
-    sendRequest(display: ([String(localized: "コメント \(count) 件に従って Card を生成します")] + asked).joined(separator: "\n"),
-                prompt: Agent.commentRequest(scope: scope, cards: items))
+    sendRequest(display: String(localized: "選択した Card のコメントに従って生成します"),
+      prompt: "Resolve the open comments on these Cards in scope \(scope): \(cards). Read their comments after access is granted.")
   }
 
   // MARK: - Card permissions
@@ -524,7 +464,9 @@ final class ChatController {
   /// A save of the Agent waiting for the user: what it would give Cards.
   struct PermissionPrompt: Identifiable {
     let id = UUID()
-    let requests: [CardPermission.Request]
+    let raw: [String]
+    var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
+    var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
     let answer: (Set<String>) -> Void
   }
   var permissionPrompt: PermissionPrompt?
@@ -532,16 +474,10 @@ final class ChatController {
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
   func approve(_ asked: [String]) async -> Set<String> {
-    let allowed = AppPreferences.shared.allowedPermissions
-    let requests = asked.compactMap(CardPermission.Request.init)
-    let approved = Set(requests.filter { allowed.contains($0.kind.rawValue) }.map(\.raw))
-    let ask = requests.filter { !approved.contains($0.raw) }
-    if ask.isEmpty { return approved }
     permissionPrompt?.answer([])
-    let answer: Set<String> = await withCheckedContinuation { c in
-      permissionPrompt = PermissionPrompt(requests: ask) { c.resume(returning: $0) }
+    return await withCheckedContinuation { continuation in
+      permissionPrompt = PermissionPrompt(raw: asked) { continuation.resume(returning: $0) }
     }
-    return approved.union(answer)
   }
 
   /// The user's answer; `always` are kinds allowed without asking from now on.
@@ -549,7 +485,26 @@ final class ChatController {
     guard let p = permissionPrompt else { return }
     permissionPrompt = nil
     if allow { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
-    p.answer(allow ? Set(p.requests.map(\.raw)) : [])
+    p.answer(allow ? Set(p.raw) : [])
+  }
+
+  /// A window releases its UI subscriptions without cancelling core work.
+  func detach() {
+    resuming?.cancel()
+    resuming = nil
+    tidyTask?.cancel()
+    answer += 1
+    let remote = agent
+    agent = nil
+    Task {
+      await GuideController.shared.detach(from: session)
+      await remote?.detach()
+      // Both observers are cancelled before releasing a pending UI answer.
+      // Their cancellation check prevents this from denying the core request.
+      let prompt = permissionPrompt
+      permissionPrompt = nil
+      prompt?.answer([])
+    }
   }
 
   func cancel() {
@@ -559,8 +514,11 @@ final class ChatController {
     }
     resuming?.cancel()
     resuming = nil
-    Task { await agent?.cancel() }
+    answer += 1
+    let remote = agent
+    stopping = Task { await remote?.cancel() }
     busy = false
+    stoppedAtLimit = true
     session.presence.turnEnded(.stopped)
     status = String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。")
   }
@@ -570,7 +528,9 @@ final class ChatController {
     guard let agent else { return }
     items.append(Item(role: "user", text: String(localized: "（止まったところから続けます）")))
     let events = begin()
+    let stopping = self.stopping
     Task {
+      await stopping?.value
       await agent.setProvider(provider)
       await agent.continueAfterLimit(events: events)
     }
@@ -579,7 +539,9 @@ final class ChatController {
   func retry() {
     guard let agent else { return }
     let events = begin()
+    let stopping = self.stopping
     Task {
+      await stopping?.value
       await agent.setProvider(provider)
       await agent.retry(events: events)
     }
@@ -589,7 +551,9 @@ final class ChatController {
     guard let agent else { return }
     let events = begin()
     status = String(localized: "会話を圧縮しています…")
+    let stopping = self.stopping
     Task {
+      await stopping?.value
       await agent.setProvider(provider)
       await agent.compact(events: events)
     }
@@ -768,6 +732,10 @@ final class ChatController {
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
+      if failed || stoppedAtLimit {
+        refreshAfterTurn()
+        return
+      }
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
       // A note of this turn (a retry, the compaction) is no longer current.
@@ -789,16 +757,25 @@ final class ChatController {
 
   private func reloadCurrent() {
     guard let agent else { return }
+    let number = answer
     Task {
-      load(await agent.conversation)
-      usage = await agent.conversation.usage
+      let conversation = await agent.conversation
+      guard number == answer else { return }
+      load(conversation)
+      usage = conversation.usage
     }
   }
 
   private func refreshAfterTurn() {
     guard let agent else { return }
+    let number = answer
     Task {
-      usage = await agent.conversation.usage
+      let conversation = await agent.conversation
+      let continuable = await agent.canContinue
+      guard number == answer else { return }
+      load(conversation)
+      usage = conversation.usage
+      stoppedAtLimit = continuable
       refreshSessions()
     }
   }

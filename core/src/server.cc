@@ -18,6 +18,9 @@
 
 #include "util/crypto.hh"
 #include "util/log.hh"
+#include "util/fs.hh"
+#include "schema.hh"
+#include "tsugumi/protocol/agent_generated.h"
 
 #ifdef MSG_NOSIGNAL
 #define MSG_NOSIGNAL_FLAG MSG_NOSIGNAL
@@ -28,6 +31,7 @@
 namespace tsugumi {
 
 namespace R = Tsugumi::RPC;
+namespace A = Tsugumi::Agent;
 
 const R::Request* RequestIn::request() const {
   return R::GetMessage(frame->data())->payload_as_Request();
@@ -308,8 +312,12 @@ void Server::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   if (c.closing) return;
   if (is_reply && bytes.size() >= 4) {
     // Track completion of in-flight requests.
-    auto* m = R::GetMessage(bytes.data());
-    if (m->request_id()) c.inflight.erase(*m->request_id());
+    if (opts_.protocol == ServerOptions::Protocol::Agent) {
+      c.inflight.erase(A::GetMessage(bytes.data())->request_id());
+    } else {
+      auto* m = R::GetMessage(bytes.data());
+      if (m->request_id()) c.inflight.erase(*m->request_id());
+    }
   }
   c.out_bytes += bytes.size();
   Conn::Out o;
@@ -487,7 +495,8 @@ bool Server::handle_ws_handshake(Conn& c) {
     size_t s = 0;
     while (s <= list.size()) {
       size_t e = list.find(',', s);
-      if (trim(list.substr(s, e == std::string::npos ? std::string::npos : e - s)) == "tsugumi.rpc.v1")
+      if (trim(list.substr(s, e == std::string::npos ? std::string::npos : e - s)) ==
+          (opts_.protocol == ServerOptions::Protocol::Agent ? "tsugumi.agent.v1" : "tsugumi.rpc.v1"))
         proto = true;
       if (e == std::string::npos) break;
       s = e + 1;
@@ -497,15 +506,24 @@ bool Server::handle_ws_handshake(Conn& c) {
   auto origin = h.find("origin");
   if (origin == h.end()) {
     if (!opts_.allow_missing_origin) return reject("403 Forbidden");
-  } else if (std::find(opts_.allowed_origins.begin(), opts_.allowed_origins.end(), origin->second) ==
-             opts_.allowed_origins.end()) {
-    return reject("403 Forbidden");
+  } else {
+    bool allowed = std::find(opts_.allowed_origins.begin(), opts_.allowed_origins.end(), origin->second) != opts_.allowed_origins.end();
+    if (!allowed && !opts_.origins_file.empty()) {
+      struct OriginList { schema::t::Array<"origins", schema::v::String> origins; };
+      OriginList list;
+      if (auto bytes = fs::read_file(opts_.origins_file); bytes && !schema::decode(std::string_view(*bytes), list)) {
+        const auto& origins = *list.origins;
+        allowed = std::find(origins.begin(), origins.end(), origin->second) != origins.end();
+      }
+    }
+    if (!allowed) return reject("403 Forbidden");
   }
   auto digest = crypto::sha1(h["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
   std::string resp =
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
       "Sec-WebSocket-Accept: " + crypto::base64(digest.data(), digest.size()) +
-      "\r\nSec-WebSocket-Protocol: tsugumi.rpc.v1\r\n\r\n";
+      "\r\nSec-WebSocket-Protocol: " +
+      (opts_.protocol == ServerOptions::Protocol::Agent ? "tsugumi.agent.v1" : "tsugumi.rpc.v1") + "\r\n\r\n";
   c.wbuf = resp;  // first bytes out, before any frame
   c.wpos = 0;
   c.ws_open = true;
@@ -628,6 +646,40 @@ void Server::on_readable(Conn& c) {
 }
 
 void Server::handle_frame(Conn& c, std::string frame) {
+  if (opts_.protocol == ServerOptions::Protocol::Agent) {
+    flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
+    if (!A::VerifyMessageBuffer(v)) return drop(c, "invalid Agent frame");
+    const auto* m = A::GetMessage(frame.data());
+    const auto* req = m->payload_as_Request();
+    if (!req || !req->value() || req->value_type() == A::RequestPayload::NONE ||
+        req->value_type() > A::RequestPayload::MAX || !m->request_id())
+      return drop(c, "invalid Agent request");
+    const auto rid = m->request_id();
+    if (c.inflight.count(rid)) return drop(c, "duplicate in-flight request_id");
+    auto fail = [&](const char* code, const char* message) {
+      flatbuffers::FlatBufferBuilder b;
+      auto f = A::CreateFailure(b, b.CreateString(code), b.CreateString(message));
+      auto reply = A::CreateReply(b, A::ReplyPayload::Failure, f.Union());
+      A::FinishMessageBuffer(b, A::CreateMessage(b, rid, A::Payload::Reply, reply.Union()));
+      enqueue_raw(c, std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()), false);
+    };
+    const bool hello = req->value_type() == A::RequestPayload::HelloRequest;
+    RequestIn in{c.id, rid, std::make_shared<const std::string>(std::move(frame)), c.websocket};
+    if (hello) {
+      if (c.hello_seen) return fail("invalid_request", "Hello was already sent");
+      c.hello_seen = true;
+      auto [bytes, ok] = sink_->hello(in);
+      c.authenticated = ok;
+      enqueue_raw(c, std::move(bytes), false);
+      if (!ok) c.close_after_flush = true;
+      return;
+    }
+    if (!c.authenticated) return fail("unauthenticated", "Hello must succeed first");
+    if (c.inflight.size() >= opts_.limits.max_inflight) return fail("busy", "too many requests in flight");
+    c.inflight.insert(rid);
+    sink_->dispatch(std::move(in));
+    return;
+  }
   flatbuffers::Verifier::Options vo;
   vo.max_size = opts_.limits.max_frame_bytes;
   flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(frame.data()), frame.size(), vo);

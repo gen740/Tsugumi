@@ -5,6 +5,8 @@ import PackageDescription
 
 let rendererLib = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
   .appendingPathComponent("../build-renderer/ui/renderer").standardizedFileURL.path
+let clientLib = ProcessInfo.processInfo.environment["TSUGUMI_CLIENT_LIB_DIR"] ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+  .appendingPathComponent("../build/client").standardizedFileURL.path
 
 let package = Package(
   name: "Tsugumi",
@@ -40,11 +42,13 @@ let package = Package(
   targets: [
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
     .plugin(name: "FlatcPlugin", capability: .buildTool(), path: "Plugins/FlatcPlugin"),
+    .systemLibrary(name: "TsugumiClientC", path: "Sources/ClientC"),
     .target(
       name: "TsugumiRPC",
-      dependencies: [.product(name: "FlatBuffers", package: "flatbuffers")],
+      dependencies: ["TsugumiClientC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/RPC",
       swiftSettings: [.swiftLanguageMode(.v5)],
+      linkerSettings: [.unsafeFlags(["-L", clientLib]), .linkedLibrary("curl"), .linkedLibrary("c++")],
       plugins: ["FlatcPlugin"]),
     .target(
       name: "TsugumiLauncher",

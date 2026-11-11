@@ -1,7 +1,5 @@
-// Tsugumi RPC client (generation 1 of the FlatBuffers contract). The
-// transport is a WebSocket in the browser (`/rpc`, subprotocol
-// tsugumi.rpc.v1) or a Unix socket in the host server; requests are
-// multiplexed by request_id and notifications go to a listener.
+// Typed project operations. The shared C++ client owns transport, validation,
+// request correlation, deadlines and disconnect handling (Wasm in the browser).
 import { Builder, ByteBuffer } from 'flatbuffers'
 import * as D from '../gen/tsugumi/data'
 import * as R from '../gen/tsugumi/rpc'
@@ -52,10 +50,10 @@ export class RPCError extends Error {
 export const disconnected = () => new RPCError('disconnected', L('tsugumid との接続が切れました'))
 
 export interface Transport {
-  send(frame: Uint8Array): void
+  call(frame: Uint8Array, timeoutMs: number): Promise<Uint8Array>
   close(): void
   /** Set by the client. */
-  onFrame?: (frame: Uint8Array) => void
+  onEvent?: (frame: Uint8Array) => void
   onClose?: (reason: string) => void
 }
 
@@ -65,8 +63,6 @@ export interface NotificationEvent {
   type: R.NotificationPayload
   value: NotificationT['value']
 }
-
-type Pending = { resolve: (r: ReplyT | Uint8Array) => void; reject: (e: Error) => void; raw: boolean; timer: ReturnType<typeof setTimeout> }
 
 export const uuid = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -78,14 +74,13 @@ export const uuid = (): string =>
 
 export class RPCClient {
   private nextId = 1n
-  private waiting = new Map<bigint, Pending>()
   private _closed = false
   hello?: R.HelloResultT
   onNotification?: (e: NotificationEvent) => void
   onClose?: (reason: string) => void
 
   constructor(private readonly transport: Transport) {
-    transport.onFrame = (f) => this.receive(f)
+    transport.onEvent = (f) => this.receiveEvent(f)
     transport.onClose = (reason) => this.closedBy(reason)
   }
 
@@ -104,80 +99,37 @@ export class RPCClient {
     if (this._closed) return
     this._closed = true
     this.transport.close()
-    this.failAll(disconnected())
   }
 
   private closedBy(reason: string) {
     if (this._closed) return
     this._closed = true
-    this.failAll(disconnected())
     this.onClose?.(reason)
   }
 
-  private failAll(e: Error) {
-    const all = [...this.waiting.values()]
-    this.waiting.clear()
-    for (const p of all) {
-      clearTimeout(p.timer)
-      p.reject(e)
-    }
-  }
-
-  private protocolError(msg: string) {
-    this._closed = true
-    this.transport.close()
-    this.failAll(new RPCError('protocol', `protocol violation: ${msg}`))
-    this.onClose?.(msg)
-  }
-
-  private receive(frame: Uint8Array) {
-    const bb = new ByteBuffer(frame)
-    if (frame.length < 8 || !Message.bufferHasIdentifier(bb)) return this.protocolError('not a TSG1 message')
-    let root: Message
+  private receiveEvent(frame: Uint8Array) {
     try {
-      root = Message.getRootAsMessage(bb)
-    } catch {
-      return this.protocolError('reply does not decode')
-    }
-    const type = root.payloadType()
-    if (type === Payload.Reply) {
-      const id = root.requestId()
-      if (id === null) return this.protocolError('reply without request_id')
-      const p = this.waiting.get(id)
-      if (!p) {
-        // A reply after our own timeout is dropped; an id we never sent is a violation.
-        if (id >= this.nextId) this.protocolError(`reply to unknown request ${id}`)
-        return
-      }
-      this.waiting.delete(id)
-      clearTimeout(p.timer)
-      if (p.raw) return p.resolve(frame)
-      const reply = (root.payload(new Reply()) as Reply).unpack()
-      p.resolve(reply)
-    } else if (type === Payload.Notification) {
-      const n = (root.unpack().payload as NotificationT | null)
-      if (!n) return
-      this.onNotification?.({ subscriptionId: s(n.subscriptionId), seq: n.seq ?? 0n, type: n.valueType, value: n.value })
-    } else {
-      this.protocolError('unexpected message type')
+      const bb = new ByteBuffer(frame)
+      const message = Message.getRootAsMessage(bb)
+      const note = message.unpack().payload as NotificationT | null
+      if (message.payloadType() !== Payload.Notification || !note) throw new Error('unexpected notification')
+      this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
+    } catch (error) {
+      this.transport.close()
+      this.closedBy(String(error))
     }
   }
 
-  private dispatch(frame: Uint8Array, id: bigint, raw: boolean, timeoutMs: number): Promise<ReplyT | Uint8Array> {
-    if (this._closed) return Promise.reject(disconnected())
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.waiting.delete(id)) reject(new RPCError('timeout', 'no reply within the time limit'))
-      }, timeoutMs)
-      this.waiting.set(id, { resolve, reject, raw, timer })
-      try {
-        this.transport.send(frame)
-      } catch (e) {
-        this.waiting.delete(id)
-        clearTimeout(timer)
-        reject(e instanceof Error ? e : disconnected())
-      }
-    })
+  private async dispatch(frame: Uint8Array, id: bigint, raw: boolean, timeoutMs: number): Promise<ReplyT | Uint8Array> {
+    if (this._closed) throw disconnected()
+    const bytes = await this.transport.call(frame, timeoutMs)
+    // The native/Wasm library has already verified the entire FlatBuffer and ID.
+    const message = Message.getRootAsMessage(new ByteBuffer(bytes))
+    if (message.requestId() !== id || message.payloadType() !== Payload.Reply) {
+      this.close()
+      throw new RPCError('protocol', 'unexpected RPC reply')
+    }
+    return raw ? bytes : (message.payload(new Reply()) as Reply).unpack()
   }
 
   /** Sends one request and waits for its reply. Failure replies throw RPCFailure. */
@@ -431,34 +383,57 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, '0')).join('')
 }
 
-/** Browser transport: one binary WebSocket message is one FlatBuffer. */
-export function webSocketTransport(url: string): Promise<Transport> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, ['tsugumi.rpc.v1'])
-    ws.binaryType = 'arraybuffer'
-    const t: Transport = {
-      send: (f) => {
-        if (ws.readyState !== WebSocket.OPEN) throw disconnected()
-        ws.send(f)
-      },
-      close: () => ws.close(),
-    }
-    let opened = false
-    ws.onopen = () => {
-      opened = true
-      resolve(t)
-    }
-    ws.onmessage = (e) => {
-      if (typeof e.data === 'string') {
-        t.onClose?.('text frames are not part of the protocol')
-        ws.close()
-        return
-      }
-      t.onFrame?.(new Uint8Array(e.data as ArrayBuffer))
-    }
-    ws.onclose = (e) => {
-      if (!opened) reject(new RPCError('disconnected', `cannot connect to ${url} (${e.code})`))
-      t.onClose?.(e.reason || `closed (${e.code})`)
-    }
+interface NativeClientError { code: number; message: string }
+interface WasmClient {
+  start(callback: (error: NativeClientError | null) => void): void
+  call(frame: Uint8Array, timeoutMs: number, callback: (error: NativeClientError | null, frame: Uint8Array) => void): void
+  onEvent(callback: (frame: Uint8Array) => void): void
+  onClosed(callback: (error: NativeClientError) => void): void
+  close(): void
+  delete(): void
+}
+interface WasmModule { RpcClient: new (endpoint: string, agent: boolean) => WasmClient }
+let wasmModule: Promise<WasmModule> | undefined
+
+const nativeError = (error: NativeClientError) => new RPCError(
+  error.code === 2 ? 'timeout' : error.code === 3 ? 'protocol' : error.code === 5 || error.code === 6 ? 'unexpected' : 'disconnected',
+  error.message,
+)
+
+/** Both project and Agent connections use the same C++ library as the CLI. */
+export async function webSocketTransport(url: string): Promise<Transport> {
+  if (!wasmModule) {
+    const moduleUrl = '/client/tsugumi-client.js'
+    wasmModule = import(moduleUrl).then((module) => module.default() as Promise<WasmModule>)
+    wasmModule.catch(() => { wasmModule = undefined })
+  }
+  const module = await wasmModule
+  const client = new module.RpcClient(url, false)
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
+    client.close()
+    client.delete()
+  }
+  const transport: Transport = {
+    call: (frame, timeoutMs) => new Promise((resolve, reject) => {
+      if (released) return reject(disconnected())
+      client.call(frame, timeoutMs, (error, reply) => error ? reject(nativeError(error)) : resolve(reply))
+    }),
+    close: release,
+  }
+  client.onEvent((frame) => transport.onEvent?.(frame))
+  client.onClosed((error) => {
+    transport.onClose?.(error.message)
+    // Free the binding after the C++ callback has unwound.
+    queueMicrotask(release)
   })
+  try {
+    await new Promise<void>((resolve, reject) => client.start((error) => error ? reject(nativeError(error)) : resolve()))
+    return transport
+  } catch (error) {
+    release()
+    throw error
+  }
 }

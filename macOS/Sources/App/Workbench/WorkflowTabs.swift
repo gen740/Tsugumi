@@ -54,6 +54,11 @@ struct WorkflowTabs: View {
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
+    .sheet(item: Binding(get: { model.chat(for: session).permissionPrompt }, set: { _ in })) { prompt in
+      PermissionPromptView(prompt: prompt) { allow, always in
+        model.chat(for: session).answerPermissions(allow: allow, always: always)
+      }
+    }
     // A demo tour: Tsugumi of this chat leads it, following the real runs.
     .onChange(of: runKey, initial: true) { if guideWindow != nil { GuideController.shared.observe(session, tab: workspace.active) } }
     .onChange(of: workspace.active?.id, initial: true) {

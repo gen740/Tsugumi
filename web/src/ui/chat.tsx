@@ -80,13 +80,15 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
     return () => window.removeEventListener('keydown', key, true)
   }, [onAnswer, always])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
+  const access = asked.filter((r) => r.startsWith('project_access '))
   const kinds = PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> {L('{0} が Card の権限を広げようとしています', who)}</div>
-        <p className="secondary">{L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
+        <div className="title2"><Icon name="hand.raised" /> {access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
+        <p className="secondary">{access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
         <ul className="permission-list">
+          {access.map((r) => <li key={r}><Icon name="hand.raised" /><div>{r.slice('project_access '.length)}</div></li>)}
           {requests.map((r) => (
             <li key={r.raw}>
               <Icon name={permissionInfo(r.kind).icon} />
@@ -97,7 +99,7 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
             </li>
           ))}
         </ul>
-        <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>
+        {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
         {kinds.map((k) => (
           <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
             onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />

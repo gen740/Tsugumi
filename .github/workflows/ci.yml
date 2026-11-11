@@ -1,21 +1,17 @@
-# The core and its tests on Linux: tsugumid, the C++ tests and the Python
-# tests against a host tsugumid (Cards sandboxed with bubblewrap); the web UI
-# built and checked. On macOS: the Swift packages' tests against a host
-# tsugumid. The shared VM (Virtualization.framework) is not available on
-# hosted runners and is tested on a Mac (TSUGUMI_TEST_CONTAINER=1); the host
-# sandboxes (bubblewrap on Linux, Seatbelt on the Mac) are checked here.
 name: CI
 on:
   push:
     branches: [main]
   pull_request:
-# A new push to a pull request replaces its run; main keeps every run.
+  workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CORE_TEST_ENV: ${{ github.workspace }}/build-ci/bin/tsugumi-test-env
 jobs:
-  # Documents alone need no Swift build. The app does read four of them
-  # (Help > Learn about Tsugumi, macOS/Tests checks that it finds them).
   changes:
     name: What changed
     runs-on: ubuntu-24.04
@@ -36,37 +32,54 @@ jobs:
             if [ -z "$others$read_by_app" ]; then app=false; fi
           fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
+
   core:
-    name: tsugumid and Python tests (Linux)
-    runs-on: ubuntu-24.04
+    name: Core RPC and Linux integrations (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Prompt probe scoring (offline)
-        run: python3 -m unittest discover -s tests/prompt
-      - uses: cachix/install-nix-action@v31
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
       - name: Allow user namespaces for bubblewrap
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Card shell steps get the dev shell's bash and tools (as the package
-      # gives them its own), not whatever the host has.
-      - name: Build tsugumid and run the C++ tests
+      # Upload completed derivations while the remaining builds and tests run.
+      - name: Build or fetch the native runtime, tests and Web CLI
         run: |
-          nix develop -c bash -c '
-            set -e
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTSUGUMI_BWRAP="$(command -v bwrap)" \
-              -DTSUGUMI_BASH="$(command -v bash)" -DTSUGUMI_CARD_PATH="$PATH"
-            ninja -C build
-            ctest --test-dir build --output-on-failure'
-      - name: Web UI typecheck, behavior contracts and build (Python tests cover RPC and server)
-        run: nix develop -c bash -c 'cd web && npm ci && npm run gen && npm run typecheck && npm test && npm run build'
-      - name: The tsugumi command builds (nix/cli.nix)
-        run: nix build .#cli --no-link
-      # docs/site/js/player.js bundles web/src (canvasKit.ts, cardNode.tsx...) and the gallery and Home
-      # thumbnails run it: a change there needs `node docs/site/player/build.mjs`. (The pages are checked by test_docs.py.)
-      - name: Documentation site player is up to date (docs/site/js/player.js, player.css, player-data/)
-        run: nix develop -c node docs/site/player/build.mjs --check
-      - name: Python tests
-        run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q'
+          nix build --no-link .#ci-core .#cli
+          nix build .#ci-core --out-link build-ci
+          web=$(nix build '.#web^out' --no-link --print-out-paths)
+          echo "TSUGUMI_WEB_DIST=$web/share/tsugumi/web/dist" >> "$GITHUB_ENV"
+      - name: Public Agent and CLI RPC tests
+        run: |
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
+      - name: Public core RPC scenarios with external doubles
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
+      - name: Web typecheck and behavior contracts
+        run: nix build --no-link .#checks.${{ matrix.system }}.web
+      - name: Core integrations with the real host environment
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration'
+      - name: Python adapter and system tests
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python'
+      - name: Cache the VM runtime
+        if: matrix.system == 'aarch64-linux'
+        run: nix build --no-link .#vm-system
+      - name: Prompt probe scoring (offline)
+        if: matrix.system == 'x86_64-linux'
+        run: python3 -m unittest discover -s tests/prompt
+      - name: Documentation site player is up to date
+        if: matrix.system == 'x86_64-linux'
+        run: nix build --no-link .#checks.x86_64-linux.site-player
 
   macos:
     name: Swift tests (macOS, no VM)
@@ -76,38 +89,45 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
-      # The worker runs the Cards an Agent test builds (TeamTests runs bash Cards).
-      - name: Build the host tsugumid and its worker (the Swift tests talk to them)
-        run: nix develop -c bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build tsugumid tsugumi-worker'
-      # A tsugumid on a Mac (the Web UI) isolates Cards with Seatbelt, not
-      # bubblewrap: the Linux job cannot check it. (The shared VM's isolation
-      # needs Virtualization.framework: TSUGUMI_TEST_CONTAINER=1 on a Mac.)
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
+      - name: Build or fetch the native runtime and public RPC tests
+        run: nix build .#ci-core --out-link build-ci
+      - name: Public Agent and CLI RPC tests
+        run: |
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
+      - name: Public core RPC scenarios with external doubles
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
       - name: Card isolation on a Mac host (Seatbelt)
-        run: nix develop -c bash -c 'cd tests/python && python3 -m pytest -q test_host_isolation.py test_host_sandbox.py'
-      # The packages' builds, kept per dependency set: what did not change is not compiled again.
-      - name: Cache the Swift builds
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
+      - name: Identify the Apple toolchain and native runtime
+        id: toolchain
+        run: |
+          toolchain=$({ xcodebuild -version; xcrun --sdk macosx --show-sdk-version; swift --version; } | shasum -a 256 | cut -d ' ' -f1)
+          echo "key=$toolchain" >> "$GITHUB_OUTPUT"
+          runtime=$(nix eval --raw .#tsugumid.drvPath)
+          echo "runtime=${runtime##*/}" >> "$GITHUB_OUTPUT"
+      - name: Restore the Swift incremental builds
         uses: actions/cache@v4
         with:
           path: |
             macOS/.build
             macOS/CoreTests/.build
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift') }}
-      # Swift and its SDK are Xcode's; only flatc comes from the flake.
-      - name: Model, RPC, Agent and launcher (macOS/CoreTests)
-        run: |
-          TSUGUMI_FLATC="$(nix develop -c which flatc)"
-          export TSUGUMI_FLATC
-          cd macOS/CoreTests && swift test
-      - name: Cache the Dawn renderer
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('macOS/Sources/**', 'macOS/Tests/**', 'macOS/CoreTests/Tests/**', 'macOS/Resources/**', 'macOS/Plugins/**', 'agent/Sources/**', 'agent/Shared/**', 'protocol/**', 'client/include/**') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-
+      - name: Model, RPC, Agent and launcher adapters
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
+      - name: Restore the Dawn renderer build
         uses: actions/cache@v4
         with:
           path: build-renderer
-          key: renderer-${{ runner.os }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt') }}
-      - name: Build the Dawn renderer (the app package links it)
-        run: '[ -f build-renderer/ui/renderer/libtsugumi_renderer.dylib ] || ui/renderer/build.sh'
-      - name: App logic (macOS/Tests)
-        run: |
-          TSUGUMI_FLATC="$(nix develop -c which flatc)"
-          export TSUGUMI_FLATC
-          cd macOS && swift test
+          key: renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt', 'client/CMakeLists.txt', 'protocol/**') }}
+          restore-keys: |
+            renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
+      - name: Build the Dawn renderer with the current toolchain
+        run: ui/renderer/build.sh
+      - name: App logic
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS'

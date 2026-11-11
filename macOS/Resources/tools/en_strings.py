@@ -31,6 +31,11 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"Agent がアクセスの許可を求めています": "The Agent is requesting access" ,
+"表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。": "Allow access to the listed resource and scope. Content read may be sent to the connected model." ,
+"プロジェクトへのアクセスは許可されませんでした。": "Access to the project was not allowed." ,
+"Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs." ,
+
 "Tsugumi を知る": "Learn about Tsugumi",
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）": "Not available for this model (only models checked against the official documents)",
 "既定（%@）": "Default (%@)",

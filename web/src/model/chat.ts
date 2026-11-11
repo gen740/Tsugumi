@@ -105,6 +105,8 @@ export class ChatController extends Observable {
   busy = false
   /** Stop was pressed and that answer has not reported its end yet. */
   private stopping = false
+  private transition: Promise<unknown> = Promise.resolve()
+  private turn = 0
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
@@ -174,10 +176,11 @@ export class ChatController extends Observable {
   /** Reads the open conversation again (its turn keeps running on the server). */
   private async reread(id: string) {
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
         '/api/chat/conversation', { ...this.base, folders: this.folders })
       if (this.currentId !== id) return
       this.busy = r.busy
+      this.stoppedAtLimit = r.continuable === true
       this.permission = r.permission ?? undefined
       this.usage = r.conversation.usage
       this.load(r.conversation)
@@ -186,7 +189,6 @@ export class ChatController extends Observable {
   }
 
   select(id: string) {
-    if (this.currentId && this.busy) void api('/api/chat/cancel', this.base).catch(() => {})
     this.busy = false
     this.failed = false
     this.usageLimited = false
@@ -198,13 +200,14 @@ export class ChatController extends Observable {
     this.changed()
     if (!this.available) return
     // Resume work left unfinished by a disconnect or restart.
-    void api<{ conversation: Conversation; busy: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, resume: true, folders: this.folders })
+    void api<{ conversation: Conversation; busy: boolean; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, resume: true, folders: this.folders })
       .then((r) => {
         if (this.currentId !== id) return
         this.permission = r.permission ?? undefined
         this.usage = r.conversation.usage
         this.provider = r.provider
         this.busy = r.busy
+      this.stoppedAtLimit = r.continuable === true
         this.load(r.conversation)
         this.changed()
       })
@@ -288,8 +291,11 @@ export class ChatController extends Observable {
   }
 
   /** Attaches a folder of this host (the server checks that it exists). */
+  private folderResources = new Map<string, string>()
+
   async attach(folder: string) {
-    const r = await api<{ folder: string }>('/api/chat/folder', { folder })
+    const r = await api<{ folder: string; resource: string }>('/api/chat/folder', { ...this.base, folder, folders: this.folders })
+    this.folderResources.set(r.folder, r.resource)
     if (this.folders.includes(r.folder)) return
     this.folders = [...this.folders, r.folder]
     this.changed()
@@ -298,34 +304,10 @@ export class ChatController extends Observable {
   /** No longer offered to the Agent. */
   detach(folder: string) {
     this.folders = this.folders.filter((f) => f !== folder)
+    const resource = this.folderResources.get(folder)
+    this.folderResources.delete(folder)
+    if (resource) void api('/api/chat/folder/detach', { ...this.base, resource, folder }).catch((e) => this.fail(e))
     this.changed()
-  }
-
-  private describe(r: Reference): string {
-    const s = this.session, k = r.card
-    if (r.kind === 'card') {
-      let out = `Card ${k} (${KIND_LABEL[s.kind(k)]}, definition ${s.definitionDir(k) ?? '-'}, name "${s.displayName(k)}"`
-      const st = s.cardStates.get(k)
-      if (st) out += `, last state ${cardState(st.state).label}`
-      const res = s.resultSummary(k)
-      if (res) out += `, result: ${res}`
-      return out + ')'
-    }
-    const v = s.displays.get(k)?.value
-    if (!v) return `Display of Card ${k}: no result yet`
-    switch (v.kind) {
-      case 'text': return `Display of Card ${k} (text):\n${v.text.slice(0, 4000)}`
-      case 'markdown': return `Display of Card ${k} (Markdown):\n${v.text.slice(0, 4000)}`
-      case 'scalar': return `Display of Card ${k}: ${v.label} = ${v.value}`
-      case 'lineChart':
-        return `Display of Card ${k} (line chart):\n` + v.series.map((x) =>
-          `series ${x.label}: ` + x.x.slice(0, 200).map((xv, i) => `(${xv}, ${x.y[i]})`).join(' ')).join('\n')
-      case 'table':
-        return `Display of Card ${k} (table):\n` + [v.columns, ...v.rows.slice(0, 200)].map((r) => r.join('\t')).join('\n')
-      case 'image': return `Display of Card ${k}: ${v.mediaType} image, ${v.data.length} bytes, ${v.alt}`
-      case 'points': return `Display of Card ${k}: 3D point cloud with ${v.x.length} points`
-      case 'module': return `Display of Card ${k} (module ${v.name}):\n${v.json.slice(0, 4000)}`
-    }
   }
 
   /** `$name` tokens that match a skill. */
@@ -340,20 +322,14 @@ export class ChatController extends Observable {
     if (!text.trim() || !this.available) return
     // No model connection: Tsugumi answers from its script.
     if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
-    let prompt = text
-    for (const sk of this.skillsIn(text)) prompt += `\n\n[Skill ${sk.name}]\n${sk.content}`
     if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
     const refs = [...this.references, ...selection.filter((k) => !this.references.some((r) => r.kind === 'card' && r.card === k)).map((card) => ({ kind: 'card' as const, card }))]
-    if (refs.length) prompt += '\n\n[References]\n' + refs.map((r) => this.describe(r)).join('\n')
-    if (this.folders.length) {
-      prompt += '\n\n[Attached folders]\n' + this.folders.map((f) => `${f} (read with attached_folder_read, folder: "${f}")`).join('\n')
-    }
     const shown = text + (refs.length ? '\n📎 ' + refs.map(refLabel).join(', ') : '')
     this.items = [...this.items, { id: uuid(), role: 'user', text: shown }]
     this.references = []
     this.begin()
     // The chat shows what was typed, not the skills and references attached to it.
-    void api('/api/chat/send', { ...this.base, prompt, title: text, display: shown, folders: this.folders }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
   }
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */
@@ -361,35 +337,26 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void api('/api/chat/send', { ...this.base, prompt, title: display.split('\n')[0], display, folders: this.folders }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text: prompt, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
   generateDrafts(scope: string[], cards: CardKey[]) {
-    const s = this.session
-    const items = cards.map((k) => {
-      // A Card's definition folder is named by its id.
-      const meta = s.cardMeta(k)
-      return { key: k, definition: path(k).pop() ?? '-', description: str(get(meta, 'description')) ?? '', content: str(get(meta, 'content')) ?? '', context: str(get(meta, 'context')) ?? '' }
-    })
-    const names = cards.map((k) => path(k).pop() ?? k).join(L('、'))
-    this.sendRequest(L('Draft {0} 枚（{1}）から Card を生成します', cards.length, names), draftRequest(scope, items))
+    this.sendRequest(L('Draft {0} 枚から Card を生成します', cards.length),
+      `Implement the selected Draft Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read their definitions after access is granted.`)
   }
 
-  /** Asks the Agent to do what the open comments on these Cards ask. */
+  /** The identifiers are explicit user selections; core reads their comments after authorization. */
   generateFromComments(scope: string[], cards: CardKey[]) {
-    const s = this.session
-    const items = cards.map((k) => ({
-      key: k, definition: path(k).pop() ?? '-', comments: s.openComments(k).map(({ id, text }) => ({ id, text })),
-    }))
-    const count = items.reduce((n, c) => n + c.comments.length, 0)
-    const asked = items.flatMap((c) => c.comments.map((x) => `${c.definition}: ${x.text}`))
-    this.sendRequest([L('コメント {0} 件に従って Card を生成します', count), ...asked].join('\n'), commentRequest(scope, items))
+    this.sendRequest(L('選択した Card のコメントに従って生成します'),
+      `Resolve the open comments on these Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read the comments after access is granted.`)
   }
 
   cancel() {
-    void api('/api/chat/cancel', this.base).catch(() => {})
+    this.turn++
+    void this.request('/api/chat/cancel', this.base).catch(() => {})
     this.stopping = true
+    this.stoppedAtLimit = true
     this.busy = false
     this.status = L('回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。')
     this.changed()
@@ -400,19 +367,19 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: L('（止まったところから続けます）') }]
     this.begin()
-    void api('/api/chat/continue', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
+    void this.request('/api/chat/continue', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   retry() {
     this.begin()
-    void api('/api/chat/retry', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
+    void this.request('/api/chat/retry', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   compact() {
     this.begin()
     this.status = COMPACTING
     this.changed()
-    void api('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
+    void this.request('/api/chat/compact', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   /** Demo mode ($demo, or a demo tour): the bird leads the user about the
@@ -439,11 +406,8 @@ export class ChatController extends Observable {
    *  comes while it answers waits for the answer to end. */
   tell(prompt: string, display: string) {
     // A tour is demo mode: the skill comes with its first note.
-    if (!this.demoMode) {
-      const demo = this.skills.find((s) => s.name === 'demo')
-      if (demo) prompt += `\n\n[Skill demo]\n${demo.content}`
-      this.demoMode = true
-    }
+    this.demoMode = true
+    prompt = display
     if (this.busy) {
       this.notes.push({ prompt, display })
       return
@@ -463,6 +427,7 @@ export class ChatController extends Observable {
   }
 
   private begin() {
+    this.turn++
     this.choices = []
     this.offered = []
     guide.chatTurnBegan(this)
@@ -473,6 +438,12 @@ export class ChatController extends Observable {
     this.stoppedAtLimit = false
     this.status = undefined
     this.changed()
+  }
+
+  private request(endpoint: string, body: Record<string, unknown>) {
+    const pending = this.transition.catch(() => {}).then(() => api(endpoint, body))
+    this.transition = pending
+    return pending
   }
 
   private fail(e: unknown) {
@@ -620,6 +591,10 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         break
       case 'finished':
+        if (this.failed || this.stoppedAtLimit) {
+          this.refreshAfterTurn()
+          break
+        }
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
@@ -685,9 +660,12 @@ export class ChatController extends Observable {
   }
 
   private refreshAfterTurn() {
-    const id = this.currentId
+    const id = this.currentId, turn = this.turn
     void api<{ conversation: Conversation }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
-      if (this.currentId === id) this.usage = r.conversation.usage
+      if (this.currentId !== id || this.turn !== turn) return
+      this.load(r.conversation)
+      this.usage = r.conversation.usage
+      this.changed()
       void this.refreshSessions()
     }).catch(() => {})
   }

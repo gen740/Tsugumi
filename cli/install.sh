@@ -89,7 +89,7 @@ if [ "$artifact" = tsugumi-linux.tar.gz ]; then
   mkdir -p "$dest"
   # An out-link keeps the build from Nix's garbage collection, as long as it
   # stays where Nix was told it is.
-  nix --extra-experimental-features 'nix-command flakes' build "path:$tree#cli" --out-link "$dest/result" || {
+  nix --extra-experimental-features 'nix-command flakes' --accept-flake-config build "path:$tree#cli" --out-link "$dest/result" || {
     rm -rf "$dest"
     fail "Nix でのビルドに失敗しました（上の出力を確かめてください）。"
   }

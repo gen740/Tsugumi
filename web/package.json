@@ -9,7 +9,7 @@
   },
   "scripts": {
     "gen": "sh scripts/gen.sh",
-    "build": "node scripts/build.mjs",
+    "build": "sh scripts/build-client.sh && node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p .",

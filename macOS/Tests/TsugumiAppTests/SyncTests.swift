@@ -19,12 +19,15 @@ import Testing
     init(project: URL) throws {
       dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("tsg-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      let build = SyncTests.root.appendingPathComponent("build")
-      process.executableURL = build.appendingPathComponent("core/tsugumid")
+      let env = ProcessInfo.processInfo.environment
+      let build = env["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
+        ?? SyncTests.root.appendingPathComponent("build")
+      process.executableURL = env["TSUGUMID"].map { URL(fileURLWithPath: $0) }
+        ?? build.appendingPathComponent("core/tsugumid")
       process.arguments = ["--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
-                           "--worker", build.appendingPathComponent("sdk/tsugumi-worker").path,
-                           "--sdk-dir", SyncTests.root.appendingPathComponent("sdk").path,
+                           "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("sdk/tsugumi-worker").path,
+                           "--sdk-dir", env["TSUGUMI_SDK_DIR"] ?? SyncTests.root.appendingPathComponent("sdk").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice
       process.standardError = FileHandle.nullDevice

@@ -30,15 +30,15 @@ enum VersionSummarizer {
     String(text.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(300))
   }
 
-  static func summarize(_ input: String, config: ProviderConfig) async throws -> String {
-    let english = Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true
-    let system = Agent.versionSummaryPrompt.replacingOccurrences(of: "{language}", with: english ? "English" : "Japanese (plain form, 常体)")
-    var text = ""
-    for try await e in try MessagesProvider(config: config).stream(system: system, messages: [ChatMessage(role: "user", content: [.text(input)])], tools: []) {
-      if case .text(let t) = e { text += t }
-    }
-    return clean(text)
+  static func summarize(project: AgentProject, commit: String, config: ProviderConfig) async throws -> String {
+    let client = CoreAgentClient.shared
+    _ = try await client.call("RegisterProjectRequest", ["project_id": project.id, "endpoint": project.endpoint,
+      "token": project.token, "title": project.title])
+    try await client.configure(config)
+    let result = try await client.call("VersionSummarizeRequest", ["project_id": project.id, "commit": commit])
+    return clean(result["text"] as? String ?? "")
   }
+
 }
 
 /// The project's versions (core/src/versions.cc): a git repository whose
@@ -72,8 +72,8 @@ extension ProjectSession {
       let diff = try await rpc.versionDiff(commit: commit)
       // Nothing a summary may read changed (the layout, data files).
       guard !diff.text.isEmpty else { return }
-      let input = VersionSummarizer.input(message: c.message ?? "", changed: c.changedList, diff: diff.text, truncated: diff.truncated)
-      let text = try await VersionSummarizer.summarize(input, config: config)
+      guard let project = try await RPCToolTransport(session: self).project() else { return }
+      let text = try await VersionSummarizer.summarize(project: project, commit: commit, config: config)
       if text.isEmpty {
         versionSummaryErrors[commit] = String(localized: "モデルが文を返しませんでした。")
       } else {

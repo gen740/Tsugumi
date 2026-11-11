@@ -71,6 +71,8 @@ class RequestSink {
 };
 
 struct ServerOptions {
+  enum class Protocol { Project, Agent };
+  Protocol protocol = Protocol::Project;
   std::string unix_path;           // empty: no Unix socket
   // WebSocket on a Unix socket (0600): the shared VM's projects, reached by
   // vmd only, so that nothing listens on the VM's loopback.
@@ -78,6 +80,8 @@ struct ServerOptions {
   std::string tcp_host = "0.0.0.0";
   int tcp_port = -1;               // <0: no WebSocket listener
   std::vector<std::string> allowed_origins;
+  // Launcher-owned control file lets another UI attach to a resident project.
+  std::string origins_file;
   bool allow_missing_origin = false;
   Limits limits;
 };

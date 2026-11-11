@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -23,9 +24,12 @@ from pathlib import Path
 
 import pytest
 
+from conftest import WEB_DIST
+from test_claude_code_plugin import isolated_environment, stop_resident_services
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
-SERVER = ROOT / "web" / "dist" / "server.js"
+SERVER = WEB_DIST / "server.js"
 needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and web/dist (cd web && npm run build)")
 
 
@@ -189,25 +193,50 @@ def test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there():
 # ---- The web server on the VM -------------------------------------------------
 
 HOST = r'''
-import json, os, sys
+import fcntl, hashlib, json, os, pathlib, socket, sys, threading
+support = pathlib.Path(sys.argv[sys.argv.index("--support") + 1]).resolve()
+lock = open(support / "vmhost.lock", "a")
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(0)
+endpoint = pathlib.Path("/tmp") / ("tsugumi-vmhost-%d-%s.sock" % (os.getuid(), hashlib.sha256(str(support).encode()).hexdigest()[:24]))
+if endpoint.exists():
+    endpoint.unlink()
+listener = socket.socket(socket.AF_UNIX)
+listener.bind(str(endpoint))
+endpoint.chmod(0o600)
+listener.listen()
+pathlib.Path(os.environ["HOST_PID"]).write_text(str(os.getpid()))
 prefs_file, log_file = os.environ["HOST_PREFS"], os.environ["HOST_LOG"]
-prefs = json.load(open(prefs_file))
-for line in sys.stdin:
-    r = json.loads(line)
-    open(log_file, "a").write(line)
-    a = {"id": r["id"], "result": {}}
-    if r["op"] == "prefs":
-        a["result"] = {k: prefs[k] for k in r["keys"] if k in prefs}
-    elif r["op"] == "setPrefs":
-        prefs.update(r["values"])
-        json.dump(prefs, open(prefs_file, "w"))
-    elif r["op"] == "start":
-        if os.path.exists(os.environ["HOST_BUSY"]):
-            a = {"id": r["id"], "error": "another Tsugumi is using the execution environment"}
-        else:
-            print(json.dumps({"event": "progress", "key": "x", "stage": "booting the VM"}), flush=True)
-            a["result"] = {"endpoint": "ws://127.0.0.1:1/rpc", "token": "t", "projectId": "p", "readyFile": "/r"}
-    print(json.dumps(a), flush=True)
+mutex = threading.Lock()
+def serve(peer):
+    with peer, peer.makefile("r") as lines:
+        for line in lines:
+            with mutex:
+                r = json.loads(line)
+                with open(log_file, "a") as log:
+                    log.write(line)
+                with open(prefs_file) as source:
+                    prefs = json.load(source)
+                a = {"id": r["id"], "result": {}}
+                if r["op"] == "prefs":
+                    a["result"] = {k: prefs[k] for k in r["keys"] if k in prefs}
+                elif r["op"] == "setPrefs":
+                    prefs.update(r["values"])
+                    temporary = prefs_file + ".new"
+                    with open(temporary, "w") as target:
+                        json.dump(prefs, target)
+                    os.replace(temporary, prefs_file)
+                elif r["op"] == "start":
+                    if os.path.exists(os.environ["HOST_BUSY"]):
+                        a = {"id": r["id"], "error": "fixture VM failed", "recovery": "Retry the virtual machine"}
+                    else:
+                        a["result"] = {"endpoint": "ws://127.0.0.1:1/rpc", "token": "t", "projectId": "p", "serverInstanceId": "s", "readyFile": "/r"}
+                peer.sendall((json.dumps(a) + "\n").encode())
+while True:
+    peer, _ = listener.accept()
+    threading.Thread(target=serve, args=(peer,), daemon=True).start()
 '''
 
 
@@ -223,8 +252,8 @@ def vm_server(tmp_path):
     (project / "tsugumi.json").write_text('{"name": "P"}')
     (support / "recent-projects.json").write_text(json.dumps([{"path": str(project), "name": "P", "openedAt": 800000000.5}]))
     executable(tmp_path / "host", f"#!{sys.executable}\n{HOST}")
-    env = dict(os.environ, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_WEB_DATA=str(support / "web"), HOST_PREFS=str(prefs), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
+    env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
+               TSUGUMI_WEB_DATA=str(support / "web"), HOST_PREFS=str(prefs), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
@@ -233,6 +262,14 @@ def vm_server(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+        stop_resident_services(tmp_path)
+        if (tmp_path / "host.pid").exists():
+            try:
+                os.kill(int((tmp_path / "host.pid").read_text()), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        endpoint = Path("/tmp") / f"tsugumi-vmhost-{os.getuid()}-{hashlib.sha256(str(support.resolve()).encode()).hexdigest()[:24]}.sock"
+        endpoint.unlink(missing_ok=True)
 
 
 def api(port: int, cookie: str, method: str, route: str, body=None):
@@ -274,12 +311,14 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     s = api(port, cookie, "GET", "/api/settings")
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"model": "chosen-here", "webSearch": True})
+    api(port, cookie, "GET", "/api/settings")
     p = json.loads(prefs.read_text())
     assert p["agent.model"] == "chosen-here" and p["agent.webSearch"] is True
     # Left alone: at the app's own default, not this server's.
     assert "agent.model.chatgpt" not in p and "agent.effort" not in p
     # A kind of permission only the app knows stays when the page changes the list.
     api(port, cookie, "POST", "/api/settings", {"allowedPermissions": ["network", "sandbox_off"]})
+    api(port, cookie, "GET", "/api/settings")
     assert sorted(json.loads(prefs.read_text())["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
 
 
@@ -293,11 +332,11 @@ def test_a_project_starts_through_the_helper_with_the_pages_origins(vm_server):
 
 
 @needs_server
-def test_the_vm_in_use_by_the_app_is_said_in_words(vm_server):
+def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
     tmp, project, _, port, cookie = vm_server
     (tmp / "busy").touch()
     s = api(port, cookie, "POST", "/api/env/start", {"path": str(project)})
-    assert s["state"] == "failed" and "デスクトップ版" in s["message"] and "終了" in s["recovery"]
+    assert s["state"] == "failed" and s["message"] == "fixture VM failed" and s["recovery"] == "Retry the virtual machine"
 
 
 # ---- Running the command again ---------------------------------------------------
@@ -314,7 +353,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
-    env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
     p = subprocess.Popen(["node", str(root / "web" / "dist" / "server.js"), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r":(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
@@ -325,6 +364,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+        stop_resident_services(tmp_path)
         for f in root.joinpath("demos").rglob("*"):
             if f.is_dir():
                 f.chmod(0o755)
@@ -338,7 +378,7 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
     opened = tmp_path / "opened"
     for name in ("open", "xdg-open"):
         executable(stubs / name, f'#!/bin/sh\necho "$1" >> {opened}\n')
-    env = dict(os.environ, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
     first = subprocess.Popen(["node", str(SERVER), "--port", "0", "--reuse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         port = int(re.search(r":(\d+)/\?key=", first.stdout.readline()).group(1))
@@ -354,6 +394,7 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
     finally:
         first.terminate()
         first.wait(10)
+        stop_resident_services(tmp_path)
 
 
 @needs_server
@@ -363,7 +404,7 @@ def test_in_wsl_the_page_opens_in_the_browser_of_windows(tmp_path):
     stubs.mkdir()
     opened = tmp_path / "opened"
     executable(stubs / "rundll32.exe", f'#!/bin/sh\necho "$@" >> {opened}\n')
-    env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"), WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
     p = subprocess.Popen(["node", str(SERVER), "--port", "0", "--open"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         port = int(re.search(r":(\d+)/\?key=", p.stdout.readline()).group(1))
@@ -374,6 +415,7 @@ def test_in_wsl_the_page_opens_in_the_browser_of_windows(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+        stop_resident_services(tmp_path)
 
 
 @needs_server
@@ -381,7 +423,7 @@ def test_a_folder_after_the_commands_flags_is_the_project_to_open(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     (project / "tsugumi.json").write_text("{}")
-    env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
     # As cli/tsugumi-macos and nix/cli.nix give it, without --open (no browser here).
     p = subprocess.Popen(["node", str(SERVER), "--reuse", str(project), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
@@ -389,6 +431,7 @@ def test_a_folder_after_the_commands_flags_is_the_project_to_open(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+        stop_resident_services(tmp_path)
 
 
 @needs_server
@@ -400,7 +443,7 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
             s.listen()
         except OSError:
             pass  # taken already, as wanted
-        env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+        env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
         env.pop("TSUGUMI_WEB_PORT", None)
         p = subprocess.Popen(["node", str(SERVER)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
         try:
@@ -409,3 +452,4 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
         finally:
             p.terminate()
             p.wait(10)
+        stop_resident_services(tmp_path)

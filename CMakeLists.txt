@@ -18,7 +18,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(TSUGUMI_BUILD_CORE "Build tsugumid and the Card worker" ON)
 option(TSUGUMI_BUILD_RENDERER "Build the Dawn Display renderer (macOS host only)" OFF)
-option(TSUGUMI_BUILD_TESTS "Build C++ tests" ON)
+option(TSUGUMI_BUILD_TESTS "Build core RPC tests" ON)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -27,16 +27,18 @@ endif()
 find_program(TSUGUMI_FLATC flatc REQUIRED)
 
 # hosq (header only, pinned by flake.lock) provides typed JSON schemas.
-set(HOSQ_INCLUDE_DIR "$ENV{HOSQ_INCLUDE_DIR}" CACHE PATH "hosq include directory")
-if(NOT EXISTS "${HOSQ_INCLUDE_DIR}/hosq/hosq.hh")
-  message(FATAL_ERROR "hosq not found; set HOSQ_INCLUDE_DIR (nix develop does this)")
+if(TSUGUMI_BUILD_CORE)
+  set(HOSQ_INCLUDE_DIR "$ENV{HOSQ_INCLUDE_DIR}" CACHE PATH "hosq include directory")
+  if(NOT EXISTS "${HOSQ_INCLUDE_DIR}/hosq/hosq.hh")
+    message(FATAL_ERROR "hosq not found; set HOSQ_INCLUDE_DIR (nix develop does this)")
+  endif()
+  add_library(hosq INTERFACE)
+  target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
 endif()
-add_library(hosq INTERFACE)
-target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
 
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker tsugumi)
+set(TSUGUMI_SCHEMAS tsugumi_enums data worker tsugumi agent)
 
 # Bindings are generated with the standard flatc into the build tree only.
 set(_gen_cpp "")
@@ -57,7 +59,7 @@ foreach(schema ${TSUGUMI_SCHEMAS})
     COMMENT "flatc ${schema}.fbs"
     VERBATIM)
 endforeach()
-foreach(schema worker tsugumi)
+foreach(schema worker tsugumi agent)
   list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs
@@ -74,6 +76,10 @@ add_library(tsugumi_protocol INTERFACE)
 add_dependencies(tsugumi_protocol tsugumi_protocol_gen)
 target_include_directories(tsugumi_protocol INTERFACE ${TSUGUMI_GEN_DIR}/cpp)
 
+find_package(flatbuffers CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+add_subdirectory(client)
+
 if(TSUGUMI_BUILD_CORE)
   find_package(flatbuffers CONFIG REQUIRED)
   find_package(PkgConfig REQUIRED)
@@ -87,6 +93,7 @@ if(TSUGUMI_BUILD_CORE)
     pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
   endif()
   find_package(Threads REQUIRED)
+  find_package(CURL REQUIRED)
   add_subdirectory(sdk)
   add_subdirectory(core)
 endif()
@@ -97,5 +104,5 @@ endif()
 
 if(TSUGUMI_BUILD_TESTS AND TSUGUMI_BUILD_CORE)
   enable_testing()
-  add_subdirectory(tests/cpp)
+  add_subdirectory(tests/core)
 endif()

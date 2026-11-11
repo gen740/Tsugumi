@@ -1,6 +1,6 @@
 // swift-tools-version:6.0
-// Tests of the model, RPC, Agent and launcher: built without the app (its
-// views, editors and renderer), so they run in a fraction of its build.
+// Platform adapters and launcher tests, built without the app's renderer.
+// Core Agent behavior is tested through public RPC in tests/core.
 //
 //   cd macOS/CoreTests && swift test
 import PackageDescription

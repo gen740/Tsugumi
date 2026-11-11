@@ -1,29 +1,23 @@
 // The Claude Code plugin's MCP server (stdio, newline-delimited JSON-RPC).
-// Claude Code works on a Tsugumi project through the web UI host: tsugumi_open
-// finds the running host (its server.json) or starts one, and opens the
-// project on the page; every other tool is one of the chat Agent's core tools,
-// sent to the host (/api/agent/call), which runs it with the same checks and
-// approvals as the chat's and shows it on the page (Tsugumi flies to the Card).
-// Nothing here talks to tsugumid directly.
+// The host only forwards calls to core's dedicated Agent socket. The tool
+// catalog, execution, conversations and access decisions belong to core.
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { BFBS } from '../src/shared/bfbs'
-import { externalTools, SYSTEM_PROMPT, ToolCatalog } from './agent'
 import { AGENT_KEY_HEADER, ServerInfo, webDataDir } from './paths'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(here, 'tsugumi.bfbs')))))
 
 const INSTRUCTIONS = `Tsugumi builds computations as Cards on a canvas: each Card is a step (Python, C++, bash, ...), \
 wires carry typed values between Cards, and a run starts from a trigger Card. Every Card runs in an isolated VM \
 with its environment fixed by Nix.
 Before working on a project, call tsugumi_open with its folder (create: true makes a new one). It opens the project \
 in the Tsugumi web UI, where the user watches each save and run live, and returns the rules for the other tools \
-(project_inspect first; saves need the base_rev you inspected). When a save widens what Cards may do (network, \
-folders), the user approves it in the web UI.`
+(project_inspect first; saves need the base_rev you inspected). Project content is unavailable until the user \
+explicitly grants access. Request access through the Agent API and wait for the user's answer. The plugin \
+cannot grant itself access or approve changes to Card permissions.`
 
 const OPEN_TOOL = {
   name: 'tsugumi_open',
@@ -40,11 +34,6 @@ const OPEN_TOOL = {
     additionalProperties: false,
   },
 }
-
-/** What differs for Claude Code from the chat Agent the rules were written for. */
-const CLAUDE_CODE_NOTE = `In Claude Code: the tools above are this MCP server's (the names may carry a prefix). \
-delegate and attached_folder_read are not available here; use your own subagents and file tools instead. The user \
-sees the project in the Tsugumi web UI; say what you changed and ran there, by the Cards' names.`
 
 let current: string | undefined
 let rulesSent = false
@@ -125,7 +114,7 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
     if (args.create !== true) return text(`${dir} is not a Tsugumi project (no tsugumi.json). Pass create: true to make a new one there.`, true)
     folder = (await api<{ path: string }>('/api/project/create', { parent: path.dirname(dir), name: path.basename(dir) })).path
   }
-  const info = await api<{ path: string; name: string }>('/api/project/open', { path: folder })
+  const info = await api<{ path: string }>('/api/project/open', { path: folder })
   current = info.path
   // The host opens the page itself: its key (which answers approvals) is not the plugin's.
   const shown = await api<{ shown: boolean; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })
@@ -135,17 +124,17 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
     where = shown.opened ? `A browser window opens it.`
       : `No web UI page is free to show it (a page on another project keeps that project); the user opens it from the URL the host printed when it started (or call tsugumi_open again without browser: false).`
   }
-  let out = `Opened "${info.name}" (${current}) in the Tsugumi web UI (http://127.0.0.1:${s.port}/). ${where}`
+  let out = `Opened ${current} in the Tsugumi web UI (http://127.0.0.1:${s.port}/). ${where} Opening a project does not grant Agent access to its contents.`
   if (!rulesSent) {
     rulesSent = true
-    out += `\n\nRules for the Tsugumi tools:\n\n${SYSTEM_PROMPT}\n\n${CLAUDE_CODE_NOTE}`
+    out += `\n\n${INSTRUCTIONS}`
   }
   return text(out)
 }
 
 async function call(name: string, args: unknown): Promise<Result> {
   if (name === OPEN_TOOL.name) return open((args ?? {}) as Record<string, unknown>)
-  if (!current) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
+  if (!current && !name.startsWith('agent_')) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
   const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} })
   const result = text(r.text, r.isError)
   for (const i of r.images ?? []) result.content.push({ type: 'image', data: i.data, mimeType: i.media_type })
@@ -173,7 +162,11 @@ async function handle(m: { id?: unknown; method?: string; params?: any }) {
     case 'ping':
       return reply(m.id, {})
     case 'tools/list':
-      return reply(m.id, { tools: [OPEN_TOOL, ...externalTools(catalog).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))] })
+      try {
+        return reply(m.id, { tools: [OPEN_TOOL, ...await api<Record<string, unknown>[]>('/api/agent/tools', {})] })
+      } catch (e) {
+        return reply(m.id, undefined, { code: -32603, message: String((e as Error).message ?? e) })
+      }
     case 'tools/call':
       try {
         return reply(m.id, await call(String(m.params?.name), m.params?.arguments))

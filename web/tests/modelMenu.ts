@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { chatRoutes } from '../server/chat'
+import { CoreAgentHost } from '../server/coreAgent'
 import { keychainReader } from '../server/keychain'
 import { withModelList } from '../server/modelList'
 import { ModelListRefresher } from '../src/model/modelLists'
@@ -86,27 +87,27 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
     writeJSON: (file, v) => void files.set(file, v),
   })
   const list = routes['POST /api/settings/models']
-  const answers: Record<string, () => Response> = {}
-  const original = globalThis.fetch
-  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+  const answers: Record<string, () => { id: string; label: string }[]> = {}
+  const original = CoreAgentHost.prototype.models
+  // The UI receives a model list from the core API; providers run in core.
+  CoreAgentHost.prototype.models = async (config) => {
     await tick()
-    const h = init?.headers as Record<string, string>
-    return answers[h['x-api-key'] ? 'anthropic' : 'openai']()
-  }) as typeof fetch
+    return answers[config.api === 'anthropicMessages' ? 'anthropic' : 'openai']()
+  }
   try {
-    const models = (...ids: string[]) => () => new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }))
+    const models = (...ids: string[]) => () => ids.map((id) => ({ id, label: id }))
     answers.anthropic = models('a1', 'a2')
     answers.openai = models('o1')
     await Promise.all([list({ provider: 'anthropic' }, new URL('http://x')), list({ provider: 'openai' }, new URL('http://x'))])
     const saved = () => ([...files.values()][0] as { models: Record<string, string[]> }).models
     assert.deepEqual(saved(), { anthropic: ['a1', 'a2'], openai: ['o1'] })
-    answers.anthropic = () => new Response('down', { status: 500 })
+    answers.anthropic = () => { throw new Error('down') }
     answers.openai = models()
     await assert.rejects(async () => list({ provider: 'anthropic' }, new URL('http://x')))
     await assert.rejects(async () => list({ provider: 'openai' }, new URL('http://x')))
     assert.deepEqual(saved(), { anthropic: ['a1', 'a2'], openai: ['o1'] })
   } finally {
-    globalThis.fetch = original
+    CoreAgentHost.prototype.models = original
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.OPENAI_API_KEY
   }

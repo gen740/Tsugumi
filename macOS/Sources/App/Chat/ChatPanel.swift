@@ -61,7 +61,7 @@ struct ChatPanel: View {
       if showList { sessionList } else { conversation }
     }
     .background(Color(nsColor: .windowBackgroundColor))
-    .sheet(item: Binding(get: { chat.permissionPrompt }, set: { _ in })) { p in
+    .sheet(item: Binding(get: { detached ? chat.permissionPrompt : nil }, set: { _ in })) { p in
       PermissionPromptView(prompt: p) { allow, always in chat.answerPermissions(allow: allow, always: always) }
     }
   }
@@ -99,9 +99,12 @@ struct ChatPanel: View {
 
   // MARK: - Session list
 
+  @State private var hits: [ChatController.SearchHit] = []
+
   private var sessionList: some View {
     VStack(spacing: 0) {
       TextField("履歴を検索", text: $query).textFieldStyle(.roundedBorder).padding(8)
+        .task(id: query) { hits = await chat.search(query) }
       if query.isEmpty {
         List(chat.sessions) { s in
           Button {
@@ -120,7 +123,6 @@ struct ChatPanel: View {
         }
         .overlay { if chat.sessions.isEmpty { ContentUnavailableView("会話はまだありません", systemImage: "bubble.left") } }
       } else {
-        let hits = chat.search(query)
         List(hits) { h in
           Button {
             chat.select(h.session)

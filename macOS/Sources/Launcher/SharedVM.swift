@@ -233,6 +233,20 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     lock.unlock()
   }
 
+  func mirrorHostEvent(_ event: [String: Any]) {
+    if event["event"] as? String == "console", let line = event["line"] as? String {
+      _ = console.feed(Data((line + "\n").utf8))
+      return
+    }
+    switch event["state"] as? String {
+    case "stopped": setState(.stopped)
+    case "running": setState(.running)
+    case "starting": setState(.starting(Stage(rawValue: event["stage"] as? String ?? "boot") ?? .boot))
+    case "failed": setState(.failed(event["message"] as? String ?? "VM host failed"))
+    default: break
+    }
+  }
+
   private func setState(_ s: State) {
     lock.lock()
     _state = s

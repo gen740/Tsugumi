@@ -8,8 +8,10 @@ THIRD_PARTY_NOTICES.md
 CMakeLists.txt
 cmake
 core
+client
+agent/Shared
 sdk
 protocol
 nix
-tests/cpp
+tests/core
 macOS/Container/vm-system.nix

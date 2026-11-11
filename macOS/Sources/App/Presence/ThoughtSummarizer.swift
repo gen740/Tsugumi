@@ -9,6 +9,7 @@ import TsugumiAgent
 @MainActor
 final class ThoughtSummarizer {
   let presence: AgentPresence
+  var conversationID: String?
   private(set) var usage = Usage()
   /// Why the last summary could not be written (nil when it was).
   private(set) var lastError: String?
@@ -46,16 +47,15 @@ final class ThoughtSummarizer {
   }
 
   private func schedule() {
-    guard Self.enabled, task == nil, let config = Self.config() else { return }
+    guard Self.enabled, task == nil, let config = Self.config(), let conversationID else { return }
     let wait = max(0, Self.interval - Date().timeIntervalSince(lastCall))
     task = Task { [weak self] in
       try? await Task.sleep(for: .seconds(wait))
       guard let self else { return }
-      let input = String(self.notes.joined(separator: "\n").suffix(2400))
       self.notes.removeAll()
       self.lastCall = Date()
       do {
-        let reply = try await Self.summarize(input, config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens })
+        let reply = try await Self.summarize(conversationID: conversationID, config: config, usage: { self.usage.inputTokens += $0.inputTokens; self.usage.outputTokens += $0.outputTokens })
         if let line = Self.clean(reply) { self.presence.think(line) }
         self.lastError = nil
       } catch {
@@ -107,17 +107,13 @@ final class ThoughtSummarizer {
     """
   }
 
-  static func summarize(_ notes: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
-    let provider = MessagesProvider(config: config)
-    var text = ""
-    for try await e in try provider.stream(system: system, messages: [ChatMessage(role: "user", content: [.text(notes)])], tools: []) {
-      switch e {
-      case .text(let t): text += t
-      case .stop(_, let u): usage(u)
-      default: break
-      }
-    }
-    return text
+  static func summarize(conversationID: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
+    let client = CoreAgentClient.shared
+    let value = try await client.call("ConversationSummarizeRequest", ["conversation_id": conversationID,
+      "provider_json": try await client.providerJSON(config)])
+    if let counts = value["usage"], let data = try? JSONSerialization.data(withJSONObject: counts),
+       let measured = try? JSONDecoder().decode(Usage.self, from: data) { usage(measured) }
+    return value["text"] as? String ?? ""
   }
 
   /// One line, at most 60 characters, without quotes or Markdown.

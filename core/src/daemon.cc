@@ -186,6 +186,7 @@ int run_daemon(int argc, char** argv) {
   sv.tcp_host = opt.listen_host;
   sv.tcp_port = opt.listen_port;
   sv.allowed_origins = opt.origins;
+  if (!opt.control_dir.empty()) sv.origins_file = (opt.control_dir / "origins.json").string();
   sv.allow_missing_origin = opt.allow_missing_origin;
   Server server(sv, &service);
   service.attach(&server);

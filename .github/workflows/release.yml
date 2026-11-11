@@ -54,14 +54,23 @@ jobs:
           tag="${TAG:-$GITHUB_REF_NAME}"
           echo "TAG=$tag" >> "$GITHUB_ENV"
           test "v$(cat VERSION)" = "$tag"
-      - uses: cachix/install-nix-action@v31
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Identify the Apple toolchain
+        id: toolchain
+        run: |
+          toolchain=$({ xcodebuild -version; xcrun --sdk macosx --show-sdk-version; swift --version; } | shasum -a 256 | cut -d ' ' -f1)
+          echo "key=$toolchain" >> "$GITHUB_OUTPUT"
       - name: Cache the Dawn renderer
         uses: actions/cache@v4
         with:
           path: build-renderer
-          key: renderer-${{ runner.os }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt') }}
+          key: renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt', 'client/CMakeLists.txt', 'protocol/**') }}
+          restore-keys: |
+            renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
       - name: Build the Dawn renderer
-        run: '[ -f build-renderer/ui/renderer/libtsugumi_renderer.dylib ] || ui/renderer/build.sh'
+        run: ui/renderer/build.sh
       # The VM's boot disk is downloaded from gen740/tsugumi-vm
       # (macOS/tools/publish-vm.sh publishes it after vm-boot.nix changes).
       - name: Build the app

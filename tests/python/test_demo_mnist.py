@@ -20,7 +20,7 @@ import pytest
 from conftest import ROOT, demo_environment
 from projects import start_run, wait_run
 from test_demos import connect, display_text, edit_card, set_param, stderr
-from test_history import read_all
+from harness.observations import read_pages
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -66,7 +66,7 @@ def ran(c, run_id, card):
 
 def subset(c, run_id):
     art = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "subset")
-    return np.load(io.BytesIO(read_all(c, "ArtifactReadRequest", 256 * 1024, artifactId=text(art.artifactId))))
+    return np.load(io.BytesIO(read_pages(c, "ArtifactReadRequest", page_bytes=256 * 1024, artifactId=text(art.artifactId))))
 
 
 def plain_knn(train_x, train_y, test_x, k):

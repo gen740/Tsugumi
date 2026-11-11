@@ -10,18 +10,10 @@ for (const c of JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/merge
 }
 console.log('merge behavior: passed')
 
-await import("./recovery")
-
-await import("./toolImages")
-await import("./references")
-
-await import("./approval")
+// Agent recovery, images, references, approvals and compaction run through
+// protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
 await import("./chatStopped")
-
-await import("./compaction")
-
-await import("./storage")
 
 await import("./table")
 

@@ -1,5 +1,6 @@
 /build/
 /build-*/
+/build-ci
 /compile_commands.json
 /result
 /result-*

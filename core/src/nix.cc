@@ -552,6 +552,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
   call.system = node.settings.system;
+  call.definition_dir = def;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";

@@ -321,6 +321,7 @@ public actor ChatGPTAuth {
       tokenType: token["token_type"] as? String ?? "Bearer", expiresIn: token["expires_in"] as? Int ?? 3600,
       scopes: scopes, savedAt: ISO8601DateFormatter().string(from: Date()), welcomed: existing?.welcomed)
     let welcome = account.planEnabled && account.welcomed != true
+    try await importCredential(account, replace: true)
     // A new sign-in becomes the active account only now that it is validated.
     try await update { s in
       if let i = s.accounts.firstIndex(where: { $0.clientId == issued }) {
@@ -345,18 +346,9 @@ public actor ChatGPTAuth {
     // revocation and the forgetting of the tokens.
     try await locked {
       guard var s = load(), let i = s.accounts.firstIndex(where: { $0.clientId == clientId }) else { return true }
-      var revoked = s.accounts[i].refreshToken == nil
-      if let t = s.accounts[i].refreshToken {
-        for attempt in 0..<3 where !revoked {
-          if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt))) }
-          var r = URLRequest(url: endpoints.revoke)
-          r.httpMethod = "POST"
-          r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
-          r.httpBody = Data(Self.form([("token", t), ("token_type_hint", "refresh_token"), ("client_id", clientId)]).utf8)
-          guard let (_, resp) = try? await session.data(for: r), let status = (resp as? HTTPURLResponse)?.statusCode else { continue }
-          if status == 200 { revoked = true } else if status < 500 { break }
-        }
-      }
+      try await importCredential(s.accounts[i], replace: false)
+      let result = try await CoreAgentClient.shared.call("CredentialForgetRequest", ["client_id": clientId])
+      let revoked = result["revoked"] as? Bool ?? false
       s.accounts[i].accessToken = nil
       s.accounts[i].refreshToken = nil
       s.accounts[i].idToken = nil
@@ -383,76 +375,25 @@ public actor ChatGPTAuth {
       throw ChatGPTError.signInRequired("no ChatGPT account is signed in")
     }
     if let stale, stale.clientId != id { throw ChatGPTError.failed("the active account changed; try again") }
-    guard a.signedIn, let current = a.accessToken else { throw ChatGPTError.signInRequired("signed out") }
+    guard a.signedIn else { throw ChatGPTError.signInRequired("signed out") }
     guard a.planEnabled else { throw ChatGPTError.planNotEnabled }
-    let needsRefresh = stale.map { $0.value == current } ?? a.expiresSoon()
-    if !needsRefresh { return AccessToken(clientId: id, value: current) }
-    // Not cancelled with the turn: once OpenAI rotated the refresh token, the
-    // answer must be saved, or the next refresh reuses the old token and the
-    // account is signed out.
-    let value = try await Task { try await self.refreshLocked(id: id, stale: stale?.value, asking: asking) }.value
-    return AccessToken(clientId: id, value: value)
+    try await importCredential(a, replace: false)
+    var fields: [String: Any] = ["client_id": id]
+    if let stale { fields["stale_token"] = stale.value }
+    let result = try await CoreAgentClient.shared.call("CredentialTokenRequest", fields)
+    guard let token = result["access_token"] as? String else { throw ChatGPTError.signInRequired("core has no access token") }
+    return AccessToken(clientId: id, value: token)
   }
 
-  private func refreshLocked(id: String, stale: String?, asking: Bool) async throws -> String {
-    try await locked {
-      // Read again: the other process may have refreshed meanwhile.
-      guard let s = load(asking: asking), let a = s.accounts.first(where: { $0.clientId == id }), let current = a.accessToken,
-            let refresh = a.refreshToken else {
-        throw ChatGPTError.signInRequired("signed out")
-      }
-      guard s.active == id else { throw ChatGPTError.failed("the active account changed; try again") }
-      guard a.planEnabled else { throw ChatGPTError.planNotEnabled }
-      if stale == nil ? !a.expiresSoon() : current != stale { return current }
-      let r = try await refreshRequest(clientId: id, refreshToken: refresh)
-      // May ask whatever the caller said: the rotated refresh token must be saved.
-      guard var s2 = load(), let i = s2.accounts.firstIndex(where: { $0.clientId == id }) else {
-        throw ChatGPTError.signInRequired("signed out")
-      }
-      switch r {
-      case .tokens(let t):
-        guard let access = t["access_token"] as? String else { throw ChatGPTError.failed("the refresh returned no access token") }
-        // The access token, its expiry, the scopes and the rotating refresh token change together.
-        s2.accounts[i].accessToken = access
-        s2.accounts[i].refreshToken = t["refresh_token"] as? String ?? refresh
-        s2.accounts[i].expiresIn = t["expires_in"] as? Int ?? 3600
-        if let sc = t["scope"] as? String { s2.accounts[i].scopes = sc.split(separator: " ").map(String.init).sorted() }
-        if let idt = t["id_token"] as? String { s2.accounts[i].idToken = idt }
-        s2.accounts[i].savedAt = ISO8601DateFormatter().string(from: Date())
-        try save(s2)
-        guard s2.accounts[i].planEnabled else { throw ChatGPTError.planNotEnabled }
-        return access
-      case .ended(let code):
-        // The refresh token can no longer be used: sign in again with the same registration.
-        s2.accounts[i].accessToken = nil
-        s2.accounts[i].refreshToken = nil
-        try save(s2)
-        throw ChatGPTError.signInRequired(code)
-      }
-    }
-  }
-
-  enum Refresh { case tokens([String: Any]), ended(String) }
-  static let endedCodes: Set<String> = ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired",
-                                        "refresh_token_invalidated", "refresh_token_reused"]
-
-  private func refreshRequest(clientId: String, refreshToken: String) async throws -> Refresh {
-    var r = URLRequest(url: endpoints.token)
-    r.httpMethod = "POST"
-    r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
-    r.httpBody = Data(Self.form([("grant_type", "refresh_token"), ("client_id", clientId), ("refresh_token", refreshToken),
-                                 ("resource", endpoints.resource)]).utf8)
-    let (data, resp) = try await session.data(for: r)
-    let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-    let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-    if status == 200 { return .tokens(obj) }
-    // A failure of the network or of the server keeps the tokens (retried later).
-    if status >= 500 || status == 429 {
-      throw MessagesProvider.HTTPStatusError(status: status, body: String(decoding: data, as: UTF8.self))
-    }
-    let code = Self.errorCode(obj) ?? "HTTP \(status)"
-    if Self.endedCodes.contains(code) { return .ended(code) }
-    throw ChatGPTError.failed("token refresh failed: \(code)")
+  private func importCredential(_ account: ChatGPTAccount, replace: Bool) async throws {
+    guard let access = account.accessToken, let refresh = account.refreshToken else { return }
+    let saved = account.savedAt.flatMap { ISO8601DateFormatter().date(from: $0) } ?? .distantPast
+    let object: [String: Any] = ["client_id": account.clientId, "access_token": access, "refresh_token": refresh,
+      "token_endpoint": endpoints.token.absoluteString, "revocation_endpoint": endpoints.revoke.absoluteString,
+      "resource": endpoints.resource, "expires_at_ms": max(0, saved.addingTimeInterval(Double(account.expiresIn ?? 0)).timeIntervalSince1970 * 1000),
+      "scope": account.scopes.joined(separator: " ")]
+    let json = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    _ = try await CoreAgentClient.shared.call("CredentialImportRequest", ["registration_json": json, "replace": replace])
   }
 
   private func tokenRequest(_ form: [(String, String)]) async throws -> [String: Any] {

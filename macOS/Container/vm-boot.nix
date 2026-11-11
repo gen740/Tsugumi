@@ -2,7 +2,7 @@
 # Virtualization.framework): the kernel and a small read-only root file
 # system with Nix. Everything else is built by Nix inside the VM on its first
 # boot from Tsugumi's own source (vm-system.nix): the app bundles only this
-# and the source, and downloads happen in the VM, from cache.nixos.org.
+# and the source, and downloads use cache.nixos.org and tsugumi.cachix.org.
 #
 #   $out/vmlinux        guest kernel (kernel.nix)
 #   $out/rootfs.erofs   read-only root file system: /init, this closure, /etc
@@ -42,6 +42,8 @@ let
     experimental-features = nix-command flakes
     substituters = https://cache.nixos.org
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    extra-substituters = https://tsugumi.cachix.org
+    extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI=
     max-jobs = auto
     allow-import-from-derivation = false
     # Build-time dependencies (compilers, the nixpkgs source) of every rooted

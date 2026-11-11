@@ -18,8 +18,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import WEB_DIST
+from test_claude_code_plugin import isolated_environment, stop_resident_services
+
 ROOT = Path(__file__).resolve().parents[2]
-SERVER = ROOT / "web" / "dist" / "server.js"
+SERVER = WEB_DIST / "server.js"
 
 pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
                                 reason="needs node and web/dist (cd web && npm run build)")
@@ -27,7 +30,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
 
 @pytest.fixture
 def web(tmp_path):
-    env = dict(os.environ, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         line = p.stdout.readline()
@@ -37,6 +40,7 @@ def web(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+        stop_resident_services(tmp_path)
 
 
 def request(port: int, method: str, path: str, headers=None, body=None):
@@ -87,6 +91,18 @@ def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(
     assert r.getheader("x-content-type-options") == "nosniff"
 
 
+def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(web):
+    _, port, _ = web
+    response, _ = request(port, "GET", "/")
+    policy = response.getheader("content-security-policy")
+    assert "'wasm-unsafe-eval'" in policy and "'unsafe-eval'" not in policy
+    response, module = request(port, "GET", "/client/tsugumi-client.wasm")
+    assert response.status == 200 and response.getheader("content-type") == "application/wasm"
+    assert module[:4] == b"\x00asm"
+    response, script = request(port, "GET", "/client/tsugumi-client.js")
+    assert response.status == 200 and b"<!doctype" not in script.lower()
+
+
 def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
     """/modules/ (a Card's Plotly figure or Vega-Lite chart) may be framed by the
     page alone, always runs sandboxed (an opaque origin: no cookie, no /api/),
@@ -119,7 +135,7 @@ def post(port: int, cookie: str, route: str, body: dict):
     return json.loads(data)
 
 
-def test_a_project_stops_when_the_last_page_showing_it_leaves(web, tmp_path):
+def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
     from test_claude_code_plugin import Events
     from conftest import write_project
 
@@ -133,16 +149,20 @@ def test_a_project_stops_when_the_last_page_showing_it_leaves(web, tmp_path):
         p.start()
     for page in ("a", "b", "child"):
         post(port, cookie, "/api/page", {"page": page, "project": str(project)})
+    before = post(port, cookie, "/api/env/start", {"path": str(project)})
+    assert before["state"] == "ready", before
     # Another page shows it: it goes on.
     assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)}) == {"stopped": False}
     assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
-    # The last one: it stops, and the page of a child workflow is told to go too.
-    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": True}
+    # The last page detaches its views while core remains available.
+    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": False}
     for _ in range(50):
         if [e for e in pages[2].events if e.get("type") == "projectClosed"]:
             break
         time.sleep(0.1)
     assert {"type": "projectClosed", "project": real} in pages[2].events
+    after = post(port, cookie, "/api/env/start", {"path": str(project)})
+    assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
 
 
 def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):

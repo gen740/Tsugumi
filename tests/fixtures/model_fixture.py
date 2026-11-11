@@ -167,6 +167,12 @@ def system_text(body):
     return s if isinstance(s, str) else "".join(b.get("text", "") for b in s)
 
 
+def asks_summary(body):
+    """A summary-only request interprets quoted history as data, not a task."""
+    instruction = body.get("instructions", "") or system_text(body)
+    return not body.get("tools") and re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None
+
+
 def unanswered_tool_uses(messages):
     """tool_use ids not answered by tool_result blocks at the start of the next
     message: the Messages API rejects such a request, and so does the fixture."""
@@ -1019,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
         if search and declared:
             self._search_reply(body, search.group(1), search.group(2), rest)
             return
-        if system_text(body).startswith("You summarize"):
+        if asks_summary(body):
             with Handler.lock:
                 refuse, Handler.fail_summaries = Handler.fail_summaries > 0, max(0, Handler.fail_summaries - 1)
             if refuse:
@@ -1127,7 +1133,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(raw)
         with Handler.lock:
             Handler.requests.append({"path": self.path, "tools": tools, "include": include,
-                                     "names_web_search": b"web_search" in raw, "summary": b"You summarize" in raw,
+                                     "names_web_search": b"web_search" in raw, "summary": asks_summary(body),
                                      "eager": b"eager_input_streaming" in raw,
                                      "effort": body.get("output_config", body.get("reasoning", {})).get("effort"),
                                      "speed": body.get("speed", body.get("service_tier")),
@@ -1260,7 +1266,7 @@ class Handler(BaseHTTPRequestHandler):
         if search and declared:
             self._responses_search(search.group(1))
             return
-        if body.get("instructions", "").startswith("You summarize"):
+        if asks_summary(body):
             decision = ("text", "Earlier: the user asked for a setting change and a run.")
         elif search:
             decision = ("text", "I have no way to search the web here.")

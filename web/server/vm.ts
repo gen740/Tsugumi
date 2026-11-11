@@ -1,9 +1,9 @@
-// The Mac's `tsugumi` command: one tsugumid per project in the app's shared
-// Linux VM, as in the desktop app, instead of on this host (env.ts). The VM
-// belongs to tsugumi-vmhost (macOS/Sources/VMHost), which this server drives
-// over its standard input and output. It is another process because only a
-// binary signed with the virtualization entitlement can run a VM.
-import { ChildProcess, spawn } from 'node:child_process'
+// The resident, signed VM host owns project execution independently of UI
+// sessions. Web and desktop clients reconnect to its private Unix socket.
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { EnvState, Environments, projectKey, writeGrant } from './env'
@@ -53,9 +53,10 @@ class HostError extends Error {
 interface Env { key: string; project: string; state: EnvState; folders: string[] }
 
 export class VMEnvironmentManager implements Environments {
-  private proc?: ChildProcess
+  private socket?: net.Socket
+  private connecting?: Promise<net.Socket>
   private nextId = 1
-  private waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>()
+  private waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private envs = new Map<string, Env>()
   private listeners = new Set<(key: string, s: EnvState) => void>()
   private terminals = new Map<number, { data: (d: string) => void; exit: (e: { exitCode: number }) => void }>()
@@ -63,28 +64,68 @@ export class VMEnvironmentManager implements Environments {
 
   constructor(readonly options: VMHostOptions, private readonly origins: () => string[]) {}
 
-  /** The helper, started on first use and again after it failed. */
-  private helper(): ChildProcess {
-    if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) return this.proc
-    const { host, image, source, support } = this.options
-    // In a session of its own: Ctrl-C reaches this server, which stops the
-    // projects first; the helper ends when its standard input does.
-    const p = spawn(host, ['--support', support, '--image', image, '--source', source], { stdio: ['pipe', 'pipe', 'inherit'], detached: true })
-    this.proc = p
-    p.on('error', (e) => this.lost(p, L('tsugumi-vmhost を起動できません: {0}', e.message)))
-    p.on('exit', (code, signal) => this.lost(p, L('tsugumi-vmhost が終了しました（{0}）', signal ?? code)))
-    p.stdin!.on('error', () => {})
-    createInterface({ input: p.stdout! }).on('line', (line) => this.line(line))
-    return p
+  /** Attach to the existing host, or start one without tying it to this server. */
+  private helper(): Promise<net.Socket> {
+    if (this.socket && !this.socket.destroyed) return Promise.resolve(this.socket)
+    if (this.connecting) return this.connecting
+    this.connecting = this.openHost().finally(() => { this.connecting = undefined })
+    return this.connecting
   }
 
-  private lost(p: ChildProcess, message: string) {
-    if (this.proc !== p) return
-    this.proc = undefined
-    for (const w of this.waiting.values()) w.reject(new HostError(message, L('再試行すると起動し直します。文書と実行履歴は消えません。'), ''))
+  private async openHost(): Promise<net.Socket> {
+    const { host, image, source, support } = this.options
+    fs.mkdirSync(support, { recursive: true, mode: 0o700 })
+    const canonical = fs.realpathSync(support)
+    const digest = createHash('sha256').update(canonical).digest('hex').slice(0, 24)
+    const socketPath = `/tmp/tsugumi-vmhost-${process.getuid!()}-${digest}.sock`
+    const connect = () => new Promise<net.Socket>((resolve, reject) => {
+      try {
+        const metadata = fs.lstatSync(socketPath)
+        if (!metadata.isSocket() || metadata.uid !== process.getuid!() || (metadata.mode & 0o077) !== 0) {
+          throw new Error('VM host socket is not private to this user')
+        }
+      } catch (error) { reject(error); return }
+      const socket = net.createConnection(socketPath)
+      const timer = setTimeout(() => { socket.destroy(); reject(new Error('VM host connection timed out')) }, 500)
+      socket.once('error', (error) => { clearTimeout(timer); socket.destroy(); reject(error) })
+      socket.once('connect', () => { clearTimeout(timer); resolve(socket) })
+    })
+    let socket = await connect().catch(() => undefined)
+    if (!socket) {
+      const log = fs.openSync(path.join(support, 'vmhost.log'), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600)
+      let failure: Error | undefined
+      try {
+        const process = spawn(host, ['--support', canonical, '--image', image, '--source', source], { stdio: ['ignore', log, log], detached: true })
+        process.on('error', (error) => { failure = error })
+        process.unref()
+      } finally { fs.closeSync(log) }
+      const deadline = Date.now() + 15_000
+      while (!socket && Date.now() < deadline) {
+        if (failure) throw failure
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        socket = await connect().catch(() => undefined)
+      }
+    }
+    if (!socket) throw new HostError('tsugumi-vmhost did not become ready', L('再試行してください。'), '')
+    const connection = socket
+    this.socket = connection
+    connection.on('error', () => {})
+    connection.on('close', () => this.lost(connection, L('実行環境との接続が切れました。')))
+    createInterface({ input: connection }).on('line', (line) => this.line(line))
+    return connection
+  }
+
+  private lost(socket: net.Socket, message: string) {
+    if (this.socket !== socket) return
+    this.socket = undefined
+    for (const w of this.waiting.values()) {
+      clearTimeout(w.timer)
+      w.reject(new HostError(message, L('再試行すると接続し直します。実行中の処理は継続しています。'), ''))
+    }
     this.waiting.clear()
     for (const t of this.terminals.values()) t.exit({ exitCode: 1 })
     this.terminals.clear()
+    this.decoders.clear()
     for (const e of this.envs.values()) if (e.state.state === 'ready' || e.state.state === 'starting') this.set(e, { state: 'stopped' })
   }
 
@@ -98,6 +139,7 @@ export class VMEnvironmentManager implements Environments {
     if (m.id !== undefined) {
       const w = this.waiting.get(m.id)
       this.waiting.delete(m.id)
+      if (w) clearTimeout(w.timer)
       if (m.error !== undefined) w?.reject(new HostError(m.error, m.recovery ?? '', m.log ?? ''))
       else w?.resolve(m.result)
     } else if (m.event === 'progress') {
@@ -117,12 +159,22 @@ export class VMEnvironmentManager implements Environments {
     }
   }
 
-  private call<T = any>(op: string, args: Record<string, unknown> = {}): Promise<T> {
+  private async call<T = any>(op: string, args: Record<string, unknown> = {}): Promise<T> {
+    const socket = await this.helper()
+    if (this.waiting.size >= 32) throw new Error('Too many pending VM host operations')
     const id = this.nextId++
-    const p = this.helper()
+    const line = JSON.stringify({ id, op, ...args }) + '\n'
+    if (Buffer.byteLength(line) > 1 << 20) throw new Error('VM host request exceeds its limit')
     return new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject })
-      p.stdin!.write(JSON.stringify({ id, op, ...args }) + '\n')
+      const timer = setTimeout(() => { this.waiting.delete(id); reject(new Error('VM host request timed out')) }, 1_800_000)
+      timer.unref()
+      this.waiting.set(id, { resolve, reject, timer })
+      socket.write(line, (error) => {
+        if (!error) return
+        clearTimeout(timer)
+        this.waiting.delete(id)
+        reject(error)
+      })
     })
   }
 
@@ -170,7 +222,7 @@ export class VMEnvironmentManager implements Environments {
 
   async stop(dir: string): Promise<void> {
     const e = this.env(dir)
-    if (this.proc) await this.call('stop', { path: e.project }).catch(() => {})
+    await this.call('stop', { path: e.project })
     this.set(e, { state: 'stopped' })
   }
 
@@ -178,18 +230,9 @@ export class VMEnvironmentManager implements Environments {
     return Promise.all([...this.envs.values()].filter((e) => e.state.state !== 'stopped').map((e) => this.stop(e.project)))
   }
 
-  /** Ends the helper: it stops the VM, and this waits for that. */
-  shutdown(): Promise<void> {
-    const p = this.proc
-    if (!p) return Promise.resolve()
-    return new Promise((resolve) => {
-      const t = setTimeout(() => p.kill('SIGKILL'), 60_000)
-      p.once('exit', () => {
-        clearTimeout(t)
-        resolve()
-      })
-      p.stdin!.end()
-    })
+  /** Disconnects this UI; the resident host keeps its VM and projects alive. */
+  async shutdown(): Promise<void> {
+    this.socket?.destroy()
   }
 
   /** As the app's chat: a folder is shared when the environment starts, so a
@@ -250,10 +293,5 @@ export class VMEnvironmentManager implements Environments {
 
 function failure(error: unknown): EnvState {
   const e = error as HostError
-  // One VM per support folder (SharedVM.start): the app has it, or another server.
-  if (e.message?.includes('another Tsugumi is using')) {
-    return { state: 'failed', message: L('デスクトップ版の Tsugumi か別の tsugumi コマンドが共通 VM を使っています。'),
-      recovery: L('VM は同時に 1 つのアプリしか使えません。もう一方を終了してから再試行してください。文書と実行履歴は消えません。'), log: '' }
-  }
   return { state: 'failed', message: e.message ?? String(e), recovery: e.recovery ?? L('再試行してください。'), log: e.log ?? '' }
 }

@@ -3156,7 +3156,7 @@ auto run(Card::Input& input) -> Card::Output {
         const diff = await this.client.versionDiff(commit)
         // Nothing a summary may read changed (the layout, data files).
         if (s(diff.text)) {
-          const { text } = await api<{ text: string }>('/api/versions/summarize', { input: versionSummaryInput(c, diff) })
+          const { text } = await api<{ text: string }>('/api/versions/summarize', { path: this.dir, commit })
           await this.client.versionSummary(uuid(), 'ui', commit, text)
           await this.refreshVersions()
         }

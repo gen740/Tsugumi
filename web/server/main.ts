@@ -301,7 +301,7 @@ async function loadPty() {
     // npm drops the helper's executable bit from the package.
     const require = createRequire(import.meta.url)
     const helper = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
-    if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
+    if (fs.existsSync(helper) && (fs.statSync(helper).mode & 0o111) === 0) fs.chmodSync(helper, 0o755)
     return pty
   } catch (e) {
     throw new HttpError(500, L('ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: {0}', (e as Error).message))
@@ -388,7 +388,7 @@ function startBuild() {
 // ---- HTTP ------------------------------------------------------------------------
 
 const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.wasm': 'application/wasm', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.map': 'application/json', '.icns': 'image/icns',
 }
 
@@ -449,8 +449,7 @@ const routes: Record<string, Handler> = {
     else pageProjects.delete(String(b.page))
     return {}
   },
-  // A page left the project. It stops with its chat and terminals, unless another
-  // page shows it; a child workflow's page goes with it.
+  // A page left the project. Its observation and terminals detach; core keeps running.
   'POST /api/project/close': async (b) => {
     const dir = projectDir(b.path)
     const page = String(b.page)
@@ -460,8 +459,7 @@ const routes: Record<string, Handler> = {
     broadcast({ type: 'projectClosed', project: dir })
     cancelChats(dir)
     for (const t of terminals.values()) if (t.project === dir) stopTerminal(t)
-    await envs.stop(dir)
-    return { stopped: true }
+    return { stopped: false }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/stop': async (b) => {
@@ -549,7 +547,7 @@ const MODULE_HEADERS = {
 
 // Every response: no framing, no type sniffing, only this origin's code.
 const SECURITY_HEADERS = {
-  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+  'content-security-policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
     "font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -678,9 +676,7 @@ async function shutdown() {
   for (const s of streams.keys()) s.end()
   for (const t of terminals.values()) stopTerminal(t, 'SIGKILL')
   server.close()
-  // Active runs are interrupted by tsugumid itself; documents stay in the folders.
-  await envs.stopAll()
-  await vm?.shutdown()
+  // Core and the resident VM host outlive browser and launcher sessions.
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

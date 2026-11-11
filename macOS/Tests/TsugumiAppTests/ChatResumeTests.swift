@@ -1,187 +1,279 @@
+import Darwin
 import Foundation
 import Testing
 import TsugumiAgent
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 
-/// Back in a project whose answer was stopped by leaving it: the chat resumes
-/// the answer as any answer goes, and what is sent then gets its reply. Real
-/// tsugumid and the local model fixture (Requires `build/core/tsugumid`, python3).
+/// UI subscriptions follow core-owned conversations through the production
+/// client. Only the HTTP model response is replaced by a local fixture.
 @MainActor
 @Suite(.serialized) struct ChatResumeTests {
-  /// The model fixture; each streamed chunk takes `slow` seconds.
-  final class Model {
-    let process = Process()
-    let port: Int
+  @MainActor final class Fixture {
+    let directory = URL(fileURLWithPath: "/tmp/tsugumi-chat-\(UUID().uuidString.prefix(8))")
+    let conversationID = UUID().uuidString.lowercased()
+    let core = Process()
+    let model = Process()
+    private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
+    private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
+    private var project: URL?
+    private var daemon: SyncTests.Daemon?
+    private var sessions: [ProjectSession] = []
+    private var chats: [ChatController] = []
+    private var port = 0
 
-    init(slow: Double, options: [String] = []) throws {
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
-                           "--port", "0", "--slow", "\(slow)"] + options
-      let out = Pipe()
-      process.standardOutput = out
-      process.standardError = FileHandle.nullDevice
-      try process.run()
-      // "model fixture on http://127.0.0.1:<port>"
-      let line = String(decoding: out.fileHandleForReading.availableData, as: UTF8.self)
-      port = line.split(separator: ":").last.flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+    var session: ProjectSession { sessions[0] }
+
+    func start(slow: Double, options: [String]) async throws {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let state = directory.appendingPathComponent("state")
+      setenv("TSUGUMI_AGENT_STATE", state.path, 1)
+      setenv("TSUGUMI_SUPPORT_DIR", directory.appendingPathComponent("support").path, 1)
+      let build = ProcessInfo.processInfo.environment["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
+        ?? SyncTests.root.appendingPathComponent("build")
+      core.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_AGENTD"].map { URL(fileURLWithPath: $0) }
+        ?? build.appendingPathComponent("core/tsugumi-agentd")
+      core.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
+                        "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
+      core.standardOutput = FileHandle.nullDevice
+      core.standardError = FileHandle.nullDevice
+      try core.run()
+      let deadline = Date().addingTimeInterval(15)
+      while !FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path),
+            core.isRunning, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      try #require(core.isRunning && FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path))
+
+      model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
+                         "--port", "0", "--slow", "\(slow)"] + options
+      let output = Pipe()
+      model.standardOutput = output
+      model.standardError = FileHandle.nullDevice
+      try model.run()
+      let line = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
+      port = try #require(line.split(separator: ":").last.flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+
+      let project = try SyncTests.project()
+      self.project = project
+      let daemon = try SyncTests.Daemon(project: project)
+      self.daemon = daemon
+      _ = try makeSession()
+      let endpoint = daemon.endpoint
+      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
+        "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture"])
+      _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
+        "project_id": endpoint.projectId, "role": "worker"])
+      try await CoreAgentClient.shared.configure(.localFixture(port: port), conversationID: conversationID)
     }
 
-    func stop() {
-      process.terminate()
-      process.waitUntilExit()
+    func makeSession() throws -> ProjectSession {
+      let project = try #require(project)
+      let daemon = try #require(daemon)
+      let session = ProjectSession(identity: try ProjectIdentity(url: project),
+        environments: EnvironmentManager(support: directory.appendingPathComponent("support"), image: nil))
+      session.endpointOverride = daemon.endpoint
+      sessions.append(session)
+      return session
+    }
+
+    func makeChat() -> ChatController {
+      let port = port
+      let chat = ChatController(session: session, directory: directory.appendingPathComponent("ui"),
+                                connection: { .localFixture(port: port) })
+      chats.append(chat)
+      return chat
+    }
+
+    func keep(_ chat: ChatController) { chats.append(chat) }
+
+    func send(_ text: String = "hello") async throws {
+      _ = try await CoreAgentClient.shared.call("ConversationSendRequest", ["conversation_id": conversationID,
+        "turn_id": UUID().uuidString, "text": text])
+    }
+
+    func snapshot() async throws -> [String: Any] {
+      try await CoreAgentClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
+    }
+
+    func finished() async throws -> [String: Any] {
+      let deadline = Date().addingTimeInterval(30)
+      var result = try await snapshot()
+      while result["busy"] as? Bool == true, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+        result = try await snapshot()
+      }
+      try #require(result["busy"] as? Bool == false)
+      return result
+    }
+
+    func stop() async {
+      for chat in chats { chat.detach() }
+      for session in sessions { await session.close() }
+      // Let the UI's detach tasks release their socket observations before
+      // terminating the isolated daemon and restoring the environment.
+      try? await Task.sleep(for: .milliseconds(100))
+      for process in [core, model] where process.isRunning {
+        process.terminate()
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        process.waitUntilExit()
+      }
+      daemon?.stop()
+      try? await Task.sleep(for: .milliseconds(100))
+      if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) } else { unsetenv("TSUGUMI_AGENT_STATE") }
+      if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) } else { unsetenv("TSUGUMI_SUPPORT_DIR") }
+      if let project { try? FileManager.default.removeItem(at: project) }
+      try? FileManager.default.removeItem(at: directory)
     }
   }
 
-  struct Setup {
-    let session: ProjectSession
-    let chat: ChatController
-    let stop: () -> Void
-  }
-
-  /// A chat opened on a conversation whose last request was never answered,
-  /// as it is after leaving the project during the answer.
-  func chatWithAnUnansweredRequest(slow: Double, options: [String] = [], earlier: [ChatMessage] = [], usage: Int = 0) throws -> Setup {
-    let project = try SyncTests.project()
-    let daemon = try SyncTests.Daemon(project: project)
-    let model = try Model(slow: slow, options: options)
-    let storage = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("chat-\(UUID().uuidString.prefix(8))")
-    var conversation = Conversation()
-    conversation.messages = earlier + [ChatMessage(role: "user", content: [.text("hello")])]
-    conversation.usage.inputTokens = usage
-    try conversation.save(storage.appendingPathComponent("sessions/unanswered.json"))
-    let session = ProjectSession(identity: try ProjectIdentity(url: project), environments: EnvironmentManager(image: nil))
-    session.endpointOverride = daemon.endpoint
-    let port = model.port
-    let chat = ChatController(session: session, directory: storage, connection: { .localFixture(port: port) })
-    return Setup(session: session, chat: chat, stop: {
-      model.stop()
-      daemon.stop()
-      try? FileManager.default.removeItem(at: project)
-      try? FileManager.default.removeItem(at: storage)
-    })
+  func withFixture(slow: Double = 0.05, options: [String] = [],
+                   _ body: (Fixture) async throws -> Void) async throws {
+    let fixture = Fixture()
+    do {
+      try await fixture.start(slow: slow, options: options)
+      try await body(fixture)
+      await fixture.stop()
+    } catch {
+      await fixture.stop()
+      throw error
+    }
   }
 
   func until(_ what: String, seconds: Double = 30, _ ok: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(seconds)
-    while !ok() && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(ok(), "\(what)")
-    try #require(ok())
+    while !ok(), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    try #require(ok(), "\(what)")
   }
 
   func reply(_ chat: ChatController, after n: Int) -> Bool {
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
   }
 
-  /// The resumed answer waits for the project, shows as working (it can be
-  /// stopped) and ends like any answer; then a message gets its reply.
-  @Test func aResumedAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
-    let t = try chatWithAnUnansweredRequest(slow: 0.05)
-    defer { t.stop() }
-    let chat = t.chat
-    try await until("the conversation was read") { !chat.items.isEmpty }
-    try await Task.sleep(for: .milliseconds(300))
-    #expect(!chat.busy && chat.items.count == 1, "not before the project is connected: \(chat.items.map(\.text))")
-
-    t.session.start()
-    try await SyncTests.connected(t.session)
-    try await until("the answer resumed") { reply(chat, after: 1) || chat.status != nil }
-    #expect(chat.busy, "the answer is under way: \(chat.status ?? "-")")
-    try await until("the answer ended") { !chat.busy }
-    #expect(chat.status == nil, "\(chat.status ?? "-")")
-
-    let before = chat.items.count
-    chat.send("続けて")
-    #expect(chat.busy)
-    try await until("the message got its reply") { !chat.busy && reply(chat, after: before) }
-    #expect(chat.status == nil, "\(chat.status ?? "-")")
-  }
-
-  /// Stopping the resumed answer and sending at once: the stopped turn ends
-  /// after the new one began, and says nothing about it.
-  @Test func aMessageAfterStoppingIsNotShownAsStopped() async throws {
-    let t = try chatWithAnUnansweredRequest(slow: 0.2)
-    defer { t.stop() }
-    let chat = t.chat
-    t.session.start()
-    try await SyncTests.connected(t.session)
-    try await until("the answer resumed") { chat.busy && reply(chat, after: 1) }
-
-    chat.cancel()
-    #expect(!chat.busy)
-    let before = chat.items.count
-    chat.send("続けて")
-    try await until("the stopped turn was replaced and the new reply began") { reply(chat, after: before) }
-    #expect(chat.busy && chat.status == nil, "busy \(chat.busy): \(chat.status ?? "-")")
-    try await until("the reply ended") { !chat.busy }
-    #expect(chat.status == nil, "\(chat.status ?? "-")")
-  }
-
-  /// While the context is compacted the chat says so, not "thinking" with
-  /// nothing to tell why the reply waits; the note goes when it is done.
-  @Test func compactingIsShownWhileTheReplyWaits() async throws {
-    let earlier = (0..<4).flatMap { i in
-      [ChatMessage(role: "user", content: [.text("question \(i)")]), ChatMessage(role: "assistant", content: [.text("answer \(i)")])]
+  @Test func aRunningCoreAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
+    try await withFixture(slow: 0.1) { t in
+      try await t.send()
+      let chat = t.makeChat()
+      try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
+      #expect(!chat.busy, "The UI waits for its project connection; core keeps working.")
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await until("the running answer is observed") { chat.busy }
+      try await until("the answer ended") { !chat.busy && reply(chat, after: 1) }
+      #expect(chat.status == nil && !chat.failed)
+      let before = chat.items.count
+      chat.send("hello again")
+      #expect(chat.busy)
+      try await until("the next message got its reply") { !chat.busy && reply(chat, after: before) }
+      #expect(chat.status == nil && !chat.failed)
     }
-    let t = try chatWithAnUnansweredRequest(slow: 0.2, earlier: earlier, usage: 5000)
-    defer { t.stop() }
-    let chat = t.chat
-    t.session.start()
-    try await SyncTests.connected(t.session)
-    try await until("the compaction is shown") { chat.status == String(localized: "会話を圧縮しています…") }
-    #expect(chat.busy)
-    try await until("the answer ended") { !chat.busy }
-    #expect(chat.status == nil, "\(chat.status ?? "-")")
-    #expect(!chat.failed && !chat.contextFull)
   }
 
-  /// A message that can never fit the model's context: the chat stops working,
-  /// says what to do instead of a retry that cannot work, and a new
-  /// conversation goes on.
+  @Test func aMessageAfterStoppingIsNotShownAsStopped() async throws {
+    try await withFixture(slow: 0.1) { t in
+      try await t.send()
+      let chat = t.makeChat()
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await until("the answer is streaming") { chat.busy && reply(chat, after: 1) }
+      chat.cancel()
+      #expect(!chat.busy)
+      let before = chat.items.count
+      chat.send("hello again")
+      try await until("the new reply ended") { !chat.busy && reply(chat, after: before) }
+      #expect(chat.status == nil && !chat.failed, "\(chat.status ?? "-")")
+    }
+  }
+
+  @Test func detachingTheUIKeepsTheAnswerAndReopeningReadsIt() async throws {
+    try await withFixture(slow: 0.1) { t in
+      try await t.send()
+      let left = t.makeChat()
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await until("the answer is streaming") { left.busy && reply(left, after: 1) }
+      left.detach()
+      let complete = try await t.finished()
+      let conversation = try #require(complete["conversation"] as? [String: Any])
+      let messages = try #require(conversation["messages"] as? [[String: Any]])
+      #expect(messages.map { $0["role"] as? String } == ["user", "assistant"])
+      let back = t.makeChat()
+      try await until("the completed answer is restored") { back.currentId == t.conversationID && reply(back, after: 1) }
+      #expect(!back.busy && !back.failed)
+      #expect(back.items.count == 2)
+      #expect(try await t.snapshot()["busy"] as? Bool == false)
+    }
+  }
+
+  @Test func compactionShowsProgressAndKeepsTheVisibleHistory() async throws {
+    try await withFixture { t in
+      for n in 0..<4 { try await t.send("hello \(n)"); _ = try await t.finished() }
+      let chat = t.makeChat()
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await until("the history is visible") { chat.items.count == 8 }
+      chat.compact()
+      #expect(chat.busy && chat.status == String(localized: "会話を圧縮しています…"))
+      try await until("compaction ended") { !chat.busy }
+      let trace = try await CoreAgentClient.shared.call("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
+      let errors = (trace["events"] as? [[String: Any]] ?? []).compactMap { $0["event"] as? [String: Any] }
+        .filter { $0["kind"] as? String == "error" }.compactMap { $0["message"] as? String }
+      #expect(chat.status == nil && !chat.failed && !chat.contextFull, "\(chat.status ?? "-"); core errors: \(errors)")
+      try await until("the compacted history is restored") { chat.items.contains { $0.archived } }
+      #expect(chat.items.count == 8, "Only the original messages belong in the transcript: \(chat.items.map(\.text))")
+    }
+  }
+
   @Test func aConversationThatCannotFitSaysToStartANewOne() async throws {
-    let t = try chatWithAnUnansweredRequest(slow: 0, options: ["--context-limit", "6000"])
-    defer { t.stop() }
-    let chat = t.chat
-    t.session.start()
-    try await SyncTests.connected(t.session)
-    try await until("the first answer ended") { !chat.items.isEmpty && !chat.busy && reply(chat, after: 1) }
-    chat.send(String(repeating: "y", count: 100_000))
-    try await until("the answer ended") { !chat.busy }
-    #expect(chat.contextFull && chat.failed)
-    #expect(chat.status == String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。"), "\(chat.status ?? "-")")
-
-    chat.newSession()
-    try await until("the new conversation is open") { chat.items.isEmpty }
-    chat.send("hello")
-    try await until("the new conversation got its reply") { !chat.busy && reply(chat, after: 0) }
-    #expect(!chat.contextFull && !chat.failed, "\(chat.status ?? "-")")
+    try await withFixture(slow: 0, options: ["--context-limit", "6000"]) { t in
+      let chat = t.makeChat()
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await until("the conversation is open") { chat.currentId == t.conversationID }
+      chat.send(String(repeating: "y", count: 100_000))
+      try await until("the oversized request ended") { !chat.busy }
+      #expect(chat.contextFull && chat.failed)
+      #expect(chat.status == String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。"), "\(chat.status ?? "-")")
+      chat.newSession()
+      try await until("a new conversation is open") { chat.currentId != t.conversationID && chat.items.isEmpty }
+      chat.send("hello")
+      try await until("the new conversation got its reply") { !chat.busy && reply(chat, after: 0) }
+      #expect(!chat.contextFull && !chat.failed, "\(chat.status ?? "-")")
+    }
   }
 
-  /// Back in the project: its chat is on the session open now, not on the
-  /// closed one, where its tools have no connection.
-  @Test func theChatFollowsTheOpenSession() throws {
-    let project = try SyncTests.project()
-    defer { try? FileManager.default.removeItem(at: project) }
-    let environments = EnvironmentManager(image: nil)
-    let left = ProjectSession(identity: try ProjectIdentity(url: project), environments: environments)
-    let back = ProjectSession(identity: try ProjectIdentity(url: project), environments: environments)
-    let model = AppModel()
-    let chat = model.chat(for: left)
-    #expect(model.chat(for: left) === chat)
-    #expect(model.chat(for: back).session === back)
-    #expect(model.chat(for: back) === model.chat(for: back))
+  @Test func theChatFollowsTheOpenSession() async throws {
+    try await withFixture(slow: 0) { t in
+      let back = try t.makeSession()
+      let model = AppModel()
+      let first = model.chat(for: t.session)
+      t.keep(first)
+      try await until("the first UI is attached") { first.currentId == t.conversationID }
+      #expect(model.chat(for: t.session) === first)
+      let replacement = model.chat(for: back)
+      t.keep(replacement)
+      try await until("the replacement UI is attached") { replacement.currentId == t.conversationID }
+      #expect(replacement.session === back)
+      #expect(replacement !== first)
+      #expect(model.chat(for: back) === replacement)
+    }
   }
 
-  /// Stopped while waiting for the project, it does not start afterwards.
   @Test func stoppingBeforeTheProjectConnectsKeepsItStopped() async throws {
-    let t = try chatWithAnUnansweredRequest(slow: 0.05)
-    defer { t.stop() }
-    let chat = t.chat
-    try await until("the conversation was read") { !chat.items.isEmpty }
-    chat.cancel()
-    t.session.start()
-    try await SyncTests.connected(t.session)
-    try await Task.sleep(for: .milliseconds(500))
-    #expect(!chat.busy && !reply(chat, after: 1), "\(chat.items.map(\.text))")
+    try await withFixture(slow: 0.1) { t in
+      try await t.send()
+      let chat = t.makeChat()
+      try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
+      chat.cancel()
+      let stopped = try await t.finished()
+      #expect(stopped["resumable"] as? Bool == false)
+      #expect(stopped["continuable"] as? Bool == true)
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await Task.sleep(for: .milliseconds(250))
+      #expect(!chat.busy && !reply(chat, after: 1))
+      #expect(chat.stoppedAtLimit && !chat.failed)
+    }
   }
 }

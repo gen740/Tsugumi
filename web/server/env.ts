@@ -122,10 +122,27 @@ export class EnvironmentManager implements Environments {
     const e = this.env(dir)
     // Opened again while it stops: a new one starts once the old one has gone.
     if (e.stopping) return e.stopping.then(() => this.start(dir))
-    if (e.state.state === 'ready' && e.proc && e.proc.exitCode === null) return Promise.resolve(e.state)
+    fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
+    const origins = path.join(e.control, 'origins.json')
+    const temporary = origins + '.' + randomUUID()
+    fs.writeFileSync(temporary, JSON.stringify({ origins: this.origins() }), { mode: 0o600 })
+    fs.renameSync(temporary, origins)
+    const running = this.readReady(e)
+    if (running) { this.set(e, running); return Promise.resolve(running) }
     if (e.starting) return e.starting
     e.starting = this.launch(e).finally(() => (e.starting = undefined))
     return e.starting
+  }
+
+  private readReady(e: Env): EnvState | undefined {
+    const file = path.join(e.control, 'server.ready')
+    try {
+      const r = JSON.parse(fs.readFileSync(file, 'utf8'))
+      if (r.protocol !== 1 || !r.pid || !r.token || !r.project_id || !r.unix_socket || !fs.statSync(r.unix_socket).isSocket()) return undefined
+      process.kill(r.pid, 0)
+      return { state: 'ready', endpoint: r.endpoint, token: r.token, projectId: r.project_id,
+        unix: r.unix_socket, pid: r.pid, readyFile: file }
+    } catch { return undefined }
   }
 
   private async launch(e: Env): Promise<EnvState> {
@@ -158,13 +175,14 @@ export class EnvironmentManager implements Environments {
       '--worker', this.bins.worker, '--sdk-dir', this.bins.sdkDir, '--cpus', String(Math.max(1, os.cpus().length))]
     for (const o of this.origins()) args.push('--allow-origin', o)
     e.log = ''
-    const proc = spawn(this.bins.tsugumid, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const logFile = path.join(e.control, 'server.log')
+    const log = fs.openSync(logFile, 'a', 0o600)
+    const proc = spawn(this.bins.tsugumid, args, { detached: true, stdio: ['ignore', log, log] })
+    fs.closeSync(log)
+    proc.unref()
     e.proc = proc
-    const append = (d: Buffer) => {
-      e.log = (e.log + d.toString()).slice(-64 * 1024)
-    }
-    proc.stdout!.on('data', append)
-    proc.stderr!.on('data', append)
+    let startupError: Error | undefined
+    proc.on('error', (error) => { startupError = error })
     proc.on('exit', (code, sig) => {
       if (e.proc !== proc) return
       e.proc = undefined
@@ -176,7 +194,8 @@ export class EnvironmentManager implements Environments {
     })
     const deadline = Date.now() + 60_000
     while (Date.now() < deadline) {
-      if (proc.exitCode !== null || proc.signalCode !== null) {
+      if (startupError || proc.exitCode !== null || proc.signalCode !== null) {
+        e.log = startupError?.message ?? fs.readFileSync(logFile, 'utf8').slice(-64 * 1024)
         const s: EnvState = {
           state: 'failed',
           message: L('tsugumid が起動中に終了しました'),
@@ -205,6 +224,14 @@ export class EnvironmentManager implements Environments {
     const e = this.env(dir)
     const p = e.proc
     if (!p) {
+      const ready = this.readReady(e)
+      if (ready?.state === 'ready' && ready.pid) {
+        const pid = ready.pid
+        process.kill(pid, 'SIGTERM')
+        const deadline = Date.now() + 20_000
+        while (this.readReady(e) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
+        if (this.readReady(e)) process.kill(pid, 'SIGKILL')
+      }
       this.set(e, { state: 'stopped' })
       return
     }
@@ -221,7 +248,7 @@ export class EnvironmentManager implements Environments {
   }
 
   stopAll(): Promise<void[]> {
-    return Promise.all([...this.envs.values()].filter((e) => e.proc).map((e) => this.stop(e.project)))
+    return Promise.all([...this.envs.values()].map((e) => this.stop(e.project)))
   }
 
   /** Registers a read-only snapshot of an external project for ProjectImport.
