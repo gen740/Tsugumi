@@ -44,6 +44,7 @@ let
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
     extra-substituters = https://tsugumi.cachix.org
     extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI=
+    !include /run/tsugumi/binary-caches/nix.conf
     max-jobs = auto
     allow-import-from-derivation = false
     # Build-time dependencies (compilers, the nixpkgs source) of every rooted
@@ -154,6 +155,11 @@ let
     # The VM's own closures are GC roots: CacheClear removes Card builds only.
     while read -r p; do ln -sfn "$p" "/nix/var/nix/gcroots/tsugumi/''${p##*/}"; done < /store-paths
     chmod 0755 /nix/var/nix/gcroots/tsugumi/projects
+    # Human-configured caches are read before starting the daemon. Project
+    # namespaces replace /run/tsugumi, so they cannot read cache credentials.
+    mkdir -p /run/tsugumi/binary-caches
+    mount -t virtiofs -o ro tsugumi-binary-caches /run/tsugumi/binary-caches \
+      || fail "cannot mount binary cache settings"
     nix-daemon --daemon >/persist/nix-daemon.log 2>&1 &
     for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
     [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start (see /persist/nix-daemon.log)"

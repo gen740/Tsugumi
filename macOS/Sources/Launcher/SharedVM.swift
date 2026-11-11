@@ -445,11 +445,15 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     lock.withLock { slots.removeAll() }
     let source = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-source")
     source.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: files.source, readOnly: true))
+    let cacheDirectory = directory.appendingPathComponent("binary-cache-config", isDirectory: true)
+    try BinaryCaches.prepare(support: directory.deletingLastPathComponent(), destination: cacheDirectory)
+    let caches = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-binary-caches")
+    caches.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: cacheDirectory, readOnly: true))
     c.directorySharingDevices = (0..<Self.slotCount).map { i in
       let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-\(i)")
       fs.share = VZMultipleDirectoryShare(directories: [:])
       return fs
-    } + [source] + (x86 == .rosetta ? [try rosettaShare()] : [])
+    } + [source, caches] + (x86 == .rosetta ? [try rosettaShare()] : [])
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]

@@ -1232,6 +1232,20 @@ EN = {
 "保存前": "Not saved",
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
 "参照先: %@": "Resolved path: %@",
+"バイナリキャッシュ": "Binary Caches",
+"この Mac の共有実行環境（全プロジェクト）": "This Mac’s shared execution environment (all projects)",
+"Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。": "Download prebuilt packages from binary caches such as Attic and Cachix after verifying their signatures. The registered signing keys are trusted by the execution environment for every project on this Mac.",
+"保存した接続は、次に実行環境を起動したときに反映されます。実行中の Workflow は停止しません。": "Saved connections apply when the execution environment next starts. Running workflows keep running.",
+"既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。": "The default cache.nixos.org and tsugumi.cachix.org remain enabled. Packages are not uploaded to caches.",
+"キャッシュ接続を削除": "Remove Cache Connection",
+"キャッシュ URL": "Cache URL",
+"署名の公開鍵": "Signing Public Key",
+"認証（非公開キャッシュ）": "Authentication (Private Caches)",
+"ユーザー名": "Username",
+"パスワード・token": "Password or Token",
+"認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。": "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.",
+"キャッシュ接続を追加": "Add Cache Connection",
+"保存しました。次の実行環境の起動から使用します。": "Saved. These connections will be used the next time the execution environment starts."
 }
 
 
