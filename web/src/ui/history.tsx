@@ -6,7 +6,8 @@ import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMilli
 import { bool } from '../shared/json'
 import { describeValue } from '../shared/flatjson'
 import { D, R, s, segs } from '../shared/rpc'
-import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Spinner, TextField, Value } from './controls'
+import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
+import { RunComparisonView } from './runComparison'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
@@ -29,6 +30,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   const [error, setError] = useState<string>()
   const [loaded, setLoaded] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const [comparing, setComparing] = useState(false)
 
   useEffect(() => {
     const rpc = session.rpc
@@ -94,6 +96,8 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     <HSplit sizes={[260, null]} min={[220, 380]}>
       {[
         <div key="runs" className="col fill">
+          <div className="pad6"><Button disabled={runs.length < 2} onClick={() => setComparing(true)}>{L('実行を比較')}</Button></div>
+          {comparing && <Sheet width={1200} onClose={() => setComparing(false)}><RunComparisonView session={session} runs={runs} initial={runId} onClose={() => setComparing(false)} /></Sheet>}
           <div className="pad6"><Segmented<Filter> small value={filter} onChange={setFilter} options={[{ value: 'all', label: L('すべて') }, { value: 'succeeded', label: L('成功') }, { value: 'failed', label: L('失敗') }]} /></div>
           <div className="list flex1" role="listbox" aria-label={L('実行')}>
             {!filtered.length && <Empty small title={runs.length ? L('条件に合う実行はありません') : L('実行履歴はありません')} icon="clock" />}

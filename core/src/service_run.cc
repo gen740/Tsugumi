@@ -507,6 +507,7 @@ void Service::run_record(RequestIn& req) {
     auto sum = wire::invocation(b, summary);
     flatbuffers::Offset<D::Display> disp;
     if (o.record && o.record->display) disp = wire::display(b, *o.record->display);
+    auto params = summary.params_json.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(summary.params_json);
     R::InvocationRecordBuilder rb(b);
     rb.add_summary(sum);
     rb.add_inputs(ins);
@@ -514,6 +515,7 @@ void Service::run_record(RequestIn& req) {
     rb.add_input_sources(srcv);
     if (!disp.IsNull()) rb.add_display(disp);
     rb.add_record_io(o.record ? o.record->record_io : false);
+    if (!params.IsNull()) rb.add_params_json(params);
     rec = rb.Finish();
   }
   auto run = wire::run_summary(b, o.run);

@@ -630,7 +630,7 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
   return out;
 }
 
-VersionDiffData Versions::diff(const std::string& commit) {
+auto Versions::diff(const std::string& commit, const std::string& from_commit) -> VersionDiffData {
   std::lock_guard<std::mutex> l(mu_);
   VersionDiffData out;
   Repo r;
@@ -641,7 +641,13 @@ VersionDiffData Versions::diff(const std::string& commit) {
   Tree mine;
   Tree theirs;
   check(git_commit_tree(mine.out(), c.get()), "tree");
-  if (git_commit_parentcount(c.get()) > 0) {
+  if (!from_commit.empty()) {
+    git_oid from_oid;
+    Commit from;
+    if (git_oid_fromstr(&from_oid, from_commit.c_str()) != 0 || git_commit_lookup(from.out(), r.get(), &from_oid) != 0)
+      throw Failed(FailureKind::not_found, "no version " + from_commit);
+    check(git_commit_tree(theirs.out(), from.get()), "base tree");
+  } else if (git_commit_parentcount(c.get()) > 0) {
     Commit p;
     if (git_commit_parent(p.out(), c.get(), 0) == 0) git_commit_tree(theirs.out(), p.get());
   }

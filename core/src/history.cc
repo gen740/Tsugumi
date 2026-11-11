@@ -60,6 +60,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.ready_at = s.ready_at.value_or(-1);
   *d.emulator = s.emulator;
   *d.environment_id = s.environment_id;
+  *d.params = s.params_json;
   return schema::encode(d);
 }
 
@@ -79,6 +80,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
   s.emulator = *d.emulator;
   s.environment_id = *d.environment_id;
+  s.params_json = *d.params;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {

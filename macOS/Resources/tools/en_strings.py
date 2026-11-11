@@ -31,6 +31,23 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    'この実行にはありません': 'Absent from this run',
+    'コードと設定の差分': 'Code and settings changes',
+    'パラメータの記録がありません': 'Parameters were not recorded',
+    '入出力は記録されていません': 'Inputs and outputs were not recorded',
+    '右の実行': 'Right run',
+    '各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。': 'Compare the last invocation of each Card. Records and the current Workflow stay unchanged.',
+    '同じ版です': 'Same version',
+    '変更はありません': 'No changes',
+    '大きな値は概要のみ表示しています。': 'Large values are shown as summaries only.',
+    '実行を比較': 'Compare Runs',
+    '左の実行': 'Left run',
+    '差分が大きいため一部を表示しています。': 'The diff is large; only part is shown.',
+    '版が記録されていないため差分を表示できません。': 'A version was not recorded, so its changes are unavailable.',
+    '異なる 2 つの実行を選んでください': 'Choose two different runs',
+    '相違あり': 'Changed',
+    '表示の記録がありません': 'No recorded display',
+
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

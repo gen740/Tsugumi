@@ -222,6 +222,49 @@ export interface DisplaySnapshot {
   value: DisplayValue
 }
 
+/** Decode a retained display without changing the live canvas. */
+export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
+  let value: DisplayValue
+  switch (d.valueType) {
+    case D.DisplayValue.DisplayText: {
+      const t = d.value as D.DisplayTextT
+      value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
+      break
+    }
+    case D.DisplayValue.DisplayScalar: {
+      const v = d.value as D.DisplayScalarT
+      value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
+      break
+    }
+    case D.DisplayValue.DisplayLineChart:
+      value = { kind: 'lineChart', series: (d.value as D.DisplayLineChartT).series.map((x) => ({ id: s(x.id), label: s(x.label), x: x.x, y: x.y })) }
+      break
+    case D.DisplayValue.DisplayTable: {
+      const t = d.value as D.DisplayTableT
+      value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
+      break
+    }
+    case D.DisplayValue.DisplayImage: {
+      const im = d.value as D.DisplayImageT
+      value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
+      break
+    }
+    case D.DisplayValue.DisplayPointCloud: {
+      const p = d.value as D.DisplayPointCloudT
+      value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
+      break
+    }
+    case D.DisplayValue.DisplayModule: {
+      const m = d.value as D.DisplayModuleT
+      value = { kind: 'module', name: s(m.name), json: s(m.dataJson) }
+      break
+    }
+    default:
+      return
+  }
+  return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
+}
+
 export function displaySummary(d: DisplaySnapshot): string {
   const v = d.value
   switch (v.kind) {
@@ -913,45 +956,8 @@ export class ProjectSession extends Observable {
     const rev = d.revision ?? 0n
     const old = this.displays.get(k)
     if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    let value: DisplayValue
-    switch (d.valueType) {
-      case D.DisplayValue.DisplayText: {
-        const t = d.value as D.DisplayTextT
-        value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
-        break
-      }
-      case D.DisplayValue.DisplayScalar: {
-        const v = d.value as D.DisplayScalarT
-        value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
-        break
-      }
-      case D.DisplayValue.DisplayLineChart:
-        value = { kind: 'lineChart', series: (d.value as D.DisplayLineChartT).series.map((x) => ({ id: s(x.id), label: s(x.label), x: x.x, y: x.y })) }
-        break
-      case D.DisplayValue.DisplayTable: {
-        const t = d.value as D.DisplayTableT
-        value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
-        break
-      }
-      case D.DisplayValue.DisplayImage: {
-        const im = d.value as D.DisplayImageT
-        value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
-        break
-      }
-      case D.DisplayValue.DisplayPointCloud: {
-        const p = d.value as D.DisplayPointCloudT
-        value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
-        break
-      }
-      case D.DisplayValue.DisplayModule: {
-        const m = d.value as D.DisplayModuleT
-        value = { kind: 'module', name: s(m.name), json: s(m.dataJson) }
-        break
-      }
-      default:
-        return
-    }
-    this.displays.set(k, { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: rev, value })
+    const display = recordedDisplay(d)
+    if (display) this.displays.set(k, display)
   }
 
   private recordTimeline(k: CardKey, inv: R.InvocationSummaryT) {

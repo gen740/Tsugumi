@@ -290,6 +290,7 @@
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
+"この実行にはありません" = "Absent from this run";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この操作はできません" = "This cannot be done";
@@ -407,6 +408,7 @@
 "コメント（Agent）: %@" = "Comment (Agent): %@";
 "コンソールで詳細を見る" = "Show Details in the Console";
 "コンテナに接続しています…" = "Connecting to the container…";
+"コードと設定の差分" = "Code and settings changes";
 "サインアウト" = "Sign Out";
 "サインアウト済み" = "Signed out";
 "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。" = "You are signed in, but using your ChatGPT plan was not allowed. Allow it with “Allow Plan Use”, or use an API key connection.";
@@ -494,6 +496,7 @@
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
 "パラメータ" = "Parameters";
+"パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
@@ -644,6 +647,7 @@
 "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" = "Save your changes first (generation starts from the saved wiring and Draft content)";
 "先頭 64 KiB を表示" = "Showing the first 64 KiB";
 "入出力" = "Ports";
+"入出力は記録されていません" = "Inputs and outputs were not recorded";
 "入出力を記録" = "Record I/O";
 "入力" = "Inputs";
 "入力 " = "Input ";
@@ -736,10 +740,13 @@
 "受け側の入力: 省略可" = "Receiving input: optional";
 "可視化" = "Display";
 "可視化 %@" = "Display %@";
+"右の実行" = "Right run";
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
+"各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。" = "Compare the last invocation of each Card. Records and the current Workflow stay unchanged.";
 "合流" = "Merge";
 "同じ名前があります" = "That name is taken";
+"同じ版です" = "Same version";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -776,6 +783,7 @@
 "変更: %@" = "Changed: %@";
 "変更した Card: %@" = "Changed Cards: %@";
 "変更できませんでした" = "Could not change";
+"変更はありません" = "No changes";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
 "変更を保存" = "Save changes";
@@ -792,6 +800,7 @@
 "外部ソース" = "External sources";
 "外部接続" = "External Connections";
 "大きく" = "Larger";
+"大きな値は概要のみ表示しています。" = "Large values are shown as summaries only.";
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
 "失敗したので結果はありません" = "It failed, so there is no result";
@@ -826,6 +835,7 @@
 "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on.";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
+"実行を比較" = "Compare Runs";
 "実行を選ぶか、実行してください。" = "Choose a run, or run the workflow.";
 "実行を選んでください" = "Choose a run";
 "実行ログを開く" = "Open Run Log";
@@ -877,6 +887,8 @@
 "履歴を読み込めませんでした" = "Could not read the history";
 "履歴を読み込んでいます…" = "Reading the history…";
 "左から右" = "Left to right";
+"左の実行" = "Left run";
+"差分が大きいため一部を表示しています。" = "The diff is large; only part is shown.";
 "幅 %lld" = "Width %lld";
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
@@ -1018,6 +1030,7 @@
 "無期限" = "No Limit";
 "版" = "Version";
 "版 %@ が最新の版です。" = "Version %@ is the latest version.";
+"版が記録されていないため差分を表示できません。" = "A version was not recorded, so its changes are unavailable.";
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
 "版の履歴" = "Version History";
@@ -1040,9 +1053,11 @@
 "用途（何を受け取るか）" = "Purpose (what it receives)";
 "画像" = "Image";
 "画像を表示できません" = "Cannot show the image";
+"異なる 2 つの実行を選んでください" = "Choose two different runs";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
+"相違あり" = "Changed";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
 "破棄して再読込" = "Discard and Reload";
@@ -1079,6 +1094,7 @@
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
 "表示しない" = "Don't show";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
+"表示の記録がありません" = "No recorded display";
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";

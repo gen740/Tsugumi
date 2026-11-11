@@ -691,6 +691,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
+    s.params_json = NixRunner::params_json(node, false);
     s.invocation = w.invocation;
     s.started_at = now_ms();
     // Ready when the last consumed input arrived (a start Card: when it fired).
@@ -1408,6 +1409,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       InvocationRecordData rec;
       rec.summary.run_id = run_id_;
       rec.summary.card = n.node->path;
+      rec.summary.params_json = NixRunner::params_json(*n.node, false);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];

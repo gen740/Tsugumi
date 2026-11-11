@@ -371,10 +371,10 @@ class LineNumberRuler: NSRulerView {
 }
 
 /// A recorded input/output value as pretty JSON (decoded with its own BFBS).
-func describeValue(_ v: Tsugumi_Data_NamedValueT) -> String {
+func describeValue(_ v: Tsugumi_Data_NamedValueT, includeArtifact: Bool = true) -> String {
   var head = "\(v.name) : \(v.rootType)"
   if let n = v.sizeBytes { head += " · \(n) bytes" }
-  if let a = v.artifactId { head += String(localized: " · 成果物 ") + a }
+  if includeArtifact, let a = v.artifactId { head += String(localized: " · 成果物 ") + a }
   guard !v.inlineBytes.isEmpty else { return head + "\n" + String(localized: "（内容は記録されていません）") }
   guard let schema = try? BFBS(data: Data(v.schemaBfbs)),
         let (index, _) = schema.object(named: v.rootType) ??
