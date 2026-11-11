@@ -3,6 +3,8 @@
 Make a Card that just multiplies the number it receives, run it, and try other conditions.
 After making it in Python, replace the same Card with bash, C++, R and Julia.
 
+The code on this page is not decoration: [tests/python/test_docs.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_docs.py) **takes the files out of this document and actually runs them**.
+
 The full specification is in [agent/Reference/card-guide.md](https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md), the same document the app's Agent reads.
 
 ## What you will make
@@ -81,14 +83,6 @@ table Outputs { number:Number (required); }
 root_type Outputs;
 ```
 
-For a File output, the `value` parameter names a saved project source. A path such
-as `data/events.fits` is relative to the input Card's own definition folder;
-`project:definitions/shared/data/events.fits` explicitly uses the owning
-project's root to name a saved source in another Card. Inside an
-external project, these bases stay within that external project. Absolute paths
-and `..` components are rejected. The file is copied into the saved run before
-it is passed downstream, so later source edits do not change that run's file.
-
 ### The processing Card (Python)
 
 Write the names of the input ports in `inputs`. Input types are not written: they are derived from the outputs of the connected Cards.
@@ -143,6 +137,7 @@ The body is `main(ctx)`. Import inputs from `inputs.<port>.<namespace>.<table>` 
 ```python
 from inputs.number.hello.Number import Number
 import outputs.result.hello.Result as result_out
+
 
 def main(ctx):
     n = ctx.input("number", Number).Value()
@@ -317,5 +312,5 @@ It runs with the standard library alone. Packages from the General registry are 
 | --- | --- |
 | Branches, merges and loops, passing files, data pinned with Nix | [The Card specification](https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md), [The bundled demos](demos.md) |
 | Examples of code that runs | [demos/](https://github.com/gen740/Tsugumi/tree/main/demos/) (`report`, `collatz` and others) |
-| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
+| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent), [a run with the real Claude API](evidence.md#a-run-with-the-real-claude-api) |
 | What the words mean | [Glossary](glossary.md) |

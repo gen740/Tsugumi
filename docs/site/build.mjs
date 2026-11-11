@@ -43,12 +43,19 @@ const STORY = [
   {
     out: 'pages/philosophy.html', source: 'docs/Philosophy.md', know: true,
     figures: [
+      ['What is it that only people can do?', 'asking'],
       ['I would like to call research done this way', 'driven', 'People ask the questions. AI runs the trials. People give them meaning, again.'],
       ['Can the speed at which people understand', 'outpace', 'How fast AI tries, and how fast people understand. The gap keeps widening.'],
       ['A person who has been away from driving', 'driver', 'Someone who had handed over the wheel is suddenly asked to take it back.'],
       ['I feel that using AI in research has exactly', 'grasp', 'Being within reach is not the same as understanding. In driving, and in research.'],
       ['Check how the samples were chosen', 'curve', 'A beautiful line through the chosen points only, and the line with the excluded points put back.'],
       ['That is why I want the process of trial and error', 'partial', 'Change the conditions of the Card you were curious about, and run again from there.'],
+      ['The author studies astrophysics', 'orbit'],
+      ['Yet space should be close to everyone', 'sky'],
+      ['the data is public on the internet', 'reach'],
+      ['Before the hackathon there were countless prototypes', 'trials'],
+      ['Claude gave that idea a form', 'formed'],
+      ['The essay ends with a call', 'fellows'],
       ['a single thread drawn from the temari becomes the wire', 'name', 'A single thread drawn from the temari becomes the wire between Card and Card.'],
       ['It comes to Japan as a winter bird', 'walk', 'A few hops, a stop, and it stands up straight to look around.'],
       ['In an age that tells results with ever more words', 'hush', 'Saying little, it offers the accumulated attempts.'],
@@ -117,6 +124,7 @@ const GALLERY = [
   ]],
 ]
 const DOWNLOAD = `${REPO}/releases/latest`
+// The record of building Tsugumi with Claude (its own site), under the ways in on Home.
 
 const ICON = {
   github: '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>',
@@ -386,7 +394,7 @@ ${home ? `<script type="module" src="${asset('site/js/home.js')}"></script>\n` :
 /** Home: the thread from the temari runs through the ways in, as a Workflow of documents. */
 function homePage(groups, pages, tagline, lead) {
   const here = (to) => to
-  const doorText = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', 'Development': 'Build and maintain Tsugumi' }
+  const doorText = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', 'Records and development': 'So that it can be checked' }
   const know = STORY.filter((s) => s.know)
   const row = (to, title, note) => `<li><a href="${here(to)}"><b>${esc(title)}</b>${note ? `<span>${esc(note)}</span>` : ''}</a></li>`
   const shortNote = (d) => (notes.get(d) ?? '').replace(/^(「[^」]+」——|[^:：]{1,14}[:：]\s*)/, '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
@@ -410,7 +418,7 @@ function homePage(groups, pages, tagline, lead) {
       <a class="cta" href="${DOWNLOAD}">${ICON.download}Download for Mac</a>
       <a class="cta quiet" href="#demos">See the demos without installing</a>
     </div>
-    <p class="home-note">Runs on macOS, Linux and Windows (Windows through WSL2. The app needs Apple silicon and macOS 26 or later) · <a href="${pages.get('INSTALL.md')}">Installation and development builds</a></p>
+    <p class="home-note">Runs on macOS, Linux and Windows (checked on macOS and Linux; Windows through WSL2. The app needs Apple silicon and macOS 26 or later) · <a href="${pages.get('INSTALL.md')}">Installation and development builds</a></p>
   </div>
   <div class="home-perch" aria-hidden="true"></div>
 </header>

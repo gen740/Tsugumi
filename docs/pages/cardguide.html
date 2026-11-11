@@ -18,7 +18,7 @@
 <div class="layout">
 <nav class="side" aria-label="Documents">
   <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a><button type="button" class="side-close" aria-label="Close the sidebar" title="Close the sidebar"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button></span></div>
-  <details class="nav-fold" open><summary>Documents</summary><div class="nav-group"><h2>Learn about Tsugumi</h2><ul><li><a href="problem.html">The problem</a></li><li><a href="philosophy.html">What to build so that we are not used by AI</a></li></ul></div><div class="nav-group"><h2>Getting started</h2><ul><li><a href="usage.html">Usage</a></li><li class="on" aria-current="page"><a href="#">Your first Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Using it from Claude Code</a></li></ul></div><div class="nav-group"><h2>The ideas</h2><ul><li><a href="rationale.html">Why one Workflow for design, implementation and checking</a></li><li><a href="vision.html">Vision and applications</a></li></ul></div><div class="nav-group"><h2>How it works</h2><ul><li><a href="features.html">Tsugumi's features</a></li><li><a href="versions.html">Versions (git)</a></li><li><a href="security.html">Security and isolation</a></li><li><a href="protocol.html">The RPC contract</a></li><li><a href="glossary.html">Glossary</a></li></ul></div><div class="nav-group"><h2>Development</h2><ul><li><a href="development.html">Development</a></li><li><a href="lock.html">Pinned versions</a></li><li><a href="licenseaudit.html">Licenses and distribution</a></li></ul></div></details>
+  <details class="nav-fold" open><summary>Documents</summary><div class="nav-group"><h2>Learn about Tsugumi</h2><ul><li><a href="problem.html">The problem</a></li><li><a href="philosophy.html">What to build so that we are not used by AI</a></li></ul></div><div class="nav-group"><h2>Getting started</h2><ul><li><a href="usage.html">Usage</a></li><li class="on" aria-current="page"><a href="#">Your first Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Using it from Claude Code</a></li></ul></div><div class="nav-group"><h2>The ideas</h2><ul><li><a href="rationale.html">Why one Workflow for design, implementation and checking</a></li><li><a href="vision.html">Vision and applications</a></li></ul></div><div class="nav-group"><h2>How it works</h2><ul><li><a href="features.html">Tsugumi's features</a></li><li><a href="versions.html">Versions (git)</a></li><li><a href="security.html">Security and isolation</a></li><li><a href="protocol.html">The RPC contract</a></li><li><a href="glossary.html">Glossary</a></li></ul></div><div class="nav-group"><h2>Records and development</h2><ul><li><a href="evidence.html">Claims and how to check them</a></li><li><a href="development.html">Development</a></li><li><a href="lock.html">Pinned versions</a></li><li><a href="licenseaudit.html">License audit</a></li></ul></div></details>
   <script>{
     const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
     const side = fold.parentElement, on = fold.querySelector('li.on')
@@ -37,6 +37,7 @@
 <h1 id="your-first-card">Your first Card</h1>
 <p>Make a Card that just multiplies the number it receives, run it, and try other conditions.
 After making it in Python, replace the same Card with bash, C++, R and Julia.</p>
+<p>The code on this page is not decoration: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_docs.py" rel="noopener">tests/python/test_docs.py</a> <strong>takes the files out of this document and actually runs them</strong>.</p>
 <p>The full specification is in <a href="https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md" rel="noopener">agent/Reference/card-guide.md</a>, the same document the app&#39;s Agent reads.</p>
 <h2 id="what-you-will-make">What you will make</h2>
 <pre><code class="language-text">start ──out→ settings ──number→ multiply
@@ -84,13 +85,6 @@ table Number { value:ulong; }
 table Outputs { number:Number (required); }
 root_type Outputs;
 </code></pre>
-<p>For a File output, the <code>value</code> parameter names a saved project source. A path such
-as <code>data/events.fits</code> is relative to the input Card&#39;s own definition folder;
-<code>project:definitions/shared/data/events.fits</code> explicitly uses the owning
-project&#39;s root to name a saved source in another Card. Inside an
-external project, these bases stay within that external project. Absolute paths
-and <code>..</code> components are rejected. The file is copied into the saved run before
-it is passed downstream, so later source edits do not change that run&#39;s file.</p>
 <h3 id="the-processing-card-python">The processing Card (Python)</h3>
 <p>Write the names of the input ports in <code>inputs</code>. Input types are not written: they are derived from the outputs of the connected Cards.</p>
 <p><code>definitions/multiply/_card.json</code></p>
@@ -126,6 +120,7 @@ in
 <p><code>definitions/multiply/src/main.py</code></p>
 <pre><code class="language-python">from inputs.number.hello.Number import Number
 import outputs.result.hello.Result as result_out
+
 
 def main(ctx):
     n = ctx.input(&quot;number&quot;, Number).Value()
@@ -247,7 +242,7 @@ end
 </code></pre>
 <p>It runs with the standard library alone. Packages from the General registry are pinned at build time with <code>packages = [ &quot;JuMP&quot; ];</code>. For a figure, pass a Vega-Lite spec as a Dict to <code>display_vegalite(ctx, spec)</code> and it is shown as an interactive chart.</p>
 <h2 id="what-to-read-next">What to read next</h2>
-<div class="table-wrap"><table><thead><tr><th>To know</th><th>Document</th></tr></thead><tbody><tr><td>Branches, merges and loops, passing files, data pinned with Nix</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md" rel="noopener">The Card specification</a>, <a href="demos.html">The bundled demos</a></td></tr><tr><td>Examples of code that runs</td><td><a href="https://github.com/gen740/Tsugumi/tree/main/demos/" rel="noopener">demos/</a> (<code>report</code>, <code>collatz</code> and others)</td></tr><tr><td>Leaving implementation to the Agent</td><td><a href="features.html#9-agent">the Agent in Features</a></td></tr><tr><td>What the words mean</td><td><a href="glossary.html">Glossary</a></td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>To know</th><th>Document</th></tr></thead><tbody><tr><td>Branches, merges and loops, passing files, data pinned with Nix</td><td><a href="https://github.com/gen740/Tsugumi/blob/main/agent/Reference/card-guide.md" rel="noopener">The Card specification</a>, <a href="demos.html">The bundled demos</a></td></tr><tr><td>Examples of code that runs</td><td><a href="https://github.com/gen740/Tsugumi/tree/main/demos/" rel="noopener">demos/</a> (<code>report</code>, <code>collatz</code> and others)</td></tr><tr><td>Leaving implementation to the Agent</td><td><a href="features.html#9-agent">the Agent in Features</a>, <a href="evidence.html#a-run-with-the-real-claude-api">a run with the real Claude API</a></td></tr><tr><td>What the words mean</td><td><a href="glossary.html">Glossary</a></td></tr></tbody></table></div>
 </article>
 </div>
 <p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/CardGuide.md" rel="noopener"><code>docs/CardGuide.md</code></a> (<a href="cardguide.md">Markdown</a>)</p>

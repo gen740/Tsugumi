@@ -30,6 +30,12 @@ A large step can be gathered into a child Workflow and handled as one Card most 
 
 You do not read the AI's report and believe it; you go straight to the place you are curious about and run it yourself.
 
+**Where to check**
+
+- On screen: in the "Cas A · Chandra RGB" demo, the spectrum Card shows that the green band (1.65–2.25 keV) contains the Si line, so what the image's colours mean can be checked on the same screen ([README](../index.md#following-an-experiment-on-screen)).
+- On screen: in a copy of "Data to report", turn on `fail_on_purpose` in `aggregate` and run. The failed Card stops what is downstream and its record stays on the Card; turn it off and rerun only `aggregate`.
+- The UI and the Agent are equal clients of the same RPC: [protocol/tsugumi.fbs](https://github.com/gen740/Tsugumi/blob/main/protocol/tsugumi.fbs), [test_agent_contract.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py)
+
 ## Why instruct AI with Drafts and Workflows
 
 **Because the links between steps travel more exactly as a diagram than as prose.**
@@ -47,6 +53,14 @@ Intentions are written in words and relationships as wires, so people and AI poi
 
 The Agent and the UI go through the same operations and the same validation rules of the core. Cards the AI saved stay as ordinary project files that people can open and edit, and a finished Workflow runs without an LLM.
 
+**Where to check**
+
+- On screen: the demos marked "(Draft)" in the demo list (such as "Cas A · Chandra RGB (Draft)") are Workflows of Drafts only. Open a copy and press "Generate Cards" for the Agent to implement it (needs an API key or a ChatGPT plan).
+- The rules for a save that implements a Draft (refused if the description is empty; what the Draft said cannot be changed): [test_draft_intent.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py)
+- Having the Agent follow comments on a Card, with a record of who did what: [Features](features.md#generating-cards-from-comments), [test_card_comments.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py)
+- A record of making Cards from Drafts with the real Claude API, running and checking them, including the attempts that did not work: [Evidence](evidence.md#a-run-with-the-real-claude-api)
+- Type and wiring checks: [Features §2](features.md#typed-ports), [tests/cpp](https://github.com/gen740/Tsugumi/tree/main/tests/cpp)
+
 ## Reproducibility
 
 **Nix pins each environment, and each Card decides the conditions its result depends on.**
@@ -60,11 +74,18 @@ To check a Card on its own, it has to be clear what it takes, where it runs and 
 | Cards and child Workflows | The extent of the processing you change and check | Survey the whole, and go inside a step when needed |
 | Saved inputs and run history | The inputs for the next trial, and the record of the run | Fix part of it and try again, and look at logs and results |
 
-Analysis software can require complex environments. Tsugumi uses Nix to pin each Card's dependencies and reuse its build results.
+Analysis software in astrophysics (NASA's [HEASoft](https://heasarc.gsfc.nasa.gov/docs/software/lheasoft/) and the like) is large, and even building the same environment is hard work. The answer the author reached in their research was Nix; they also publish HEASoft packaged for Nix ([gen740/heasoft](https://github.com/gen740/heasoft); see [Where it started](philosophy.md#where-it-started)). Tsugumi applies that answer to each Card.
 
 - Each Card's environment (its language toolchain and libraries) is built by Nix from that Card's `default.nix`. The definition stays with the project's version, so the same environment can be built on another machine.
 - A heavy computation (a long simulation, say) can be a Nix build with its seed and conditions written in. While the definition and the dependencies do not change, its output is reused from the Nix store, so the later analysis or plotting can be tried any number of times.
 - The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `any` Card) or state kept by a resident worker, the Card has to decide that condition: make the seed a parameter, write per-run initialisation in `onRunStart` / `on_run_start`, and so on.
+
+**Where to check**
+
+- The "Cas A · Chandra RGB" demo fetches its Chandra observation pinned by hash. The observation (13 MB for the default ObsID 25628, 520 MB for ObsID 114) is fetched once on the first run; later runs use the file in the Nix store, so a whole Run takes about 10 seconds ([README](../index.md#following-an-experiment-on-screen)).
+- The "Collatz" demo checks that the same loop, written separately in C++, Python, Julia and R, returns the same 112-number sequence from 27 ([test_demo_collatz.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_collatz.py)).
+- A Card's environment: [sdk/nix/default.nix](https://github.com/gen740/Tsugumi/blob/main/sdk/nix/default.nix), [Features §3](features.md#3-reproducible-environments-with-nix)
+- Resident workers and per-run initialisation: [test_workers.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)
 
 ## What is recorded, and where
 
@@ -97,6 +118,14 @@ What comes back is code and definitions, not the state of workers at the time or
 
 **Tsugumi versions the code and the Workflow's definition with git and ties each run to its version.** From the version tree you can go back to earlier content and start a different attempt, and logs and displays are in the run history. Keeping the code, reading the results and trying the next condition become one line of research. The operations are in [Versions](versions.md).
 
+**Where to check**
+
+- On screen: open "Version History" in a copy of "Cas A · Chandra RGB" to see, as a tree, the branches that tried band edges and grids and failed, the ones not adopted, and the adopted version `rgb-v1`.
+- Every combination of `recordIO` and `retainArtifact`, and what is left after clearing the cache and restarting: [test_history.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_history.py)
+- Saved inputs (including the contents of File inputs) still usable for a single-Card run after clearing the cache or restarting: [test_regressions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py)
+- Writing `.tsugumi/runs.sqlite` and reading it in a copied project: [test_run_history.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_run_history.py)
+- How commits, notes, tags and branches are made: [test_versions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_versions.py)
+
 ## Rerunning from the middle
 
 **To make the back-and-forth of fixing and checking one Card at a time fast.**
@@ -114,6 +143,13 @@ Two cautions:
 - **If you changed something upstream and have not run it, the saved inputs are still the old ones**, as are the values used at a merge. Which run's values were used is kept in the run's journal.
 - **Finally, run the whole Workflow to confirm.** A partial run is for trying a part while you build. Taking an old input does not bring back the code or upstream conditions of that time.
 
+**Where to check**
+
+- On screen: in "Cas A · Chandra RGB", rewrite the band edges of `bands` (`green_min_ev` and so on) and choose "Run Only This Card (Last Inputs)" to try the colouring without reading the observation again.
+- On screen: in "Collatz", choose "Run Only This Card (Last Inputs)" on `compare` to compare again without rerunning the four language Cards (run the whole once first).
+- A run from one branch meeting saved inputs at a merge, and an explicit failure when there is no saved input: [test_scheduler.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py)
+- In the MNIST demo, running one classifier and going on to `compare` to compare again: [test_demo_mnist.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demo_mnist.py)
+
 ## Unpublished data
 
 **It can be handled without giving it to AI. A Card's computation stays inside the VM on the Mac, and what leaves it is fixed.**
@@ -124,6 +160,14 @@ Two cautions:
 - With the Agent, the conversation and the sources, logs and input and output values the Agent reads are sent to the model's provider. There is no mechanism yet that masks what is sent.
 - A save in which the Agent gives a Card the network or a folder of the Mac does not go through without the user's approval.
 - A finished Workflow runs without an LLM. You can build the processing with the Agent on public or synthetic data, and run it on unpublished data without the Agent.
+
+**Where to check**
+
+- What is and is not protected: [the summary in Security and isolation](security.md#summary)
+- What is sent to the model when the Agent is used: [What is sent to the model](security.md#what-is-sent-to-the-model)
+- Cards have no network by default: [test_workers.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py) (`test_network_is_off_unless_the_card_allows_it`), [test_cards_container.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py)
+- A save in which the Agent widens permissions needs approval: [test_permissions.py](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py)
+- The idea of separating what AI sees while building from what it sees in production: [Business automation and the data boundary](vision.md#business-automation-and-the-data-boundary)
 
 ## Measures that keep trial and error light
 
@@ -137,6 +181,14 @@ Tsugumi separates `params.json`, used at run time, from `params-nix.json`, passe
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
+**Where to check**
+
+- Code: [Nix build inputs](https://github.com/gen740/Tsugumi/blob/main/core/src/nix.cc) (`NixRunner::build`)
+- Code: [validation on save](https://github.com/gen740/Tsugumi/blob/main/core/src/service.cc)
+- Code: [keeping the definition and the layout](https://github.com/gen740/Tsugumi/blob/main/core/src/store.cc)
+- Tests: [reuse of the shared store](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_shared_vm.py) (reopening, cleaning the store, copying a project)
+- Tests: [the save contract](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_contract.py)
+
 ### Reusing the evaluator and workers so small steps can repeat
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
@@ -144,6 +196,15 @@ If a computation of a few lines split into a Card started the Nix evaluator or a
 The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++ / Python Cards are called by a resident worker that loads their shared library (R and Julia Cards start a process per invocation, so this does not reach them). Even with a fresh worker per invocation, the next worker is started and its library loaded ahead of time.
 
 A reused worker's state carries across runs, and the initialisation it needs can be written in `onRunStart` / `on_run_start`. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
+
+With these speed-ups, including a separate history disk, a Run of Collatz with 1,344 invocations (when it was only C++ and Python) went from 4.5–5.0 s to 0.92–1.0 s when rerun on the shared VM. The first run in the same setup took 7.9 s; first-time preparation and reruns are measured separately ([conditions and breakdown](development.md#measurements-2026-11-03)).
+
+**Where to check**
+
+- Code: [the built-in evaluator](https://github.com/gen740/Tsugumi/blob/main/core/src/nix_eval.cc)
+- Code: [the worker pool](https://github.com/gen740/Tsugumi/blob/main/core/src/worker_pool.cc)
+- Code: [calling a Card](https://github.com/gen740/Tsugumi/blob/main/sdk/src/worker_main.cc)
+- Tests: [resident, initialising and fresh workers, with cancellation and deadlines](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py)
 
 ### Partial runs without gathering inputs again
 
@@ -159,6 +220,12 @@ Tsugumi saves the full set of inputs of the latest invocation and the latest inp
 
 **Researchers can try a change where they were curious without gathering inputs by hand.** These latest inputs are saved separately from the full input and output history chosen with `recordIO`.
 
+**Where to check**
+
+- Code: [partial runs and saving inputs](https://github.com/gen740/Tsugumi/blob/main/core/src/scheduler.cc) (`seed_saved`, `take_ready`, `save_last_inputs`)
+- Tests: [regressions for File inputs after clearing the cache and restarting, and for missing inputs](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py)
+- Tests: [partial runs from child Workflows and branches](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py)
+
 ### A saved record behind every "finished"
 
 If downstream steps went ahead as soon as a step returned a value, a later failure to save the record would leave a run that shows as successful on screen but cannot be traced.
@@ -166,6 +233,14 @@ If downstream steps went ahead as soon as a step returned a value, a later failu
 Tsugumi validates the outputs, keeps the artifacts the settings ask for and saves the record of the invocation's completion before it announces completion and passes values downstream. A value whose save failed is not passed on. The input and output values recorded keep the type schema of that moment. The stages shown on screen are not guessed from the final state either; they come from the stages the core actually recorded: evaluation, build, run, validation and saving.
 
 **How far a run got and where it failed are seen on screen and in the run history from the same evidence.** The full history of input and output values and the keeping of artifacts are settings, so the amount recorded can be tuned to the analysis.
+
+**Where to check**
+
+- Code: [the order of output validation, saving and notification](https://github.com/gen740/Tsugumi/blob/main/core/src/scheduler.cc)
+- Code: [saving the history and type schemas](https://github.com/gen740/Tsugumi/blob/main/core/src/history.cc)
+- Code: [showing the stages](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/App/Workbench/StageLogView.swift)
+- Tests: [the regression for a failed history write](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py) (`test_history_write_failure_fails_the_run`)
+- Tests: [combinations of records and artifacts](https://github.com/gen740/Tsugumi/blob/main/tests/python/test_history.py)
 
 ### Keeping Nix dependencies consistent with a Workflow that branches
 
@@ -176,6 +251,13 @@ Say A branches to B or C, and D runs on whichever result arrives. The code Card 
 Tsugumi analyses how inputs are awaited, branches and merges, loops and child Workflows, and finds the Cards that precede on every path. `all` takes the union of what its required inputs guarantee; `any`, and several paths into one port, take the intersection; loops are solved as a greatest fixed point. Only the definitions of code Cards that meet this condition are passed to the Nix evaluator, and those referred to are evaluated lazily.
 
 References written directly in a source are also diagnosed on save as `nix_reference_*`, and an indirect reference (through an alias, say) fails to evaluate, because the evaluator is given only the definitions in range. **The Workflow's connections are reflected not only in the order of execution but also in the dependencies of the environment's definitions.**
+
+**Where to check**
+
+- Code: [finding the Cards that always precede](https://github.com/gen740/Tsugumi/blob/main/core/src/graph.cc) (`compute_guarantees`)
+- Code: [the upstream definitions passed to Nix](https://github.com/gen740/Tsugumi/blob/main/core/src/nix.cc) (`entry_nix`)
+- Tests: [branches, merges, loops and child Workflows](https://github.com/gen740/Tsugumi/blob/main/tests/cpp/core_tests.cc) (`upstream_branch_sides_do_not_survive_any_merge` and others: straight lines, branches with `any`, `all` with optional inputs, several paths into one port, loops, nesting and unreachable cycles)
+- How it works: [what is diagnosed on save](features.md#referring-to-upstream-definitions-inputsupstream)
 
 ## What it brings together from existing approaches
 
@@ -188,7 +270,7 @@ Trying code interactively, representing processing as a graph, and managing depe
 | Represent the relationships of processing as a graph | Make the displayed connections the basis of type derivation and the rules of execution |
 | Manage versions of environments, code and experiments | Tie runs to versions of the code, and start the next attempt from a past version |
 
-Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the worker that calls a C++ Card as a shared library in [Card SDK and workers](features.md#4-card-sdk-and-workers), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [Documents and saving](features.md#5-documents-and-saving).
+Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the worker that calls a C++ Card as a shared library in [Card SDK and workers](features.md#4-card-sdk-and-workers) and its [measurements](development.md#measurements-2026-11-03), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [Documents and saving](features.md#5-documents-and-saving).
 
 **What Tsugumi aims for is a research environment in which people and AI design, run and keep thinking on the same structure.**
 With that structure, researchers can return to the trials an AI pushed forward and test their own questions as concrete changes.

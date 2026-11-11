@@ -629,6 +629,7 @@ start → load ─ share ─┬→ fit ─ fits-share ─┬→ check
 Each has a start Card and three Drafts, and each Draft's description says what it receives, what it does and what it passes on (almost the same text as the descriptions of the implemented demos' Cards).
 
 Press "Generate Cards" at the top right of the Canvas and the Agent makes Cards from the Drafts, runs them and checks ([Generating Cards from Drafts](features.md#generating-cards-from-drafts)).
+A record of having the real Claude API implement `casa-draft` is in [Evidence](Evidence.md#a-run-with-the-real-claude-api).
 
 ## Dynamical systems gallery (`dynamics-draft`)
 

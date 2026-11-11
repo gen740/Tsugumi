@@ -2,7 +2,7 @@
 
 ## Getting it
 
-**It runs on macOS, Linux and Windows** (Windows through WSL2). The desktop app is for Apple silicon Macs with macOS 26 or later only; on Linux and Windows, use the Web UI of the [`tsugumi` command](#using-it-in-the-browser-the-tsugumi-command).
+**It runs on macOS, Linux and Windows** (checked on macOS and on Linux, Ubuntu and NixOS; Windows verified through WSL2). The desktop app is for Apple silicon Macs with macOS 26 or later only; on Linux and Windows, use the Web UI of the [`tsugumi` command](#using-it-in-the-browser-the-tsugumi-command).
 
 Preparing the runtime the first time (assembling Tsugumi inside the VM and fetching the Cards' dependencies) needs an internet connection.
 
@@ -65,7 +65,7 @@ tsugumi update
 - **What is installed**: only the command (`~/.local/bin/tsugumi`) and what it runs (`~/.local/share/tsugumi/<version>/`). If `~/.local/bin` is not on `PATH`, it says so; it does not change your shell's settings. `tsugumi update` or installing again replaces it with a new version (it does not update itself). To remove it, see [Uninstalling](#uninstalling).
 - **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes Node.js and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The first start takes a few minutes while Tsugumi is assembled inside the VM. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](docs/WebUI.md#the-tsugumi-command).
 - **Linux (x86_64 / aarch64)**: needs [Nix](https://nixos.org/download). It fetches the source, `tsugumi-linux.tar.gz`, and builds it with Nix (the first time takes a few minutes; how it works is in [Web UI](docs/WebUI.md#the-tsugumi-command)).
-- **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
+- **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. Verified in WSL2 (with Nix without its daemon): it was installed, and a demo opened and ran ([#159](https://github.com/gen740/Tsugumi/issues/159)). It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
 - Downloaded files are installed after their checksum (`.sha256`) is checked. To choose a version, use the environment variable `TSUGUMI_VERSION`.
 
 ## Building from source
@@ -127,10 +127,10 @@ The app icon `macOS/Resources/AppIcon.icns` is generated from `docs/assets/tsugu
 ## Checking after building
 
 ```bash
-tests/ci-local.sh
+(cd tests/python && python -m pytest -q test_contract.py)
 ```
 
-The test suites and commands are in [Tests in Development](docs/Development.md#tests).
+The test suites and what has been checked are in [Tests in Development](docs/Development.md#tests).
 
 ## Uninstalling
 

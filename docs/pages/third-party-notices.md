@@ -2,14 +2,16 @@
 
 Tsugumi's own code is under the [MIT License](https://github.com/gen740/Tsugumi/blob/main/LICENSE). Existing libraries,
 copied code, fonts and external data retain their own licenses, including
-the [hosq](https://github.com/CLI20-dev/hosq) library.
+the author's pre-existing [hosq](https://github.com/CLI20-dev/hosq) library.
+See [How it was built](philosophy.md#how-it-was-built) for the authorship boundary.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh)).
 The corresponding source of the VM's boot disk is in that disk's release of
 [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
-[Licenses and distribution](licenseaudit.md). Lock files and build recipes
-are authoritative when dependencies change.
+[License audit](licenseaudit.md). Versions
+below were audited at `0ec6460` (2026-11-04) and checked again on 2026-11-05;
+lock files and build recipes are authoritative when dependencies change.
 
 ## Tree-sitter: copied sources and linked packages
 
@@ -44,7 +46,7 @@ The copied queries' upstream license texts are retained in
 
 `tree-sitter-swift` is used by SwiftTreeSitter's **test target**, not by the
 `SwiftTreeSitter` product that Tsugumi links. It is not an app dependency
-in the `macOS/Package.swift` / `Package.resolved` graph.
+in the audited `macOS/Package.swift` / `Package.resolved` graph.
 
 ## Other macOS app dependencies
 

@@ -1,7 +1,7 @@
 # Tsugumi's features
 
 Tsugumi is a macOS app that runs graphs of Cards connected by ports (Workflows) in environments pinned with Nix, and records which Card did what and when (there is also a [Web UI](WebUI.md) with the same screens in a browser).
-This document is a reference list of what each feature can do and how it is achieved.
+This document is a reference list of what each feature can do and how it is achieved. Each section ends with **Where to check**: the tests and code that show the feature.
 
 | To know | Read |
 | --- | --- |
@@ -25,6 +25,11 @@ macOS (host)                                       Shared Linux VM (one per app)
 - **The UI and the Agent are equal clients**: both talk to the core with the same RPC contract, defined in `protocol/tsugumi.fbs`. The Agent does not imitate operations on screen; it sends RPC requests to the core directly. With the Agent disabled, every ordinary operation still works.
 - **The shared VM**: one Linux VM started with macOS's `Virtualization.framework`, inside which each project's `tsugumid` runs with its own namespaces, uid and cgroup (details in [security.md](security.md)).
 - **Web UI**: the same screens from a browser. With the Mac's `tsugumi` command it runs inside the same shared VM as the app; on Linux and when started from the repository, `tsugumid` runs directly on the host (Cards are isolated with Seatbelt on a Mac and bubblewrap on Linux; [Web UI](WebUI.md)).
+
+**Where to check**
+
+- The RPC contract: [protocol/tsugumi.fbs](../protocol/tsugumi.fbs), [test_contract.py](../tests/python/test_contract.py)
+- The UI and the Agent using the same contract: [test_agent_contract.py](../tests/python/test_agent_contract.py)
 
 ## 2. Cards and Workflows
 
@@ -53,6 +58,12 @@ macOS (host)                                       Shared Linux VM (one per app)
 - Downstream of a path a branch did not take is `skipped`; a Card that depends on a Draft or a failed upstream Card is `blocked`, with a reason; paths independent of them keep running.
 - A run that was in progress when the process ended abnormally or restarted is recorded as `interrupted`.
 - Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Files). When "Run from Here Downstream" reaches a merge, a Card that waits for all its inputs fills only the ports that receive nothing this time with saved inputs (an `any` Card runs with only the values that arrived).
+
+**Where to check**
+
+- Types, structural compatibility and the union of a merge: [tests/cpp](../tests/cpp)
+- Passing values across languages: [test_cards_container.py](../tests/python/test_cards_container.py), [test_language_cards.py](../tests/python/test_language_cards.py)
+- `all` / `any`, `maxRuns`, Card in Card and partial runs: [test_scheduler.py](../tests/python/test_scheduler.py)
 
 ## 3. Reproducible environments with Nix
 
@@ -111,6 +122,12 @@ in { run = "${ciao}/bin/dmlist ..."; }
 - All projects share one `/nix/store`, and each project keeps its build results with its own GC roots (the last two generations per Card; ones unused for 30 days are collected automatically).
 - A project's "Delete the build cache" only removes that project's GC roots. Garbage collection of the shared store itself runs only from "Clean shared store" under "External Connections" in the app's settings. With `keep-outputs = true`, compilers and the nixpkgs source stay after cleaning, so editing a Card does not download them again.
 
+**Where to check**
+
+- A Card's environment and the SDK: [sdk/nix/default.nix](../sdk/nix/default.nix)
+- The analysis of upstream references: [tests/cpp](../tests/cpp), [core/src/graph.cc](../core/src/graph.cc) (`compute_guarantees`)
+- Reusing the shared store, and GC roots: [test_shared_vm.py](../tests/python/test_shared_vm.py)
+
 ## 4. Card SDK and workers
 
 ### Stages
@@ -158,6 +175,12 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).
 - In the Experimental section of a Card's settings, "Allow network access" (`network`) and "Allow access to folders of the host" (`hostFolders`; seen from the worker as `/host/<name>`, read-only by default) can be set per Card.
 
+**Where to check**
+
+- Each language's SDK, and visualisation, File outputs and params: [test_cards_container.py](../tests/python/test_cards_container.py), [test_language_cards.py](../tests/python/test_language_cards.py)
+- Resident workers, `onRunStart`, the network and Mac folders: [test_workers.py](../tests/python/test_workers.py)
+- Your first Card (a test runs the code on that page): [CardGuide.md](CardGuide.md)
+
 ## 5. Documents and saving
 
 - A project is an ordinary folder of `tsugumi.json`, `definitions/<Card>/` (`_card.json`, `_meta.json` (intentions such as the summary), `default.nix`, `src/`, `_outputs.fbs`) and the layout in `layout.json`, and can be managed with Git as it is.
@@ -166,6 +189,10 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - **Conflict detection**: a save is based on the revision at which editing began. If another window or the Agent saved first, it is detected as a conflict and nothing is silently overwritten. A resend with the same `op_id` is applied only once (if a response is lost to a dropped connection, `OperationGet` confirms the result).
 - **Saving during a run**: while a Workflow runs, a save that changes the computation's definition (its execution fingerprint) is refused with `busy`; only layout changes and the like are accepted, safely.
 
+**Where to check**
+
+- Save round trips, conflicts, resends with the same `op_id` and fault injection: [test_contract.py](../tests/python/test_contract.py)
+
 ## 6. Run history and artifacts
 
 - Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM's dedicated run-history disk (`vm/history.img`), so it is written fast without going through a folder shared with the host, and is not lost by "Reset all environments".
@@ -173,6 +200,12 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
 - When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.
 - "Delete Run History" deletes from all three places: inside the VM, `.tsugumi/runs.sqlite` and the per-run file area.
+
+**Where to check**
+
+- Every combination of `recordIO × retainArtifact`, and tamper detection: [test_history.py](../tests/python/test_history.py)
+- Writing, importing and deleting `.tsugumi/runs.sqlite`: [test_run_history.py](../tests/python/test_run_history.py)
+- A run whose history failed to save does not succeed: [test_regressions.py](../tests/python/test_regressions.py)
 
 ## 7. Visualisation
 
@@ -322,7 +355,21 @@ On Home, a single guide conversation for the whole app (`Agent.Role.guide`; its 
 - The first time the user connects to a model by saving a key (or signing in to ChatGPT), the main window in front asks once "Would you like to see the guide?", noting that the guide uses the model's API and costs money. "See the guide" opens the Data to report demo and starts the guide; "Later" is the same as "Later" in the speech bubble.
 - During the guide, the start and end of runs (succeeded, failed, stopped) and disconnections and reconnections are reported to the chat as they really are. What happens while it is answering is reported after it finishes. The guide's state and the answer to the invitation are saved and not repeated after a restart.
 
+**Where to check**
+
+- The list of tools and the FlatJSON conversion being the same on the Mac and the Web: [test_agent_contract.py](../tests/python/test_agent_contract.py), `macOS/CoreTests`
+- How the script proceeds without a key (the same on the Mac and the Web): `macOS/Tests/TsugumiAppTests/GuideTests.swift`, `web/tests/guideScript.ts`
+- The rules for saves that implement Drafts: [test_draft_intent.py](../tests/python/test_draft_intent.py)
+- The rules for saving comments, and the version history: [test_card_comments.py](../tests/python/test_card_comments.py)
+- A save in which the Agent widens a Card's permissions needs approval: [test_permissions.py](../tests/python/test_permissions.py)
+- A record of making Cards from Drafts with the real Claude API, running and checking them: [Evidence](Evidence.md#a-run-with-the-real-claude-api)
+
 ## 10. Demos
 
 There are 31 bundled demos (Draft versions included), in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
 Choose "Open a Copy" on a demo from "Browse Demos" on the home screen to get an editable copy in `~/Documents/Tsugumi/<demo>`.
+
+**Where to check**
+
+- Every demo opens and resolves: [test_demos.py](../tests/python/test_demos.py)
+- Running demos for real and checking against independently computed values (`TSUGUMI_TEST_DEMO_RUNS=1`): `tests/python/test_demo_*.py`

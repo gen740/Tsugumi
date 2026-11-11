@@ -6,6 +6,8 @@
   <a href="https://gen740.github.io/Tsugumi/"><img src="assets/docs-card.svg" alt="Read the documentation: the problem told with moving figures, demos you can watch without installing, and how it works" width="100%"></a>
 </p>
 
+<p align="center">The repository as submitted to <b>Build with Claude: Japan</b> is kept as a frozen mirror: <a href="https://github.com/gen740/tsugumi-hackathon">gen740/tsugumi-hackathon</a>.</p>
+
 <p align="center">
   <a href="#install"><img src="assets/install-card.svg" alt="Install it and try it: the app on a Mac, a command for the browser on Linux and Windows. Go to installation and first steps" width="100%"></a>
 </p>
@@ -15,7 +17,8 @@
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="Latest release"></a>
   <a href="https://github.com/gen740/Tsugumi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="pages/install.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (Windows through WSL2)"></a>
+  <a href="pages/install.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows verified through WSL2)"></a>
+  <a href="https://github.com/gen740/tsugumi-hackathon"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan (the submitted snapshot)"></a>
   <a href="pages/philosophy.md#how-it-was-built"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
   <a href="llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="Documentation written for both people and AI"></a>
 </p>
@@ -24,9 +27,23 @@
 
 **Run the analysis you sketched with AI, as it is, and check it with your own hands.**
 
-Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (Windows through WSL2).
+Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, verified through WSL2).
 You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
 You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.
+
+**Who made it, and why**
+
+I am a PhD student working on AI for astrophysics. The X-ray observations that arrive from deep space can, in fact, be downloaded by anyone from the internet. Getting meaning out of them, however, means getting past NASA's large analysis suite (HEASoft) and a pile of tedious, detector-specific processing.
+
+Wanting people to be able to touch the universe more easily, with their own hands, I have been pinning whole analysis environments with Nix and publishing them ([gen740/heasoft](https://github.com/gen740/heasoft)). An environment that runs was not enough, though. Unless you understand the steps and can try "what happens if I change this condition" yourself, the research does not become yours.
+
+During the hackathon I visited laboratories in science, engineering and medicine at the University of Tokyo and asked researchers about this. In their words (translated from Japanese):
+
+- Science (associate professor): "Arguing only about the conclusion while you can't see how it was reached is frightening, honestly."
+- Engineering (first-year PhD student): "I can't tell whether what the AI produced really matches what it is actually doing."
+- Medicine (first-year master's student): "Handing patients' information to an AI is a scary thought."
+
+The fields differed, but they were stuck in the same place: **there is no way for a person to follow afterwards what the AI did and check it.** The wall I had been hitting in astrophysics is the wall every researcher who computes now faces. Tsugumi is my answer to it ([the start of the demo video](https://www.youtube.com/watch?v=-GhD9vI6_Dg); the longer story: [What to build so that we are not used by AI](pages/philosophy.md)).
 
 ![A Canvas that makes an RGB image and an energy spectrum from an X-ray observation of Cas A](assets/screenshots/workflow.png)
 
@@ -111,7 +128,7 @@ Yet today we write long instructions, read long reports, and check again whether
 Tsugumi is a **macOS app for assembling computation and data processing as a graph of Cards (a Workflow)**.
 
 1. **Draw.** Place Drafts, which have only a name and a description, and wire them up to design the whole flow.
-2. **Implement.** Leave a Draft to the Agent, or write C++ / Python / bash / R / Julia yourself. The generated code stays in the project as ordinary files that you can reread and edit at any time.
+2. **Implement.** Leave a Draft to the Agent, or write C++ / Python / bash / R / Julia yourself. The generated code stays in the project as ordinary files that you can reread and edit at any time. A run with the real Claude API, from Drafts to execution and checking, is recorded in [Evidence](pages/evidence.md#a-run-with-the-real-claude-api).
 3. **Check.** Run the graph in environments pinned with Nix, and look at each Card's progress, outputs and logs. When you fix a step in the middle, run again from there at once, with the saved inputs.
 
 ## Splitting the processing finely, without making trial and error heavy
@@ -176,7 +193,7 @@ In a project, the chat is the thrush. Write `$demo` and it flies around the scre
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-**Mac and Linux**: the `tsugumi` command, used in the browser (on Linux, install [Nix](https://nixos.org/download) first). Open it with `tsugumi` and update it with `tsugumi update`.
+**Mac and Linux**: the `tsugumi` command, used in the browser (on Linux, install [Nix](https://nixos.org/download) first). Open it with `tsugumi` and update it with `tsugumi update`. It has been checked on Linux too (Ubuntu on aarch64 and x86_64, NixOS on x86_64; on NixOS also [over SSH from another machine](pages/webui.md#running-it-on-another-machine-over-ssh)).
 
 ```bash
 curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
@@ -190,7 +207,7 @@ irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 
 You can also open a shell in the WSL Linux and install with the same `curl … | sh` as on Mac and Linux. Either way, running `tsugumi` opens the page in the Windows browser.
 
-The first start takes a few minutes to prepare. The signature (ad hoc), system requirements and building from source are in [INSTALL.md](pages/install.md).
+The first start takes a few minutes to prepare. The signature (ad hoc), the environments that were checked and building from source are in [INSTALL.md](pages/install.md).
 
 ### First steps
 
@@ -201,7 +218,7 @@ The first start takes a few minutes to prepare. The signature (ad hoc), system r
 
 The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
 
-If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI ([Using it from Claude Code](pages/claude-code.md)).
+If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI (verified on a Mac and on Windows in WSL2; [Using it from Claude Code](pages/claude-code.md)).
 
 ### Bundled demos
 
@@ -256,15 +273,17 @@ This idea starts from research and extends to turning research decisions into te
 
 ## Documentation
 
+The concerns behind Tsugumi, its author and how it was built during the hackathon are in **[What to build so that we are not used by AI](pages/philosophy.md)**; the repository as submitted to Build with Claude: Japan is the frozen mirror **[gen740/tsugumi-hackathon](https://github.com/gen740/tsugumi-hackathon)**.
+
 | Purpose | Documents |
 | --- | --- |
 | **Getting started** | [Installation](pages/install.md) · [Usage](pages/usage.md) · [Your first Card](pages/cardguide.md) · [The bundled demos](pages/demos.md) · [Web UI](pages/webui.md) · [Using it from Claude Code](pages/claude-code.md) |
 | **The ideas** | [What to build so that we are not used by AI](pages/philosophy.md) · [Why one Workflow for design, implementation and checking](pages/rationale.md) · [Vision and applications](pages/vision.md) · [Plans and guarantees](pages/limitations.md) |
 | **How it works** | [Features](pages/features.md) · [Versions](pages/versions.md) · [Security and isolation](pages/security.md) · [The RPC contract](pages/protocol.md) · [Glossary](pages/glossary.md) |
-| **Development** | [Development](pages/development.md) · [Pinned versions](pages/lock.md) · [Licenses and distribution](pages/licenseaudit.md) |
+| **Records and development** | [Claims and how to check them](pages/evidence.md) · [Development](pages/development.md) · [Pinned versions](pages/lock.md) · [License audit](pages/licenseaudit.md) |
 
 The list of all documents is in [docs/README.md](pages/documents.md).
 
 ## License
 
-Tsugumi's own code is under the MIT License ([LICENSE](https://github.com/gen740/Tsugumi/blob/main/LICENSE)). External code, fonts and data are under their own licenses, whose full texts ship with the app and the `tsugumi` command. The list of dependencies is in [THIRD_PARTY_NOTICES.md](pages/third-party-notices.md); what the distributions include and how the VM's corresponding source is provided are in the [Licenses and distribution](pages/licenseaudit.md).
+Tsugumi's own code is under the MIT License ([LICENSE](https://github.com/gen740/Tsugumi/blob/main/LICENSE)). External code, fonts and data are under their own licenses, whose full texts ship with the app and the `tsugumi` command. The list of dependencies is in [THIRD_PARTY_NOTICES.md](pages/third-party-notices.md); what the distributions include and how the VM's corresponding source is provided are in the [License audit](pages/licenseaudit.md).
