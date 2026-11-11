@@ -4,7 +4,7 @@ import { CardEnvironment, compareCardEnvironments, groupCardEnvironments, storeN
 import { ProjectSession, formatMillis } from '../model/session'
 import { R, s, segs } from '../shared/rpc'
 import { Button } from './controls'
-import { EnvironmentView } from './environments'
+import { EnvironmentView, recordedEnvironmentSource } from './environments'
 
 function LazyDetail({ label, children }: { label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -43,6 +43,7 @@ function DependencyDifference({ session, source, excluded }: { session: ProjectS
 
 /** Run-wide view groups shared environments and compares latest invocations by Card path. */
 export function EnvironmentHistory({ session, runId }: { session: ProjectSession; runId: string }) {
+  const [names, setNames] = useState<Record<string, string>>({})
   const [rows, setRows] = useState<CardEnvironment[]>([])
   const [before, setBefore] = useState<CardEnvironment[]>([])
   const [runs, setRuns] = useState<R.RunSummaryT[]>([])
@@ -55,13 +56,26 @@ export function EnvironmentHistory({ session, runId }: { session: ProjectSession
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let alive = true
-    setBusy(true); setError(undefined); setRows([]); setBefore([])
+    setBusy(true); setError(undefined); setRows([]); setBefore([]); setNames({})
     if (!session.rpc) { setError(L('実行環境に接続していません')); setBusy(false); return }
     const rpc = session.rpc
     const latest = async (run: string) => (await rpc.call<R.InvocationPageT>(R.RequestPayload.RunLatestInvocationsRequest,
       Object.assign(new R.RunLatestInvocationsRequestT(), { runId: run }))).records.map(r => ({ card: segs(r.card).join('/'), environment: s(r.environmentId) || undefined }))
-    void Promise.all([latest(runId), compare ? latest(compare) : Promise.resolve([])]).then(([current, old]) => {
-      if (alive) { setRows(current); setBefore(old) }
+    const labels = async () => {
+      const names: Record<string, string> = {}
+      if (compare) return names
+      let offset: bigint | null = 0n
+      const source = recordedEnvironmentSource(rpc)
+      while (offset !== null && alive) {
+        const page = await source.environments(runId, offset)
+        for (const e of page.environments) names[e.id] = storeName(e.manifest)
+        if (page.next !== null && page.next <= offset) throw Error('Environment pagination did not advance')
+        offset = page.next
+      }
+      return names
+    }
+    void Promise.all([latest(runId), compare ? latest(compare) : Promise.resolve([]), labels()]).then(([current, old, labels]) => {
+      if (alive) { setRows(current); setBefore(old); setNames(labels) }
     }).catch(e => { if (alive) setError(String(e.message ?? e)) }).finally(() => { if (alive) setBusy(false) })
     return () => { alive = false }
   }, [session.rpc, runId, compare, attempt])
@@ -95,7 +109,7 @@ export function EnvironmentHistory({ session, runId }: { session: ProjectSession
       {row.before && <LazyDetail label={L('比較元の実行')}><EnvironmentView key={`${compare}:${row.before}`} session={session} runId={compare} environmentId={row.before} /></LazyDetail>}
       {row.after && <LazyDetail label={L('記録された実行環境')}><EnvironmentView key={`${runId}:${row.after}`} session={session} runId={runId} environmentId={row.after} /></LazyDetail>}
     </LazyDetail>) : groupCardEnvironments(rows).map(group => <div key={group.id}>
-      <Button onClick={() => setSelected(group.id)} disabled={!group.id}>{group.id || L('環境の記録がありません')}</Button>
+      <Button onClick={() => setSelected(group.id)} disabled={!group.id}>{names[group.id] || L('環境の記録がありません')}</Button>
       <p>{group.cards.join(', ')}</p>
     </div>)}
     {selected && !compare && <EnvironmentView key={`${runId}:${selected}`} session={session} runId={runId} environmentId={selected} />}

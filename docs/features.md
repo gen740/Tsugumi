@@ -172,6 +172,8 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - `recordIO` and `retainArtifact` choose, per Card, what is recorded and kept. Kept artifacts are checked for tampering and path escapes.
 - With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
 - When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.
+- In a Card's execution history, **Environment** shows the selected invocation's recorded target system, manifest output, derivation and runtime dependencies. Expand a package name to select and copy its full store path. Dependency search covers the recorded closure and returns at most 100 paths per page; it does not evaluate or build the current project.
+- **Environments across the run** groups Cards by shared environment. Choose a comparison run to see changed environments, added or removed Cards, and paginated added/removed dependency paths. The comparison uses each Card's last invocation; use the per-invocation tab for earlier calls. Missing environment records are shown as unknown, not as matching or empty environments. A runtime closure does not include dependencies used only during the build.
 - "Delete Run History" deletes from all three places: inside the VM, `.tsugumi/runs.sqlite` and the per-run file area.
 
 ## 7. Visualisation

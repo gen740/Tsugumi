@@ -73,3 +73,15 @@ import Testing
   #expect(recordedStoreName("/nix/store/package-with-dashes") == "package-with-dashes")
   #expect(recordedStoreName("/nix/store/" + String(repeating: "X", count: 32) + "-package") == String(repeating: "X", count: 32) + "-package")
 }
+
+@MainActor @Test func environmentComparisonDistinguishesMissingRecordsFromEqualEnvironments() {
+  let before = [CardEnvironment(card: "same", environment: "shared"), CardEnvironment(card: "changed", environment: "old"),
+                CardEnvironment(card: "removed", environment: "old"), CardEnvironment(card: "unknown", environment: nil)]
+  let after = [CardEnvironment(card: "same", environment: "shared"), CardEnvironment(card: "changed", environment: "new"),
+               CardEnvironment(card: "added", environment: "shared"), CardEnvironment(card: "unknown", environment: nil)]
+  let changes = compareCardEnvironments(before, after)
+  #expect(changes.map(\.card) == ["added", "changed", "removed", "same", "unknown"])
+  #expect(changes.map(\.state) == [.added, .changed, .removed, .same, .unrecorded])
+  #expect(changes[1].before == "old")
+  #expect(changes[1].after == "new")
+}

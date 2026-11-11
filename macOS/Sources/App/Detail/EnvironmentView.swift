@@ -125,7 +125,7 @@ struct RecordedEnvironmentView: View {
   }
 }
 
-private enum EnvironmentPageError: Error { case nonAdvancing }
+enum EnvironmentPageError: Error { case nonAdvancing }
 
 func recordedStoreName(_ path: String) -> String {
   let name = String(path.split(separator: "/").last ?? "")

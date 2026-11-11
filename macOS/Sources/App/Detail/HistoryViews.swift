@@ -55,7 +55,7 @@ struct CardExecutionView: View {
   }
 
   enum Detail: String, CaseIterable, Identifiable {
-    case io, log, info, environment
+    case io, log, info, environment, environments
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -63,6 +63,7 @@ struct CardExecutionView: View {
       case .log: String(localized: "ログ")
       case .info: String(localized: "情報")
       case .environment: String(localized: "環境")
+      case .environments: String(localized: "実行全体の環境")
       }
     }
   }
@@ -145,7 +146,7 @@ struct CardExecutionView: View {
               .frame(maxWidth: 320)
               Spacer()
               Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 280)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 400)
             }
             .padding(6)
             Divider()
@@ -154,6 +155,8 @@ struct CardExecutionView: View {
             case .log:
               if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
             case .info: infoView
+            case .environments:
+              if let runId { EnvironmentHistoryView(session: session, runId: runId).id(runId) }
             case .environment:
               if let runId {
                 RecordedEnvironmentView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")

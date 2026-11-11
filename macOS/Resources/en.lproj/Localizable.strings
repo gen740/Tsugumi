@@ -592,6 +592,7 @@
 "付箋を編集" = "Edit Note";
 "付箋を編集…" = "Edit Note…";
 "付箋を追加" = "Add Note";
+"以前の実行を読み込む" = "Load earlier runs";
 "会話" = "Conversations";
 "会話に戻る" = "Back to the conversation";
 "会話の一覧と検索" = "Conversations and search";
@@ -720,6 +721,8 @@
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
 "削除…" = "Delete…";
+"削除された Card" = "Removed Card";
+"削除された依存パス" = "Removed dependency paths";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
 "前へ" = "Previous";
@@ -743,9 +746,11 @@
 "可視化 %@" = "Display %@";
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
+"各 Card の最後の呼び出しを比較します。" = "Comparing the last invocation of each Card.";
 "合流" = "Merge";
 "同じ名前があります" = "That name is taken";
 "同じ環境 ID の呼び出しは、この環境を共有しています。" = "Invocations with the same environment ID share this environment.";
+"同じ環境です" = "Same environment";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -846,6 +851,7 @@
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
 "実行中・SDK 準備中は削除できません。" = "Cannot delete while a run or SDK preparation is active.";
 "実行全体" = "Whole run";
+"実行全体の環境" = "Environments across the run";
 "実行履歴" = "Run History";
 "実行履歴…" = "Run History…";
 "実行履歴なし" = "No runs";
@@ -1015,6 +1021,8 @@
 "残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";
 "段階" = "Phase";
+"比較しない" = "Do not compare";
+"比較元の実行" = "Compare against run";
 "流れの向き" = "Flow direction";
 "添えられたフォルダを読んでいます" = "Reading the attached folder";
 "添付を外す" = "Remove the attachment";
@@ -1040,6 +1048,8 @@
 "版管理されていません" = "Not versioned";
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
+"環境が変わりました" = "Environment changed";
+"環境の記録がありません" = "Environment not recorded";
 "環境を停止" = "Stop Environment";
 "生命・医療" = "Life and medicine";
 "生成" = "Generated";
@@ -1139,6 +1149,8 @@
 "起動中: %@" = "Starting: %@";
 "起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
+"追加された Card" = "Added Card";
+"追加された依存パス" = "Added dependency paths";
 "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here like inputs.sources.ciao.packages.ciao. It is fixed by its commit and hash. Adding, updating and removing are saved at once. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";

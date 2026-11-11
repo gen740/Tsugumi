@@ -31,6 +31,19 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '実行全体の環境': 'Environments across the run',
+    '各 Card の最後の呼び出しを比較します。': 'Comparing the last invocation of each Card.',
+    '比較元の実行': 'Compare against run',
+    '比較しない': 'Do not compare',
+    '以前の実行を読み込む': 'Load earlier runs',
+    '追加された Card': 'Added Card',
+    '削除された Card': 'Removed Card',
+    '環境が変わりました': 'Environment changed',
+    '同じ環境です': 'Same environment',
+    '環境の記録がありません': 'Environment not recorded',
+    '追加された依存パス': 'Added dependency paths',
+    '削除された依存パス': 'Removed dependency paths',
+
     '記録された実行環境': 'Recorded execution environment',
     'この呼び出しの環境は記録されていません': 'No environment was recorded for this invocation',
     '共有環境 ID': 'Shared environment ID',
