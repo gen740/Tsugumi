@@ -45,6 +45,8 @@ $command = Join-Path $bin 'tsugumi.cmd'
 Set-Content -Path $command -Encoding Ascii -Value @'
 @echo off
 wsl.exe --cd ~ --exec .local/bin/tsugumi %*
+if errorlevel 1 exit /b %errorlevel%
+if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)
 '@
 
 Write-Host "tsugumi: installed $command"

@@ -97,6 +97,7 @@ if [ "$artifact" = tsugumi-linux.tar.gz ]; then
 else
   mv "$tree" "$dest"
 fi
+printf '%s\n' "$version" > "$dest/.installed-by-tsugumi"
 ln -sfn "$version" "$data/current"
 ln -sfn "$data/current/tsugumi" "$bin/tsugumi"
 # Earlier versions: what runs now keeps its open files.

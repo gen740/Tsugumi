@@ -5,6 +5,7 @@
 #
 #   tsugumi [project folder]   opens the Web UI; Ctrl-C stops it and the VM
 #   tsugumi update             puts the latest release in place
+#   tsugumi uninstall [--yes]   previews removal; --yes removes the command
 set -eu
 
 self="$0"
@@ -23,7 +24,7 @@ case "${1:-}" in
     exit 0
     ;;
   -h | --help)
-    sed -n '5,6p' "$0" | cut -c3-
+    sed -n '5,7p' "$0" | cut -c3-
     exit 0
     ;;
 esac

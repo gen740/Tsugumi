@@ -18,6 +18,7 @@ import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
 import { VMEnvironmentManager, VMTerminal } from './vm'
 import { desktopRecents, desktopSettings, Recent } from './desktop'
 import { L, language } from './i18n'
+import { uninstall } from './uninstall'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -31,7 +32,9 @@ const opt = (name: string) => {
 }
 // `tsugumi update`: the latest release's install.sh (cli/install.sh) puts the
 // newest version in place. The wrappers put their flags before the user's words.
-if (argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port') === 'update') process.exit(update())
+const commandIndex = argv.findIndex((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port')
+if (argv[commandIndex] === 'update') process.exit(update())
+if (argv[commandIndex] === 'uninstall') process.exit(uninstall(argv.slice(commandIndex + 1)))
 
 function update(): number {
   // TSUGUMI_INSTALL_BASE (checks, or another place) and TSUGUMI_VERSION go on to install.sh as they are.

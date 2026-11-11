@@ -188,6 +188,90 @@ def test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there():
     # Says what is missing, and does not change PATH.
     assert "wsl --install" in script and "Nix is needed" in script
     assert "SetEnvironmentVariable" not in script
+    # Never delete the Windows launcher on preview or a failed WSL uninstall.
+    wrapper = script[script.index("@echo off"):script.index("\n'@", script.index("@echo off"))]
+    assert wrapper.index("if errorlevel 1 exit /b %errorlevel%") < wrapper.index('del "%~f0"')
+    assert 'if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)' in wrapper
+
+
+# ---- Uninstalling --------------------------------------------------------------
+
+@needs_server
+@pytest.mark.parametrize("system,arch,nix", [("Darwin", "arm64", False), ("Linux", "x86_64", True)])
+def test_uninstall_previews_then_removes_only_the_installed_command(machine, system, arch, nix):
+    artifact(machine.release, "tsugumi-linux.tar.gz" if nix else "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine(system, arch, nix=nix).returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    command = machine.home / ".local/bin/tsugumi"
+    kept = [machine.home / "Documents/Tsugumi/project/tsugumi.json",
+            machine.home / "Library/Application Support/Tsugumi/vm.img",
+            machine.home / ".config/tsugumi/settings.json", data / "my-notes.txt"]
+    for f in kept:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("keep me")
+    store = machine.home / "nix-store-fixture"
+    store.mkdir()
+    (store / "package").write_text("keep store output")
+    (data / "1.2.3/store-output").symlink_to(store, target_is_directory=True)
+    args = [shutil.which("node"), str(SERVER), "--open", "--reuse", "uninstall"]
+    preview = machine(system, arch, nix=nix, command=args)
+    assert preview.returncode == 0, preview.stderr
+    assert "uninstall --yes" in preview.stdout
+    assert command.exists() and (data / "1.2.3").exists()
+    removed = machine(system, arch, nix=nix, command=args + ["--yes"])
+    assert removed.returncode == 0, removed.stderr
+    assert not command.is_symlink() and not (data / "current").is_symlink()
+    assert not (data / "1.2.3").exists()
+    assert all(f.read_text() == "keep me" for f in kept)
+    assert (store / "package").read_text() == "keep store output"
+    again = machine(system, arch, nix=nix, command=args + ["--yes"])
+    assert again.returncode == 0 and "No installer-managed" in again.stdout
+
+
+@needs_server
+def test_uninstall_removes_empty_installation_folder(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    assert r.returncode == 0, r.stderr
+    assert not (machine.home / ".local/share/tsugumi").exists()
+
+
+@needs_server
+@pytest.mark.parametrize("change", ["launcher", "data", "bin", "current", "version", "marker"])
+def test_uninstall_refuses_replaced_or_redirected_installations(machine, change):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    command = machine.home / ".local/bin/tsugumi"
+    external = machine.home / "external"
+    external.mkdir()
+    (external / "keep").write_text("keep")
+    if change == "launcher":
+        command.unlink()
+        command.write_text("other command")
+    elif change in ("data", "bin", "version"):
+        target = {"data": data, "bin": command.parent, "version": data / "1.2.3"}[change]
+        target.rename(external / "original")
+        target.symlink_to(external / "original", target_is_directory=True)
+    elif change == "current":
+        (data / "current").unlink()
+        (data / "current").symlink_to(external, target_is_directory=True)
+    else:
+        (data / "1.2.3/.installed-by-tsugumi").unlink()
+    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    assert r.returncode != 0
+    assert (external / "keep").read_text() == "keep"
+    assert command.exists() or command.is_symlink()
+
+
+@needs_server
+def test_uninstall_rejects_unknown_options_without_deleting(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--purge"])
+    assert r.returncode != 0 and "Usage:" in r.stderr
+    assert (machine.home / ".local/bin/tsugumi").exists()
 
 
 # ---- The web server on the VM -------------------------------------------------
