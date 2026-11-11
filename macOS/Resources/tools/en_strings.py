@@ -1232,6 +1232,9 @@ EN = {
 "保存前": "Not saved",
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
 "参照先: %@": "Resolved path: %@",
+    '差分・保存前': 'Patch · not saved',
+    '差分・保存済み': 'Patch · saved',
+    '置換テキスト': 'Replacement text',
 }
 
 

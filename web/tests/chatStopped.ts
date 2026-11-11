@@ -77,4 +77,22 @@ c.handle(cancelled)
 assert.equal(c.busy, false)
 assert.equal(c.status, STOPPED)
 
+// Only source-saving tool arguments belong on the canvas. A successful save
+// changes the label; a rejected or failed save removes the unsaved preview.
+{
+  const c = chat()
+  const delta = JSON.stringify({ changes: [{ value: { path: 'definitions/a/main.py', patches: [{ text: 'print(42)' }] } }] })
+  c.noteWriting('', { kind: 'toolInput', name: 'project_file_read', index: 0, delta })
+  assert.equal(c.writers.size, 0)
+  c.noteWriting('', { kind: 'toolInput', name: 'project_save', index: 1, delta })
+  const writer = c.writers.get('')
+  assert.equal(writer.at(Date.now() / 1000)?.saved, false)
+  assert.equal(writer.at(Date.now() / 1000)?.patch, true)
+  c.noteWriting('', { kind: 'toolFinished', name: 'project_save', ok: true })
+  assert.equal(writer.at(Date.now() / 1000)?.saved, true)
+  c.noteWriting('', { kind: 'toolInput', name: 'project_save', index: 2, delta })
+  c.noteWriting('', { kind: 'toolFinished', name: 'project_save', ok: false })
+  assert.equal(writer.at(Date.now() / 1000), undefined)
+}
+
 console.log('chat stopped behavior: passed')

@@ -877,6 +877,8 @@
 "履歴を読み込めませんでした" = "Could not read the history";
 "履歴を読み込んでいます…" = "Reading the history…";
 "左から右" = "Left to right";
+"差分・保存前" = "Patch · not saved";
+"差分・保存済み" = "Patch · saved";
 "幅 %lld" = "Width %lld";
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
@@ -1070,6 +1072,7 @@
 "編集…" = "Edit…";
 "編集中の _outputs.fbs（未適用・型は適用後に解決）" = "_outputs.fbs being edited (not applied; types resolve after applying)";
 "縮小" = "Zoom Out";
+"置換テキスト" = "Replacement text";
 "考えています" = "Thinking";
 "考えています…" = "Thinking…";
 "興味のあること（例: 画像処理）" = "What interests you (e.g. image processing)";
