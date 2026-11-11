@@ -67,3 +67,9 @@ import Testing
   #expect(history.runs.first??.status.state == .succeeded)
   await session.close()
 }
+
+@Test func recordedEnvironmentNamesKeepFullUnhashedNames() {
+  #expect(recordedStoreName("/nix/store/" + String(repeating: "a", count: 32) + "-python-3.13") == "python-3.13")
+  #expect(recordedStoreName("/nix/store/package-with-dashes") == "package-with-dashes")
+  #expect(recordedStoreName("/nix/store/" + String(repeating: "X", count: 32) + "-package") == String(repeating: "X", count: 32) + "-package")
+}

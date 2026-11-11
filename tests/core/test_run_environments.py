@@ -233,3 +233,69 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
     assert inventory(restored.connect(), run_id)[0] == environment_id
+
+
+def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factory, project, tmp_path):
+    """Search covers the recorded closure, with offsets and totals over matching paths."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    environment_id, paths = inventory(client, run_id)
+    for query in ["", "NIX", paths[-1].split("/")[-1], "%", "_", "'", "no-such-package"]:
+        expected = [p for p in paths if query.lower() in p.lower()]
+        found = []
+        offset = 0
+        while True:
+            page = client.call("RunEnvironmentPathsRequest", runId=run_id,
+                               environmentId=environment_id, query=query, offset=offset, limit=1)
+            assert page.total == len(expected)
+            found.extend(text(p) for p in page.paths)
+            if page.nextOffset is None:
+                break
+            assert page.nextOffset > offset
+            offset = page.nextOffset
+        assert found == expected
+
+
+def test_environment_diff_is_paginated_and_validates_both_sides(core_factory, project, tmp_path):
+    """Comparisons return exact set differences; missing history is never an empty closure."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    worker_project(client, project, tmp_path, [])
+    first = run(client)
+    assert wait_run(client, first).state == RunState.succeeded
+    old_id, old_paths = inventory(client, first)
+    # Change the build product through the normal project source path.
+    package = tmp_path / "changed-worker"
+    package.mkdir()
+    (package / "scenario.json").write_text(json.dumps({"actions": []}))
+    graph = Project(project).card("changed", {"language": "bash", "sandbox": False},
+                                  outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}})
+    graph.save(client)
+    second = run(client, "changed")
+    assert wait_run(client, second).state == RunState.succeeded
+    changed_id, new_paths = inventory(client, second, "changed")
+    for left, left_id, left_paths, right, right_id, right_paths in [
+        (first, old_id, old_paths, second, changed_id, new_paths),
+        (second, changed_id, new_paths, first, old_id, old_paths),
+        (first, old_id, old_paths, first, old_id, old_paths),
+    ]:
+        expected = sorted(set(left_paths) - set(right_paths))
+        found, offset = [], 0
+        while True:
+            page = client.call("RunEnvironmentPathsRequest", runId=left, environmentId=left_id,
+                               excludeRunId=right, excludeEnvironmentId=right_id, limit=1, offset=offset)
+            assert page.total == len(expected)
+            found.extend(text(p) for p in page.paths)
+            if page.nextOffset is None:
+                break
+            assert page.nextOffset > offset
+            offset = page.nextOffset
+        assert found == expected
+    for fields, kind in [({"excludeRunId": first}, "invalid_request"),
+                         ({"excludeEnvironmentId": old_id}, "invalid_request"),
+                         ({"excludeRunId": first, "excludeEnvironmentId": "missing"}, "not_found"),
+                         ({"excludeRunId": new_id(), "excludeEnvironmentId": old_id}, "not_found")]:
+        with pytest.raises(RpcFailure) as error:
+            client.call("RunEnvironmentPathsRequest", runId=first, environmentId=old_id, **fields)
+        assert error.value.kind == kind

@@ -351,6 +351,13 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto offset = r->offset().value_or(0);
   const auto limit = page_limit(r->limit());
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  const auto query = r->query() ? r->query()->str() : std::string{};
+  const bool compare = r->exclude_run_id() || r->exclude_environment_id();
+  if (compare && (!r->exclude_run_id() || !r->exclude_environment_id()))
+    throw Failed(FailureKind::invalid_request, "both excluded run and environment are required");
+  if (compare) require_uuid(r->exclude_run_id(), "exclude_run_id");
+  const auto excluded_run = compare ? r->exclude_run_id()->str() : std::string{};
+  const auto excluded_id = compare ? r->exclude_environment_id()->str() : std::string{};
   FBB b;
   std::vector<flatbuffers::Offset<flatbuffers::String>> paths;
   uint64_t total = 0;
@@ -359,10 +366,25 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
     environment.bind(1, run).bind(2, id);
     if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
     total = environment.u64(0);
-    auto q = db.prepare(
-        "SELECT path FROM environment_paths WHERE run_id=? AND environment_id=? "
-        "AND position>=? ORDER BY position LIMIT ?");
-    q.bind(1, run).bind(2, id).bind(3, offset).bind(4, static_cast<int>(limit));
+    if (compare) {
+      auto excluded = db.prepare("SELECT 1 FROM build_environments WHERE run_id=? AND id=?");
+      excluded.bind(1, excluded_run).bind(2, excluded_id);
+      if (!excluded.step()) throw Failed(FailureKind::not_found, "unknown comparison environment");
+    }
+    const auto predicate = std::string{
+        "FROM environment_paths AS p WHERE run_id=? AND environment_id=? "
+        "AND instr(lower(path), lower(?))>0 "
+        "AND NOT EXISTS (SELECT 1 FROM environment_paths AS other "
+        "WHERE other.run_id=? AND other.environment_id=? AND other.path=p.path) "};
+    if (!query.empty() || compare) {
+      auto count = db.prepare("SELECT count(*) " + predicate);
+      count.bind(1, run).bind(2, id).bind(3, query).bind(4, excluded_run).bind(5, excluded_id);
+      count.step();
+      total = count.u64(0);
+    }
+    auto q = db.prepare("SELECT path " + predicate + "ORDER BY position LIMIT ? OFFSET ?");
+    q.bind(1, run).bind(2, id).bind(3, query).bind(4, excluded_run).bind(5, excluded_id)
+        .bind(6, static_cast<int>(limit)).bind(7, offset);
     while (q.step()) {
       const auto path = q.text(0);
       if (path.size() + 16 > kPagePayload)

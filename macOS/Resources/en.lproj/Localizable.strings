@@ -287,6 +287,7 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
+"この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -497,6 +498,7 @@
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
+"ビルド時だけに使う依存関係は含まれません。" = "Dependencies used only at build time are not included.";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
@@ -565,6 +567,7 @@
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
+"一致する依存パスはありません" = "No matching dependency paths";
 "一般" = "General";
 "一覧から削除" = "Remove from the list";
 "一覧から外す" = "Remove from list";
@@ -610,6 +613,7 @@
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
+"依存パスを検索" = "Search dependency paths";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -667,6 +671,7 @@
 "共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。" = "Cleaning the shared Nix store deletes what no project has registered as a build result (no GC root). Registered Card builds and the compilers used for them stay. A project's “Clear build cache” only unregisters; the store is cleaned only here.";
 "共有 Nix store を掃除しますか？" = "Clean the shared Nix store?";
 "共有 store を掃除…" = "Clean shared store…";
+"共有環境 ID" = "Shared environment ID";
 "内容" = "Content";
 "内容が不明なため、編集・名前変更・保存はできません。\n%@" = "Its contents are unknown, so it cannot be edited, renamed or saved.\n%@";
 "内部の接続先: %@.%@" = "Inside it goes to: %@.%@";
@@ -740,6 +745,7 @@
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "合流" = "Merge";
 "同じ名前があります" = "That name is taken";
+"同じ環境 ID の呼び出しは、この環境を共有しています。" = "Invocations with the same environment ID share this environment.";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -849,6 +855,7 @@
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
+"実行時の依存パス" = "Runtime dependency paths";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境との接続が切れました" = "Lost the connection to the environment";
@@ -858,6 +865,7 @@
 "実行環境の VM イメージがある" = "The environment's VM image is here";
 "実行環境のコンソール" = "Environment Console";
 "実行環境のデータ" = "Environment data";
+"実行環境の出力" = "Environment output";
 "実行環境の準備ができませんでした: %@" = "The environment could not get ready: %@";
 "実行環境の管理プロセスを起動しています" = "Starting the environment's supervisor";
 "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
@@ -996,6 +1004,7 @@
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
+"検索結果を 100 件ずつ表示します。" = "Showing 100 search results at a time.";
 "検証" = "Validate";
 "検証しています" = "Validating";
 "概要" = "Description";
@@ -1100,6 +1109,7 @@
 "記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。" = "Connections used by logger Cards to store logs in an external database, independent of the core history.";
 "記録がありません" = "No record";
 "記録された出来事はありません" = "No events were recorded";
+"記録された実行環境" = "Recorded execution environment";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";
 "記録と成果物" = "Recording and artifacts";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";

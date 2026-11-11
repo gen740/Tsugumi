@@ -31,6 +31,17 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '記録された実行環境': 'Recorded execution environment',
+    'この呼び出しの環境は記録されていません': 'No environment was recorded for this invocation',
+    '共有環境 ID': 'Shared environment ID',
+    '同じ環境 ID の呼び出しは、この環境を共有しています。': 'Invocations with the same environment ID share this environment.',
+    '実行環境の出力': 'Environment output',
+    '実行時の依存パス': 'Runtime dependency paths',
+    'ビルド時だけに使う依存関係は含まれません。': 'Dependencies used only at build time are not included.',
+    '依存パスを検索': 'Search dependency paths',
+    '検索結果を 100 件ずつ表示します。': 'Showing 100 search results at a time.',
+    '一致する依存パスはありません': 'No matching dependency paths',
+
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

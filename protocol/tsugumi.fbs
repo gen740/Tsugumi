@@ -544,6 +544,12 @@ table RunEnvironmentPathsRequest {
   environment_id:string (id: 1, required);
   offset:uint64 = null (id: 2);
   limit:uint32 = null (id: 3);
+  /// Case-insensitive literal substring search. Offset and total refer to matching paths.
+  query:string (id: 4);
+  /// Optional pair: omit paths present in this recorded environment. Swap the
+  /// two environments to inspect the opposite side of a dependency diff.
+  exclude_run_id:string (id: 5);
+  exclude_environment_id:string (id: 6);
 }
 
 table BuildEnvironment {

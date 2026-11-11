@@ -1,3 +1,5 @@
+import { EnvironmentHistory } from './environmentHistory'
+import { EnvironmentView } from './environments'
 // Run history, artifacts and the enlarged output display of one Card.
 import { useEffect, useMemo, useState } from 'react'
 import { app } from '../model/app'
@@ -13,7 +15,7 @@ import { RunLogView } from './logs'
 import { L } from '../i18n'
 
 type Filter = 'all' | 'succeeded' | 'failed'
-type Detail = 'io' | 'log' | 'info'
+type Detail = 'io' | 'log' | 'info' | 'environment' | 'environments'
 
 /** Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
  *  Loading, failed and empty are said plainly, never as an empty split view. */
@@ -122,7 +124,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                     label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` + (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
                   })) : [{ value: '', label: L('呼び出しなし') }]} />
                 <span className="spacer" />
-                <Segmented<Detail> small width={220} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'info', label: L('情報') }]} />
+                <Segmented<Detail> small width={400} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'info', label: L('情報') }, { value: 'environment', label: L('環境') }, { value: 'environments', label: L('実行全体の環境') }]} />
               </div>
               <div className="flex1 col min0">
                 {detail === 'io' && (rec ? (
@@ -136,6 +138,8 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                     {rec.outputs.map((v, i) => <ValueBox key={i} v={v} />)}
                   </div>
                 ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
+                {detail === 'environments' && <EnvironmentHistory key={runId} session={session} runId={runId} />}
+                {detail === 'environment' && <EnvironmentView key={`${runId}:${invocation}:${s(rec?.summary?.environmentId)}`} session={session} runId={runId} environmentId={s(rec?.summary?.environmentId)} />}
                 {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
                 {detail === 'info' && (record ? (
                   <div className="scroll">
