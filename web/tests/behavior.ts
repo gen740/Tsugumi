@@ -64,3 +64,4 @@ await import("./sessionConnect")
 
 await import("./perchScale")
 await import("./guideScript")
+await import("./demoReplay")

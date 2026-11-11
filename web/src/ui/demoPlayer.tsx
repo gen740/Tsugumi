@@ -74,7 +74,14 @@ export interface DemoData {
 
 // ---- Replay: a list of frames walked by a timer ---------------------------------------
 
-export interface Frame { mode: 'idle' | 'playing' | 'done'; step: number; sub: number; tick: number; ms: number }
+export interface Frame {
+  mode: 'idle' | 'playing' | 'done'
+  step: number
+  sub: number
+  tick: number
+  ms: number
+  recorded?: { from: number; to: number }
+}
 export const IDLE: Frame = { mode: 'idle', step: -1, sub: 0, tick: 0, ms: 0 }
 export const DONE: Frame = { mode: 'done', step: Infinity, sub: 0, tick: 0, ms: 0 }
 /** Invocation counts shown while a Card that ran many times (a loop) is replayed. */
@@ -84,16 +91,28 @@ export function framesOf(data: DemoData, speed: number): Frame[] {
   const kinds = new Map(data.cards.map((c) => [c.id, c.kind]))
   const out: Frame[] = []
   data.steps.forEach((st, step) => {
+    const first = out.length
     const code = st.cards.some((c) => kinds.get(c) === 'code' || kinds.get(c) === 'subgraph')
     const loops = st.cards.some((c) => (data.final[c]?.count ?? 0) > 1)
     if (!code) {
       out.push({ mode: 'playing', step, sub: 0, tick: 0, ms: 620 * speed })
-      return
+    } else {
+      out.push({ mode: 'playing', step, sub: 0, tick: 0, ms: 520 * speed })
+      if (loops) for (let tick = 0; tick < LOOP_TICKS; tick++) out.push({ mode: 'playing', step, sub: 1, tick, ms: 230 * speed })
+      else out.push({ mode: 'playing', step, sub: 1, tick: LOOP_TICKS - 1, ms: 900 * speed })
+      out.push({ mode: 'playing', step, sub: 2, tick: LOOP_TICKS - 1, ms: 480 * speed })
     }
-    out.push({ mode: 'playing', step, sub: 0, tick: 0, ms: 520 * speed })
-    if (loops) for (let tick = 0; tick < LOOP_TICKS; tick++) out.push({ mode: 'playing', step, sub: 1, tick, ms: 230 * speed })
-    else out.push({ mode: 'playing', step, sub: 1, tick: LOOP_TICKS - 1, ms: 900 * speed })
-    out.push({ mode: 'playing', step, sub: 2, tick: LOOP_TICKS - 1, ms: 480 * speed })
+    if (st.startMs !== undefined && st.endMs !== undefined) {
+      const frames = out.slice(first)
+      const duration = frames.reduce((sum, frame) => sum + frame.ms, 0)
+      let elapsed = 0
+      for (const frame of frames) {
+        const from = st.startMs + (st.endMs - st.startMs) * elapsed / duration
+        elapsed += frame.ms
+        const to = st.startMs + (st.endMs - st.startMs) * elapsed / duration
+        frame.recorded = { from, to }
+      }
+    }
   })
   return out
 }
@@ -534,13 +553,38 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
 
 // ---- The player -------------------------------------------------------------------------------
 
+/** Interpolate recorded time within a replay frame, independent of the replay speed. */
+export function recordedTime(frame: Frame, elapsed: number): number | undefined {
+  if (!frame.recorded) return undefined
+  const progress = frame.ms > 0 ? Math.max(0, Math.min(1, elapsed / frame.ms)) : 1
+  return frame.recorded.from + (frame.recorded.to - frame.recorded.from) * progress
+}
+
+// Only the clock re-renders at display cadence; Cards still advance by replay frames.
+function ReplayElapsed({ frame, totalMs }: { frame: Frame; totalMs?: number }) {
+  const [sample, setSample] = useState<{ frame: Frame; ms: number }>()
+  useEffect(() => {
+    if (frame.mode !== 'playing' || !frame.recorded) return
+    const start = performance.now()
+    let request: number
+    const tick = (now: number) => {
+      const elapsed = now - start
+      setSample({ frame, ms: recordedTime(frame, elapsed)! })
+      if (elapsed < frame.ms) request = requestAnimationFrame(tick)
+    }
+    request = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(request)
+  }, [frame])
+  const ms = frame.mode === 'done' ? totalMs
+    : frame.mode === 'playing' ? (sample?.frame === frame ? sample.ms : recordedTime(frame, 0)) : undefined
+  return ms === undefined ? null : <span className="secondary mono-digits nowrap" title={L('実際の実行での経過時間（記録）')}>{formatDuration(ms / 1000)}</span>
+}
+
 export function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
-  const step = frame.mode === 'playing' ? data.steps[frame.step] : undefined
   const label = frame.mode === 'playing' ? L('実行中') : frame.mode === 'done' ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('待機中')
   const icon = frame.mode === 'playing' ? 'play.circle.fill' : frame.mode === 'done' ? 'checkmark.circle.fill' : 'circle'
   const color = frame.mode === 'playing' ? 'orange' : frame.mode === 'done' ? 'green' : 'secondary'
   const real = data.run?.realOrder
-  const ms = frame.mode === 'done' ? data.run?.totalMs : step ? (frame.sub >= 2 ? step.endMs : step.startMs) : undefined
   return (
     <div className="capsule material cv-run" onPointerDown={(e) => e.stopPropagation()}>
       <Button kind={playing ? 'danger' : 'prominent'} icon={playing ? 'stop.fill' : 'play.fill'} className="cv-run-button" disabled={data.draftOnly}
@@ -550,7 +594,7 @@ export function RunControl({ data, frame, playing, onRun, onStop }: { data: Demo
       <span className="cv-run-state">
         <Icon name={icon} style={{ color: `var(--${color})` }} />
         <span className="nowrap">{label}</span>
-        {real && ms !== undefined && <span className="secondary mono-digits nowrap" title={L('実際の実行での経過時間（記録）')}>{formatDuration(ms / 1000)}</span>}
+        {real && <ReplayElapsed frame={frame} totalMs={data.run?.totalMs} />}
       </span>
     </div>
   )
