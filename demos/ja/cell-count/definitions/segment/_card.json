@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "cleaned"
+    }
+  ],
+  "params": [
+    {
+      "name": "min_distance",
+      "type": "uint64",
+      "data": 5
+    },
+    {
+      "name": "min_area",
+      "type": "uint64",
+      "data": 30
+    }
+  ]
+}

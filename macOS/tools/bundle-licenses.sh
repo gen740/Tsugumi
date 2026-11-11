@@ -27,6 +27,7 @@ cp "$repo/macOS/Sources/Grammars/LICENSE.tree-sitter" "$repo/macOS/Sources/Gramm
   "$repo/macOS/Sources/App/Resources/TreeSitter/SOURCES.md" "$dest/tree-sitter/"
 cp "$repo/macOS/Sources/Grammars/TreeSitterNix/LICENSE" "$dest/tree-sitter/tree-sitter-nix.LICENSE"
 cp "$repo/macOS/Sources/Grammars/TreeSitterPython/LICENSE" "$dest/tree-sitter/tree-sitter-python.LICENSE"
+cp "$repo/macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE" "$dest/tree-sitter/tree-sitter-julia-scanner.LICENSE"
 
 # What the renderer's static Dawn library compiles (docs/LicenseAudit.md).
 mkdir -p "$dest/dawn"

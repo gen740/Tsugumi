@@ -1,0 +1,14 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "summary"
+    },
+    {
+      "name": "config"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "report",
+  "filesystem": true
+}

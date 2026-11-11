@@ -71,4 +71,14 @@ struct ContractTests {
       #expect(Agent.draftRequest(scope: try #require(c["scope"] as? [String]), cards: cards) == c["expect"] as? String)
     }
   }
+
+  @Test func commentRequests() throws {
+    for c in try #require(fixture["commentRequest"] as? [[String: Any]]) {
+      let cards = try #require(c["cards"] as? [[String: Any]]).map { card in
+        (key: card["key"] as! String, definition: card["definition"] as! String,
+         comments: (card["comments"] as! [[String: String]]).map { (id: $0["id"]!, text: $0["text"]!) })
+      }
+      #expect(Agent.commentRequest(scope: try #require(c["scope"] as? [String]), cards: cards) == c["expect"] as? String)
+    }
+  }
 }

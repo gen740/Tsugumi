@@ -3,7 +3,7 @@
 // are routed here to the active project and tab (the macOS menu commands);
 // the canvas handles its own single-key shortcuts while it has the focus.
 import { useEffect, useRef, useState } from 'react'
-import { onServerEvent } from '../api'
+import { closePageProject, onServerEvent, reportPageProject } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { canvasFor } from '../model/canvas'
@@ -13,11 +13,12 @@ import { errorText } from '../model/session'
 import { Workspace } from '../model/workspace'
 import { runAll } from './actions'
 import { Button, Empty, MenuHost, Sheet, Spinner, TextField } from './controls'
-import { GuideFlyer, GuideSetupSheet, setGuideWindow } from './guide'
+import { GuideFlyer, GuideInvite, GuideSetupSheet, setGuideWindow } from './guide'
 import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
 import { WorkflowTabs } from './workbench'
+import { L } from '../i18n'
 
 const isTextInput = (el: Element | null) =>
   !!el && (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button'].includes(el.type)) ||
@@ -30,6 +31,8 @@ export function App() {
   const [workspace] = useState(() => new Workspace())
   useObserve(workspace)
   const [switchError, setSwitchError] = useState<string>()
+  // Leaving was asked for and the changes cannot be saved: the way out is to give them up.
+  const [unsaved, setUnsaved] = useState<{ reason: string; answer: (giveUp: boolean) => void }>()
   const [duplicating, setDuplicating] = useState(false)
   const params = new URLSearchParams(location.search)
   const detachedScope = params.get('scope')
@@ -40,9 +43,11 @@ export function App() {
       const s = await app.session(dir)
       workspace.open(s, scope)
       if (scope) workspace.set('showChat', false)
+      reportPageProject(s.dir)
       const u = new URL(location.href)
       u.searchParams.set('project', s.dir)
       if (!scope) u.searchParams.delete('scope')
+      u.searchParams.delete('fresh')
       history.replaceState(null, '', u)
     } catch (e) {
       app.setError(e)
@@ -54,7 +59,15 @@ export function App() {
       void guide.refresh()
       // `?project=<folder>` (or the server's launch argument) opens that project.
       const p = params.get('project') ?? app.status?.launchProject
+      if (p && params.has('fresh')) app.markFresh(p)
       if (p && !app.setupNeeded) void open(p, detached ? detachedScope!.split('/').filter(Boolean) : undefined)
+      // `?new` is another tab's ⌘N: this tab's Home opens the sheet.
+      if (params.has('new')) {
+        app.request('requestNewProject', true)
+        const u = new URL(location.href)
+        u.searchParams.delete('new')
+        history.replaceState(null, '', u)
+      }
     })
   }, [])
 
@@ -63,30 +76,26 @@ export function App() {
     const s = workspace.session
     if (!s) return true
     if (s.runActive) {
-      setSwitchError('実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。')
+      setSwitchError(L('実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。'))
       return false
     }
-    if (s.dirty) await s.save()
-    if (s.dirty) {
-      setSwitchError(`変更を保存できませんでした: ${s.saveError ?? ''}。変更は保持しています。`)
-      return false
-    }
+    const settled = await s.settleBeforeLeaving((reason) => new Promise((answer) => setUnsaved({ reason, answer })))
+    if (!settled) return false
     workspace.close()
+    app.closeProject(s)
     const u = new URL(location.href)
     u.search = ''
     history.replaceState(null, '', u)
+    await closePageProject(s.dir).catch(() => {})
     void app.refresh()
     return true
   }
   workspace.switchProject = detached ? undefined : () => void leaveProject()
   // The guide's buttons act on this page.
   setGuideWindow({
-    openProject: (p) => void openReplacing(p),
+    openProject: (p) => void openProject(p),
     home: () => void leaveProject(),
-    newProject: () => void (async () => {
-      if (workspace.session && !(await leaveProject())) return
-      app.request('requestNewProject', true)
-    })(),
+    newProject: () => void newProject(),
     showChat: () => workspace.set('showChat', true),
   })
 
@@ -97,16 +106,47 @@ export function App() {
     if (!workspace.session) await open(dir)
   }
 
-  // The latest handlers, for the one keydown listener.
-  const commands = useRef({ leaveProject, openReplacing })
-  commands.current = { leaveProject, openReplacing }
+  /** A project opens on this tab's Home; from a project, in a browser tab of its own
+   *  (a browser that blocks the new tab: here, once the open one has been left). */
+  const openProject = async (dir: string) => {
+    if (!workspace.session) return open(dir)
+    if (workspace.session.dir === dir) return
+    const q = new URLSearchParams({ project: dir })
+    const fresh = app.takeFresh(dir)
+    if (fresh) q.set('fresh', '')
+    if (window.open(`${location.pathname}?${q}`, '_blank')) return
+    if (fresh) app.markFresh(dir)
+    await openReplacing(dir)
+  }
 
-  // Claude Code (the plugin) opened a project: this page shows it. When it
-  // asks to widen what Cards may do, the chat (where that is approved) opens.
+  /** The new project sheet, on this tab's Home; from a project, on a new tab's. */
+  const newProject = async () => {
+    if (workspace.session && window.open(`${location.pathname}?new`, '_blank')) return
+    if (workspace.session && !(await leaveProject())) return
+    app.request('requestNewProject', true)
+  }
+
+  // The latest handlers, for the one keydown listener.
+  const commands = useRef({ leaveProject, openProject, newProject })
+  commands.current = { leaveProject, openProject, newProject }
+
+  // Claude Code (the plugin) opened a project: the server chose this page to
+  // show it (on Home; other pages keep their projects). When it asks to widen
+  // what Cards may do, the chat (where that is approved) opens.
   useEffect(() => {
-    if (detached) return
+    if (detached) {
+      // A child workflow's page closes with its project.
+      return onServerEvent((e) => {
+        const s = workspace.session
+        if (s && e.type === 'projectClosed' && s.dir === e.project) {
+          workspace.close()
+          app.closeProject(s)
+          window.close()
+        }
+      })
+    }
     return onServerEvent((e) => {
-      if (e.type === 'agentOpen' && workspace.session?.dir !== e.project) void commands.current.openReplacing(e.project)
+      if (e.type === 'agentOpen' && !workspace.session) void commands.current.openProject(e.project)
       if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'permission' && workspace.session?.dir === e.project) workspace.set('showChat', true)
     })
   }, [])
@@ -151,11 +191,7 @@ export function App() {
       e.stopPropagation()
       switch (action) {
         case 'newProject':
-          if (detached) return
-          void (async () => {
-            if (workspace.session && !(await commands.current.leaveProject())) return
-            app.request('requestNewProject', true)
-          })()
+          if (!detached) void commands.current.newProject()
           return
         case 'openProject':
           if (!detached) app.request('requestOpenProject', true)
@@ -201,7 +237,7 @@ export function App() {
 
   let body: JSX.Element
   if (!app.status) {
-    body = app.error ? <Empty title="サーバーに接続できません" icon="network.slash" description={app.error}><Button onClick={() => void app.refresh()}>再試行</Button></Empty>
+    body = app.error ? <Empty title={L('サーバーに接続できません')} icon="network.slash" description={app.error}><Button onClick={() => void app.refresh()}>{L('再試行')}</Button></Empty>
       : <div className="center-fill"><Spinner /></div>
   } else if (app.setupNeeded) {
     body = <SetupView />
@@ -217,22 +253,36 @@ export function App() {
       <MenuHost />
       {!detached && <GuideFlyer />}
       {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
+      {!detached && <GuideInvite />}
       {app.requestOpenProject && (
-        <FolderPicker message="tsugumi.json を含むフォルダを選んでください" requireProject
+        <FolderPicker message={L('tsugumi.json を含むフォルダを選んでください')} requireProject
           onClose={() => app.request('requestOpenProject', false)}
           onPick={(p) => {
             app.request('requestOpenProject', false)
-            void openReplacing(p)
+            void openProject(p)
           }} />
       )}
       {duplicating && workspace.session && (
         <DuplicateProjectSheet dir={workspace.session.dir} onClose={() => setDuplicating(false)}
-          onError={(m) => setSwitchError(m)} onCreated={(p) => void openReplacing(p)} />
+          onError={(m) => setSwitchError(m)} onCreated={(p) => void openProject(p)} />
+      )}
+      {unsaved && (
+        <Sheet onClose={() => { setUnsaved(undefined); unsaved.answer(false) }} width={420}>
+          <div className="confirm">
+            <div className="confirm-title">{L('保存できない変更があります')}</div>
+            <div className="secondary">{L('Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。')}</div>
+            <div className="secondary selectable">{L('保存できない理由: {0}', unsaved.reason)}</div>
+            <div className="row end gap8">
+              <Button onClick={() => { setUnsaved(undefined); unsaved.answer(false) }}>{L('キャンセル')}</Button>
+              <Button kind="danger" onClick={() => { setUnsaved(undefined); unsaved.answer(true) }}>{L('変更を破棄して Home へ戻る')}</Button>
+            </div>
+          </div>
+        </Sheet>
       )}
       {switchError && (
         <Sheet onClose={() => setSwitchError(undefined)} width={420}>
           <div className="confirm">
-            <div className="confirm-title">プロジェクトを切り替えられません</div>
+            <div className="confirm-title">{L('プロジェクトを切り替えられません')}</div>
             <div className="secondary selectable">{switchError}</div>
             <div className="row end"><Button kind="prominent" onClick={() => setSwitchError(undefined)}>OK</Button></div>
           </div>
@@ -251,15 +301,15 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
   return (
     <Sheet onClose={onClose} width={420}>
       <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name.trim()) setChoosing(true) }}>
-        <div className="headline">複製を作る場所を選んでください（保存済みの内容を複製します）</div>
-        <TextField value={name} onChange={setName} placeholder="名前" autoFocus />
+        <div className="headline">{L('複製を作る場所を選んでください（保存済みの内容を複製します）')}</div>
+        <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
-          <Button onClick={onClose}>キャンセル</Button>
-          <Button kind="prominent" type="submit" disabled={!name.trim()}>場所を選ぶ…</Button>
+          <Button onClick={onClose}>{L('キャンセル')}</Button>
+          <Button kind="prominent" type="submit" disabled={!name.trim()}>{L('場所を選ぶ…')}</Button>
         </div>
       </form>
       {choosing && (
-        <FolderPicker message="複製を作る場所を選んでください（保存済みの内容を複製します）" allowCreate initial={parent}
+        <FolderPicker message={L('複製を作る場所を選んでください（保存済みの内容を複製します）')} allowCreate initial={parent}
           onClose={() => setChoosing(false)}
           onPick={async (p) => {
             setChoosing(false)
@@ -269,7 +319,7 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
               onCreated(made)
             } catch (e) {
               onClose()
-              onError('複製できませんでした: ' + errorText(e))
+              onError(L('複製できませんでした: ') + errorText(e))
             }
           }} />
       )}

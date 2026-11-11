@@ -1,0 +1,11 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "sequence"
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "table",
+  "filesystem": true
+}

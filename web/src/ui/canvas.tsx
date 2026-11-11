@@ -4,7 +4,9 @@
 // bars above and below the inner graph.
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
-import { Boundary, BoundaryPort, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
+import { HelperBirds } from './helperBirds'
+import { WritingPanels } from './writingPanel'
+import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
@@ -16,12 +18,13 @@ import { arr, dbl, get, J, JObj, obj, real, str } from '../shared/json'
 import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
-import { CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
+import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { L } from '../i18n'
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
@@ -107,9 +110,13 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       const r = el.getBoundingClientRect()
       const p = { x: e.clientX - r.left, y: e.clientY - r.top }
       const wd = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY
-      const mouse = e.deltaMode !== 0 || (typeof wd === 'number' && wd !== 0 && Math.abs(wd) % 120 === 0 && e.deltaX === 0)
-      if (e.ctrlKey || e.metaKey) cv.zoomBy(Math.exp(-e.deltaY * 0.01), p)
-      else if (mouse) cv.zoomBy(Math.max(0.5, 1 + (e.deltaMode === 1 ? -e.deltaY : (wd ?? -e.deltaY) / 120) * 0.08), p)
+      // A mouse wheel steps by lines: Firefox says so (deltaMode), Chrome gives 120 per
+      // line. Chrome gives a trackpad's pixels as 3 × deltaY, which is a multiple of 120
+      // when the trackpad moves by 40 px: that one is not a wheel.
+      const mouse = e.deltaMode !== 0 || (typeof wd === 'number' && wd !== 0 && Math.abs(wd) % 120 === 0 && wd !== -3 * e.deltaY && e.deltaX === 0)
+      // As on the Mac, a wheel zooms by the same steps with ⌘ or without.
+      if (mouse) cv.zoomBy(Math.max(0.5, 1 + (e.deltaMode === 1 ? -e.deltaY : (wd ?? -e.deltaY) / 120) * 0.08), p)
+      else if (e.ctrlKey || e.metaKey) cv.zoomBy(Math.exp(-e.deltaY * 0.01), p)
       else {
         const c = cv.camera
         cv.setCamera({ ...c, x: c.x - e.deltaX, y: c.y - e.deltaY })
@@ -454,12 +461,12 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const backgroundMenu = (e: React.MouseEvent) => {
     const at = cv.world(local(e))
     showMenu(e, [
-      { label: 'Card を追加', disabled: !session.isEditable, submenu: builtinCardItems((t) => addBuiltin(t, at)) },
-      { label: '付箋を追加', action: () => cv.addNote(at) },
+      { label: L('Card を追加'), disabled: !session.isEditable, submenu: builtinCardItems((t) => addBuiltin(t, at)) },
+      { label: L('付箋を追加'), action: () => cv.addNote(at) },
       'divider',
-      { label: '全体表示', action: () => cv.fitAll() },
-      { label: '整列', action: () => session.arrange(scope) },
-      tab.selection.size > 0 && { label: '選択をグループ化', disabled: !session.connected, action: () => cv.groupSelection() },
+      { label: L('全体表示'), action: () => cv.fitAll() },
+      { label: L('整列'), action: () => session.arrange(scope) },
+      tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
   }
 
@@ -478,7 +485,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   }
 
   return (
-    <div ref={root} className={`cv-canvas${spaceHeld || panning ? ' cv-grab' : ''}`} tabIndex={0} aria-label="Canvas"
+    <div ref={root} className={`cv-canvas${spaceHeld || panning ? ' cv-grab' : ''}`} tabIndex={0} aria-label="Canvas" data-canvas-zoom={z}
       onKeyDown={onKeyDown}
       onKeyUp={(e) => e.key === ' ' && setSpaceHeld(false)}
       onFocus={() => (cv.focused = true)}
@@ -531,15 +538,15 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               cv.set('editingGroup', id)
             }}
             onContextMenu={(e) => showMenu(e, [
-              { label: 'グループを編集…', action: () => cv.set('editingGroup', id) },
-              { label: 'メンバーを選択', action: () => tab.setSelection(members) },
+              { label: L('グループを編集…'), action: () => cv.set('editingGroup', id) },
+              { label: L('メンバーを選択'), action: () => tab.setSelection(members) },
               'divider',
-              { label: 'グループを解除（Card は残ります）', action: () => session.ungroup(id) },
+              { label: L('グループを解除（Card は残ります）'), action: () => session.ungroup(id) },
             ])} />
         )
       })}
 
-      <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style }))}
+      <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted }))}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
 
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} onDown={onBoundaryDown} />}
@@ -563,8 +570,9 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               },
             } : undefined}
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
-            onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
             onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
+            onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
+            onComments={() => app.openWindow(session, { kind: 'card', card: k, category: 'comments' })}
             onPointerDown={(e) => onCardDown(k, e)}
             onDoubleClick={(e) => {
               e.stopPropagation()
@@ -613,10 +621,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               })
             }}
             onContextMenu={(e) => showMenu(e, [
-              { label: '拡大して表示', action: () => app.openWindow(session, { kind: 'visual', card: k }) },
-              { label: 'チャットに参照を追加', action: () => app.chat(session).addReference({ kind: 'display', card: k }) },
+              { label: L('拡大して表示'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
+              { label: L('チャットに参照を追加'), action: () => app.chat(session).addReference({ kind: 'display', card: k }) },
               'divider',
-              { label: '枠を削除（Card は残ります）', action: () => cv.closeFrame(k) },
+              { label: L('枠を削除（Card は残ります）'), action: () => cv.closeFrame(k) },
             ])} />
         )
       })}
@@ -671,22 +679,27 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
                 session.updateNote(id, (x) => x.set('fontSize', f === 13 ? undefined : real(f)))
               }
               showMenu(e, [
-                { label: '付箋を編集…', action: () => cv.set('editingNote', id) },
-                { label: '色', submenu: NOTE_COLORS.map((c) => ({ label: c.label, checked: (str(get(n, 'color')) ?? 'yellow') === c.id, action: () => session.updateNote(id, (x) => x.set('color', c.id)) })) },
+                { label: L('付箋を編集…'), action: () => cv.set('editingNote', id) },
+                { label: L('色'), submenu: NOTE_COLORS.map((c) => ({ label: c.label, checked: (str(get(n, 'color')) ?? 'yellow') === c.id, action: () => session.updateNote(id, (x) => x.set('color', c.id)) })) },
                 {
-                  label: '文字の大きさ', submenu: [
-                    { label: '大きく', action: () => setFont(current + 2) },
-                    { label: '小さく', action: () => setFont(current - 2) },
+                  label: L('文字の大きさ'), submenu: [
+                    { label: L('大きく'), action: () => setFont(current + 2) },
+                    { label: L('小さく'), action: () => setFont(current - 2) },
                     'divider',
-                    ...[11, 13, 16, 20, 28].map((v) => ({ label: `${v}${v === 13 ? '（デフォルト）' : ''}`, checked: current === v, action: () => setFont(v) })),
+                    ...[11, 13, 16, 20, 28].map((v) => ({ label: L('{0}{1}', v, v === 13 ? L('（デフォルト）') : ''), checked: current === v, action: () => setFont(v) })),
                   ],
                 },
                 'divider',
-                { label: '付箋を削除', destructive: true, action: () => session.removeNote(id) },
+                { label: L('付箋を削除'), destructive: true, action: () => session.removeNote(id) },
               ])
             }} />
         )
       })}
+
+      <WritingPanels writers={app.chat(session).writers} team={app.chat(session).team} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)}
+        obstacles={() => [...scene.cardKeys.map((k) => scene.cardRect(k)), ...scene.outputKeys.map((k) => scene.frameRect(k))]}
+        screen={screen} zoom={z} size={cv.size} />
+      <HelperBirds chat={app.chat(session)} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)} screen={screen} zoom={z} size={cv.size} />
 
       {pending && (() => {
         const a = screen(scene.portWorld(pending.from[0], pending.from[1], pending.fromOutput))
@@ -715,7 +728,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
                 session.removeConnection(i, scope)
                 tab.selectedConnection = undefined
                 tab.changed()
-              }}>切断</Button>
+              }}>{L('切断')}</Button>
           </div>
         )
       })()}
@@ -782,47 +795,48 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
   const editable = session.isEditable
   return [
     ...(kind === 'subgraph' ? [
-      { label: '開く', action: () => tab.enter(path(k)) },
-      { label: '新しいタブで開く', action: () => workspace.openTab(path(k)) },
-      { label: '別ウインドウで開く', action: () => openWorkflowWindow(session, path(k)) },
+      { label: L('開く'), action: () => tab.enter(path(k)) },
+      { label: L('新しいタブで開く'), action: () => workspace.openTab(path(k)) },
+      { label: L('別ウインドウで開く'), action: () => openWorkflowWindow(session, path(k)) },
       'divider' as const,
     ] : []),
-    kind === 'draft' && { label: '名前と内容を書く', disabled: !editable, action: () => canvasFor(session, tab).writeDraft(k) },
-    { label: '設定…', action: () => app.openWindow(session, { kind: 'card', card: k }) },
-    { label: '実行履歴…', action: () => app.openWindow(session, { kind: 'executions', card: k }) },
-    { label: '成果物…', action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
-    { label: 'ログを表示', action: () => showLog(workspace, k) },
+    kind === 'draft' && { label: L('名前と内容を書く'), disabled: !editable, action: () => canvasFor(session, tab).writeDraft(k) },
+    { label: L('設定…'), action: () => app.openWindow(session, { kind: 'card', card: k }) },
+    { label: L('コメント…'), action: () => app.openWindow(session, { kind: 'card', card: k, category: 'comments' }) },
+    { label: L('実行履歴…'), action: () => app.openWindow(session, { kind: 'executions', card: k }) },
+    { label: L('成果物…'), action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
+    { label: L('ログを表示'), action: () => showLog(workspace, k) },
     {
-      label: 'チャットに参照を追加', action: () => {
+      label: L('チャットに参照を追加'), action: () => {
         for (const t of [...targets].sort()) app.chat(session).addReference({ kind: 'card', card: t })
         workspace.set('showChat', true)
       },
     },
     'divider',
-    { label: 'ここから下流を実行', disabled: cannotRun, action: () => runCard(session, k, true) },
-    { label: 'この Card だけ実行（最後の入力）', disabled: cannotRun, action: () => runCard(session, k, false) },
+    { label: L('ここから下流を実行'), disabled: cannotRun, action: () => runCard(session, k, true) },
+    { label: L('この Card だけ実行（最後の入力）'), disabled: cannotRun, action: () => runCard(session, k, false) },
     'divider',
-    { label: '複製', disabled: !editable, action: () => void session.duplicate(targets, tab.scope).then((s) => tab.setSelection(s)) },
-    { label: session.collapsed(k) ? '展開' : '折りたたむ', action: () => session.setCollapsed(targets, !session.collapsed(k)) },
+    { label: L('複製'), disabled: !editable, action: () => void session.duplicate(targets, tab.scope).then((s) => tab.setSelection(s)) },
+    { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
     get(session.displayFrame(k), 'hidden') === true && {
-      label: '出力表示を戻す', action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
+      label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
     },
     {
-      label: 'グループ化（見た目だけ）', action: () => {
+      label: L('グループ化（見た目だけ）'), action: () => {
         if (!tab.selection.has(k)) tab.setSelection([k])
         if (onGroup) onGroup()
         else canvasFor(session, tab).groupSelection()
       },
     },
     {
-      label: 'Card in Card にまとめる（新しい external プロジェクト）', disabled: !editable,
+      label: L('Card in Card にまとめる（新しい external プロジェクト）'), disabled: !editable,
       action: () => void session.makeSubgraph(targets, tab.scope).then((nk) => nk && tab.setSelection([nk])),
     },
     'divider',
-    { label: '入力を切断', disabled: !editable, action: () => session.disconnect(k, true, tab.scope) },
-    { label: '出力を切断', disabled: !editable, action: () => session.disconnect(k, false, tab.scope) },
+    { label: L('入力を切断'), disabled: !editable, action: () => session.disconnect(k, true, tab.scope) },
+    { label: L('出力を切断'), disabled: !editable, action: () => session.disconnect(k, false, tab.scope) },
     {
-      label: '削除', destructive: true, disabled: !editable, action: () => {
+      label: L('削除'), destructive: true, disabled: !editable, action: () => {
         session.deleteCards(targets, tab.scope)
         tab.setSelection([...tab.selection].filter((x) => !targets.has(x)))
       },
@@ -840,41 +854,11 @@ function BoundaryBars({ b, zoom, screen, drag, onDown }: {
   return (
     <>
       {([[b.top, b.inputs, true], [b.bottom, b.outputs, false]] as const).map(([rect, ports, input]) => (
-        <BoundaryBarView key={input ? 'in' : 'out'} title={input ? 'この Card の入力' : 'この Card の出力'} ports={ports} input={input} zoom={zoom} rect={rect}
+        <BoundaryBarView key={input ? 'in' : 'out'} title={input ? L('この Card の入力') : L('この Card の出力')} ports={ports} input={input} zoom={zoom} rect={rect}
           style={placed(screen(rect), rect.width * zoom, rect.height * zoom)}
           onPointerDown={(e) => onDown(input, undragged(rect, input), e)} />
       ))}
     </>
-  )
-}
-
-/** A bar standing for the outer Card's inputs (above) or outputs (below)
- *  inside a Card in Card: public name, type and the inner port it maps to. */
-function BoundaryBarView({ title, ports, input, zoom, rect, style, onPointerDown }: {
-  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; onPointerDown: (e: React.PointerEvent) => void
-}) {
-  const mark = Math.max(6, 8 * zoom)
-  return (
-    <div className="cv-boundary" style={{ ...style, borderRadius: 8 * zoom }} title="ドラッグで移動できます" onPointerDown={onPointerDown}
-      aria-label={title + ': ' + ports.map((p) => p.name).join(', ')}>
-      <span className="cv-boundary-title" style={{ fontSize: Math.max(6, 9.5 * zoom), left: 8 * zoom, top: 3 * zoom, gap: 4 * zoom }}>
-        <Icon name={input ? 'arrow.down.to.line' : 'arrow.down.to.line.compact'} size={Math.max(6, 9.5 * zoom)} />{title}
-      </span>
-      {ports.map((p, i) => {
-        const x = (p.point.x - rect.x) * zoom
-        return (
-          <span key={i}>
-            <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
-              title={p.inner ? `内部の接続先: ${p.inner[0].split('/').pop()}.${p.inner[1]}` : '内部の接続先が未設定です'}>
-              <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
-              {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
-            </span>
-            <span className={input ? 'cv-boundary-dot in' : 'cv-boundary-dot out'}
-              style={{ left: x - mark / 2, top: (input ? rect.height * zoom : 0) - mark / 2, width: mark, height: mark }} />
-          </span>
-        )
-      })}
-    </div>
   )
 }
 
@@ -896,14 +880,14 @@ function GroupFrameView({ session, group, scope, zoom: z, ...ev }: { session: Pr
   })
   const name = str(group.get('name'))
   return (
-    <div className="cv-group" {...ev} aria-label={`グループ ${name ?? ''}`}
+    <div className="cv-group" {...ev} aria-label={L('グループ {0}', name ?? '')}
       style={{ ...ev.style, borderRadius: 12 * z, background: tint(color, 0.07), borderColor: tint(color, 0.5) }}>
       <div className="cv-group-title" style={{ color, gap: 6 * z, padding: `${5 * z}px ${10 * z}px 0` }}>
         <Icon name="rectangle.3.group" size={10 * z} />
-        <span style={{ fontSize: 12 * z, fontWeight: 600 }}>{name ?? 'グループ'}</span>
+        <span style={{ fontSize: 12 * z, fontWeight: 600 }}>{name ?? L('グループ')}</span>
       </div>
       {outputs.length > 0 && (
-        <div className="cv-group-outputs" style={{ gap: 2 * z, padding: 6 * z }} title="グループの公開出力">
+        <div className="cv-group-outputs" style={{ gap: 2 * z, padding: 6 * z }} title={L('グループの公開出力')}>
           {outputs.map((o) => (
             <span key={o} className="cv-group-output" style={{ color, fontSize: 10 * z, padding: `${2 * z}px ${6 * z}px`, background: tint(color, 0.15), gap: 3 * z }}>
               <Icon name="arrow.right.circle" size={10 * z} />{o}
@@ -921,7 +905,7 @@ export const noteFontSize = (n: J | undefined) => dbl(get(n, 'fontSize')) ?? 13
 function StickyNoteView({ note, zoom: z, selected, onResize, ...ev }: { note: J; zoom: number; selected: boolean; onResize: (dx: number, dy: number) => void } & ItemEvents) {
   const color = noteColor(get(note, 'color'))
   return (
-    <div className={`cv-note${selected ? ' selected' : ''}`} {...ev} title="ダブルクリックで編集"
+    <div className={`cv-note${selected ? ' selected' : ''}`} {...ev} title={L('ダブルクリックで編集')}
       style={{ ...ev.style, padding: 10 * z, borderRadius: 6 * z, background: tint(color, 0.28), borderColor: tint(color, 0.5) }}>
       {/* Cut at the note's size (no scroll bar on the canvas; resize to see more). */}
       <div className="cv-note-text" style={{ fontSize: noteFontSize(note) * z }}><Markdown text={str(get(note, 'text')) ?? ''} /></div>
@@ -933,7 +917,7 @@ function StickyNoteView({ note, zoom: z, selected, onResize, ...ev }: { note: J;
 function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
   const [live, setLive] = useState({ x: 0, y: 0 })
   return (
-    <span className="cv-resize secondary" title="ドラッグしてサイズ変更" style={{ transform: `translate(${live.x}px, ${live.y}px)` }}
+    <span className="cv-resize secondary" title={L('ドラッグしてサイズ変更')} style={{ transform: `translate(${live.x}px, ${live.y}px)` }}
       onDoubleClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => {
         if (e.button !== 0) return
@@ -961,19 +945,19 @@ function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClos
         <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
         <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{session.displayName(cardKey)}</span>
         {d && (
-          <span className="mono-digits nowrap" style={{ fontSize: 9 * z }} title={`Run ${d.runId} の中で、この Card の ${d.invocation} 回目の実行の結果`}>
-            {`Run ${d.runId.slice(0, 6)} · 実行 #${d.invocation}`}
+          <span className="mono-digits nowrap" style={{ fontSize: 9 * z }} title={L('Run {0} の中で、この Card の {1} 回目の実行の結果', d.runId, d.invocation)}>
+            {L('Run {0} · 実行 #{1}', d.runId.slice(0, 6), d.invocation)}
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <button type="button" className="cv-icon-button" title="拡大して表示" onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onExpand() }}>
+        <button type="button" className="cv-icon-button" title={L('拡大して表示')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onExpand() }}>
           <Icon name="arrow.up.left.and.arrow.down.right" size={11 * z} />
         </button>
-        <button type="button" className="cv-icon-button" title="枠を削除（Card は残ります）" onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onClose() }}>
+        <button type="button" className="cv-icon-button" title={L('枠を削除（Card は残ります）')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onClose() }}>
           <Icon name="xmark" size={11 * z} />
         </button>
       </div>
-      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} /></div>
+      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} /></div>
       <ResizeHandle onEnd={onResize} />
     </div>
   )
@@ -997,7 +981,7 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
     const lines = session.cardDetails(t.k)
     let status = runText(d) ?? idleText(d)
     const id = session.currentRunId
-    if (id && d.invocation > 0n) status += `（Run ${id.slice(0, 8)} の中でこの Card の ${d.invocation} 回目の実行）`
+    if (id && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', id.slice(0, 8), d.invocation)
     return {
       title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? KIND_ICON[d.kind], lines, status,
       problems: [...d.errors, ...(d.failure ? [d.failure] : [])], warnings: d.warnings,
@@ -1006,18 +990,18 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
   const symbol = 'point.topleft.down.to.point.bottomright.curvepath'
   const c = session.connections(scope)[t.i]
   const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
-  if (!fc || !fp || !tc || !tp) return { title: '接続', subtitle: '', symbol }
+  if (!fc || !fp || !tc || !tp) return { title: L('接続'), subtitle: '', symbol }
   const fk = key([...scope, fc]), tk = key([...scope, tc])
   const out = session.resolution.get(fk)?.outputs.find((p) => p.name === fp)
   const inp = session.resolution.get(tk)?.inputs.find((p) => p.name === tp)
   const lines = [`${session.displayName(fk)}.${fp}  →  ${session.displayName(tk)}.${tp}`]
-  lines.push('型: ' + (out?.rootType ?? inp?.rootType ?? '未解決'))
-  lines.push(inp?.optional ? '受け側の入力: 省略可' : '受け側の入力: 必須')
-  let status = 'この Run ではまだ値が通っていません'
+  lines.push(L('型: ') + (out?.rootType ?? inp?.rootType ?? L('未解決')))
+  lines.push(inp?.optional ? L('受け側の入力: 省略可') : L('受け側の入力: 必須'))
+  let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId
-  if (st && st.sentInRun.has(fp) && id) status = `Run ${id.slice(0, 8)} で値が通りました（送信元の最新は実行 #${st.invocation}）`
-  return { title: '接続', subtitle: '', symbol, lines, status }
+  if (st && st.sentInRun.has(fp) && id) status = L('Run {0} で値が通りました（送信元の最新は実行 #{1}）', id.slice(0, 8), st.invocation)
+  return { title: L('接続'), subtitle: '', symbol, lines, status }
 }
 
 /** Details shown near the pointer over a Card or a wire. */
@@ -1054,14 +1038,14 @@ function FindBox({ session, keys, text, field, onChange, onClose, onPick }: {
     <div className="cv-find material" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <div className="row gap6" style={{ alignItems: 'center' }}>
         <Icon name="magnifyingglass" className="secondary" />
-        <input ref={field} className="cv-find-field" value={text} placeholder="Card を検索（名前・説明）" spellCheck={false}
+        <input ref={field} className="cv-find-field" value={text} placeholder={L('Card を検索（名前・説明）')} spellCheck={false}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === 'Enter' && !e.nativeEvent.isComposing && matches[0]) onPick(matches[0])
             if (e.key === 'Escape') onClose()
           }} />
-        <button type="button" className="cv-icon-button secondary" aria-label="閉じる" onClick={onClose}><Icon name="xmark.circle.fill" /></button>
+        <button type="button" className="cv-icon-button secondary" aria-label={L('閉じる')} onClick={onClose}><Icon name="xmark.circle.fill" /></button>
       </div>
       {matches.slice(0, 8).map((k) => (
         <button key={k} type="button" className="cv-find-item" onClick={() => onPick(k)}>
@@ -1070,7 +1054,7 @@ function FindBox({ session, keys, text, field, onChange, onClose, onPick }: {
           <span className="caption secondary">{KIND_LABEL[session.kind(k)]}</span>
         </button>
       ))}
-      {q !== '' && !matches.length && <div className="caption secondary">見つかりません</div>}
+      {q !== '' && !matches.length && <div className="caption secondary">{L('見つかりません')}</div>}
     </div>
   )
 }
@@ -1080,7 +1064,7 @@ function FindBox({ session, keys, text, field, onChange, onClose, onPick }: {
 function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
   return (
     <div className="row gap8" style={{ alignItems: 'center' }}>
-      <span>色</span>
+      <span>{L('色')}</span>
       <Segmented value={value} options={NOTE_COLORS.map((c) => ({ value: c.id, label: c.label }))} onChange={onChange} />
     </div>
   )
@@ -1091,8 +1075,8 @@ function EditorButtons({ remove, removeLabel, onClose, onApply }: { remove: () =
     <div className="row gap8" style={{ alignItems: 'center' }}>
       <Button kind="destructive" onClick={() => { remove(); onClose() }}>{removeLabel}</Button>
       <span className="flex1" />
-      <Button onClick={onClose}>キャンセル</Button>
-      <Button kind="prominent" type="submit">適用</Button>
+      <Button onClick={onClose}>{L('キャンセル')}</Button>
+      <Button kind="prominent" type="submit">{L('適用')}</Button>
     </div>
   )
 }
@@ -1131,19 +1115,19 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
     n.set('fontSize', fontSize === 13 ? undefined : real(fontSize))
   })
   return (
-    <EditorSheet title="付箋を編集" width={560} onClose={onClose} onApply={apply}>
+    <EditorSheet title={L('付箋を編集')} width={560} onClose={onClose} onApply={apply}>
       <div className="row gap8" style={{ height: 220 }}>
         <TextField multiline mono value={text} onChange={setText} autoFocus style={{ flex: 1, minWidth: 220, height: '100%', resize: 'none', fontSize: 13 }} />
         <div className="cv-note-preview" style={{ background: tint(noteColor(color), 0.2), fontSize: fontSize }}><Markdown text={text} /></div>
       </div>
-      <div className="caption secondary">Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。</div>
-      <Stepper label={`文字の大きさ ${Math.round(fontSize)}`} value={fontSize} onChange={setFontSize} min={8} max={48} step={1} />
+      <div className="caption secondary">{L('Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。')}</div>
+      <Stepper label={L('文字の大きさ {0}', Math.round(fontSize))} value={fontSize} onChange={setFontSize} min={8} max={48} step={1} />
       <ColorPicker value={color} onChange={setColor} />
       <div className="row gap16">
-        <Stepper label={`幅 ${Math.round(width)}`} value={width} onChange={setWidth} min={120} max={800} step={20} />
-        <Stepper label={`高さ ${Math.round(height)}`} value={height} onChange={setHeight} min={60} max={600} step={20} />
+        <Stepper label={L('幅 {0}', Math.round(width))} value={width} onChange={setWidth} min={120} max={800} step={20} />
+        <Stepper label={L('高さ {0}', Math.round(height))} value={height} onChange={setHeight} min={60} max={600} step={20} />
       </div>
-      <EditorButtons removeLabel="削除" remove={() => session.removeNote(noteId)} onClose={onClose} onApply={apply} />
+      <EditorButtons removeLabel={L('削除')} remove={() => session.removeNote(noteId)} onClose={onClose} onApply={apply} />
     </EditorSheet>
   )
 }
@@ -1176,12 +1160,12 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
     g.set('outputs', outs.length ? outs : undefined)
   })
   return (
-    <EditorSheet title="グループを編集" width={600} onClose={onClose} onApply={apply}>
-      <TextField value={name} onChange={setName} placeholder="名前" autoFocus />
+    <EditorSheet title={L('グループを編集')} width={600} onClose={onClose} onApply={apply}>
+      <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
       <ColorPicker value={color} onChange={setColor} />
       <div className="row gap12" style={{ height: 240 }}>
         <div className="col flex1">
-          <div className="headline">所属する Card</div>
+          <div className="headline">{L('所属する Card')}</div>
           <div className="cv-list">
             {ids.map((id) => (
               <Toggle key={id} kind="checkbox" checked={members.has(id)} label={session.displayName(key([...scope, id]))}
@@ -1190,7 +1174,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
           </div>
         </div>
         <div className="col flex1">
-          <div className="headline">公開する出力</div>
+          <div className="headline">{L('公開する出力')}</div>
           <div className="cv-list">
             {[...members].sort().flatMap((id) => session.ports(key([...scope, id])).outputs.map((p) => {
               const tag = `${id}\t${p}`
@@ -1202,8 +1186,8 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
           </div>
         </div>
       </div>
-      <div className="caption secondary">グループは見た目のまとまりです。実行順序は変わらず、解除しても Card は残ります。</div>
-      <EditorButtons removeLabel="グループを解除" remove={() => session.ungroup(groupId)} onClose={onClose} onApply={apply} />
+      <div className="caption secondary">{L('グループは見た目のまとまりです。実行順序は変わらず、解除しても Card は残ります。')}</div>
+      <EditorButtons removeLabel={L('グループを解除')} remove={() => session.ungroup(groupId)} onClose={onClose} onApply={apply} />
     </EditorSheet>
   )
 }

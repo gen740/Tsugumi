@@ -5,17 +5,22 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { AGENT, modelChoices } from '../src/shared/agentShared'
 import { BFBS } from '../src/shared/bfbs'
-import { RPCClient, Transport } from '../src/shared/rpc'
-import { Agent, externalTools, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
+import { RPCClient, Transport, webSocketTransport } from '../src/shared/rpc'
+import { Agent, externalTools, summarizeVersion, AgentEvent, DEMO_SKILL, guideText, listModels, loadConversation, ProviderConfig, referenceDemos, ToolCatalog } from './agent'
 import { keychainReader } from './keychain'
 import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
-import { EnvironmentManager, projectKey } from './env'
+import { Environments, projectKey } from './env'
+import { DesktopSettings } from './desktop'
+import { L, language, setLanguage, type Language } from './i18n'
 
 export interface ChatContext {
   support: string
-  envs: EnvironmentManager
+  envs: Environments
+  /** The desktop app's settings, when this server shares them (the Mac's tsugumi command). */
+  desktop?: DesktopSettings
   projectDir: (p: unknown) => string
   broadcast: (v: unknown) => void
   httpError: (status: number, message: string) => Error
@@ -25,6 +30,9 @@ export interface ChatContext {
   here: string
   /** How many pages are connected (their event streams). */
   listeners: () => number
+  /** Opens the page in the default browser (the page's key is the server's alone). */
+  showOnPage: (project: string) => boolean
+  openPage: (project?: string) => void
 }
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
@@ -46,17 +54,29 @@ interface Settings {
   model: string
   openAIModel: string
   chatGPTModel: string
+  /** The chat's model menu: the effort ('': the model's default), for every
+   *  model that takes it, and the one model Fast mode was turned on for. */
+  effort: string
+  fastModel: string
   fixturePort: number
-  /** Models listed earlier with "モデル一覧を取得" (no request from the chat). */
-  /** Models listed with "モデル一覧を取得", per connection (no request from the chat). */
+  /** Models listed earlier with "List Models" (no request from the chat). */
+  /** Models listed with "List Models", per connection (no request from the chat). */
   models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   /** Their display names (the ChatGPT account's catalog has them). */
   modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
+  /** The chat's Agent may search the web through the provider (its queries
+   *  leave for the provider's search service). Off until the user turns it on. */
+  webSearch: boolean
   /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
   guide: GuideState
+  /** A small model writes what each version changed (off: nothing is sent for it). */
+  versionSummaries: boolean
+  /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
+   *  server's messages, and what tsugumid writes into a project's git. */
+  language: Language
 }
 
 /** The demo the guide shows: its id and title, the copy's folder, and
@@ -67,11 +87,23 @@ interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTou
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
-  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', fixturePort: 8765,
-  models: {}, modelNames: {}, allowedPermissions: [],
+  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', effort: '', fastModel: '', fixturePort: 8765,
+  models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
   guide: { setupDone: false, demoAnswered: false, tour: null },
+  versionSummaries: false,
+  language: 'ja',
 }
-const settings = (): Settings => ({ ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}) })
+const settings = (): Settings => {
+  const s: Settings = { ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values }
+  if (s.language !== 'en') s.language = 'ja'
+  setLanguage(s.language)
+  return s
+}
+const saveSettings = (s: Settings) => {
+  ctx.desktop?.save(settings(), s)
+  ctx.writeJSON(settingsFile(), s)
+  setLanguage(s.language)
+}
 
 /** Only these keys are written from the page (never a key or anything else). */
 function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
@@ -80,9 +112,12 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
     out.skillFolders = b.skillFolders.filter((f) => f && typeof f.path === 'string').map((f) => ({ path: String(f.path), enabled: f.enabled !== false }))
   }
   if (b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' || b.provider === 'fixture') out.provider = b.provider
+  if (typeof b.versionSummaries === 'boolean') out.versionSummaries = b.versionSummaries
   if (typeof b.model === 'string') out.model = b.model.trim()
   if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
   if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
+  if (b.effort === '' || AGENT.modelOptions.efforts.includes(b.effort as string)) out.effort = b.effort as string
+  if (typeof b.fastModel === 'string') out.fastModel = b.fastModel
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
   if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
     const m = b.models as Record<string, unknown>
@@ -91,6 +126,8 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   }
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
+  if (typeof b.webSearch === 'boolean') out.webSearch = b.webSearch
+  if (b.language === 'ja' || b.language === 'en') out.language = b.language
   return out
 }
 
@@ -142,20 +179,20 @@ async function keySource(p: KeyedProvider): Promise<'env' | 'keychain' | 'file' 
 async function saveKey(p: KeyedProvider, raw: string) {
   const key = raw.trim()
   // An API key is printable ASCII without spaces or quotes.
-  if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw ctx.httpError(400, 'API キーに使えない文字が含まれています。')
+  if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw ctx.httpError(400, L('API キーに使えない文字が含まれています。'))
   if (process.platform === 'darwin') {
     // The secret goes to `security` on its standard input, never as an argument.
     const r = await run('security', ['-i'], `add-generic-password -U -s "${KEYCHAIN_SERVICE}" -a "${PROVIDERS[p].name}" -w "${key}"\n`)
     keychain.forget(PROVIDERS[p].name)
     if (r.code === 0 && (await keychainKey(p)) === key) {
       fs.rmSync(keyFile(p), { force: true })
-      return 'Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。'
+      return L('Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。')
     }
   }
   fs.mkdirSync(ctx.support, { recursive: true })
   fs.writeFileSync(keyFile(p), key, { mode: 0o600 })
   fs.chmodSync(keyFile(p), 0o600)
-  return `${keyFile(p)}（0600）に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。`
+  return L('{0}（0600）に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。', keyFile(p))
 }
 
 async function deleteKey(p: KeyedProvider) {
@@ -164,7 +201,7 @@ async function deleteKey(p: KeyedProvider) {
     keychain.forget(PROVIDERS[p].name)
   }
   fs.rmSync(keyFile(p), { force: true })
-  return `${PROVIDERS[p].name} のキーを削除しました。` + (process.env[PROVIDERS[p].env] ? `（環境変数 ${PROVIDERS[p].env} は残っています）` : '')
+  return L('{0} のキーを削除しました。', PROVIDERS[p].name) + (process.env[PROVIDERS[p].env] ? L('（環境変数 {0} は残っています）', PROVIDERS[p].env) : '')
 }
 
 // Sign in with ChatGPT: this server's registrations and tokens, in a 0600
@@ -180,6 +217,14 @@ async function provider(): Promise<ProviderConfig> {
   return providerFor(settings().provider)
 }
 
+/** The connection of the chat's Agent and its helpers: with the effort and the
+ *  Fast mode chosen in the model menu. The guide, the summaries and the checks
+ *  use provider(), without them. */
+async function chatProvider(): Promise<ProviderConfig> {
+  const p = await provider(), s = settings()
+  return { ...p, ...modelChoices(s.provider, p.model, s.effort, s.fastModel) }
+}
+
 /** A connection with its chosen model (each keeps its own); its key or token when it has one. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
   const s = { ...settings(), provider: id }
@@ -188,18 +233,18 @@ async function providerFor(id: ProviderId): Promise<ProviderConfig> {
   }
   if (s.provider === 'chatgpt') {
     return { name: 'ChatGPT', baseURL: process.env.TSUGUMI_CHATGPT_API ?? 'https://api.openai.com', model: s.chatGPTModel || defaultSettings.chatGPTModel,
-             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000 }
+             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
   }
   if (s.provider === 'openai') {
-    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000 }
+    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
   }
-  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000 }
+  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
 }
 
 /** What the page may know of the connection (no key, no token). */
 async function providerInfo() {
-  const p = await provider()
-  return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt',
+  const p = await chatProvider()
+  return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt', effort: p.effort, fast: !!p.fast,
            modelNames: p.auth === 'chatgpt' ? settings().modelNames : {} }
 }
 
@@ -217,7 +262,7 @@ function references(): Record<string, string> {
     if (fs.existsSync(p)) out[name] = p
   }
   // Not the Draft demos nor their answers (referenceDemos).
-  Object.assign(out, referenceDemos(path.join(repo, 'demos')))
+  Object.assign(out, referenceDemos(path.join(repo, 'demos', language())))
   add('sdk/python/tsugumi/__init__.py', path.join(repo, 'sdk', 'python', 'tsugumi', '__init__.py'))
   add('card-guide.md', path.join(repo, 'agent', 'Reference', 'card-guide.md'))
   return out
@@ -263,12 +308,15 @@ async function guide(): Promise<Agent> {
   return guideAgent
 }
 
-/** The guide's connection: the Agent's, with the small model Tsugumi speaks
- *  with on the ChatGPT plan: gpt-6.1-luna when the account offers it, else
- *  its newest luna (the plan refuses models it does not offer). */
+/** The guide's connection: the Agent's, with a small model: claude-haiku-5-5
+ *  on Anthropic, and on the ChatGPT plan the model Tsugumi speaks with:
+ *  gpt-6.1-luna when the account offers it, else its newest luna (the plan
+ *  refuses models it does not offer). OpenAI keeps the Agent's. Demo tours are
+ *  led by the chat, with the chat's model. */
 async function guideProvider(): Promise<ProviderConfig> {
-  const p = await provider()
-  return settings().provider === 'chatgpt' ? { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) } : p
+  const p = await provider(), id = settings().provider
+  if (id === 'chatgpt') return { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) }
+  return id === 'anthropic' ? { ...p, model: 'claude-haiku-5-5' } : p
 }
 
 export function speechModel(offered: string[], fallback: string): string {
@@ -295,7 +343,7 @@ async function guideState() {
   let g = settings().guide
   if (available && !g.setupDone) {
     g = { ...g, setupDone: true }
-    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    saveSettings({ ...settings(), guide: g })
   }
   return { available, ...g }
 }
@@ -352,10 +400,10 @@ function loadSkills(folder: string, source: string): Skill[] {
 }
 
 /** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
-const DEMO: Skill = { name: 'demo', description: 'ツグミが画面を飛び回って、デモや画面の使い方を案内します', path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' }
+const demoSkill = (): Skill => ({ name: 'demo', description: L('ツグミが画面を飛び回って、デモや画面の使い方を案内します'), path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' })
 
 function skillsFor(project: string | undefined): Skill[] {
-  const out = [DEMO, ...(project ? loadSkills(path.join(project, 'skills'), 'プロジェクト') : [])]
+  const out = [demoSkill(), ...(project ? loadSkills(path.join(project, 'skills'), L('プロジェクト')) : [])]
   for (const f of settings().skillFolders) if (f.enabled) out.push(...loadSkills(f.path, path.basename(f.path)))
   return out
 }
@@ -425,7 +473,7 @@ function answerPermission(id: string, allow: boolean, always: string[] = []) {
   permissionWaits.delete(id)
   if (allow && always.length) {
     const s = settings()
-    ctx.writeJSON(settingsFile(), { ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
+    saveSettings({ ...s, allowedPermissions: PERMISSION_KINDS.filter((k) => s.allowedPermissions.includes(k) || always.includes(k)) })
   }
   w.resolve(allow ? new Set(w.asked) : new Set())
   ctx.broadcast({ type: 'chat', project: w.project, session: w.session, event: { kind: 'permissionAnswered', id } })
@@ -448,8 +496,9 @@ class ChatHost {
     if (this.client && !this.client.closed) return this.client
     const st = await ctx.envs.start(this.project)
     if (st.state !== 'ready') throw new Error(st.state === 'failed' ? st.message : 'tsugumid is not running')
-    const c = new RPCClient(await unixTransport(st.unix))
-    await c.connect(undefined)
+    // On this host its Unix socket, which needs no token; in the VM its WebSocket.
+    const c = new RPCClient(st.unix ? await unixTransport(st.unix) : await webSocketTransport(st.endpoint))
+    await c.connect(st.unix ? undefined : st.token, language())
     this.client = c
     return c
   }
@@ -461,23 +510,18 @@ class ChatHost {
   async agent(id: string): Promise<Agent> {
     let a = this.agents.get(id)
     if (!a) {
-      a = new Agent(catalog!, () => this.rpc(), await provider(), this.file(id), id, references())
+      a = new Agent(catalog!, () => this.rpc(), await chatProvider(), this.file(id), id, references())
       a.approver = (asked) => approve(this.project, id, asked)
       this.agents.set(id, a)
     }
     return a
   }
 
-  /** The folders a chat may read; tsugumid on this host reads only those
-   *  listed in its control folder (attached.json), written here alone. */
-  attach(a: Agent, folders: string[]) {
+  /** The folders a chat may read. */
+  async attach(a: Agent, folders: string[]) {
     a.folders = folders
     const all = [...new Set([...this.agents.values()].flatMap((x) => x.folders))].sort()
-    const control = ctx.envs.controlDir(this.key)
-    fs.mkdirSync(control, { recursive: true, mode: 0o700 })
-    const file = path.join(control, 'attached.json')
-    fs.writeFileSync(file + '.tmp', JSON.stringify({ folders: all }), { mode: 0o600 })
-    fs.renameSync(file + '.tmp', file)
+    await ctx.envs.attachFolders(this.project, this.key, all)
   }
 
   events(id: string) {
@@ -515,11 +559,15 @@ class ChatHost {
       const id = f.slice(0, -5)
       let c
       try { c = this.agents.get(id)?.conversation ?? loadConversation(path.join(this.dir, f), id) }
-      catch { return { id, title: `読み込めない会話 (${id})`, updatedAt: 0, messages: 0 } }
+      catch { return { id, title: L('読み込めない会話 ({0})', id), updatedAt: 0, messages: 0 } }
       const m = [...c.archive, ...c.messages].find((m) => m.role === 'user')
       const first = m?.display ?? m?.content.flatMap((b) => (b.type === 'text' ? [b.text] : []))[0]
-      return { id, title: c.title ?? (first ? first.slice(0, 60) : '新しい会話'), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
+      return { id, title: c.title ?? (first ? first.slice(0, 60) : L('新しい会話')), updatedAt: c.updatedAt, messages: c.archive.length + c.messages.length }
     }).sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  cancelAll() {
+    for (const a of this.agents.values()) a.cancel()
   }
 
   delete(id: string) {
@@ -562,6 +610,11 @@ function chatFor(dir: string): ChatHost {
 }
 
 
+/** The project was left: no turn of it goes on. */
+export function cancelChats(dir: string) {
+  chats.get(projectKey(dir).key)?.cancelAll()
+}
+
 const keyedProvider = (v: unknown): KeyedProvider => (v === 'openai' ? 'openai' : 'anthropic')
 
 /** The Agent of a session, ready for a new turn (current connection and folders). */
@@ -569,42 +622,57 @@ async function turnAgent(b: any) {
   if (!catalog) throw ctx.httpError(503, catalogError!)
   const host = chatFor(ctx.projectDir(b.path))
   const a = await host.agent(String(b.session))
-  a.setProvider(await provider())
-  if (b.folders) host.attach(a, cleanFolders(b.folders))
+  a.setProvider(await chatProvider())
+  if (b.folders) await host.attach(a, cleanFolders(b.folders))
   return { host, a }
 }
 
 export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
+  // The language for the server's own messages, from the start (the app's, once read).
+  settings()
+  void ctx.desktop?.refresh().then(() => settings(), () => {})
   try {
     catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(c.here, 'tsugumi.bfbs')))))
   } catch (e) {
-    catalogError = `RPC スキーマを読み込めないため、チャットは使えません（${(e as Error).message}）。通常の操作はすべて UI から行えます。`
+    catalogError = L('RPC スキーマを読み込めないため、チャットは使えません（{0}）。通常の操作はすべて UI から行えます。', (e as Error).message)
   }
   const projectDir = c.projectDir
   return {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
   'GET /api/settings': async () => ({
-    ...settings(),
+    ...(await ctx.desktop?.refresh(), settings()),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
   'POST /api/settings': (b) => {
     const next = { ...settings(), ...cleanSettings(b ?? {}) }
-    ctx.writeJSON(settingsFile(), next)
+    saveSettings(next)
     return next
+  },
+  // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
+  'POST /api/versions/summarize': async (b) => {
+    const s = settings()
+    if (!s.versionSummaries) throw ctx.httpError(400, L('版の要約はオフです。'))
+    if (s.provider === 'chatgpt') throw ctx.httpError(400, L('ChatGPT プランでは版の要約を作りません。'))
+    const c = await provider()
+    // Room for the model's own reasoning on a large diff: the answer itself is cut to one line.
+    const small = { ...c, maxTokens: 1500, model: s.provider === 'anthropic' ? 'claude-haiku-5-5' : c.model }
+    const text = await summarizeVersion(small, String(b.input ?? ''), AbortSignal.timeout(60_000))
+    if (!text) throw ctx.httpError(502, L('モデルが文を返しませんでした。'))
+    return { text }
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
   /** Lists a connection's models (the one in use unless `provider` names another). */
   'POST /api/settings/models': async (b) => {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
-    if (id === 'fixture') throw ctx.httpError(400, 'fixture にはモデル一覧がありません。')
+    if (id === 'fixture') throw ctx.httpError(400, L('fixture にはモデル一覧がありません。'))
     const list = await listModels(await providerFor(id))
     // Read after the wait: the other connections' lists come at the same time.
     const next = withModelList(settings(), id, list)
-    if (!next) throw ctx.httpError(502, 'モデル一覧が空でした。保存済みの一覧はそのままです。')
-    ctx.writeJSON(settingsFile(), next)
+    if (!next) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
+    saveSettings(next)
     return { models: next.models[id], modelNames: next.modelNames }
   },
   /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
@@ -620,10 +688,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     signInOutcome = null
     done.then((r) => {
       signInOutcome = { ok: true, welcome: r.welcome ? r.account.clientId : undefined, message: r.account.planEnabled
-        ? `${r.account.email ?? r.account.clientId} でサインインしました。`
-        : 'サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。' }
+        ? L('{0} でサインインしました。', r.account.email ?? r.account.clientId)
+        : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
     }, (e: Error) => {
-      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? 'サインインを中止しました。' : e.message }
+      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? L('サインインを中止しました。') : e.message }
     })
     return { url }
   },
@@ -644,8 +712,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id = String(b.clientId)
     const email = chatgpt().accounts().find((a) => a.clientId === id)?.email ?? id
     const revoked = await chatgpt().signOut(id)
-    return { ...chatGPTState(), message: revoked ? `${email} からサインアウトしました。`
-      : 'このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。' }
+    return { ...chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
+      : L('このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。') }
   },
   'POST /api/settings/skillCount': (b) => ({ count: loadSkills(String(b.path), '').length }),
   'POST /api/settings/skillFolderStatus': (b) => {
@@ -657,10 +725,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!catalog) throw ctx.httpError(503, catalogError!)
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
-    if (b.folders) host.attach(a, cleanFolders(b.folders))
+    if (b.folders) await host.attach(a, cleanFolders(b.folders))
     // Resume work left unfinished by a disconnect or restart.
     if (b.resume && !a.busy) {
-      a.setProvider(await provider())
+      a.setProvider(await chatProvider())
       a.resume(host.events(a.id))
     }
     const [wait] = waitingFor(host.project, a.id)
@@ -704,7 +772,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/folder': (b) => {
     // A folder to attach: it must be an existing folder of this host.
     const [f] = cleanFolders([b.folder])
-    if (!f) throw ctx.httpError(400, `フォルダが見つかりません: ${b.folder}`)
+    if (!f) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', b.folder))
     return { folder: f, name: path.basename(f) }
   },
   'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
@@ -714,11 +782,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!catalog) throw ctx.httpError(503, catalogError!)
     return externalTools(catalog).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
   },
-  /** Claude Code opened a project: the open page shows it (none open: the plugin opens one). */
+  /** Claude Code opened a project: a page that has it or is on Home shows it (others keep
+   *  their projects; none free: a browser opens one, unless `browser: false`). */
   'POST /api/agent/open': (b) => {
     const project = chatFor(projectDir(b.path)).project
-    ctx.broadcast({ type: 'agentOpen', project })
-    return { project, pages: ctx.listeners() }
+    const shown = ctx.showOnPage(project)
+    const opened = !shown && b.browser !== false
+    if (opened) ctx.openPage(project)
+    return { project, shown, opened }
   },
   'POST /api/agent/call': async (b) => {
     if (!catalog) throw ctx.httpError(503, catalogError!)
@@ -736,7 +807,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
     if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
     if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
-    ctx.writeJSON(settingsFile(), { ...settings(), guide: g })
+    saveSettings({ ...settings(), guide: g })
     return guideState()
   },
   /** A connection check for the first start: the provider lists its models with the key. */
@@ -749,9 +820,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return guideState()
   },
   'POST /api/guide/send': async (b) => {
-    if (!(await guideAvailable())) throw ctx.httpError(409, 'ガイドに使える API キーがありません。')
+    if (!(await guideAvailable())) throw ctx.httpError(409, L('ガイドに使える API キーがありません。'))
     const a = await guide()
-    if (a.busy) throw ctx.httpError(409, 'ツグミはまだ答えています。')
+    if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     a.send(String(b.prompt), String(b.display), guideEvents, String(b.display))
     return { ok: true }

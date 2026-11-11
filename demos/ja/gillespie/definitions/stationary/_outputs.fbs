@@ -1,0 +1,4 @@
+namespace gillespie;
+table Stationary { mean:double; variance:double; fano:double; theory:double; se_mean:double; se_variance:double; se_fano:double; runs:ulong; }
+table Outputs { stationary:Stationary (required); }
+root_type Outputs;

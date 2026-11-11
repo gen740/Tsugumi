@@ -1,0 +1,4 @@
+namespace collatz;
+table Number { value:ulong; }
+table Outputs { next:Number (required); }
+root_type Outputs;

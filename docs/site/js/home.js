@@ -156,7 +156,7 @@ addEventListener('load', measure)
 document.fonts?.ready.then(measure)
 requestAnimationFrame(frame)
 
-// ---- The gallery: each demo plays in its tile, and opens large ----
+// ---- The gallery: each demo plays in its tile, and opens large (also from a link to #demo-<id>) ----
 
 async function gallery() {
   const tiles = [...document.querySelectorAll('.demo-tile')]
@@ -175,18 +175,31 @@ async function gallery() {
       player.mountPlayer(e.target.querySelector('.demo-thumb'), { demo: id, data: dataUrl(id), compact: true, autoplay: !still })
     }
   }, { rootMargin: '120px' })
+  const open = (id) => {
+    if (document.querySelector('dialog.player-dialog')) return
+    const dialog = document.createElement('dialog')
+    dialog.className = 'player-dialog'
+    dialog.innerHTML = '<form method="dialog"><button class="close">Close</button></form><div class="player-host"></div>'
+    document.body.append(dialog)
+    const mounted = player.mountPlayer(dialog.querySelector('.player-host'), { demo: id, data: dataUrl(id), autoplay: !still })
+    dialog.addEventListener('close', () => {
+      mounted?.destroy?.()
+      dialog.remove()
+      // Closed: the address no longer names the demo, so the same link opens it again.
+      if (location.hash === `#demo-${id}`) history.replaceState(null, '', `${location.pathname}${location.search}#demos`)
+    })
+    dialog.showModal()
+  }
   tiles.forEach((tile) => {
     seen.observe(tile)
-    tile.addEventListener('click', () => {
-      const dialog = document.createElement('dialog')
-      dialog.className = 'player-dialog'
-      dialog.innerHTML = '<form method="dialog"><button class="close">閉じる</button></form><div class="player-host"></div>'
-      document.body.append(dialog)
-      const id = tile.dataset.demo
-      const mounted = player.mountPlayer(dialog.querySelector('.player-host'), { demo: id, data: dataUrl(id), autoplay: !still })
-      dialog.addEventListener('close', () => { mounted?.destroy?.(); dialog.remove() })
-      dialog.showModal()
-    })
+    tile.addEventListener('click', () => open(tile.dataset.demo))
   })
+  // A link to #demo-<id> (the README's tiles) opens that demo; without the player it still scrolls to the tile.
+  const linked = () => {
+    const id = location.hash.match(/^#demo-(.+)$/)?.[1]
+    if (id && tiles.some((t) => t.dataset.demo === id)) open(id)
+  }
+  addEventListener('hashchange', linked)
+  linked()
 }
 gallery()

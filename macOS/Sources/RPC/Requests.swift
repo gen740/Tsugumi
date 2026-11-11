@@ -232,6 +232,20 @@ public extension RPCClient {
     return res.files.compactMap { $0 }
   }
 
+  /// Each Card's latest invocation of a run.
+  func latestInvocations(runId: String) async throws -> Tsugumi_RPC_InvocationPageT {
+    let r = Tsugumi_RPC_RunLatestInvocationsRequestT()
+    r.runId = runId
+    return try await call(.runlatestinvocationsrequest, r)
+  }
+
+  /// Looks a flake up for nixSources (nothing is saved).
+  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
+    let r = Tsugumi_RPC_NixSourceResolveRequestT()
+    r.ref = ref
+    return try await call(.nixsourceresolverequest, r, timeout: .seconds(300))
+  }
+
   /// Deletes the project's build caches; documents and history are kept.
   func clearCache(opId: UUID) async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()
@@ -255,6 +269,30 @@ public extension RPCClient {
     let r = Tsugumi_RPC_VersionGraphRequestT()
     r.limit = limit
     return try await call(.versiongraphrequest, r)
+  }
+
+  /// A version's own Cards and wires, for a minimap.
+  func versionCanvas(commit: String) async throws -> Tsugumi_RPC_VersionCanvasT {
+    let r = Tsugumi_RPC_VersionCanvasRequestT()
+    r.commit = commit
+    return try await call(.versioncanvasrequest, r)
+  }
+
+  /// What a version changed: the code and settings a summary may read, never data.
+  func versionDiff(commit: String) async throws -> Tsugumi_RPC_VersionDiffT {
+    let r = Tsugumi_RPC_VersionDiffRequestT()
+    r.commit = commit
+    return try await call(.versiondiffrequest, r)
+  }
+
+  /// Keeps a summary of a version in its own note.
+  func versionSummary(opId: UUID, origin: String, commit: String, summary: String) async throws -> Tsugumi_RPC_VersionResultT {
+    let r = Tsugumi_RPC_VersionSummaryRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.origin = origin
+    r.commit = commit
+    r.summary = summary
+    return try await call(.versionsummaryrequest, r)
   }
 
   /// Makes the project a git repository (a demo's history becomes its versions).

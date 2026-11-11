@@ -6,6 +6,7 @@
 import { CSSProperties, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
+import { L } from '../i18n'
 
 /** Token classes the editor colors. */
 export type SyntaxToken = 'plain' | 'comment' | 'string' | 'number' | 'keyword' | 'function' | 'type' | 'constant' | 'property'
@@ -285,7 +286,7 @@ export function CodeEditor({ text, onChange, language = '', editable = true, mar
             </pre>
             <textarea key={documentId} ref={ta} className="ce-input" value={text} readOnly={!editable} rows={1} cols={1}
               spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" wrap="off" style={{ lineHeight }}
-              aria-label={documentId || 'コード'}
+              aria-label={documentId || L('コード')}
               onChange={(e) => {
                 typed.current = e.target.value
                 onChange?.(e.target.value)

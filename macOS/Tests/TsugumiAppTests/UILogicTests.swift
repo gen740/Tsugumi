@@ -2,8 +2,97 @@ import Foundation
 import AppKit
 import SwiftUI
 import Testing
+@testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
+
+@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() throws {
+  struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/nix-source-refs.json")))
+  #expect(!cases.isEmpty)
+  for c in cases {
+    #expect(NixSources.sourceName(c.ref) == c.name, "\(c.ref)")
+    #expect(NixSources.unlockedRef(c.ref) == c.unlocked, "\(c.ref)")
+    #expect(NixSources.shortCommit(c.ref) == c.commit, "\(c.ref)")
+  }
+}
+
+@Test func aVersionHoverIsWrittenFromItsChangeAndFitsItsCards() {
+  #expect(VersionSummarizer.input(message: "実行: bands\n", changed: ["bands", ""], diff: "+x\n", truncated: true)
+    == "Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n")
+  #expect(VersionSummarizer.clean(" 緑を\n  広げた。 ") == "緑を 広げた。")
+  // Every Card stays inside the box, in the order it has on the canvas.
+  let wide = VersionMiniMapLayout([.init(id: "a", x: 100, y: 0), .init(id: "b", x: 5000, y: 300), .init(id: "c", x: 2500, y: -400)],
+                                  flow: .leftToRight, width: 284, height: 132)
+  for (_, c) in wide.cards {
+    let r = c.box
+    #expect(r.minX >= 0 && r.maxX <= 284 && r.minY >= 0 && r.maxY <= wide.height && wide.height <= 132)
+  }
+  #expect(wide.cards["a"]!.box.minX < wide.cards["c"]!.box.minX && wide.cards["c"]!.box.minX < wide.cards["b"]!.box.minX)
+  #expect(!wide.named)
+  // A small graph is not blown up, and is only as tall as it is.
+  let small = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0)], flow: .leftToRight, width: 284, height: 132)
+  #expect(small.cards["a"]!.box.width == 220 * 0.3 && small.height == small.cards["a"]!.box.height + 16 && small.named)
+  #expect(VersionMiniMapLayout([], flow: .leftToRight, width: 284, height: 132).cards.isEmpty)
+}
+
+@Test func aVersionsMinimapDrawsWhatIsNotACardWithItsCanvasShape() {
+  func canvas(_ kind: CardKind, fan: Int = 0, flow: FlowDirection = .leftToRight) -> CardGeometry {
+    CardGeometry(VersionMiniMapLayout.Card(id: "c", x: 0, y: 0, kind: kind, fan: fan).data, flow: flow)
+  }
+  func outline(_ g: CardGeometry, in box: CGRect, _ k: CGFloat) -> Path {
+    let o = g.outlineRect
+    return g.outline(in: CGRect(x: box.minX + o.minX * k, y: box.minY + o.minY * k, width: o.width * k, height: o.height * k), cornerScale: k)
+  }
+  // A graph laid out on the canvas does not overlap here: start -> fork -> two Cards.
+  let start = canvas(.trigger), fork = canvas(.fork, fan: 2)
+  let forked = VersionMiniMapLayout([
+    .init(id: "start", x: 0, y: 30, kind: .trigger),
+    .init(id: "fork", x: start.size.width + 10, y: 20, kind: .fork, fan: 2),
+    .init(id: "load", x: start.size.width + fork.size.width + 40, y: -30),
+    .init(id: "draft", x: start.size.width + fork.size.width + 40, y: 60, kind: .draft),
+  ], flow: .leftToRight, width: 284, height: 132)
+  let at = forked.cards
+  #expect(at["start"]!.shape == .start && at["fork"]!.shape == .fork && at["load"]!.shape == .card && at["draft"]!.shape == .card)
+  #expect(at["draft"]!.draft && !at["load"]!.draft)
+  let boxes = Array(at.values.map(\.box))
+  for (i, a) in boxes.enumerated() {
+    for b in boxes[(i + 1)...] { #expect(!a.intersects(b)) }
+  }
+  // The shapes are those of the canvas, scaled and at their place.
+  let k = at["fork"]!.box.width / fork.size.width
+  #expect(k > 0 && k <= 0.3)
+  #expect(abs(at["fork"]!.box.height - fork.size.height * k) < 1e-9 && abs(at["start"]!.box.width - start.size.width * k) < 1e-9)
+  #expect(at["fork"]!.outline == outline(fork, in: at["fork"]!.box, k))
+  #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
+  #expect(abs(at["fork"]!.outline.boundingRect.minX - (at["fork"]!.box.minX + fork.outlineRect.minX * k)) < 1)
+
+  // A branch is a diamond whose corners shrink with it; a merge is a triangle that
+  // grows with its inputs, and a fork with its outputs; both follow the flow.
+  let diamond = VersionMiniMapLayout([.init(id: "b", x: 0, y: 0, kind: .branch)], flow: .leftToRight, width: 284, height: 132).cards["b"]!
+  #expect(diamond.shape == .branch && abs(diamond.box.width - canvas(.branch).size.width * 0.3) < 1e-9)
+  #expect(diamond.outline == outline(canvas(.branch), in: diamond.box, 0.3))
+  #expect(diamond.outline != outline(canvas(.branch), in: diamond.box, 1))
+  func single(_ kind: CardKind, _ fan: Int, _ flow: FlowDirection = .leftToRight) -> VersionMiniMapLayout.Placed {
+    VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], flow: flow, width: 284, height: 132).cards["m"]!
+  }
+  #expect(single(.merge, 2).shape == .merge)
+  #expect(single(.merge, 6).box.height > single(.merge, 2).box.height)
+  #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
+  #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
+  #expect(single(.fork, 6).box.height > single(.fork, 2).box.height)
+
+  // A loop is a merge and a branch with a wire back: they keep their shapes and do not overlap.
+  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .branch)],
+                                  flow: .leftToRight, width: 284, height: 132).cards
+  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .branch)
+  #expect(!loop["m"]!.box.intersects(loop["step"]!.box) && !loop["step"]!.box.intersects(loop["b"]!.box))
+
+  // A folded Card is its header.
+  let folded = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0, collapsed: true)], flow: .leftToRight, width: 284, height: 132).cards["a"]!
+  #expect(abs(folded.box.height - CardGeometry.header * 0.3) < 1e-9)
+}
 
 @Test func stagesOfCodeAndBuiltinCards() {
   // Shown as build → run → validate (SDK and Nix inside build, saving inside validate).
@@ -44,6 +133,56 @@ import Testing
   let long = size([String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)])
   #expect(long.width <= 361)
   #expect(long.height >= short.height + 40, "\(short) \(long)")
+}
+
+/// A wire to or from a Draft is dotted until the Draft has code. The web checks
+/// the same (web/tests/draftWires.tsx).
+@MainActor @Test func draftWiresAreDotted() throws {
+  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
+  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  s.project = try JSONValue.parse(document)
+  let start = s.addCard(template: .trigger, in: [], at: .zero, name: "start")
+  let log = s.addCard(template: .logger, in: [], at: CGPoint(x: 600, y: 0), name: "log")
+  let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
+
+  #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
+  #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
+  #expect(s.isDraftWire(from: draft, to: draft), "between Drafts")
+  #expect(s.isDraftWire(from: draft, to: nil), "from a Draft to the bar of a Card in Card")
+  #expect(!s.isDraftWire(from: start, to: log), "between Cards with code")
+  #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
+
+  // Code written for the Draft: its wires are solid again, without any other change.
+  s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
+  #expect(s.kind(draft) == .code)
+  #expect(!s.isDraftWire(from: draft, to: log))
+  #expect(!s.isDraftWire(from: start, to: draft))
+
+  // The dots flow with the active wires' phase, which wraps at one dash period.
+  let (on, off) = (WireLayer.dot[0], WireLayer.dot[1])
+  #expect(on == 0, "round dots")
+  #expect(off > 0)
+  let dots = WireLayer.dash.reduce(0, +) / off
+  #expect(abs(dots - dots.rounded()) < 1e-9, "a whole number of dots per period")
+}
+
+/// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
+@MainActor @Test func aThumbnailDotsADraftsWires() throws {
+  let card = { (id: String, kind: String) in
+    "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": [{\"name\": \"in\"}], \"outputs\": [{\"name\": \"out\"}], \"params\": [], \"permissions\": []}"
+  }
+  let wire = { (a: String, b: String) in "{\"from\": \"\(a)\", \"fromPort\": \"out\", \"to\": \"\(b)\", \"toPort\": \"in\"}" }
+  let json = """
+    {"flow": "topToBottom", "draftOnly": true, "frames": {}, "steps": [], "final": {}, "outputs": {},
+     "cards": [\(card("a", "code")), \(card("b", "code")), \(card("d", "draft"))],
+     "wires": [\(wire("a", "b")), \(wire("b", "d")), \(wire("d", "a"))]}
+    """
+  let scene = DemoScene(try JSONDecoder().decode(DemoPlayerData.self, from: Data(json.utf8)))
+  #expect(scene.wires.map(\.dotted) == [false, true, true])
 }
 
 @Test func aDraftOffersItsNextPortAndOpensWhileWritten() {
@@ -440,4 +579,45 @@ import Testing
       }
     }
   }
+}
+
+/// Counts the requests to redraw the whole column.
+private final class CountingRuler: LineNumberRuler {
+  var wholeRedraws = 0
+  override var needsDisplay: Bool {
+    get { super.needsDisplay }
+    set {
+      if newValue { wholeRedraws += 1 }
+      super.needsDisplay = newValue
+    }
+  }
+}
+
+/// AppKit may ask the line numbers for more than the column's height and then
+/// count all of it as drawn, so a scroll alone would leave the rest blank.
+@MainActor @Test func scrollingTheEditorRedrawsTheWholeLineNumberColumn() {
+  let scroll = NSTextView.scrollableTextView()
+  scroll.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+  let tv = scroll.documentView as! NSTextView
+  tv.string = (1...100).map { "line \($0)" }.joined(separator: "\n")
+  scroll.hasVerticalRuler = true
+  scroll.rulersVisible = true
+  let ruler = CountingRuler(textView: tv)
+  scroll.verticalRulerView = ruler
+  tv.layoutManager?.ensureLayout(for: tv.textContainer!)
+  ruler.wholeRedraws = 0
+
+  scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
+  #expect(ruler.wholeRedraws > 0)
+}
+
+@Test func theChatTakesItsWidthFromWhatTheWorkbenchLeaves() {
+  #expect(ChatSplit.chatWidth(480, in: 1220) == 480)
+  // What was asked for stays within the chat's limits.
+  #expect(ChatSplit.chatWidth(100, in: 1220) == 320)
+  #expect(ChatSplit.chatWidth(2000, in: 2000) == 900)
+  // The workbench keeps its minimum, in a narrow window too.
+  #expect(ChatSplit.chatWidth(480, in: 700) == 340)
+  #expect(ChatSplit.chatWidth(480, in: 500) == 140)
+  #expect(ChatSplit.chatWidth(480, in: 200) == 0)
 }

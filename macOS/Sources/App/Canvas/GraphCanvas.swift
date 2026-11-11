@@ -53,7 +53,7 @@ struct GraphCanvas: View {
         ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
           groupFrame(id)
         }
-        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, thread: $0.thread) },
+        WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(cam.transform), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
                   animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
         if let b = boundary { boundaryBars(b) }
         ForEach(cardKeys, id: \.self) { k in cardView(k) }
@@ -72,9 +72,9 @@ struct GraphCanvas: View {
         // The Agent at work: threads being drawn and the tsugumi.
         // (one bird per helper while the Agent has work delegated)
         ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
-          // One Tsugumi: while the guide's bird is out (demo mode), the Agent's bird is not drawn too.
+          // One Tsugumi: while the guide's bird is out here (demo mode), the Agent's bird is not drawn too.
           PresenceLayer(presence: p, geometry: presenceGeometry(routed),
-                        avatar: GuideController.shared.awayWindows > 0 ? .none : prefs.agentAvatar,
+                        avatar: GuideController.shared.birdAway(session.identity.url.path) ? .none : prefs.agentAvatar,
                         lead: p === session.presence && !session.helperPresences.isEmpty)
         }
         if let p = pending {
@@ -268,6 +268,7 @@ struct GraphCanvas: View {
     var connection: Int?   // index in the scope's connections (nil: boundary wire or display link)
     var path: Path         // world units
     var style: WireDraw.Style
+    var dotted = false     // an end of it is a Draft
     var thread: AgentPresence.Wire? = nil  // a connection, as the Agent's thread knows it
   }
 
@@ -276,7 +277,9 @@ struct GraphCanvas: View {
     let shown = Set(cardKeys)
     return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
                             wire: { w in routed.first { $0.thread == w }?.path },
-                            screen: { screen($0) }, zoom: camera.zoom)
+                            dotted: { w in session.isDraftWire(from: w.from, to: w.to) },
+                            screen: { screen($0) }, zoom: camera.zoom,
+                            obstacles: { cardKeys.map(cardRect) + outputKeys.map(frameRect) })
   }
 
   /// Every wire of the scope, routed once per update and used for drawing,
@@ -297,18 +300,20 @@ struct GraphCanvas: View {
       ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
       out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
+                            dotted: session.isDraftWire(from: fk, to: tk),
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
-        out.append(RoutedWire(connection: nil, path: Path(), style: .normal))
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal, dotted: session.isDraftWire(from: inner.0, to: nil)))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((portWorld(inner.0, inner.1, output: true), p.point))
-        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil)))
+        out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil),
+                              dotted: session.isDraftWire(from: inner.0, to: nil)))
       }
     }
     for (i, path) in router.routeAll(ends).enumerated() { out[i].path = path }
@@ -474,11 +479,12 @@ struct GraphCanvas: View {
                         onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: pt) },
                         onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
                         onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
+                        onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .comments)) },
                         onRun: data.kind == .trigger && session.connected && !session.runActive
                           ? { RunActions.run(session, card: k, propagate: true) } : nil,
                         draftEdit: draftEdit(k))
       .modifier(CardWriting(presence: session.presence(forCard: k), card: k, title: data.title, zoom: camera.zoom))
-      .guideTarget("card:\(k)", radius: 12)
+      .guideTarget("card:\(k)", radius: 12, zoom: camera.zoom)
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
@@ -687,12 +693,12 @@ struct GraphCanvas: View {
   /// E: a new Draft Card in the middle of the canvas, written on the Card.
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
-    let k = session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)))
+    let k = session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), clearOfOthers: true)
     tab.selection = [k]
     writeDraft(k)
   }
 
-  /// The Card menu's "名前と内容を書く".
+  /// The Card menu's "Write name and content".
   func handleWriteDraft(_ n: Notification) {
     if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.isEditable { writeDraft(k) }
   }
@@ -1009,7 +1015,7 @@ struct GraphCanvas: View {
   /// written on its Card.
   func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
     guard session.isEditable else { return }
-    let k = session.addCard(template: t, in: tab.scope, at: w)
+    let k = session.addCard(template: t, in: tab.scope, at: w, clearOfOthers: true)
     tab.selection = [k]
     if t == .draft { writeDraft(k) }
   }

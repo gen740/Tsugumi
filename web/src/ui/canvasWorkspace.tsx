@@ -18,9 +18,10 @@ import { GuideNest } from './guide'
 import { Button, Divider, MenuButton, Popover } from './controls'
 import { Icon } from './icons'
 import { IssueList } from './workbench'
+import { L } from '../i18n'
 
 /** A tooltip that names the shortcut of its action. */
-export const tip = (text: string, action: ShortcutAction) => `${text}（${prefs.label(action)}）`
+export const tip = (text: string, action: ShortcutAction) => L('{0}（{1}）', text, prefs.label(action))
 
 export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bottomTrailing }: {
   workspace: Workspace; session: ProjectSession; tab: WorkflowTab
@@ -40,6 +41,7 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
         <CanvasRunControl workspace={workspace} session={session} tab={tab} />
         <span className="cv-spacer" />
         <CanvasDraftControls workspace={workspace} session={session} tab={tab} />
+        <CanvasCommentControls workspace={workspace} session={session} tab={tab} />
         <ProjectActions workspace={workspace} session={session} onSwitchProject={onSwitchProject} />
       </div>
       <div className="cv-bottom">
@@ -56,17 +58,19 @@ export function ProjectActions({ workspace, session, onSwitchProject }: { worksp
   useObserve(guide)
   return (
     <div className="capsule material cv-actions">
-      {onSwitchProject && <Button kind="borderless" iconOnly icon="house" onClick={onSwitchProject} help={tip('Home へ戻る', 'home')} />}
+      {onSwitchProject && <Button kind="borderless" iconOnly icon="house" guide="home" onClick={onSwitchProject} help={tip(L('Home へ戻る'), 'home')} />}
+      {/* Another project beside this one: each browser tab has its own. */}
+      {onSwitchProject && <Button kind="borderless" iconOnly icon="plus.square" onClick={() => window.open(location.pathname, '_blank')} help={L('新しいタブで Home を開く')} />}
       {!workspace.showChat && onSwitchProject && guide.present ? (
         // While the chat is closed, Tsugumi waits on its button.
-        <button type="button" className="btn btn-borderless btn-icon guide-nest-button" data-guide="chat" title={tip('チャットを開く', 'toggleChat')}
-          aria-label={tip('チャットを開く', 'toggleChat')} onClick={() => workspace.set('showChat', true)}>
+        <button type="button" className="btn btn-borderless btn-icon guide-nest-button" data-guide="chat" title={tip(L('チャットを開く'), 'toggleChat')}
+          aria-label={tip(L('チャットを開く'), 'toggleChat')} onClick={() => workspace.set('showChat', true)}>
           <GuideNest busy={app.chat(session).busy} small />
         </button>
       ) : (
         <Button kind="borderless" iconOnly icon={workspace.showChat ? 'bubble.left.and.text.bubble.right.fill' : 'bubble.left.and.text.bubble.right'}
           pressed={workspace.showChat} guide="chat"
-          help={workspace.showChat ? tip('チャットを閉じる', 'toggleChat') : tip('チャットを開く', 'toggleChat')}
+          help={workspace.showChat ? tip(L('チャットを閉じる'), 'toggleChat') : tip(L('チャットを開く'), 'toggleChat')}
           onClick={() => workspace.set('showChat', !workspace.showChat)} />
       )}
     </div>
@@ -81,7 +85,7 @@ function Breadcrumbs({ session, tab }: { session: ProjectSession; tab: WorkflowT
   }
   return (
     <div className="capsule material cv-breadcrumbs">
-      {!(tab.scope.length === 0 && tab.back.length === 0) && <Button kind="borderless" small iconOnly icon="chevron.backward" help="戻る" onClick={goUp} />}
+      {!(tab.scope.length === 0 && tab.back.length === 0) && <Button kind="borderless" small iconOnly icon="chevron.backward" help={L('戻る')} onClick={goUp} />}
       <button type="button" className="cv-crumb-root" title={session.dir} onClick={() => tab.enter([])}>{session.scopeName([])}</button>
       {tab.scope.map((_, i) => (
         <span key={i} className="cv-crumb">
@@ -134,8 +138,8 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
     const [k, s] = running[0]
     const stage = runStateStage(s)
     activity = session.displayName(k) + ' ' + (stage !== undefined ? STAGE_INFO[stage].active : cardState(s.state).label)
-  } else if (running.length > 1) activity = `${running.length} 枚が実行中`
-  else if (session.runStatus?.state === D.RunState.preparing) activity = '実行環境を準備中'
+  } else if (running.length > 1) activity = L('{0} 枚が実行中', running.length)
+  else if (session.runStatus?.state === D.RunState.preparing) activity = L('実行環境を準備中')
 
   // Run time on the core's clock from acceptance: the same measure while it runs and once it ended.
   let elapsed = ''
@@ -151,13 +155,13 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       {/* One button of a fixed size: its title and color change, nothing moves. */}
       <Button kind={shownActive ? 'danger' : 'prominent'} icon={shownActive ? 'stop.fill' : 'play.fill'} className="cv-run-button" guide="run"
         disabled={shownActive ? !session.runActive || st === D.RunState.cancelling : !session.connected}
-        help={shownActive ? tip('Workflow の実行を停止（チャットの回答停止とは別の操作です）', 'stop') : tip('文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）', 'run')}
+        help={shownActive ? tip(L('Workflow の実行を停止（チャットの回答停止とは別の操作です）'), 'stop') : tip(L('文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）'), 'run')}
         onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>
-        {shownActive ? '停止' : '実行'}
+        {shownActive ? L('停止') : L('実行')}
       </Button>
       {/* State and time on one line in a fixed width (what runs now is in the tooltip). */}
       <span className="cv-run-state"
-        title={shownActive ? (activity ?? runState(st).label) + '（経過時間は Run の受付から、実行環境の時計で計ります）' : 'Run の状態と経過時間'}>
+        title={shownActive ? (activity ?? runState(st).label) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
         <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
         <span className="nowrap">{label}</span>
         <span className="secondary mono-digits nowrap">{elapsed}</span>
@@ -165,7 +169,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       <span ref={issues}>
         <Button kind="borderless" small icon={problems > 0 ? 'exclamationmark.triangle.fill' : 'checkmark.seal'}
           style={{ color: problems > 0 ? 'var(--orange)' : 'var(--secondary)' }}
-          help={`問題 ${problems} 件（一覧から対象の Card やログへ移動できます）`} onClick={() => setShowIssues((v) => !v)}>
+          help={L('問題 {0} 件（一覧から対象の Card やログへ移動できます）', problems)} onClick={() => setShowIssues((v) => !v)}>
           <span className="mono-digits">{problems}</span>
         </Button>
       </span>
@@ -173,7 +177,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
         <IssueList workspace={workspace} session={session} tab={tab} onDone={() => setShowIssues(false)} />
       </Popover>
       <Divider vertical />
-      <MenuButton icon="plus" disabled={!session.isEditable} help="組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）"
+      <MenuButton icon="plus" disabled={!session.isEditable} help={L('組み込みの Card を追加（入力値・Draft・開始・分配・分岐・合流・記録・処理）')}
         items={() => builtinCardItems((t) => {
           const k = canvasFor(session, tab).addBuiltin(t)
           if (k && t === 'draft') canvasFor(session, tab).writeDraft(k)
@@ -191,14 +195,39 @@ export function CanvasDraftControls({ workspace, session, tab }: { workspace: Wo
   if (!drafts.length) return null
   return (
     <div className="capsule material cv-drafts">
-      <Button icon="wand.and.stars" small disabled={session.dirty || !session.connected || session.runActive || chat.busy}
-        help={session.dirty ? '先に変更を保存してください（配線と Draft の内容を確定してから生成します）'
-          : 'この階層の Draft をチャットで実装します。進捗はチャットに表示されます。'}
+      <Button icon="wand.and.stars" small guide="generate" disabled={session.dirty || !session.connected || session.runActive || chat.busy}
+        help={session.dirty ? L('先に変更を保存してください（配線と Draft の内容を確定してから生成します）')
+          : L('この階層の Draft をチャットで実装します。進捗はチャットに表示されます。')}
         onClick={() => {
           workspace.set('showChat', true)
           chat.generateDrafts(tab.scope, drafts)
         }}>
-        Card を生成
+        {L('Card を生成')}
+      </Button>
+    </div>
+  )
+}
+
+/** Shown when Cards of the current scope have open comments: the selected ones
+ *  (or all of them) go to the chat. */
+export function CanvasCommentControls({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
+  const chat = app.chat(session)
+  useObserve(session, chat, tab)
+  const cards = session.cardsWithOpenComments(tab.scope)
+  if (!cards.length) return null
+  const chosen = cards.filter((k) => tab.selection.has(k))
+  const asked = chosen.length ? chosen : cards
+  const count = asked.reduce((n, k) => n + session.openComments(k).length, 0)
+  return (
+    <div className="capsule material cv-drafts">
+      <Button icon="bubble.left" small guide="from_comments" disabled={session.dirty || !session.connected || chat.busy}
+        help={session.dirty ? L('先に変更を保存してください')
+          : L('{0}の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。', chosen.length ? L('選択した Card') : L('この階層の Card'))}
+        onClick={() => {
+          workspace.set('showChat', true)
+          chat.generateFromComments(tab.scope, asked)
+        }}>
+        {L('コメントから生成（{0}）', count)}
       </Button>
     </div>
   )
@@ -210,18 +239,18 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
   useObserve(cv, prefs, tab)
   const zoom = cv.camera.zoom
   return (
-    <div className="capsule material cv-view-controls">
-      <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={tip('縮小', 'zoomOut')} onClick={() => cv.zoomFromControls(zoom / 1.2)} />
-      <Button kind="borderless" small help={tip('100% に戻す', 'actualSize')} onClick={() => cv.zoomFromControls(1)}>
+    <div className="capsule material cv-view-controls" data-guide="view">
+      <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={tip(L('縮小'), 'zoomOut')} onClick={() => cv.zoomFromControls(zoom / 1.2)} />
+      <Button kind="borderless" small help={tip(L('100% に戻す'), 'actualSize')} onClick={() => cv.zoomFromControls(1)}>
         <span className="mono-digits" style={{ display: 'inline-block', minWidth: 34, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
       </Button>
-      <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={tip('拡大', 'zoomIn')} onClick={() => cv.zoomFromControls(zoom * 1.2)} />
+      <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={tip(L('拡大'), 'zoomIn')} onClick={() => cv.zoomFromControls(zoom * 1.2)} />
       <Divider vertical />
-      <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={tip('全体表示', 'fitAll')} onClick={() => cv.fitAll()} />
+      <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={tip(L('全体表示'), 'fitAll')} onClick={() => cv.fitAll()} />
       {/* Notes, groups and folding are in the canvas's context menu and the menu, where they are named. */}
-      <Button kind="borderless" small iconOnly icon="rectangle.grid.2x2" help="整列（配置だけを変更）" onClick={() => session.arrange(tab.scope)} />
+      <Button kind="borderless" small iconOnly icon="rectangle.grid.2x2" help={L('整列（配置だけを変更）')} onClick={() => session.arrange(tab.scope)} />
       <Divider vertical />
-      <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help="グリッド" onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
+      <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help={L('グリッド')} onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
     </div>
   )
 }

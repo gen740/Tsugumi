@@ -18,7 +18,11 @@
 #include <nix/expr/eval-settings.hh>
 #include <nix/expr/eval.hh>
 #include <nix/expr/get-drvs.hh>
+#include <nix/expr/value-to-json.hh>
 #include <nix/fetchers/fetch-settings.hh>
+#include <nix/flake/flake.hh>
+#include <nix/flake/flakeref.hh>
+#include <nix/flake/settings.hh>
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/indirect-root-store.hh>
@@ -98,6 +102,11 @@ struct NixEvaluator::Impl {
   bool read_only = false;
   std::unique_ptr<nix::EvalSettings> eval_settings;
   std::unique_ptr<nix::fetchers::Settings> fetch_settings;
+  // Opted-in flakes only: Cards never reach this state, or getFlake.
+  std::unique_ptr<nix::EvalSettings> flake_eval_settings;
+  std::unique_ptr<nix::flake::Settings> flake_settings;
+  std::shared_ptr<nix::EvalState> flake_state;
+  std::map<std::string, FlakeInfo> flakes;  // by the ref asked for and the locked one
   std::shared_ptr<nix::Store> store;
   std::shared_ptr<nix::EvalState> state;
   nix::RootValue entry;
@@ -162,6 +171,27 @@ struct NixEvaluator::Impl {
     return fut.get();
   }
 
+  // Runs on the evaluator's thread; Nix's errors become what NixEvaluator promises.
+  template <class F>
+  auto guarded(const NixCall& call, F f) -> decltype(f()) {
+    return run([&]() -> decltype(f()) {
+      try {
+        return f();
+      } catch (const nix::Interrupted&) {
+        bool timed_out = false;
+        interrupted(call, &timed_out);
+        throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
+      } catch (const nix::BaseError& e) {
+        if (interrupted(call, nullptr)) {
+          bool timed_out = false;
+          interrupted(call, &timed_out);
+          throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
+        }
+        throw std::runtime_error(message(e));
+      }
+    });
+  }
+
   void open() {
     store = nix::openStore().get_ptr();
     eval_settings = std::make_unique<nix::EvalSettings>(read_only);
@@ -181,7 +211,7 @@ struct NixEvaluator::Impl {
   }
 
   nix::Value& pkgs_for(const NixCall& c) {
-    std::string key = c.pin_url + "#" + c.pin_hash;
+    std::string key = c.pin_url + "#" + c.pin_hash + "#" + c.system;
     if (auto it = pkgs.find(key); it != pkgs.end()) return **it->second;
     auto quote = [](const std::string& s) {
       std::string q = "\"";
@@ -192,11 +222,101 @@ struct NixEvaluator::Impl {
       return q + "\"";
     };
     std::string expr = "import (builtins.fetchTarball { url = " + quote(c.pin_url) + "; sha256 = " +
-                       quote(c.pin_hash) + "; }) { system = builtins.currentSystem; config = { }; overlays = [ ]; }";
+                       quote(c.pin_hash) + "; }) { system = " +
+                       (c.system.empty() ? std::string("builtins.currentSystem") : quote(c.system)) +
+                       "; config = { }; overlays = [ ]; }";
     auto* v = state->allocValue();
     state->eval(state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))), *v);
     state->forceValue(*v, nix::noPos);
     return **(pkgs[key] = nix::allocRootValue(v));
+  }
+
+  void open_flakes() {
+    if (!state) open();
+    nix::experimentalFeatureSettings.set("extra-experimental-features", "flakes");
+    if (!flake_settings) flake_settings = std::make_unique<nix::flake::Settings>();
+    flake_eval_settings = std::make_unique<nix::EvalSettings>(read_only);
+    nix::loadConfFile(*flake_eval_settings);
+    flake_eval_settings->pureEval = true;
+    flake_eval_settings->enableImportFromDerivation = false;
+    flake_eval_settings->nixPath = nix::Strings{};
+    flake_settings->configureEvalSettings(*flake_eval_settings);
+    flake_state = std::make_shared<nix::EvalState>(nix::LookupPath{}, nix::ref<nix::Store>(store), *fetch_settings,
+                                                   *flake_eval_settings);
+  }
+
+  // Every .drv of a remembered result is still there, and stays while this process does.
+  bool hold(const FlakeInfo& info) {
+    for (const auto& [attr, p] : nlohmann::json::parse(info.json).at("packages").items()) {
+      auto drv = store->parseStorePath(p.at("drv").get<std::string>());
+      if (!store->isValidPath(drv)) return false;
+      store->addTempRoot(drv);
+    }
+    return true;
+  }
+
+  FlakeInfo flake(const NixCall& c, const std::string& ref) {
+    current = &c;
+    g_logger->set(c.log);
+    struct Done {
+      Impl* d;
+      ~Done() {
+        g_logger->set(nullptr);
+        d->current = nullptr;
+      }
+    } done{this};
+    if (!flake_state) open_flakes();
+    std::string system = c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
+    if (auto it = flakes.find(ref + "|" + system); it != flakes.end()) {
+      if (hold(it->second)) return it->second;
+      // Collected since: this state remembers derivations it would not write again.
+      flakes.clear();
+      open_flakes();
+    }
+    auto quote = [](const std::string& s) {
+      std::string q = "\"";
+      for (char ch : s) {
+        if (ch == '"' || ch == '\\' || ch == '$') q += '\\';
+        q += ch;
+      }
+      return q + "\"";
+    };
+    auto input = nix::parseFlakeRef(*fetch_settings, ref);
+    auto locked = nix::flake::getFlake(*flake_state, input, nix::fetchers::UseRegistries::No).lockedRef.to_string();
+    std::string expr = R"(
+      let
+        f = builtins.getFlake )" + quote(locked) + R"(;
+        plain = builtins.unsafeDiscardStringContext;
+        read = d: builtins.tryEval (builtins.deepSeq [ d.drvPath d.outPath ] {
+          name = d.name or "";
+          drv = plain d.drvPath;  # not outPath: Nix would write the whole set as that path
+          out = plain d.outPath;
+          output = d.outputName or "out";
+        });
+        all = builtins.mapAttrs (_: read) (f.packages.)" + quote(system) + R"( or { });
+      in {
+        ref = )" + quote(locked) + R"(;
+        rev = f.rev or "";
+        narHash = f.narHash or "";
+        packages = builtins.listToAttrs (builtins.concatMap
+          (n: if all.${n}.success then [ { name = n; value = all.${n}.value; } ] else [ ])
+          (builtins.attrNames all));
+      }
+    )";
+    auto* v = flake_state->allocValue();
+    flake_state->eval(flake_state->parseExprFromString(expr, flake_state->rootPath(nix::CanonPath("/"))), *v);
+    nix::NixStringContext context;
+    auto json = nix::printValueAsJSON(*flake_state, true, *v, nix::noPos, context, false);
+    FlakeInfo info;
+    info.ref = locked;
+    info.rev = json.at("rev").get<std::string>();
+    info.nar_hash = json.at("narHash").get<std::string>();
+    for (const auto& [attr, p] : json.at("packages").items()) info.packages.push_back(attr);
+    info.json = json.dump();
+    hold(info);
+    flakes[ref + "|" + system] = info;
+    flakes[locked + "|" + system] = info;
+    return info;
   }
 
   NixResult build(const NixCall& c) {
@@ -264,6 +384,10 @@ struct NixEvaluator::Impl {
   }
 };
 
+FlakeInfo NixEvaluator::flake(const NixCall& call, const std::string& ref) {
+  return impl_->guarded(call, [&] { return impl_->flake(call, ref); });
+}
+
 NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed) : impl_(std::make_unique<Impl>()) {
   impl_->entry_text = std::move(entry);
   impl_->allowed = std::move(allowed);
@@ -296,22 +420,7 @@ NixEvaluator::~NixEvaluator() {
 }
 
 NixResult NixEvaluator::build(const NixCall& call) {
-  return impl_->run([&]() -> NixResult {
-    try {
-      return impl_->build(call);
-    } catch (const nix::Interrupted&) {
-      bool timed_out = false;
-      impl_->interrupted(call, &timed_out);
-      throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
-    } catch (const nix::BaseError& e) {
-      if (impl_->interrupted(call, nullptr)) {
-        bool timed_out = false;
-        impl_->interrupted(call, &timed_out);
-        throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
-      }
-      throw std::runtime_error(message(e));
-    }
-  });
+  return impl_->guarded(call, [&] { return impl_->build(call); });
 }
 
 bool NixEvaluator::valid(const std::string& store_path) {

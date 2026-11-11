@@ -12,6 +12,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import { L } from './i18n'
 
 export interface ChatGPTEndpoints {
   issuer: string
@@ -262,8 +263,8 @@ export class ChatGPTAuth {
       }
       const ok = !u.searchParams.has('error')
       const body = ok
-        ? 'サインインしました。このタブを閉じて Tsugumi に戻ってください。 / Signed in. Close this tab and return to Tsugumi.'
-        : 'サインインは完了しませんでした。Tsugumi に戻ってください。 / The sign-in did not finish. Return to Tsugumi.'
+        ? L('サインインしました。このタブを閉じて Tsugumi に戻ってください。 / Signed in. Close this tab and return to Tsugumi.')
+        : L('サインインは完了しませんでした。Tsugumi に戻ってください。 / The sign-in did not finish. Return to Tsugumi.')
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', connection: 'close' })
       res.end(`<!doctype html><meta charset=utf-8><title>Tsugumi</title><body style="font: 15px -apple-system, sans-serif; margin: 3em"><p>${body}</p>`)
       settle.resolve(u.searchParams)

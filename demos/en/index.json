@@ -1,0 +1,423 @@
+{
+  "demos": [
+    {
+      "id": "report",
+      "title": "Data to report",
+      "field": "Learn the basics",
+      "description": "Generate data, aggregate it and write a report. Change a step in the middle and rerun from there.",
+      "path": "report",
+      "tags": [
+        "Python",
+        "Artifacts",
+        "Card in Card",
+        "Reproducing failures"
+      ]
+    },
+    {
+      "id": "collatz",
+      "title": "Collatz (C++ / Python / Julia / R)",
+      "field": "Learn the basics",
+      "description": "The same computation in four languages, compared while following its branch and loop.",
+      "path": "collatz",
+      "tags": [
+        "C++",
+        "Python",
+        "Julia",
+        "R",
+        "Loops",
+        "Branch, fork and merge",
+        "Card in Card",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "live-stream",
+      "title": "Live Stream",
+      "field": "Learn the basics",
+      "description": "A time series plotted while the run is still going.",
+      "path": "live-stream",
+      "tags": [
+        "Python",
+        "Live display",
+        "Loops",
+        "Stopping"
+      ]
+    },
+    {
+      "id": "plots",
+      "title": "Plots (matplotlib, Plotly, Altair)",
+      "field": "Learn the basics",
+      "description": "matplotlib code written for a window becomes the Card's display as it is.",
+      "path": "plots",
+      "tags": [
+        "Python",
+        "matplotlib",
+        "Plotly",
+        "Altair",
+        "Live display",
+        "Branch, fork and merge"
+      ]
+    },
+    {
+      "id": "casa",
+      "title": "Cas A · Chandra RGB",
+      "field": "Space and Earth",
+      "description": "An X-ray observation split into three energy bands for an RGB image, with the spectrum of the same photons to match lines to colours.",
+      "path": "casa",
+      "tags": [
+        "Python",
+        "Pinned with Nix",
+        "Astronomy",
+        "Images"
+      ]
+    },
+    {
+      "id": "casa-draft",
+      "title": "Cas A · Chandra RGB (Draft)",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
+      "path": "casa-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Pinned with Nix",
+        "Astronomy",
+        "Images"
+      ]
+    },
+    {
+      "id": "gw150914",
+      "title": "GW150914 · gravitational waves",
+      "field": "Space and Earth",
+      "description": "The chirp of a gravitational wave, extracted from public data and plotted.",
+      "path": "gw150914",
+      "tags": [
+        "Python",
+        "Network",
+        "Physics",
+        "Images"
+      ]
+    },
+    {
+      "id": "gw150914-draft",
+      "title": "GW150914 · gravitational waves (Draft)",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
+      "path": "gw150914-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Network",
+        "Physics",
+        "Images"
+      ]
+    },
+    {
+      "id": "protein-6lu7",
+      "title": "6LU7 · a protein and its binding pocket",
+      "field": "Life and medicine",
+      "description": "A protein's 3D structure, fetched to look at its binding pocket.",
+      "path": "protein-6lu7",
+      "tags": [
+        "Python",
+        "Network",
+        "Biology",
+        "Images"
+      ]
+    },
+    {
+      "id": "protein-6lu7-draft",
+      "title": "6LU7 · a protein and its binding pocket (Draft)",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
+      "path": "protein-6lu7-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Network",
+        "Biology",
+        "Images"
+      ]
+    },
+    {
+      "id": "exoplanet-transit",
+      "title": "Kepler-6 b · an exoplanet transit",
+      "field": "Space and Earth",
+      "description": "A light curve folded to show an exoplanet's transit.",
+      "path": "exoplanet-transit",
+      "tags": [
+        "Python",
+        "Network",
+        "Astronomy",
+        "Images"
+      ]
+    },
+    {
+      "id": "exoplanet-transit-draft",
+      "title": "Kepler-6 b · an exoplanet transit (Draft)",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
+      "path": "exoplanet-transit-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Network",
+        "Astronomy",
+        "Images"
+      ]
+    },
+    {
+      "id": "seismic-trench",
+      "title": "Japan Trench · hypocentre sections and the b-value",
+      "field": "Space and Earth",
+      "description": "A cross-section of hypocentres and the b-value, from an earthquake catalogue.",
+      "path": "seismic-trench",
+      "tags": [
+        "Python",
+        "Network",
+        "Earth science",
+        "Images"
+      ]
+    },
+    {
+      "id": "seismic-trench-draft",
+      "title": "Japan Trench · hypocentre sections and the b-value (Draft)",
+      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
+      "path": "seismic-trench-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Network",
+        "Earth science",
+        "Images"
+      ]
+    },
+    {
+      "id": "mnist-classifiers",
+      "title": "MNIST · comparing classifiers of handwritten digits",
+      "field": "Statistics and machine learning",
+      "description": "The real MNIST fed to seven classifiers at once, comparing accuracy and time.",
+      "path": "mnist-classifiers",
+      "tags": [
+        "Python",
+        "Machine learning",
+        "Branch, fork and merge",
+        "matplotlib",
+        "Plotly",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "newton",
+      "title": "Newton's method · starting points and convergence",
+      "field": "Numerical computation and optimisation",
+      "description": "A map of the complex plane showing how the starting point decides where it goes and how fast.",
+      "path": "newton",
+      "tags": [
+        "Python",
+        "Numerical computation",
+        "Fractals",
+        "Branch, fork and merge"
+      ]
+    },
+    {
+      "id": "pharmacokinetics",
+      "title": "Pharmacokinetics · Tsugumicin, a made-up drug",
+      "field": "Life and medicine",
+      "description": "Teaching material comparing how concentration moves with the dosing interval. Not medical advice.",
+      "path": "pharmacokinetics",
+      "tags": [
+        "Python",
+        "Numerical computation",
+        "Interactive charts",
+        "Branch, fork and merge"
+      ]
+    },
+    {
+      "id": "max-flow",
+      "title": "Maximum flow and minimum cut",
+      "field": "Numerical computation and optimisation",
+      "description": "On a made-up network, which edge to widen to increase the flow.",
+      "path": "max-flow",
+      "tags": [
+        "Python",
+        "Graph theory",
+        "Numerical computation",
+        "Branch, fork and merge"
+      ]
+    },
+    {
+      "id": "dose-response",
+      "title": "Dose–response curve",
+      "field": "Statistics and machine learning",
+      "description": "A fit and its confidence interval, checked on data whose true values are known.",
+      "path": "dose-response",
+      "tags": [
+        "Python",
+        "Synthetic data",
+        "Statistics",
+        "Fitting"
+      ]
+    },
+    {
+      "id": "molecules",
+      "title": "Molecular properties",
+      "field": "Chemistry and ecology",
+      "description": "Properties and structural formulas from SMILES, with RDKit.",
+      "path": "molecules",
+      "tags": [
+        "Python",
+        "Chemistry",
+        "RDKit",
+        "Interactive charts"
+      ]
+    },
+    {
+      "id": "cell-count",
+      "title": "Counting cells in images",
+      "field": "Life and medicine",
+      "description": "A counting method scored on synthetic images with known answers, then applied to real images of nuclei.",
+      "path": "cell-count",
+      "tags": [
+        "Python",
+        "Synthetic data",
+        "Images",
+        "Biology"
+      ]
+    },
+    {
+      "id": "survival",
+      "title": "Survival analysis",
+      "field": "Life and medicine",
+      "description": "How much the same hazard ratio moves with the subjects and the adjustment.",
+      "path": "survival",
+      "tags": [
+        "R",
+        "Statistics",
+        "Medicine",
+        "Images",
+        "Branch, fork and merge",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "meta-analysis",
+      "title": "Meta-analysis: BCG vaccine",
+      "field": "Life and medicine",
+      "description": "How the conclusion moves with the pooling method and the trials left out.",
+      "path": "meta-analysis",
+      "tags": [
+        "R",
+        "Statistics",
+        "Medicine",
+        "Images",
+        "Branch, fork and merge",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "rna-seq",
+      "title": "RNA-seq: airway and dexamethasone",
+      "field": "Life and medicine",
+      "description": "With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.",
+      "path": "rna-seq",
+      "tags": [
+        "R",
+        "Statistics",
+        "Biology",
+        "Images",
+        "Branch, fork and merge",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "simpson",
+      "title": "Simpson's paradox",
+      "field": "Statistics and machine learning",
+      "description": "Two real datasets in which the whole and its strata point in opposite directions.",
+      "path": "simpson",
+      "tags": [
+        "R",
+        "Statistics",
+        "Images",
+        "Branch, fork and merge",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "battery",
+      "title": "Scheduling a battery",
+      "field": "Numerical computation and optimisation",
+      "description": "Charging and discharging optimised by dynamic programming, under made-up prices.",
+      "path": "battery",
+      "tags": [
+        "Julia",
+        "Optimisation",
+        "Dynamic programming",
+        "Made-up data"
+      ]
+    },
+    {
+      "id": "gillespie",
+      "title": "Fluctuations in chemical reactions",
+      "field": "Chemistry and ecology",
+      "description": "A Gillespie simulation checked against theory.",
+      "path": "gillespie",
+      "tags": [
+        "Julia",
+        "Stochastic simulation",
+        "Chemical reactions",
+        "Checked against theory"
+      ]
+    },
+    {
+      "id": "heat-inverse",
+      "title": "An inverse problem in heat conduction",
+      "field": "Numerical computation and optimisation",
+      "description": "The naive inverse breaks down; regularisation recovers the answer.",
+      "path": "heat-inverse",
+      "tags": [
+        "Julia",
+        "Inverse problems",
+        "Regularisation",
+        "Made-up data"
+      ]
+    },
+    {
+      "id": "ecology-models",
+      "title": "Comparing ecological models",
+      "field": "Chemistry and ecology",
+      "description": "Predator–prey models fitted to fur-trade records and compared.",
+      "path": "ecology-models",
+      "tags": [
+        "Julia",
+        "Model comparison",
+        "Ecology",
+        "Public data"
+      ]
+    },
+    {
+      "id": "dynamics-draft",
+      "title": "Dynamical systems gallery (Draft)",
+      "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Generate Cards\" hands them to helpers that write them at the same time, a bird each.",
+      "path": "dynamics-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Splitting the work",
+        "Python",
+        "Images"
+      ]
+    },
+    {
+      "id": "mnist-classifiers-draft",
+      "title": "MNIST · comparing classifiers (Draft)",
+      "description": "Real MNIST digits are loaded and subsampled, and seven classifiers (kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a CNN) wait as Drafts with a shared output type, each in its own Nix environment: the Agent's \"Generate Cards\" hands them to helpers that write them at the same time, a bird each, and then writes the comparison.",
+      "path": "mnist-classifiers-draft",
+      "tags": [
+        "Draft",
+        "Agent",
+        "Splitting the work",
+        "Python",
+        "Machine learning",
+        "Branch, fork and merge"
+      ]
+    }
+  ]
+}

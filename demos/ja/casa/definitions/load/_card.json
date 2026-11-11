@@ -1,0 +1,28 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "params": [
+    {
+      "name": "obsid",
+      "type": "string",
+      "data": "25628",
+      "nix": true
+    },
+    {
+      "name": "file",
+      "type": "string",
+      "data": "acisf25628N002_evt2.fits.gz",
+      "nix": true
+    },
+    {
+      "name": "hash",
+      "type": "string",
+      "data": "sha256-MYAMIQXv/cwAV6L30N5+XODCrCSYk6NTqpMV+VSDwp4=",
+      "nix": true
+    }
+  ]
+}

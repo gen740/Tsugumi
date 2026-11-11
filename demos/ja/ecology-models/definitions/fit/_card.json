@@ -1,0 +1,30 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "pelts"
+    }
+  ],
+  "params": [
+    {
+      "name": "fit_until",
+      "type": "uint64",
+      "data": 1920
+    },
+    {
+      "name": "restarts",
+      "type": "uint64",
+      "data": 24
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 11
+    },
+    {
+      "name": "dt",
+      "type": "double",
+      "data": 0.05
+    }
+  ]
+}

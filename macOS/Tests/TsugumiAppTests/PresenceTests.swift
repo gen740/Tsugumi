@@ -221,44 +221,164 @@ import Testing
   #expect(LayoutTidy.makeRoom(columns, across: true).map(\.id) == ["card:c"])
 }
 
-@MainActor @Test func theFileBeingWrittenShowsAboveItsCardUntilTheCallEnds() {
+@MainActor @Test func theFileBeingWrittenShowsWhatHasArrivedAtThePaceItArrives() {
+  typealias T = AgentPresence.Timing
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
   // Outside a turn, or from a tool that writes no files, nothing shows.
   p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
-  #expect(p.liveCode == nil)
+  #expect(p.liveCode(at: t0) == nil)
   p.turnStarted(now: t0)
   p.toolInput(index: 1, tool: "run", delta: #"{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
-  #expect(p.liveCode == nil && p.beats.isEmpty)
+  #expect(p.liveCode(at: t0) == nil && p.beats.isEmpty)
 
-  p.toolInput(index: 2, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/src/main.py","bytes":"imp"#, now: t0)
-  #expect(p.liveCode == AgentPresence.LiveCode(card: "load", file: "src/main.py", text: "imp"))
-  // The bird goes there and says so, once, not for each piece.
+  p.toolInput(index: 2, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/src/main.py","bytes":"import os"#, now: t0)
+  // The bird goes there and says so; what has arrived is written out up to the next lump.
   #expect(p.beats.map(\.beat) == [.compose("load")])
   #expect(p.line(at: t0)?.text == "load を書いています")
-  // Pieces faster than the screen are held, and none is lost.
-  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: t0.addingTimeInterval(0.001))
-  #expect(p.liveCode?.text == "imp")
-  p.toolInput(index: 2, tool: "project_save", delta: " os", now: t0.addingTimeInterval(0.05))
-  #expect(p.liveCode?.text == "import os")
+  #expect(p.liveCode(at: t0)?.text == "")
+  #expect(p.liveCode(at: at(T.codeEase / 2))?.text == "impo")
+  #expect(p.liveCode(at: at(T.codeEase + 0.01))?.text == "import os")
+  #expect(p.liveCode(at: t0)?.file == "src/main.py")
+  // A lump in many pieces at once, none lost, on the same scene: from where it had got to.
+  p.toolInput(index: 2, tool: "project_save", delta: "\\nimp", now: at(1))
+  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: at(1.001))
+  #expect(p.liveCode(at: at(1.001))?.text == "import os")
+  #expect(p.liveCode(at: at(1.001 + T.codeEase / 2))?.text == "import os\nim")
+  #expect(p.liveCode(at: at(1.001 + T.codeEase + 0.01))?.text == "import os\nimport")
   #expect(p.beats.count == 1)
+  // The next lump before this one has been written out: on from where it has got to, never back.
+  p.toolInput(index: 2, tool: "project_save", delta: " x", now: at(2))
+  p.toolInput(index: 2, tool: "project_save", delta: " y", now: at(2 + T.codeEase / 2))
+  let inLump = p.liveCode(at: at(2 + T.codeEase / 2))?.text.count ?? 0
+  #expect(inLump == "import os\nimport x".count - 1)
+  #expect(p.liveCode(at: at(2 + T.codeEase * 1.5 + 0.01))?.text == "import os\nimport x y")
 
-  // Another Card: the panel moves at once, the bird follows.
-  p.toolInput(index: 2, tool: "project_save", delta: #""}},{"value":{"path":"definitions/rgb/src/main.py","bytes":"from"#, now: t0.addingTimeInterval(0.051))
-  #expect(p.liveCode?.card == "rgb" && p.liveCode?.text == "from")
+  // A slow model: the scene lasts as long as the file arrives, a pause included.
+  p.toolInput(index: 2, tool: "project_save", delta: " a", now: at(30))
+  #expect(p.liveCode(at: at(30 + T.codeStalled - 0.1))?.text == "import os\nimport x y a")
+
+  // The next file comes: the one on the screen has been seen long enough, so it
+  // does not hold, and the next shows at once.
+  p.toolInput(index: 2, tool: "project_save", delta: #""}},{"value":{"path":"definitions/rgb/src/main.py","bytes":"from"#, now: at(31))
   #expect(p.beats.map(\.beat) == [.compose("load"), .compose("rgb")])
+  #expect(p.liveCode(at: at(31))?.card == "rgb")
+  #expect(p.liveCode(at: at(31 + T.codeEase + 0.01))?.text == "from")
 
-  // The call ended: gone, whether or not the save went through.
-  p.toolInputEnded()
-  #expect(p.liveCode == nil)
-  // A file outside any Card has no place to show.
-  p.toolInput(index: 3, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.json","bytes":"{"#, now: t0.addingTimeInterval(1))
-  #expect(p.liveCode == nil)
-  // A turn that ends leaves nothing behind.
-  p.toolInput(index: 4, tool: "project_validate", delta: #"{"changes":[{"value":{"path":"definitions/a/b","bytes":"c"#, now: t0.addingTimeInterval(2))
-  #expect(p.liveCode?.card == "a")
-  p.turnEnded(.stopped, now: t0.addingTimeInterval(3))
-  #expect(p.liveCode == nil)
+  // The last file has arrived and the save goes through: it says so for its hold,
+  // and is gone by then.
+  p.toolInput(index: 2, tool: "project_save", delta: #" a"}}]}"#, now: at(33))
+  p.saved(written: [("rgb", reveal: true)], wires: [], now: at(33.1))
+  p.toolInputEnded(ok: true, now: at(33.1))
+  #expect(p.liveCode(at: at(33.2))?.saved == true)
+  #expect(p.liveCode(at: at(33 + T.codeHold + 0.01)) == nil)
+}
+
+@MainActor @Test func aShortFileStaysLongEnoughToSeeAndTheWindowDoesNotFallBehind() {
+  typealias T = AgentPresence.Timing
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
+  let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
+  p.turnStarted(now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
+  // Alone, it is seen for its shortest stay and holds.
+  #expect(p.beats[0].length == T.codeShortest + T.codeHold)
+  // More come at once: the first keeps its shortest stay, then only the newest shows.
+  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: at(0.1))
+  p.toolInput(index: 0, tool: "project_save", delta: file("c"), now: at(0.2))
+  #expect(p.beats.map(\.beat) == [.compose("a"), .compose("c")])
+  #expect(p.beats[1].start == at(T.codeShortest))
+  #expect(p.liveCode(at: at(T.codeShortest - 0.01))?.card == "a")
+  #expect(p.liveCode(at: at(T.codeShortest + 0.01))?.card == "c")
+}
+
+@MainActor @Test func aFileWaitsNoLongerThanTheBirdIsBehindAndShowsWhenItCan() {
+  typealias T = AgentPresence.Timing
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
+  p.turnStarted(now: t0)
+  // The bird is threading the wires of the last save, far behind.
+  for n in 0..<8 { p.enqueue(.thread(AgentPresence.Wire(from: "a", fromPort: "o", to: "b\(n)", toPort: "i")), now: t0) }
+  let free = p.beats.last!.end.timeIntervalSince(t0)
+  #expect(free > T.maxBacklog)
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/m.py","bytes":"x"#, now: t0)
+  #expect(!p.beats.contains { $0.code != nil })
+  // Once it is close enough, the file still being written gets its scene, whole so far.
+  p.toolInput(index: 0, tool: "project_save", delta: "y", now: at(free))
+  #expect(p.liveCode(at: at(free + T.codeEase + 0.01))?.text == "xy")
+}
+
+@MainActor @Test func aSaveEndsWhatWaitsAndARunEndsTheWindow() {
+  typealias T = AgentPresence.Timing
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
+  let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
+  p.turnStarted(now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: at(0.1))
+  // The save has gone through: b, still waiting, is not shown any more.
+  p.saved(written: [("a", reveal: true), ("b", reveal: true)], wires: [], now: at(0.2))
+  p.toolInputEnded(ok: true, now: at(0.2))
+  #expect(p.beats.filter { $0.code != nil }.count == 1)
+  #expect(p.liveCode(at: at(0.3))?.saved == true)
+  #expect(p.liveCode(at: at(T.codeShortest + 0.01)) == nil)
+  // The workflow starts within a's shortest stay: the window goes at once, and
+  // the bird's scenes that were queued behind it stay.
+  p.toolInput(index: 1, tool: "project_save", delta: file("c"), now: at(10))
+  p.saved(written: [("c", reveal: true)], wires: [], now: at(10.1))
+  p.toolInputEnded(ok: true, now: at(10.1))
+  #expect(p.liveCode(at: at(10.2))?.card == "c")
+  p.stopShowingCode(now: at(10.2))
+  #expect(p.liveCode(at: at(10.2)) == nil && p.liveCode(at: at(11)) == nil)
+  #expect(p.beats.contains { $0.beat == .write("c", reveal: true) })
+}
+
+@Test func thePanelOfACardNotOnTheCanvasGoesWhereThereIsRoom() {
+  let view = CGRect(x: 12, y: 52, width: 1000, height: 800)
+  let w = WritingPanel.size.width, h = WritingPanel.size.height
+  // The top middle of the view.
+  let top = WritingPanel.frame(scale: 1, in: view)
+  #expect(top == CGRect(x: view.midX - w / 2, y: view.minY, width: w, height: h))
+  // Something there: the bottom middle.
+  let bottom = WritingPanel.frame(scale: 1, in: view, others: [top])
+  #expect(bottom == CGRect(x: view.midX - w / 2, y: view.maxY - h, width: w, height: h))
+  // Both: a corner, whole and covering nothing.
+  let corner = WritingPanel.frame(scale: 1, in: view, others: [top, bottom])
+  #expect(view.contains(corner) && !corner.intersects(top) && !corner.intersects(bottom))
+  // Nothing free: the first place all the same, inside the view.
+  #expect(WritingPanel.frame(scale: 1, in: view, others: [view]) == top)
+  // Another bird does not take the same place, and it scales as the others.
+  #expect(WritingPanel.frame(scale: 1, in: view, slot: 1) == bottom)
+  #expect(WritingPanel.frame(scale: 1.3, in: view).height == h * 1.3)
+}
+
+@MainActor @Test func whatAFailedOrStoppedCallWroteGoesAtOnce() {
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
+  let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
+  p.turnStarted(now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: t0)
+  #expect(p.beats.count == 2)
+  p.toolInputEnded(ok: false, now: at(0.5))
+  #expect(p.liveCode(at: at(0.5)) == nil && p.liveCode(at: at(4)) == nil)
+  // What is not a Card's file shows nothing, and the next call starts afresh.
+  p.toolInput(index: 1, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.json","bytes":"{"#, now: at(1))
+  #expect(p.liveCode(at: at(1)) == nil)
+  p.toolInput(index: 2, tool: "project_save", delta: file("c"), now: at(2))
+  #expect(p.liveCode(at: at(2.5))?.card == "c")
+  // A turn that is stopped leaves nothing behind; one that ends well plays out.
+  p.turnEnded(.stopped, now: at(3))
+  #expect(p.liveCode(at: at(3)) == nil)
+  p.turnStarted(now: at(10))
+  p.toolInput(index: 3, tool: "project_save", delta: file("d"), now: at(10))
+  p.turnEnded(.done, now: at(10.1))
+  #expect(p.liveCode(at: at(11))?.card == "d")
 }
 
 @Test func thePanelShowsTheLastLines() {
@@ -267,4 +387,40 @@ import Testing
   // A new line just begun is kept, so the text moves as it is written.
   #expect(WritingPanel.tail("1\n2\n3\n", lines: 3) == ["2", "3", ""])
   #expect(WritingPanel.tail("", lines: 3) == [""])
+  // CR LF ends a line too, and a tab does not take a tab stop of its own.
+  #expect(WritingPanel.tail("a\r\nb\n\tc", lines: 3) == ["a", "b", "    c"])
+}
+
+@Test func thePanelStaysClearOfTheBirdAndInsideTheView() {
+  let view = CGRect(x: 12, y: 52, width: 1000, height: 800)
+  let card = CGRect(x: 400, y: 400, width: 220, height: 120)
+  let w = WritingPanel.size.width, h = WritingPanel.size.height
+  // Above the bird and the bubble (the 80 points over the Card), centred on the Card.
+  let above = WritingPanel.frame(card: card, clear: 80, scale: 1, in: view)!
+  #expect(above.maxY <= card.minY - 80)
+  #expect(above.midX == card.midX && above.width == w && above.height == h)
+  // No room above: under the Card, away from the bird and the bubble.
+  let top = card.offsetBy(dx: 0, dy: -300)
+  let under = WritingPanel.frame(card: top, clear: 80, scale: 1, in: view)!
+  #expect(under.minY >= top.maxY && view.contains(under))
+  // Something above it (another row of Cards) and nothing under: under the Card.
+  let row = card.offsetBy(dx: 0, dy: -200)
+  let moved = WritingPanel.frame(card: card, clear: 80, scale: 1, in: view, others: [row])!
+  #expect(moved.minY >= card.maxY && !moved.intersects(row))
+  // Something on both sides: above the bird and the bubble all the same, never over them.
+  let both = WritingPanel.frame(card: card, clear: 80, scale: 1, in: view, others: [row, card.offsetBy(dx: 0, dy: 200)])!
+  #expect(both.maxY <= card.minY - 80)
+  // Half out of the view on a side: still whole.
+  for dx in [-500.0, 500] {
+    let out = card.offsetBy(dx: dx, dy: 0)
+    #expect(out.intersects(view))
+    #expect(view.contains(WritingPanel.frame(card: out, clear: 80, scale: 1, in: view)!))
+  }
+  // No room above or under (a Card as tall as the view): whole, on the roomier side.
+  let tall = CGRect(x: 400, y: 100, width: 220, height: 700)
+  #expect(view.contains(WritingPanel.frame(card: tall, clear: 80, scale: 1, in: view)!))
+  // Its Card out of view: the bird's mark at the edge says where it is.
+  #expect(WritingPanel.frame(card: card.offsetBy(dx: 2000, dy: 0), clear: 80, scale: 1, in: view) == nil)
+  // Readable at any zoom, and not larger than the view needs.
+  #expect(WritingPanel.scale(zoom: 0.5) == 0.8 && WritingPanel.scale(zoom: 1) == 1 && WritingPanel.scale(zoom: 3) == 1.3)
 }

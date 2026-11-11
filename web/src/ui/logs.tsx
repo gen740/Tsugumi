@@ -1,15 +1,18 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
+import { terminalText } from '../model/terminalText'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../shared/rpc'
 import { Button, copyText, download, Empty, Segmented, Select, Spinner, Toggle } from './controls'
 import { Icon } from './icons'
 import { ProjectTerminalPanel } from './terminal'
+import { L } from '../i18n'
 
 const HEIGHT_KEY = 'tsugumi.bottomHeight'
 
@@ -78,14 +81,14 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
     <>
       <div className="panel-bar">
         <span className="label headline callout"><Icon name={BOTTOM_ICONS[p]} />{BOTTOM_TITLES[p]}</span>
-        <Select label="実行" value={runId ?? ''} onChange={(v) => setRunId(v || undefined)} style={{ maxWidth: 320 }}
-          options={runs.length ? runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}` })) : [{ value: '', label: '実行履歴なし' }]} />
+        <Select label={L('実行')} value={runId ?? ''} onChange={(v) => setRunId(v || undefined)} style={{ maxWidth: 320 }}
+          options={runs.length ? runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}` })) : [{ value: '', label: L('実行履歴なし') }]} />
         {p === 'log' && (
           <Select label="Card" value={workspace.logCard ?? ''} onChange={(v) => workspace.set('logCard', v || undefined)} style={{ maxWidth: 240 }}
-            options={[{ value: '', label: '全体' }, ...cards.map((k) => ({ value: k, label: k }))]} />
+            options={[{ value: '', label: L('全体') }, ...cards.map((k) => ({ value: k, label: k }))]} />
         )}
         <span className="spacer" />
-        <Button kind="borderless" small iconOnly icon="xmark" help="閉じる（下部のアイコンでも開閉できます）" onClick={() => workspace.set('showBottom', false)} />
+        <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる（下部のアイコンでも開閉できます）')} onClick={() => workspace.set('showBottom', false)} />
       </div>
       {p === 'log' ? (
         runId && workspace.logCard ? (
@@ -94,7 +97,7 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
           // The whole run: its own journal (Card logs are shown by stage).
           <RunLogView session={session} runId={runId} raw stream={workspace.logStream} onStream={(v) => workspace.set('logStream', v)} />
         ) : (
-          <Empty title="実行履歴はありません" icon="text.alignleft" description="実行するとここにログが表示されます。" />
+          <Empty title={L('実行履歴はありません')} icon="text.alignleft" description={L('実行するとここにログが表示されます。')} />
         )
       ) : (
         <RunTimelineView session={session} runId={runId} run={runs.find((r) => s(r.status!.runId) === runId)?.status ?? undefined}
@@ -199,12 +202,12 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
 
   /** Why nothing is shown, so an empty pane is never ambiguous. */
   const emptyReason = (() => {
-    if (error) return 'ログを読み込めませんでした: ' + error
-    if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return 'この実行では、この Card はまだ動いていません。'
+    if (error) return L('ログを読み込めませんでした: ') + error
+    if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return L('この実行では、この Card はまだ動いていません。')
     switch (stream) {
-      case D.LogStream.stderr: return 'stderr への出力はありません（Nix 評価・build のログもここに出ます）。'
-      case D.LogStream.journal: return '記録された段階の出来事はありません。'
-      default: return 'stdout への出力はありません。'
+      case D.LogStream.stderr: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
+      case D.LogStream.journal: return L('記録された段階の出来事はありません。')
+      default: return L('stdout への出力はありません。')
     }
   })()
 
@@ -213,14 +216,14 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
       <div className="panel-bar">
         <Segmented<D.LogStream> small value={stream} onChange={setStream} width={240}
           options={[{ value: D.LogStream.stdout, label: 'stdout' }, { value: D.LogStream.stderr, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
-        <span className="caption secondary">{card ? `Card ${card.join('/')}${invocation !== undefined ? ` #${invocation}` : ''}` : '実行全体'}</span>
+        <span className="caption secondary">{card ? `Card ${card.join('/')}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
-        <Toggle kind="checkbox" small checked={follow} onChange={setFollow} label="末尾を追う" />
-        <Button small disabled={!log} onClick={() => void copyText(log)}>コピー</Button>
-        <Button small disabled={!log} onClick={() => download(`${runId}-${D.LogStream[stream]}.log`, log, 'text/plain')}>書き出す…</Button>
+        <Toggle kind="checkbox" small checked={follow} onChange={setFollow} label={L('末尾を追う')} />
+        <Button small disabled={!log} onClick={() => void copyText(log)}>{L('コピー')}</Button>
+        <Button small disabled={!log} onClick={() => download(`${runId}-${D.LogStream[stream]}.log`, log, 'text/plain')}>{L('書き出す…')}</Button>
       </div>
       <div className="log-text">
-        <pre className={`selectable${log ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{log || emptyReason}</pre>
+        <pre className={`selectable${log ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(log) || emptyReason}</pre>
         <div ref={end} />
       </div>
       {error && <div className="caption" style={{ color: 'var(--red)', padding: '0 6px' }}>{error}</div>}
@@ -241,7 +244,7 @@ type GroupStatus = { icon: string; color: string; label: string }
 /** The log of one invocation of a Card by stage, like a CI job: SDK
  *  preparation, Nix evaluation and build / execution / validation and save,
  *  each with its state, duration and what it printed, folded unless it failed
- *  or was asked for. The raw streams stay available under 「stream 別」. */
+ *  or was asked for. The raw streams stay available under "By stream". */
 export function StageLogView({ session, runId, card, invocation, focus }: {
   session: ProjectSession; runId: string; card: string[]; invocation?: bigint; focus?: Stage
 }) {
@@ -257,23 +260,30 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const [error, setError] = useState<string>()
   const [loaded, setLoaded] = useState(false)
   const busy = useRef({ running: false, again: false })
+  // The log opens at its end and follows it, as the chat does, until the
+  // reader scrolls up; back at the end, it follows again.
+  const scroll = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  /** Groups opened when they started running: each once, so one the reader folds stays folded. */
+  const openedRunning = useRef(new Set<string>())
+  const lastTop = useRef(0)
 
   const code = session.kind(k) === 'code'
   const groups: StageGroup[] = [
-    ...(code ? [{ id: 'build' as const, title: 'SDK 準備・Nix 評価・build', stages: [Stage.prepare, Stage.evaluate, Stage.build] }] : []),
-    { id: 'execute', title: '実行', stages: [Stage.execute] },
-    { id: 'save', title: '出力検証・保存', stages: [Stage.validate, Stage.save] },
+    ...(code ? [{ id: 'build' as const, title: L('SDK 準備・Nix 評価・build'), stages: [Stage.prepare, Stage.evaluate, Stage.build] }] : []),
+    { id: 'execute', title: L('実行'), stages: [Stage.execute] },
+    { id: 'save', title: L('出力検証・保存'), stages: [Stage.validate, Stage.save] },
   ]
   const records = (g: StageGroup) => stages.filter((r) => g.stages.includes(r.stage))
   const status = (g: StageGroup): GroupStatus => {
     const rs = records(g)
-    if (rs.some((r) => r.outcome === D.StageOutcome.failed)) return { icon: 'xmark.circle.fill', color: 'red', label: '失敗' }
-    if (rs.some((r) => r.outcome === D.StageOutcome.cancelled)) return { icon: 'stop.circle.fill', color: 'brown', label: '停止' }
-    if (rs.some((r) => r.outcome === D.StageOutcome.running)) return { icon: 'circle.dotted.circle', color: 'orange', label: '進行中' }
-    if (!rs.length) return { icon: 'circle.dashed', color: 'secondary', label: '実行されていません' }
-    if (rs.every((r) => r.outcome === D.StageOutcome.cached)) return { icon: 'bolt.circle.fill', color: 'blue', label: 'キャッシュを利用' }
-    if (rs.every((r) => r.outcome === D.StageOutcome.reused)) return { icon: 'arrow.triangle.2.circlepath.circle.fill', color: 'teal', label: '再利用' }
-    return { icon: 'checkmark.circle.fill', color: 'green', label: '完了' }
+    if (rs.some((r) => r.outcome === D.StageOutcome.failed)) return { icon: 'xmark.circle.fill', color: 'red', label: L('失敗') }
+    if (rs.some((r) => r.outcome === D.StageOutcome.cancelled)) return { icon: 'stop.circle.fill', color: 'brown', label: L('停止') }
+    if (rs.some((r) => r.outcome === D.StageOutcome.running)) return { icon: 'circle.dotted.circle', color: 'orange', label: L('進行中') }
+    if (!rs.length) return { icon: 'circle.dashed', color: 'secondary', label: L('実行されていません') }
+    if (rs.every((r) => r.outcome === D.StageOutcome.cached)) return { icon: 'bolt.circle.fill', color: 'blue', label: L('キャッシュを利用') }
+    if (rs.every((r) => r.outcome === D.StageOutcome.reused)) return { icon: 'arrow.triangle.2.circlepath.circle.fill', color: 'teal', label: L('再利用') }
+    return { icon: 'checkmark.circle.fill', color: 'green', label: L('完了') }
   }
   const seconds = (g: StageGroup): number | undefined => {
     const rs = records(g).flatMap((r) => (r.start !== undefined && r.end !== undefined ? [(r.end - r.start) / 1000] : []))
@@ -290,7 +300,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     try {
       const rpc = session.rpc
       if (!rpc) {
-        setError('実行環境に接続していません')
+        setError(L('実行環境に接続していません'))
         return
       }
       let inv: bigint | null = invocation ?? null
@@ -327,6 +337,12 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
         if (f) n.add(f.id)
         return n
       })
+      // So does the one running now, to show its output as it comes.
+      const running = groups.filter((g) => st.some((r) => g.stages.includes(r.stage) && r.outcome === D.StageOutcome.running) && !openedRunning.current.has(g.id))
+      if (running.length) {
+        for (const g of running) openedRunning.current.add(g.id)
+        setOpen((o) => new Set([...o, ...running.map((g) => g.id)]))
+      }
     } catch (e) {
       if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) {
         setLogs(new Map())
@@ -345,8 +361,18 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   useEffect(() => {
     setOpen(new Set())
     setLoaded(false)
+    following.current = true
+    openedRunning.current = new Set()
     void load()
   }, [runId, k, invocation])
+  useLayoutEffect(() => {
+    const el = scroll.current
+    if (el && following.current) el.scrollTop = el.scrollHeight
+  })
+  const scrolled = (el: HTMLDivElement) => {
+    following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
+    lastTop.current = el.scrollTop
+  }
   useEffect(() => {
     void load()
   }, [session.logRevision])
@@ -373,7 +399,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   }).join('\n')
 
   const logText = (text: string, empty: string) => (
-    <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{text || empty}</pre>
+    <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(text) || empty}</pre>
   )
 
   const shown = shownInvocation ?? invocation ?? 0n
@@ -381,15 +407,15 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   if (!loaded) body = <div className="center-fill"><Spinner /></div>
   else if (error) {
     body = (
-      <Empty title="ログを読み込めませんでした" icon="exclamationmark.triangle" description={error}>
-        <Button onClick={() => void load()}>再試行</Button>
+      <Empty title={L('ログを読み込めませんでした')} icon="exclamationmark.triangle" description={error}>
+        <Button onClick={() => void load()}>{L('再試行')}</Button>
       </Empty>
     )
   } else if (!stages.length && [...logs.values()].every((t) => !t)) {
-    body = <Empty title="この実行では、この Card はまだ動いていません" icon="circle.dotted" />
+    body = <Empty title={L('この実行では、この Card はまだ動いていません')} icon="circle.dotted" />
   } else {
     body = (
-      <div className="stage-log-scroll">
+      <div className="stage-log-scroll" ref={scroll} onScroll={(e) => scrolled(e.currentTarget)}>
         {groups.map((g) => {
           const st = status(g)
           const sec = seconds(g)
@@ -414,24 +440,24 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
                           {STAGE_INFO[sg].label}
                           {r && r.start !== undefined && r.end !== undefined && <span className="secondary">{formatDuration((r.end - r.start) / 1000)}</span>}
                           {r?.outcome === D.StageOutcome.cached && <span style={{ color: 'var(--blue)' }}>cache</span>}
-                          {r?.outcome === D.StageOutcome.reused && <span style={{ color: 'var(--teal)' }}>再利用</span>}
+                          {r?.outcome === D.StageOutcome.reused && <span style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
                         </span>
                       )
                     })}
                   </div>
-                  {g.id === 'build' && logText(logs.get(D.LogStream.build) ?? '', '準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')}
+                  {g.id === 'build' && logText(logs.get(D.LogStream.build) ?? '', L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）'))}
                   {g.id === 'execute' && (
                     <>
                       <div className="caption headline secondary">stdout</div>
-                      {logText(logs.get(D.LogStream.stdout) ?? '', 'stdout への出力はありません')}
+                      {logText(logs.get(D.LogStream.stdout) ?? '', L('stdout への出力はありません'))}
                       <div className="caption headline secondary">stderr</div>
-                      {logText(logs.get(D.LogStream.stderr) ?? '', 'stderr への出力はありません')}
+                      {logText(logs.get(D.LogStream.stderr) ?? '', L('stderr への出力はありません'))}
                     </>
                   )}
                   {g.id === 'save' && (
                     <>
-                      {logText(journal(['validate', 'save']), '記録された出来事はありません')}
-                      {failure && st.label === '失敗' && <div className="caption selectable" style={{ color: 'var(--red)' }}>{failure}</div>}
+                      {logText(journal(['validate', 'save']), L('記録された出来事はありません'))}
+                      {failure && st.label === L('失敗') && <div className="caption selectable" style={{ color: 'var(--red)' }}>{failure}</div>}
                     </>
                   )}
                 </div>
@@ -443,13 +469,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           <button type="button" className="stage-group-head" aria-expanded={open.has('raw')} onClick={() => toggle('raw')}>
             <Icon name={open.has('raw') ? 'chevron.down' : 'chevron.right'} size={9} className="secondary" />
             <Icon name="list.bullet.rectangle" />
-            <span className="callout">stream 別（元の出力）</span>
+            <span className="callout">{L('stream 別（元の出力）')}</span>
           </button>
           {open.has('raw') && (
             <div className="stage-group-body">
               <Segmented<D.LogStream> small value={rawStream} onChange={setRawStream} width={300}
                 options={[{ value: D.LogStream.stdout, label: 'stdout' }, { value: D.LogStream.stderr, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />
-              {logText(logs.get(rawStream) ?? '', 'この stream への出力はありません')}
+              {logText(logs.get(rawStream) ?? '', L('この stream への出力はありません'))}
             </div>
           )}
         </div>
@@ -463,8 +489,8 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           {session.displayName(k)} · 実行 #{String(shown)}{state !== undefined ? ` · ${cardState(state).label}` : ''}
         </span>
         <span className="spacer" />
-        <Button small onClick={() => setOpen(new Set([...groups.map((g) => g.id), 'raw']))}>すべて開く</Button>
-        <Button small onClick={() => setOpen(new Set())}>すべて閉じる</Button>
+        <Button small onClick={() => setOpen(new Set([...groups.map((g) => g.id), 'raw']))}>{L('すべて開く')}</Button>
+        <Button small onClick={() => setOpen(new Set())}>{L('すべて閉じる')}</Button>
       </div>
       {body}
     </div>
@@ -482,7 +508,7 @@ const STAGE_COLORS: Partial<Record<Stage, string>> = {
 
 /** Invocations of one run on a shared time axis, one row per Card, each bar
  *  split into its stages. Drag over a time range to zoom into it, scroll
- *  sideways to move along time, 「全体」 to see the whole run again. Hover a bar
+ *  sideways to move along time, "All" to see the whole run again. Hover a bar
  *  for its Card, invocation, stage and times; click it to show the Card. */
 function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSession; runId?: string; run?: R.RunStatusT; onSelect: (k: CardKey) => void }) {
   const [entries, setEntries] = useState<TimelineEntry[]>([])
@@ -536,7 +562,7 @@ function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSe
   const list = current && session.timeline.length ? session.timeline : entries
   if (!list.length) {
     return loading ? <div className="center-fill"><Spinner /></div>
-      : <Empty title="実行状況はありません" icon="chart.bar.xaxis" description="実行を選ぶか、実行してください。" />
+      : <Empty title={L('実行状況はありません')} icon="chart.bar.xaxis" description={L('実行を選ぶか、実行してください。')} />
   }
   const rows = [...new Set(list.map((e) => e.card))].sort()
   const rowIndex = new Map(rows.map((k, i) => [k, i]))
@@ -565,8 +591,8 @@ function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSe
   }
   const hovered = hover && !drag ? hit(hover) : undefined
   const describe = (e: TimelineEntry) => {
-    const lines = [`${session.displayName(e.card)} · 実行 #${e.invocation} · ${cardState(e.state).label}`]
-    if (e.startedAt !== undefined && e.endedAt !== undefined) lines.push('全体 ' + formatDuration((e.endedAt - e.startedAt) / 1000))
+    const lines = [L('{0} · 実行 #{1} · {2}', session.displayName(e.card), e.invocation, cardState(e.state).label)]
+    if (e.startedAt !== undefined && e.endedAt !== undefined) lines.push(L('全体 ') + formatDuration((e.endedAt - e.startedAt) / 1000))
     for (const st of e.stages) if (st.start !== undefined && st.end !== undefined) lines.push(`${STAGE_INFO[st.stage].label}: ` + formatDuration((st.end - st.start) / 1000))
     return lines.join('\n')
   }
@@ -621,9 +647,9 @@ function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSe
       <div className="timeline-head">
         <span className="caption2 secondary mono-digits" style={{ width: LABEL_WIDTH, textAlign: 'right' }}>{formatDuration(shown[0] / 1000)}</span>
         <span className="spacer" />
-        <span className="caption2 tertiary">ドラッグで範囲を拡大・横スクロールで移動</span>
-        <Button small disabled={!range} help={`Run 全体（受付から終了まで ${formatDuration(total / 1000)}）を表示`} onClick={() => setRange(undefined)}>全体</Button>
-        <span className="caption2 secondary mono-digits">{formatDuration(shown[1] / 1000) + (live && !range ? '（実行中）' : '')}</span>
+        <span className="caption2 tertiary">{L('ドラッグで範囲を拡大・横スクロールで移動')}</span>
+        <Button small disabled={!range} help={L('Run 全体（受付から終了まで {0}）を表示', formatDuration(total / 1000))} onClick={() => setRange(undefined)}>{L('全体')}</Button>
+        <span className="caption2 secondary mono-digits">{formatDuration(shown[1] / 1000) + (live && !range ? L('（実行中）') : '')}</span>
       </div>
       <div className="timeline-scroll">
         <div className="row">

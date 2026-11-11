@@ -20,6 +20,7 @@ struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
   std::string pin_hash;  // nixpkgs: its sha256 (SRI)
   std::string args;      // Nix expression of the entry's arguments (sdk, gen, card)
+  std::string system;    // the Nix system to evaluate for; "" = this machine's
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
@@ -37,6 +38,15 @@ struct NixResult {
   std::filesystem::path root;
 };
 
+struct FlakeInfo {
+  std::string ref;                    // locked: a commit and its narHash
+  std::string rev, nar_hash;
+  std::vector<std::string> packages;  // packages.<this system>, by attribute
+  // {"ref", "rev", "narHash", "packages": {<attr>: {"name", "drv", "out",
+  // "output"}}}; the .drv files are in the store.
+  std::string json;
+};
+
 class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
@@ -51,6 +61,12 @@ class NixEvaluator {
   // Throws std::runtime_error with Nix's message; Interrupted as `cancelled`
   // or `timed_out` set in `what`.
   NixResult build(const NixCall& call);
+
+  // A flake a project opted in to, evaluated apart from every Card: its own
+  // state has getFlake and runs as `nix build` does (pure, no IFD). A Card only
+  // ever gets the result. `ref` may be unlocked; the result's is locked. `call`
+  // gives the cancel, deadline and log only.
+  FlakeInfo flake(const NixCall& call, const std::string& ref);
   bool valid(const std::string& store_path);
 
   // Resident memory of the evaluator's heap (Boehm GC), in bytes.

@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace protein;
+table PdbFiles { value:string; }
+table Outputs { data:PdbFiles (required, tsugumi: "directory"); }
+root_type Outputs;

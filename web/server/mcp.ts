@@ -12,7 +12,7 @@ import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { BFBS } from '../src/shared/bfbs'
 import { externalTools, SYSTEM_PROMPT, ToolCatalog } from './agent'
-import { ServerInfo, webDataDir } from './paths'
+import { AGENT_KEY_HEADER, ServerInfo, webDataDir } from './paths'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const catalog = new ToolCatalog(new BFBS(new Uint8Array(fs.readFileSync(path.join(here, 'tsugumi.bfbs')))))
@@ -64,7 +64,7 @@ function readServer(): ServerInfo | undefined {
 async function request(s: ServerInfo, route: string, body: unknown): Promise<Response> {
   return fetch(`http://127.0.0.1:${s.port}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', cookie: `${s.cookie}=${s.key}` },
+    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', [AGENT_KEY_HEADER]: s.agentKey },
     body: JSON.stringify(body ?? {}),
   })
 }
@@ -114,7 +114,7 @@ async function api<T>(route: string, body: unknown): Promise<T> {
 
 // ---- Tools -----------------------------------------------------------------------
 
-type Result = { content: { type: 'text'; text: string }[]; isError?: boolean }
+type Result = { content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]; isError?: boolean }
 const text = (t: string, isError = false): Result => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) })
 
 async function open(args: { folder?: unknown; create?: unknown; browser?: unknown }): Promise<Result> {
@@ -127,17 +127,13 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
   }
   const info = await api<{ path: string; name: string }>('/api/project/open', { path: folder })
   current = info.path
-  const shown = await api<{ pages: number }>('/api/agent/open', { path: current })
+  // The host opens the page itself: its key (which answers approvals) is not the plugin's.
+  const shown = await api<{ shown: boolean; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })
   const s = await host()
   let where = `The open web UI page shows it now.`
-  if (!shown.pages) {
-    const url = `http://127.0.0.1:${s.port}/?key=${s.key}&project=${encodeURIComponent(current)}`
-    if (args.browser !== false) {
-      spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
-      where = `A browser window opens it.`
-    } else {
-      where = `No web UI page is open; the user can open ${url}`
-    }
+  if (!shown.shown) {
+    where = shown.opened ? `A browser window opens it.`
+      : `No web UI page is free to show it (a page on another project keeps that project); the user opens it from the URL the host printed when it started (or call tsugumi_open again without browser: false).`
   }
   let out = `Opened "${info.name}" (${current}) in the Tsugumi web UI (http://127.0.0.1:${s.port}/). ${where}`
   if (!rulesSent) {
@@ -150,8 +146,10 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
 async function call(name: string, args: unknown): Promise<Result> {
   if (name === OPEN_TOOL.name) return open((args ?? {}) as Record<string, unknown>)
   if (!current) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
-  const r = await api<{ text: string; isError: boolean }>('/api/agent/call', { path: current, name, arguments: args ?? {} })
-  return text(r.text, r.isError)
+  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} })
+  const result = text(r.text, r.isError)
+  for (const i of r.images ?? []) result.content.push({ type: 'image', data: i.data, mimeType: i.media_type })
+  return result
 }
 
 // ---- JSON-RPC over stdio ---------------------------------------------------------

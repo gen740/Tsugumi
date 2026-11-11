@@ -1,0 +1,11 @@
+namespace flow;
+table Flow {
+  nodes:string;
+  tail:[ulong];
+  head:[ulong];
+  capacity:[ulong];
+  flow:[ulong];
+  value:ulong;
+}
+table Outputs { flow:Flow (required); }
+root_type Outputs;

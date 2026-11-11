@@ -1,0 +1,15 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "size",
+      "type": "uint64",
+      "data": 480
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 7
+    }
+  ]
+}

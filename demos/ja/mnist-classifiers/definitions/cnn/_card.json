@@ -1,0 +1,25 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "params": [
+    {
+      "name": "channels",
+      "type": "uint64",
+      "data": 16
+    },
+    {
+      "name": "epochs",
+      "type": "uint64",
+      "data": 8
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 0
+    }
+  ]
+}

@@ -178,6 +178,29 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     await client.close()
   }
 
+  /// A read naming a revision gone by (the canvas tidied, or the model's guess)
+  /// reads the latest, without the model spending a reply on it.
+  @Test func aReadAtAnOldRevisionReadsTheLatest() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let agent = try makeAgent(h, client)
+    let first = EventLog()
+    await agent.send("set src.text to \"newer\" and run", context: []) { first.add($0) }
+    await waitFinished(first)
+    let rev = try #require(try await client.inspect().rev)
+    #expect(rev > 0)
+    let log = EventLog()
+    await agent.send("validate at revision 0", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.text.contains("Checked at revision \(rev)."), "\(log.all)")
+    let conv = await agent.conversation
+    #expect(conv.tools.filter { $0.name == "project_validate" }.count == 1)
+    await client.close()
+  }
+
   /// A save widening what a Card may do waits for the user: approved, it is
   /// saved; declined, nothing is, and the model is told so.
   @Test func cardPermissionsWaitForTheUser() async throws {
@@ -230,6 +253,32 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(Keychain.load(account: account) == "fixture-key")
     Keychain.delete(account: account)
     #expect(Keychain.load(account: account) == nil)
+    await client.close()
+  }
+
+  /// Results too large for the context over the Responses API, where the
+  /// refusal comes in the stream (ContextLimitTests has the rest; here for the
+  /// Keychain, which the tests of this suite use one at a time).
+  @Test func resultsTooLargeOverTheResponsesAPI() async throws {
+    var h = AgentHarness()
+    try h.start(fixtureArgs: ["--context-limit", "6000"])
+    defer { h.stop() }
+    let account = "Tsugumi test OpenAI \(UUID().uuidString)"
+    try Keychain.save("fixture-key", account: account)
+    defer { Keychain.delete(account: account) }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    var config = ProviderConfig(name: account, baseURL: URL(string: "http://127.0.0.1:\(h.fixturePort)")!, model: "fixture",
+                                auth: .apiKey, api: .openAIResponses)
+    config.contextLimit = 6000
+    let big = h.dir.appendingPathComponent("big.txt")
+    try Data(String(repeating: "x", count: 20_000).utf8).write(to: big)
+    let agent = try makeAgent(h, client, provider: config, references: ["big.txt": big])
+    let log = EventLog()
+    await agent.send("read big.txt 10 times", context: []) { log.add($0) }
+    await waitFinished(log)
+    #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
+    #expect(log.text.contains("Read 10 results, 10 cut."), "\(log.all)")
     await client.close()
   }
 
@@ -436,7 +485,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     for m in conv.messages[(i + 1)...] {
       for b in m.content {
         if case .toolUse(let id, _, _) = b { asked.insert(id) }
-        if case .toolResult(let id, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
+        if case .toolResult(let id, _, _, _) = b { #expect(asked.contains(id), "a result of the cancelled turn: \(id)") }
       }
     }
     await client.close()
@@ -467,7 +516,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(log.all.contains { if case .finished = $0 { return true }; return false }, "\(log.all)")
     let conv = await agent.conversation
     let answered = conv.messages[2].content.compactMap { b -> (String, Bool)? in
-      if case .toolResult(let id, _, let e) = b { return (id, e) }
+      if case .toolResult(let id, _, let e, _) = b { return (id, e) }
       return nil
     }
     #expect(answered.map(\.0) == ["toolu_done", "toolu_never"] && answered.map(\.1) == [false, true], "\(conv.messages[2])")
@@ -568,6 +617,54 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   }
 }
 
+/// A comment from request to change through the Agent: the Card changes, the
+/// comment is resolved in the same save with the record of who did it and what
+/// changed, and the Agent adds a Card and a comment of its own when it is asked to.
+/// The other comment, not asked about, stays as it is.
+@Suite(.serialized) struct CommentGenerationTests {
+  @Test func commentsAreFollowedAndRecorded() async throws {
+    var h = AgentHarness()
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    let snap = try await client.inspect()
+    let out = try #require(snap.definitions.compactMap { $0 }.first { $0.id == "out" })
+    let asked = "Then add a Card extra and leave a comment"
+    let meta = #"{"description":"Logs","comments":[{"id":"c1","text":"\#(asked)","author":"user"},{"id":"c2","text":"Not asked about","author":"user"}]}"#
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.putDefinition(id: "out", cardJSON: out.cardJson, metaJSON: meta),
+    ])
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    let request = Agent.commentRequest(scope: [], cards: [(key: "out", definition: "out", comments: [(id: "c1", text: asked)])])
+    await agent.send(request, context: []) { log.add($0) }
+    await waitFinished(log, seconds: 120)
+    #expect(log.text.contains("Followed the comments"), "\(log.all)")
+    let after = try await client.inspect()
+    let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == "out" })
+    #expect(try JSONValue.parse(def.cardJson)["symbol"]?.string == "checkmark")
+    let comments = try JSONValue.parse(try #require(def.metaJson))["comments"]?.array ?? []
+    #expect(comments.count == 3)
+    #expect(comments[0]["text"]?.string == asked && comments[0]["resolved"]?.bool == true && comments[0]["author"]?.string == "user")
+    #expect(comments[0]["stateBy"]?.string == "agent" && comments[0]["resolution"]?.string?.isEmpty == false)
+    #expect(comments[0]["cards"]?.array?.compactMap(\.string) == ["extra", "out"])
+    #expect(comments[1]["text"]?.string == "Not asked about" && comments[1]["resolved"] == nil)
+    #expect(comments[2]["author"]?.string == "agent" && comments[2]["id"]?.string?.isEmpty == false)
+    #expect(after.definitions.compactMap { $0 }.contains { $0.id == "extra" })
+    await client.close()
+  }
+
+  @Test func theChatRowSaysWhatASaveDidToTheComments() throws {
+    let list = #"[{"by":"agent","card":"plot","cards":["plot"],"change":"resolved","text":"log"}]"#
+    let result = #"{"reply":"SaveResult","value":{"delta":{"big":"\#(String(repeating: "x", count: 2000))"},"comments":\#(list)}}"#
+    let summary = Agent.toolSummary(result)
+    #expect(summary.hasPrefix("comments: " + list + "\n"))
+    #expect(Agent.toolSummary(#"{"reply":"RunStatus"}"#) == #"{"reply":"RunStatus"}"#)
+    #expect(Agent.toolSummary(String(repeating: "x", count: 500)).count == 400)
+  }
+}
+
 /// Draft from plan to implementation through the Agent: described and wired,
 /// saved and reloaded, converted by the Agent into a code Card (types, Nix,
 /// sources) that validates; the intent stays in _meta.json. A cancelled
@@ -653,7 +750,8 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
 
   func indented(_ rel: String) throws -> String {
-    let text = try String(contentsOf: root.appendingPathComponent(rel), encoding: .utf8)
+    // The rules' "demos/…" are the demos of the app's language; their code is the same in both.
+    let text = try String(contentsOf: root.appendingPathComponent(rel.replacingOccurrences(of: "demos/", with: "demos/en/")), encoding: .utf8)
     return text.split(separator: "\n", omittingEmptySubsequences: false).dropLast(text.hasSuffix("\n") ? 1 : 0)
       .map { $0.isEmpty ? "" : "      " + $0 }.joined(separator: "\n")
   }
@@ -667,11 +765,11 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     let guide = try String(contentsOf: root.appendingPathComponent("agent/Reference/card-guide.md"), encoding: .utf8)
     let named = (Agent.systemPrompt + guide).matches(of: try Regex("demos/[A-Za-z0-9_/.-]+[A-Za-z0-9]")).map { String((Agent.systemPrompt + guide)[$0.range]) }
     #expect(!named.isEmpty)
-    for n in Set(named) { #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(n).path), "\(n)") }
+    for n in Set(named) { #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(n.replacingOccurrences(of: "demos/", with: "demos/en/")).path), "\(n)") }
   }
 
   @Test func referenceReadListsAndReadsOnlyTheReferences() async throws {
-    let refs = Agent.referenceDemos(in: root.appendingPathComponent("demos", isDirectory: true)).merging([
+    let refs = Agent.referenceDemos(in: root.appendingPathComponent("demos/en", isDirectory: true)).merging([
       "sdk/python/tsugumi/__init__.py": root.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
       "card-guide.md": root.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     let bfbs = try #require(RPCSchema.bfbs())
@@ -686,6 +784,11 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(!e3 && sdk.contains("def display_table"))
     let (_, e4) = await agent.readReference("demos/../../core/src/store.cc")
     #expect(e4)
+    // A folder in one call: a Card's files, or every file under any other.
+    let (card, e6) = await agent.readReference("demos/report/definitions/render")
+    #expect(!e6 && ["--- _card.json\n", "--- _outputs.fbs\n", "--- default.nix\n", "--- src/main.py\n"].allSatisfy { card.contains($0) })
+    let (tree, e7) = await agent.readReference("demos/report")
+    #expect(!e7 && tree.split(separator: "\n").contains("definitions/render/src/main.py"))
     // The Draft demos are tasks and the finished demo of each is its answer:
     // neither is listed nor read (implementing casa-draft must not copy casa).
     let (demos, e5) = await agent.readReference("demos")

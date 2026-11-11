@@ -12,12 +12,17 @@ struct ChatPanel: View {
   @Bindable var chat: ChatController
   let detached: Bool
   var tab: WorkflowTab?
+  /// Whether the panel is open: opening it again shows the newest message.
+  var shown = true
   @State private var showList = false
   @State private var query = ""
   @State private var input = ""
   @State private var model = AgentSettings.current().model
   /// The connection chosen in Settings > API: the model menu follows it when it changes.
   @AppStorage("agent.provider") private var providerSetting = "anthropic"
+  /// The model menu's effort and Fast mode (AgentSettings.chat() reads them).
+  @AppStorage(AgentSettings.effortKey) private var effortSetting = ""
+  @AppStorage(AgentSettings.fastModelKey) private var fastModelSetting = ""
   /// The connections set up (keys stored, ChatGPT signed in) with their models.
   @State private var connections: [Connection] = []
   struct Connection: Identifiable {
@@ -34,7 +39,7 @@ struct ChatPanel: View {
     // that would have to ask keeps its saved list until a turn or Settings > API reads it.
     try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
   })
-  /// "思考の過程を描く": the Agent's thinking summarized for the canvas (extra tokens).
+  /// "Draw thoughts": the Agent's thinking summarized for the canvas (extra tokens).
   @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
   @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
   @State private var askThoughts = false
@@ -44,6 +49,8 @@ struct ChatPanel: View {
   @State private var folderToAttach: URL?
   /// The conversation is taller than its area (only then a scroll bar shows).
   @State private var overflows = false
+  @State private var follow = ChatFollow()
+  @State private var scrollPosition = ScrollPosition(edge: .bottom)
   @FocusState private var inputFocused: Bool
   @State private var flashing = false
 
@@ -140,7 +147,7 @@ struct ChatPanel: View {
           LazyVStack(alignment: .leading, spacing: 12) {
             if chat.items.isEmpty {
               VStack(alignment: .leading, spacing: 6) {
-                Text(GuideController.shared.available ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
+                Text(GuideController.shared.connected ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
                                                        : String(localized: "Workflow の相談・生成・編集を依頼できます。")).font(.callout)
                 Text("Card を右クリックして参照に追加、$ で Skill を選べます。").font(.caption).foregroundStyle(.secondary)
               }
@@ -157,16 +164,37 @@ struct ChatPanel: View {
                   }
                 }
             }
-            if chat.busy { activity.id("activity") }
+            if chat.busy { activity }
           }
           .padding(.horizontal, 14).padding(.vertical, 12)
           .frame(maxWidth: 720, alignment: .leading)
         }
         .scrollIndicators(overflows ? .automatic : .never)
         .onScrollGeometryChange(for: Bool.self) { g in g.contentSize.height > g.containerSize.height + 1 } action: { _, v in overflows = v }
-        .onChange(of: chat.items.count) { scrollToEnd(proxy) }
+        // Opens at the newest message and keeps it, whatever changes the height
+        // (messages, Markdown and math measured, the composer, the panel's width),
+        // until the reader scrolls up.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: ChatFollow.View.self) { g in
+          ChatFollow.View(top: g.visibleRect.minY, bottom: g.visibleRect.maxY, content: g.contentSize.height)
+        } action: { _, now in
+          if follow.update(now) { scrollPosition.scrollTo(edge: .bottom) }
+        }
+        .onScrollPhaseChange { _, phase in
+          follow.readerScrolling = phase == .interacting || phase == .decelerating
+          // (rows measured while the reader's hand was on it left the end further away)
+          if phase == .idle, follow.following { scrollPosition.scrollTo(edge: .bottom) }
+        }
+        .onAppear { followEnd() }
+        .onChange(of: chat.currentId) { followEnd() }
+        // (the inspector keeps its views while closed: nothing appears again)
+        .onChange(of: shown) { if shown { followEnd() } }
+        .onChange(of: chat.items.last.flatMap { $0.role == "user" ? $0.id : nil }) { _, sent in
+          if sent != nil { followEnd() }
+        }
         .onChange(of: GuideController.shared.chatFlash) { _, d in
-          guard d != nil, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
+          guard d != nil, GuideController.shared.speakingChat === chat, let last = chat.items.last(where: { $0.role == "assistant" }) else { return }
           withAnimation { proxy.scrollTo(last.id, anchor: .top) }
           withAnimation(.easeOut(duration: 0.2)) { flashing = true }
           Task { @MainActor in
@@ -174,7 +202,6 @@ struct ChatPanel: View {
             withAnimation(.easeOut(duration: 0.6)) { flashing = false }
           }
         }
-        .onChange(of: chat.items.last?.text) { scrollToEnd(proxy) }
       }
       if let s = chat.status {
         HStack(spacing: 6) {
@@ -184,6 +211,8 @@ struct ChatPanel: View {
           Spacer()
           if chat.usageLimited {
             Button("Manage usage") { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }.controlSize(.small).buttonStyle(.borderedProminent)
+          } else if chat.contextFull {
+            Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
           if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
@@ -194,8 +223,9 @@ struct ChatPanel: View {
     }
   }
 
-  private func scrollToEnd(_ proxy: ScrollViewProxy) {
-    if chat.busy { proxy.scrollTo("activity", anchor: .bottom) } else if let last = chat.items.last { proxy.scrollTo(last.id, anchor: .bottom) }
+  private func followEnd() {
+    follow.restart()
+    scrollPosition.scrollTo(edge: .bottom)
   }
 
   /// What the agent is doing right now (no internal reasoning, only the step).
@@ -339,7 +369,7 @@ struct ChatPanel: View {
           // The model, as quiet text under the input (a menu, not a pop-up box).
           Button { modelMenu.show() } label: {
             HStack(spacing: 3) {
-              Text(modelName(model)).lineLimit(1)
+              Text(modelLabel).lineLimit(1)
               Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.caption)
@@ -377,11 +407,22 @@ struct ChatPanel: View {
     .task {
       modelMenu.onOpen = { refreshModels() }
       modelMenu.onChoose = { provider, m in choose(provider, m) }
+      UIScript.shared.modelMenu = modelMenu
+      modelMenu.onEffort = { level in
+        UserDefaults.standard.set(level, forKey: AgentSettings.effortKey)
+        showChoices()
+      }
+      modelMenu.onFast = { on in
+        UserDefaults.standard.set(on ? AgentSettings.current().model : "", forKey: AgentSettings.fastModelKey)
+        showChoices()
+      }
       await loadModels()
     }
     .onDisappear {
       modelMenu.onOpen = nil
       modelMenu.onChoose = nil
+      modelMenu.onEffort = nil
+      modelMenu.onFast = nil
     }
     // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
     .onChange(of: providerSetting) { Task { await loadModels() } }
@@ -504,6 +545,21 @@ struct ChatPanel: View {
     modelNames = names
     connections = out
     modelMenu.setContents(connections: out, provider: providerSetting, model: current, names: names)
+    showChoices()
+  }
+
+  /// What the requests carry, in the menu.
+  private func showChoices() {
+    let c = AgentSettings.chat()
+    modelMenu.setChoices(effort: c.effort, fast: c.fast)
+  }
+
+  /// The model with what its requests carry beyond the defaults.
+  private var modelLabel: String {
+    var c = AgentSettings.config(for: providerSetting)
+    c.model = model
+    c = c.choosing(effort: effortSetting, fastModel: fastModelSetting)
+    return ([modelName(model), c.effort, c.fast ? "Fast" : nil] as [String?]).compactMap { $0 }.joined(separator: " · ")
   }
 
   /// The menu opened: the models of every connection are listed again. It
@@ -537,12 +593,13 @@ struct ChatPanel: View {
     providerSetting = provider
     model = m
     modelMenu.setCurrent(provider: provider, model: m)
+    showChoices()
     GuideController.shared.refreshAvailability()
   }
 
   private func modelName(_ m: String) -> String { modelNames[m] ?? m }
 
-  /// "思考の過程を描く": on, a small model writes what the Agent is thinking
+  /// "Draw thoughts": on, a small model writes what the Agent is thinking
   /// for the tsugumi's bubble (asks once before the first time).
   private var thoughtsToggle: some View {
     Button {
@@ -571,7 +628,7 @@ struct ToolStep {
     if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?["segments"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?.string { return c }
-    return v["path"]?.string ?? v["definition"]?.string
+    return v["path"]?.string ?? v["definition"]?.string ?? v["query"]?.string
   }
 
   var card: CardKey? {
@@ -582,9 +639,23 @@ struct ToolStep {
     return v["card"]?.string
   }
 
+  /// What the save did to the comments on Cards, one line each.
+  var savedComments: [String] {
+    guard let from = args.range(of: "\n→ comments: "), let end = args[from.upperBound...].firstIndex(of: "\n"),
+          let list = (try? JSONValue.parse(String(args[from.upperBound..<end])))?.array else { return [] }
+    return list.map { c in
+      var line = String(localized: "\(c["card"]?.string ?? "") · コメントを\(CardComment.change(c["change"]?.string ?? "", by: c["by"]?.string)): \(c["text"]?.string ?? "")")
+      if let r = c["resolution"]?.string, !r.isEmpty { line += " — " + r }
+      let cards = c["cards"]?.array?.compactMap(\.string) ?? []
+      if !cards.isEmpty { line += String(localized: "（変更した Card: \(cards.joined(separator: "、"))）") }
+      return line
+    }
+  }
+
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
     if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
+    if n == "web_search" { return (String(localized: "Web を検索しています"), String(localized: "Web を検索")) }
     if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
     if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
     if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }
@@ -634,6 +705,18 @@ private struct ToolRow: View {
   let session: ProjectSession
   @State private var open = false
 
+  /// A search's details with its sources as links (only http and https).
+  static func linked(_ text: String) -> AttributedString {
+    var out = AttributedString(text)
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
+    for m in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+      guard let url = m.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+            let r = Range(m.range, in: text), let a = Range(r, in: out) else { continue }
+      out[a].link = url
+    }
+    return out
+  }
+
   var body: some View {
     let step = ToolStep(name: item.tool?.name ?? "", args: item.text)
     VStack(alignment: .leading, spacing: 4) {
@@ -660,8 +743,15 @@ private struct ToolRow: View {
           .buttonStyle(.borderless).foregroundStyle(.secondary)
           .help(open ? "詳細を閉じる" : "ツールの詳細")
       }
+      ForEach(Array(step.savedComments.enumerated()), id: \.offset) { _, line in
+        Text(verbatim: line)
+          .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+          .padding(.leading, 19)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       if open {
-        Text(item.text).font(.caption.monospaced()).textSelection(.enabled)
+        (item.tool?.name == "web_search" ? Text(Self.linked(item.text)) : Text(item.text))
+          .font(.caption.monospaced()).textSelection(.enabled)
           .lineLimit(40)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(6)

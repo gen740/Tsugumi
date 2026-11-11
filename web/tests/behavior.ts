@@ -12,7 +12,12 @@ console.log('merge behavior: passed')
 
 await import("./recovery")
 
+await import("./toolImages")
+await import("./references")
+
 await import("./approval")
+
+await import("./chatStopped")
 
 await import("./compaction")
 
@@ -21,16 +26,47 @@ await import("./storage")
 await import("./table")
 
 await import("./draft")
+await import("./comments")
+await import("./draftWires")
+await import("./freedName")
 await import("./summary")
+await import("./versions")
 await import("./wires")
 await import("./wireDemos")
 
 await import("./modelMenu")
 
+await import("./chatFollow")
+await import("./terminalText")
+
 await import("./projectActions")
 
 await import("./thumbnails")
 
+await import("./liveCode")
+
+await import("./helperBirds")
+await import("./leaveProject")
+await import("./terminalInput")
+
 await import("./portGrid")
 
 await import("./marquee")
+
+await import("./arrange")
+
+await import("./freeSpot")
+
+await import("./deleteCard")
+
+await import("./saveFailure")
+
+await import("./draftDisplays")
+
+await import("./nixSources")
+
+await import("./sessionRestore")
+await import("./sessionConnect")
+
+await import("./perchScale")
+await import("./guideScript")

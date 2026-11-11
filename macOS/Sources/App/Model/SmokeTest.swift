@@ -77,7 +77,7 @@ enum SmokeTest {
         _ = s.addGroup(Set(first), in: [])
         s.setCollapsed([first[0]], true)
         if let shown = s.resolution.keys.first(where: { s.displays[$0] != nil }) {
-          s.updateDisplayFrame(shown) { $0["hidden"] = .bool(true) }
+          s.closeDisplayFrame(shown)
         }
         await s.save()
         report["layout_extras"] = s.saveError ?? "ok"

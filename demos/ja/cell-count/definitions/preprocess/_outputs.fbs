@@ -1,0 +1,4 @@
+namespace cells;
+table Cleaned { size:ulong; image:[float]; }
+table Outputs { cleaned:Cleaned (required); }
+root_type Outputs;

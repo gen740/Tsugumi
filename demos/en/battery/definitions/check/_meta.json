@@ -1,0 +1,5 @@
+{
+  "description": "Check by exhaustive search, a bound and the step",
+  "content": "On a short period and a small battery, compares the dynamic programme's answer with an exhaustive search over every path. Shows in a table that at a flat price with exports at the same price it does not run, that the saving does not exceed a simple upper bound, and that a finer step of stored energy barely changes the answer. The Card fails if anything is off.",
+  "outputs": []
+}

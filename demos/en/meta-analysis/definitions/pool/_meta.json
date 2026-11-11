@@ -1,0 +1,10 @@
+{
+  "description": "Pool with fixed and random effects",
+  "content": "Pools with fixed effect and random effects (method: DL, REML and so on), and shows a forest plot with both diamonds, and I², τ² and Q. Trial numbers written in exclude are left out.",
+  "outputs": [
+    {
+      "name": "pooled",
+      "description": "CSV of the fixed-effect and random-effects pooled values"
+    }
+  ]
+}

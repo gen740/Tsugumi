@@ -5,12 +5,15 @@ sniffing. Needs node and a built web/dist (npm run build)."""
 
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -103,3 +106,109 @@ def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
         assert r.status == 200 and len(data) > 1000, lib
     r, _ = request(port, "GET", "/")
     assert r.getheader("x-frame-options") == "DENY" and "frame-ancestors 'none'" in r.getheader("content-security-policy")
+
+
+def page_cookie(port: int, key: str) -> str:
+    r, _ = request(port, "GET", f"/?key={key}")
+    return r.getheader("set-cookie").split(";")[0]
+
+
+def post(port: int, cookie: str, route: str, body: dict):
+    r, data = request(port, "POST", route, {"Cookie": cookie, "content-type": "application/json", "x-tsugumi": "1"}, json.dumps(body))
+    assert r.status == 200, data
+    return json.loads(data)
+
+
+def test_a_project_stops_when_the_last_page_showing_it_leaves(web, tmp_path):
+    from test_claude_code_plugin import Events
+    from conftest import write_project
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    project = tmp_path / "proj"
+    write_project(project)
+    real = str(project.resolve())
+    pages = [Events(port, cookie, "a"), Events(port, cookie, "b"), Events(port, cookie, "child&detached")]
+    for p in pages:
+        p.start()
+    for page in ("a", "b", "child"):
+        post(port, cookie, "/api/page", {"page": page, "project": str(project)})
+    # Another page shows it: it goes on.
+    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)}) == {"stopped": False}
+    assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
+    # The last one: it stops, and the page of a child workflow is told to go too.
+    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": True}
+    for _ in range(50):
+        if [e for e in pages[2].events if e.get("type") == "projectClosed"]:
+            break
+        time.sleep(0.1)
+    assert {"type": "projectClosed", "project": real} in pages[2].events
+
+
+def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):
+    from conftest import write_project
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    other = tmp_path / "other"
+    write_project(other)
+    blob = bytes(range(256))
+    (other / "blob.bin").write_bytes(blob)
+    r = post(port, cookie, "/api/import/project", {"folder": str(other)})
+    assert base64.b64decode(r["binary"]["blob.bin"]) == blob
+    assert "blob.bin" not in r["files"] and "tsugumi.json" in r["files"]
+
+
+def test_the_page_is_told_whether_host_folders_can_be_used(web):
+    _, port, key = web
+    r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
+    assert r.status == 200
+    assert json.loads(data)["hostFolders"] is (sys.platform != "darwin")
+
+
+def test_a_terminal_is_a_real_terminal(web, tmp_path):
+    from test_claude_code_plugin import Events
+    from conftest import write_project
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    project = tmp_path / "proj"
+    write_project(project)
+    page = Events(port, cookie, "a")
+    page.start()
+    t = post(port, cookie, "/api/terminal/start", {"path": str(project), "cols": 91, "rows": 17})
+
+    def printed() -> str:
+        return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
+
+    def until(text: str):
+        for _ in range(100):
+            if text in printed():
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"no {text!r} in {printed()!r}")
+
+    def send(data: str):
+        post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
+
+    # It has a terminal, of the size the page draws, and programs may use it.
+    send('tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語\n')
+    until("/dev/")
+    until("size=17 91 term=xterm-256color")
+    until("日本語")
+    post(port, cookie, "/api/terminal/resize", {"id": t["id"], "cols": 100, "rows": 30})
+    send('echo "now=$(stty size)"\n')
+    until("now=30 100")
+    # A key: ⌃C stops what runs, not the shell.
+    send("sleep 100\n")
+    time.sleep(0.3)
+    send("\x03")
+    send("echo after-interrupt-$((1 + 1))\n")
+    until("after-interrupt-2")
+    post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
+    for _ in range(100):
+        if [e for e in list(page.events) if e.get("type") == "terminal-exit" and e["id"] == t["id"]]:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("the terminal did not end")

@@ -166,7 +166,8 @@ public actor EnvironmentManager {
     var lastError = ""
     for _ in 0..<50 {
       do {
-        try await vm.request("start \(p.id) \(resources.cpus) \(hostName(p)) \(slot)")
+        let origins = allowedOrigins.isEmpty ? "" : " " + allowedOrigins.joined(separator: ",")
+        try await vm.request("start \(p.id) \(resources.cpus) \(hostName(p)) \(slot)\(origins)")
         started = true
         break
       } catch {
@@ -209,6 +210,12 @@ public actor EnvironmentManager {
   public private(set) var extraFolders: [String: [String]] = [:]
 
   public func setExtraFolders(_ p: ProjectIdentity, _ paths: [String]) { extraFolders[p.id] = paths }
+
+  /// The web pages a project's tsugumid started from now on lets connect (the
+  /// `tsugumi` command's server). None for the app, whose client sends no Origin.
+  public private(set) var allowedOrigins: [String] = []
+
+  public func setAllowedOrigins(_ origins: [String]) { allowedOrigins = origins }
 
   /// The shared store's cleanup (an app setting): what no project's GC root
   /// keeps. Starts the VM when it is not running.

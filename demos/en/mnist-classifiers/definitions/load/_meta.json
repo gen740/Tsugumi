@@ -1,0 +1,10 @@
+{
+  "description": "Pin the real MNIST with Nix",
+  "content": "Fetches the four MNIST files in IDX format (60000 training and 10000 test images) from the public mirror https://ossci-datasets.s3.amazonaws.com/mnist/ with fetchurl in default.nix, pinning their content by hash. The download happens only the first time; no network while running. Checks the headers and counts, shows samples of each digit, and passes the store folder's path on.",
+  "outputs": [
+    {
+      "name": "dataset",
+      "description": "The folder of unpacked IDX files (a Nix store path), the source and the counts"
+    }
+  ]
+}

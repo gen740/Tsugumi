@@ -12,6 +12,7 @@ struct WorkflowTabs: View {
   let session: ProjectSession
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
+  @Environment(\.controlActiveState) private var activeState
 
   /// What changes in the project that a demo tour follows.
   private var runKey: String {
@@ -31,24 +32,24 @@ struct WorkflowTabs: View {
         // Nothing of the canvas stays behind the problem: it replaces the content.
         EnvironmentProblemView(session: session, onSwitchProject: onSwitchProject)
       } else {
-      VStack(spacing: 0) {
-        if workspace.tabs.count > 1 { tabBar }
-        if let tab = workspace.active {
-          Workbench(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
-            .id(tab.id)
-            .focusedSceneValue(\.workflowTab, tab)
-            .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
-            .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
-        }
-      }
-      .inspector(isPresented: $workspace.showChat) {
-        // Wider by default; the width the user gives it is kept (per Mac).
-        // The chat is Tsugumi: the bird waits at its top left (GuideNest).
-        ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active)
-          .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
-            if w >= 320 { chatWidth = Double(w.rounded()) }
+      ChatSplit(width: chatWidth) {
+        VStack(spacing: 0) {
+          if workspace.tabs.count > 1 { tabBar }
+          if let tab = workspace.active {
+            Workbench(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
+              .id(tab.id)
+              .focusedSceneValue(\.workflowTab, tab)
+              .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
+              .onChange(of: tab.selection) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
           }
-          .inspectorColumnWidth(min: 320, ideal: CGFloat(chatWidth), max: 900)
+        }
+        if workspace.showChat {
+          // Wider by default; the width the user gives it is kept (per Mac).
+          // The chat is Tsugumi: the bird waits at its top left (GuideNest).
+          ChatColumn(width: $chatWidth) {
+            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active, shown: workspace.showChat)
+          }
+        }
       }
       }
     }
@@ -58,16 +59,21 @@ struct WorkflowTabs: View {
     .onChange(of: workspace.active?.id, initial: true) {
       if guideWindow != nil { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
     }
+    // The window the user looks at now is the one a tapped choice is asked from.
+    .onChange(of: activeState) {
+      if guideWindow != nil, activeState == .key { GuideController.shared.setContext(.project, session: session, tab: workspace.active) }
+    }
     .onAppear { if guideWindow != nil, GuideController.shared.touring(session) { workspace.showChat = true } }
     // Tsugumi points into a Card in Card (or back at a root Card): the canvas shows that workflow.
     .onChange(of: GuideController.shared.scopeRequest) { _, s in
-      guard guideWindow != nil, let s, let tab = workspace.active else { return }
+      // Only the window of the project being talked about (the next, of another, has nothing to show).
+      guard guideWindow != nil, let s, let tab = workspace.active, GuideController.shared.speakingChat?.session === session else { return }
       GuideController.shared.scopeRequest = nil
       if session.kind(key(s)) == .subgraph || s.isEmpty { tab.enter(s) }
     }
     .onChange(of: GuideController.shared.highlight) { _, h in
       guard guideWindow != nil, let h, h.hasPrefix("card:"), !h.dropFirst(5).contains("/"), let tab = workspace.active,
-            !tab.scope.isEmpty else { return }
+            !tab.scope.isEmpty, GuideController.shared.speakingChat?.session === session else { return }
       let id = String(h.dropFirst(5))
       if session.instance(key(tab.scope + [id])) == nil, session.instance(key([id])) != nil { tab.enter([]) }
     }
@@ -133,6 +139,63 @@ struct Workbench: View {
       }
     }
     .frame(minWidth: 360)
+  }
+}
+
+/// The workbench with the chat at its right. Not `.inspector`: on macOS 27.0 a
+/// NavigationSplitView with an inspector can end the app with AppKit's "more
+/// Update Constraints in Window passes than there are views" (it did on opening
+/// a project on 27.0.1; https://developer.apple.com/forums/thread/836901). So
+/// the window's split view only ever sees the workbench's size: the chat takes
+/// its width from what is there and asks for nothing.
+struct ChatSplit: Layout {
+  static let minChat = 320.0, maxChat = 900.0, minWorkbench = 360.0
+  var width: Double
+
+  /// The chat's width in `available`: the workbench keeps its minimum.
+  static func chatWidth(_ wanted: Double, in available: Double) -> Double {
+    min(max(wanted, minChat), maxChat, max(0, available - minWorkbench))
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    subviews.first?.sizeThatFits(proposal) ?? .zero
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    let chat = subviews.count > 1 ? Self.chatWidth(width, in: bounds.width) : 0
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width - chat, height: bounds.height))
+    if subviews.count > 1 {
+      subviews[1].place(at: CGPoint(x: bounds.maxX - chat, y: bounds.minY), proposal: ProposedViewSize(width: chat, height: bounds.height))
+    }
+  }
+}
+
+/// The chat's column: its left edge is dragged to set the width.
+private struct ChatColumn<Content: View>: View {
+  @Binding var width: Double
+  @ViewBuilder var content: Content
+  @State private var shown = 0.0
+  @State private var dragStart: Double?
+
+  var body: some View {
+    content
+      .clipped()
+      .onGeometryChange(for: Double.self) { $0.size.width } action: { shown = $0 }
+      .overlay(alignment: .leading) {
+        Color.clear
+          .frame(width: 9)
+          .overlay { Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1) }
+          .contentShape(Rectangle())
+          .pointerStyle(.columnResize)
+          .offset(x: -4)
+          .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { v in
+              let start = dragStart ?? shown
+              dragStart = start
+              width = min(max((start - v.translation.width).rounded(), ChatSplit.minChat), ChatSplit.maxChat)
+            }
+            .onEnded { _ in dragStart = nil })
+      }
   }
 }
 
@@ -243,6 +306,11 @@ struct EnvironmentProblemView: View {
                      message: String(localized: "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。"),
                      recovery: nil, log: "", canStop: false)
     default:
+      if session.connectionFailed {
+        return Problem(symbol: "exclamationmark.triangle.fill", color: .orange, title: String(localized: "実行環境に接続できませんでした"),
+                       message: session.connectionMessage ?? "",
+                       recovery: String(localized: "再試行してください。"), log: "")
+      }
       return Problem(symbol: "exclamationmark.triangle.fill", color: .orange, title: String(localized: "プロジェクトを読み込めませんでした"),
                      message: session.connectionMessage ?? "",
                      recovery: String(localized: "tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。"), log: "")

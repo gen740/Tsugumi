@@ -1,0 +1,128 @@
+{
+  "name": "Comparing ecological models",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "fit"
+      },
+      {
+        "id": "forecast"
+      },
+      {
+        "id": "fits-share"
+      },
+      {
+        "id": "scores"
+      },
+      {
+        "id": "phase"
+      },
+      {
+        "id": "check"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "pelts"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "fit"
+        },
+        "to": {
+          "card": "fit",
+          "port": "pelts"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "forecast"
+        },
+        "to": {
+          "card": "forecast",
+          "port": "pelts"
+        }
+      },
+      {
+        "from": {
+          "card": "fit",
+          "port": "fits"
+        },
+        "to": {
+          "card": "fits-share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "fits-share",
+          "port": "scores"
+        },
+        "to": {
+          "card": "scores",
+          "port": "fits"
+        }
+      },
+      {
+        "from": {
+          "card": "fits-share",
+          "port": "phase"
+        },
+        "to": {
+          "card": "phase",
+          "port": "fits"
+        }
+      },
+      {
+        "from": {
+          "card": "fits-share",
+          "port": "check"
+        },
+        "to": {
+          "card": "check",
+          "port": "fits"
+        }
+      },
+      {
+        "from": {
+          "card": "forecast",
+          "port": "forecast"
+        },
+        "to": {
+          "card": "scores",
+          "port": "forecast"
+        }
+      }
+    ]
+  }
+}

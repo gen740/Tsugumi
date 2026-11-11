@@ -11,6 +11,11 @@ versions and query provenance are recorded in
 | C++ | tree-sitter-cpp 0.23.4 (`f41e1a044c8a84ea9fa8577fdd2eab92ec96de02`) | [LICENSE](tree-sitter-cpp/LICENSE) |
 | JSON | tree-sitter-json 0.24.8 (`ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24`) | [LICENSE](tree-sitter-json/LICENSE) |
 | Bash | tree-sitter-bash 0.25.1 (`a06c2e4415e9bc0346c6b86d401879ffb44058f7`) | [LICENSE](tree-sitter-bash/LICENSE) |
+| Go | tree-sitter-go 0.25.0 (`1547678a9da59885853f5f5cc8a99cc203fa2e2c`) | [LICENSE](tree-sitter-go/LICENSE) |
+| Rust | tree-sitter-rust 0.24.2 (`77a3747266f4d621d0757825e6b11edcbf991ca5`) | [LICENSE](tree-sitter-rust/LICENSE) |
+| Julia | tree-sitter-julia 0.25.0 (`e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3`) | [LICENSE](tree-sitter-julia/LICENSE) |
+| Julia external scanner | tree-sitter-julia 0.25.0 (`e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3`) | [LICENSE](../../macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE) |
+| R | tree-sitter-r 1.3.0 (`346d3707b8c9301f1051e8f6e32666e67529f7d2`) | [LICENSE](tree-sitter-r/LICENSE) |
 | Nix parser / scanner / query | tree-sitter-nix `e49c2f317e896eb08967717e758a46d6eea038b2` | [LICENSE](../../macOS/Sources/Grammars/TreeSitterNix/LICENSE) |
 | Python parser / scanner / query | tree-sitter-python 0.25.0 | [LICENSE](../../macOS/Sources/Grammars/TreeSitterPython/LICENSE) |
 | Tree-sitter support headers | Tree-sitter; notice copied from runtime 0.25.10 (`da6fe9beb4f7f67beb75914ca8e0d48ae48d6406`) | [LICENSE.tree-sitter](../../macOS/Sources/Grammars/LICENSE.tree-sitter) |

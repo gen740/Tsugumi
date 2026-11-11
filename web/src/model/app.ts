@@ -87,6 +87,17 @@ export class AppModel extends Observable {
     return s
   }
 
+  /** The project was left: its windows and chat close with it (the Mac app's
+   *  ClosesWithProject and release). Opening it again starts anew. */
+  closeProject(s: ProjectSession) {
+    this.windows = this.windows.filter((w) => w.session !== s)
+    this.chats.get(s.key)?.close()
+    this.chats.delete(s.key)
+    this.sessions.delete(s.key)
+    s.close()
+    this.changed()
+  }
+
   /** Takes projects off the recent list (the folders stay). */
   async forgetRecents(paths: Iterable<string>) {
     try {
@@ -100,6 +111,15 @@ export class AppModel extends Observable {
   /** Projects made or copied here: they become git repositories when they
    *  first connect (a demo's history file becomes its versions). */
   private fresh = new Set<string>()
+
+  /** Whether a project was just made here, handed over to the tab that opens it (`?fresh`). */
+  takeFresh(dir: string): boolean {
+    return this.fresh.delete(dir)
+  }
+
+  markFresh(dir: string) {
+    this.fresh.add(dir)
+  }
 
   /** Copies a bundled demo into a new, editable project (the original stays untouched). */
   async copyDemo(id: string): Promise<string> {

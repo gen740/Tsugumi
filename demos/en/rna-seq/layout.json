@@ -1,0 +1,141 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 240,
+      "y": 0
+    },
+    "filter": {
+      "x": 640,
+      "y": 0
+    },
+    "share": {
+      "x": 1140,
+      "y": 0
+    },
+    "normalize": {
+      "x": 1400,
+      "y": -640
+    },
+    "pca": {
+      "x": 2160,
+      "y": -640
+    },
+    "deseq": {
+      "x": 1400,
+      "y": 0
+    },
+    "fan": {
+      "x": 2000,
+      "y": 0
+    },
+    "volcano": {
+      "x": 2260,
+      "y": -60
+    },
+    "thresholds": {
+      "x": 2900,
+      "y": -60
+    },
+    "top": {
+      "x": 2900,
+      "y": 300
+    },
+    "edger": {
+      "x": 1400,
+      "y": 620
+    },
+    "compare": {
+      "x": 2260,
+      "y": 620
+    },
+    "design": {
+      "x": 2960,
+      "y": 880
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## RNA-seq: genes moved by dexamethasone\n\nThe data is Bioconductor's **airway**: real data from four airway smooth muscle cell lines treated with dexamethasone for 18 hours (Himes et al., *PLoS One* 2014;9:e99625, GEO GSE52778). There are eight samples, 4 lines × with or without treatment.\n\nA negative binomial generalised linear model estimates the treatment effect $\\beta$ for each gene.\n\n$$K_{ij}\\sim \\mathrm{NB}(s_j q_{ij},\\ \\alpha_i),\\qquad \\log_2 q_{ij}=\\beta_{\\text{cell line}(j)}+\\beta_i\\,x_j$$\n\n$s_j$ is the size factor (sequencing depth), $\\alpha_i$ the size of the dispersion.\n\n**What to change**\n\n- `min_total` of **filter**: the cut-off for removing genes read only a few times.\n- `paired` of **deseq**: whether to include the cell-line term. **design** lays both side by side. Explaining the differences between lines makes the same estimate less uncertain.\n- `fdr` and `lfc` of **volcano**, and the grid of **thresholds**: the number of genes changes a lot with the thresholds, and \"the number of differentially expressed genes\" is not a value the data decides alone.\n- **compare**: how DESeq2 and edgeR agree.\n\nFKBP5, DUSP1, TSC22D3, KLF15, PER1 and CRISPLD2 are known to go up with glucocorticoids, and are used to check the results. This is a cell-culture experiment; it shows no effect of treatment and is not medical advice.",
+      "x": -40,
+      "y": -700,
+      "width": 800,
+      "height": 660
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 60,
+      "y": 130,
+      "width": 500,
+      "height": 300
+    },
+    "filter": {
+      "x": 600,
+      "y": 130,
+      "width": 480,
+      "height": 280
+    },
+    "normalize": {
+      "x": 1360,
+      "y": -510,
+      "width": 660,
+      "height": 360
+    },
+    "pca": {
+      "x": 2120,
+      "y": -510,
+      "width": 540,
+      "height": 370
+    },
+    "deseq": {
+      "x": 1360,
+      "y": 130,
+      "width": 600,
+      "height": 380
+    },
+    "volcano": {
+      "x": 2220,
+      "y": 70,
+      "width": 620,
+      "height": 430
+    },
+    "thresholds": {
+      "x": 2860,
+      "y": 70,
+      "width": 480,
+      "height": 200
+    },
+    "top": {
+      "x": 2860,
+      "y": 430,
+      "width": 560,
+      "height": 420
+    },
+    "edger": {
+      "x": 1360,
+      "y": 750,
+      "width": 360,
+      "height": 210
+    },
+    "compare": {
+      "x": 2220,
+      "y": 750,
+      "width": 600,
+      "height": 430
+    },
+    "design": {
+      "x": 2920,
+      "y": 1010,
+      "width": 700,
+      "height": 370
+    }
+  }
+}

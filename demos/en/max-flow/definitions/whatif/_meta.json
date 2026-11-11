@@ -1,0 +1,5 @@
+{
+  "description": "If one edge were wider",
+  "content": "Raises by raise_by the capacity of an edge on the cut (given by edge; if empty, the one that gains most) and of an edge off the cut, and tables how the maximum flow and the minimum cut change.",
+  "outputs": []
+}

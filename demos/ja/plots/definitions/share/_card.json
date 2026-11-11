@@ -1,0 +1,15 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "summary",
+        "diffusion",
+        "explore",
+        "spread"
+      ]
+    }
+  ]
+}

@@ -23,10 +23,24 @@ import TsugumiRPC
 ///   save                            key delete|forwarddelete|escape
 ///   winsize <w> <h> <window title>  home | demos (Home's demo list)
 ///   open versions                   makerepo (the project becomes a repository)
+///   hoverversion <row>              (what the pointer on that row of the version tree opens)
 ///   add <template> <x> <y>          wire <index>   chatsample
 ///   chatsend <text>                 waitchat
-///   explainer (Help > Tsugumi を知る)   scroll <x> <y> <dy> [window title]
+///   chatstate | chatstop            reopen <project folder> (from Home)
+///   explainer (Help > Learn about Tsugumi)   scroll <x> <y> <dy> [window title]
 ///   marquee <x1> <y1> <x2> <y2>     (world units: what Shift + drag over them selects)
+///   menu <item title>               (presses the menu bar's item)
+///   newproject                      (the new project sheet, as ⌘N in the window steps act on)
+///   openproject <folder>            (as the open panel of the window in front answers)
+///   window <n>                      (later steps act on the n-th main window)
+///   mainwindows                     (a line per main window: its project, connection, run, unsaved edits)
+///   closewindow                     (as the window's close button)
+///   offlineedit <card> <param> <v>  (every open project loses its environment and gets an edit; then the app quits, with them unsaved)
+///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
+///   modelmenu [capture name]        (lists the chat's model menu; with a name, a picture of the window)
+///   modelpick <item title>          (presses that item of the chat's model menu)
+///   guideshow <json>                (the bird does what a guide_show with these arguments asks)
+///   guideclose                      (its bubble is closed; it flies home)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
 @MainActor
@@ -36,12 +50,17 @@ final class UIScript {
 
   enum Request: Equatable {
     case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
+    case project(URL), newProject
   }
 
   var request: Request?
   /// Whether a canvas has the keyboard focus (reported by `state`).
   @ObservationIgnored var canvasFocused = false
-  @ObservationIgnored weak var workspace: Workspace?
+  /// The main window steps act on (`window <n>`; the first one there is until then).
+  @ObservationIgnored private weak var chosen: Workspace?
+  var workspace: Workspace? { chosen ?? AppModel.shared.mainWindows.first }
+  /// The model menu of the open chat (`modelmenu`, `modelpick`).
+  @ObservationIgnored weak var modelMenu: ModelMenu?
   /// Card settings windows that are open (scripts edit their working copies).
   @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
   @ObservationIgnored private var log: FileHandle?
@@ -143,16 +162,102 @@ final class UIScript {
           t.selectedFrames = items.frames
           say("marquee cards=\(items.cards.count) notes=\(items.notes.count) frames=\(items.frames.count)")
         }
+      case "hoverversion":
+        // Not `move`: SwiftUI's hover does not see a mouse event sent to a window in the back.
+        NotificationCenter.default.post(name: .versionHover, object: Int(w[1]) ?? 0)
       case "explainer": request = .explainer
-      case "home": NotificationCenter.default.post(name: .appHome, object: nil)
+      case "home": if let w = workspace { AppModel.shared.leaveProject(in: w) }
+      case "newproject": request = .newProject
+      case "openproject": request = .project(URL(fileURLWithPath: w.dropFirst().joined(separator: " ")))
+      case "window":
+        let list = AppModel.shared.mainWindows
+        if let n = Int(w[1]), list.indices.contains(n) {
+          chosen = list[n]
+        } else { say("no main window \(w[1])") }
+      case "mainwindows":
+        for (i, m) in AppModel.shared.mainWindows.enumerated() {
+          let s = m.session
+          say("main \(i) title=\(m.window?.title ?? "-") project=\(s?.identity.url.lastPathComponent ?? "home") connected=\(s?.connected ?? false) "
+              + "run=\(s?.runActive ?? false)/\(s?.runStatus?.state.label ?? "-") dirty=\(s?.dirty ?? false) key=\(m.window?.isKeyWindow ?? false) "
+              + "closable=\(m.window?.standardWindowButton(.closeButton)?.isEnabled ?? false) sheet=\(m.window?.attachedSheet != nil)")
+        }
+        say("sessions \(AppModel.shared.sessions.values.map { $0.identity.url.lastPathComponent }.sorted())")
+      case "answer":
+        // answer <n>: the n-th button (1...) of the next alert, a moment after it comes up.
+        let code = NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + (Int(w[1]) ?? 1) - 1)
+        // A timer: the quit may be asked from a main-actor task, whose alert keeps the main queue busy.
+        let timer = Timer(timeInterval: 0.02, repeats: true) { t in
+          MainActor.assumeIsolated {
+            guard let alert = NSApp.modalWindow else { return }
+            t.invalidate()
+            let texts = alert.contentView?.subviews.compactMap { ($0 as? NSTextField)?.stringValue } ?? []
+            self.say("alert: " + texts.joined(separator: " | "))
+            alert.alphaValue = 0
+            NSApp.stopModal(withCode: code)
+          }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+      case "offlineedit":
+        // offlineedit <card> <param> <value>: in every open project the environment
+        // goes away and an edit follows, so the edits stay unsaved (a quit's question).
+        let open = AppModel.shared.mainWindows.compactMap(\.session)
+        for s in open { s.stopEnvironment() }
+        try? await Task.sleep(for: .milliseconds(100))
+        for s in open {
+          s.setParam(w[1], w[2], parseParam(w[3], "uint64"))
+          say("offlineedit \(s.identity.url.lastPathComponent) dirty=\(s.dirty)")
+        }
+        NSApp.terminate(nil)
+      case "closewindow": workspace?.window?.performClose(nil)
+      case "menu":
+        let title = w.dropFirst().joined(separator: " ")
+        func press(_ menu: NSMenu) -> Bool {
+          for (i, item) in menu.items.enumerated() {
+            if item.title == title {
+              menu.update()
+              say("menu \(title) enabled=\(item.isEnabled)")
+              if item.isEnabled { menu.performActionForItem(at: i) }
+              return true
+            }
+            if let sub = item.submenu, press(sub) { return true }
+          }
+          return false
+        }
+        if let bar = NSApp.mainMenu, !press(bar) { say("no menu item \(title)") }
+      case "reopen":
+        // reopen <project folder>: from Home, as choosing it there does.
+        if let s = try? AppModel.shared.session(for: URL(fileURLWithPath: w.dropFirst().joined(separator: " "))) {
+          AppModel.shared.hold(s)
+          workspace?.open(s)
+        }
+      case "chatstop":
+        // The chat's stop button.
+        if let s = session { AppModel.shared.chat(for: s).cancel() }
+      case "chatstate":
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          let last = chat.items.last.map { "\($0.role): \($0.text.prefix(60))" } ?? "-"
+          say("chatstate bound=\(chat.session === s) busy=\(chat.busy) items=\(chat.items.count) status=\(chat.status ?? "-") last=\(last.replacingOccurrences(of: "\n", with: " "))")
+        }
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
-        // The canvas's "Card を生成": the Drafts of the shown scope go to the Agent.
+        // The canvas's "Generate Cards": the Drafts of the shown scope go to the Agent.
         if let s = session, let t = workspace?.active {
           let drafts = s.cards(in: t.scope).compactMap { $0["id"]?.string }.map { key(t.scope + [$0]) }.filter { s.kind($0) == .draft }
           workspace?.showChat = true
           AppModel.shared.chat(for: s).generateDrafts(scope: t.scope, cards: drafts)
           say("generate \(drafts)")
+        }
+      case "comment":
+        // comment <card> <text>: a comment written on a Card, as in its settings window
+        if let s = session { s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
+      case "generate-comments":
+        // The canvas's "Generate from comments": the open comments of the shown scope go to the Agent.
+        if let s = session, let t = workspace?.active {
+          let cards = s.cardsWithOpenComments(in: t.scope)
+          workspace?.showChat = true
+          AppModel.shared.chat(for: s).generateFromComments(scope: t.scope, cards: cards)
+          say("generate-comments \(cards)")
         }
       case "presence":
         // presence [thought]: plays the Agent's scenes over the shown scope's
@@ -259,6 +364,10 @@ final class UIScript {
           `compare` Card の出力 `sequence` を `record` が CSV に書きます。
           """)
         }
+      case "guideshow":
+        // guideshow <json>: the chat's Tsugumi calls guide_show with these arguments, as a model would.
+        if let s = session { GuideController.shared.chatShow(AppModel.shared.chat(for: s), arguments: w.dropFirst().joined(separator: " ")) }
+      case "guideclose": GuideController.shared.dismissBubble()
       case "chatsend":
         // chatsend <text>: sends to the configured model (real provider)
         if let s = session { AppModel.shared.chat(for: s).send(w.dropFirst().joined(separator: " ")) }
@@ -300,16 +409,31 @@ final class UIScript {
         }
       case "windows":
         for win in NSApp.windows where win.isVisible { say("window \(win.windowNumber) \(win.identifier?.rawValue ?? "-") \(win.title)") }
+      case "modelmenu":
+        guard let m = modelMenu else { say("modelmenu: no chat open"); break }
+        for item in m.menu.items where !item.isSeparatorItem {
+          say("modelmenu \(item.state == .on ? "[x]" : "[ ]") \(item.isEnabled ? "" : "(off) ")\(item.title)")
+        }
+        if w.count > 1 {
+          // The window with its label, without activating the app as `capture` does.
+          say("capture \(w[1]) \(mainWindow?.windowNumber ?? -1)")
+          try? await Task.sleep(for: .milliseconds(1500))
+        }
+      case "modelpick":
+        let title = w.dropFirst().joined(separator: " ")
+        if let at = modelMenu?.menu.items.firstIndex(where: { $0.title == title }) {
+          modelMenu?.menu.performActionForItem(at: at)
+        } else {
+          say("modelpick: no item \(title)")
+        }
       case "capture":
         let windows = NSApp.windows.filter { $0.isVisible && $0.frame.height > 120 }
         let wanted = w.dropFirst(2).joined(separator: " ")
         let target = w.count > 2
           ? windows.first { $0.title.contains(wanted) || ($0.identifier?.rawValue.localizedCaseInsensitiveContains(wanted) ?? false) }
           : mainWindow
-        // In front, as when used (the window buttons and selection in their active colors).
-        NSApp.activate()
-        target?.makeKeyAndOrderFront(nil)
-        try? await Task.sleep(for: .milliseconds(300))
+        // Never brought to the front: someone is working on this Mac, and the outside
+        // tool takes the picture of a window behind others just the same.
         say("capture \(w[1]) \(target?.windowNumber ?? -1)")
         try? await Task.sleep(for: .milliseconds(1800))
       case "zoom":
@@ -354,9 +478,16 @@ final class UIScript {
         guard let win, w.count >= 4, let x = Double(w[1]), let y = Double(w[2]), let dy = Double(w[3]),
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(-dy), wheel2: 0, wheel3: 0)
         else { say("no window for " + line); break }
-        let screenHeight = NSScreen.screens.first?.frame.maxY ?? 0
-        cg.location = CGPoint(x: win.frame.minX + x, y: screenHeight - win.frame.maxY + y)
-        if let e = NSEvent(cgEvent: cg) { win.sendEvent(e) }
+        // An NSEvent made from a CGEvent has no window: its locationInWindow is
+        // its screen location, y up from the primary screen's bottom. So the CG
+        // location is the one that reads back as this point of the window.
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        cg.location = CGPoint(x: x, y: primaryHeight - (win.frame.height - y))
+        guard let e = NSEvent(cgEvent: cg) else { say("no event for " + line); break }
+        // Taken from the queue, so it is NSApp.currentEvent while views are hit-tested
+        // (the canvas and the timeline ask, to take the wheel only).
+        NSApp.postEvent(e, atStart: true)
+        if let next = NSApp.nextEvent(matching: .scrollWheel, until: nil, inMode: .default, dequeue: true) { win.sendEvent(next) }
       case "drag":
         let title = w.dropFirst(5).joined(separator: " ")
         let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }

@@ -1,0 +1,118 @@
+{
+  "name": "Maximum flow and minimum cut",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "network"
+      },
+      {
+        "id": "flow"
+      },
+      {
+        "id": "cut"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "verify"
+      },
+      {
+        "id": "whatif"
+      },
+      {
+        "id": "sweep"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "settings"
+        },
+        "to": {
+          "card": "network",
+          "port": "settings"
+        }
+      },
+      {
+        "from": {
+          "card": "network",
+          "port": "network"
+        },
+        "to": {
+          "card": "flow",
+          "port": "network"
+        }
+      },
+      {
+        "from": {
+          "card": "flow",
+          "port": "flow"
+        },
+        "to": {
+          "card": "cut",
+          "port": "flow"
+        }
+      },
+      {
+        "from": {
+          "card": "cut",
+          "port": "cut"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "verify"
+        },
+        "to": {
+          "card": "verify",
+          "port": "cut"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "whatif"
+        },
+        "to": {
+          "card": "whatif",
+          "port": "cut"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "sweep"
+        },
+        "to": {
+          "card": "sweep",
+          "port": "cut"
+        }
+      }
+    ]
+  }
+}

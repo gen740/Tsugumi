@@ -1,0 +1,10 @@
+{
+  "description": "Make a synthetic cell image",
+  "content": "Makes a fluorescence-like synthetic image of cells with blurred edges, placed with random numbers from seed. Of the cells, touching_pairs pairs touch. Uneven illumination and noise are added too. The cells' centres are known, so the counting can be scored.",
+  "outputs": [
+    {
+      "name": "scene",
+      "description": "The image and the true centres"
+    }
+  ]
+}

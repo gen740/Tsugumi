@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace lung;
+table Km { value:string; }
+table Outputs { km:Km (required, tsugumi: "directory"); }
+root_type Outputs;

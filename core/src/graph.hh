@@ -16,6 +16,8 @@ namespace tsugumi {
 
 enum class Template { Code, Trigger, Input, Fork, Branch, Merge, Logger, Subgraph, Draft };
 const char* template_name(Template t);
+// What a definition is; no definition at all is a Draft.
+Template template_of(const DefinitionDoc* def);
 
 enum class ParamType {
   Bool, Int64, UInt64, Double, String,
@@ -54,13 +56,32 @@ struct Settings {
   bool reuse_worker = true;
   bool network = false;
   bool markdown = false;  // logger: shows the text it receives as Markdown
+  std::string system;     // "" = native_system(); another one runs emulated (binfmt)
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data
 };
 
+// The Nix system of this machine: what a Card is built for unless its
+// settings name another.
+constexpr const char* native_system() {
+#if defined(__aarch64__) && defined(__APPLE__)
+  return "aarch64-darwin";
+#elif defined(__aarch64__)
+  return "aarch64-linux";
+#elif defined(__x86_64__) && defined(__APPLE__)
+  return "x86_64-darwin";
+#else
+  return "x86_64-linux";
+#endif
+}
+
 struct InputDef {
   std::string name;
   bool optional = false;
+};
+
+struct NixSourceRef {
+  std::string name, type, ref;
 };
 
 struct Node {
@@ -71,6 +92,7 @@ struct Node {
   std::string def_dir;
   std::string project_dir;                    // "" or "externals/<p>/": the project the Card is written in
   std::string pkgs_path;                      // of the project the Card is written in
+  std::vector<NixSourceRef> nix_sources;      // what that project opts in to (tsugumi.json nixSources)
   std::optional<schema::Boundary> boundary;  // Card in Card: its external's ports
   std::string external;                      // Card in Card: "externals/<p>/" (project relative)
   Settings settings;

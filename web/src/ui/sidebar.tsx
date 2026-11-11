@@ -12,6 +12,7 @@ import { arr, get, str } from '../shared/json'
 import { DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openWorkflowWindow } from './actions'
 import { Button, showMenu, Sheet, Spinner, TextField } from './controls'
 import { Icon } from './icons'
+import { L } from '../i18n'
 
 const kindIcon = (k: string) => KIND_ICON[k as keyof typeof KIND_ICON] ?? 'circle'
 
@@ -29,32 +30,32 @@ export function WorkbenchSidebar({ workspace, session, tab }: { workspace: Works
     <div className="sidebar">
       <div className="sidebar-scroll">
         <div className="sidebar-section">
-          <div className="sidebar-header">Workflow 階層</div>
+          <div className="sidebar-header">{L('Workflow 階層')}</div>
           <ScopeRow workspace={workspace} session={session} tab={tab} scope={[]} depth={0} />
         </div>
         <div className="sidebar-section">
           <div className="sidebar-header row center">
-            <span>Card を追加</span>
+            <span>{L('Card を追加')}</span>
             <span className="spacer" />
             <Button kind="borderless" small iconOnly icon="square.and.arrow.down.on.square" disabled={!session.isEditable}
-              help="他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）" onClick={() => setImporting(true)} />
+              help={L('他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）')} onClick={() => setImporting(true)} />
           </div>
           <Definitions session={session} tab={tab} />
         </div>
         <div className="sidebar-section">
-          <div className="sidebar-header">表示中の Card</div>
+          <div className="sidebar-header">{L('表示中の Card')}</div>
           <VisibleCards session={session} tab={tab} />
         </div>
       </div>
       <div className="sidebar-footer">
-        <Button kind="borderless" iconOnly icon="point.3.connected.trianglepath.dotted" help="版の履歴（git）"
+        <Button kind="borderless" iconOnly icon="point.3.connected.trianglepath.dotted" help={L('版の履歴（git）')} guide="versions"
           onClick={() => app.openWindow(session, { kind: 'versions' })} />
-        <Button kind="borderless" iconOnly icon="gearshape" help="このプロジェクトの設定（設定ウインドウの「このプロジェクト」）"
+        <Button kind="borderless" iconOnly icon="gearshape" help={L('このプロジェクトの設定（設定ウインドウの「このプロジェクト」）')} guide="project_settings"
           onClick={() => app.openWindow(session, { kind: 'workflowSettings' })} />
       </div>
       {importing && (
-        <FolderPicker message="取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。"
-          requireProject confirmLabel="取り込む" onClose={() => setImporting(false)}
+        <FolderPicker message={L('取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。')}
+          requireProject confirmLabel={L('取り込む')} onClose={() => setImporting(false)}
           onPick={async (folder) => {
             setImporting(false)
             try {
@@ -67,7 +68,7 @@ export function WorkbenchSidebar({ workspace, session, tab }: { workspace: Works
       {importError && (
         <Sheet onClose={() => setImportError(undefined)} width={420}>
           <div className="confirm">
-            <div className="confirm-title">取り込めませんでした</div>
+            <div className="confirm-title">{L('取り込めませんでした')}</div>
             <div className="secondary selectable">{importError}</div>
             <div className="row end"><Button kind="prominent" onClick={() => setImportError(undefined)}>OK</Button></div>
           </div>
@@ -110,10 +111,10 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
   }
   return (
     <>
-      <div className="sidebar-pad"><TextField small value={search} onChange={setSearch} placeholder="検索" /></div>
+      <div className="sidebar-pad"><TextField small value={search} onChange={setSearch} placeholder={L('検索')} /></div>
       {exts.length === 0 && (
         <div className="sidebar-note caption secondary">
-          externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。
+          {L('externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。')}
         </div>
       )}
       {exts.map((prefix) => {
@@ -125,13 +126,13 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
             <TreeHead open={isOpen(prefix)} onToggle={() => toggle(prefix)} icon="shippingbox" label={name} />
             {isOpen(prefix) && (
               <>
-                <DefinitionRow session={session} icon={KIND_ICON.subgraph} title={`${name} 全体（Card in Card）`} drag={EXTERNAL_DRAG + prefix}
-                  help="このプロジェクト全体のコピーを Card in Card として置きます" onAdd={() => void placeExternal(prefix)} />
+                <DefinitionRow session={session} icon={KIND_ICON.subgraph} title={L('{0} 全体（Card in Card）', name)} drag={EXTERNAL_DRAG + prefix}
+                  help={L('このプロジェクト全体のコピーを Card in Card として置きます')} onAdd={() => void placeExternal(prefix)} />
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
                     <DefinitionRow key={id} session={session} icon={d?.link !== undefined ? KIND_ICON.subgraph : kindIcon(definitionKind(d?.card))} title={id}
-                      drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help="定義をこのプロジェクトの definitions にコピーして Card を置きます"
+                      drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )
                 })}
@@ -142,13 +143,13 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
       })}
       {unplaced.length > 0 && (
         <div>
-          <TreeHead open={isOpen('unplaced')} onToggle={() => toggle('unplaced')} icon="tray" label="配置されていない定義" secondary />
+          <TreeHead open={isOpen('unplaced')} onToggle={() => toggle('unplaced')} icon="tray" label={L('配置されていない定義')} secondary />
           {isOpen('unplaced') && unplaced.map((id) => (
             <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(session.definitions.get(id)))} title={id} drag={DEFINITION_DRAG + id}
-              help="ダブルクリックまたは Canvas へドラッグして配置" onAdd={() => place(id)}
+              help={L('ダブルクリックまたは Canvas へドラッグして配置')} onAdd={() => place(id)}
               menu={[
-                { label: 'Canvas に配置', action: () => place(id), disabled: !session.isEditable },
-                { label: '削除', destructive: true, disabled: !session.isEditable, action: () => session.edit((x) => x.removeDefinition(id)) },
+                { label: L('Canvas に配置'), action: () => place(id), disabled: !session.isEditable },
+                { label: L('削除'), destructive: true, disabled: !session.isEditable, action: () => session.edit((x) => x.removeDefinition(id)) },
               ]} />
           ))}
         </div>
@@ -172,10 +173,10 @@ function DefinitionRow({ session, icon, title, drag, help, onAdd, menu }: {
   menu?: Parameters<typeof showMenu>[1]
 }) {
   return (
-    <div className="sidebar-row def-row tree-leaf" draggable title={help + '（ダブルクリックまたは Canvas へドラッグ）'}
+    <div className="sidebar-row def-row tree-leaf" draggable title={help + L('（ダブルクリックまたは Canvas へドラッグ）')}
       onDragStart={(e) => { e.dataTransfer.setData('text/plain', drag); e.dataTransfer.effectAllowed = 'copy' }}
       onDoubleClick={() => session.isEditable && onAdd()}
-      onContextMenu={(e) => showMenu(e, menu ?? [{ label: 'Canvas に追加', action: onAdd, disabled: !session.isEditable }])}>
+      onContextMenu={(e) => showMenu(e, menu ?? [{ label: L('Canvas に追加'), action: onAdd, disabled: !session.isEditable }])}>
       <Icon name={icon} className="secondary" />
       <span className="ellipsis flex1">{title}</span>
     </div>
@@ -192,9 +193,9 @@ function ScopeRow({ workspace, session, tab, scope, depth }: { workspace: Worksp
       <div className={`sidebar-row scope-row${current ? ' current' : ''}`} style={{ paddingLeft: 10 + depth * 14 }}
         onClick={() => tab.enter(scope)}
         onContextMenu={(e) => showMenu(e, [
-          { label: 'このタブで開く', action: () => tab.enter(scope) },
-          { label: '新しいタブで開く', action: () => workspace.openTab(scope) },
-          { label: '別ウインドウで開く', action: () => openWorkflowWindow(session, scope) },
+          { label: L('このタブで開く'), action: () => tab.enter(scope) },
+          { label: L('新しいタブで開く'), action: () => workspace.openTab(scope) },
+          { label: L('別ウインドウで開く'), action: () => openWorkflowWindow(session, scope) },
         ])}>
         {children.length > 0 ? (
           <button type="button" className="disclosure-toggle" aria-expanded={expanded} onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}>
@@ -203,7 +204,7 @@ function ScopeRow({ workspace, session, tab, scope, depth }: { workspace: Worksp
         ) : <span className="disclosure-toggle" />}
         <Icon name={scope.length === 0 ? 'square.stack.3d.up.fill' : 'square.stack.3d.up'} style={{ color: current ? 'var(--accent)' : 'var(--secondary)' }} />
         <span className="ellipsis flex1" style={{ fontWeight: current ? 600 : 400 }}>{session.scopeName(scope)}</span>
-        {current && <span className="caption2 secondary">表示中</span>}
+        {current && <span className="caption2 secondary">{L('表示中')}</span>}
       </div>
       {expanded && children.map((c) => <ScopeRow key={key(c)} workspace={workspace} session={session} tab={tab} scope={c} depth={depth + 1} />)}
     </>
@@ -212,7 +213,7 @@ function ScopeRow({ workspace, session, tab, scope, depth }: { workspace: Worksp
 
 /** The Cards of the current scope, under the headings of their visual
  *  groups. A row selects its Card and moves the canvas to it; a composite
- *  Card has an explicit "開く". Collapsing is done on the Card itself. */
+ *  Card has an explicit "Open". Collapsing is done on the Card itself. */
 function VisibleCards({ session, tab }: { session: ProjectSession; tab: WorkflowTab }) {
   const ids = session.cards(tab.scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
   const groups = session.groups(tab.scope)
@@ -221,14 +222,14 @@ function VisibleCards({ session, tab }: { session: ProjectSession; tab: Workflow
   const row = (id: string, indent: boolean) => <VisibleCardRow key={id} session={session} tab={tab} cardKey={key([...tab.scope, id])} indent={indent} />
   return (
     <>
-      {ids.length === 0 && <div className="sidebar-row secondary">Card はありません</div>}
+      {ids.length === 0 && <div className="sidebar-row secondary">{L('Card はありません')}</div>}
       {groups.map((g) => {
         const gid = str(get(g, 'id'))
         const list = members(g).filter((m) => ids.includes(m))
         if (!gid || !list.length) return null
         return (
           <div key={gid}>
-            <div className="sidebar-row group-head caption headline secondary"><Icon name="rectangle.3.group" size={12} />{str(get(g, 'name')) ?? 'グループ'}</div>
+            <div className="sidebar-row group-head caption headline secondary"><Icon name="rectangle.3.group" size={12} />{str(get(g, 'name')) ?? L('グループ')}</div>
             {list.map((id) => row(id, true))}
           </div>
         )
@@ -247,7 +248,7 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
   const cs = st ? cardState(st.state) : undefined
   return (
     <div className={`sidebar-row${selected ? ' selected' : ''}`} style={{ paddingLeft: indent ? 20 : undefined }} role="option" aria-selected={selected}
-      aria-label={`${session.displayName(cardKey)}, ${KIND_LABEL[kind]}, ${cs ? cs.label : '未実行'}`}
+      aria-label={L('{0}, {1}, {2}', session.displayName(cardKey), KIND_LABEL[kind], cs ? cs.label : '未実行')}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey) {
           const s = new Set(tab.selection)
@@ -261,16 +262,16 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
       }}>
       <Icon name={kindIcon(kind)} className={selected ? '' : 'secondary'} size={13} />
       <span className="ellipsis flex1">{session.displayName(cardKey)}</span>
-      {errors > 0 && <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--yellow)' }} title={`問題 ${errors} 件`} />}
+      {errors > 0 && <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--yellow)' }} title={L('問題 {0} 件', errors)} />}
       {st && cs && (
-        <span className="label" title={`${cs.label}（実行 #${st.invocation}）`}>
+        <span className="label" title={L('{0}（実行 #{1}）', cs.label, st.invocation)}>
           <Icon name={cs.icon} style={{ color: selected ? undefined : `var(--${cs.color})` }} />
           {st.invocation > 0n && <span className="caption2 mono-digits secondary">#{String(st.invocation)}</span>}
         </span>
       )}
       {kind === 'subgraph' && (
-        <Button kind="borderless" small help="Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）"
-          onClick={() => tab.enter(path(cardKey))}>開く</Button>
+        <Button kind="borderless" small help={L('Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）')}
+          onClick={() => tab.enter(path(cardKey))}>{L('開く')}</Button>
       )}
     </div>
   )
@@ -305,9 +306,9 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
       <div className="sheet-body">
         <div className="headline">{message}</div>
         <form className="row gap8" onSubmit={(e) => { e.preventDefault(); void load(typed) }}>
-          <Button iconOnly icon="chevron.backward" help="上のフォルダ" disabled={!listing?.parent} onClick={() => listing?.parent && void load(listing.parent)} />
+          <Button iconOnly icon="chevron.backward" help={L('上のフォルダ')} disabled={!listing?.parent} onClick={() => listing?.parent && void load(listing.parent)} />
           <TextField value={typed} onChange={setTyped} mono style={{ flex: 1 }} />
-          <Button type="submit">移動</Button>
+          <Button type="submit">{L('移動')}</Button>
         </form>
         <div className="list bordered" style={{ height: 300 }}>
           {!listing && !error && <Spinner />}
@@ -316,16 +317,16 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
               onClick={() => void load(`${listing.path}/${e.name}`)}>
               <Icon name={e.project ? 'square.stack.3d.up' : 'folder'} style={{ color: e.project ? 'var(--accent)' : 'var(--secondary)' }} />
               <span className="flex1">{e.name}</span>
-              {e.project && <span className="caption2 secondary">プロジェクト</span>}
+              {e.project && <span className="caption2 secondary">{L('プロジェクト')}</span>}
             </div>
           ))}
-          {listing && listing.entries.length === 0 && <div className="list-row secondary">サブフォルダはありません</div>}
+          {listing && listing.entries.length === 0 && <div className="list-row secondary">{L('サブフォルダはありません')}</div>}
         </div>
         {error && <div style={{ color: 'var(--red)' }} className="callout selectable">{error}</div>}
-        {requireProject && listing && !listing.project && <div className="caption secondary">tsugumi.json を含むフォルダを選んでください</div>}
+        {requireProject && listing && !listing.project && <div className="caption secondary">{L('tsugumi.json を含むフォルダを選んでください')}</div>}
         <div className="row gap8">
           {allowCreate && (newFolder === null
-            ? <Button onClick={() => setNewFolder('')}>新規フォルダ…</Button>
+            ? <Button onClick={() => setNewFolder('')}>{L('新規フォルダ…')}</Button>
             : (
               <form className="row gap8" onSubmit={async (e) => {
                 e.preventDefault()
@@ -337,13 +338,13 @@ export function FolderPicker({ initial, message, onPick, onClose, allowCreate, r
                   setError(errorText(er))
                 }
               }}>
-                <TextField small value={newFolder} onChange={setNewFolder} placeholder="フォルダ名" autoFocus />
-                <Button small type="submit" disabled={!newFolder}>作成</Button>
+                <TextField small value={newFolder} onChange={setNewFolder} placeholder={L('フォルダ名')} autoFocus />
+                <Button small type="submit" disabled={!newFolder}>{L('作成')}</Button>
               </form>
             ))}
           <span className="spacer" />
-          <Button onClick={onClose}>キャンセル</Button>
-          <Button kind="prominent" disabled={!can} onClick={() => listing && onPick(listing.path)}>{confirmLabel ?? '選択'}</Button>
+          <Button onClick={onClose}>{L('キャンセル')}</Button>
+          <Button kind="prominent" disabled={!can} onClick={() => listing && onPick(listing.path)}>{confirmLabel ?? L('選択')}</Button>
         </div>
       </div>
     </Sheet>
@@ -360,7 +361,7 @@ export function ImportDefinitionsSheet({ session, onClose, scope = [], at = { x:
     return (
       <Sheet onClose={onClose} width={420}>
         <div className="confirm">
-          <div className="confirm-title">取り込めませんでした</div>
+          <div className="confirm-title">{L('取り込めませんでした')}</div>
           <div className="secondary selectable">{error}</div>
           <div className="row end"><Button kind="prominent" onClick={onClose}>OK</Button></div>
         </div>
@@ -368,8 +369,8 @@ export function ImportDefinitionsSheet({ session, onClose, scope = [], at = { x:
     )
   }
   return (
-    <FolderPicker message="取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。"
-      requireProject confirmLabel="取り込む" onClose={onClose}
+    <FolderPicker message={L('取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。')}
+      requireProject confirmLabel={L('取り込む')} onClose={onClose}
       onPick={async (folder) => {
         try {
           await session.importProject(folder, scope, at)

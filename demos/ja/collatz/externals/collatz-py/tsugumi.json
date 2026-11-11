@@ -1,0 +1,136 @@
+{
+  "name": "Collatz in Python",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "boundary": {
+    "inputs": {
+      "n": {
+        "card": "loop",
+        "port": "init"
+      }
+    },
+    "outputs": {
+      "sequence": {
+        "card": "collect",
+        "port": "sequence"
+      }
+    }
+  },
+  "canvas": {
+    "cards": [
+      {
+        "id": "loop"
+      },
+      {
+        "id": "split"
+      },
+      {
+        "id": "check"
+      },
+      {
+        "id": "route"
+      },
+      {
+        "id": "halve"
+      },
+      {
+        "id": "triple"
+      },
+      {
+        "id": "collect"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "loop",
+          "port": "out"
+        },
+        "to": {
+          "card": "split",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "split",
+          "port": "check"
+        },
+        "to": {
+          "card": "check",
+          "port": "arrival"
+        }
+      },
+      {
+        "from": {
+          "card": "split",
+          "port": "collect"
+        },
+        "to": {
+          "card": "collect",
+          "port": "arrival"
+        }
+      },
+      {
+        "from": {
+          "card": "check",
+          "port": "value"
+        },
+        "to": {
+          "card": "route",
+          "port": "value"
+        }
+      },
+      {
+        "from": {
+          "card": "check",
+          "port": "even"
+        },
+        "to": {
+          "card": "route",
+          "port": "condition"
+        }
+      },
+      {
+        "from": {
+          "card": "route",
+          "port": "a"
+        },
+        "to": {
+          "card": "halve",
+          "port": "number"
+        }
+      },
+      {
+        "from": {
+          "card": "route",
+          "port": "b"
+        },
+        "to": {
+          "card": "triple",
+          "port": "number"
+        }
+      },
+      {
+        "from": {
+          "card": "halve",
+          "port": "next"
+        },
+        "to": {
+          "card": "loop",
+          "port": "half"
+        }
+      },
+      {
+        "from": {
+          "card": "triple",
+          "port": "next"
+        },
+        "to": {
+          "card": "loop",
+          "port": "triple"
+        }
+      }
+    ]
+  }
+}

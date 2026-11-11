@@ -33,7 +33,48 @@ final class ApprovalTransport: ToolTransport, @unchecked Sendable {
   }
 }
 
+/// Counts the RPCs sent and answers each with an empty file (FileContent).
+final class CountingTransport: ToolTransport, @unchecked Sendable {
+  let schema: BFBS
+  var calls = 0
+  init(schema: BFBS) { self.schema = schema }
+  func call(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset) async throws -> (replyType: String, table: Table) {
+    calls += 1
+    let codec = FlatJSON(schema: schema)
+    var reply = FlatBufferBuilder()
+    reply.finish(offset: try codec.build(try #require(schema.object(named: "Tsugumi.RPC.FileContent")).0,
+                                     ["name": "", "hash": "", "bytes": ""], into: &reply))
+    let out = reply.sizedBuffer
+    return ("FileContent", Table(bb: out, position: Int32(out.read(def: UInt32.self, position: out.reader)) + Int32(out.reader)))
+  }
+}
+
 struct AgentOperationTests {
+  /// A folder detached from the chat stays shared with the environment until it
+  /// next starts: the Agent refuses it at once, and never sends the read.
+  @Test func onlyAttachedFoldersAreRead() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let schema = try BFBS(data: try #require(RPCSchema.bfbs()))
+    let transport = CountingTransport(schema: schema)
+    let agent = try Agent(catalog: try ToolCatalog(schema: schema), transport: transport,
+                          provider: .localFixture(port: 1), storage: dir.appendingPathComponent("chat.json"))
+    func read(_ folder: String) async throws -> (String, Bool) {
+      let block = try await agent.runTool(id: UUID().uuidString, name: "attached_folder_read",
+                                          input: "{\"folder\":\"\(folder)\",\"path\":\"\"}") { _ in }
+      guard case .toolResult(_, let content, let isError, _) = block else { throw CancellationError() }
+      return (content, isError)
+    }
+    var (text, error) = try await read("/Users/me/data")
+    #expect(error && text.contains("not attached here") && transport.calls == 0)
+    await agent.setFolders(["/Users/me/data/"])
+    (_, error) = try await read("/Users/me/data")
+    #expect(!error && transport.calls == 1)
+    await agent.setFolders([])
+    (text, error) = try await read("/Users/me/data")
+    #expect(error && text.contains("not attached here") && transport.calls == 1)
+  }
+
   @Test func approvedOperationIsSavedBeforeResending() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }

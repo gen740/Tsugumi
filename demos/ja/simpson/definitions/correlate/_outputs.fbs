@@ -1,0 +1,6 @@
+attribute "tsugumi";
+namespace simpson;
+table Points { value:string; }
+table Correlations { value:string; }
+table Outputs { points:Points (required, tsugumi: "file"); correlations:Correlations (required, tsugumi: "file"); }
+root_type Outputs;

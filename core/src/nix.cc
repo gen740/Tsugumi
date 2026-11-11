@@ -28,6 +28,34 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+// The interpreter the kernel runs ELF executables of a Linux system with
+// (binfmt_misc: a static qemu-user in the shared VM, boot.binfmt.emulatedSystems
+// on NixOS), or "" when none is registered. Matched by the ELF header the
+// entry's magic names, whatever the entry is called.
+std::string binfmt_interpreter(const std::string& system) {
+  std::string machine = system == "x86_64-linux" ? "3e00" : system == "aarch64-linux" ? "b700" : "";
+  const stdfs::path dir = "/proc/sys/fs/binfmt_misc";
+  std::error_code ec;
+  if (machine.empty() || !stdfs::is_directory(dir, ec)) return "";
+  for (const auto& e : stdfs::directory_iterator(dir, ec)) {
+    auto name = e.path().filename().string();
+    if (name == "register" || name == "status") continue;
+    std::ifstream f(e.path());
+    std::string line, interpreter, magic;
+    bool enabled = false;
+    while (std::getline(f, line)) {
+      if (line == "enabled") enabled = true;
+      else if (line.starts_with("interpreter ")) interpreter = line.substr(12);
+      else if (line.starts_with("magic ")) magic = line.substr(6);
+    }
+    // 7f 'E' 'L' 'F', 64-bit, little-endian, ..., e_machine at byte 18.
+    if (enabled && !interpreter.empty() && magic.starts_with("7f454c4602") && magic.size() >= 40 &&
+        magic.substr(36, 4) == machine)
+      return interpreter;
+  }
+  return "";
+}
+
 // The evaluator's entry: a function of the nixpkgs package set (read once
 // per pin and reused) and of the Card's folders.
 std::string entry_nix() {
@@ -37,13 +65,37 @@ std::string entry_nix() {
 # (run, preRun, extra attributes, functions) of the code Cards that have
 # always run before this one; paths are relative to the Card's own project. They are imported lazily: only what is
 # referenced is evaluated, and branches that may not run are never offered.
+#
+# inputs.sources.<name> is a tarball the Card's project opts in to (tsugumi.json
+# nixSources), fetched by its hash when it is referenced.
 pkgs: { sdk, gen, upstream, card }:
 let
   # upstream.json is read here only: it names folders of this evaluator, so it
   # is kept out of `gen`, which builds take in by content.
   up = builtins.fromJSON (builtins.readFile upstream);
-  inputsFor = tsugumi: deps: {
+  # What Tsugumi evaluated apart from this evaluator: built when a Card uses it.
+  sourceReaders.flake = v: {
+    inherit (v) ref rev narHash;
+    packages = builtins.mapAttrs (_: p:
+      let
+        package = {
+          type = "derivation";
+          inherit (p) name;
+          outputName = p.output;
+          outputs = [ p.output ];
+          drvPath = builtins.appendContext p.drv { ${p.drv} = { allOutputs = true; }; };
+          outPath = builtins.appendContext p.out { ${p.drv} = { outputs = [ p.output ]; }; };
+          ${p.output} = package;
+        };
+      in package) v.packages;
+  };
+  sourcesOf = g: builtins.listToAttrs (map (s: {
+    name = s.name;
+    value = sourceReaders.${s.type} s.value;
+  }) (builtins.fromJSON (builtins.readFile (g + "/sources.json"))));
+  inputsFor = tsugumi: g: deps: {
     inherit tsugumi;
+    sources = sourcesOf g;
     upstream = builtins.listToAttrs (map (d: { name = d.name; value = cards.${d.key}; }) deps);
     local = builtins.listToAttrs (map (d: { name = d.local; value = cards.${d.key}; })
       (builtins.filter (d: d.local != null) deps));
@@ -56,12 +108,12 @@ let
     import (/. + u.def + "/default.nix") {
       inherit pkgs;
       params = builtins.fromJSON (builtins.readFile (ugen + "/params-nix.json"));
-      inputs = inputsFor usdk u.deps;
+      inputs = inputsFor usdk ugen u.deps;
     };
   cards = builtins.listToAttrs (map (u: { name = u.key; value = importCard u; }) up.cards);
   tsugumi = import (sdk + "/nix") { inherit pkgs; generated = gen; };
   params = builtins.fromJSON (builtins.readFile (gen + "/params-nix.json"));
-  self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi up.deps; };
+  self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi gen up.deps; };
 in
 tsugumi.manifest self
 )NIX";
@@ -144,6 +196,24 @@ NixRunner::~NixRunner() {
   for (auto& t : sdk_threads_)
     if (t.joinable()) t.join();
   evaluator_.reset();
+}
+
+FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
+  static const std::regex page(R"(^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$)");
+  static const std::regex allowed(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]+$)");
+  std::smatch m;
+  std::string flake = std::regex_match(ref, m, page) ? "github:" + m[1].str() + "/" + m[2].str() : ref;
+  if (!std::regex_match(flake, allowed))
+    throw Failed(FailureKind::validation_failed, "not a flake reference Tsugumi reads: " + ref);
+  NixCall call;
+  call.deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+  try {
+    return evaluator().flake(call, flake);
+  } catch (const NixInterrupted& e) {
+    throw Failed(FailureKind::timeout, e.what());
+  } catch (const std::runtime_error& e) {
+    throw Failed(FailureKind::nix_failed, e.what());
+  }
 }
 
 NixEvaluator& NixRunner::evaluator() {
@@ -397,7 +467,44 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     }
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
-  auto files = generate(node);
+  // The sources a Card names, evaluated apart from it; nothing is fetched for a Card that names none.
+  auto with_sources = [&](const Node& n) {
+    auto generated = generate(n);
+    std::string sources = "[";
+    auto nix = req.doc->sources.count(n.def_dir + "default.nix") ? svc_.store().read_source(*req.doc, n.def_dir + "default.nix") : std::string();
+    for (const auto& s : n.nix_sources) {
+      if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
+      NixCall lookup;
+      lookup.system = n.settings.system;
+      lookup.cancel = req.cancel;
+      if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
+      lookup.log = req.log;
+      if (req.on_phase) req.on_phase(Phase::evaluate);
+      try {
+        auto info = evaluator().flake(lookup, s.ref);
+        sources += std::string(sources.size() > 1 ? "," : "") + "{\"name\":\"" + s.name + "\",\"type\":\"" + s.type + "\",\"value\":" + info.json + "}";  // a name and a type are checked when the project is read
+      } catch (const NixInterrupted& e) {
+        throw Failed(e.timed_out ? FailureKind::timeout : FailureKind::cancelled, e.what());
+      } catch (const std::runtime_error& e) {
+        throw Failed(FailureKind::nix_failed, "nixSources " + s.name + ": " + e.what());
+      }
+    }
+    generated["sources.json"] = sources + "]";
+    return generated;
+  };
+  // Another system's binaries run through the kernel's binfmt_misc: without
+  // an entry for it, Nix would refuse the build with a less helpful message.
+  std::string emulator;
+  if (!node.settings.system.empty()) {
+    emulator = binfmt_interpreter(node.settings.system);
+    if (emulator.empty())
+      throw Failed(FailureKind::unsupported,
+                   "system " + node.settings.system + " needs an emulator registered with the kernel (binfmt_misc), " +
+                       "and Nix's extra-platforms to include it: the shared VM on a Mac has qemu-x86_64; " +
+                       "on NixOS, set boot.binfmt.emulatedSystems",
+                   {{"system", node.settings.system}});
+  }
+  auto files = with_sources(node);
   files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
   // Upstream code Cards this definition may reference (see entry.nix).
   const auto& graph = *req.doc->resolution;
@@ -409,7 +516,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   std::string deps_json = "[";
   for (size_t i = 0; i < allowed.size(); ++i) {
     const Node& u = graph.nodes[allowed[i]];
-    auto ugen = schema::string_value(generated_dir(generate(u)).string());
+    auto ugen = schema::string_value(generated_dir(with_sources(u)).string());
     auto udef = schema::string_value(definition_dir(u.def_dir).string());
     std::string udeps = "[";
     for (size_t d : graph.nix_upstream(allowed[i]))
@@ -444,6 +551,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
+  call.system = node.settings.system;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + "; }";
@@ -480,9 +588,11 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   if (const auto* r = schema::get(m.run)) {
     if (const auto* p = schema::get(r->package)) b.package = *p;
     if (const auto* p = schema::get(r->bash)) b.bash = *p;
+    if (const auto* p = schema::get(r->worker)) b.worker = *p;
   }
   if (b.package.has_value() == b.bash.has_value())
     throw Failed(FailureKind::nix_failed, "the Card manifest needs exactly one body: run.package or run.bash");
+  b.emulator = emulator;
   if (const auto* p = schema::get(m.pre_run)) b.pre_run = *p;
   if (const auto* p = schema::get(m.post_run)) b.post_run = *p;
   b.key = res.out;

@@ -1,0 +1,30 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "pasted"
+    }
+  ],
+  "params": [
+    {
+      "name": "molecules",
+      "type": "string[]",
+      "data": [
+        "aspirin: CC(=O)Oc1ccccc1C(=O)O",
+        "salicylic acid: O=C(O)c1ccccc1O",
+        "caffeine: Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "ibuprofen: CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+        "paracetamol: CC(=O)Nc1ccc(O)cc1",
+        "nicotine: CN1CCCC1c1cccnc1",
+        "morphine: CN1CC[C@]23c4c5ccc(O)c4O[C@H]2[C@@H](O)C=C[C@H]3[C@H]1C5",
+        "codeine: CN1CC[C@]23c4c5ccc(OC)c4O[C@H]2[C@@H](O)C=C[C@H]3[C@H]1C5",
+        "diazepam: CN1C(=O)CN=C(c2ccccc2)c2cc(Cl)ccc12",
+        "penicillin G: CC1(C)S[C@@H]2[C@H](NC(=O)Cc3ccccc3)C(=O)N2[C@H]1C(=O)O",
+        "glucose: OC[C@H]1OC(O)[C@H](O)[C@@H](O)[C@@H]1O",
+        "cholesterol: CC(C)CCC[C@@H](C)[C@H]1CC[C@H]2[C@@H]3CC=C4C[C@@H](O)CC[C@]4(C)[C@H]3CC[C@]12C",
+        "atorvastatin: CC(C)c1c(C(=O)Nc2ccccc2)c(-c2ccccc2)c(-c2ccc(F)cc2)n1CC[C@@H](O)C[C@@H](O)CC(=O)O",
+        "cyclosporin A: CCC1C(=O)N(CC(=O)N(C(C(=O)NC(C(=O)N(C(C(=O)NC(C(=O)NC(C(=O)N(C(C(=O)N(C(C(=O)N(C(C(=O)N(C(C(=O)N1)C(C(C)CC=CC)O)C)C(C)C)C)CC(C)C)C)CC(C)C)C)C)C)CC(C)C)C)C(C)C)CC(C)C)C)C"
+      ]
+    }
+  ]
+}

@@ -4,7 +4,9 @@
 //   docs/site/player-data/<id>.json, index.json    each demo's real project, with
 //     its recorded run when harvest.py has one (player-data/assets/)
 // Needs web/node_modules and web/src/gen (`nix develop --command npm run gen` in web/).
-//   node docs/site/player/build.mjs
+//   node docs/site/player/build.mjs [--check]
+// --check writes nothing and fails when a generated file differs from what the sources give
+// (CI runs it with the Web UI: a change to web/src/model/canvasKit.ts and the like needs this rebuilt).
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -309,41 +311,87 @@ function scopedStyles() {
   return `.tp-root {${block(':root')}${block(':root[data-theme="dark"]')}}\n${rules}\n${canvas}\n${own}`
 }
 
+/** What svg.mjs reads a Card in Card's inner Workflow with. */
+export { readJson, readProject, flowOf, stepsFromRun, finalsFromRun }
+
 // ---- Main -------------------------------------------------------------------------------------
 
-if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
-  console.error('web/src/gen is missing: run `nix develop --command npm run gen` in web/ first')
-  process.exit(1)
+async function main() {
+
+  if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
+    console.error('web/src/gen is missing: run `nix develop --command npm run gen` in web/ first')
+    process.exit(1)
+  }
+
+  // Everything is produced in memory first: `--check` compares it with the files, otherwise it is written.
+  /** Path (from the repository root) -> contents of every generated file. */
+  const outputs = new Map()
+  const rel = (p) => path.relative(ROOT, p).split(path.sep).join('/')
+
+  const bundle = await esbuild.build({
+    entryPoints: [path.join(WEB, 'src', 'ui', 'demoPlayer.tsx')],
+    outfile: path.join(SITE, 'js', 'player.js'),
+    bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic', write: false,
+    nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
+    define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning',
+    // The site is in English: the player's strings (web/src/i18n.ts) from the start.
+    banner: { js: "globalThis.TSUGUMI_LANGUAGE = 'en';" },
+  })
+  outputs.set(rel(path.join(SITE, 'js', 'player.js')), bundle.outputFiles[0].text)
+  const css = await esbuild.transform(scopedStyles(), { loader: 'css', minify: true })
+  outputs.set(rel(path.join(SITE, 'player.css')), css.code)
+
+  const narrations = readJson(path.join(HERE, 'narration.json'))
+  const portsOf = readJson(path.join(ASSETS, 'ports.json'), {})
+  const guideDir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-guide-'))
+  writeGuideProject(guideDir)
+  const entries = [
+    ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
+    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → multiply of docs/CardGuide.md.', tags: ['Python', 'Guide'], root: guideDir },
+  ]
+  const index = []
+  const built = []
+  try {
+    for (const e of entries) {
+      const demo = buildDemo(e, e.root, portsOf, narrations)
+      outputs.set(rel(path.join(DATA, `${e.id}.json`)), JSON.stringify(demo))
+      built.push(demo)
+      index.push({ id: e.id, title: e.title, description: e.description, tags: demo.tags, draftOnly: demo.draftOnly, recorded: !!demo.run, outputs: Object.keys(demo.outputs) })
+    }
+  } finally {
+    fs.rmSync(guideDir, { recursive: true, force: true })
+  }
+  outputs.set(rel(path.join(DATA, 'index.json')), JSON.stringify({ demos: index }))
+
+  if (process.argv.includes('--check')) {
+    // Stale: the file differs from what the sources give. Stray: a <id>.json in player-data/ no demo produces any more.
+    const problems = []
+    for (const [file, text] of outputs) {
+      const abs = path.join(ROOT, file)
+      if (!fs.existsSync(abs)) problems.push(`missing: ${file}`)
+      else if (fs.readFileSync(abs, 'utf8') !== text) problems.push(`stale: ${file}`)
+    }
+    for (const f of fs.readdirSync(DATA)) {
+      if (f.endsWith('.json') && !outputs.has(rel(path.join(DATA, f)))) problems.push(`stray: ${rel(path.join(DATA, f))}`)
+    }
+    if (problems.length) {
+      console.error(`${problems.join('\n')}\nrun \`node docs/site/player/build.mjs\` (web/src/ui, web/src/model, web/src/styles, demos/ or this directory changed)`)
+      process.exit(1)
+    }
+    console.log(`up to date: player.js, player.css and ${outputs.size - 2} files of player-data/`)
+    process.exit(0)
+  }
+
+  fs.mkdirSync(DATA, { recursive: true })
+  for (const f of fs.readdirSync(DATA)) {
+    if (f.endsWith('.json') && !outputs.has(rel(path.join(DATA, f)))) fs.rmSync(path.join(DATA, f))
+  }
+  for (const [file, text] of outputs) fs.writeFileSync(path.join(ROOT, file), text)
+
+  const kb = (file) => `${(Buffer.byteLength(outputs.get(file)) / 1024).toFixed(0)} KB`
+  console.log(`player.js ${kb('docs/site/js/player.js')}, player.css ${kb('docs/site/player.css')}`)
+  for (const d of index) console.log(`${d.id}.json ${kb(`docs/site/player-data/${d.id}.json`)}${d.recorded ? `  recorded (${d.outputs.join(', ') || 'no display'})` : d.draftOnly ? '  Draft' : '  no recorded run'}`)
 }
 
-await esbuild.build({
-  entryPoints: [path.join(WEB, 'src', 'ui', 'demoPlayer.tsx')],
-  outfile: path.join(SITE, 'js', 'player.js'),
-  bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic',
-  nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
-  define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning',
-})
-const css = await esbuild.transform(scopedStyles(), { loader: 'css', minify: true })
-fs.writeFileSync(path.join(SITE, 'player.css'), css.code)
-
-const narrations = readJson(path.join(HERE, 'narration.json'))
-const portsOf = readJson(path.join(ASSETS, 'ports.json'), {})
-fs.mkdirSync(DATA, { recursive: true })
-const guideDir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-guide-'))
-writeGuideProject(guideDir)
-const entries = [
-  ...readJson(path.join(ROOT, 'demos', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', d.path) })),
-  { id: 'card-guide', title: 'Card を手で書く', description: 'docs/CardGuide.md の start → settings → multiply。', tags: ['Python', 'ガイド'], root: guideDir },
-]
-const index = []
-for (const e of entries) {
-  const demo = buildDemo(e, e.root, portsOf, narrations)
-  fs.writeFileSync(path.join(DATA, `${e.id}.json`), JSON.stringify(demo))
-  index.push({ id: e.id, title: e.title, description: e.description, tags: demo.tags, draftOnly: demo.draftOnly, recorded: !!demo.run, outputs: Object.keys(demo.outputs) })
-}
-fs.rmSync(guideDir, { recursive: true, force: true })
-fs.writeFileSync(path.join(DATA, 'index.json'), JSON.stringify({ demos: index }))
-
-const kb = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`
-console.log(`player.js ${kb(path.join(SITE, 'js', 'player.js'))}, player.css ${kb(path.join(SITE, 'player.css'))}`)
-for (const d of index) console.log(`${d.id}.json ${kb(path.join(DATA, `${d.id}.json`))}${d.recorded ? `  recorded (${d.outputs.join(', ') || 'no display'})` : d.draftOnly ? '  Draft' : '  no recorded run'}`)
+// Imported (svg.mjs) only for its readers above.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

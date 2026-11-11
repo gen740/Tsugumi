@@ -7,6 +7,11 @@ Used only by the app's editor for syntax colors (not by Cards or SDKs).
 - TreeSitterPython: `src/` copied from github.com/tree-sitter/tree-sitter-python
   v0.25.0 (MIT, LICENSE); its Swift package does not build its scanner when
   used as a dependency.
+- TreeSitterJuliaScanner: only `src/scanner.c` (and the `parser.h` it includes)
+  of github.com/tree-sitter/tree-sitter-julia v0.25.0 (MIT, LICENSE). The
+  grammar itself, with its 23 MB `parser.c`, is the SwiftPM dependency; its
+  manifest adds `src/scanner.c` only when the working directory has one, which
+  it does not when SwiftPM evaluates it, so the link failed without this.
 - TreeSitterFBS: FlatBuffers schemas, written here (`grammar.js`). After
   changing it, regenerate `src/` in that folder with
   `nix shell nixpkgs#tree-sitter nixpkgs#nodejs -c tree-sitter generate`.

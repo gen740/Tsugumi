@@ -1,0 +1,15 @@
+{
+  "template": "fork",
+  "params": [
+    {
+      "name": "branches",
+      "type": "string[]",
+      "data": [
+        "cpp",
+        "python",
+        "julia",
+        "r"
+      ]
+    }
+  ]
+}

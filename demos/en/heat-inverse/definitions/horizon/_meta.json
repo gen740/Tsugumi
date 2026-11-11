@@ -1,0 +1,5 @@
+{
+  "description": "A late measurement loses details",
+  "content": "With the same rod and the same noise, measures at different times, recovers each by the discrepancy principle and lays it next to the truth. Also shows the error and the number of modes left above the noise.",
+  "outputs": []
+}

@@ -3,10 +3,12 @@ import SwiftUI
 import TsugumiRPC
 
 /// Home (new, existing and recent projects) and the demo list, entered
-/// from "デモを見る" with a way back. Both follow the window's size: lists
+/// from "Browse Demos" with a way back. Both follow the window's size: lists
 /// scroll, nothing is cut at the top.
 struct ProjectChooser: View {
   @Environment(AppModel.self) private var model
+  /// The main window this Home is in.
+  @Bindable var workspace: Workspace
   let onOpen: (URL) -> Void
   @State private var showDemos = false
   @State private var newName = ""
@@ -107,10 +109,10 @@ struct ProjectChooser: View {
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .ignoresSafeArea(.container, edges: .top)
     .sheet(isPresented: $showNew) { newProjectSheet }
-    .onChange(of: model.requestNewProject, initial: true) { _, asked in
+    .onChange(of: workspace.requestNewProject, initial: true) { _, asked in
       if asked {
         showNew = true
-        model.requestNewProject = false
+        workspace.requestNewProject = false
       }
     }
   }
@@ -283,7 +285,7 @@ struct ProjectChooser: View {
   }
 }
 
-/// "たった今", "5 分前", "3 時間前", "2 日前": no seconds that tick.
+/// "Just now", "5 min ago", "3 h ago", "2 days ago": no seconds that tick.
 func relativeAge(_ date: Date, now: Date = Date()) -> String {
   let s = max(0, now.timeIntervalSince(date))
   if s < 60 { return String(localized: "たった今") }
@@ -344,6 +346,7 @@ private struct HomeSidebar: View {
           .guideTarget("new_project")
         Button(action: onOpen) { Label("既存のプロジェクトを開く…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
           .controlSize(.large)
+          .guideTarget("open_project")
         Button { showDemos.toggle() } label: {
           Label(showDemos ? "最近のプロジェクト" : "デモを見る", systemImage: showDemos ? "clock" : "sparkles")
         }
@@ -362,7 +365,7 @@ private struct HomeSidebar: View {
   }
 }
 
-/// Home: the documents, read with their figures (the same window as Help > Tsugumi を知る).
+/// Home: the documents, read with their figures (the same window as Help > Learn about Tsugumi).
 private struct OpenExplainerLink: View {
   @Environment(\.openWindow) private var openWindow
   var body: some View {
@@ -400,7 +403,9 @@ private struct DemoCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
       Text(demo.title).font(.headline)
       Text(demo.description).font(.callout).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 4) {
+      // Tags wrap onto further lines: in one row, a demo with many tags had
+      // each squeezed into a column a few letters wide.
+      GuideFlow(spacing: 4) {
         ForEach(demo.tags, id: \.self) { t in
           Text(t).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill(TsugumiPalette.olive.opacity(0.25)))

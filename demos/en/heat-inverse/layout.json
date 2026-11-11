@@ -1,0 +1,101 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 260,
+      "y": 0
+    },
+    "forward": {
+      "x": 540,
+      "y": 0
+    },
+    "share": {
+      "x": 1340,
+      "y": 0
+    },
+    "spectrum": {
+      "x": 1580,
+      "y": -836
+    },
+    "naive": {
+      "x": 1580,
+      "y": -442
+    },
+    "tikhonov": {
+      "x": 1580,
+      "y": -18
+    },
+    "reconstruct": {
+      "x": 1860,
+      "y": 386
+    },
+    "horizon": {
+      "x": 1580,
+      "y": 790
+    },
+    "check": {
+      "x": 1580,
+      "y": 1434
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## An inverse problem in heat conduction\n\nThe problem of finding a rod's initial temperature from its temperature at a later time. The data is **made up**, with random noise added.\n\n$$u_t=\\alpha u_{xx},\\quad u(x,T)=\\sum_k e^{-\\alpha\\lambda_k T}\\langle u_0,\\phi_k\\rangle\\phi_k$$\n\nThe finer a mode, the faster it vanishes as $e^{-\\alpha\\lambda_k T}$, so solving backwards amplifies the noise by the same factor (**naive**). Tikhonov regularisation damps the components of small singular values.\n\n$$\\min_u\\ \\|Au-d\\|^2+\\lambda^2\\|u\\|^2,\\quad \\hat u=\\sum_k\\frac{\\sigma_k}{\\sigma_k^2+\\lambda^2}(u_k^{\\mathsf T}d)\\,v_k$$\n\n$\\lambda$ is chosen by the discrepancy principle $\\|A\\hat u-d\\|\\approx\\sigma_{\\rm noise}\\sqrt{n}$ or at the corner of the L-curve (**tikhonov**). The \"closest $\\lambda$\", which needs the truth, is only for comparison.\n\nTry final_time and noise of **settings**, and lambda of **reconstruct**. **horizon** shows the details lost by measuring late.\n\nThe size of the noise is taken as known. On this grid the vanished modes cannot be recovered, and the recovery is \"one solution consistent with the measurements\".\n",
+      "x": -40,
+      "y": -640,
+      "width": 780,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "forward": {
+      "x": 540,
+      "y": 170,
+      "width": 740,
+      "height": 400
+    },
+    "spectrum": {
+      "x": 2140,
+      "y": -860,
+      "width": 810,
+      "height": 370
+    },
+    "naive": {
+      "x": 2140,
+      "y": -466,
+      "width": 810,
+      "height": 400
+    },
+    "tikhonov": {
+      "x": 2140,
+      "y": -42,
+      "width": 880,
+      "height": 380
+    },
+    "reconstruct": {
+      "x": 2140,
+      "y": 362,
+      "width": 840,
+      "height": 380
+    },
+    "horizon": {
+      "x": 2140,
+      "y": 766,
+      "width": 850,
+      "height": 620
+    },
+    "check": {
+      "x": 2140,
+      "y": 1410,
+      "width": 800,
+      "height": 300
+    }
+  }
+}

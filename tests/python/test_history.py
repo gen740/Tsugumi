@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 
 from conftest import Daemon
-from projects import FILE_FBS, card, conn, run_and_wait, write
+from projects import FILE_FBS, builtin_project, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 BIG = "".join(f"line {i:05d} 日本語テキスト\n" for i in range(20000))  # ~ 600 KB
@@ -140,5 +141,27 @@ def test_past_invocations_keep_their_own_state(tmp_path):
         r2 = c.call("RunRecordRequest", runId=run2, card=path("src"))
         assert text(r1.run.status.runId) == run1 and text(r2.run.status.runId) == run2
         assert r1.record.summary.endedAt <= r2.record.summary.startedAt
+    finally:
+        d.cleanup()
+
+
+def test_a_client_opening_later_gets_each_cards_latest_invocation(tmp_path):
+    """Nobody is told again what a finished run did: a client that opens the
+    project afterwards asks, in one request, and restores its Cards from that."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        run_id, status = run_and_wait(c, ["src"])
+        assert status.state == RunState.succeeded
+        page = c.call("RunLatestInvocationsRequest", runId=run_id)
+        got = {"/".join(text(s) for s in r.card.segments): r for r in page.records}
+        assert len(got) == len(page.records), "one record per Card"
+        assert "src" in got and got["src"].state == CardState.succeeded and got["src"].invocation == 1
+        with pytest.raises(RpcFailure) as e:
+            c.call("RunLatestInvocationsRequest", runId=new_id())
+        assert e.value.kind == "not_found"
     finally:
         d.cleanup()

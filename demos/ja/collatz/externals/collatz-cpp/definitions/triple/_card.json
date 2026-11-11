@@ -1,0 +1,9 @@
+{
+  "language": "cpp",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "maxRuns": 100000
+}

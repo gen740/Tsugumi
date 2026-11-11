@@ -1,92 +1,92 @@
-# Tsugumi の構想と応用
+# Vision and applications
 
-**人と AI が同じ処理を見ながら、問いを深め、仕事を育て続ける。**
-Tsugumi は研究のために作り始めましたが、この課題は AI と協働する多くの仕事に共通しています。
+**People and AI looking at the same processing, deepening the questions and growing the work together.**
+Tsugumi was started for research, but the problem is common to much of the work done together with AI.
 
-AI に作業を任せるとき、最初の指示だけでこちらの意図をすべて伝え切るのは困難です。
-出てきた結果を見て初めて気づく前提もあれば、途中の処理だけ差し替えたくなることもあります。
-「この前提は守ってほしい」「この部分だけを変えたい」「このデータには触れないでほしい」——。
-そうした意思を具体的な処理と結びつけ、人と AI が確かめながら共有できる足場が必要です。
+When you hand work to AI, it is hard to get your whole intention across in the first instruction.
+Some assumptions you only notice once you see the result; sometimes you want to replace just one step in the middle.
+"Keep this assumption." "Change only this part." "Don't touch this data."
+What is needed is a foothold where such intentions are tied to concrete processing and shared by people and AI as they check.
 
-**処理の流れそのものを、対話の共通言語にする。**
-Card の説明で意図を伝え、型付きの入出力で境界を示し、コードと実行結果で実際の振る舞いを確かめる。
-この仕組みを、研究から教育・エンジニアリング・日々の業務へと広げていく構想をまとめています。
+**The flow of processing itself as the common language of the conversation.**
+Convey the intention in a Card's description, show its boundary with typed inputs and outputs, and check the actual behaviour with the code and the results.
+This page gathers the idea of extending this from research to education, engineering and everyday work.
 
-## 研究の判断を、動かして学べる教材にする
+## Turning research decisions into teaching material you can run
 
-研究を学ぶ人が本当に知りたいのは、完成したグラフや論文の背後にある「判断の積み重ね」です。
-なぜこのデータを選び、この前処理を施し、この条件で比較したのか。
-最終的に残ったスクリプト1本を渡されるだけでは、そうした意図や棄却された試行錯誤までは伝わりません。
+What people learning research really want to know is the accumulation of decisions behind a finished graph or paper.
+Why this data was chosen, why this preprocessing was applied, why the comparison was made under these conditions.
+Handed only the one script that survived at the end, they receive neither those intentions nor the trial and error that was rejected.
 
-処理を Card ごとに分け、説明や付箋に目的・前提を書き添えておけば、指導する人と学ぶ人が同じ構造を見ながら議論できます。
-学ぶ側は入力やパラメータを自分で変え、結果がどう変化するかをその場で実行して確かめられます。
-指導する側も、どのステップで前提の理解が食い違ったのかを具体的にたどれます。
+If the processing is split into Cards, with purposes and assumptions written in their descriptions and on sticky notes, the person teaching and the person learning can discuss while looking at the same structure.
+The learner can change inputs and parameters and run them on the spot to see how the results change.
+The teacher can follow concretely at which step the understanding of an assumption diverged.
 
-例えば、観測データから背景ノイズを差し引く処理と、その後のモデルへのフィッティングを別の Card に分ける。
-そして背景の推定方法だけを差し替え、最終的な結論がどれほど影響を受けるかを比べる。
-そうした往復を通じて、単なる手順の模倣ではなく、「なぜその解析を行うのか」を自分の手で確かめながら学べる生きた教材になります。
+For example, split the subtraction of background noise from observations and the fit of a model that follows into separate Cards.
+Then replace only the method of estimating the background and compare how much the final conclusion is affected.
+Through this back-and-forth, the material becomes something alive: not imitation of a procedure, but learning "why this analysis is done" by checking it with your own hands.
 
-**条件を変えて確かめることが、研究の判断を学ぶことにつながる。**
-そのために、処理の目的や採用した理由を Card の説明や付箋に残し、実行できる手順と結びつけます。学ぶ人が自分で試した結果を持ち寄れば、次の議論も具体的な処理から始められます。
+**Changing conditions and checking leads to learning the decisions of research.**
+For that, the purpose of each step and the reason it was adopted are kept in Card descriptions and sticky notes, tied to steps that can be run. When learners bring the results they tried themselves, the next discussion can start from concrete processing too.
 
-関連する機能：[操作ガイド](usage.md)、[Card と Workflow](features.md#2-card-と-workflow)、[実行履歴と成果物](features.md#6-実行履歴と成果物)
+Related: [Usage](usage.md), [Cards and Workflows](features.md#2-cards-and-workflows), [Run history and artifacts](features.md#6-run-history-and-artifacts)
 
-## AI と作ったツールを、理解して育て続ける
+## Understanding and growing the tools you made with AI
 
-Vibe coding で素早く作った便利なツールが、いつの間にかブラックボックスになり、怖くて手を入れられなくなっていませんか。
-あるいは、少し条件が違うだけの用途のために、似たようなツールを何度も一から AI に作らせていないでしょうか。
+Has a handy tool you made quickly by vibe coding turned into a black box that you are afraid to touch?
+Or do you have AI build a similar tool from scratch, again and again, for uses that differ only slightly?
 
-例えば「ファイルを読む → 整形する → 集計する → レポートに出力する」というパイプラインなら、出力形式を変えるために手を入れるべきなのは最後のステップだけです。
-処理の境界が Card とポートの型で明確に分かれていれば、AI に依頼する変更範囲も、人間がレビューすべき範囲も最小限に絞れます。
-書き換えた Card に保存済みの入力を流し込み、出力を確かめてから全体の Workflow へ戻すことができます。
+In a pipeline like "read files → clean them → aggregate → write a report", only the last step needs work to change the output format.
+If the boundaries of the processing are clearly separated by Cards and the types of their ports, both the scope of the change you ask AI for and the scope a person must review can be kept to a minimum.
+You can feed saved inputs into the rewritten Card, check its output, and then return to the whole Workflow.
 
-さらに Tsugumi では、まとまった処理を子 Workflow（Card in Card）として扱い、他のプロジェクトからも定義を取り込んで組み合わせることができます。
-**一度作った処理を、確かめながら次の用途へ育てる。**
-変更する箇所と、その影響が届く先を同じ Workflow で見渡し、必要な部品を組み替えて使い続けることが、エンジニアリングにおける Tsugumi の狙いです。
+In Tsugumi, a coherent piece of processing can also be handled as a child Workflow (a Card in a Card), and definitions can be imported from other projects and combined.
+**Grow what you made once into the next use, checking as you go.**
+Surveying, in one Workflow, what you change and how far the effect reaches, and recombining the parts you need to keep using them: that is Tsugumi's aim in engineering.
 
-関連する機能：[Card の編集と結果の確認](ui-view.md#card-の編集と結果の確認)、[Card と Workflow](features.md#2-card-と-workflow)
+Related: [UI (the workbench)](features.md#8-ui-the-workbench), [Cards and Workflows](features.md#2-cards-and-workflows)
 
-## 業務自動化とデータの境界
+## Business automation and the data boundary
 
-日々の定型業務を AI で自動化したい。けれど、その相談をするために実際の顧客情報や未公開の社内資料まで外部の AI に渡してしまってよいのか。
-プロンプトで「この情報にはアクセスしないで」と指示するだけで、本当に十分と言えるでしょうか。
+You want to automate routine work with AI. But to discuss it, is it all right to hand real customer information or unpublished internal documents to an outside AI?
+Is telling the prompt "don't access this information" really enough?
 
-目指しているのは、**AI と相談しながら処理を作る領域**と、**実際の機密データを使って処理を実行する領域**を、仕組みとして明確に分離することです。
-例えば、ダミーの明細データと入出力の型定義だけを使って AI に集計ロジックを実装させ、本番データでの実行は外部通信を遮断した隔離環境で行う。
-AI にフィードバックする情報も、生データではなく検証に必要な統計量やエラー構造だけに限定する。
-そのためには、データの流れを可視化するだけでなく、読み取り権限と外部送信の範囲をシステム側で強制できなければなりません。
+The aim is to separate, as a mechanism, **the area where you build processing while consulting AI** from **the area where the processing runs on real confidential data**.
+For example, have AI implement the aggregation logic using only dummy records and the type definitions of the inputs and outputs, and run it on production data in an isolated environment with outside communication cut off.
+Limit what is fed back to the AI, too, to the statistics and error structure needed for checking, not raw data.
+For that, it is not enough to visualise the flow of data; the system has to be able to enforce read permissions and the extent of outside transmission.
 
-現在の Tsugumi には、Linux VM と bubblewrap による Card ごとの隔離、およびデフォルトでのネットワーク遮断が備わっています。
-一方で、Agent がツール経由で読み取ったソースコード・ログ・入出力値などは、接続先の LLM プロバイダへ送信されます。
-**現時点では、機密データを Agent から自動的に秘匿・マスキングして外部送信を防ぐ仕組みまでは完成していません。**
-業務自動化へ本格的に広げるうえで、このデータ境界を型や権限として設計に組み込むことが次の重要な課題です。
+Tsugumi today has per-Card isolation with a Linux VM and bubblewrap, and the network cut off by default.
+On the other hand, the source code, logs and input and output values the Agent reads through its tools are sent to the connected LLM provider.
+**There is not yet a mechanism that automatically hides or masks confidential data from the Agent to prevent it from being sent.**
+Building this data boundary into the design as types and permissions is the next important problem before extending to business automation in earnest.
 
-現在の動作：[セキュリティと隔離](security.md)、[モデルに送られるもの](security.md#モデルに送られるもの)
+How it works today: [Security and isolation](security.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
 
-## 次の人が、動かして確かめられる形で仕事を渡す
+## Handing work to the next person in a form they can run and check
 
-「自動化した本人が異動すると、中で何をしているのか誰も分からなくなる」
-「引き継ぎ用の手順書はあるが、実際に動いているスクリプトと一致しているか確かめられない」
+"When the person who automated it moves on, nobody knows what it does inside."
+"There is a handover document, but no way to check that it matches the script that is actually running."
 
-こうした属人化の問題に対しても、処理の意図と実行可能な環境を一体として残すアプローチが有効です。
+For problems of work tied to one person, an approach that keeps the intention of the processing and an environment that can run it together is effective.
 
-Tsugumi のプロジェクトは、処理の定義・ソースコード・配置情報（`layout.json`）からなる通常のフォルダであり、そのまま Git で管理できます。
-設定に応じて実行履歴（`.tsugumi/runs.sqlite`）や成果物もプロジェクトと一緒に持ち運べるため、引き継いだ人が過去の実行結果をたどり、条件を変えて試すための材料がそのまま揃います。
+A Tsugumi project is an ordinary folder of the processing's definitions, source code and layout (`layout.json`), and can be managed with Git as it is.
+Depending on the settings, the run history (`.tsugumi/runs.sqlite`) and artifacts travel with the project, so the person taking over has the material to follow past runs and try other conditions.
 
-例えば毎月の集計業務を引き継ぐとき、入力データの前提、例外処理のルール、確認すべき出力を Card ごとに分けて記述しておく。
-次の担当者は、そのグラフ構造を見ながら AI に変更を相談し、保存済みの最新入力で部分実行を試したうえで、Workflow 全体を通して結果を検証できます。
-**仕事の引き継ぎを、次の人の試行錯誤の出発点にする。**
-前任者の意図を読み、自分で条件を変えて確かめられることが、理解して改善を続けるための土台になります。
+For example, when handing over a monthly aggregation, describe the assumptions about the input data, the rules for exceptions and the outputs to check, Card by Card.
+The next person can discuss changes with AI while looking at that graph, try partial runs with the latest saved inputs, and then check the results through the whole Workflow.
+**Make handing over work the starting point of the next person's trial and error.**
+Being able to read the predecessor's intentions and check by changing conditions yourself is the foundation for understanding and continuing to improve.
 
-関連する機能：[文書と保存](features.md#5-文書と保存)、[実行履歴と成果物](features.md#6-実行履歴と成果物)
+Related: [Documents and saving](features.md#5-documents-and-saving), [Run history and artifacts](features.md#6-run-history-and-artifacts)
 
-## 人と AI が、同じ仕事の構造を共有する未来へ
+## Towards people and AI sharing the structure of the same work
 
-これらすべての応用に共通しているのは、**人間が意図を持ち、AI に実装や試行を任せ、いつでもその過程に立ち戻って判断できる**という関係です。
-Tsugumi はその往復を、Card・型・コード・実行記録という具体的な手触りのある対象の上で実現します。
+What all these applications share is a relationship in which **people hold the intention, hand implementation and trials to AI, and can always return to the process to judge**.
+Tsugumi realises that back-and-forth on tangible things: Cards, types, code and run records.
 
-研究はその出発点です。
-**人と AI が同じ仕事の構造を見つめながら、学び、試し、ともに改善していける基盤へ。**
-ここに描いた構想を、一つずつ実際の体験として育てていきます。
+Research is the starting point.
+**Towards a foundation where people and AI learn, try and improve together while looking at the structure of the same work.**
+We will grow the ideas described here, one at a time, into real experience.
 
-[README に戻る](../index.md#処理の流れそのものを人と-ai-の共通言語にする)
+[Back to the README](../index.md#the-flow-of-processing-as-a-common-language-for-people-and-ai)

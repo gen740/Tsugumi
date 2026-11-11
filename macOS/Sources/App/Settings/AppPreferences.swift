@@ -140,10 +140,16 @@ final class AppPreferences {
   static let shared = AppPreferences()
   @ObservationIgnored private let d = UserDefaults.standard
 
+  /// The app's language: Japanese unless English is chosen, whatever the
+  /// system's. It is also what tsugumid writes into a project's git (the
+  /// SessionHello's language, RPCClient) and the Web UI's on this Mac.
   enum Language: String, CaseIterable, Identifiable {
-    case system, ja, en
+    case ja, en
     var id: String { rawValue }
-    var label: String { self == .system ? String(localized: "システムに従う") : (self == .ja ? String(localized: "日本語") : "English") }
+    var label: String { self == .ja ? "日本語" : "English" }
+    /// The language this process shows (the one at launch: a change waits
+    /// for the next one). The demos are in demos/<it>.
+    static var running: Language { Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true ? .en : .ja }
   }
 
   enum Theme: String, CaseIterable, Identifiable {
@@ -187,7 +193,7 @@ final class AppPreferences {
   var flowDirection: FlowDirection { didSet { d.set(flowDirection.rawValue, forKey: "canvas.flow") } }
   var tsugumiMotion: Motion { didSet { d.set(tsugumiMotion.rawValue, forKey: "app.tsugumiMotion") } }
 
-  /// The bird stays still: as set here, or by default as macOS "Reduce motion" (視差効果を減らす).
+  /// The bird stays still: as set here, or by default as macOS "Reduce motion".
   func tsugumiStill(reduceMotion: Bool) -> Bool {
     switch tsugumiMotion {
     case .system: return reduceMotion
@@ -202,7 +208,7 @@ final class AppPreferences {
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
   init() {
-    language = Language(rawValue: d.string(forKey: "app.language") ?? "") ?? .system
+    language = Language(rawValue: d.string(forKey: "app.language") ?? "") ?? .ja
     maxConcurrency = d.object(forKey: "run.maxConcurrency") as? Int ?? 4
     sendKey = SendKey(rawValue: d.string(forKey: "chat.sendKey") ?? "") ?? .returnKey
     theme = Theme(rawValue: d.string(forKey: "app.theme") ?? "") ?? .system
@@ -227,6 +233,7 @@ final class AppPreferences {
     } else {
       skillFolders = []
     }
+    applyLanguage()
   }
 
   func shortcut(_ a: ShortcutAction) -> KeyBinding { shortcuts[a] ?? a.defaultKey }
@@ -254,8 +261,10 @@ final class AppPreferences {
   }
 
   /// The language takes effect at the next launch (standard macOS behavior).
+  /// Applied when the preferences load too (TsugumiApp's first property, before
+  /// any string is localized), so a first launch is in Japanese.
   private func applyLanguage() {
-    if language == .system { d.removeObject(forKey: "AppleLanguages") } else { d.set([language.rawValue], forKey: "AppleLanguages") }
+    if d.stringArray(forKey: "AppleLanguages") != [language.rawValue] { d.set([language.rawValue], forKey: "AppleLanguages") }
   }
 }
 

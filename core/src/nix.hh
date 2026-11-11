@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "nix_eval.hh"
 #include "graph.hh"
 #include "model.hh"
 
@@ -27,6 +28,12 @@ struct CardBuild {
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
+  // The program the kernel runs the Card's binaries with (binfmt_misc), for a
+  // Card built for another system; "" when it runs natively.
+  std::string emulator;
+  // The worker that loads a package of another system, built with the Card's
+  // nixpkgs for that system; "" for tsugumid's own worker.
+  std::string worker;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
 };
@@ -83,6 +90,8 @@ class NixRunner {
   std::optional<std::string> sdk_file(const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
+  // A flake to opt in to, as the settings ask for it: a flake reference or a GitHub page's URL.
+  FlakeInfo resolve_flake(const std::string& ref);
   bool available() const { return true; }
 
  private:

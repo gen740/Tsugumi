@@ -1,0 +1,9 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "arrival"
+    }
+  ],
+  "maxRuns": 100000
+}

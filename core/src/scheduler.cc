@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <flatbuffers/reflection.h>
@@ -275,6 +276,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return summary_.status;
   }
 
+  std::string note_summary() {
+    std::lock_guard<std::mutex> l(mu_);
+    return note_summary_;
+  }
+
   RunStatusData request_cancel(bool interrupted) {
     std::lock_guard<std::mutex> l(mu_);
     // Once finalize() has taken the final status it is on its way to the history:
@@ -307,6 +313,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t invocations = 0;
     bool running = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
+    bool saved_inputs = false;  // some of its inputs are saved values, not this run's
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
     std::optional<CardBuild> build;
@@ -468,6 +475,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       t.from_inv = last->invocation;
       t.seq = ++token_seq_;
       n.queues[port].push_back(std::move(t));
+      n.saved_inputs = true;
       // No Card of this run sent it: the record says where it comes from.
       seed_notes_.push_back(path_key(n.node->path) + "." + port + " uses the saved value from run " +
                             (one ? one->run_id : last->run_id) + ", invocation " +
@@ -521,6 +529,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           }
         }
         w.from_saved = true;
+        n.saved_inputs = true;
         for (auto& v : last->inputs) {
           if (v.kind != PortKind::FlatBuffer) {
             auto p = path_value(v);
@@ -782,6 +791,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.stages = done.stages;
       rec.summary.outputs_sent = done.outputs_sent;
       rec.summary.worker_reused = done.worker_reused;
+      rec.summary.emulator = done.emulator;
       try {
         History& h = svc_.history();
         h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
@@ -1148,6 +1158,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       stage_begin(s, Phase::build, StageOutcome::reused);
     }
     s.build_cached = rt.build->cached;
+    s.emulator = rt.build->emulator;
     stage_begin(s, Phase::execute);
     card_status(s);
     set_state(RunState::running);
@@ -1156,7 +1167,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<uid_t> uid;
     if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
     WorkerSpawn sp;
-    sp.worker_binary = svc_.options().worker_binary.string();
+    // A package of another system is loaded by the worker its build made for
+    // that system, which the kernel runs under the emulator.
+    sp.worker_binary = rt.build->worker.empty() ? svc_.options().worker_binary.string() : rt.build->worker;
     sp.bash = TSUGUMI_BASH;
     sp.build = *rt.build;
     sp.sandbox = node.settings.sandbox;
@@ -1165,6 +1178,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Every File / Directory input lives in these trees: one set of binds
     // serves any input, so the worker is reused whatever the paths.
     sp.ro_paths = {(svc_.store().state_dir() / "runs").string(), (svc_.store().state_dir() / "inputs").string()};
+    // Another system's binaries run with the emulator the kernel opened when it
+    // was registered; Rosetta also reads its own folder while it runs.
+    if (const auto& e = rt.build->emulator; !e.empty() && !e.starts_with("/nix/store/"))
+      sp.ro_paths.push_back(stdfs::path(e).parent_path().string());
     if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
     sp.hidden_paths.push_back(svc_.store().state_dir().string());
     sp.network = node.settings.network;
@@ -1184,7 +1201,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // The resident worker of this Card, if it runs the same build under the same conditions.
     std::string key = rt.build->package.value_or("") + "|" + rt.build->bash.value_or("") + "|" + rt.build->pre_run +
                       "|" + rt.build->post_run + "|" + (sp.sandbox ? "s" : "u") + "|" +
-                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-");
+                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary;
     for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
     std::string card_key = path_key(node.path);
     auto lease = svc_.workers().acquire(card_key, key, sp, rt.node->settings.reuse_worker);
@@ -1239,7 +1256,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         {"TSUGUMI_CARD", path_key(node.path)},
         {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
         {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
-        {"TSUGUMI_WORKER", svc_.options().worker_binary.string()},
+        {"TSUGUMI_WORKER", sp.worker_binary},
     };
     std::optional<uint64_t> deadline_ms;
     std::optional<std::chrono::steady_clock::time_point> deadline;
@@ -1282,6 +1299,47 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   // ---- convergence ------------------------------------------------------------
+
+  // One line for the note of the run's commit, from what this run did rather
+  // than what it planned. Failure messages and logs stay out of git, as the
+  // outputs do: they are in the run's record.
+  std::string describe(const std::vector<CardState>& final) const {
+    const auto& res = *doc_->resolution;
+    const Node* target = res.find(p_.card);
+    const bool whole = p_.card.empty() || (p_.propagate && target && target->kind == Template::Trigger);
+    std::vector<std::string> ran;
+    std::vector<std::string> failed;
+    std::vector<std::string> never;
+    bool saved = false;
+    const bool en = p_.english;
+    for (const auto& n : nodes_) {
+      if (!n.in_targets || n.node->is_virtual) continue;
+      const std::string key = path_key(n.node->path);
+      // The trigger of a whole run only starts it.
+      if (n.invocations > 0 && !(whole && n.node->kind == Template::Trigger)) {
+        ran.push_back(n.invocations > 1 ? key + " ×" + std::to_string(n.invocations) : key);
+        saved |= n.saved_inputs;
+      }
+      if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
+        failed.push_back(key + (en ? " (" : "（") + failure_kind_name(n.last_failure->kind) + (en ? ")" : "）"));
+      else if (n.invocations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
+        never.push_back(key);
+    }
+    auto names = [en](const std::vector<std::string>& v) {
+      constexpr size_t kShown = 6;
+      std::string s;
+      for (size_t i = 0; i < std::min(v.size(), kShown); ++i) s += (i ? (en ? ", " : "、") : "") + v[i];
+      if (v.size() > kShown) s += (en ? " and " + std::to_string(v.size() - kShown) + " more" : " ほか " + std::to_string(v.size() - kShown));
+      return s;
+    };
+    std::string out = en ? (whole ? "whole" : (p_.propagate ? "from " : "only ") + path_key(p_.card))
+                         : (whole ? "全体" : path_key(p_.card) + (p_.propagate ? " から" : " だけ"));
+    if (saved) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
+    if (!ran.empty()) out += ": " + names(ran);
+    if (!failed.empty()) out += (en ? " / failed: " : " / 失敗: ") + names(failed);
+    if (!never.empty()) out += (en ? " / not run: " : " / 未実行: ") + names(never);
+    return out;
+  }
 
   void finalize() {
     const auto& res = *doc_->resolution;
@@ -1352,6 +1410,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard<std::mutex> l(mu_);
       finishing_ = true;
       sum = summary_;
+      note_summary_ = describe(final);
     }
     auto& st = sum.status;
     if (cancel_ && interrupted_) {
@@ -1408,6 +1467,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   DocumentPtr doc_;
   RunParams p_;
   RunSummaryData summary_;
+  std::string note_summary_;  // what ran (describe), for the commit's note
   std::string run_id_;
   stdfs::path run_dir_;
   std::thread thread_;
@@ -1676,13 +1736,95 @@ RunStatusData Scheduler::cancel(const std::string& run_id) {
 void Scheduler::publish_display(const DisplayData& d) {
   {
     std::lock_guard<std::mutex> l(mu_);
-    displays_[path_key(d.card)] = d;
+    auto k = path_key(d.card);
+    displays_[k] = d;
+    gone_.erase(k);
+    no_display_.erase(k);
   }
   svc_.server()->broadcast(display_note(d));
 }
 
+namespace {
+
+// What a Card is made of: its settings (whatever the spacing of their JSON, a
+// client writes its own) and the files of its definition folder.
+std::string card_content(const Document& doc, const Node& n) {
+  std::string out;
+  if (n.def_dir.empty()) return out;
+  if (n.project_dir.empty()) {
+    if (auto d = doc.definitions.find(n.path.back()); d != doc.definitions.end()) {
+      bool quoted = false, escaped = false;
+      for (char c : d->second.card_json) {
+        if (escaped) escaped = false;
+        else if (quoted && c == '\\') escaped = true;
+        else if (c == '"') quoted = !quoted;
+        else if (!quoted && (c == ' ' || c == '\n' || c == '\t' || c == '\r')) continue;
+        out += c;
+      }
+    }
+  }
+  for (auto s = doc.sources.lower_bound(n.def_dir); s != doc.sources.end() && s->first.starts_with(n.def_dir); ++s) {
+    out += '\0' + s->first + '\0' + s->second.hash;
+  }
+  return out;
+}
+
+}  // namespace
+
+void Scheduler::document_changed(const Document& before, const Document& after,
+                                 const std::vector<std::pair<std::string, std::string>>& renamed) {
+  if (!before.resolution || !after.resolution) return;
+  if (before.resolution == after.resolution && renamed.empty()) return;
+  auto inside = [](const std::string& k, const std::string& card) { return k == card || k.starts_with(card + "/"); };
+  std::lock_guard<std::mutex> l(mu_);
+  for (const auto& [from, to] : renamed) {
+    auto moved = [&, &from = from, &to = to](const std::string& k) { return to + k.substr(from.size()); };
+    // What a Card that left had is not this Card's. The history has just given
+    // it the new name, so that is not asked either.
+    std::vector<std::string> left, blocked;
+    for (const auto& [k, content] : gone_)
+      if (inside(k, from)) left.push_back(k);
+    for (const auto& k : no_display_)
+      if (inside(k, from)) blocked.push_back(k);
+    for (const auto& k : left) no_display_.insert(moved(k));
+    for (const auto& k : blocked) {
+      no_display_.erase(k);
+      no_display_.insert(moved(k));
+    }
+    std::vector<std::string> keys;
+    for (const auto& [k, d] : displays_)
+      if (inside(k, from) && !gone_.count(k)) keys.push_back(k);
+    for (const auto& k : keys) {
+      auto n = displays_.extract(k);
+      auto t = moved(k);
+      n.mapped().card = path_from_key(t);
+      displays_[t] = std::move(n.mapped());
+      gone_.erase(t);
+      no_display_.erase(t);
+    }
+  }
+  for (const auto& n : before.resolution->nodes) {
+    if (after.resolution->find(n.path)) continue;
+    auto k = path_key(n.path);
+    if (std::any_of(renamed.begin(), renamed.end(), [&](const auto& r) { return inside(k, r.first); })) continue;
+    // The first Card that left: an undo goes back through the ones that followed it.
+    gone_.try_emplace(k, card_content(before, n));
+  }
+}
+
 std::optional<Note> Scheduler::latest_display_note(const std::string& card_key) {
   std::lock_guard<std::mutex> l(mu_);
+  if (auto g = gone_.find(card_key); g != gone_.end()) {
+    auto doc = svc_.store().current();
+    const Node* n = doc->resolution ? doc->resolution->find(path_from_key(card_key)) : nullptr;
+    if (!n) return std::nullopt;
+    if (card_content(*doc, *n) != g->second) {
+      displays_.erase(card_key);
+      no_display_.insert(card_key);
+    }
+    gone_.erase(g);
+  }
+  if (no_display_.count(card_key)) return std::nullopt;
   auto it = displays_.find(card_key);
   if (it != displays_.end()) return display_note(it->second);
   // After a restart the latest display comes from the last run's history.
@@ -1713,7 +1855,7 @@ void Scheduler::finished(RunExec* exec) {
     std::lock_guard<std::mutex> l(mu_);
     reapers_.emplace_back([this, done] {
       done->join();
-      svc_.note_run_end(done->status());
+      svc_.note_run_end(done->status(), done->note_summary());
     });
   }
 }

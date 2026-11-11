@@ -1,0 +1,5 @@
+{
+  "description": "When it does not work",
+  "content": "Draws, next to the reference case, starting near a critical point (offset is the distance from 0), losing quadratic convergence at a multiple root and regaining it with λ = 2, and falling into a cycle of period 2 at z₀ = 0 for z³ − 2z + 2. The polynomials are fixed; only the tolerance and the iteration limit are taken from settings.",
+  "outputs": []
+}

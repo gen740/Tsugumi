@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace bcg;
+table Sensitivity { value:string; }
+table Outputs { sensitivity:Sensitivity (required, tsugumi: "file"); }
+root_type Outputs;

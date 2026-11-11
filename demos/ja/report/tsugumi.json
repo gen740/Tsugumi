@@ -1,0 +1,102 @@
+{
+  "name": "Data to report",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "settings"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "generate"
+      },
+      {
+        "id": "aggregate"
+      },
+      {
+        "id": "render"
+      },
+      {
+        "id": "archive"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "settings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "generate",
+          "port": "csv"
+        },
+        "to": {
+          "card": "aggregate",
+          "port": "csv"
+        }
+      },
+      {
+        "from": {
+          "card": "aggregate",
+          "port": "summary"
+        },
+        "to": {
+          "card": "render",
+          "port": "summary"
+        }
+      },
+      {
+        "from": {
+          "card": "render",
+          "port": "report"
+        },
+        "to": {
+          "card": "archive",
+          "port": "report"
+        }
+      },
+      {
+        "from": {
+          "card": "settings",
+          "port": "config"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "generate"
+        },
+        "to": {
+          "card": "generate",
+          "port": "config"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "render"
+        },
+        "to": {
+          "card": "render",
+          "port": "config"
+        }
+      }
+    ]
+  }
+}

@@ -362,6 +362,6 @@ def test_the_cards_share_their_source_files():
     """Each Card can be read alone, so the shared code is a copy: the copies stay the same."""
     for demo, name, first, others in (("battery", "dp.jl", "schedule", ["capacities", "tariffs", "check"]),
                                       ("ecology-models", "ecology.jl", "fit", ["forecast", "phase", "check"])):
-        base = ROOT / "demos" / demo / "definitions"
+        base = ROOT / "demos" / "ja" / demo / "definitions"
         for other in others:
             assert filecmp.cmp(base / first / "src" / name, base / other / "src" / name, shallow=False), (demo, other)

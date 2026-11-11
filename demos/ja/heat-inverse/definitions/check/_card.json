@@ -1,0 +1,15 @@
+{
+  "language": "julia",
+  "inputs": [
+    {
+      "name": "measurement"
+    }
+  ],
+  "params": [
+    {
+      "name": "early_time",
+      "type": "double",
+      "data": 5e-05
+    }
+  ]
+}

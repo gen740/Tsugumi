@@ -1,249 +1,289 @@
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi: ドキュメントを開く" width="100%"></a>
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/tsugumi-hero.svg" alt="Tsugumi: open the documentation" width="100%"></a>
 </p>
 
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="ドキュメントを読む: 動く図で読む課題の話、インストールせずに見られるデモ、仕組みの解説" width="100%"></a>
+  <a href="https://gen740.github.io/Tsugumi/"><img src="docs/assets/docs-card.svg" alt="Read the documentation: the problem told with moving figures, demos you can watch without installing, and how it works" width="100%"></a>
+</p>
+
+<p align="center">The repository as submitted to <b>Build with Claude: Japan</b> is kept as a frozen mirror: <a href="https://github.com/gen740/tsugumi-hackathon">gen740/tsugumi-hackathon</a>.</p>
+
+<p align="center">
+  <a href="#install"><img src="docs/assets/install-card.svg" alt="Install it and try it: the app on a Mac, a command for the browser on Linux and Windows. Go to installation and first steps" width="100%"></a>
 </p>
 
 <p align="center">
-  <a href="https://gen740.github.io/Tsugumi/"><img src="https://img.shields.io/badge/docs-gen740.github.io%2FTsugumi-c97d3d" alt="Web 版のドキュメント"></a>
+  <a href="https://gen740.github.io/Tsugumi/"><img src="https://img.shields.io/badge/docs-gen740.github.io%2FTsugumi-c97d3d" alt="Documentation on the web"></a>
   <a href="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml"><img src="https://github.com/gen740/Tsugumi/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="最新のリリース"></a>
+  <a href="https://github.com/gen740/Tsugumi/releases/latest"><img src="https://img.shields.io/github/v/release/gen740/Tsugumi?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_26%2B_(Apple_silicon)-lightgrey" alt="macOS 26 以降（Apple silicon）"></a>
-  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan"></a>
-  <a href="docs/Provenance.md"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
-  <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="文書は人と AI の両方に向けて書いています"></a>
+  <a href="INSTALL.md"><img src="https://img.shields.io/badge/platform-macOS_%7C_Linux_%7C_Windows-lightgrey" alt="macOS, Linux and Windows (checked on macOS and Linux; Windows verified through WSL2)"></a>
+  <a href="https://github.com/gen740/tsugumi-hackathon"><img src="https://img.shields.io/badge/Claude_Hackathon-Japan-D97757" alt="Claude Hackathon: Japan (the submitted snapshot)"></a>
+  <a href="docs/Philosophy.md#how-it-was-built"><img src="https://img.shields.io/badge/built_with-Claude_Code-D97757" alt="Built with Claude Code"></a>
+  <a href="docs/llms.txt"><img src="https://img.shields.io/badge/docs-for_humans_%26_AI-2d5a5c" alt="Documentation written for both people and AI"></a>
 </p>
 
 # Tsugumi
 
-**AI と描いた解析を、そのまま動かし、自分の手で確かめる。**
+**Run the analysis you sketched with AI, as it is, and check it with your own hands.**
 
-Tsugumi は、人間が描く仕様、AI が編集する対象、実際に動く処理を、同じ Workflow として扱う macOS の研究ワークベンチです。
-計算やデータ処理を Card とその接続で描き、AI とともに実装して、Nix で固定した環境で実行します。
-気になる Card のコードや結果を開き、条件を変え、保存された入力でもう一度試す。その往復を通じて、研究者が解析の過程を理解し、次の問いを立てられるようにします。
+Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (checked on macOS and on Linux, Ubuntu and NixOS; on Windows, verified through WSL2).
+You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
+You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.
 
-![Cas A の X 線観測から RGB 画像とエネルギースペクトルを作る Canvas](docs/assets/screenshots/workflow.png)
+**Who made it, and why**
+
+I am a PhD student working on AI for astrophysics. The X-ray observations that arrive from deep space can, in fact, be downloaded by anyone from the internet. Getting meaning out of them, however, means getting past NASA's large analysis suite (HEASoft) and a pile of tedious, detector-specific processing.
+
+Wanting people to be able to touch the universe more easily, with their own hands, I have been pinning whole analysis environments with Nix and publishing them ([gen740/heasoft](https://github.com/gen740/heasoft)). An environment that runs was not enough, though. Unless you understand the steps and can try "what happens if I change this condition" yourself, the research does not become yours.
+
+During the hackathon I visited laboratories in science, engineering and medicine at the University of Tokyo and asked researchers about this. In their words (translated from Japanese):
+
+- Science (associate professor): "Arguing only about the conclusion while you can't see how it was reached is frightening, honestly."
+- Engineering (first-year PhD student): "I can't tell whether what the AI produced really matches what it is actually doing."
+- Medicine (first-year master's student): "Handing patients' information to an AI is a scary thought."
+
+The fields differed, but they were stuck in the same place: **there is no way for a person to follow afterwards what the AI did and check it.** The wall I had been hitting in astrophysics is the wall every researcher who computes now faces. Tsugumi is my answer to it ([the start of the demo video](https://www.youtube.com/watch?v=-GhD9vI6_Dg); the longer story: [What to build so that we are not used by AI](docs/Philosophy.md)).
+
+![A Canvas that makes an RGB image and an energy spectrum from an X-ray observation of Cas A](docs/assets/screenshots/workflow.png)
 
 <p align="center">
-  <a href="#使ってみる"><b>使ってみる</b></a> ·
-  <a href="#画面でたどる実験と検証">画面でたどる</a> ·
-  <a href="#ドキュメント">ドキュメント</a> ·
-  <a href="docs/Philosophy.md">なぜ作ったか</a> ·
-  <a href="docs/Name.md">名前の由来</a> ·
-  <a href="https://gen740.github.io/Tsugumi/">動く図で読む</a>
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg"><b>Demo video</b></a> ·
+  <a href="#are-you-using-ai-in-your-research-as-much-as-you-could">The problem</a> ·
+  <a href="#following-an-experiment-on-screen">On screen</a> ·
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#first-steps">First steps</a> ·
+  <a href="#bundled-demos">Demos</a> ·
+  <a href="#documentation">Documentation</a>
+  |
+  <a href="docs/Philosophy.md">Why it was made</a> ·
+  <a href="docs/Philosophy.md#the-name">The name</a> ·
+  <a href="https://gen740.github.io/Tsugumi/">Read it with moving figures</a>
 </p>
 
-- **描いた図が、そのまま動く。** Draft を線でつなぐと、Agent がコード・型・Nix の環境定義を作り、その Workflow がそのまま実行されます。
-- **気になった Card だけを、すぐ試す。** 保存された入力を使って、選んだ Card や子 Workflow だけを再実行できます。
-- **環境ごと固定して、確かめ直せる。** Card ごとの依存関係を Nix で固定し、実行は git の版と結びつけて記録します。
-- **計算は Mac の中の隔離された VM で。** Card からの外部ネットワークは既定で遮断し、Agent に送られる内容も[明示](docs/security.md#モデルに送られるもの)しています。
-- **完成した Workflow に LLM は要らない。** 生成されたコードは通常のファイルとして残り、人間がいつでも読んで直せます。
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg"><img src="https://i.ytimg.com/vi/-GhD9vI6_Dg/hqdefault.jpg" alt="Demo video: Tsugumi, run the analysis you sketched with AI and check it with your own hands" width="560"></a><br>
+  <a href="https://www.youtube.com/watch?v=-GhD9vI6_Dg">▶ Watch the demo video (YouTube, in Japanese)</a>
+</p>
 
-## AI を研究に積極的に活用できていますか？
+- **The diagram you draw is what runs.** Wire up Drafts and the Agent writes the code, the types and the Nix environment; that Workflow is what gets executed.
+- **Try just the Card you are curious about, right away.** Run again only the Cards or child Workflows you choose, with the inputs that were saved.
+- **Pinned down to the environment, so it can be checked again.** Each Card's dependencies are pinned with Nix, and every run is recorded against a git version.
+- **Computation runs isolated.** In a VM of its own on a Mac, under bubblewrap on Linux. Cards have no outside network by default, and a save in which the Agent widens a Card's permissions does not go through without the user's approval. What is sent to the model is [stated](docs/security.md#what-is-sent-to-the-model). Opening a project is a decision to trust its contents; Tsugumi takes responsibility for what happens inside that ([what it guarantees](docs/security.md#what-tsugumi-takes-on)).
+- **A finished Workflow needs no LLM.** The generated code stays as ordinary files that a person can read and fix at any time.
+- **Each Claude feature for what it is good at.** Tool use to implement Cards, subagents to implement independent Drafts at the same time, a Skill for the demo guide, multimodal input for the figures a run makes, and MCP (the Claude Code plugin) for agents outside. Small models write the guide and the summaries ([the list](docs/features.md#choosing-claudes-features-by-purpose)).
 
-AI は、数学や科学の長年の難問に挑み始めています。
-2026 年 8 月から 9 月にかけて、OpenAI は [10 件の未解決問題の解決または大幅な前進](https://openai.com/index/ten-advances-in-mathematics/)を、Anthropic の Claude は[リーマンゼータ関数の下界更新](https://www.anthropic.com/research/riemann-zeta)と[フェルマーの最終定理の完全形式化](https://www.anthropic.com/research/formalizing-fermats-last-theorem)を発表しました。どれも議論を証明支援系 Lean などで形式化し、コンピュータが[機械的に検証](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)できる証明として公開しています。
-10 月には、物理学者 Matthew Schwartz と Anthropic が、厳密に検証できる計算ハーネスの中で Claude を動かし、数十年間解けなかった素粒子物理の積分計算を突破しました（[Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)）。
+## Are you using AI in your research as much as you could?
 
-人間が成果を吟味し、意味を理解して、次の問いを立てられるのは、AI の議論や計算を独立した仕組みで確かめられるからです。
+AI has begun to take on long-standing problems in mathematics and science.
+Between August and September 2026, OpenAI announced [solutions to, or major progress on, ten open problems](https://openai.com/index/ten-advances-in-mathematics/), and Anthropic's Claude announced [an improved lower bound on the Riemann zeta function](https://www.anthropic.com/research/riemann-zeta) and [a complete formalisation of Fermat's Last Theorem](https://www.anthropic.com/research/formalizing-fermats-last-theorem). Each formalised its argument in a proof assistant such as Lean and published proofs a computer can [check mechanically](https://lean-lang.org/doc/reference/latest/ValidatingProofs/).
+In October, the physicist Matthew Schwartz and Anthropic ran Claude inside a computational harness that could be checked rigorously, and in a few weeks it computed 15 Feynman integrals of particle physics that had never been computed before ([Claude-shaped science](https://www.anthropic.com/news/claude-shaped-science)).
 
-**AI に仕事を任せるには、その仕事を確かめられる仕組みが必要です。**
+People can weigh these results, understand what they mean and ask the next question because the AI's arguments and computations can be checked by an independent mechanism.
 
-では、日々の研究で AI にもっと多くの仕事を任せるのをためらってしまうのは、なぜでしょうか。
+**To hand work to an AI, you need a way to check that work.**
 
-1. **再現性を担保できない。** 結果を生んだコード・入力・実行環境が揃っておらず、同じ計算をもう一度確かめられない。
-2. **結論に至るプロセスが見えない。** どのデータにどんな処理を施し、どこで何を判断したのかを追えない。
-3. **データを AI に渡すのが怖い。** 未公開のデータがどこへ送られ、どう扱われるのかを把握できない。
+Why, then, do we hesitate to hand more of our everyday research to AI?
 
-これらに共通しているのは、**AI が何を行い、何を扱ったのかを、人間が後から追って確かめるための足場がない**という問題です。
+1. **Reproducibility is not assured.** The code, the inputs and the environment behind a result are not kept together, so the same computation cannot be checked again.
+2. **The path to the conclusion is invisible.** You cannot follow which data was processed how, or where which decision was made.
+3. **Handing data to an AI is frightening.** You cannot tell where unpublished data is sent or how it is handled.
 
-## 確かめるたびに、次の問いが生まれる
+What these share is that **there is no foothold from which a person can follow, afterwards, what the AI did and what it handled.**
 
-AI の登場によって、コードを書き、実験を回し、結果をまとめるまでの時間は劇的に短くなりました。
-その間に何を試し、何が分かったのかも、整った要約やレポートとしてすぐに受け取れます。
-しかし、試行錯誤が速く、大規模になるほど、言葉でまとめられた報告と実際の処理を照らし合わせることは難しくなっていきます。
+## Every check raises the next question
 
-「この条件だけ変えたら、結果はどう変わるだろう」
-「ここだけ、別のアプローチを試してみたい」
+With AI, the time from writing code to running experiments to summarising results has shrunk dramatically.
+What was tried and what was learned arrives at once, as a tidy summary or report.
+But the faster and larger the trial and error becomes, the harder it is to hold a report written in words up against the processing that actually happened.
 
-そう思うたびにまた新しい試行を頼み、返ってきた長いレポートを読み直す。
-何千行ものコードや説明の中から、いつの間にか変わった前提を探し、結論の根拠を確かめる——。
-実験そのものは速く回せても、人間がその過程を消化し、次の発想へとつなげる段階で足が止まってしまいます。
+"What would change if I altered just this condition?"
+"I'd like to try a different approach just here."
 
-**結果を吟味し、何を根拠として採用し、次に何を問うかを決める。それは、他ならぬ研究者が担う仕事です。**
-検証は、新しい発想が生まれる創造的な場でもあります。
-背景の推定方法を変えても、同じ傾向が見えるだろうか。別のモデルなら、説明できなかった差を説明できるだろうか。
-条件を変えて結果を比べるたびに、仮説の成り立つ範囲が見え、次に調べたいことが生まれます。
+Each time, you ask for another attempt and read through the long report that comes back.
+You search thousands of lines of code and explanation for an assumption that quietly changed, and recheck what the conclusion rests on.
+The experiments themselves run fast, but you come to a halt at the stage where a person has to digest the process and turn it into the next idea.
 
-Tsugumi では、その疑問が生まれた箇所に直接手を入れられます。
-Card のコードを読み、パラメータを変え、保存された入力で試す。版の履歴から以前の方針へ戻り、別のアプローチを始める。
-部分実行で調整を進め、最後は Workflow 全体を通して結果を確かめます。
+**Weighing results, deciding what to accept as evidence and choosing what to ask next is the researcher's own work.**
+Checking is also a creative place where new ideas are born.
+Would the same trend appear with a different way of estimating the background? Would another model explain the difference that could not be explained?
+Each time you change a condition and compare results, you see how far a hypothesis holds, and something new to look into appears.
 
-**解析の過程を理解することから、自分の問いを試すことへ。その距離を短くしたい。**
-AI と重ねた試行錯誤を見渡せる構造に残し、研究者が仮説と結果を深く考えるための時間と、次の試行へ進む余地を広げます。
+In Tsugumi you can put your hands directly on the place where the question arose.
+Read a Card's code, change a parameter and try it with the saved inputs. Go back to an earlier approach in the version history and start a different one.
+Tune things with partial runs, and finally run the whole Workflow to confirm the result.
 
-## AI に頼みたいことは、本来単純なはずです
+**From understanding how an analysis went to trying your own question: I want to make that distance short.**
+By keeping the trial and error done with AI in a structure you can see across, Tsugumi gives researchers time to think hard about hypotheses and results, and room to move on to the next attempt.
 
-観測データをダウンロードして、エネルギーで区切って、描画する。
-やりたいことは、紙に箱を三つ描けば伝わるくらい単純です。
-それなのに今は、長い指示を書き、長いレポートを読み、伝わったかどうかを確かめ直しています。
+## What we want to ask of AI should be simple
 
-## 処理の形を描く。AI と実装する。実行して確かめる。
+Download the observation, split it by energy, plot it.
 
-Tsugumi は、計算やデータ処理を **Card のグラフ（Workflow）として組み立てる macOS アプリ**です。
+What you want is simple enough to get across by drawing three boxes on paper.
+Yet today we write long instructions, read long reports, and check again whether we were understood.
 
-1. **描く。** 名前と内容だけの Draft を置き、線でつないで全体の流れを設計します。
-2. **実装する。** Agent に Draft の実装を任せることも、自分で C++ / Python / bash を書くこともできます。生成されたコードは通常のファイルとしてプロジェクトに残り、いつでも読み直して編集できます。実際の Claude API で Draft から実行・検証までを通した記録は [AgentRun.md](docs/AgentRun.md) にあります。
-3. **確かめる。** Nix で固定された環境でグラフを実行し、各 Card の進捗・出力・ログを確認します。途中の処理を直したら、保存された入力を使ってその箇所からすぐに再実行できます。
+## Draw the shape of the processing. Implement it with AI. Run it and check.
 
-## 処理を細かく分けても、試行錯誤を重くしない
+Tsugumi is a **macOS app for assembling computation and data processing as a graph of Cards (a Workflow)**.
 
-研究者が解析を理解し、途中の判断を確かめるには、処理が手を入れられる大きさに分かれている必要があります。一方、細かく分けるほど、入出力の型や実行環境を整える手間、処理の起動や記録にかかる時間も増えます。
+1. **Draw.** Place Drafts, which have only a name and a description, and wire them up to design the whole flow.
+2. **Implement.** Leave a Draft to the Agent, or write C++ / Python / bash / R / Julia yourself. The generated code stays in the project as ordinary files that you can reread and edit at any time. A run with the real Claude API, from Drafts to execution and checking, is recorded in [Evidence](docs/Evidence.md#a-run-with-the-real-claude-api).
+3. **Check.** Run the graph in environments pinned with Nix, and look at each Card's progress, outputs and logs. When you fix a step in the middle, run again from there at once, with the saved inputs.
 
-Tsugumi は、この負担を Agent と実行基盤で引き受けます。
+## Splitting the processing finely, without making trial and error heavy
 
-| 研究者がしたいこと | それを支える工夫 |
-| --- | --- |
-| 処理の意図と関係を示して、実装を任せる | Draft の説明と接続を Agent が読み、コード・出力型・Nix の環境定義を作ります。下流の入力型は接続から導出します。 |
-| 条件を変えて、繰り返し試す | 実行時パラメータとビルド入力を分け、条件変更による不要な再ビルドを避けます。Nix 評価器と worker も再利用します。 |
-| 気になった処理だけを確かめる | 最新の入力を保存し、選択した Card や子 Workflow の部分実行に使います。ファイルの実体も保持し、再実行前に入力の型を確認します。 |
-| 実際に何が動いたかを追う | 出力の検証と実行記録の保存を終えてから、完了を通知して下流へ値を渡します。記録した値には当時の型情報も残します。 |
+The more finely you split processing into pieces you can work on, the more effort goes into types and environments, and the more time goes into starting and recording. Tsugumi takes this on with the Agent and its runtime. From a Draft, the Agent writes the code, the output types and the Nix environment; changing a condition does not trigger a rebuild; a partial run reruns only the Cards you chose, with saved inputs; and a run is reported as finished only after its record is saved.
 
-この設計により、研究者は結果から処理へ戻り、その箇所を変更して、保存された入力で試せます。部分実行で調整した後は、Workflow 全体を通して結果を確かめます。
+**The structure a person draws, the structure the Agent implements and the structure that runs are the same.**
+The generated code stays as ordinary files, and a finished Workflow runs without an LLM. Why these measures were taken, and where their code and tests are, is in [Measures that keep trial and error light](docs/Rationale.md#measures-that-keep-trial-and-error-light).
 
-**人間が描いた構造、Agent が実装する構造、実際に動く構造は同じです。**
-生成されたコードは通常のファイルとして残り、完成した Workflow の実行に LLM は必要ありません。個々の工夫の理由と実装・テストへの案内は、[試行錯誤を支える実装上の工夫](docs/novelty.md#試行錯誤を支える実装上の工夫)にまとめています。
+## Following an experiment on screen
 
-## 画面でたどる、実験と検証
+The bundled "Cas A · Chandra RGB" demo fetches an X-ray observation (Chandra) of the supernova remnant Cassiopeia A, pinned with Nix, and splits its photons into three energy bands to make an RGB image.
+It also draws the energy spectrum of the same photons with matplotlib, so you can see which element's emission lines became which colour.
+Switch to the deep observation ObsID 114 (50 ks, about 15 million photons in the three bands) and the lines in the spectrum stand out more clearly.
 
-同梱の「Cas A · Chandra RGB」デモでは、超新星残骸カシオペヤ座 A の X 線観測（Chandra）を Nix で固定して取得し、光子を 3 つのエネルギー帯に分けて RGB 画像にします。
-同じ光子のエネルギースペクトルも matplotlib で描き、どの元素の輝線がどの色になったのかを確かめます。
-このページの画像は、観測を深い ObsID 114（50 ks。3 帯域で約 1,500 万個の光子）に変えて実行したものです。
+### Seeing the whole flow
 
-### 全体の流れを見渡す
+In the screen at the top of this page, a sticky note states the aim of the analysis, and below it runs the flow `load` → `bands` → `rgb` / `spectrum`.
+When it runs, each Card shows its progress, and the table of photon counts per band, the RGB image and the spectrum appear right on the Canvas.
+The spectrum shows that the green band (1.65–2.25 keV) contains exactly the Si line, while S, Ar, Ca and Fe fall in blue. What the colours of the image mean can be checked on the same screen.
+From the chat on the right you can ask the Agent to implement or change things.
 
-ページ冒頭の画面では、付箋に解析の目的が書かれ、その下に `load` → `bands` → `rgb` / `spectrum` の流れが並んでいます。
-実行すると各 Card に進行状況が表示され、帯域ごとの光子数の表、RGB 画像、スペクトルがそのまま Canvas 上に並びます。
-スペクトルを見ると、緑の帯域（1.65–2.25 keV）がちょうど Si の輝線を含み、S・Ar・Ca・Fe は青に入ることが分かります。画像の色が何を意味するのかを、同じ画面で確かめられます。
-右側のチャットからは、Agent に実装や変更を依頼できます。
+### Reading the code and trying other conditions
 
-### コードを読み、条件を変えて試す
+Open a Card's settings to see its source code, its input and output ports, and the definition of its environment (`default.nix`).
+`spectrum` is the same matplotlib code you would write for a window: the figure drawn with `plt.show()` appears as the Card's display.
+Rewrite the band edges or the bin width of the spectrum and rerun only that Card with the saved inputs, and checking continues from the very place you were curious about.
 
-Card の設定を開くと、その処理のソースコードや入出力ポート、実行環境の定義（`default.nix`）を確認できます。
-`spectrum` は、ウィンドウ向けに書くのと同じ matplotlib のコードです。`plt.show()` で描いた図が、そのまま Card の表示に出ます。
-帯域の境界やスペクトルの刻みを書き換え、保存された入力を使ってその Card だけを再実行すれば、気になった箇所からすぐに検証を進められます。
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="Opening the settings of the spectrum Card and following its matplotlib source down to plt.show()" width="100%"></a>
 
-![spectrum の Card 設定で、matplotlib のソースコードを確認する画面](docs/assets/screenshots/card-source.png)
+### Looking back at what actually ran
 
-### 実際に何が動いたかを振り返る
+The timeline at the bottom of the screen shows when each Card ran and for how long.
+The observation and the analysis tools are fetched and built once, on the first run; after that they come from the Nix store, so the whole Run recorded here finishes in about 12 seconds.
+You can also open each Card's run history, logs and artifacts, and check every step on the way to the conclusion.
 
-画面下部のタイムラインでは、どの Card がいつ、どれだけの時間をかけて動いたかを時間軸で追えます。
-520 MB の観測は最初の実行で 1 度だけ取得され、2 回目以降は Nix store のファイルを使うので、Run 全体は 10 秒ほどで終わります。
-さらに各 Card の実行履歴やログ、成果物を開き、結論に至るまでの過程を隅々まで確かめられます。
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-timeline.svg" alt="The timeline drawing, as the run goes, when each Card ran and for how long" width="100%"></a>
 
-![各 Card の実行を時間軸で確認するタイムライン](docs/assets/screenshots/timeline.png)
+### Going inside a step
 
-### 気になる処理の中へ入る
+A large step can be gathered into a child Workflow (a Card in a Card). Open "collatz-cpp" in the "Collatz (C++ / Python / Julia / R)" demo and the Workflow inside it appears, with a branch and a loop.
+Most of the time you handle it as a single Card; when you want to check, you can go down to its finest steps.
 
-大きな処理は子 Workflow（Card in Card）にまとめられます。「Collatz (C++ / Python / Julia / R)」デモの「collatz-cpp」を開くと、条件分岐と反復を含む内部の Workflow が現れます。
-普段は一つの Card として簡潔に扱いながら、確かめたいときには内部の細かなステップまで降りてたどれます。
+<a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/collatz-subworkflow.svg" alt="The Workflow inside collatz-cpp, going round its branch and loop 112 times" width="100%"></a>
 
-![子 Workflow を開き、条件分岐・反復・途中の出力を確認する画面](docs/assets/screenshots/subworkflow.png)
+### Letting Tsugumi the thrush show you around
 
-### ツグミに案内してもらう
+The first time you open the app, the thrush in the bottom right asks "What would you like to do?". Choose between watching a demo run and having the AI implement Drafts, pick a field, and it takes you to a demo.
+In a project, the chat is the thrush. Write `$demo` and it flies around the screen, pointing at Cards, the Run button and a Card's settings, and explains one step at a time with choices to pick from (with an OpenAI or Anthropic API key, or a ChatGPT plan; without a key, three demos have a fixed script).
 
-はじめて開くと、右下のツグミが「何に興味がありますか？」と尋ね、答えに合うデモを選んで案内します。
-プロジェクトではチャットがツグミです。`$demo` と書くと、ツグミが画面の中を飛び回り、Card や実行ボタン、Card の設定を指しながら、選択肢を出して一歩ずつ説明します（OpenAI・Anthropic の API キーか ChatGPT のプランで使えます）。
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-guide.svg" alt="The thrush flying to the spectrum Card and explaining it in a speech bubble with choices" width="100%"></a>
 
-![ツグミが spectrum の Card に飛んでいき、吹き出しで説明と選択肢を出している画面](docs/assets/screenshots/guide.png)
+## Trying it
 
-## 使ってみる
+### Install
 
-Apple silicon Mac / macOS 26 以降に対応しています。[GitHub Releases](https://github.com/gen740/Tsugumi/releases) のアプリを入れると、以後は新しいリリースに自動で更新されます。アプリには計算の実行環境とデモが入っており、計算環境を別に用意する必要はありません。
+**We recommend the macOS desktop app.** Tsugumi is developed on macOS, so this is the most thoroughly checked way to use it. The runtime for computation is inside the app, and there is nothing else to prepare.
+
+**Mac (Apple silicon, macOS 26 or later)**: the desktop app. It contains the runtime and the demos, and updates itself from then on.
 
 ```bash
 curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
 ```
 
-Developer ID による署名・公証はしていない（ad-hoc 署名）ため、ブラウザでダウンロードした場合は Gatekeeper に止められます。詳しい手順・自動更新・ソースからのビルドは [INSTALL.md](INSTALL.md) を参照してください。
+**Mac and Linux**: the `tsugumi` command, used in the browser (on Linux, install [Nix](https://nixos.org/download) first). Open it with `tsugumi` and update it with `tsugumi update`. It has been checked on Linux too (Ubuntu on aarch64 and x86_64, NixOS on x86_64; on NixOS also [over SSH from another machine](docs/WebUI.md#running-it-on-another-machine-over-ssh)).
 
-起動したら、ホーム画面の「デモを見る」から「コピーを開く」を選んでください。手元に編集可能なコピーが作られ、入力やコードを自由に変えながら試せます。
+```bash
+curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
+```
 
-Agent を使う場合は、設定の「API」で Anthropic または OpenAI の API キーを登録するか、「Continue with ChatGPT」でサインインして ChatGPT のプランを使います。Agent を使わなくても、Card の作成・編集・実行はすべて画面から行えます。
-Claude Code を使っているなら、plugin `tsugumi` で Claude Code に Web UI のプロジェクトを任せることもできます（[Claude Code から使う](docs/claude-code.md)）。
-なお、Agent には会話内容やツールが読み取ったソース・ログなどが送信されます。詳しくは[モデルに送られるもの](docs/security.md#モデルに送られるもの)を参照してください。
+**Windows** (WSL2): run this in PowerShell (no administrator rights needed). First install WSL2 (`wsl --install` in PowerShell) and [Nix](https://nixos.org/download) in its Linux.
 
-各デモの Card のつながりと動きは[同梱デモのしくみ](docs/Demos.md)にまとめています。
+```powershell
+irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
+```
 
-| デモ | 試せること |
+You can also open a shell in the WSL Linux and install with the same `curl … | sh` as on Mac and Linux. Either way, running `tsugumi` opens the page in the Windows browser.
+
+The first start takes a few minutes to prepare. The signature (ad hoc), the environments that were checked and building from source are in [INSTALL.md](INSTALL.md).
+
+### First steps
+
+1. **Open a demo.** From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want. An editable copy is made for you; the bundled original is left unchanged.
+2. **Run it.** Once the first preparation is done, press "Run" at the top of the screen. Open a Card, change its code or its conditions, and rerun just that Card.
+3. **Let the thrush guide you.** Send `$demo` in the chat and the thrush points at the screen and guides you step by step. Without an API key, three demos (Data to report, Kepler-6 b and Pharmacokinetics) have a fixed script.
+4. **Connect the Agent (optional).** Register an Anthropic or OpenAI API key under "API" in the settings, or sign in with "Continue with ChatGPT", and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs ([what is sent to the model](docs/security.md#what-is-sent-to-the-model)). Without the Agent, everything (making, editing and running Cards) can still be done on screen.
+
+The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
+
+If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI (verified on a Mac and on Windows in WSL2; [Using it from Claude Code](docs/claude-code.md)).
+
+### Bundled demos
+
+Each one replays the record of a real run. Click one to open it in the [web version](https://gen740.github.io/Tsugumi/#demos), where you can read what is inside its Cards and their sources. There are 31 demos, Draft versions included; how each works is in [The bundled demos](docs/Demos.md).
+
+#### The basics
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-report"><img src="docs/assets/demos/report.svg" alt="The Data to report demo running" width="100%"></a><br><b>Data to report</b><br><sub>Generate data, aggregate it and write a report. Change a step in the middle and rerun from there.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/demos/collatz.svg" alt="The Collatz (C++ / Python / Julia / R) demo running" width="100%"></a><br><b>Collatz (C++ / Python / Julia / R)</b><br><sub>The same computation in four languages, compared while following its branch and loop.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-plots"><img src="docs/assets/demos/plots.svg" alt="The Plots demo running" width="100%"></a><br><b>Plots</b><br><sub>matplotlib code written for a window becomes the Card's display as it is.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-live-stream"><img src="docs/assets/demos/live-stream.svg" alt="The Live Stream demo running" width="100%"></a><br><b>Live Stream</b><br><sub>A time series plotted while the run is still going.</sub></td></tr>
+</table>
+
+#### Public data
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/demos/casa.svg" alt="The Cas A · Chandra RGB demo running" width="100%"></a><br><b>Cas A · Chandra RGB</b><br><sub>An X-ray observation split into three energy bands for an RGB image, with the spectrum of the same photons to match lines to colours.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gw150914"><img src="docs/assets/demos/gw150914.svg" alt="The GW150914 demo running" width="100%"></a><br><b>GW150914</b><br><sub>The chirp of a gravitational wave, extracted from public data and plotted.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-protein-6lu7"><img src="docs/assets/demos/protein-6lu7.svg" alt="The 6LU7 demo running" width="100%"></a><br><b>6LU7</b><br><sub>A protein's 3D structure, fetched to look at its binding pocket.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-exoplanet-transit"><img src="docs/assets/demos/exoplanet-transit.svg" alt="The Kepler-6 b demo running" width="100%"></a><br><b>Kepler-6 b</b><br><sub>A light curve folded to show an exoplanet's transit.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-seismic-trench"><img src="docs/assets/demos/seismic-trench.svg" alt="The Japan Trench demo running" width="100%"></a><br><b>Japan Trench</b><br><sub>A cross-section of hypocentres and the b-value, from an earthquake catalogue.</sub></td></tr>
+</table>
+
+#### Machine learning and computation
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-mnist-classifiers"><img src="docs/assets/demos/mnist-classifiers.svg" alt="The MNIST classifier comparison demo running" width="100%"></a><br><b>MNIST · comparing classifiers</b><br><sub>The real MNIST fed to seven classifiers at once, comparing accuracy and time.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-newton"><img src="docs/assets/demos/newton.svg" alt="The Newton's method demo running" width="100%"></a><br><b>Newton's method</b><br><sub>A map of the complex plane showing how the starting point decides where it goes and how fast.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-max-flow"><img src="docs/assets/demos/max-flow.svg" alt="The maximum flow and minimum cut demo running" width="100%"></a><br><b>Maximum flow and minimum cut</b><br><sub>On a made-up network, which edge to widen to increase the flow.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-pharmacokinetics"><img src="docs/assets/demos/pharmacokinetics.svg" alt="The pharmacokinetics demo running" width="100%"></a><br><b>Pharmacokinetics (a made-up drug)</b><br><sub>Teaching material comparing how concentration moves with the dosing interval. Not medical advice.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-dose-response"><img src="docs/assets/demos/dose-response.svg" alt="The dose–response demo running" width="100%"></a><br><b>Dose–response curve (synthetic data)</b><br><sub>A fit and its confidence interval, checked on data whose true values are known.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-molecules"><img src="docs/assets/demos/molecules.svg" alt="The molecular properties demo running" width="100%"></a><br><b>Molecular properties</b><br><sub>Properties and structural formulas from SMILES, with RDKit.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-cell-count"><img src="docs/assets/demos/cell-count.svg" alt="The cell counting demo running" width="100%"></a><br><b>Counting cells in images</b><br><sub>A counting method scored on synthetic images with known answers, then applied to real images of nuclei.</sub></td></tr>
+</table>
+
+#### Statistics in R
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-survival"><img src="docs/assets/demos/survival.svg" alt="The survival analysis demo running" width="100%"></a><br><b>Survival analysis</b><br><sub>How much the same hazard ratio moves with the subjects and the adjustment.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-meta-analysis"><img src="docs/assets/demos/meta-analysis.svg" alt="The BCG vaccine meta-analysis demo running" width="100%"></a><br><b>Meta-analysis: the BCG vaccine</b><br><sub>How the conclusion moves with the pooling method and the trials left out.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-rna-seq"><img src="docs/assets/demos/rna-seq.svg" alt="The RNA-seq airway demo running" width="100%"></a><br><b>RNA-seq: airway</b><br><sub>With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-simpson"><img src="docs/assets/demos/simpson.svg" alt="The Simpson's paradox demo running" width="100%"></a><br><b>A correlation that reverses when stratified</b><br><sub>Two real datasets in which the whole and its strata point in opposite directions.</sub></td></tr>
+</table>
+
+#### Simulation in Julia
+
+<table>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-battery"><img src="docs/assets/demos/battery.svg" alt="The battery scheduling demo running" width="100%"></a><br><b>Scheduling a battery</b><br><sub>Charging and discharging optimised by dynamic programming, under made-up prices.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gillespie"><img src="docs/assets/demos/gillespie.svg" alt="The stochastic chemical reactions demo running" width="100%"></a><br><b>Fluctuations in chemical reactions</b><br><sub>A Gillespie simulation checked against theory.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-heat-inverse"><img src="docs/assets/demos/heat-inverse.svg" alt="The inverse heat conduction demo running" width="100%"></a><br><b>An inverse problem in heat conduction</b><br><sub>The naive inverse breaks down; regularisation recovers the answer.</sub></td></tr>
+<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-ecology-models"><img src="docs/assets/demos/ecology-models.svg" alt="The ecological model comparison demo running" width="100%"></a><br><b>Comparing ecological models</b><br><sub>Predator–prey models fitted to fur-trade records and compared.</sub></td></tr>
+</table>
+
+A Draft version of a demo is a project with only the shape of its Cards (names, descriptions and wires); you have the Agent implement it with "Generate Cards" ([The bundled demos](docs/Demos.md)).
+
+## The flow of processing as a common language for people and AI
+
+"What I want done", "what was run" and "what to change next".
+Tsugumi shares all three on the same Workflow. From getting an intention across to weighing the result and asking the next question, the work moves forward on one structure.
+
+This idea starts from research and extends to turning research decisions into teaching material you can run, to understanding and growing the tools you made with AI, and to handing work to the next person in a form they can run and check ([Vision and applications](docs/Vision.md)).
+
+**The more work we hand to AI, the more we need an environment in which people understand the process and make the next decision.**
+
+## Documentation
+
+The concerns behind Tsugumi, its author and how it was built during the hackathon are in **[What to build so that we are not used by AI](docs/Philosophy.md)**; the repository as submitted to Build with Claude: Japan is the frozen mirror **[gen740/tsugumi-hackathon](https://github.com/gen740/tsugumi-hackathon)**.
+
+| Purpose | Documents |
 | --- | --- |
-| データからレポートへ | データ生成・集計・レポート作成をつなぎ、途中の処理を変えて途中から再実行する |
-| Collatz (C++ / Python / Julia / R) | 四つの言語で同じ計算を行い、分岐・反復をたどりながら結果を比較する |
-| Live Stream | 時系列の出力をリアルタイムにグラフで描画し、停止・再実行する |
-| Plots | ウィンドウ向けに書いた matplotlib のコード（`plt.show()`・`FuncAnimation`）が、そのまま Card の表示に描かれる。Plotly の `fig.show()` と Altair の `chart.show()` は対話できるグラフになる |
-| Cas A · Chandra RGB | Nix で固定した X 線観測を 3 つのエネルギー帯に分けて RGB 画像にし、同じ光子のスペクトルで輝線と色の対応を見る。帯域や伸長を変えてその Card だけ再実行する |
-| GW150914 · 重力波／6LU7 · タンパク質／Kepler-6 b · 系外惑星／日本海溝 · 震源断面 | 公開データを取得して解析・図示する。途中の Card のパラメータを変えて、その Card だけ再実行する |
-| MNIST · 手書き数字の分類器くらべ | 同じ手書き数字を kNN・SVM・CNN など 7 つの分岐で同時に学習し、正解率と時間を比べ、1 つの分岐だけを条件を変えて実行し直す |
-| Newton 法／薬物動態／最大流と最小カット | 初期値・投与間隔・枝の容量といった条件を変えて、収束・濃度・流量がどう変わるかを、理論値と照らして確かめる |
-| 濃度–反応曲線／分子の物性／細胞画像の計数 | 実験室の解析を、合成データの正解や既知の値と照らしながら試し、手法が破綻する条件を探す |
-| 生存時間解析／メタ解析／RNA-seq／集計と層別で逆転する相関（R） | 公開データを R で解析し、対象者・調整変数・手法を変えると結論がどう動くかを並べて見る |
-| 蓄電池の最適運用／化学反応のゆらぎ／熱伝導の逆問題／生態系のモデル比較（Julia） | 標準ライブラリだけの Julia で最適化・確率シミュレーション・逆問題・モデル比較を動かし、条件を変えて結果を操作できるグラフで見比べる |
-| 各科学デモの Draft 版 | 計画（Draft）だけのプロジェクトから、Agent の「Card を生成」で実装させる |
-| 力学系ギャラリー（Draft） | 互いに依存しない 6 つの Draft を、Agent が helper に手分けさせて同時に実装する |
-| MNIST · 分類器くらべ（Draft） | 7 つの分類器の Draft を helper が同時に実装し、Agent が 1 つの比較に合流させる |
+| **Getting started** | [Installation](INSTALL.md) · [Usage](docs/Usage.md) · [Your first Card](docs/CardGuide.md) · [The bundled demos](docs/Demos.md) · [Web UI](docs/WebUI.md) · [Using it from Claude Code](docs/claude-code.md) |
+| **The ideas** | [What to build so that we are not used by AI](docs/Philosophy.md) · [Why one Workflow for design, implementation and checking](docs/Rationale.md) · [Vision and applications](docs/Vision.md) · [Plans and guarantees](docs/Limitations.md) |
+| **How it works** | [Features](docs/features.md) · [Versions](docs/Versions.md) · [Security and isolation](docs/security.md) · [The RPC contract](docs/Protocol.md) · [Glossary](docs/Glossary.md) |
+| **Records and development** | [Claims and how to check them](docs/Evidence.md) · [Development](docs/Development.md) · [Pinned versions](docs/Lock.md) · [License audit](docs/LicenseAudit.md) |
 
-## 処理の流れそのものを、人と AI の共通言語にする
+The list of all documents is in [docs/README.md](docs/README.md).
 
-「何をしてほしいか」「何を実行したか」「次にどこを変えるか」。
-Tsugumi は、この三つを同じ Workflow の上で共有します。
+## License
 
-人間が Draft で描いた処理の関係を、AI が実装する。実行結果を見て、気になる Card を開き、条件を変えて確かめる。その試行を版として残し、別のアプローチへ進む。
-意図を伝えるところから、結果を吟味して次の問いを立てるところまで、同じ構造を使って仕事を進められます。
-
-この仕組みは、研究を出発点に、学ぶこと、作ること、仕事を引き継ぐことへと広がります。
-
-- **研究の判断を、動かして学べる教材にする。** 処理の目的や前提を読み、条件を変え、結論への影響を自分で確かめる（[研究と教育への応用](docs/Vision.md#研究の判断を動かして学べる教材にする)）。
-- **AI と作ったツールを、理解して育て続ける。** 変更したい処理を見つけ、その部分を直して、保存された入力で試す（[エンジニアリングへの応用](docs/Vision.md#ai-と作ったツールを理解して育て続ける)）。
-- **次の人が、動かして確かめられる形で仕事を渡す。** 意図・コード・実行環境を一緒に残し、受け取った人がそこから試行を続ける（[共有と引き継ぎへの応用](docs/Vision.md#次の人が動かして確かめられる形で仕事を渡す)）。
-
-業務自動化に向けては、AI と処理を作る際に見せる情報と、本番の実行で扱うデータの境界を仕組みとして制御する構想もあります（[構想と現在の境界](docs/Vision.md#業務自動化とデータの境界)）。
-
-**AI に任せる仕事が増えるほど、人間がその過程を理解し、次の判断を下せる環境が必要になります。**
-Tsugumi は、人と AI が同じ処理を見ながら、問いを深め、仕事を育て続けるための基盤を目指しています（[Tsugumi の構想と応用](docs/Vision.md)）。
-
-また、研究者が自らの判断を手放さないための問題意識と、1 週間のハッカソンでこの基盤を作り上げた体験を **[AI に使われないために、何を作るか](docs/Philosophy.md)** にまとめました。
-事前に用意した自作 JSON parser の hosq と仕様プロンプト、Tsugumi として実装した部分、利用した OSS の区分は **[制作範囲と事前準備](docs/Provenance.md)** に記載しています。
-「継ぐ・積む・組む」「紡ぐ」、そして冬に口を噤む鳥・ツグミに重ねた思いについては、**[名前の由来](docs/Name.md)** をご覧ください。
-
-## ドキュメント
-
-動く図つきの Web 版を **<https://gen740.github.io/Tsugumi/>** で公開しています。内容はこのリポジトリの Markdown と同じです。
-
-| 目的 | 文書 |
-| --- | --- |
-| **はじめる** | [インストール](INSTALL.md)（リリース版・自動更新・ソースからのビルド） · [操作ガイド](docs/Usage.md)（画面ごとの操作とデモの試し方） · [はじめての Card](docs/CardGuide.md)（Python・bash・C++・R・Julia で作る） · [同梱デモのしくみ](docs/Demos.md)（各デモの Card のつながりと動き） · [Web UI](docs/WebUI.md)（ブラウザから使う） · [Claude Code から使う](docs/claude-code.md)（plugin で Web UI のプロジェクトを任せる） |
-| **考え方を知る** | [Q&A](docs/QA.md)（課題意識・Draft・再現性・記録と再実行） · [設計の独自性](docs/novelty.md)（なぜ同じ Workflow なのか、試行錯誤を支える工夫） · [構想と応用](docs/Vision.md) · [AI に使われないために、何を作るか](docs/Philosophy.md) · [名前の由来](docs/Name.md) · [作った人](docs/Author.md) · [私にしかない深さ](docs/Origin.md) · [まだできないこと](docs/Limitations.md) |
-| **仕組みを知る** | [主要機能](docs/features.md)（Card・Nix・SDK と worker・記録・Agent） · [版の管理](docs/Versions.md)（git と実行結果、版のツリー） · [セキュリティと隔離](docs/security.md)（隔離の境界・データの置き場所・モデルに送られるもの） · [画面の仕様](docs/ui-view.md) · [RPC 契約](docs/Protocol.md) · [用語集](docs/Glossary.md) |
-| **記録と開発** | [主張と、それを確かめる方法](docs/Evidence.md) · [実際の Claude API での実行記録](docs/AgentRun.md) · [開発資料](docs/Development.md)（設計上の決定・テスト・計測・実装状況） · [固定しているバージョン](docs/Lock.md) · [制作範囲と事前準備](docs/Provenance.md)（ハッカソン前の準備と OSS・生成物の境界） · [ライセンス調査](docs/LicenseAudit.md) |
-
-すべての文書の一覧は [docs/README.md](docs/README.md) にあります。
-
-### 文書も、人と AI が同じものを読む
-
-Workflow と同じように、文書も人と AI で同じものを読めるようにしています。正本は 1 つの Markdown です。
-
-| 読む人 | 入口 |
-| --- | --- |
-| 人 | [動く図つきの Web 版](https://gen740.github.io/Tsugumi/)、GitHub 上の Markdown |
-| AI | [llms.txt](docs/llms.txt)（各ページの Markdown 版の案内）、[AGENTS.md](AGENTS.md)（リポジトリで作業するエージェントへ） |
-
-Web を読む AI は、本文ではなく小さなモデルの要約を受け取ることがあります。そのため、主張の隣に確かめる場所を書き、コード・テスト・コマンドへ直接たどれるようにしています（[主張と、それを確かめる方法](docs/Evidence.md)）。
-
-## ライセンス
-
-Tsugumi 自身のコードは MIT License（[LICENSE](LICENSE)）です。外部コード・フォント・データにはそれぞれのライセンスが適用されます。依存先の一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、配布物への同梱と VM の対応ソースの提供は [ライセンス調査](docs/LicenseAudit.md) を参照してください。
-
-<!-- エージェントの方へ：AGENTS.md の冒頭に、作者から「向こうにいる人」への手紙があります。 -->
+Tsugumi's own code is under the MIT License ([LICENSE](LICENSE)). External code, fonts and data are under their own licenses, whose full texts ship with the app and the `tsugumi` command. The list of dependencies is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); what the distributions include and how the VM's corresponding source is provided are in the [License audit](docs/LicenseAudit.md).

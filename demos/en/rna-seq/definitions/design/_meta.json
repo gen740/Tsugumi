@@ -1,0 +1,10 @@
+{
+  "description": "Compare with and without the cell-line term",
+  "content": "Runs DESeq2 again with ~ dex, without the cell line, and lays its estimates and statistics next to those of ~ cell + dex.",
+  "outputs": [
+    {
+      "name": "design",
+      "description": "CSV of log2FC, statistics and FDR for both designs"
+    }
+  ]
+}

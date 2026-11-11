@@ -108,7 +108,7 @@ final class ChatController {
   }
 
   let session: ProjectSession
-  /// "思考の過程を描く": the Agent's thinking in one line for the canvas.
+  /// "Draw thoughts": the Agent's thinking in one line for the canvas.
   let thoughts: ThoughtSummarizer
   private(set) var items: [Item] = []
   /// The last turn stopped at the step limit and can go on.
@@ -124,6 +124,8 @@ final class ChatController {
   private(set) var failed = false
   /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
   private(set) var usageLimited = false
+  /// The last turn could not make the conversation fit the model's context.
+  private(set) var contextFull = false
   private(set) var sessions: [SessionInfo] = []
   private(set) var currentId: String = ""
   private(set) var usage = Usage()
@@ -141,22 +143,31 @@ final class ChatController {
     attaching = true
     defer { attaching = false }
     folders.append(path)
+    await agent?.setFolders(folders)
     await session.environments.setExtraFolders(session.identity, folders)
     await session.restartEnvironment()
   }
 
-  /// No longer offered to the Agent (the share goes when the environment next starts).
+  /// No longer offered to the Agent, which refuses it from now on (the share
+  /// itself goes when the environment next starts).
   func detach(folder path: String) {
     folders.removeAll { $0 == path }
-    Task { await session.environments.setExtraFolders(session.identity, folders) }
+    let (agent, folders) = (self.agent, self.folders)
+    Task {
+      await agent?.setFolders(folders)
+      await session.environments.setExtraFolders(session.identity, folders)
+    }
   }
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
+  /// Opening a conversation, until its unfinished work (if any) has resumed.
+  @ObservationIgnored private var resuming: Task<Void, Never>?
   @ObservationIgnored private var catalog: ToolCatalog?
   @ObservationIgnored private var replyNames: [UInt8: String] = [:]
   @ObservationIgnored private let dir: URL
 
-  var provider: ProviderConfig { AgentSettings.current() }
+  @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
+  var provider: ProviderConfig { connection() }
 
   /// The references the Agent may read (reference_read): the bundled demos
   /// that are not Draft tasks or their answers (Agent.referenceDemos), the
@@ -165,14 +176,14 @@ final class ChatController {
   static let references: [String: URL] = {
     let fm = FileManager.default
     if let res = Bundle.main.resourceURL, fm.fileExists(atPath: res.appendingPathComponent("reference/card-guide.md").path) {
-      return Agent.referenceDemos(in: res.appendingPathComponent("demos", isDirectory: true)).merging([
+      return Agent.referenceDemos(in: res.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
         "sdk/python/tsugumi/__init__.py": res.appendingPathComponent("reference/tsugumi-sdk.py"),
         "card-guide.md": res.appendingPathComponent("reference/card-guide.md")]) { a, _ in a }
     }
     #if DEBUG
     // A development build run from the source tree reads the repository.
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
-    return Agent.referenceDemos(in: repo.appendingPathComponent("demos", isDirectory: true)).merging([
+    return Agent.referenceDemos(in: repo.appendingPathComponent("demos/\(AppPreferences.Language.running.rawValue)", isDirectory: true)).merging([
       "sdk/python/tsugumi/__init__.py": repo.appendingPathComponent("sdk/python/tsugumi/__init__.py"),
       "card-guide.md": repo.appendingPathComponent("agent/Reference/card-guide.md")]) { a, _ in a }
     #else
@@ -180,10 +191,13 @@ final class ChatController {
     #endif
   }()
 
-  init(session: ProjectSession) {
+  /// `directory` and `connection`: where its conversations are and what it
+  /// answers with, instead of the app's (tests).
+  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
     self.session = session
+    self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
-    dir = AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
+    dir = directory ?? AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
     guard let bfbs = RPCSchema.bfbs(), let schema = try? BFBS(data: bfbs), let catalog = try? ToolCatalog(schema: schema) else {
       status = String(localized: "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。")
       available = false
@@ -230,6 +244,9 @@ final class ChatController {
     // new one starts (the new one waits for it).
     let previous = agent
     if let previous { Task { await previous.cancel() } }
+    resuming?.cancel()
+    resuming = nil
+    answer += 1
     busy = false
     failed = false
     usageLimited = false
@@ -251,15 +268,33 @@ final class ChatController {
     items = []
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
-    Task {
+    resuming = Task {
       await previous?.cancelAndWait()
       await agent.setApprover(approver)
+      await agent.setFolders(self.folders)
       let conv = await agent.conversation
+      guard !Task.isCancelled else { return }
       usage = conv.usage
       load(conv)
-      // Resume work left unfinished by a disconnect or restart.
-      await agent.resume { e in Task { @MainActor in self.handle(e) } }
+      await resumeWhenConnected(agent)
     }
+  }
+
+  /// Resumes work left unfinished by a disconnect, a restart or leaving the
+  /// project, as any answer goes: the chat shows it working and it can be
+  /// stopped. Its tools need the project, so it starts once that is connected
+  /// (until then nothing can be sent either).
+  private func resumeWhenConnected(_ agent: Agent) async {
+    guard await agent.hasUnfinishedWork else { return }
+    while !session.connected {
+      if session.closed { return }
+      try? await Task.sleep(for: .milliseconds(100))
+      if Task.isCancelled { return }
+    }
+    guard !Task.isCancelled, !busy, await agent.hasUnfinishedWork else { return }
+    let events = begin()
+    await agent.setProvider(provider)
+    await agent.resume(events: events)
   }
 
   private func load(_ conv: Conversation) {
@@ -274,11 +309,13 @@ final class ChatController {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
         case .toolUse(_, let n, let a): out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(_, let c, let e):
+        case .toolResult(_, let c, let e, _):
           if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
             out[j].tool?.ok = !e
-            out[j].text += "\n→ " + String(c.prefix(400))
+            out[j].text += "\n→ " + Agent.toolSummary(c)
           }
+        case .webSearch(let s):
+          out.append(Item(role: "tool", text: s.arguments + "\n→ " + s.summary, tool: ("web_search", s.error == nil), archived: archived))
         }
       }
     }
@@ -375,7 +412,13 @@ final class ChatController {
   // MARK: - Conversation
 
   func send(_ text: String, selection: [CardKey] = []) {
-    guard let agent, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    // No model connection: Tsugumi answers from its script (a connection of this chat's own, as in tests, is used).
+    if GuideController.shared.scripted, provider.auth != .none, !busy {
+      GuideController.shared.answerScripted(text, chat: self)
+      return
+    }
+    guard let agent else { return }
     var prompt = text
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
@@ -388,21 +431,31 @@ final class ChatController {
     let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
     items.append(Item(role: "user", text: shown))
     references = []
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
       // The chat shows what was typed, not the skills and references attached to it.
-      await agent.send(prompt: prompt, title: text, display: shown) { e in Task { @MainActor in self.handle(e) } }
+      await agent.send(prompt: prompt, title: text, display: shown, events: events)
     }
   }
 
-  /// Demo mode ($demo, or a demo tour): the bird flies about the screen for this
-  /// chat; it ends with the tour's farewell. Otherwise the chat is a chat.
+  /// Demo mode ($demo, or a demo tour): the bird leads the user about the
+  /// screen for this chat; it ends with the tour's farewell. Otherwise the chat
+  /// is a chat, whose bird flies only to show where a feature asked about is.
   private(set) var demoMode = false
 
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
   private(set) var choices: [String] = []
   private(set) var offered: [GuideAction] = []
+  /// Without a model connection: Tsugumi's fixed reply (GuideScript) to what
+  /// was asked or what the app noted, with its choices and buttons.
+  func showScripted(asked: String?, reply: String, shown: GuideShow) {
+    if let asked { items.append(Item(role: "user", text: asked)) }
+    items.append(Item(role: "assistant", text: reply))
+    choices = shown.choices
+    offered = shown.actions
+  }
+
   /// Notes of the app (a demo tour's runs) that came while it answered.
   @ObservationIgnored private var notes: [(prompt: String, display: String)] = []
 
@@ -435,10 +488,10 @@ final class ChatController {
   private func sendRequest(display: String, prompt: String) {
     guard let agent else { return }
     items.append(Item(role: "user", text: display))
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.send(prompt: prompt, title: display, display: display) { e in Task { @MainActor in self.handle(e) } }
+      await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, events: events)
     }
   }
 
@@ -453,6 +506,17 @@ final class ChatController {
     let names = cards.map { path($0).last ?? $0 }.joined(separator: "、")
     sendRequest(display: String(localized: "Draft \(cards.count) 枚（\(names)）から Card を生成します"),
                 prompt: Agent.draftRequest(scope: scope, cards: items))
+  }
+
+  /// Asks the Agent to do what the open comments on these Cards ask.
+  func generateFromComments(scope: [String], cards: [CardKey]) {
+    let items = cards.map { k in
+      (key: k, definition: path(k).last ?? "-", comments: session.openComments(k).map { (id: $0.id, text: $0.text) })
+    }
+    let count = items.reduce(0) { $0 + $1.comments.count }
+    let asked = items.flatMap { c in c.comments.map { "\(c.definition): \($0.text)" } }
+    sendRequest(display: ([String(localized: "コメント \(count) 件に従って Card を生成します")] + asked).joined(separator: "\n"),
+                prompt: Agent.commentRequest(scope: scope, cards: items))
   }
 
   // MARK: - Card permissions
@@ -493,6 +557,8 @@ final class ChatController {
       permissionPrompt = nil
       p.answer([])
     }
+    resuming?.cancel()
+    resuming = nil
     Task { await agent?.cancel() }
     busy = false
     session.presence.turnEnded(.stopped)
@@ -503,49 +569,56 @@ final class ChatController {
   func continueWork() {
     guard let agent else { return }
     items.append(Item(role: "user", text: String(localized: "（止まったところから続けます）")))
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.continueAfterLimit { e in Task { @MainActor in self.handle(e) } }
+      await agent.continueAfterLimit(events: events)
     }
   }
 
   func retry() {
     guard let agent else { return }
-    begin()
+    let events = begin()
     Task {
       await agent.setProvider(provider)
-      await agent.retry { e in Task { @MainActor in self.handle(e) } }
+      await agent.retry(events: events)
     }
   }
 
   func compact() {
     guard let agent else { return }
-    begin()
+    let events = begin()
     status = String(localized: "会話を圧縮しています…")
     Task {
       await agent.setProvider(provider)
-      await agent.compact { e in Task { @MainActor in self.handle(e) } }
+      await agent.compact(events: events)
     }
   }
 
-  private func begin() {
+  /// An answer begins; what it reports goes to the returned closure.
+  private func begin() -> @Sendable (AgentEvent) -> Void {
+    answer += 1
     choices = []
     offered = []
     GuideController.shared.chatTurnBegan(self)
     busy = true
     failed = false
     usageLimited = false
+    contextFull = false
     stoppedAtLimit = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
     session.presence.turnStarted()
     thoughts.turnStarted()
+    let number = answer
+    return { e in Task { @MainActor in self.handle(e, of: number) } }
   }
 
   /// The tsugumi on the canvas follows what the Agent looks at and runs.
   private func showOnCanvas(tool: String, arguments: String, bird: AgentPresence? = nil) {
     let bird = bird ?? session.presence
+    // What was written is not on the screen once it runs.
+    if tool == "run" { bird.stopShowingCode() }
     switch PresenceEvents.look(tool: tool, arguments: arguments) {
     case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
     case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }
@@ -598,7 +671,7 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, let summary):
       thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
       tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
@@ -615,7 +688,18 @@ final class ChatController {
     }
   }
 
-  private func handle(_ e: AgentEvent) {
+  /// The answer the chat shows. One stopped or left behind may still be ending:
+  /// its text and its end are no longer this chat's (it goes on with the newer
+  /// one, which would be shown as stopped). What its tools did still counts.
+  @ObservationIgnored private var answer = 0
+
+  private func handle(_ e: AgentEvent, of number: Int) {
+    if number != answer {
+      switch e {
+      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .stepLimit: return
+      default: break
+      }
+    }
     switch e {
     case .text(let t):
       thoughts.note(text: t)
@@ -634,8 +718,9 @@ final class ChatController {
       let shown = GuideAction.parse(args)
       choices = shown.choices
       offered = shown.actions
-      // The bird moves only in demo mode; after the farewell the chat is a chat again.
-      if demoMode { GuideController.shared.chatShow(self, arguments: args) }
+      // The bird flies for it: in demo mode, and outside it to show where a
+      // feature the user asked about is (the rules keep it to that).
+      GuideController.shared.chatShow(self, arguments: args)
       if shown.endTour { demoMode = false }
     case .toolFinished(_, "guide_show", _, _):
       break
@@ -647,20 +732,27 @@ final class ChatController {
       thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       thoughts.note(tool: name, ok: ok, summary: summary)
-      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded() }
+      if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
       tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
       }
+    case .compacting:
+      // The next reply waits for it (over a minute with a long conversation).
+      status = String(localized: "会話を圧縮しています…")
     case .compacted:
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
+      status = nil
       reloadCurrent()
-    case .retrying(let s): status = String(localized: "再試行中: \(s)")
+    case .retrying(let s):
+      // The reply is asked again from its beginning.
+      session.presence.toolInputEnded(ok: false)
+      status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
-      session.presence.toolInputEnded()
+      session.presence.toolInputEnded(ok: false)
       if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
@@ -669,13 +761,17 @@ final class ChatController {
       session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
       failed = s != "cancelled"
       usageLimited = s == ChatGPTError.usageLimitText
+      contextFull = s == Agent.contextFullText
       status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
         : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+        : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
     case .finished:
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
       busy = false
+      // A note of this turn (a retry, the compaction) is no longer current.
+      status = nil
       session.presence.turnEnded()
       refreshAfterTurn()
       tidySoon()
@@ -693,7 +789,10 @@ final class ChatController {
 
   private func reloadCurrent() {
     guard let agent else { return }
-    Task { load(await agent.conversation) }
+    Task {
+      load(await agent.conversation)
+      usage = await agent.conversation.usage
+    }
   }
 
   private func refreshAfterTurn() {
@@ -724,10 +823,14 @@ enum AgentSettings {
     return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
   }
 
-  /// The connection of the Home guide: the Agent's, with the small speech model on the ChatGPT plan.
+  /// The connection of the Home guide: the Agent's, with a small model, as for
+  /// the canvas bird's thoughts: claude-haiku-5-5 on Anthropic, the speech model
+  /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
+  /// chat, with the chat's model.
   static func guide() -> ProviderConfig {
     var c = current()
     if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
+    else if c.auth == .apiKey, c.api == .anthropicMessages { c.model = "claude-haiku-5-5" }
     return c
   }
 
@@ -735,6 +838,19 @@ enum AgentSettings {
   static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
 
   static func current() -> ProviderConfig { config(for: provider) }
+
+  /// The connection of the chat's Agent and its helpers: with the effort and
+  /// the Fast mode chosen in the model menu. The guide, the summaries and the
+  /// checks use `current()`, without them.
+  static func chat() -> ProviderConfig {
+    let d = UserDefaults.standard
+    return current().choosing(effort: d.string(forKey: effortKey) ?? "", fastModel: d.string(forKey: fastModelKey) ?? "")
+  }
+
+  /// The model menu's effort ("" or none: the model's default), for every model that takes it.
+  static let effortKey = "agent.effort"
+  /// The one model Fast mode was turned on for.
+  static let fastModelKey = "agent.fastModel"
 
   /// A connection with its chosen model (each keeps its own).
   static func config(for provider: String) -> ProviderConfig {
@@ -745,17 +861,24 @@ enum AgentSettings {
     case "chatgpt":
       var c = ProviderConfig.chatGPT
       if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     case "openai":
       var c = ProviderConfig.openAI
       if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     default:
       var c = ProviderConfig.anthropic
       if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
+      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     }
   }
+
+  /// The chat's Agent may search the web through the provider (Settings > API;
+  /// off until the user turns it on: its queries leave for a search service).
+  static let webSearchKey = "agent.webSearch"
 
   /// Where a connection keeps its chosen model.
   static func modelKey(_ provider: String) -> String {

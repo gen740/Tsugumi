@@ -1,0 +1,28 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "filesystem": true,
+  "network": true,
+  "params": [
+    {
+      "name": "urls",
+      "type": "string[]",
+      "data": [
+        "https://gwosc.org/eventapi/json/GWTC-1-confident/GW150914/v3/H-H1_GWOSC_4KHZ_R1-1126259447-32.hdf5",
+        "https://gwosc.org/eventapi/json/GWTC-1-confident/GW150914/v3/L-L1_GWOSC_4KHZ_R1-1126259447-32.hdf5"
+      ]
+    },
+    {
+      "name": "names",
+      "type": "string[]",
+      "data": [
+        "H-H1_GWOSC_4KHZ_R1-1126259447-32.hdf5",
+        "L-L1_GWOSC_4KHZ_R1-1126259447-32.hdf5"
+      ]
+    }
+  ]
+}

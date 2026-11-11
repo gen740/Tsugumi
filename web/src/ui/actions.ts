@@ -5,6 +5,7 @@ import type { Stage } from '../model/canvasKit'
 import { CardKey, errorText, key, path, ProjectSession } from '../model/session'
 import type { Workspace, WorkflowTab } from '../model/workspace'
 import { get, str } from '../shared/json'
+import { L } from '../i18n'
 
 /** The whole document runs from its root trigger, whichever scope is shown. */
 export function runAll(s: ProjectSession) {
@@ -14,7 +15,7 @@ export function runAll(s: ProjectSession) {
   })
   const id = str(get(trigger, 'id'))
   if (!id) {
-    s.notice = '全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。'
+    s.notice = L('全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。')
     s.changed()
     return
   }

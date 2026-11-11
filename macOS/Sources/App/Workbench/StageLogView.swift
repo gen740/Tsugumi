@@ -5,7 +5,7 @@ import TsugumiRPC
 /// The log of one invocation of a Card by stage, like a CI job: SDK
 /// preparation, Nix evaluation and build / execution / validation and save,
 /// each with its state, duration and what it printed, folded unless it failed
-/// or was asked for. The raw streams stay available under 「stream 別」.
+/// or was asked for. The raw streams stay available under "By stream".
 struct StageLogView: View {
   let session: ProjectSession
   let runId: String
@@ -19,9 +19,15 @@ struct StageLogView: View {
   @State private var shownInvocation: UInt64?
   @State private var logs: [Tsugumi_Data_LogStream: String] = [:]
   @State private var open: Set<String> = []
+  /// Groups opened when they started running: each once, so one the reader folds stays folded.
+  @State private var openedRunning: Set<String> = []
   @State private var rawStream: Tsugumi_Data_LogStream = .stdout
   @State private var error: String?
   @State private var loaded = false
+  /// The log opens at its end and follows it, as the chat does, until the
+  /// reader scrolls up; back at the end, it follows again.
+  @State private var follow = ChatFollow()
+  @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
   private struct Group: Identifiable {
     let id: String
@@ -78,9 +84,25 @@ struct StageLogView: View {
           }
           .padding(.vertical, 6)
         }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: ChatFollow.View.self) { g in
+          ChatFollow.View(top: g.visibleRect.minY, bottom: g.visibleRect.maxY, content: g.contentSize.height)
+        } action: { _, now in
+          if follow.update(now) { scrollPosition.scrollTo(edge: .bottom) }
+        }
+        .onScrollPhaseChange { _, phase in
+          follow.readerScrolling = phase == .interacting || phase == .decelerating
+          if phase == .idle, follow.following { scrollPosition.scrollTo(edge: .bottom) }
+        }
       }
     }
-    .task(id: "\(runId)|\(invocation ?? 0)") { await load() }
+    .task(id: "\(runId)|\(invocation ?? 0)") {
+      openedRunning = []
+      follow.restart()
+      scrollPosition.scrollTo(edge: .bottom)
+      await load()
+    }
     .onChange(of: session.logRevision) { Task { await load() } }
     .onChange(of: focus) { if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { open.insert(g.id) } }
   }
@@ -152,7 +174,7 @@ struct StageLogView: View {
   }
 
   private func logText(_ text: String, empty: String) -> some View {
-    Text(text.isEmpty ? empty : text)
+    Text(text.isEmpty ? empty : terminalText(text))
       .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: text.isEmpty ? .default : .monospaced))
       .foregroundStyle(text.isEmpty ? .secondary : .primary)
       .textSelection(.enabled)
@@ -205,6 +227,11 @@ struct StageLogView: View {
       if open.isEmpty {
         for g in groups where status(g).2 == String(localized: "失敗") { open.insert(g.id) }
         if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { open.insert(g.id) }
+      }
+      // So does the one running now, to show its output as it comes.
+      for g in groups where status(g).2 == String(localized: "進行中") && !openedRunning.contains(g.id) {
+        openedRunning.insert(g.id)
+        open.insert(g.id)
       }
     } catch let f as RPCFailure where f.kind == .notFound {
       logs = [:]

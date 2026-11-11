@@ -1,0 +1,11 @@
+{
+  "description": "Grow reaction–diffusion (Gray–Scott) patterns",
+  "content": "Takes size and seed from settings. On a periodic grid of side size/2, starts from u=1, v=0, sets the central 20×20 to u=0.5, v=0.25 and adds ±1% fluctuations from random numbers by seed. Advances the Gray–Scott model (Du=0.16, Dv=0.08, F=0.035, k=0.065, dt=1, a 5-point Laplacian) 6000 steps, and shows the distribution of v, enlarged 2×, as a PNG. F, k and the number of steps are parameters. Asserts that u and v stay within 0–1 throughout, and logs the mean and maximum of the final v. Uses numpy and pillow, with the loop written as array operations.",
+  "inputs": [
+    {
+      "name": "settings",
+      "description": "size and seed"
+    }
+  ],
+  "outputs": []
+}

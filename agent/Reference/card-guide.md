@@ -223,8 +223,9 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 
 ## Checking and running
 
-1. Check planned changes with `project_validate {"changes": [...]}` (nothing is saved).
-2. Save with `project_save`.
+1. Save with `project_save`; its result lists each Card's diagnostics.
+2. When the writing is done, check once with `project_validate` (it resolves the latest revision) and fix what it
+   reports.
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.

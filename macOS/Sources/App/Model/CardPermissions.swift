@@ -2,7 +2,8 @@ import Foundation
 import TsugumiRPC
 
 /// What a Card may do beyond computing (core/src/permissions.hh): reach the
-/// network, run without the sandbox, see folders of the Mac. The Agent's
+/// network, run without the sandbox, see folders of the Mac, have Nix read a
+/// source outside nixpkgs. The Agent's
 /// saves that widen these wait for the user (ChatController.approve), except
 /// for the kinds the user allows without asking (AppPreferences).
 enum CardPermission: String, CaseIterable, Identifiable {
@@ -10,6 +11,7 @@ enum CardPermission: String, CaseIterable, Identifiable {
   case sandboxOff = "sandbox_off"
   case hostFolderRead = "host_folder_read"
   case hostFolderWrite = "host_folder_write"
+  case nixSource = "nix_source"
 
   var id: String { rawValue }
 
@@ -19,6 +21,7 @@ enum CardPermission: String, CaseIterable, Identifiable {
     case .sandboxOff: return String(localized: "隔離（sandbox）なしで実行")
     case .hostFolderRead: return String(localized: "Mac のフォルダを読む")
     case .hostFolderWrite: return String(localized: "Mac のフォルダに書く")
+    case .nixSource: return String(localized: "外部の Nix ソースを読む")
     }
   }
 
@@ -28,10 +31,11 @@ enum CardPermission: String, CaseIterable, Identifiable {
     case .sandboxOff: return "shield.slash"
     case .hostFolderRead: return "folder"
     case .hostFolderWrite: return "folder.badge.plus"
+    case .nixSource: return "shippingbox"
     }
   }
 
-  /// One widening a save asks for: "<kind> <card>[ <folder>]".
+  /// One widening a save asks for: "<kind> <card>[ <folder>]" (nix_source: "<kind> <name> <url>#<hash>").
   struct Request: Identifiable, Hashable {
     let raw: String
     let kind: CardPermission

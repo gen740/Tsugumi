@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace simpson;
+table Admissions { value:string; }
+table Outputs { admissions:Admissions (required, tsugumi: "file"); }
+root_type Outputs;

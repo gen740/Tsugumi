@@ -72,9 +72,50 @@ let
   '';
 
   languagesKnown = [ "cpp" "python" ];
+
+  # Whether this Card is built for another system than the one evaluating it
+  # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
+  # kernel registered (binfmt_misc).
+  foreign = pkgs.stdenv.hostPlatform.system != builtins.currentSystem;
+
+  # tsugumi-worker for this nixpkgs and system, for a package Card of another
+  # system: the worker of tsugumid is built for the machine's own system and
+  # cannot load the Card's main.so. Built from this nixpkgs, so the worker and
+  # the Card share one glibc, libstdc++ and libpython; one build per nixpkgs
+  # and system, reused by every such Card. The sources are those tsugumid was
+  # built from (installed with it: share/tsugumi/sdk/worker).
+  worker =
+    let
+      dir = sdkRoot + "/worker";
+    in
+    assert lib.assertMsg (builtins.pathExists dir)
+      "a C++ or Python Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
+    pkgs.stdenv.mkDerivation {
+      name = "tsugumi-worker";
+      src = lib.fileset.toSource {
+        root = sdkRoot;
+        fileset = lib.fileset.unions [ dir (sdkRoot + "/include") (sdkRoot + "/src/worker_main.cc") ];
+      };
+      nativeBuildInputs = [ pkgs.flatbuffers ];
+      buildInputs = [ pkgs.flatbuffers ];
+      dontConfigure = true;
+      # As tsugumid's CMake build generates them (CMakeLists.txt).
+      buildPhase = ''
+        mkdir -p gen/tsugumi/protocol
+        flatc --cpp --scoped-enums --gen-mutable --keep-prefix --include-prefix tsugumi/protocol \
+          -I worker/protocol -o gen/tsugumi/protocol worker/protocol/*.fbs
+        # hosq is a system header there too: its warnings are not the worker's.
+        $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/core -isystem worker/include -Igen \
+          src/worker_main.cc worker/core/schema.cc worker/core/util/text.cc \
+          -lflatbuffers -lpthread -ldl -o tsugumi-worker
+      '';
+      installPhase = ''
+        install -Dm755 tsugumi-worker $out/bin/tsugumi-worker
+      '';
+    };
 in
 rec {
-  inherit generated runtime;
+  inherit generated runtime worker;
   inherit (pkgs) flatbuffers;
 
   # The SDK of this Card: its contract compiled for the requested languages
@@ -236,7 +277,8 @@ rec {
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.
   #   run      the body: a package (derivation; the worker loads its
-  #            lib/main.so and calls it in memory) or a bash script (string;
+  #            lib/main.so and calls it in memory; for another system,
+  #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT)
   #   preRun   bash before the body, every invocation (also with a resident
@@ -257,6 +299,7 @@ rec {
       body =
         if !(card ? run) then throw "a Card needs `run`: a package (derivation) or a bash script (string)"
         else if lib.isDerivation card.run then { package = "${card.run}"; }
+          // lib.optionalAttrs foreign { worker = "${worker}/bin/tsugumi-worker"; }
         else if builtins.isString card.run then { bash = card.run; }
         else throw "run must be a package (derivation) or a bash script (string)";
     in

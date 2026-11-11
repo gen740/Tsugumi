@@ -183,6 +183,50 @@ struct ParamData: Hashable {
   var value: String
 }
 
+/// What the user and the Agent write about a Card (_meta.json), and the record
+/// of who did what ("agent" or "user"; nil when not recorded).
+struct CardComment: Equatable, Identifiable {
+  var id: String
+  var text: String
+  var resolved = false
+  /// One line on what was done about it.
+  var resolution: String?
+  var author: String?
+  var editedBy: String?
+  var stateBy: String?
+  /// The Cards the save that resolved it changed.
+  var cards: [String] = []
+
+  static func list(in meta: JSONValue?) -> [CardComment] {
+    (meta?["comments"]?.array ?? []).compactMap { c in
+      guard let id = c["id"]?.string, let text = c["text"]?.string, !id.isEmpty else { return nil }
+      let line = c["resolution"]?.string ?? ""
+      return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
+                         author: c["author"]?.string, editedBy: c["editedBy"]?.string, stateBy: c["stateBy"]?.string,
+                         cards: c["cards"]?.array?.compactMap(\.string) ?? [])
+    }
+  }
+
+  /// Who did something to a comment, for the sentences that say so.
+  static func actor(_ by: String?) -> String? {
+    by == "agent" ? "Agent" : by == "user" ? String(localized: "あなた") : nil
+  }
+
+  /// What a version or a save did to a comment, and who did it when that is recorded.
+  static func change(_ change: String, by: String?) -> String {
+    let what: String
+    switch change {
+    case "added": what = String(localized: "追加")
+    case "edited": what = String(localized: "編集")
+    case "resolved": what = String(localized: "解決")
+    case "reopened": what = String(localized: "開き直し")
+    case "removed": what = String(localized: "削除")
+    default: what = change
+    }
+    return actor(by).map { "\(what)（\($0)）" } ?? what
+  }
+}
+
 /// Everything a Card view needs, with no dependency on a session.
 struct CardNodeData: Equatable {
   var title: String
@@ -216,11 +260,13 @@ struct CardNodeData: Equatable {
   var untitled = false
   /// The canvas grid's spacing while the grid is on: the ports follow it.
   var portGrid: CGFloat?
+  /// Comments on the Card not resolved yet.
+  var openComments = 0
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
 
-  /// "実行 #3 · 成功" and the like; nil before the first invocation.
+  /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
     guard let state, invocation > 0 else { return nil }
     var s = String(localized: "実行 #\(invocation)")
@@ -481,15 +527,17 @@ struct CardGeometry {
   }
 
   /// The outline itself (Card box, diamond, fan or funnel) inside `r`.
-  func outline(in r: CGRect) -> Path {
+  /// `cornerScale` shrinks the corners that stay the same at every zoom, for a
+  /// drawing much smaller than the canvas.
+  func outline(in r: CGRect, cornerScale: CGFloat = 1) -> Path {
     switch shape {
     case .card:
-      return Path(roundedRect: r, cornerRadius: 9)
+      return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
     case .start:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6)
+                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
     case .fork, .merge:
       // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.
@@ -746,6 +794,8 @@ struct CardNodeView: View {
   var onInputDrop: ((String, CGPoint) -> Void)?
   var onStageTap: ((Stage) -> Void)?
   var onToggleCollapse: (() -> Void)?
+  /// The badge of open comments: opens them (nil: only shows the number).
+  var onComments: (() -> Void)?
   /// The start Card's button: runs the workflow from it (nil: not offered).
   var onRun: (() -> Void)?
   var draftEdit: DraftEdit?
@@ -772,6 +822,7 @@ struct CardNodeView: View {
       path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
       portLabels(g)
       portMarks(g)
+      if data.openComments > 0 { commentsBadge(outline: outline) }
     }
     .frame(width: size.width, height: size.height, alignment: .topLeading)
     // The outline and the ports: a port sits on the edge, and the half of it
@@ -781,8 +832,33 @@ struct CardNodeView: View {
     .accessibilityLabel(accessibilityText)
   }
 
+  /// On the outline's top right corner, for every shape of Card.
+  private func commentsBadge(outline: CGRect) -> some View {
+    Button { onComments?() } label: {
+      HStack(spacing: s(2)) {
+        Image(systemName: "bubble.left").font(font(9, .semibold))
+        Text(verbatim: "\(data.openComments)").font(font(9.5, .semibold)).monospacedDigit()
+      }
+      .foregroundStyle(.white)
+      .padding(.horizontal, s(4))
+      .frame(minWidth: s(15), minHeight: s(15))
+      .background(Color.accentColor, in: Capsule())
+    }
+    .buttonStyle(.plain)
+    .disabled(onComments == nil)
+    .help("未解決のコメント \(data.openComments) 件")
+    .accessibilityLabel(String(localized: "未解決のコメント \(data.openComments) 件"))
+    .alignmentGuide(.leading) { $0.width * 0.7 - outline.maxX }
+    .alignmentGuide(.top) { $0.height / 2 - outline.minY }
+  }
+
   private func hitShape(_ g: CardGeometry, outline: Path) -> Path {
     var p = outline
+    if data.openComments > 0 {
+      // The badge sits half outside the outline and must still take the click.
+      let badge = max(16, s(18))
+      p.addRect(CGRect(x: outline.boundingRect.maxX - badge, y: outline.boundingRect.minY - badge / 2, width: badge * 1.4, height: badge))
+    }
     let hit = max(16, s(18))
     for (list, output) in [(data.inputs, false), (data.outputs, true)] {
       for port in list {
@@ -1284,6 +1360,8 @@ struct WireDraw {
   enum Style { case normal, carried, active, selected, display }
   var path: Path
   var style: Style
+  /// A wire to or from a Draft is dotted, whatever its style.
+  var dotted = false
   /// The connection, when the Agent may be threading it (drawn by the
   /// presence layer meanwhile).
   var thread: AgentPresence.Wire? = nil
@@ -1436,9 +1514,10 @@ struct WireRouter {
 
   /// How far along the flow a port's wire has to run to get out of a Card's box (0: not in it).
   private func depth(_ o: CGRect, _ p: CGPoint, _ dir: CGFloat) -> CGFloat {
-    if p.x <= o.minX || p.x >= o.maxX { return 0 }
-    if dir > 0 { return o.minY <= p.y && p.y < o.maxY ? o.maxY - p.y : 0 }
-    return o.minY < p.y && p.y <= o.maxY ? p.y - o.minY : 0
+    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // beside the wire, and the wire would otherwise go on through all of it.
+    if p.x <= o.minX || p.x >= o.maxX || p.y <= o.minY || p.y >= o.maxY { return 0 }
+    return dir > 0 ? o.maxY - p.y : p.y - o.minY
   }
 
   /// Where a port's wire is out of the boxes it starts in (a Card's port is on the edge already).
@@ -1732,6 +1811,13 @@ struct WireLayer: View {
   /// The active wires' dashes, and how fast they flow (points per second).
   static let dash: [CGFloat] = [8, 6]
   static let flow: Double = 30
+  /// A Draft's wires: round dots, spaced so that they flow without a jump
+  /// at the phase of the active wires' dashes (a whole number per period),
+  /// and never smaller than can be seen on a Canvas zoomed out.
+  static let dot: [CGFloat] = [0, dash.reduce(0, +) / 3]
+  static let dotMin: CGFloat = 2.2
+  /// A selected wire is thicker: further apart, its dots still read as dots.
+  static let dotSelected: [CGFloat] = [0, dash.reduce(0, +) / 2]
 
   var body: some View {
     let anyActive = animate && wires.contains { $0.style == .active }
@@ -1748,17 +1834,18 @@ struct WireLayer: View {
         for wire in wires {
           // A wire the Agent is threading is drawn by the presence layer.
           if let th = wire.thread, presences.contains(where: { $0.thread(th, at: t.date) != .plain }) { continue }
-          let round = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
+          let dots = wire.dotted ? Self.dot : []
+          let width = { (w: CGFloat) in wire.dotted ? max(w, Self.dotMin) : w }
           switch wire.style {
           case .normal:
-            ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: round)
+            ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: StrokeStyle(lineWidth: width(w), lineCap: .round, lineJoin: .round, dash: dots))
           case .carried:
-            ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: w + 0.4, lineCap: .round, lineJoin: .round))
+            ctx.stroke(wire.path, with: .color(.orange.opacity(0.8)), style: StrokeStyle(lineWidth: width(w + 0.4), lineCap: .round, lineJoin: .round, dash: dots))
           case .active:
-            ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: w + 0.6, lineCap: .round, lineJoin: .round,
-                                                                             dash: anyActive ? Self.dash : [], dashPhase: phase))
+            ctx.stroke(wire.path, with: .color(.orange), style: StrokeStyle(lineWidth: width(w + 0.6), lineCap: .round, lineJoin: .round,
+                                                                             dash: wire.dotted ? dots : anyActive ? Self.dash : [], dashPhase: phase))
           case .selected:
-            ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: w + 1.4, lineCap: .round, lineJoin: .round))
+            ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: width(w + 1.4), lineCap: .round, lineJoin: .round, dash: wire.dotted ? Self.dotSelected : []))
           case .display:
             ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
           }

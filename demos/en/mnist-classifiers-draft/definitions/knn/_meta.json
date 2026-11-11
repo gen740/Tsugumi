@@ -1,0 +1,16 @@
+{
+  "description": "Tell the digits apart with k-nearest neighbours",
+  "content": "For each test image, find by brute force the distance to the training images and decide the digit by a majority vote of the k nearest. Use scikit-learn's KNeighborsClassifier (algorithm=\"brute\"). k is a parameter (default 3). Add to the figure a few test images it got wrong, next to their neighbouring training images. data is the path of prepare's npz file: train_images and test_images are 784-dimensional arrays scaled to 0–1, train_labels and test_labels are digits, digest is a fingerprint of the test images. Set OMP_NUM_THREADS=1 at the top of main.py (before the imports) to run on one thread. Measure training and prediction times as differences of time.process_time(). The type of the output result is the same for all seven classifiers, and compare reads it with one type, so _outputs.fbs is, without changing a character, \"namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;\". model is the Card's id, settings a string of the parameters' values, digest the value received as it is, and predictions the predictions for every test image. Show the accuracy, the times and a breakdown of the mistakes (a 10×10 table of true and predicted) in a matplotlib figure. Assert: that the length of predictions equals the number of test images, that every prediction is 0–9, that the accuracy is at least 0.93, that with k=1 the predictions for the first 100 test images agree with the labels of the nearest neighbours found by brute force in numpy, and that with k=1 predicting the first 100 training images gets them all right. Use numpy, matplotlib and scikit-learn.",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare's subset (the path of the npz file)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "Accuracy, CPU time, settings, and predictions for every test image"
+    }
+  ]
+}

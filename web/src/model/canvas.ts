@@ -3,11 +3,12 @@
 // controls, the menus and the shortcuts.
 import { arr, bool, dbl, get, isObj, J, real, str } from '../shared/json'
 import { D } from '../shared/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
 import { Observable } from './observable'
-import type { ShortcutAction } from './prefs'
+import { prefs, ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
+import { L } from '../i18n'
 
 export type { Camera }
 
@@ -21,6 +22,8 @@ export interface RoutedWire {
   d: string
   pts: Pt[]
   style: WireStyle
+  /** An end of it is a Draft: drawn dotted, whatever its style. */
+  dotted?: boolean
 }
 
 export interface BoundaryPort {
@@ -133,6 +136,38 @@ export class Scene {
     return m?.frames?.has(k) && !this.session.frameFollowsCard(k, m.keys) ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r
   }
 
+  /** The nearest place to `point` where the Card `k` covers no other Card,
+   *  output frame or sticky note: `point` itself when it is free, else on rings
+   *  around it. On the grid when the grid is on. The Mac's freeSpot is the same search. */
+  freeSpot(point: Pt, k: CardKey): Pt {
+    const step = prefs.showGrid ? prefs.gridSize : 20
+    const start = prefs.showGrid ? { x: snapToGrid(point.x, step), y: snapToGrid(point.y, step) } : point
+    const size = this.geometry(k).size
+    const margin = 16
+    const taken = [
+      ...this.cardKeys.filter((c) => c !== k).map((c) => this.cardRect(c)),
+      ...this.outputKeys.filter((c) => c !== k).map((c) => this.frameRect(c)),
+      ...this.session.notes(this.scope).map((n) => noteRect(n)),
+    ]
+    const free = (p: Pt) => {
+      const r = { x: p.x - margin, y: p.y - margin, width: size.width + 2 * margin, height: size.height + 2 * margin }
+      return !taken.some((t) => intersects(r, t))
+    }
+    if (free(start)) return start
+    for (let ring = 1; ring <= 200; ring++) {
+      const spots: { dx: number; dy: number }[] = []
+      for (let i = -ring; i <= ring; i++) spots.push({ dx: i, dy: -ring }, { dx: i, dy: ring })
+      for (let i = 1 - ring; i < ring; i++) spots.push({ dx: -ring, dy: i }, { dx: ring, dy: i })
+      // Nearest first; among equals, the same order on the Mac and on the web.
+      spots.sort((a, b) => (a.dx * a.dx + a.dy * a.dy) - (b.dx * b.dx + b.dy * b.dy) || b.dy - a.dy || b.dx - a.dx)
+      for (const s of spots) {
+        const p = { x: start.x + s.dx * step, y: start.y + s.dy * step }
+        if (free(p)) return p
+      }
+    }
+    return start
+  }
+
   /** What a marquee (world units) touches. */
   itemsIn(r: Rect): { cards: CardKey[]; notes: string[]; frames: CardKey[] } {
     return {
@@ -202,6 +237,7 @@ export class Scene {
   get wires(): RoutedWire[] {
     if (this._wires) return this._wires
     const s = this.session
+    const kind = (k: CardKey) => s.kind(k)
     const obstacles = [...this.cardKeys.map((k) => this.cardRect(k)), ...this.outputKeys.map((k) => this.frameRect(k))]
     const b = this.boundary
     if (b) obstacles.push(b.top, b.bottom)
@@ -211,16 +247,16 @@ export class Scene {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
       if (!fc || !fp || !tc || !tp) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk) } })
+      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk), dotted: isDraftWire(kind, fk, tk) } })
     })
     if (b) {
       for (const p of b.inputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal' } })
+        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal', dotted: isDraftWire(kind, p.inner[0]) } })
       }
       for (const p of b.outputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined) } })
+        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined), dotted: isDraftWire(kind, p.inner[0]) } })
       }
     }
     const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
@@ -505,7 +541,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
   /** A built-in Card in the middle of the view (or at `at`); returns it. */
   addBuiltin(t: DefinitionTemplate, at?: Pt): CardKey | undefined {
     if (!this.session.isEditable) return undefined
-    const k = this.session.addCard(t, this.tab.scope, at ?? this.middle())
+    const k = this.addClear(t, at ?? this.middle())
     this.tab.setSelection([k])
     return k
   }
@@ -513,9 +549,15 @@ export class CanvasController extends Observable implements CanvasOverlay {
   /** E: a new Draft Card in the middle of the canvas. */
   addDraft(): CardKey | undefined {
     if (!this.session.isEditable) return undefined
-    const k = this.session.addCard('draft', this.tab.scope, this.world(this.center))
+    const k = this.addClear('draft', this.world(this.center))
     this.tab.setSelection([k])
     return k
+  }
+
+  /** A Card put on the canvas without being aimed at this very spot: where it covers nothing. */
+  private addClear(t: DefinitionTemplate, at: Pt): CardKey {
+    const scope = this.tab.scope
+    return this.session.addCard(t, scope, at, undefined, (k) => new Scene(this.session, scope).freeSpot(at, k))
   }
 
   /** G: the selected Cards become a group; a selection that is one group's Cards is ungrouped. */
@@ -532,7 +574,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
     else this.session.addGroup(sel, this.tab.scope)
   }
 
-  /** "選択をグループ化": a new group, its editor open. */
+  /** "Group Selection": a new group, its editor open. */
   groupSelection() {
     if (!this.tab.selection.size) return
     this.set('editingGroup', this.session.addGroup(this.tab.selection, this.tab.scope))
@@ -597,7 +639,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
     const t = this.tab
     // Notes and frames are layout: they can go during a run, as from their own menus.
     if (!s.isEditable && (t.selection.size || t.selectedConnection !== undefined)) {
-      s.notice = '実行中は Card を削除できません。'
+      s.notice = L('実行中は Card を削除できません。')
       s.changed()
       return
     }
@@ -608,7 +650,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
       this.tab.changed()
       return
     }
-    // A frame alone is closed and its Card stays (the frame's own 枠を削除);
+    // A frame alone is closed and its Card stays (the frame's own Remove Frame);
     // a deleted Card takes its frame with it.
     const scene = this.scene()
     const closing = scene.outputKeys.filter((k) => t.selectedFrames.has(k) && !t.selection.has(k)).map((k) => [k, scene.frameRect(k)] as const)

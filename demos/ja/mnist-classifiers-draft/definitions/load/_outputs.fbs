@@ -1,0 +1,4 @@
+namespace mnist;
+table Dataset { directory:string; source:string; train_count:uint; test_count:uint; }
+table Outputs { dataset:Dataset (required); }
+root_type Outputs;

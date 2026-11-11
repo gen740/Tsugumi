@@ -1,0 +1,15 @@
+namespace cells;
+// A synthetic image (size x size) with the true cell centres, and how it was made.
+table Scene {
+  size:ulong;
+  image:[float];
+  true_x:[float];
+  true_y:[float];
+  radius:double;
+  pairs:ulong;
+  seed:ulong;
+  noise:double;
+  unevenness:double;
+}
+table Outputs { scene:Scene (required); }
+root_type Outputs;

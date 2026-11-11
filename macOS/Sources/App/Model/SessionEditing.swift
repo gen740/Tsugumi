@@ -164,6 +164,7 @@ extension ProjectSession {
 
   /// Adds a Card instance to a scope's canvas.
   func appendCard(_ id: String, in scope: [String]) {
+    startClean(key(scope + [id]))
     updateGraph(scope) { g in
       var cards = g["cards"]?.array ?? []
       cards.append(.object([("id", .string(id))]))
@@ -171,17 +172,74 @@ extension ProjectSession {
     }
   }
 
+  /// A new Card's name can be one a Card had: nothing of that Card stays with it.
+  /// The core keeps this project's layout up with renames and deletes, but a Card
+  /// in Card's layout or a file written by hand can still hold a frame.
+  private func startClean(_ k: CardKey) {
+    forgetResult(k)
+    updateLayout(of: Array(path(k).dropLast())) { dropLayoutEntries(of: k, from: &$0) }
+  }
+
+  /// The Card's place and frame (and the places of anything inside it).
+  private func dropLayoutEntries(of k: CardKey, from l: inout JSONValue) {
+    let lk = layoutKey(k)
+    if var cards = l["cards"]?.object {
+      cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
+      l["cards"] = .object(cards)
+    }
+    l["displays"]?[lk] = nil
+  }
+
   /// A new Card from a template, with its own definition folder.
   @discardableResult
-  func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil) -> CardKey {
+  /// `clearOfOthers`: at the nearest place where it covers nothing (a Card put
+  /// on the canvas without the user aiming it at this very spot).
+  func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
+               clearOfOthers: Bool = false) -> CardKey {
     let id = uniqueId(name ?? t.baseName, in: scope)
     let k = key(scope + [id])
     edit { s in
       s.appendCard(id, in: scope)
       s.writeTemplate(t, card: k)
-      s.setPosition(k, point)
+      s.setPosition(k, clearOfOthers ? s.freeSpot(near: point, for: k, in: scope) : point)
     }
     return k
+  }
+
+  /// The nearest place to `point` where a Card covers no other Card, output
+  /// frame or sticky note: `point` itself when it is free, else on rings
+  /// around it. On the grid when the grid is on. The web's Scene.freeSpot is
+  /// the same search.
+  func freeSpot(near point: CGPoint, for k: CardKey, in scope: [String]) -> CGPoint {
+    let prefs = AppPreferences.shared
+    let step = prefs.showGrid ? prefs.gridSize : 20
+    let start = prefs.showGrid ? CGPoint(x: snapToGrid(point.x, step), y: snapToGrid(point.y, step)) : point
+    let size = geometry(k).size
+    let margin = 16.0
+    let others = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { $0 != k }
+    let taken = others.map { CGRect(origin: placedPosition($0), size: geometry($0).size) }
+      + framedCards(in: scope).filter { $0 != k }.map { displayRect($0, origin: placedPosition($0)) }
+      + notes(in: scope).map(noteRect)
+    func free(_ p: CGPoint) -> Bool {
+      let r = CGRect(origin: p, size: size).insetBy(dx: -margin, dy: -margin)
+      return !taken.contains { r.intersects($0) }
+    }
+    if free(start) { return start }
+    for ring in 1...200 {
+      var spots: [(dx: Int, dy: Int)] = []
+      for i in -ring...ring { spots += [(i, -ring), (i, ring)] }
+      for i in (1 - ring)..<ring { spots += [(-ring, i), (ring, i)] }
+      // Nearest first; among equals, the same order on the Mac and on the web.
+      spots.sort { a, b in
+        let da = a.dx * a.dx + a.dy * a.dy, db = b.dx * b.dx + b.dy * b.dy
+        return da != db ? da < db : a.dy != b.dy ? a.dy > b.dy : a.dx > b.dx
+      }
+      for s in spots {
+        let p = CGPoint(x: start.x + Double(s.dx) * step, y: start.y + Double(s.dy) * step)
+        if free(p) { return p }
+      }
+    }
+    return start
   }
 
   /// Copies a Card's definition folder (settings and every file) into a
@@ -212,7 +270,16 @@ extension ProjectSession {
       ext = await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
       link = .object([("external", .string(extName))])
     }
-    let draft = DefinitionDraft(card: d.card, meta: d.meta, link: link)
+    // The copy's comments are comments of its own.
+    var meta = d.meta
+    if let comments = meta?["comments"]?.array {
+      meta?["comments"] = .array(comments.map { c in
+        var n = c
+        n["id"] = .string(UUID().uuidString.lowercased())
+        return n
+      })
+    }
+    let draft = DefinitionDraft(card: d.card, meta: meta, link: link)
     let newKey = key(scope + [newId])
     return (newId, { s in
       s.setCardDefinition(newKey, draft)
@@ -371,6 +438,7 @@ extension ProjectSession {
     var made: Set<CardKey> = []
     edit { s in
       for a in applies { a(s) }
+      for new in map.values { s.startClean(key(scope + [new])) }
       s.updateGraph(scope) { g in
         var cards = g["cards"]?.array ?? []
         var conns = g["connections"]?.array ?? []
@@ -567,15 +635,7 @@ extension ProjectSession {
       }
     }
     s.updateLayout(of: scope) { l in
-      for k in keys {
-        // Layout entries of the Card and of anything inside it.
-        let lk = s.layoutKey(k)
-        if var cards = l["cards"]?.object {
-          cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
-          l["cards"] = .object(cards)
-        }
-        l["displays"]?[lk] = nil
-      }
+      for k in keys { s.dropLayoutEntries(of: k, from: &l) }
     }
     s.updateGroups(in: scope) { groups in
       for i in groups.indices {
@@ -1092,7 +1152,7 @@ extension ProjectSession {
   }
 
   /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
-  /// Card stays (the frame's own 枠を削除); a deleted Card takes its frame with it.
+  /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
   func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
     edit { s in
       s.removeCards(cards, in: scope)
@@ -1117,33 +1177,66 @@ extension ProjectSession {
     }
   }
 
-  /// Arranges the Cards of a scope in layers by their distance from the
-  /// sources, following the flow direction (layout only).
+  /// Lays out a scope's Cards, output frames and notes (layout only, one undo):
+  /// see `arrangeCards`. Sizes and port positions are those of `CardGeometry`.
   func arrange(_ scope: [String]) {
     let ids = cards(in: scope).compactMap { $0["id"]?.string }
-    var incoming: [String: Set<String>] = [:]
-    for c in connections(in: scope) {
-      if let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string, f != t { incoming[t, default: []].insert(f) }
+    let nodes: [ArrangeCard] = ids.map { id in
+      let g = geometry(key(scope + [id]))
+      func ports(_ names: [String], output: Bool) -> [ArrangePort] {
+        names.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: Double(p.x), y: Double(p.y)) }
+      }
+      return ArrangeCard(id: id, width: Double(g.size.width), height: Double(g.size.height), inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true))
     }
-    var depth: [String: Int] = [:]
-    func level(_ id: String, _ seen: Set<String>) -> Int {
-      if let d = depth[id] { return d }
-      let preds = (incoming[id] ?? []).filter { !seen.contains($0) }
-      let d = preds.isEmpty ? 0 : (preds.map { level($0, seen.union([id])) }.max() ?? 0) + 1
-      depth[id] = d
-      return d
+    let wires: [ArrangeWire] = connections(in: scope).compactMap { c in
+      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
+            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      return ArrangeWire(from: f, fromPort: fp, to: t, toPort: tp)
     }
-    for id in ids { _ = level(id, []) }
-    var layers: [Int: [String]] = [:]
-    for id in ids { layers[depth[id] ?? 0, default: []].append(id) }
-    let vertical = flow == .topToBottom
+    let frames: [ArrangeBox] = ids.compactMap { id in
+      let k = key(scope + [id]), f = displayFrame(k)
+      guard displays[k] != nil || f != nil, f?["hidden"]?.bool != true else { return nil }
+      return ArrangeBox(id: id, width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
+    }
+    let boxes: [ArrangeBox] = notes(in: scope).compactMap { n in
+      n["id"]?.string.map { ArrangeBox(id: $0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120) }
+    }
+    func bar(_ side: String) -> [ArrangeBarEnd] {
+      guard !scope.isEmpty else { return [] }
+      return (boundary(key(scope))?[side]?.object ?? []).map { ArrangeBarEnd(card: $0.1["card"]?.string ?? "", port: $0.1["port"]?.string ?? "") }
+    }
+    let placed = arrangeCards(ArrangeInput(flow: flow, grid: AppPreferences.shared.gridSize, snap: AppPreferences.shared.showGrid, cards: nodes, wires: wires, frames: frames, notes: boxes,
+                                           boundaryInputs: bar("inputs"), boundaryOutputs: bar("outputs")))
     edit { s in
-      for (level, members) in layers {
-        for (i, id) in members.enumerated() {
-          let across = Double(i) * 260 - Double(members.count - 1) * 130
-          let along = Double(level) * (vertical ? 200 : 270)
-          s.setPosition(key(scope + [id]), vertical ? CGPoint(x: across, y: along) : CGPoint(x: along, y: across * 0.6))
+      for c in placed.cards { s.setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
+      s.updateLayout(of: scope) { l in
+        if !placed.frames.isEmpty {
+          var displays = l["displays"] ?? .object([])
+          for f in placed.frames {
+            let lk = layoutKey(key(scope + [f.id]))
+            var d = displays[lk] ?? .object([])
+            d["x"] = .real(f.x)
+            d["y"] = .real(f.y)
+            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+            if let size = frames.first(where: { $0.id == f.id }) {
+              d["width"] = .real(size.width)
+              d["height"] = .real(size.height)
+            }
+            displays[lk] = d
+          }
+          l["displays"] = displays
         }
+        if !placed.notes.isEmpty, let list = l["notes"]?.array {
+          l["notes"] = .array(list.map { n in
+            guard let at = placed.notes.first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
+            var copy = n
+            copy["x"] = .real(at.x)
+            copy["y"] = .real(at.y)
+            return copy
+          })
+        }
+        // The bars of a Card in Card go back to following the Cards.
+        l["boundary"] = nil
       }
     }
   }

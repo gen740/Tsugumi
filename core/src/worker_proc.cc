@@ -228,6 +228,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
                  "--ro-bind", "/nix/store", "/nix/store", "--proc", "/proc", "--dev", "/dev",
                  "--tmpfs", "/tmp"};
+    // A development build's worker lives outside /nix/store: that one file is
+    // shown read-only, as the Seatbelt profile allows it (the image's is in the store).
+    if (!sp.worker_binary.starts_with("/nix/store/"))
+      spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.worker_binary, sp.worker_binary});
     // popen and system(3) run /bin/sh by that name (R needs it to start).
     if (!sp.bash.empty()) spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
     if (sp.network) spec.argv.push_back("--share-net");

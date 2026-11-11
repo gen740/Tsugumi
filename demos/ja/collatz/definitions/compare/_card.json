@@ -1,0 +1,18 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "cpp"
+    },
+    {
+      "name": "python"
+    },
+    {
+      "name": "julia"
+    },
+    {
+      "name": "r"
+    }
+  ],
+  "maxRuns": 1
+}

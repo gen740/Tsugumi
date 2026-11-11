@@ -1,9 +1,11 @@
 // A project's versions: its folder is a git repository (libgit2). A run
 // commits what is saved when it starts (when it changed) and records that
 // commit; when it ends, a line goes to the commit's note (refs/notes/tsugumi),
-// so a commit has its runs' results and git selects versions by them
-// (git log --notes=tsugumi --grep=failed). A version the user names is an
-// annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
+// with what ran, so a commit has its runs' results and git selects versions by them
+// (git log --notes=tsugumi --grep=failed). A client may keep what a version
+// changed, in words a model wrote from its diff, in a note of its own
+// (refs/notes/tsugumi-summary), apart from that record. A version the user
+// names is an annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
 #pragma once
 
 #include <cstdint>
@@ -13,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "comments.hh"
+
 namespace tsugumi {
 
 struct VersionRunNote {
@@ -20,6 +24,9 @@ struct VersionRunNote {
   std::string state;  // succeeded, failed, cancelled
   std::string ended;  // ISO 8601 (UTC)
   double seconds = 0;
+  // What ran, from what the run did ("whole: a, b ×2 / failed: b (worker_failed)").
+  // Empty for a run a demo's history file lists.
+  std::string summary;
 };
 
 struct VersionCommit {
@@ -35,6 +42,28 @@ struct VersionCommit {
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
   std::vector<std::string> changed;
+  std::string change_summary;  // refs/notes/tsugumi-summary; empty until written
+  std::vector<comments::Change> comments;
+};
+
+// A version's own Cards and how they connect, for a minimap.
+struct VersionCanvasData {
+  struct Card {
+    std::string id;
+    double x = 0;
+    double y = 0;
+    std::string kind = "code";
+    uint32_t fan = 0;  // a fork's outputs or a merge's inputs
+    bool collapsed = false;
+  };
+  std::vector<Card> cards;
+  std::vector<std::pair<std::string, std::string>> wires;  // from, to
+  std::string flow = "leftToRight";
+};
+
+struct VersionDiffData {
+  std::string text;
+  bool truncated = false;
 };
 
 struct VersionGraphData {
@@ -54,8 +83,9 @@ class Versions {
   // Makes the folder a repository with a first commit of what is in it
   // (.gitignore keeps .tsugumi/ out). A demo's history file
   // (.tsugumi-history.json) becomes its commits, branches, tags and notes
-  // instead, ending in what is on disk. Returns HEAD.
-  std::string init();
+  // instead, ending in what is on disk. Returns HEAD. `english` is the language
+  // of the first commit's message (the connection's, as for runs).
+  std::string init(bool english);
   // Commits what is on disk when it differs from HEAD (on a detached HEAD a
   // branch is made first, so nothing is left unreachable). Returns HEAD; ""
   // when the folder is not a repository.
@@ -65,9 +95,16 @@ class Versions {
   std::string mark(const std::string& name, const std::string& message);
   // The folder becomes `commit` (what is saved now is committed first). On a
   // branch's tip HEAD follows that branch, else it is detached and the next
-  // commit starts a branch.
-  void checkout(const std::string& commit);
+  // commit starts a branch. `english`: the language of that first commit's message.
+  void checkout(const std::string& commit, bool english);
   VersionGraphData graph(size_t limit);
+  // The Cards of `commit`: saved positions, or columns by depth when a Card
+  // has none. No Cards when its documents cannot be read.
+  VersionCanvasData canvas(const std::string& commit);
+  // What `commit` changed from its first parent: the files a summary may read
+  // (summary_reads), cut at a limit.
+  VersionDiffData diff(const std::string& commit);
+  void set_summary(const std::string& commit, const std::string& summary);
 
   static std::string format_note(const VersionRunNote& r);
   static std::string iso_utc(int64_t ms);
@@ -75,6 +112,10 @@ class Versions {
   // "definitions/a/x" -> "a", "externals/p/definitions/b/y" -> "p/b",
   // "tsugumi.json" -> "", anything else -> nullopt.
   static std::optional<std::string> card_of(const std::string& path);
+  // Whether a file's changes may go to a model for a summary: a project's and
+  // a Card's own documents and its code, never data ("definitions/a/src/x.py"
+  // yes, "definitions/a/src/x.csv" and "definitions/a/data/x.txt" no).
+  static bool summary_reads(const std::string& path);
 
  private:
   std::filesystem::path root_;

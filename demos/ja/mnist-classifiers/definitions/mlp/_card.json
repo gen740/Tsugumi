@@ -1,0 +1,25 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "params": [
+    {
+      "name": "hidden",
+      "type": "uint64",
+      "data": 256
+    },
+    {
+      "name": "epochs",
+      "type": "uint64",
+      "data": 15
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 0
+    }
+  ]
+}

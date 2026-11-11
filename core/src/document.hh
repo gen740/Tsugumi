@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -95,8 +96,17 @@ class DocumentError : public std::runtime_error {
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
 schema::Layout parse_layout_json(const std::string& text);
+// layout.json after the root canvas changed: what is under a `moved` Card (old
+// id -> new id) is under its new id, replacing anything already there, and what
+// is under a `gone` Card is dropped, from the positions, the frames and the
+// groups. `text` comes back as it is when it names none of them. `text` is valid.
+std::string layout_following_cards(const std::string& text, const std::map<std::string, std::string>& moved,
+                                   const std::set<std::string>& gone);
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
 schema::CardMeta parse_meta_json(const std::string& text);
+// _meta.json with its empty description and context filled; what has text stays as it is.
+std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
+                           const std::optional<std::string>& context);
 schema::CardLink parse_link_json(const std::string& id, const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
 schema::Project parse_external_project(const std::string& rel, const std::string& text);

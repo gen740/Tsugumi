@@ -31,6 +31,8 @@
           inherit kernel vm-boot;
           # Tsugumi in the shared VM: built inside the VM at boot from this source.
           vm-system = pkgs.callPackage ./macOS/Container/vm-system.nix { tsugumid = core; };
+          # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
+          cli = pkgs.callPackage ./nix/cli.nix { tsugumid = core; };
           # What the app bundles: the boot disk (kernel and a small rootfs with Nix).
           vm = pkgs.runCommand "tsugumi-vm" { } ''
             mkdir -p $out
@@ -53,6 +55,7 @@
             nix.libs.nix-expr
             nix.libs.nix-store
             nix.libs.nix-fetchers
+            nix.libs.nix-flake
             nix.libs.nix-util
             git
             (python3.withPackages (ps: [ ps.flatbuffers ps.pytest ps.websockets ps.matplotlib ps.plotly ps.altair ]))

@@ -1,0 +1,53 @@
+{
+  "name": "Cas A · Chandra RGB",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "load"
+      },
+      {
+        "id": "bands"
+      },
+      {
+        "id": "rgb"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "load",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "events"
+        },
+        "to": {
+          "card": "bands",
+          "port": "input"
+        }
+      },
+      {
+        "from": {
+          "card": "bands",
+          "port": "images"
+        },
+        "to": {
+          "card": "rgb",
+          "port": "input"
+        }
+      }
+    ]
+  }
+}

@@ -2,6 +2,7 @@
 // settings live in the project documents instead; skill folders and the
 // model connection live in the host server because it reads them.
 import { Observable } from './observable'
+import { L } from '../i18n'
 
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
 
@@ -18,12 +19,12 @@ export const SHORTCUT_ACTIONS = [
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number]
 
 export const SHORTCUT_TITLES: Record<ShortcutAction, string> = {
-  newProject: '新しいプロジェクト', openProject: 'プロジェクトを開く', home: 'Home へ戻る', duplicateProject: 'プロジェクトを複製',
-  find: 'テキスト検索', run: 'ワークフローを実行', stop: '実行を停止', openSettings: 'Card 設定を開く', openArtifacts: '成果物を開く',
-  openLog: '実行ログを開く', toggleCollapse: '折りたたみを切り替える', duplicate: 'Card を複製', fitAll: '全体表示', actualSize: '100% で表示',
-  zoomIn: '拡大', zoomOut: '縮小', arrange: '整列', group: 'グループ操作', addDraft: 'Draft Card を追加', generateDrafts: 'Draft から Card を生成',
-  toggleChat: 'チャットの表示切替', toggleLog: 'ログの表示切替', toggleTimeline: 'タイムラインの表示切替', toggleTerminal: 'ターミナルの表示切替',
-  showDetails: '選択した Card の詳細', addNote: '付箋を追加', formatSource: 'ソースコードを整形', toggleGuide: 'ガイドのツグミに聞く',
+  newProject: L('新しいプロジェクト'), openProject: L('プロジェクトを開く'), home: L('Home へ戻る'), duplicateProject: L('プロジェクトを複製'),
+  find: L('テキスト検索'), run: L('ワークフローを実行'), stop: L('実行を停止'), openSettings: L('Card 設定を開く'), openArtifacts: L('成果物を開く'),
+  openLog: L('実行ログを開く'), toggleCollapse: L('折りたたみを切り替える'), duplicate: L('Card を複製'), fitAll: L('全体表示'), actualSize: L('100% で表示'),
+  zoomIn: L('拡大'), zoomOut: L('縮小'), arrange: L('整列'), group: L('グループ操作'), addDraft: L('Draft Card を追加'), generateDrafts: L('Draft から Card を生成'),
+  toggleChat: L('チャットの表示切替'), toggleLog: L('ログの表示切替'), toggleTimeline: L('タイムラインの表示切替'), toggleTerminal: L('ターミナルの表示切替'),
+  showDetails: L('選択した Card の詳細'), addNote: L('付箋を追加'), formatSource: L('ソースコードを整形'), toggleGuide: L('ガイドのツグミに聞く'),
 }
 
 /** Works only while the canvas has the focus (a key without ⌘ would
@@ -107,19 +108,19 @@ export function eventBinding(e: KeyboardEvent): KeyBinding {
 
 export type Theme = 'system' | 'light' | 'dark'
 export type FlowDirection = 'topToBottom' | 'leftToRight'
-export const FLOW_LABELS: Record<FlowDirection, string> = { topToBottom: '上から下', leftToRight: '左から右' }
+export const FLOW_LABELS: Record<FlowDirection, string> = { topToBottom: L('上から下'), leftToRight: L('左から右') }
 /** Whether the Tsugumi bird (Home, loading) moves. */
 export type Motion = 'system' | 'on' | 'off'
-export const MOTION_LABELS: Record<Motion, string> = { system: 'システムに従う（視差効果を減らす）', on: '動かす', off: '動かさない' }
+export const MOTION_LABELS: Record<Motion, string> = { system: L('システムに従う（視差効果を減らす）'), on: L('動かす'), off: L('動かさない') }
 /** Colors of the code editor (syntax highlighting). */
 export type EditorTheme = 'standard' | 'contrast' | 'muted'
-export const EDITOR_THEME_LABELS: Record<EditorTheme, string> = { standard: '標準', contrast: '高コントラスト', muted: '控えめ' }
+export const EDITOR_THEME_LABELS: Record<EditorTheme, string> = { standard: L('標準'), contrast: L('高コントラスト'), muted: L('控えめ') }
 export type SendKey = 'returnKey' | 'commandReturn'
 
-export const THEME_LABELS: Record<Theme, string> = { system: 'システムに従う', light: 'ライト', dark: 'ダーク' }
+export const THEME_LABELS: Record<Theme, string> = { system: L('システムに従う'), light: L('ライト'), dark: L('ダーク') }
 export const SEND_KEY_LABELS: Record<SendKey, string> = {
-  returnKey: 'Return で送信（⇧Return で改行）',
-  commandReturn: `${isMac ? '⌘' : 'Ctrl+'}Return で送信（Return で改行）`,
+  returnKey: L('Return で送信（⇧Return で改行）'),
+  commandReturn: L('{0}Return で送信（Return で改行）', isMac ? '⌘' : 'Ctrl+'),
 }
 
 interface Stored {

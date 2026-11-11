@@ -1,0 +1,10 @@
+{
+  "description": "Find the minimum cut",
+  "content": "Finds the minimum cut with networkx and draws the s side, the t side and the cut's edges. Fails unless the cut's capacity equals the maximum flow.",
+  "outputs": [
+    {
+      "name": "cut",
+      "description": "The network, the flows, the value of the maximum flow, and the nodes on the s side of the cut"
+    }
+  ]
+}

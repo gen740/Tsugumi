@@ -46,6 +46,51 @@ std::string object_text(const std::vector<std::pair<std::string, const hosq::jso
   return encode(m);
 }
 
+std::string pretty_text(std::string_view compact) {
+  std::string out;
+  size_t depth = 0;
+  auto line = [&] { out += '\n'; out.append(depth * 2, ' '); };
+  for (size_t i = 0; i < compact.size(); ++i) {
+    char c = compact[i];
+    switch (c) {
+      case '"': {
+        size_t end = i + 1;
+        while (compact[end] != '"') end += compact[end] == '\\' ? 2 : 1;
+        out.append(compact, i, end - i + 1);
+        i = end;
+        break;
+      }
+      case '{':
+      case '[':
+        out += c;
+        if (compact[i + 1] == '}' || compact[i + 1] == ']') {
+          out += compact[++i];
+        } else {
+          ++depth;
+          line();
+        }
+        break;
+      case '}':
+      case ']':
+        --depth;
+        line();
+        out += c;
+        break;
+      case ',':
+        out += c;
+        line();
+        break;
+      case ':':
+        out += ": ";
+        break;
+      default:
+        out += c;
+    }
+  }
+  out += '\n';
+  return out;
+}
+
 bool is_null(const hosq::json::GenericDom<>& value) {
   v::Null n;
   return !value[""].decode_into(n);

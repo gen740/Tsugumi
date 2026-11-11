@@ -165,7 +165,7 @@ def main():
             c.open()  # notifications go to opened views
         else:
             if a.scenario == "collatz":
-                shutil.copytree(ROOT / "demos" / "collatz", root)
+                shutil.copytree(ROOT / "demos" / "ja" / "collatz", root)
                 start = "start"
             else:
                 import test_cards_container as T

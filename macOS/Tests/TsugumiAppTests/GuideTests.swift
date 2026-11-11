@@ -1,6 +1,11 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import TsugumiApp
+import TsugumiAgent
+import TsugumiLauncher
+import TsugumiRPC
 
 /// The guide's guide_show: what it points at and the buttons it offers.
 @Test func guideShowIsReadIntoButtons() {
@@ -31,6 +36,13 @@ import Testing
   #expect(GuideAction.parse(#"{"open": " card:archive/copy ", "highlight": "param:rows"}"#).open == "card:archive/copy")
 }
 
+/// guide_show "open" names the panels under the canvas; the versions and a Card are no panel.
+@Test func theGuideOpensThePanelsByName() {
+  #expect(GuideController.panel("logs") == .log && GuideController.panel("timeline") == .timeline)
+  #expect(GuideController.panel("terminal") == .terminal)
+  #expect(GuideController.panel("versions") == nil && GuideController.panel("card:summarize") == nil)
+}
+
 /// A long answer sends the user to the chat; one the bubble holds does not.
 @Test func aLongAnswerPointsToTheChat() {
   #expect(GuideController.saysMore(String(repeating: "あ", count: 300), than: "要点です。"))
@@ -58,4 +70,88 @@ import Testing
   defer { try? FileManager.default.removeItem(atPath: "/private/tmp/\(name)") }
   #expect(GuideController.same("/tmp/\(name)/", URL(fileURLWithPath: "/private/tmp/\(name)")))
   #expect(!GuideController.same("/tmp/\(name)-copy", URL(fileURLWithPath: "/private/tmp/\(name)")))
+}
+
+/// By a Card the bird goes with the Canvas, within limits; what is not on a
+/// Canvas has no zoom and leaves it as it is. The web has the same limits
+/// (web/tests/perchScale.tsx).
+@MainActor @Test func theBirdByACardGoesWithTheCanvas() {
+  let full = GuideFlyer.birdScale
+  #expect(GuideFlyer.perchScale(zoom: nil) == full)
+  #expect(GuideFlyer.perchScale(zoom: 1) == full)
+  #expect(GuideFlyer.perchScale(zoom: 2) == full)
+  #expect(GuideFlyer.perchScale(zoom: 0.7) == full * 0.7)
+  #expect(GuideFlyer.perchScale(zoom: 0.45) == full * 0.45)
+  #expect(GuideFlyer.perchScale(zoom: 0.39) == full * 0.45)
+  // The frame the bird flies in, at 39%: 90 x 64 is 40.5 x 28.8.
+  #expect(abs(900 * GuideFlyer.perchScale(zoom: 0.39) - 40.5) < 0.001)
+}
+
+/// A Card on the real canvas tells the stage the canvas's zoom: without it the
+/// bird would stand at its full size whatever the zoom.
+@MainActor @Test func aCardOnTheCanvasTellsTheBirdItsZoom() async throws {
+  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("guide-zoom-\(UUID().uuidString.prefix(8))")
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
+  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  s.project = try JSONValue.parse(document)
+  let card = s.addCard(template: .trigger, in: [], at: CGPoint(x: 100, y: 100), name: "start")
+  s.cameras[key([])] = (x: 0, y: 0, zoom: 0.39)
+
+  let guide = GuideController.shared
+  guide.point(at: "card:\(card)")
+  defer { guide.clearHighlight() }
+  let stage = GuideStage()
+  let view = NSHostingView(rootView: GraphCanvas(workspace: Workspace(), session: s, tab: WorkflowTab(scope: [])).environment(stage).environment(AppPreferences.shared))
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: true)
+  window.contentView = view
+  view.layoutSubtreeIfNeeded()
+  for _ in 0..<100 where stage.perch == nil {
+    try await Task.sleep(for: .milliseconds(20))
+    view.layoutSubtreeIfNeeded()
+  }
+  #expect(stage.perch?.id == "card:\(card)")
+  #expect(stage.perch?.spot.zoom == 0.39)
+  window.contentView = nil
+}
+
+/// Without a connection Tsugumi answers from agent/Shared/guide-script.json:
+/// every choice and every run's end leads to a step of it, each tour has the
+/// steps of a tour, Home's suggestions find their tours, and the reply to
+/// anything typed offers Settings and $demo (web/tests/guideScript.ts checks
+/// the same script and plays every tour through).
+@MainActor @Test func theScriptWithoutAConnectionIsWhole() {
+  // Both languages' scripts, whatever language this Mac runs the app in.
+  for script in [GuideScript(json: Agent.guideScript), GuideScript(json: Agent.guideScriptEnglish)] {
+    #expect(script.tours.map(\.demo) == ["report", "exoplanet-transit", "pharmacokinetics"])
+    for demo in script.tours.map(\.demo) {
+      for id in ["pick", "about", "start", "resume", "run", "ranOk", "ranFailed", "change", "runAgain", "ranAgain", "next", "farewell"] {
+        #expect(script.steps["\(demo)/\(id)"] != nil, "\(demo)/\(id)")
+      }
+      #expect(script.steps["\(demo)/run"]?.show.actions.map(\.kind) == [.run])
+      #expect(script.steps["\(demo)/farewell"]?.show.endTour == true)
+      #expect(script.homeSteps.contains("\(demo)/pick") && !script.homeSteps.contains("\(demo)/start"))
+    }
+    for (id, s) in script.steps {
+      #expect(Set(s.next.keys) == Set(s.show.choices), "\(id): every choice leads somewhere")
+      for n in Array(s.next.values) + [s.ranOk, s.ranElse].compactMap({ $0 }) { #expect(script.steps[n] != nil, "\(id) → \(n)") }
+    }
+    #expect(script.step("start", of: "newton") == "otherProject")
+    #expect(script.noConnection.show.actions.map(\.kind) == [.openSettings, .openDemo])
+    #expect(script.noConnection.text.contains("$demo"))
+    #expect(script.steps["otherProject"]?.show.actions.compactMap(\.demo) == script.tours.map(\.demo))
+  }
+  // Home's first question, answered in each language.
+  let ja = GuideScript(json: Agent.guideScript)
+  #expect(ja.demo(for: "天文・地震・タンパク質のデータ") == "exoplanet-transit")
+  #expect(ja.demo(for: "ライブ表示") == "pharmacokinetics")
+  #expect(ja.demo(for: "データの集計とレポート") == "report")
+  #expect(ja.demo(for: "なんでも") == "report")
+  let en = GuideScript(json: Agent.guideScriptEnglish)
+  #expect(en.demo(for: "Astronomy, earthquakes and protein data") == "exoplanet-transit")
+  #expect(en.demo(for: "Live display") == "pharmacokinetics")
+  #expect(en.demo(for: "Aggregating data and reports") == "report")
+  #expect(en.demo(for: "Anything") == "report")
 }

@@ -58,6 +58,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
   for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
   *d.ready_at = s.ready_at.value_or(-1);
+  *d.emulator = s.emulator;
   return schema::encode(d);
 }
 
@@ -75,6 +76,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   if (*d.worker_reused >= 0) s.worker_reused = *d.worker_reused == 1;
   for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
   if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
+  s.emulator = *d.emulator;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -593,6 +595,25 @@ std::optional<std::string> History::run_receipt_digest(sql::Db& db, const std::s
   auto r = receipt(db, op_id);
   if (!r) return std::nullopt;
   return r->digest;
+}
+
+std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, const std::string& run_id) {
+  auto st = db.prepare(
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
+      "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
+      "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM statuses WHERE run_id=?1 AND card=s.card) "
+      "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=s.card), 0) "
+      "ORDER BY card, invocation");
+  st.bind(1, run_id);
+  std::vector<InvocationSummaryData> out;
+  while (st.step()) {
+    auto row = inv_row(st, run_id, 9, 10);
+    // A status newer than the Card's last record is the one a client wants.
+    if (!out.empty() && out.back().card == row.card) out.back() = std::move(row);
+    else out.push_back(std::move(row));
+  }
+  return out;
 }
 
 std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::string& run_id,

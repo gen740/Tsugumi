@@ -56,6 +56,22 @@ import TsugumiRPC
     for d in Self.drafts { #expect(log.text.contains("\(d): \(d) implemented, its run succeeded"), "\(log.text)") }
     let helpers = Set(log.all.compactMap { e -> String? in if case .helper(let n, _) = e { return n }; return nil })
     #expect(helpers == Set(Self.drafts))
+    // What they share is written once before they start, and is what each sends first.
+    let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(h.fixturePort)/fixture/requests")!)
+    let requests = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+    let warms = requests.indices.filter { requests[$0]["output_limit"] as? Int == 0 }
+    #expect(warms.count == 1, "\(warms)")
+    let helpersAsked = requests.indices.filter { !(requests[$0]["tools"] as? [String] ?? []).contains("delegate") && !warms.contains($0) }
+    #expect(helpersAsked.count >= Self.drafts.count)
+    let warm = try #require(warms.first.map { requests[$0] })
+    #expect(warm["system_blocks"] as? [String] == [Agent.systemPrompt])
+    for i in helpersAsked {
+      #expect(i > warms[0], "a helper asked before the cache was written")
+      #expect(requests[i]["tools"] as? [String] == warm["tools"] as? [String])
+      let blocks = requests[i]["system_blocks"] as? [String] ?? []
+      #expect(blocks.count == 2 && blocks.first == Agent.systemPrompt)
+    }
+    #expect(await agent.conversation.usage.cacheWriteTokens >= 1000, "the write is counted")
     let after = try await client.inspect()
     for d in Self.drafts {
       let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == d })
@@ -65,6 +81,54 @@ import TsugumiRPC
     let dir = h.dir.appendingPathComponent("conversation.helpers")
     #expect(Set((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []) == Set(Self.drafts.map { $0 + ".json" }))
     await client.close()
+  }
+
+  /// "runs": "together": the helpers only write, whatever they try, and the
+  /// main Agent runs once when all have reported. No helper's run holds up
+  /// another's save, and there is one run in the history.
+  @Test func helpersThatRunTogetherOnlyWrite() async throws {
+    var h = AgentHarness()
+    try #require(FileManager.default.fileExists(atPath: h.root.appendingPathComponent("build/sdk/tsugumi-worker").path),
+                 "build/sdk/tsugumi-worker is missing: ninja -C build tsugumi-worker")
+    try h.start()
+    defer { h.stop() }
+    let client = RPCClient(endpoint: h.endpoint!)
+    _ = try await client.connect(token: h.token, clientId: UUID(), expectedProjectId: nil)
+    try await addDrafts(client)
+    let before = try await client.history().runs.count
+    let agent = try makeAgent(h, client)
+    let log = EventLog()
+    await agent.send("delegate the drafts alpha beta gamma, and run them together", context: []) { log.add($0) }
+    await waitFinished(log, seconds: 180)
+    #expect(log.text.contains("Ran once: succeeded"), "\(log.text)")
+    // Each helper tried to run and was told no.
+    let refused = log.all.filter { e in
+      if case .helper(_, .toolFinished(_, "run", false, let summary)) = e { return summary.contains("only writes") }
+      return false
+    }
+    #expect(refused.count == Self.drafts.count, "\(log.all)")
+    #expect(try await client.history().runs.count == before + 1, "one run, the main Agent's")
+    let after = try await client.inspect()
+    // The report says where the helpers left the project: the main Agent's next save starts from it.
+    let reported = await agent.conversation.tools.first { $0.name == "delegate" }?.result ?? ""
+    #expect(reported.contains("now at revision \(after.rev ?? 0)"), "\(reported)")
+    for d in Self.drafts {
+      let def = try #require(after.definitions.compactMap { $0 }.first { $0.id == d })
+      #expect(try JSONValue.parse(def.cardJson)["language"]?.string == "bash", "\(d) is still a Draft")
+    }
+    await client.close()
+  }
+
+  @Test func howHelpersMeetIsChosenInTheCall() {
+    let tasks = #""tasks":[{"name":"a","cards":["a"],"instruction":"x"},{"name":"b","cards":["b"],"instruction":"y"}]"#
+    func together(_ json: String) -> [Bool]? {
+      if case .success(let h) = Agent.tasks(json) { return h.map(\.runsTogether) }
+      return nil
+    }
+    #expect(together("{\(tasks)}") == [false, false])
+    #expect(together(#"{"runs":"each","# + tasks + "}") == [false, false])
+    #expect(together(#"{"runs":"together","# + tasks + "}") == [true, true])
+    #expect(together(#"{"runs":"sometimes","# + tasks + "}") == nil)
   }
 
   @Test func aDelegateCallIsCheckedBeforeAnyHelperStarts() {
@@ -91,6 +155,20 @@ import TsugumiRPC
     #expect(h.outside([["value_type": "SetProject", "value": ["json": "{}"]]]) == "SetProject")
     #expect(h.outside([["value_type": "PutSource", "value": ["path": "definitions/lorenz/../life/x"]]]) != nil)
     #expect(h.outside([["value_type": "PutSource", "value": ["path": "tsugumi.json"]]]) == "tsugumi.json")
+    // A patch or a removal of its own file is its own (a patch was refused once, as outside).
+    #expect(h.outside([["value_type": "PatchSource", "value": ["path": "definitions/lorenz/src/main.py"]],
+                       ["value_type": "RemoveSource", "value": ["path": "definitions/lorenz/src/old.py"]]]) == nil)
+    #expect(h.outside([["value_type": "PatchSource", "value": ["path": "definitions/life/src/main.py"]]]) == "definitions/life/src/main.py")
+  }
+
+  /// What a helper starts from (as the web Agent's).
+  @Test func aHelperStartsFromItsCardsAndWhatFeedsThem() async throws {
+    for c in try agentBehaviorCases("helperBrief") {
+      let helper = Agent.Helper(name: "x", cards: c["cards"] as! [String], instruction: "")
+      let files = c["files"] as! [String: String]
+      let brief = await Agent.helperBrief(helper, snapshot: c["snapshot"] as! [String: Any]) { files[$0] }
+      #expect(brief == Shared.fill(Shared.data.helper.brief, ["rev": "7", "project": c["expect"] as! String]), "\(c["name"]!)")
+    }
   }
 
   /// While the Agent works, the app tidies the canvas (a layout save): the

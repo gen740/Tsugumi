@@ -1,5 +1,6 @@
 #include "document.hh"
 
+#include <regex>
 #include <set>
 
 #include "util/crypto.hh"
@@ -128,6 +129,21 @@ schema::Project parse_project_json(const std::string& text) {
     if (!db.name->has_value() || !db.url->has_value()) invalid("databaseConnections entries need name and url");
     if (!names.insert(db.name->value()).second) invalid("duplicate database connection " + db.name->value());
   }
+  if (p.nix_sources->has_value()) {
+    static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
+    static const std::regex ref_re(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
+    std::set<std::string> sources;
+    for (const auto& s : p.nix_sources->value()) {
+      if (!s.name->has_value() || !s.type->has_value() || !s.ref->has_value())
+        invalid("nixSources entries need name, type and ref");
+      const auto& name = s.name->value();
+      if (!std::regex_match(name, name_re)) invalid("nixSources: \"" + name + "\" is not a name");
+      if (s.type->value() != "flake") invalid("nixSources: " + name + ": type must be flake");
+      if (!std::regex_match(s.ref->value(), ref_re))
+        invalid("nixSources: " + name + ": ref must be a locked flake reference with a narHash");
+      if (!sources.insert(name).second) invalid("nixSources: duplicate name " + name);
+    }
+  }
   check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
   check_boundary(p, "tsugumi.json");
   return p;
@@ -165,11 +181,114 @@ schema::Layout parse_layout_json(const std::string& text) {
   return l;
 }
 
+std::string layout_following_cards(const std::string& text, const std::map<std::string, std::string>& moved,
+                                   const std::set<std::string>& gone) {
+  using Object = schema::v::Mapping<schema::v::String, schema::Json>;
+  using hosq::json::GenericDom;
+  auto as = []<class S>(const GenericDom<>& value, S& out) {
+    if (auto err = schema::decode(value, out)) invalid("layout.json: " + err->message);
+  };
+  bool changed = false;
+  // Where a key or id of a Card goes; nothing when its Card is gone.
+  auto follow = [&](const std::string& key) -> std::optional<std::string> {
+    auto card = key.substr(0, key.find('/'));
+    if (gone.count(card)) {
+      changed = true;
+      return std::nullopt;
+    }
+    auto it = moved.find(card);
+    if (it == moved.end()) return key;
+    changed = true;
+    return it->second + key.substr(card.size());
+  };
+  auto cards_by_key = [&](const GenericDom<>& value) {
+    Object in, out;
+    as(value, in);
+    std::set<std::string> arrived;
+    for (const auto& [key, _] : in.value())
+      if (auto to = follow(key); to && *to != key) arrived.insert(*to);
+    for (const auto& [key, entry] : in.value()) {
+      auto to = follow(key);
+      if (!to) continue;
+      if (*to == key && arrived.count(key)) continue;  // what the moved Card had wins
+      out.value().emplace_back(*to, entry);
+    }
+    return schema::capture(schema::encode(out));
+  };
+  auto group_ids = [&](const GenericDom<>& value) {
+    schema::v::Array<schema::v::String> in, out;
+    as(value, in);
+    for (const auto& id : in.value())
+      if (auto to = follow(id)) out.value().push_back(*to);
+    return schema::capture(schema::encode(out));
+  };
+  auto group_outputs = [&](const GenericDom<>& value) {
+    schema::v::Array<Object> in, out;
+    as(value, in);
+    for (auto port : in.value()) {
+      bool kept = true;
+      for (auto& [name, field] : port) {
+        if (name != "card") continue;
+        schema::v::String id;
+        as(field, id);
+        if (auto to = follow(id.value())) field = schema::string_value(*to);
+        else kept = false;
+      }
+      if (kept) out.value().push_back(std::move(port));
+    }
+    return schema::capture(schema::encode(out));
+  };
+
+  Object root;
+  as(schema::capture(text), root);
+  for (auto& [field, value] : root.value()) {
+    if (field == "cards" || field == "displays" || field == "boundaries") {
+      value = cards_by_key(value);
+    } else if (field == "groups") {
+      schema::v::Array<Object> groups;
+      as(value, groups);
+      for (auto& group : groups.value())
+        for (auto& [name, member] : group) {
+          if (name == "cards") member = group_ids(member);
+          else if (name == "outputs") member = group_outputs(member);
+        }
+      value = schema::capture(schema::encode(groups));
+    }
+  }
+  return changed ? schema::pretty_text(schema::encode(root)) : text;
+}
+
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text) {
   return decode_doc<schema::CardDefinition>("definitions/" + id + "/_card.json", text);
 }
 
 schema::CardMeta parse_meta_json(const std::string& text) { return decode_doc<schema::CardMeta>("_meta.json", text); }
+
+std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
+                           const std::optional<std::string>& context) {
+  auto meta = parse_meta_json(text);
+  const auto empty = [](const auto& field) {
+    const auto* s = schema::get(field);
+    if (!s) return true;
+    const std::string value(*s);
+    return value.find_first_not_of(" \t\r\n") == std::string::npos;
+  };
+  schema::v::Mapping<schema::v::String, schema::Json> root;
+  if (schema::decode(schema::capture(text), root)) throw DocumentError("invalid_document", "_meta.json is not an object");
+  bool any = false;
+  const auto fill = [&](const std::string& name, const std::optional<std::string>& value, bool is_empty) {
+    if (!value || !is_empty) return;
+    std::remove_reference_t<decltype(root.value())> next;
+    for (const auto& [key, field] : root.value())
+      if (key != name) next.emplace_back(key, field);
+    next.emplace_back(name, schema::string_value(*value));
+    root.value() = std::move(next);
+    any = true;
+  };
+  fill("description", description, empty(meta.description));
+  fill("context", context, empty(meta.context));
+  return any ? schema::pretty_text(schema::encode(root)) : text;
+}
 
 void check_structure(const Document& doc) {
   const auto& graph = doc.project.canvas->value();

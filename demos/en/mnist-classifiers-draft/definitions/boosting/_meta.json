@@ -1,0 +1,16 @@
+{
+  "description": "Tell the digits apart with gradient boosting",
+  "content": "A sum of decision trees in which each tree corrects the previous ones' errors. Use xgboost's xgb.train (objective=\"multi:softprob\", num_class=10, tree_method=\"hist\", max_bin=64, nthread=1). rounds (default 60), max_depth (default 4), eta (default 0.3) and seed (default 0) are parameters. Add to the figure a line of the test error rate by round (read from the trained model with iteration_range). data is the path of prepare's npz file: train_images and test_images are 784-dimensional arrays scaled to 0–1, train_labels and test_labels are digits, digest is a fingerprint of the test images. Set OMP_NUM_THREADS=1 at the top of main.py (before the imports) to run on one thread. Measure training and prediction times as differences of time.process_time(). The type of the output result is the same for all seven classifiers, and compare reads it with one type, so _outputs.fbs is, without changing a character, \"namespace mnist; table Result { model:string; settings:string; digest:string; accuracy:double; fit_seconds:double; predict_seconds:double; predictions:[ubyte] (required); } table Outputs { result:Result (required); } root_type Outputs;\". model is the Card's id, settings a string of the parameters' values, digest the value received as it is, and predictions the predictions for every test image. Show the accuracy, the times and a breakdown of the mistakes (a 10×10 table of true and predicted) in a matplotlib figure. Assert: that the length of predictions equals the number of test images, that every prediction is 0–9, that the accuracy is at least 0.93, that model.num_boosted_rounds() equals rounds, that the test error rate after all rounds is smaller than after the first, and that the accuracy on the training images is at least that on the test images. Use numpy, matplotlib and xgboost.",
+  "inputs": [
+    {
+      "name": "data",
+      "description": "prepare's subset (the path of the npz file)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "description": "Accuracy, CPU time, settings, and predictions for every test image"
+    }
+  ]
+}

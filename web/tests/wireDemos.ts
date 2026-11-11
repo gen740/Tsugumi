@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { CardGeometry, CardNodeData, Pt, Rect, union, WireRouter } from '../src/model/canvasKit'
+import { CardGeometry, CardNodeData, Pt, Rect, snapToGrid, union, WireRouter } from '../src/model/canvasKit'
 import type { FlowDirection } from '../src/model/prefs'
 
 const root = process.argv[2]
@@ -55,20 +55,27 @@ function node(dir: string, id: string): CardNodeData {
   return { ...blank, kind: 'code', inputs: declared, outputs: typed }
 }
 
-/** One scope as `Scene` in model/canvas.ts lays it out, before any run. */
-function scene(name: string, dir: string, flow: FlowDirection | undefined, moved: Record<string, Pt> = {}): { scene: Scene; flow: FlowDirection } {
+/** One scope as `Scene` in model/canvas.ts lays it out, before any run. With a
+ *  grid, as `placedPosition` and `nodeData` in model/session.ts do: Cards on the
+ *  nearest line and sized by it, frames where they were saved. */
+function scene(name: string, dir: string, flow: FlowDirection | undefined, moved: Record<string, Pt> = {}, grid?: number): { scene: Scene; flow: FlowDirection } {
   const project = read(path.join(dir, 'tsugumi.json'))
   const layout: Layout = read(path.join(dir, 'layout.json')) ?? {}
   const ids: string[] = project.canvas.cards.map((c: { id: string }) => c.id)
-  const place = (id: string): Pt => moved[id] ?? { x: layout.cards?.[id]?.x ?? 0, y: layout.cards?.[id]?.y ?? 0 }
+  const saved = (id: string): Pt => moved[id] ?? { x: layout.cards?.[id]?.x ?? 0, y: layout.cards?.[id]?.y ?? 0 }
+  const place = (id: string): Pt => {
+    const p = saved(id)
+    return grid ? { x: snapToGrid(p.x, grid), y: snapToGrid(p.y, grid) } : p
+  }
   const conns: { from: { card: string; port: string }; to: { card: string; port: string } }[] = project.canvas.connections
   if (!flow) {
     if (layout.flow === 'topToBottom' || layout.flow === 'leftToRight') flow = layout.flow
     else {
       let across = 0, down = 0
       for (const c of conns) {
-        across += Math.abs(place(c.to.card).x - place(c.from.card).x)
-        down += Math.abs(place(c.to.card).y - place(c.from.card).y)
+        // From where they were saved: the flow does not change with the grid.
+        across += Math.abs(saved(c.to.card).x - saved(c.from.card).x)
+        down += Math.abs(saved(c.to.card).y - saved(c.from.card).y)
       }
       flow = across > down ? 'leftToRight' : 'topToBottom'
     }
@@ -76,7 +83,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   const datas = new Map(ids.map((id) => {
     const d = node(dir, id)
     const frame = layout.displays?.[id]
-    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, hasDisplay: !!frame && frame.hidden !== true }]
+    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, hasDisplay: !!frame && frame.hidden !== true, portGrid: grid }]
   }))
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
@@ -116,17 +123,17 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
 }
 
 /** A demo's top scope and the scopes of its Cards in Card. */
-function scopes(name: string, dir: string): Scene[] {
-  const top = scene(name, dir, undefined)
+function scopes(name: string, dir: string, grid?: number): Scene[] {
+  const top = scene(name, dir, undefined, {}, grid)
   const out = [top.scene]
   const externals = path.join(dir, 'externals')
-  if (fs.existsSync(externals)) for (const e of fs.readdirSync(externals).sort()) out.push(scene(`${name}/${e}`, path.join(externals, e), top.flow).scene)
+  if (fs.existsSync(externals)) for (const e of fs.readdirSync(externals).sort()) out.push(scene(`${name}/${e}`, path.join(externals, e), top.flow, {}, grid).scene)
   return out
 }
 
 /** `report` with share directly above the column of generate, aggregate, render and archive. */
 function stacked(shareX: number): Scene {
-  const dir = path.join(root, 'demos/report')
+  const dir = path.join(root, 'demos/ja/report')
   return scene(`report stacked, share at ${shareX}`, dir, undefined, {
     start: { x: 0, y: -190 }, settings: { x: 0, y: 0 }, share: { x: shareX, y: 285 },
     generate: { x: 0, y: 380 }, aggregate: { x: 0, y: 570 }, render: { x: 0, y: 760 }, archive: { x: 0, y: 950 },
@@ -135,14 +142,19 @@ function stacked(shareX: number): Scene {
 
 /** `report` with its fork lowered, so that its output is `gap` above generate's input. */
 function forkNearGenerate(gap: number): Scene {
-  return scene(`report, fork ${gap} above generate`, path.join(root, 'demos/report'), undefined, { share: { x: 300, y: 380 - gap - 40 } }).scene
+  return scene(`report, fork ${gap} above generate`, path.join(root, 'demos/ja/report'), undefined, { share: { x: 300, y: 380 - gap - 40 } }).scene
+}
+
+/** `casa` with the box of its fork ending just where the next Card begins, on a grid of 20. */
+function forkAgainstCard(): Scene {
+  return scene('casa, fork against rgb', path.join(root, 'demos/ja/casa'), undefined, { share: { x: 840, y: 40 }, rgb: { x: 940, y: 0 }, spectrum: { x: 1200, y: 0 } }, 20).scene
 }
 
 const length = (pts: Pt[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0)
 
 /** Cards the path enters and leaves again. A branch's port sits inside its box:
  *  a stay that starts or ends the path is the wire reaching its port. */
-function crossed(pts: Pt[], obstacles: Rect[]): number {
+export function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {
     const n = Math.max(1, Math.ceil(Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) / 2))
@@ -190,39 +202,43 @@ function wireCrossings(routes: { pts: Pt[] }[], wires: Wire[]): number {
   return n
 }
 
-const index: { demos: { path: string }[] } = read(path.join(root, 'demos/index.json'))
-const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', d.path)))
+const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
+const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
 const arrangements = [-60, 20, 60, 100, 150, 200].map(stacked)
 const everything = [...demos, ...arrangements, forkNearGenerate(20), forkNearGenerate(-20)]
 
-let wires = 0, crossingWires = 0, crossings = 0, between = 0
-const detours: number[] = []
-const crossers: string[] = []
-for (const s of everything) {
-  const routes = route(s)
-  between += wireCrossings(routes, s.wires)
-  s.wires.forEach((w, i) => {
-    wires++
-    const c = crossed(routes[i].pts, s.obstacles)
-    if (c) {
-      crossingWires++
-      crossers.push(`${s.name}: ${w.name} (${c})`)
-    }
-    crossings += c
-    const straight = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y)
-    if (straight > 1) detours.push(length(routes[i].pts) / straight)
-  })
+/** Prints how the wires of these scenes run, and gives those that cross a Card. */
+function measure(label: string, scenes: Scene[]): string[] {
+  let wires = 0, crossings = 0, between = 0
+  const detours: number[] = []
+  const crossers: string[] = []
+  for (const s of scenes) {
+    const routes = route(s)
+    between += wireCrossings(routes, s.wires)
+    s.wires.forEach((w, i) => {
+      wires++
+      const c = crossed(routes[i].pts, s.obstacles)
+      if (c) crossers.push(`${s.name}: ${w.name} (${c})`)
+      crossings += c
+      const straight = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y)
+      if (straight > 1) detours.push(length(routes[i].pts) / straight)
+    })
+  }
+  detours.sort((p, q) => p - q)
+  console.log(`wire routes, ${label}:`, JSON.stringify({
+    scenes: scenes.length, wires, crossingWires: crossers.length, cardCrossings: crossings, wireCrossings: between,
+    detourMean: +(detours.reduce((t, d) => t + d, 0) / detours.length).toFixed(3),
+    detourP95: +detours[Math.floor(detours.length * 0.95)].toFixed(2), detourMax: +detours[detours.length - 1].toFixed(2),
+  }))
+  return crossers
 }
-detours.sort((a, b) => a - b)
-const summary = {
-  scenes: everything.length, wires, crossingWires, cardCrossings: crossings, wireCrossings: between,
-  detourMean: +(detours.reduce((s, d) => s + d, 0) / detours.length).toFixed(3),
-  detourP95: +detours[Math.floor(detours.length * 0.95)].toFixed(2), detourMax: +detours[detours.length - 1].toFixed(2),
-}
-console.log('wire routes:', JSON.stringify(summary))
 
 // ---- Every wire of every demo --------------------------------------------------------
-assert.deepEqual(crossers, [], 'no wire crosses a Card')
+assert.deepEqual(measure('grid off', everything), [], 'no wire crosses a Card')
+// The grid is on by default, and it moves and resizes every Card: as the app draws them.
+const grids = [20, 30].map((grid) => ({ grid, scenes: index.demos.flatMap((d) => scopes(`${d.path}, grid ${grid}`, path.join(root, 'demos', 'ja', d.path), grid)) }))
+for (const { grid, scenes } of grids) assert.deepEqual(measure(`grid ${grid}`, scenes), [], `no wire crosses a Card on a grid of ${grid}`)
+assert.deepEqual(measure('fork against a Card', [forkAgainstCard()]), [], 'a wire out of a fork does not go on through the Card that begins where its box ends')
 
 // The wires of the report asked for: short, in the free bands.
 {
@@ -277,12 +293,19 @@ for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWit
 // ---- The cases Mac and web must route alike ---------------------------------------------
 type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[]; paths: (Pt[] | null)[] }
 const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
-  .concat(stacked(60), stacked(150), forkNearGenerate(20))
-const cases: Case[] = shared.map((s) => {
+  .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(), ...grids[0].scenes.filter((s) => s.name === 'casa, grid 20' || s.name === 'rna-seq, grid 20'))
+const routed = (s: { flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }) => {
   const routes = new WireRouter(s.flow, s.obstacles).routeAll(s.wires)
-  return { name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routes.map((r) => (r.curved ? null : r.pts)) }
-})
+  return routes.map((r) => (r.curved ? null : r.pts))
+}
 const fixture = path.join(root, 'tests/fixtures/wire-routes.json')
-if (process.env.WIRE_ROUTES_WRITE) fs.writeFileSync(fixture, JSON.stringify(cases) + '\n')
-assert.deepEqual(cases, read(fixture), 'the paths Mac also has to find (WIRE_ROUTES_WRITE=1 npm test writes them)')
+// The scenes are samples kept in the file, so moving a Card of a demo does not
+// change this check. WIRE_ROUTES_WRITE=1 npm test takes new samples from the demos.
+if (process.env.WIRE_ROUTES_WRITE) {
+  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routed(s) }))
+  fs.writeFileSync(fixture, JSON.stringify(samples) + '\n')
+}
+const cases: Case[] = read(fixture)
+assert.ok(cases.length > 0)
+for (const c of cases) assert.deepEqual(routed(c), c.paths, `the paths Mac also has to find: ${c.name} (a change to the router on purpose: WIRE_ROUTES_WRITE=1 npm test)`)
 console.log('wire routes: passed')

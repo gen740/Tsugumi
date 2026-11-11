@@ -1,0 +1,81 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 260,
+      "y": 0
+    },
+    "share": {
+      "x": 540,
+      "y": 0
+    },
+    "trajectories": {
+      "x": 800,
+      "y": -596
+    },
+    "stationary": {
+      "x": 800,
+      "y": -192
+    },
+    "scaling": {
+      "x": 800,
+      "y": 192
+    },
+    "binding": {
+      "x": 800,
+      "y": 586
+    },
+    "check": {
+      "x": 1090,
+      "y": 400
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Fluctuations in chemical reactions\n\nMolecules in a cell are few, and reactions happen one at a time, at random. Gillespie's method follows this process exactly, drawing the time to the next reaction from an exponential distribution and which reaction it is from the ratio of the rates.\n\n$$\\emptyset \\xrightarrow{kV} X,\\qquad X \\xrightarrow{\\gamma n} \\emptyset,\\qquad \\frac{dn}{dt}=kV-\\gamma n$$\n\nThe stationary distribution of this system is Poisson with mean $N=kV/\\gamma$, so\n\n$$\\mathrm{Var}[n]=N,\\quad \\frac{\\mathrm{Var}[n]}{N}=1,\\quad \\mathrm{CV}=\\frac{1}{\\sqrt{N}}$$\n\nThe reactions are linear, so the mean agrees with the rate equation. $A+B\\rightleftharpoons C$ in **binding** is non-linear, and in small volumes the mean itself departs from the rate equation.\n\nSet volume of **settings** to 0.1 and there are only about two molecules; trajectories drop to 0 too. synthesis, degradation and runs can be changed as well. The rates are for illustration, not measurements of any particular gene.\n",
+      "x": -40,
+      "y": -620,
+      "width": 660,
+      "height": 560
+    }
+  ],
+  "displays": {
+    "trajectories": {
+      "x": 1380,
+      "y": -620,
+      "width": 700,
+      "height": 380
+    },
+    "stationary": {
+      "x": 1380,
+      "y": -216,
+      "width": 700,
+      "height": 360
+    },
+    "scaling": {
+      "x": 1380,
+      "y": 168,
+      "width": 790,
+      "height": 370
+    },
+    "binding": {
+      "x": 1380,
+      "y": 562,
+      "width": 700,
+      "height": 360
+    },
+    "check": {
+      "x": 800,
+      "y": 960,
+      "width": 760,
+      "height": 500
+    }
+  }
+}

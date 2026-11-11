@@ -10,11 +10,27 @@ export function webDataDir(): string {
       : path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), '.local', 'share'), 'tsugumi-web'))
 }
 
-/** What a running server writes for local clients of this user (mode 0600). */
+/** What a running server writes for local clients of this user (mode 0600):
+ *  the Claude Code plugin's MCP server. Its key is not the page's: it reaches
+ *  only the routes Claude Code works through (AGENT_ROUTES in main.ts), never
+ *  the answers to approvals, the event stream, terminals or files. */
 export interface ServerInfo {
   port: number
-  key: string
   pid: number
-  /** The cookie the key goes in. */
-  cookie: string
+  /** Sent in the X-Tsugumi-Agent header. */
+  agentKey: string
 }
+
+/** The header that carries ServerInfo.agentKey. */
+export const AGENT_KEY_HEADER = 'x-tsugumi-agent'
+
+/** The routes the agent key reaches: what the plugin's MCP server calls, and
+ *  another run of the tsugumi command asking this server to open a page. */
+export const AGENT_ROUTES: ReadonlySet<string> = new Set([
+  'POST /api/project/open',
+  'POST /api/project/create',
+  'POST /api/agent/tools',
+  'POST /api/agent/open',
+  'POST /api/agent/call',
+  'POST /api/page/open',
+])

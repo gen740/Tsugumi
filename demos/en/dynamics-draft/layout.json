@@ -1,0 +1,49 @@
+{
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "settings": {
+      "x": 300,
+      "y": 0
+    },
+    "lorenz": {
+      "x": 860,
+      "y": -130
+    },
+    "mandelbrot": {
+      "x": 1190,
+      "y": -130
+    },
+    "logistic": {
+      "x": 1520,
+      "y": -130
+    },
+    "life": {
+      "x": 860,
+      "y": 130
+    },
+    "grayscott": {
+      "x": 1190,
+      "y": 130
+    },
+    "pendulum": {
+      "x": 1520,
+      "y": 130
+    },
+    "share": {
+      "x": 560,
+      "y": 0
+    }
+  },
+  "notes": [
+    {
+      "id": "plan",
+      "scope": "",
+      "text": "Dynamical systems gallery\nEach of the six computations takes only settings and depends on no other. The Agent can split them up and write them at the same time (delegate)",
+      "x": 560,
+      "y": -230
+    }
+  ]
+}

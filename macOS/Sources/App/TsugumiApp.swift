@@ -12,9 +12,15 @@ struct TsugumiApp: App {
     // (AppModel.takeLaunchProject). AppKit must not take it as a file to open:
     // then SwiftUI would not create the main window at all.
     UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    // No window is restored (the scenes below), but a session that ended without
+    // quitting (killed, crashed) leaves saved state, and a launch that has some to
+    // restore makes no first window: SwiftUI leaves that to the restoration.
+    UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": "YES"])
     // Sockets to the VM and to tsugumid: a peer that went away is an error
     // to handle, never the end of the app (sockets also set SO_NOSIGPIPE).
     signal(SIGPIPE, SIG_IGN)
+    // Each project has a window of its own; windows do not merge into tabs.
+    NSWindow.allowsAutomaticWindowTabbing = false
   }
 
   var body: some Scene {
@@ -25,45 +31,56 @@ struct TsugumiApp: App {
         .frame(minWidth: 1100, minHeight: 680)
     }
     .commands { WorkbenchCommands() }
+    // No window comes back by itself: a main window would come back as an empty
+    // Home, and a Card's settings without its project's window (the launch would then
+    // show no main window at all). Every launch starts at one Home.
+    .restorationBehavior(.disabled)
 
     // A child workflow opened in its own window.
     WindowGroup("Workflow", id: "workflow", for: WorkflowRef.self) { $ref in
       if let ref { WorkflowWindow(ref: ref).environment(model).environment(prefs).frame(minWidth: 900, minHeight: 600) }
     }
+    .restorationBehavior(.disabled)
 
     WindowGroup("Card 設定", id: "card", for: CardRef.self) { $ref in
       // One editor per Card: a window shown for another Card never keeps the
       // previous Card's working copy.
       // Tsugumi can fly into it to point at a setting.
-      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref).id(ref.card) }.modifier(GuideWindowLayer()) }
+      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: ref).id(ref.card) }.modifier(GuideWindowLayer(project: ref.path)) }
     }
     .defaultSize(width: 860, height: 620)
+    .restorationBehavior(.disabled)
     .windowToolbarStyle(.unifiedCompact(showsTitle: true))
 
     WindowGroup("Card 定義", id: "definitions", for: ProjectRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardDatabaseView(session: $0, initial: ref.definition) } }
     }
     .defaultSize(width: 900, height: 600)
+    .restorationBehavior(.disabled)
 
     WindowGroup("版の履歴", id: "versions", for: ProjectRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { VersionTreeView(session: $0) } }
     }
     .defaultSize(width: 980, height: 620)
+    .restorationBehavior(.disabled)
 
     WindowGroup("実行履歴", id: "executions", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardExecutionView(session: $0, cardKey: ref.card) } }
     }
     .defaultSize(width: 900, height: 560)
+    .restorationBehavior(.disabled)
 
     WindowGroup("成果物", id: "artifacts", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardArtifactsView(session: $0, cardKey: ref.card) } }
     }
     .defaultSize(width: 900, height: 560)
+    .restorationBehavior(.disabled)
 
     WindowGroup("可視化", id: "visual", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { VisualizationWindow(session: $0, cardKey: ref.card) } }
     }
     .defaultSize(width: 900, height: 600)
+    .restorationBehavior(.disabled)
 
     // The documents (README.md, docs/*.md) with their figures: Help menu, Home.
     Window("Tsugumi を知る", id: "explainer") {
@@ -71,17 +88,20 @@ struct TsugumiApp: App {
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 1440, height: 900)
+    .restorationBehavior(.disabled)
 
     Window("実行環境のコンソール", id: "console") {
       VMConsoleView().environment(model).environment(prefs)
     }
     .defaultSize(width: 760, height: 460)
+    .restorationBehavior(.disabled)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
         DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
       }
     }
     .defaultSize(width: 460, height: 720)
+    .restorationBehavior(.disabled)
 
     Settings {
       // The connection and storage panes read the open projects from the model.
@@ -90,6 +110,7 @@ struct TsugumiApp: App {
         .environment(prefs)
         .frame(width: 760, height: 520)
     }
+    .restorationBehavior(.disabled)
   }
 }
 
@@ -225,6 +246,7 @@ struct DetailHost<Content: View>: View {
           .environment(AppPreferences.shared)
           .focusedSceneValue(\.projectSession, session)
           .navigationSubtitle(session.scopeName([]))
+          .modifier(ClosesWithProject(session: session))
       } else if let error {
         ContentUnavailableView("プロジェクトを開けません", systemImage: "exclamationmark.triangle", description: Text(error))
       } else {
@@ -245,19 +267,29 @@ struct WorkbenchCommands: Commands {
   @FocusedValue(\.workspace) private var workspace
   @FocusedValue(\.workflowTab) private var tab
   @FocusedValue(\.canvasFocused) private var canvasFocused
+  @FocusedValue(\.mainWindow) private var mainWindow
   @Environment(\.openWindow) private var openWindow
 
   private var onCanvas: Bool { canvasFocused ?? false }
   private var selected: CardKey? { tab?.selection.sorted().first }
   private func post(_ n: Notification.Name, _ info: [String: Any]? = nil) {
-    NotificationCenter.default.post(name: n, object: n.rawValue.hasPrefix("tsugumi.app.") ? nil : tab?.id, userInfo: info)
+    NotificationCenter.default.post(name: n, object: tab?.id, userInfo: info)
+  }
+  /// The main window of the project in front (a Card's settings window acts on its project's).
+  private var projectWindow: Workspace? {
+    if let mainWindow, mainWindow.session != nil { return mainWindow }
+    return session.flatMap { AppModel.shared.mainWindow(showing: $0) }
   }
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
-      Button("新しいプロジェクト…") { post(.appNewProject) }.shortcut(.newProject)
-      Button("プロジェクトを開く…") { post(.appOpenProject) }.shortcut(.openProject)
-      Button("Home へ戻る") { post(.appHome) }.shortcut(.home).disabled(session == nil)
+      // Each main window has its project: these leave the one in front alone, Home takes them.
+      Button("新しいウインドウ") { openWindow(id: "main") }
+        .keyboardShortcut("n", modifiers: [.command, .shift])
+      Button("新しいプロジェクト…") { AppModel.shared.newProject(from: mainWindow, openWindow: openWindow) }.shortcut(.newProject)
+      Button("プロジェクトを開く…") { AppModel.shared.chooseProject(from: mainWindow, openWindow: openWindow) }.shortcut(.openProject)
+      Button("Home へ戻る") { if let w = projectWindow { AppModel.shared.leaveProject(in: w) } }
+        .shortcut(.home).disabled(session == nil)
     }
     CommandGroup(replacing: .undoRedo) {
       Button("取り消す") { session?.undo() }
@@ -268,7 +300,7 @@ struct WorkbenchCommands: Commands {
         .disabled(session?.redoStack.isEmpty ?? true)
     }
     CommandGroup(after: .saveItem) {
-      Button("プロジェクトを複製…") { post(.appDuplicateProject) }
+      Button("プロジェクトを複製…") { if let w = projectWindow { AppModel.shared.duplicateProject(in: w, openWindow: openWindow) } }
         .shortcut(.duplicateProject)
         .disabled(session == nil)
     }
@@ -372,19 +404,16 @@ enum TextFind {
 }
 
 extension Notification.Name {
-  /// Home and project commands of the menu (handled by the main window).
-  static let appNewProject = Notification.Name("tsugumi.app.newProject")
-  static let appOpenProject = Notification.Name("tsugumi.app.openProject")
-  static let appHome = Notification.Name("tsugumi.app.home")
   /// The demo list on Home (UI scripts).
   static let appShowDemos = Notification.Name("tsugumi.app.showDemos")
-  static let appDuplicateProject = Notification.Name("tsugumi.app.duplicateProject")
   /// Canvas commands (object: tab id).
   static let canvasDelete = Notification.Name("tsugumi.canvas.delete")
   static let canvasGroup = Notification.Name("tsugumi.canvas.group")
   static let canvasAddDraft = Notification.Name("tsugumi.canvas.addDraft")
   static let canvasWriteDraft = Notification.Name("tsugumi.canvas.writeDraft")
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
+  /// As if the pointer came on a row of the version tree (object: the row; UI scripts).
+  static let versionHover = Notification.Name("tsugumi.versions.hover")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")
   static let canvasAddBuiltin = Notification.Name("tsugumi.canvas.addBuiltin")
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
@@ -403,6 +432,7 @@ struct ProjectSessionKey: FocusedValueKey { typealias Value = ProjectSession }
 struct WorkspaceKey: FocusedValueKey { typealias Value = Workspace }
 struct WorkflowTabKey: FocusedValueKey { typealias Value = WorkflowTab }
 struct CanvasFocusedKey: FocusedValueKey { typealias Value = Bool }
+struct MainWindowKey: FocusedValueKey { typealias Value = Workspace }
 
 extension FocusedValues {
   var projectSession: ProjectSession? {
@@ -416,6 +446,11 @@ extension FocusedValues {
   var workflowTab: WorkflowTab? {
     get { self[WorkflowTabKey.self] }
     set { self[WorkflowTabKey.self] = newValue }
+  }
+  /// The main window in front, with a project or on Home.
+  var mainWindow: Workspace? {
+    get { self[MainWindowKey.self] }
+    set { self[MainWindowKey.self] = newValue }
   }
   /// The canvas has the keyboard focus (not a text field).
   var canvasFocused: Bool? {

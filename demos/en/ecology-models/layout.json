@@ -1,0 +1,91 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "load": {
+      "x": 260,
+      "y": 0
+    },
+    "share": {
+      "x": 780,
+      "y": 0
+    },
+    "fit": {
+      "x": 1000,
+      "y": -560
+    },
+    "forecast": {
+      "x": 1000,
+      "y": 190
+    },
+    "fits-share": {
+      "x": 1960,
+      "y": -560
+    },
+    "check": {
+      "x": 2200,
+      "y": -976
+    },
+    "phase": {
+      "x": 2200,
+      "y": -556
+    },
+    "scores": {
+      "x": 2200,
+      "y": 190
+    }
+  },
+  "notes": [
+    {
+      "id": "about",
+      "scope": "",
+      "color": "yellow",
+      "text": "## Comparing ecological models\n\nFits three predator–prey models to the Hudson's Bay Company's fur records (**real data**, 1900–1920, source: [stan-dev/example-models](https://github.com/stan-dev/example-models/blob/master/knitr/lotka-volterra/hudson-bay-lynx-hare.csv), from Howard 2009's lecture notes).\n\n$$\\text{LV: } \\dot H=aH-bHL,\\ \\ \\dot L=cHL-dL$$\n$$\\text{Logistic prey: } aH\\to aH(1-H/K)$$\n$$\\text{Holling type II: } bH\\to \\frac{bH}{1+bhH}$$\n\nThe error is the sum of squares of the logs; assuming normal noise of equal variance, they are compared by $\\mathrm{AIC}=n\\log(\\mathrm{SSE}/n)+2k$.\n\n**A good AIC does not mean the mechanism is right**. AIC only ranks the equations at hand relative to each other, and ignores the autocorrelation of the residuals. And **pelt counts are not population counts**: they are a proxy swayed by the number of traps, the price of pelts and how easy the animals are to catch (starving animals walk into traps more readily).\n\nTry changing the years held out with fit_until of **forecast**, and the number of starting points with restarts of **fit**.\n",
+      "x": -40,
+      "y": -640,
+      "width": 700,
+      "height": 600
+    }
+  ],
+  "displays": {
+    "load": {
+      "x": 100,
+      "y": 180,
+      "width": 640,
+      "height": 360
+    },
+    "fit": {
+      "x": 1000,
+      "y": -340,
+      "width": 860,
+      "height": 490
+    },
+    "forecast": {
+      "x": 1000,
+      "y": 410,
+      "width": 860,
+      "height": 460
+    },
+    "check": {
+      "x": 2460,
+      "y": -1000,
+      "width": 780,
+      "height": 360
+    },
+    "phase": {
+      "x": 2460,
+      "y": -580,
+      "width": 820,
+      "height": 420
+    },
+    "scores": {
+      "x": 2200,
+      "y": 340,
+      "width": 1100,
+      "height": 230
+    }
+  }
+}

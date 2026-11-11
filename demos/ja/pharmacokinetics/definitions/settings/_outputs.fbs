@@ -1,0 +1,14 @@
+namespace pk;
+table Settings {
+  doses_mg:[double];
+  intervals_h:[double];
+  half_life_h:double;
+  ka_per_h:double;
+  volume_l:double;
+  bioavailability:double;
+  low_mg_l:double;
+  high_mg_l:double;
+  days:double;
+}
+table Outputs { settings:Settings (required); }
+root_type Outputs;

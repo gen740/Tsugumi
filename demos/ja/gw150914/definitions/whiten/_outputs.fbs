@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace gw;
+table WhitenedDir { value:string; }
+table Outputs { whitened:WhitenedDir (required, tsugumi: "directory"); }
+root_type Outputs;

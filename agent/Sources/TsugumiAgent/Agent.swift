@@ -98,6 +98,8 @@ public enum AgentEvent: Sendable {
   case toolInput(index: Int, name: String, delta: String)
   case toolStarted(id: String, name: String, arguments: String)
   case toolFinished(id: String, name: String, ok: Bool, summary: String)
+  /// Earlier turns are being summarized: the next reply waits for it.
+  case compacting
   case compacted
   case retrying(String)
   /// The text streamed so far in this reply is dropped: the reply is asked
@@ -140,6 +142,9 @@ public actor Agent {
   /// Each definition's _card.json as this Agent last saw it (inspect, its
   /// own saves): a save that meets only others' layout changes is sent again.
   var seenDefinitions: [String: String] = [:]
+  /// The latest revision a helper knows, which its saves and runs start from
+  /// (nil: the one it was started with).
+  var helperRev: String?
   var approverForHelpers: Approver? { approver }
   /// A run started by a tool call whose end was not seen yet.
   private var unconfirmedRun: String?
@@ -147,6 +152,16 @@ public actor Agent {
   private var cutReplies = 0
   /// How long run_status waits for a run to end before it answers.
   public var statusWait: TimeInterval = 300
+  /// Folders of the Mac attached to the chat: the only ones attached_folder_read
+  /// may read. A folder detached stays shared with the environment until it next
+  /// starts, so the Agent refuses it here at once.
+  public private(set) var folders: [String] = []
+  public func setFolders(_ f: [String]) { folders = f.map(Self.trimmedFolder) }
+  static func trimmedFolder(_ f: String) -> String {
+    var f = f
+    while f.count > 1, f.hasSuffix("/") { f.removeLast() }
+    return f
+  }
 
   /// The rules and working examples the model gets. The default.nix and
   /// _outputs.fbs examples are the bundled demos' own files (a test keeps
@@ -154,8 +169,14 @@ public actor Agent {
   public static let systemPrompt = Shared.systemPrompt
   /// The guide's rules (agent/Shared/guide-prompt.md).
   public static let guidePrompt = Shared.guidePrompt
+  /// What a model is told to write a version's summary (agent/Shared); {language} is the app's.
+  public static let versionSummaryPrompt = Shared.versionSummaryPrompt
   /// The built-in skill $demo (agent/Shared/demo-skill.md): Tsugumi of the chat shows the screen around.
   public static let demoSkill = Shared.demoSkill
+  /// What the guide says without a model connection (agent/Shared/guide-script.json, as JSON).
+  public static let guideScript = Shared.guideScript
+  /// The same in English (agent/Shared/guide-script.en.json).
+  public static let guideScriptEnglish = Shared.guideScriptEnglish
 
   public init(catalog: ToolCatalog, transport: ToolTransport, provider: ProviderConfig, storage: URL,
               references: [String: URL] = [:], helper: Helper? = nil, role: Role = .worker) throws {
@@ -251,7 +272,7 @@ public actor Agent {
     var note = "Continue from where you stopped (the step limit ended the previous turn). Check the current state first"
     if let run = unconfirmedRun { note += " and the outcome of run \(run) (run_status), which was started and never checked" }
     note += ", then finish the remaining work."
-    conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: "（止まったところから続けます）"))
+    conversation.messages.append(ChatMessage(role: "user", content: [.text(note)], display: String(localized: "（止まったところから続けます）", bundle: .main)))
     conversation.updatedAt = Date()
     guard saveBeforeTurn(events) else { return }
     startTurn { await self.loop(events) }
@@ -274,11 +295,15 @@ public actor Agent {
     }
   }
 
+  /// Work `resume` would go on with: a request not answered, a tool call not settled.
+  public var hasUnfinishedWork: Bool {
+    conversation.tools.contains { $0.state == .sent || $0.state == .pending } || conversation.messages.last?.role == "user"
+  }
+
   /// Resumes after a restart or disconnect: tool calls that were sent but never
   /// answered are reconciled with OperationGet instead of being re-sent.
   public func resume(events: @escaping @Sendable (AgentEvent) -> Void) {
-    guard conversation.tools.contains(where: { $0.state == .sent || $0.state == .pending }) ||
-          conversation.messages.last?.role == "user" else { return }
+    guard hasUnfinishedWork else { return }
     startTurn { await self.loop(events) }
   }
 
@@ -288,13 +313,32 @@ public actor Agent {
       try closeDanglingToolUses()
       cutReplies = 0
       var done = false
+      var refusals = 0
+      var brokenReplies = 0
       for _ in 0..<maxSteps {
         try Task.checkCancellation()
         try await compactIfNeeded(events)
-        var (blocks, stop) = try await modelTurn(events)
-        if stop == "max_tokens" {
-          // The reply was cut at the output limit, maybe inside a tool call:
-          // nothing of it is executed; the model is asked for smaller steps.
+        let reply: ([ContentBlock], String, String?)
+        do {
+          reply = try await modelTurn(events)
+          refusals = 0
+        } catch where !Task.isCancelled && Self.isContextOverflow(text: "\(error)") {
+          // Refused over the context, so it reported no usage to compact by, and
+          // the same request would be refused for ever: it is made smaller first.
+          refusals += 1
+          guard refusals <= 3 else {
+            events(.error(Self.contextFullText))
+            return
+          }
+          do { try await compactIfNeeded(events, force: true, room: provider.config.contextLimit >> refusals) }
+          catch where !Task.isCancelled && Self.isContextOverflow(text: "\(error)") {}  // the summary too: with less room next
+          continue
+        }
+        var (blocks, stop, providerContent) = reply
+        if stop == "max_tokens" || stop == "model_context_window_exceeded" {
+          // The reply was cut at the output limit or the context window, maybe
+          // inside a tool call: nothing of it is executed; the model is asked
+          // for smaller steps (and over the threshold, the context is compacted).
           cutReplies += 1
           guard cutReplies <= 3 else { throw AgentError.provider("the model's replies were cut at the output limit three times") }
           blocks = blocks.filter { if case .toolUse = $0 { return false }; return true }
@@ -303,13 +347,25 @@ public actor Agent {
           conversation.messages.append(ChatMessage(role: "user", content: [.text(
             "Your last reply was cut at the output limit, so its tool call was not run and nothing was saved. Make the "
             + "change in smaller steps: one Card per project_save, and long source files in saves of their own.")],
-            display: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）"))
+            display: String(localized: "（応答が長すぎて途中で切れたため、小さく分けてやり直します）", bundle: .main)))
           events(.retrying("the reply was cut at the output limit; asking for smaller steps"))
           try conversation.save(storage)
           continue
         }
-        conversation.messages.append(ChatMessage(role: "assistant", content: blocks))
+        // Nothing to say or do (declined before any output, or only thinking,
+        // which is not kept). The API refuses empty content anywhere but at the
+        // end, so the history holds a note, and the turn says what happened.
+        let empty = blocks.isEmpty ? "the model sent an empty reply (stop reason: \(stop))" : nil
+        if let empty { blocks = [.text("[\(empty)]")] }
+        conversation.messages.append(ChatMessage(role: "assistant", content: blocks, providerContent: providerContent))
         try conversation.save(storage)
+        if let empty {
+          events(.error("\(empty); ask again, or in other words"))
+          return
+        }
+        // The provider paused a long search turn: the reply goes back as it is,
+        // with nothing added, and the same request goes on (one more step).
+        if stop == "pause_turn" { continue }
         let uses = blocks.compactMap { b -> (String, String, String)? in
           if case .toolUse(let id, let name, let input) = b { return (id, name, input) }
           return nil
@@ -328,6 +384,11 @@ public actor Agent {
         try Task.checkCancellation()
         conversation.messages.append(ChatMessage(role: "user", content: results))
         try conversation.save(storage)
+        // Each try may be a whole file long: asked again a few times, as a cut reply is.
+        if uses.contains(where: { ContentBlock.arguments($0.2) == nil }) {
+          brokenReplies += 1
+          guard brokenReplies <= 3 else { throw AgentError.provider("the arguments of the model's tool calls were broken JSON three times") }
+        }
       }
       // Never a silent stop: the limit is its own outcome, and it can go on.
       events(done ? .finished : .stepLimit(steps: maxSteps, unconfirmedRun: unconfirmedRun))
@@ -346,13 +407,21 @@ public actor Agent {
 
   /// One streamed model response; transient provider errors are retried with
   /// backoff before any of its tool calls has been executed.
-  private func modelTurn(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ([ContentBlock], String) {
+  private func modelTurn(_ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ([ContentBlock], String, String?) {
     var attempt = 0
     while true {
       var text = ""
       var tools: [Int: (id: String, name: String, json: String)] = [:]
       var order: [Int] = []
       var stopReason = "end_turn"
+      // Text and searches in the order they came; the sources the reply cites.
+      var parts: [ContentBlock] = []
+      var cited: [WebSource] = []
+      var providerContent: String?
+      func flushText() {
+        if !text.isEmpty { parts.append(.text(text)) }
+        text = ""
+      }
       do {
         for try await e in try provider.stream(system: system, messages: wireMessages(), tools: self.tools) {
           switch e {
@@ -367,6 +436,17 @@ public actor Agent {
             if let name = tools[i]?.name { events(.toolInput(index: i, name: name, delta: pj)) }
           case .blockStop:
             break
+          case .search(let id, let query):
+            flushText()
+            let search = WebSearch(id: id, query: query)
+            parts.append(.webSearch(search))
+            events(.toolStarted(id: id, name: Shared.data.webSearch.name, arguments: search.arguments))
+          case .searchResult(let id, let sources, let error):
+            try searchEnded(id: id, sources: sources, error: error, parts: &parts, events)
+          case .citation(let source):
+            cited.append(source)
+          case .providerContent(let json):
+            providerContent = json
           case .stop(let reason, let usage):
             stopReason = reason
             conversation.usage.inputTokens = usage.inputTokens
@@ -377,28 +457,78 @@ public actor Agent {
         }
         // A cancelled consumer sees the stream end normally; it is not an answer.
         try Task.checkCancellation()
-        var blocks: [ContentBlock] = []
-        if !text.isEmpty { blocks.append(.text(text)) }
+        let sources = WebSearch.sourcesText(cited)
+        if !sources.isEmpty {
+          text += sources
+          events(.text(sources))
+        }
+        flushText()
+        var blocks = parts
         for i in order {
           guard let t = tools[i] else { continue }
           blocks.append(.toolUse(id: t.id, name: t.name, input: t.json.isEmpty ? "{}" : t.json))
         }
-        return (blocks, stopReason)
+        return (blocks, stopReason, providerContent)
+      } catch let e as MessagesProvider.HTTPStatusError where e.status == 400 && e.body.lowercased().contains("image") && conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
+      } catch ChatGPTError.unsupported where conversation.hasToolImages {
+        try goOnWithoutImages(hadText: !text.isEmpty || !parts.isEmpty, events)
+        continue
       } catch let e as MessagesProvider.HTTPStatusError where e.retryable && attempt < 3 {
         attempt += 1
         // The provider's retry-after when it gave one (rate limits), else backoff.
         let wait = min(120, max(e.retryAfter ?? 0, 0.5 * Double(1 << attempt)))
-        if !text.isEmpty { events(.discardText) }
+        if !text.isEmpty || !parts.isEmpty { events(.discardText) }
         events(.retrying("provider returned \(e.status); retry \(attempt) in \(Int(wait.rounded(.up))) s"))
         try await Task.sleep(for: .seconds(wait))
         continue
       } catch let e as URLError where attempt < 3 && e.code != .cancelled {
         attempt += 1
-        if !text.isEmpty { events(.discardText) }
+        if !text.isEmpty || !parts.isEmpty { events(.discardText) }
         events(.retrying("connection to the model failed (\(e.code.rawValue)); retry \(attempt)"))
       }
       try await Task.sleep(for: .milliseconds(500 * (1 << attempt)))
     }
+  }
+
+  /// The provider refused a request with images (a model without vision, a
+  /// corrupt or oversized picture): asking again as it is would fail for good.
+  private func goOnWithoutImages(hadText: Bool, _ events: @escaping @Sendable (AgentEvent) -> Void) throws {
+    if hadText { events(.discardText) }
+    conversation.dropToolImages()
+    try conversation.save(storage)
+    events(.retrying("the model did not accept an image from a tool; going on without it"))
+  }
+
+  /// A search's result: in this reply's blocks, or in an earlier reply's when
+  /// it waited for our tools. Recorded at once: the query has left, whatever
+  /// becomes of the reply.
+  private func searchEnded(id: String, sources: [WebSource], error: String?, parts: inout [ContentBlock],
+                           _ events: @escaping @Sendable (AgentEvent) -> Void) throws {
+    func filled(_ blocks: inout [ContentBlock]) -> WebSearch? {
+      for i in blocks.indices {
+        guard case .webSearch(var s) = blocks[i], s.id == id else { continue }
+        s.sources = sources
+        s.error = error
+        blocks[i] = .webSearch(s)
+        return s
+      }
+      return nil
+    }
+    var search = filled(&parts)
+    if search == nil {
+      for m in conversation.messages.indices.reversed() {
+        search = filled(&conversation.messages[m].content)
+        if search != nil { break }
+      }
+    }
+    let done = search ?? WebSearch(id: id, query: "", sources: sources, error: error)
+    conversation.tools.removeAll { $0.id == id }
+    conversation.tools.append(ToolRecord(id: id, name: Shared.data.webSearch.name, arguments: done.arguments, state: .completed,
+                                         result: done.summary, isError: error != nil))
+    try conversation.save(storage)
+    events(.toolFinished(id: id, name: Shared.data.webSearch.name, ok: error == nil, summary: done.summary))
   }
 
   private func wireMessages() -> [ChatMessage] {
@@ -414,8 +544,19 @@ public actor Agent {
     if role == .guide {
       return catalog.tools.filter { Shared.data.guide.tools.contains($0.name) } + reference + [Self.guideShowTool]
     }
-    return catalog.tools + reference + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
+    return (searches ? [Self.webSearchTool] : []) + helperTools + (helper == nil ? [Self.delegateTool, Self.guideShowTool] : [])
   }
+
+  /// What a helper is given: only the main Agent has more.
+  var helperTools: [ToolSpec] { catalog.tools + (references.isEmpty ? [] : [Self.referenceTool]) }
+
+  /// The main Agent may search, when the setting is on (the helpers work from
+  /// what it tells them; the guide explains the app).
+  var searches: Bool { role == .worker && helper == nil && providerConfig.searchesWeb }
+
+  static let webSearchTool = ToolSpec(
+    name: Shared.data.webSearch.name, requestName: "", payloadType: 0, object: -1, description: "", inputSchema: [:],
+    mutating: false, server: true)
 
   static let guideShowTool = ToolSpec(
     name: Shared.data.guide.showTool.name, requestName: "", payloadType: 0, object: -1,
@@ -440,6 +581,19 @@ public actor Agent {
       Shared.fill(t.card, ["key": $0.key, "definition": $0.definition, "description": $0.description, "content": $0.content, "context": $0.context])
     }.joined(separator: "\n")
     let where_ = scope.isEmpty ? t.root : Shared.fill(t.child, ["scope": scope.joined(separator: "/")])
+    return Shared.fill(t.text, ["where": where_, "list": list])
+  }
+
+  /// The request that has the model follow the user's comments on Cards (the
+  /// same text as the web Agent's, from agent/Shared/agent.json).
+  public static func commentRequest(scope: [String], cards: [(key: String, definition: String, comments: [(id: String, text: String)])]) -> String {
+    let t = Shared.data.comment
+    let list = cards.map { c in
+      let comments = c.comments.map { Shared.fill(t.comment, ["id": $0.id, "text": $0.text]) }.joined(separator: "\n")
+      return Shared.fill(t.card, ["key": c.key, "definition": c.definition, "comments": comments])
+    }.joined(separator: "\n")
+    let d = Shared.data.draft
+    let where_ = scope.isEmpty ? d.root : Shared.fill(d.child, ["scope": scope.joined(separator: "/")])
     return Shared.fill(t.text, ["where": where_, "list": list])
   }
 
@@ -482,24 +636,49 @@ public actor Agent {
     guard url.resolvingSymlinksInPath().path.hasPrefix(base.resolvingSymlinksInPath().path) else { return ("not found: \(rel)", true) }
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return ("not found: \(rel)", true) }
-    if isDir.boolValue {
-      let names = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-      return (names.filter { !$0.lastPathComponent.hasPrefix(".") }.map { u in
-        ((try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) ? u.lastPathComponent + "/" : u.lastPathComponent
-      }.sorted().joined(separator: "\n"), false)
-    }
+    if isDir.boolValue { return (Self.readFolder(url), false) }
     guard let data = try? Data(contentsOf: url) else { return ("cannot read \(rel)", true) }
     if data.count > 200_000 { return (String(decoding: data.prefix(200_000), as: UTF8.self) + "\n[cut at 200000 bytes]", false) }
     return (String(decoding: data, as: UTF8.self), false)
   }
+
+  /// A reference folder in one call, so that the model need not walk it a
+  /// level per reply: a Card's folder gives all its files, any other lists every
+  /// file under it. Hidden files and symbolic links are left out.
+  static func readFolder(_ url: URL) -> String {
+    let root = url.resolvingSymlinksInPath()
+    var files: [(rel: String, url: URL)] = []
+    let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+    while let u = walk?.nextObject() as? URL {
+      guard (try? u.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+      files.append((String(u.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1)), u))
+    }
+    files.sort { $0.rel < $1.rel }
+    guard files.contains(where: { $0.rel == "_card.json" }) else {
+      let shown = files.prefix(folderEntries).map(\.rel).joined(separator: "\n")
+      return files.count > folderEntries ? shown + "\n[\(files.count - folderEntries) more files]" : shown
+    }
+    return files.map { f in
+      let data = (try? Data(contentsOf: f.url)) ?? Data()
+      let text = data.count > folderFileLimit ? nil : String(data: data, encoding: .utf8)
+      return "--- \(f.rel)\n\(text ?? "(\(data.count) bytes, not shown: read it by its path)")\n"
+    }.joined()
+  }
+  static let folderEntries = 300
+  static let folderFileLimit = 50_000
 
   /// Validates arguments, executes the RPC and records the result.
   func runTool(id: String, name: String, input: String, _ events: @escaping @Sendable (AgentEvent) -> Void) async throws -> ContentBlock {
     events(.toolStarted(id: id, name: name, arguments: input))
     var record = conversation.tools.first { $0.id == id } ?? ToolRecord(id: id, name: name, arguments: input, state: .pending)
     if let existing = conversation.tools.firstIndex(where: { $0.id == id }) { conversation.tools.remove(at: existing) }
+    // Broken arguments never run, whatever the tool: the model is told to write
+    // them again. (A reply cut at the output limit does not come this far: loop.)
+    guard let args = ContentBlock.arguments(input) else {
+      return try finish(&record, Self.invalidArgumentsText(input), isError: true, events)
+    }
     if name == Self.referenceTool.name, !references.isEmpty {
-      let path = (try? JSONSerialization.jsonObject(with: Data(input.utf8)) as? [String: Any])?["path"] as? String ?? ""
+      let path = args["path"] as? String ?? ""
       let (text, isError) = readReference(path)
       return try finish(&record, text, isError: isError, events)
     }
@@ -518,9 +697,14 @@ public actor Agent {
     guard let spec = catalog.tool(named: name) else {
       return try finish(&record, "unknown tool \(name)", isError: true, events)
     }
-    // Incomplete or invalid arguments are never executed.
-    guard let data = input.data(using: .utf8), let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-      return try finish(&record, "the arguments are not a complete JSON object", isError: true, events)
+    if name == "attached_folder_read" {
+      let folder = Self.trimmedFolder(args["folder"] as? String ?? "")
+      guard folders.contains(folder) else {
+        let failure: [String: Any] = ["reply": "Failure", "value": ["kind": "not_found",
+          "message": "the folder \(folder) is not attached here (attach it in the chat)"]]
+        let text = String(decoding: try JSONSerialization.data(withJSONObject: failure, options: [.sortedKeys]), as: UTF8.self)
+        return try finish(&record, text, isError: true, events)
+      }
     }
     var full = args
     // Fields the Agent fills itself: never the model's.
@@ -531,10 +715,18 @@ public actor Agent {
                                          ["name": helper.name, "cards": helper.cards.joined(separator: ", "), "what": outside]),
                     isError: true, events)
     }
+    // A helper told only to write leaves the run to the main Agent.
+    if let helper, helper.runsTogether, name == "run" {
+      return try finish(&record, Shared.fill(Shared.data.helper.runRefused, ["name": helper.name]), isError: true, events)
+    }
     if spec.mutating {
       record.opId = record.opId ?? UUID().uuidString.lowercased()
       full["op_id"] = record.opId
       full["origin"] = "agent"
+      // A helper leaves base_rev to the app: the latest it knows, and a conflict goes on below.
+      if let helper, let rev = helperRev ?? helper.rev, (spec.inputSchema["properties"] as? [String: Any])?["base_rev"] != nil {
+        full["base_rev"] = rev
+      }
     }
     // Validate by building once before sending anything.
     do {
@@ -570,6 +762,15 @@ public actor Agent {
         conversation.tools.append(record)
         try conversation.save(storage)
         try Task.checkCancellation()
+        (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
+          try codec.build(spec.object, full, into: &b)
+        }
+        json = renderReply(replyType, table)
+      }
+      // A read that named a revision gone by (the canvas tidied, or the
+      // model's guess) reads the latest; its reply says which that is.
+      if !spec.mutating, replyType == "Failure", Self.failureKind(json) == "revision_conflict",
+         full.removeValue(forKey: "at_rev") != nil {
         (replyType, table) = try await transport.call(payloadType: spec.payloadType) { b in
           try codec.build(spec.object, full, into: &b)
         }
@@ -624,6 +825,11 @@ public actor Agent {
       }
       noteRun(tool: name, reply: replyType, json: json)
       noteDefinitions(reply: replyType, json: json)
+      if helper != nil, replyType == "SaveResult" || replyType == "ProjectSnapshot",
+         let value = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["value"] as? [String: Any],
+         let rev = value["rev"] as? NSNumber {
+        helperRev = rev.stringValue
+      }
       return try finish(&record, json, isError: replyType == "Failure", events)
     } catch let error as ConversationStorageError {
       throw error
@@ -689,7 +895,7 @@ public actor Agent {
       } : []
       let next = i + 1 < conversation.messages.count ? conversation.messages[i + 1] : nil
       let answered = Set(next?.role == "user" ? next!.content.compactMap { b -> String? in
-        if case .toolResult(let id, _, _) = b { return id }
+        if case .toolResult(let id, _, _, _) = b { return id }
         return nil
       } : [])
       let missing = ids.filter { !answered.contains($0) }
@@ -698,7 +904,7 @@ public actor Agent {
           let r = conversation.tools.first { $0.id == id }
           switch r?.state {
           case .completed?:
-            return .toolResult(toolUseId: id, content: Self.clip(r?.result ?? ""), isError: r?.isError ?? false)
+            return Self.resultBlock(id: id, result: r?.result ?? "", isError: r?.isError ?? false)
           case .sent?:
             return .toolResult(toolUseId: id, content: "sent, but the turn was stopped before the answer; check the outcome "
                                  + "with operation_get (op_id \(r?.opId ?? ""))", isError: true)
@@ -724,12 +930,38 @@ public actor Agent {
     if changed { try conversation.save(storage) }
   }
 
+  /// What a tool's row in the chat shows of its result: its start, after what a
+  /// save did to the comments on Cards (the result's end, which the start cuts off).
+  public static func toolSummary(_ result: String) -> String {
+    var head = ""
+    if result.hasPrefix(#"{"reply":"SaveResult""#), result.contains(#""comments""#),
+       let o = try? JSONSerialization.jsonObject(with: Foundation.Data(result.utf8)) as? [String: Any],
+       let list = (o["value"] as? [String: Any])?["comments"] as? [Any], !list.isEmpty,
+       let line = try? JSONSerialization.data(withJSONObject: list, options: [.sortedKeys, .withoutEscapingSlashes]) {
+      head = "comments: " + String(decoding: line, as: UTF8.self) + "\n"
+    }
+    return head + String(result.prefix(400))
+  }
+
+  /// A tool's result as the model gets it: its images as images, its text clipped.
+  static func resultBlock(id: String, result: String, isError: Bool) -> ContentBlock {
+    let (text, images) = ToolImage.split(result)
+    return .toolResult(toolUseId: id, content: clip(text), isError: isError, images: images)
+  }
+
   /// How much of a tool's result the model gets; a longer one says it was cut.
   public static let resultLimit = 60_000
   public static func clip(_ s: String) -> String {
     guard s.count > resultLimit else { return s }
     return String(s.prefix(resultLimit)) + "\n[cut: showing the first \(resultLimit) of \(s.count) characters; "
       + "read the rest with a narrower request (an offset, a range or one file)]"
+  }
+
+  /// What the model is told of arguments that are not a JSON object: to write
+  /// them again, with the text it wrote (it may mend that instead of starting over).
+  static func invalidArgumentsText(_ input: String) -> String {
+    let wrapped = (try? JSONSerialization.data(withJSONObject: ["INVALID_JSON": input], options: [.withoutEscapingSlashes])) ?? Data()
+    return Shared.fill(Shared.data.invalidArguments, ["json": String(decoding: wrapped, as: UTF8.self)])
   }
 
   private func finish(_ record: inout ToolRecord, _ result: String, isError: Bool,
@@ -740,8 +972,8 @@ public actor Agent {
     conversation.tools.removeAll { $0.id == record.id }
     conversation.tools.append(record)
     try conversation.save(storage)
-    events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: String(result.prefix(400))))
-    return .toolResult(toolUseId: record.id, content: Self.clip(result), isError: isError)
+    events(.toolFinished(id: record.id, name: record.name, ok: !isError, summary: Self.toolSummary(result)))
+    return Self.resultBlock(id: record.id, result: result, isError: isError)
   }
 
   func renderReply(_ type: String, _ table: Table) -> String {
@@ -776,8 +1008,8 @@ public actor Agent {
         // Replace that result too, so the next model request sees the receipt.
         for m in conversation.messages.indices {
           conversation.messages[m].content = conversation.messages[m].content.map { block in
-            if case .toolResult(let toolId, _, _) = block, toolId == id {
-              return .toolResult(toolUseId: id, content: Self.clip(json), isError: error ?? true)
+            if case .toolResult(let toolId, _, _, _) = block, toolId == id {
+              return Self.resultBlock(id: id, result: json, isError: error ?? true)
             }
             return block
           }
@@ -798,6 +1030,18 @@ public actor Agent {
     return kind == "Failure"
   }
 
+  /// What ends a turn when the conversation cannot be made to fit the model's
+  /// context (the app says what to do: a new conversation).
+  public static let contextFullText = "the conversation no longer fits the model's context"
+
+  /// A provider's refusal of a request over the model's context: nothing of it
+  /// was answered, and asking the same again gets the same answer.
+  public static func isContextOverflow(text: String) -> Bool {
+    let t = text.lowercased()
+    return ["prompt is too long", "input is too long", "exceed context limit", "request_too_large", "context_length_exceeded",
+            "exceeds the context window", "maximum context length"].contains { t.contains($0) }
+  }
+
   /// Keep recent tool calls together with their results. The summary is the
   /// leading user message, so the tail may safely start with an assistant.
   static func compactionBoundary(_ messages: [ChatMessage], keep: Int = 4) -> Int {
@@ -808,38 +1052,87 @@ public actor Agent {
     return cut
   }
 
-  /// Context compaction: older turns are replaced by a model-written summary
-  /// when the last request approached the provider's context limit.
-  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false) async throws {
-    let limit = provider.config.contextLimit
-    guard force || conversation.usage.inputTokens > limit * 3 / 4, conversation.messages.count > (force ? 4 : 6) else { return }
-    let messages = conversation.messages
-    let cut = Self.compactionBoundary(messages)
-    guard cut > 0 else { return }
-    let old = Array(messages.prefix(cut))
-    var transcript = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
+  /// A tool's result cut to make room in the context (the whole result stays in
+  /// its record, and in what the chat shows of it).
+  static let contextCutNote = "\n[cut to fit the model's context: read it again with a narrower request]"
+
+  /// The tool results among these messages, cut to the same length so that
+  /// together they take at most `room` characters.
+  static func fitToolResults(_ messages: [ChatMessage], room: Int) -> [ChatMessage] {
+    let note = contextCutNote.count
+    let sizes = messages.flatMap { $0.content.compactMap { b -> Int? in
+      if case .toolResult(_, let c, _, _) = b { return c.count }
+      return nil
+    } }
+    var cap = resultLimit
+    while cap > 200, sizes.reduce(0, { $0 + min($1, cap + note) }) > room { cap /= 2 }
+    return messages.map { m in
+      var m = m
+      m.content = m.content.map { b in
+        if case .toolResult(let id, let c, let e, let images) = b, c.count > cap + note {
+          return .toolResult(toolUseId: id, content: String(c.prefix(cap)) + contextCutNote, isError: e, images: images)
+        }
+        return b
+      }
+      return m
+    }
+  }
+
+  /// The model's summary of these messages, in a request of about `room` characters at most.
+  private func summary(of old: [ChatMessage], room: Int) async throws -> String {
+    var transcript = ""
     for m in old {
       for b in m.content {
         switch b {
         case .text(let t): transcript += "\(m.role): \(t)\n"
         case .toolUse(_, let n, let a): transcript += "tool call \(n) \(a.prefix(500))\n"
-        case .toolResult(_, let c, let e): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
+        case .toolResult(_, let c, let e, _): transcript += "tool result\(e ? " (error)" : ""): \(c.prefix(800))\n"
+        case .webSearch(let s): transcript += s.note + "\n"
         }
       }
     }
-    let ask = [ChatMessage(role: "user", content: [.text("Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n\(transcript)")])]
+    let earlier = conversation.summary.map { "Earlier summary: " + $0 + "\n" } ?? ""
+    let text = earlier + String(transcript.suffix(room))
+    let ask = [ChatMessage(role: "user", content: [.text("Summarize this Tsugumi session so far in under 200 words, keeping revisions, run ids and decisions:\n\n\(text)")])]
     var summary = ""
-    for try await e in try provider.stream(system: "You summarize conversations.", messages: ask, tools: []) {
+    // A short summary: neither the chosen effort nor Fast mode's price.
+    for try await e in try MessagesProvider(config: providerConfig.withoutChoices).stream(system: "You summarize conversations.", messages: ask, tools: []) {
       if case .text(let t) = e { summary += t }
     }
     try Task.checkCancellation()
     guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw AgentError.provider("the context summary was empty; the conversation was kept")
     }
+    return summary
+  }
+
+  /// Context compaction, when the last request approached the provider's context
+  /// limit: older turns are replaced by a model-written summary, and the tool
+  /// results of the turns kept are cut to `room` characters (half the limit by
+  /// default), or what is kept could fill the context by itself. A summary that
+  /// fails then ends nothing: the request may still fit, and if not its refusal
+  /// comes back here with `force`, where the failure is the turn's.
+  private func compactIfNeeded(_ events: @escaping @Sendable (AgentEvent) -> Void, force: Bool = false, room: Int? = nil) async throws {
+    let limit = provider.config.contextLimit
+    guard force || conversation.usage.inputTokens > limit * 3 / 4 else { return }
+    let messages = conversation.messages
+    let room = room ?? limit / 2
+    let cut = messages.count > (force ? 4 : 6) ? Self.compactionBoundary(messages) : 0
+    let kept = Self.fitToolResults(Array(messages.dropFirst(cut)), room: room)
+    guard cut > 0 || kept != messages else { return }
+    events(.compacting)
+    var summary = conversation.summary
+    if cut > 0 {
+      do { summary = try await self.summary(of: Array(messages.prefix(cut)), room: room) }
+      catch where !force && !Task.isCancelled && (error as? URLError)?.code != .cancelled {
+        events(.retrying("the earlier turns could not be summarized (\(error)); going on without it"))
+        return
+      }
+    }
     guard conversation.messages == messages else { return }
     conversation.summary = summary
-    conversation.archive += old
-    conversation.messages = Array(messages.dropFirst(cut))
+    conversation.archive += messages.prefix(cut)
+    conversation.messages = kept
     conversation.usage.inputTokens = 0
     try conversation.save(storage)
     events(.compacted)

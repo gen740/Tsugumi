@@ -1,0 +1,92 @@
+{
+  "name": "Meta-analysis: the BCG vaccine",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "databaseConnections": [],
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "trials"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "pool"
+      },
+      {
+        "id": "funnel"
+      },
+      {
+        "id": "moderator"
+      },
+      {
+        "id": "sensitivity"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "trials",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "trials",
+          "port": "trials"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "pool"
+        },
+        "to": {
+          "card": "pool",
+          "port": "trials"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "funnel"
+        },
+        "to": {
+          "card": "funnel",
+          "port": "trials"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "moderator"
+        },
+        "to": {
+          "card": "moderator",
+          "port": "trials"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "sensitivity"
+        },
+        "to": {
+          "card": "sensitivity",
+          "port": "trials"
+        }
+      }
+    ]
+  }
+}

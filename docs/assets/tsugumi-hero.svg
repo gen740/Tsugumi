@@ -128,8 +128,8 @@
     </g>
   </g>
 
-  <!-- 手毬（巻きかがり）から引き出した一本の糸。くちばしに挟んだ糸は先へ流れ、
-       処理の流れ（ノード）を縫ってつなぐ -->
+  <!-- A single thread drawn from the temari (in a wound pattern). The thread held in the beak runs on,
+       stitching the flow of processing (the nodes) together -->
   <g fill="none" stroke-linecap="round">
     <g transform="translate(300 225) scale(0.6) translate(-540 -476)">
       <ellipse cx="708" cy="704" rx="66" ry="9" fill="#1a120a" opacity="0.45"/>
@@ -155,8 +155,8 @@
   </g>
   <!-- wordmark -->
   <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
-    <text x="606" y="318" font-size="24" fill="#cfe0d4" font-family="'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif">AI との試行錯誤を、見て、確かめて、</text>
-    <text x="606" y="352" font-size="24" fill="#cfe0d4" font-family="'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif">手を入れられる研究ワークベンチ</text>
+    <text x="606" y="318" font-size="24" fill="#cfe0d4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">A research workbench where you can see,</text>
+    <text x="606" y="352" font-size="24" fill="#cfe0d4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">check and work on your trials with AI</text>
     <text x="606" y="394" font-size="15" letter-spacing="1" fill="#8fc0b0" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">macOS · Claude Agent · Nix VM · C++ / Python / Bash</text>
     <polygon points="606,416 646,416 640,422 606,422" fill="#c97d3d"/>
     <polygon points="650,416 690,416 684,422 644,422" fill="#9fb070"/>

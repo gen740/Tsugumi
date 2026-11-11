@@ -1,0 +1,36 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "params": [
+    {
+      "name": "f_low",
+      "type": "double",
+      "data": 35.0
+    },
+    {
+      "name": "f_high",
+      "type": "double",
+      "data": 350.0
+    },
+    {
+      "name": "t_event",
+      "type": "double",
+      "data": 1126259462.4
+    },
+    {
+      "name": "before",
+      "type": "double",
+      "data": 0.2
+    },
+    {
+      "name": "after",
+      "type": "double",
+      "data": 0.05
+    }
+  ]
+}

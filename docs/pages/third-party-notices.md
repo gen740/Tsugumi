@@ -3,13 +3,13 @@
 Tsugumi's own code is under the [MIT License](https://github.com/gen740/Tsugumi/blob/main/LICENSE). Existing libraries,
 copied code, fonts and external data retain their own licenses, including
 the author's pre-existing [hosq](https://github.com/CLI20-dev/hosq) library.
-See [制作範囲と事前準備](provenance.md) for the authorship boundary.
+See [How it was built](philosophy.md#how-it-was-built) for the authorship boundary.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](https://github.com/gen740/Tsugumi/blob/main/macOS/tools/bundle-licenses.sh)).
 The corresponding source of the VM's boot disk is in that disk's release of
 [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
-[ライセンス調査](licenseaudit.md). Versions
+[License audit](licenseaudit.md). Versions
 below were audited at `0ec6460` (2026-11-04) and checked again on 2026-11-05;
 lock files and build recipes are authoritative when dependencies change.
 
@@ -28,6 +28,10 @@ SwiftTreeSitter has its own BSD license.
 | tree-sitter-cpp | [0.23.4, MIT](https://github.com/tree-sitter/tree-sitter-cpp/blob/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE) | Linked grammar and copied highlight query (also uses the C query) |
 | tree-sitter-json | [0.24.8, MIT](https://github.com/tree-sitter/tree-sitter-json/blob/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-bash | [0.25.1, MIT](https://github.com/tree-sitter/tree-sitter-bash/blob/a06c2e4415e9bc0346c6b86d401879ffb44058f7/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-go | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-go/blob/1547678a9da59885853f5f5cc8a99cc203fa2e2c/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-rust | [0.24.2, MIT](https://github.com/tree-sitter/tree-sitter-rust/blob/77a3747266f4d621d0757825e6b11edcbf991ca5/LICENSE) | Linked grammar and copied highlight query |
+| tree-sitter-julia | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-julia/blob/e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3/LICENSE) | Linked grammar and copied highlight query; its external scanner (`src/scanner.c`) is copied into `macOS/Sources/Grammars/TreeSitterJuliaScanner/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE), because the package's manifest leaves it out |
+| tree-sitter-r | [1.3.0, MIT](https://github.com/r-lib/tree-sitter-r/blob/346d3707b8c9301f1051e8f6e32666e67529f7d2/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-nix | e49c2f317e896eb08967717e758a46d6eea038b2, MIT | Copied into `macOS/Sources/Grammars/TreeSitterNix/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterNix/LICENSE), and copied highlight query |
 | tree-sitter-python | 0.25.0, MIT | Copied into `macOS/Sources/Grammars/TreeSitterPython/`, with its [LICENSE](https://github.com/gen740/Tsugumi/blob/main/macOS/Sources/Grammars/TreeSitterPython/LICENSE), and copied highlight query |
 
@@ -70,6 +74,14 @@ Tsugumi app product dependency. A lock file entry alone is not proof that
 its code is present in the final executable. Apple's system frameworks are
 used from the operating system, not copied into the app.
 
+## The `tsugumi` command
+
+The Mac's `tsugumi-macos-arm64.tar.gz` also contains the official Node.js build
+(version and checksum in `cli/node-version.env`; MIT and the notices in its
+`LICENSE`, included as `licenses/node.LICENSE`), the Web UI below with the license files of its
+npm packages (`licenses/npm`), the boot image below, and FlatBuffers in
+`tsugumi-vmhost`. On Linux and in WSL on Windows, Nix builds the same from source (`nix/cli.nix`).
+
 ## Web UI
 
 `web/package-lock.json` pins this runtime package tree. esbuild bundles
@@ -84,6 +96,8 @@ only code reachable from the server and browser entry points.
 | KaTeX | 0.19.0 | MIT; Tsugumi requests MathML output and does not copy KaTeX fonts |
 | commander | 15.0.0 | MIT; KaTeX CLI dependency, not an app import |
 | FlatBuffers | 25.9.23 | Apache-2.0 |
+| xterm.js (`@xterm/xterm`, `@xterm/addon-fit`) | 5.5.0, 0.10.0 | MIT |
+| node-pty | 1.1.0 | MIT; a native module, loaded from `web/node_modules` and not bundled |
 
 ### Plot viewer (web UI and macOS app)
 
@@ -118,7 +132,7 @@ user's VM on first boot. These are different distribution boundaries.
 | Component used by core | License / source |
 | --- | --- |
 | hosq, `1eb894224b0feffbb5b81d075d3e2c76160f99a1` | [MIT](https://github.com/CLI20-dev/hosq/blob/1eb894224b0feffbb5b81d075d3e2c76160f99a1/LICENSE); pre-existing author library, included as headers |
-| Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
+| Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-flake`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
 | Boehm–Demers–Weiser GC | Its MIT-style license; transitive Nix dependency |
 | FlatBuffers | Apache-2.0 |
 | SQLite | Public domain |
@@ -144,7 +158,7 @@ carries in `licenses/vm-boot/`, lists what the image really contains, with each
 package's license as nixpkgs declares it, its sources and patches, the license
 files of those sources and the kernel's configuration. The corresponding source
 is `sources.tar.gz` in the same release. See
-[how it is provided](licenseaudit.md#vm-の対応ソースの提供方法).
+[how it is provided](licenseaudit.md#how-the-vms-corresponding-source-is-provided).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
 
@@ -160,12 +174,20 @@ distributing a standalone daemon or a different container image.
 
 ## Documentation site
 
-The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image. The app's Help > Tsugumi を知る shows the same pages: `build-app.sh` copies them, with these files and the font's license text, to `Contents/Resources/explainer/`.
+The pages under `docs/` for GitHub Pages (`docs/site/`) draw the sketches' handwriting with a font and show an image. The app's Help > Learn about Tsugumi shows the same pages: `build-app.sh` copies them, with these files and the font's license text, to `Contents/Resources/explainer/`.
 
 | Component | Version / license text | Use |
 | --- | --- | --- |
 | Yusei Magic | [google/fonts `f58dfb9`](https://github.com/google/fonts/tree/f58dfb9001f31a5eb15b4960b9548b8fd0fa6168/ofl/yuseimagic), [SIL OFL 1.1](../site/assets/YuseiMagic-OFL.txt) (Copyright 2020 The Yusei Magic Project Authors; no Reserved Font Name) | `docs/site/assets/YuseiMagic-subset.woff`, subset to the characters of the figures with fonttools |
 | Cas A RGB image | Output of the Cas A demo's `rgb` Card (Chandra ObsID 25628) | `docs/site/assets/casa-rgb-25628.png`, the result in a figure; derived from Chandra observation data (see External data below) |
+
+## External software
+
+The Cas A demo builds CIAO (Chandra X-ray Center, GPL version 3 or later) from
+source on the first run, with CCfits and libwcs from WCSTools, by the Nix
+expressions of https://github.com/gen740/ciao, which the demo reads at a fixed
+commit. Their sources are downloaded from upstream by
+hash and are not included in this repository or in the app.
 
 ## External data
 

@@ -8,9 +8,10 @@ import { Button, Empty } from './controls'
 import { tablePage } from '../model/tablePage'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { L } from '../i18n'
 
 /** Renders a Display value at `zoom` (on the canvas) or larger (`large`, the expanded viewer). */
-export function DisplayContent({ display, large = false, zoom = 1 }: { display?: DisplaySnapshot; large?: boolean; zoom?: number }) {
+export function DisplayContent({ display, large = false, zoom = 1, emptyNote }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string }) {
   const size = (small: number, big: number) => (large ? big : small) * zoom
   // Scrolls in the large viewer; on the canvas (where the wheel moves the
   // canvas) the content is cut at the frame, with no scroll bar.
@@ -19,8 +20,8 @@ export function DisplayContent({ display, large = false, zoom = 1 }: { display?:
   )
   const v = display?.value
   if (!v) {
-    if (large) return <Empty title="まだ結果がありません" icon="chart.xyaxis.line" description="実行すると表示されます。" />
-    return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>まだ結果がありません（実行すると表示されます）</div>
+    if (large) return <Empty title={L('まだ結果がありません')} icon="chart.xyaxis.line" description={L('実行すると表示されます。')} />
+    return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>{emptyNote ?? L('まだ結果がありません（実行すると表示されます）')}</div>
   }
   switch (v.kind) {
     case 'text':
@@ -61,12 +62,12 @@ function TableDisplay({ columns, rows, large, zoom }: { columns: string[]; rows:
     {large ? <div className="row gap6 caption" style={{ flexShrink: 0 }}>
       <span>{page.start === page.end ? 0 : page.start + 1}–{page.end} / {rows.length} 行</span>
       <span className="spacer" />
-      <Button disabled={page.index === 0} onClick={() => setPage(page.index - 1)}>前へ</Button>
-      <select aria-label="ページ" value={page.index} onChange={(e) => setPage(Number(e.target.value))}>
+      <Button disabled={page.index === 0} onClick={() => setPage(page.index - 1)}>{L('前へ')}</Button>
+      <select aria-label={L('ページ')} value={page.index} onChange={(e) => setPage(Number(e.target.value))}>
         {Array.from({ length: page.count }, (_, i) => <option key={i} value={i}>{i + 1} / {page.count}</option>)}
       </select>
-      <Button disabled={page.index + 1 >= page.count} onClick={() => setPage(page.index + 1)}>次へ</Button>
-    </div> : <div className="secondary" style={{ fontSize: 9 * zoom }}>全 {rows.length} 行・先頭 {page.end} 行のプレビュー（拡大して全行表示）</div>}
+      <Button disabled={page.index + 1 >= page.count} onClick={() => setPage(page.index + 1)}>{L('次へ')}</Button>
+    </div> : <div className="secondary" style={{ fontSize: 9 * zoom }}>{L('全 {0} 行・先頭 {1} 行のプレビュー（拡大して全行表示）', rows.length, page.end)}</div>}
     <div key={page.index} className={`display-body${large ? ' display-scroll display-both' : ''}`}>
       <table className="display-table" style={{ fontSize: (large ? 12 : 10) * zoom, borderSpacing: `${12 * zoom}px ${3 * zoom}px`, padding: 4 * zoom }}>
         <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
@@ -81,7 +82,7 @@ function ImageDisplay({ data, type, alt, fontSize }: { data: Uint8Array; type: s
   const [failed, setFailed] = useState(false)
   useEffect(() => () => URL.revokeObjectURL(url), [url])
   useEffect(() => setFailed(false), [url])
-  if (failed) return <div className="display-center secondary" style={{ fontSize }}>画像を表示できません</div>
+  if (failed) return <div className="display-center secondary" style={{ fontSize }}>{L('画像を表示できません')}</div>
   return (
     <div className="display-center">
       <img className="display-image" src={url} alt={alt} draggable={false} onError={() => setFailed(true)} />
@@ -150,7 +151,7 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
   }, [cloud, colors, view])
 
   return (
-    <div className="display-points" aria-label={`点群 ${x.length} 点`}
+    <div className="display-points" aria-label={L('点群 {0} 点', x.length)}
       onPointerDown={(e) => {
         e.stopPropagation()
         const start = { x: e.clientX, y: e.clientY, ...view }
@@ -170,7 +171,7 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
         setView((v) => ({ ...v, scale: Math.max(0.2, Math.min(8, v.scale * Math.exp(-e.deltaY * 0.01))) }))
       }}>
       <canvas ref={ref} />
-      <span className="display-points-caption caption2 secondary">{x.length} 点 · ドラッグで回転</span>
+      <span className="display-points-caption caption2 secondary">{L('{0} 点 · ドラッグで回転', x.length)}</span>
     </div>
   )
 }
@@ -243,7 +244,7 @@ function JSONModuleView({ name, json, large, zoom }: { name: string; json: strin
   }
   return (
     <div className="display-module">
-      <div className="secondary" style={{ fontSize: 10 * zoom, fontWeight: 700 }}>モジュール {name}</div>
+      <div className="secondary" style={{ fontSize: 10 * zoom, fontWeight: 700 }}>{L('モジュール {0}', name)}</div>
       <pre className={`display-text${large ? ' selectable display-scroll' : ''}`} style={{ fontSize: (large ? 12 : 10) * zoom }}>
         {value !== undefined ? serialize(value) : json}
       </pre>

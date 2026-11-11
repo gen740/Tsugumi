@@ -16,7 +16,7 @@ clangStdenv.mkDerivation {
   };
   nativeBuildInputs = [ cmake ninja pkg-config flatbuffers ];
   # The embedded Nix evaluator: the same Nix as the environment's daemon.
-  buildInputs = [ flatbuffers sqlite libgit2 nix.libs.nix-expr nix.libs.nix-store nix.libs.nix-fetchers nix.libs.nix-util ]
+  buildInputs = [ flatbuffers sqlite libgit2 nix.libs.nix-expr nix.libs.nix-store nix.libs.nix-fetchers nix.libs.nix-flake nix.libs.nix-util ]
     # SHA-256 on Linux (macOS has CommonCrypto).
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ openssl ];
   cmakeFlags = [

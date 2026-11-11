@@ -3,6 +3,7 @@
 // 64 bit integers are decimal strings in JSON beyond 2^53.
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { BaseType, BFBS, Field } from './bfbs'
+import { L } from '../i18n'
 
 export class InvalidArguments extends Error {}
 
@@ -318,8 +319,8 @@ export function describeValue(v: {
 }): string {
   let head = `${v.name} : ${v.rootType}`
   if (v.sizeBytes !== null) head += ` · ${v.sizeBytes} bytes`
-  if (v.artifactId) head += ` · 成果物 ${v.artifactId}`
-  if (!v.inlineBytes.length) return head + '\n（内容は記録されていません）'
+  if (v.artifactId) head += L(' · 成果物 {0}', v.artifactId)
+  if (!v.inlineBytes.length) return head + L('\n（内容は記録されていません）')
   const hex = () => v.inlineBytes.slice(0, 256).map((x) => x.toString(16).padStart(2, '0')).join(' ')
   try {
     const schema = new BFBS(new Uint8Array(v.schemaBfbs))

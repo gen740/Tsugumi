@@ -1,0 +1,40 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": 42
+    },
+    {
+      "name": "noise_sd",
+      "type": "double",
+      "data": 4.0
+    },
+    {
+      "name": "concentrations",
+      "type": "uint64",
+      "data": 8
+    },
+    {
+      "name": "top_um",
+      "type": "double",
+      "data": 100.0
+    },
+    {
+      "name": "dilution",
+      "type": "double",
+      "data": 3.16
+    },
+    {
+      "name": "replicates",
+      "type": "uint64",
+      "data": 3
+    }
+  ]
+}

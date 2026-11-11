@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 
-// "Tsugumi を知る": the story pages of the documentation site in a web view, so
+// "Learn about Tsugumi": the story pages of the documentation site in a web view, so
 // the app and the site show the same words and the same figures from one source
 // (docs/site/build.mjs, docs/site/js/). The pages use ES modules, which WebKit
 // does not load from file:, so they are served under a scheme of the app's own.
@@ -36,7 +36,7 @@ enum Explainer {
     return file
   }
 
-  /// The pages there are here, as paths from the root ("pages/name.html").
+  /// The pages there are here, as paths from the root ("pages/philosophy.html").
   static var pages: [String] {
     guard let root else { return [] }
     let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("pages").path)) ?? []
