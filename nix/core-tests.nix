@@ -87,9 +87,6 @@ clangStdenv.mkDerivation {
             ps.pytest
             ps.flatbuffers
             ps.websockets
-            ps.matplotlib
-            ps.plotly
-            ps.altair
           ]))
           flatbuffers
           bash

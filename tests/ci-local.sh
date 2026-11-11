@@ -34,7 +34,7 @@ linux_job() {
   step "Build or fetch the native runtime, tests and Web CLI"
   nix --extra-experimental-features 'nix-command flakes' build --no-link .#ci-core .#cli
   nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
-  local web web_support system
+  local web web_support system sdk_python
   web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
   web_support=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^testSupport' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
@@ -49,7 +49,9 @@ linux_job() {
   step "Core integration tests with the real host environment"
   core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
-  core_run python3 -m pytest -q tests/python
+  sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build .#ci-python --no-link --print-out-paths)
+  core_run "$sdk_python/bin/python3" -c 'import matplotlib, plotly, altair'
+  core_run "$sdk_python/bin/python3" -m pytest -q tests/python
   if [ "$system" = aarch64-linux ]; then
     step "Cache the VM runtime"
     nix --extra-experimental-features 'nix-command flakes' build --no-link .#vm-system

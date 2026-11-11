@@ -44,6 +44,7 @@
         in
         {
           inherit ci-core client-wasm web;
+          ci-python = pkgs.callPackage ./nix/ci-python.nix { };
           default = core;
           tsugumid = core;
         }
