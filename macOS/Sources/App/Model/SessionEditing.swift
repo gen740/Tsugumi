@@ -43,7 +43,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, input, draft, trigger, fork, branch, merge, logger
+  case python, cpp, rust, input, draft, trigger, fork, branch, merge, logger
   case switchCard = "switch"
   var id: String { rawValue }
   var label: String {
@@ -51,6 +51,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .draft: return String(localized: "Draft（未実装の計画）")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
+    case .rust: return String(localized: "Rust の処理")
     case .input: return String(localized: "入力値")
     case .switchCard: return String(localized: "スイッチ")
     case .trigger: return String(localized: "開始")
@@ -60,11 +61,11 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
+  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp || self == .rust ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
-    case .python, .cpp: return "card"
+    case .python, .cpp, .rust: return "card"
     case .trigger: return "start"
     default: return rawValue
     }
@@ -1325,6 +1326,11 @@ extension ProjectSession {
           ctx.output("out", b, out.End(b))
 
       """)
+    case .rust:
+      set(.object([("language", .string("rust")), ("inputs", .array([.object([("name", .string("in"))])]))]))
+      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"rust\" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n")
+      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
+      for (name, source) in RustScaffold.files { putSource(dir + "src/" + name, source) }
     case .cpp:
       set(.object([("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")

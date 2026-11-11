@@ -142,3 +142,37 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `tests/prompt/` | Offline prompt probe scoring |
 
 For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+
+## Rust Card implementation
+
+Rust uses a `cdylib` loaded by the existing resident worker. A subprocess/JSON
+adapter would simplify the ABI boundary but add serialization and process setup,
+lose FlatBuffers borrow checking and require a second state/display protocol.
+The library adapter reuses cancellation, deadlines, sandboxing and streamed
+Display callbacks. Its C shim (`sdk/src/rust_host.c`) compiles against the current
+ABI header; Rust receives an opaque call pointer instead of duplicating that
+layout. There is no dependency on the R/Julia JSON adapter.
+
+`sdk/codegen/card_rust.py` generates verified borrowed `Input` views, owned
+`Output` objects, params and the exported entry points. The safe context ties
+views to the call and is neither `Send` nor `Sync`; only the runtime touches raw
+pointers. `Result` failures and unwind panics become structured Card failures.
+The release profile uses unwinding; the panic payload is forgotten so that a
+custom payload's destructor cannot panic across C. The failed worker is then
+discarded. Native aborts and double panics remain worker crashes, isolated from
+the daemon.
+
+`rustCard` uses `buildRustPackage` and a committed Cargo.lock. Its generated
+local `tsugumi` dependency fixes the FlatBuffers crate to the version used by
+the project's default nixpkgs. The build vendors registry/Git dependencies and
+runs Cargo offline; a running Card never fetches crates. This builder accepts
+one Cargo package with a `cdylib`, not a workspace selection. Use `buildInputs`
+for linked libraries and `nativeBuildInputs` for build tools. The lock update
+helper resolves in a temporary source copy and leaves only Cargo.lock behind.
+
+The UI scaffold's source is `sdk/rust/template/`; after changing it, run
+`python3 sdk/codegen/scaffold_rust.py` to update both Swift and TypeScript.
+`tests/python/test_rust_cards.py` exercises the real host sandbox (Seatbelt on
+macOS, bubblewrap on Linux), typed Python/Rust/C++ data, borrow-check failures,
+worker state, panic recovery, cancellation/deadlines, file artifacts and every
+Display kind. The bilingual `rust-pipeline` demo is the small end-to-end example.

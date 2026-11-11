@@ -22,7 +22,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
 - These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
-  reference with reference_read only for what the rules do not cover (R or Julia Cards, merge outputs, a Card in Card
+  reference with reference_read only for what the rules do not cover (Rust, R or Julia Cards, merge outputs, a Card in Card
   you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the SDK's
   source), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
   and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
@@ -91,9 +91,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
     branch, merge, logger (card-guide.md).
-  * Otherwise a code Card: set "language" ("python", "cpp", "bash", "r" or "julia") and remove "template" in _card.json, write
+  * Otherwise a code Card: set "language" ("python", "cpp", "rust", "bash", "r" or "julia") and remove "template" in _card.json, write
     _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
-    For R and Julia, card-guide.md has the entry points and Nix helpers.
+    For Rust, R and Julia, card-guide.md has the entry points and Nix helpers.
     default.nix is a function of { pkgs, inputs, params }. Python (demos/report/definitions/generate/default.nix):
       { pkgs, inputs, params }:
       let

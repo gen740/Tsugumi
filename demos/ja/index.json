@@ -418,6 +418,29 @@
         "機械学習",
         "分岐・分配・合流"
       ]
+    },
+    {
+      "id": "rust-pipeline",
+      "title": "Rust のパイプライン",
+      "description": "Python → Rust → C++。型付きの入力と出力、固定した crate を使う。",
+      "path": "rust-pipeline",
+      "tags": [
+        "Rust",
+        "Python",
+        "C++"
+      ],
+      "field": "基本を学ぶ"
+    },
+    {
+      "id": "rust-pipeline-draft",
+      "title": "Rust のパイプライン (Draft)",
+      "description": "Python → Rust → C++。型付きの入力と出力、固定した crate を使う。",
+      "path": "rust-pipeline-draft",
+      "tags": [
+        "Rust",
+        "Python",
+        "C++"
+      ]
     }
   ]
 }

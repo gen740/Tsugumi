@@ -1,3 +1,4 @@
+import { RUST_SCAFFOLD } from './rust-scaffold'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -3059,6 +3060,12 @@ def main(ctx):
     ctx.output("out", b, out.End(b))
 `)
         break
+      case 'rust':
+        set(obj([['language', 'rust'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        for (const [name, source] of Object.entries(RUST_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
+        break
       case 'cpp':
         set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n')
@@ -3440,16 +3447,16 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = 'python' | 'cpp' | 'rust' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'rust', label: L('Rust の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' || t === 'rust' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
-export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' || t === 'rust' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

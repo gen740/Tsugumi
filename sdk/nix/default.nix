@@ -71,7 +71,25 @@ let
     done
   '';
 
-  languagesKnown = [ "cpp" "python" ];
+  rustFace =
+    dir:
+    pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out/src $out/lib
+      cp ${sdkRoot}/rust/Cargo.toml $out/Cargo.toml
+      cp ${sdkRoot}/rust/src/runtime.rs $out/src/runtime.rs
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --rust --gen-object-api -o $out/src ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_rust.py ${dir}/_contract.json $out
+      $CC -std=c11 -O2 -fPIC -Wall -Wextra -Werror -I${sdkRoot}/include \
+        -c ${sdkRoot}/src/rust_host.c -o host.o
+      $AR rcs $out/lib/libtsugumi_rust_host.a host.o
+      cat > $out/build.rs <<EOF
+      fn main() { println!("cargo:rustc-link-search=native=$out/lib"); }
+      EOF
+    '';
+
+  languagesKnown = [ "cpp" "python" "rust" ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -89,7 +107,7 @@ let
       dir = sdkRoot + "/worker";
     in
     assert lib.assertMsg (builtins.pathExists dir)
-      "a C++ or Python Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
+      "a package Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
     pkgs.stdenv.mkDerivation {
       name = "tsugumi-worker";
       src = lib.fileset.toSource {
@@ -139,6 +157,7 @@ rec {
       contract = dir;
       cpp = if want "cpp" then cppFace dir else null;
       python = if want "python" then pythonFace dir else null;
+      rust = if want "rust" then rustFace dir else null;
     };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
@@ -163,6 +182,49 @@ rec {
       installPhase = ''
         mkdir -p $out/lib
         cp main.so $out/lib/main.so
+      '';
+    };
+
+  # Cargo.lock pins every crate. The generated local dependency is named
+  # tsugumi; no registry or Git access is needed at run time.
+  rustCard =
+    {
+      src,
+      sdk,
+      name ? "tsugumi-rust-card",
+      buildInputs ? [ ],
+      nativeBuildInputs ? [ ],
+      cargoLock ? {
+        lockFile = src + "/Cargo.lock";
+      },
+    }:
+    assert lib.assertMsg (sdk.rust != null) "rustCard: the SDK was made without \"rust\" in languages";
+    let
+      manifest = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
+      library = manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] manifest.package.name);
+    in
+    pkgs.rustPlatform.buildRustPackage {
+      inherit
+        name
+        src
+        buildInputs
+        nativeBuildInputs
+        cargoLock
+        ;
+      # A panic must unwind to the SDK's catch_unwind, never across C.
+      CARGO_PROFILE_RELEASE_PANIC = "unwind";
+      postPatch = ''
+        if [ -e tsugumi ]; then
+          echo "src/tsugumi is reserved for the generated Card SDK" >&2
+          exit 1
+        fi
+        cp -r --no-preserve=mode ${sdk.rust} tsugumi
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/lib
+        cp target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
+        runHook postInstall
       '';
     };
 

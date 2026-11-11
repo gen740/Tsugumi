@@ -235,3 +235,72 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.
+
+## Rust Cards
+
+Use `"language": "rust"`. Start from `demos/rust-pipeline/definitions/scale`
+(read the whole folder, including its `src/Cargo.lock`). The UI's **Rust step**
+creates the same pinned Cargo scaffold. `default.nix`:
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };
+in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
+```
+
+`src/Cargo.toml` declares a `cdylib` and `tsugumi = { path = "tsugumi" }`.
+That path is reserved: Nix generates the crate from this Card's contract at build
+time. Commit `Cargo.lock`; registry checksums and the project's fixed nixpkgs
+pin dependencies. After editing dependencies, run `python3 <sdk>/rust/update-lock.py <card>/src`
+with Cargo on `PATH` (the SDK is `sdk/` in a checkout or
+`share/tsugumi/sdk/` in an installation). It resolves in a temporary copy and
+writes only `Cargo.lock`; do not commit a generated `src/tsugumi` directory.
+The helper supports `--offline` for an already populated Cargo cache.
+Additional native libraries go in `rustCard.buildInputs`; build-time tools such
+as `pkg-config` go in `nativeBuildInputs`;
+git crates also need the `cargoLock.outputHashes` accepted by nixpkgs.
+There is no Cargo/network operation when a Card runs.
+
+```rust
+use tsugumi::{Context, Input, Output, Result};
+
+fn run(ctx: &Context<'_>, input: Input<'_>) -> Result<Output> {
+    let mut out = tsugumi::outputs::Out::default();
+    out.value = input.number.value() * ctx.params()?.factor().unwrap_or(1);
+    ctx.display_scalar(out.value as f64, "product")?;
+    Ok(Output { out: Some(out) })
+}
+tsugumi::export!(run);
+```
+
+`Input` contains verified, borrowed FlatBuffers views; optional ports are
+`Option`. Inputs and `ctx.params()?` cannot outlive the current context. Copy or
+`unpack()` a value before retaining it. `Output` holds owned FlatBuffers object
+API types, aliased by port under `tsugumi::outputs` (for example `Out`). Construct
+them with `Default` and assign fields: generated types are non-exhaustive.
+Input/output namespaces differ, so explicitly construct an output object rather
+than returning an input's owned object. `Some` emits a port; `None` omits it and
+normal required-output validation still applies. Integers remain native `i64`/
+`u64`, including values outside a double's exact range.
+
+The worker retains the library and its state by default. Use
+`tsugumi::export!(run, on_run_start)` with a `fn(&Context<'_>) -> Result<()>`
+hook for per-run initialization; `reuseWorker: false` starts fresh each call.
+Keep owned state in ordinary Rust synchronization/thread-local containers.
+`Context` cannot be sent/shared across threads. `ctx.invocation()`, `run_id()`,
+`card()`, `cancelled()` and `remaining_ms()` describe the current call.
+
+File/Directory inputs are typed tables with a `value()` path, staged afresh for
+each invocation. Write output files beneath `ctx.output_directory()` and put
+that absolute path in the output object's `value`. Other paths are
+`working_directory()` and `temporary_directory()`.
+
+`ctx.log()` and all display methods return `Result<()>`: `display_text`,
+`display_markdown`, `display_scalar`, `display_line_chart` (one series),
+`display_table`, `display_image`, `display_points`, and `display_module` (Plotly/
+Vega-Lite JSON). Displays stream before completion. Propagate errors with `?` or
+return `Error::new("output_invalid", "explanation")`. Panics are caught at the
+FFI boundary and fail the invocation; the failed worker is discarded. Explicit
+abort, double panic during unwinding and native crashes still terminate the
+worker, and the daemon records that failure. Cancellation/deadlines stop even
+uncooperative native code; check the context for cooperative early exit.
