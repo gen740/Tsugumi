@@ -291,7 +291,7 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
   /// limit stops the turn without retries; signing out revokes the session.
   @Test func chatGPTPlanSignInRunRefreshLimitSignOut() async throws {
     var h = AgentHarness()
-    try h.start(fixtureArgs: ["--chatgpt-expires", "1"])
+    try h.start(fixtureArgs: ["--chatgpt-expires", "1", "--refuse-model-lists", "3"])
     defer { h.stop() }
     let issuer = "http://127.0.0.1:\(h.fixturePort)"
     let store = "Tsugumi test ChatGPT \(UUID().uuidString)"
@@ -308,7 +308,10 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     var config = ProviderConfig(name: "ChatGPT", baseURL: URL(string: issuer)!, model: "fixture", auth: .chatGPT, api: .openAIResponses)
     config.chatGPTEndpoints = ChatGPTEndpoints(issuer: issuer, resource: "https://api.openai.com/v1")
     config.chatGPTStore = store
-    let models = try await MessagesProvider(config: config).modelChoices()
+    // Two refusals stop the first lookup. A background lookup recovers from the third.
+    let provider = MessagesProvider(config: config)
+    await #expect(throws: (any Error).self) { _ = try await provider.modelChoices() }
+    let models = try await provider.modelChoices(asking: false)
     #expect(models.map(\.id) == ["fixture"] && models.first?.label == "Fixture model")
     // The model menu's read: the same list, with the record read without asking.
     #expect(try await MessagesProvider(config: config).modelChoices(asking: false).map(\.id) == ["fixture"])
@@ -339,12 +342,18 @@ func waitFinished(_ log: EventLog, seconds: Double = 60) async {
     #expect(again.last?["ext_agent_host_id"] as? String == authorize?["ext_agent_host_id"] as? String)
     #expect(again.last?["id_token_hint"] as? Bool == true)
 
+    let refused = try await auth.accessToken()
     #expect(try await auth.signOut(clientId: signedIn.account.clientId))
     #expect(await auth.accounts().map(\.signedIn) == [false])
     await #expect(throws: ChatGPTError.self) { _ = try await auth.accessToken() }
     // Nothing of the tokens is left after signing out.
     let record = try #require(Keychain.load(account: store))
     #expect(!record.contains("chatgpt-access-") && !record.contains("chatgpt-refresh-"))
+
+    _ = try await auth.signIn { url in _ = try await browser.data(from: url) }
+    await #expect(throws: ChatGPTError.failed("the active account changed; try again")) {
+      _ = try await auth.accessToken(replacing: refused)
+    }
     await client.close()
   }
 

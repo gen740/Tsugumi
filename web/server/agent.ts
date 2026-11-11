@@ -14,7 +14,7 @@ import systemPrompt from '../../agent/Shared/system-prompt.md'
 import guidePrompt from '../../agent/Shared/guide-prompt.md'
 import versionSummaryPrompt from '../../agent/Shared/version-summary-prompt.md'
 import demoSkill from '../../agent/Shared/demo-skill.md'
-import { ChatGPTError, planError, TransientError } from './chatgpt'
+import { ChatGPTError, planError, type PlanAccessToken, TransientError } from './chatgpt'
 import { L, language } from './i18n'
 
 // ---- Tool catalog --------------------------------------------------------------
@@ -278,7 +278,7 @@ export interface ProviderConfig {
    *  to the page, tsugumid or Card workers. */
   apiKey?: string
   /** The ChatGPT access token (refreshed near its expiry; `stale` is one the API refused). */
-  token?: (stale?: string) => Promise<string>
+  token?: (stale?: PlanAccessToken) => Promise<PlanAccessToken>
   /** Output limit of one model reply: a Card's sources fit in one save. */
   maxTokens: number
   contextLimit: number
@@ -335,25 +335,40 @@ type StreamEvent =
   | { t: 'providerContent'; blocks: Record<string, unknown>[] }
   | { t: 'stop'; reason: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }
 
-async function headers(c: ProviderConfig, stale?: string): Promise<Record<string, string>> {
+function headers(c: ProviderConfig): Record<string, string> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
   if (c.api === 'anthropicMessages') h['anthropic-version'] = '2023-06-01'
   if (c.auth === 'apiKey') {
     if (!c.apiKey) throw new Error(`no API key for ${c.name}; add it in Settings > API`)
     if (c.api === 'anthropicMessages') h['x-api-key'] = c.apiKey
     else h.authorization = 'Bearer ' + c.apiKey
-  } else if (c.auth === 'chatgpt') {
-    h.authorization = 'Bearer ' + (await c.token!(stale))
   }
   return h
 }
 
 const endpoint = (c: ProviderConfig, p: string) => new URL(p, c.baseURL.endsWith('/') ? c.baseURL : c.baseURL + '/')
 
+/** Retry a refused plan credential once, bound to the original registration. */
+async function providerFetch(c: ProviderConfig, path: string, init: RequestInit): Promise<Response> {
+  const url = endpoint(c, path)
+  const h = headers(c)
+  if (c.auth !== 'chatgpt') return fetch(url, { ...init, headers: h })
+  const token = await c.token!()
+  const send = (t: PlanAccessToken) => fetch(url, { ...init, headers: { ...h, authorization: 'Bearer ' + t.value } })
+  const response = await send(token)
+  if (response.status !== 401) return response
+  await response.body?.cancel()
+  init.signal?.throwIfAborted()
+  return send(await c.token!(token))
+}
+
 /** Available models, with the names to show (the ChatGPT account's catalog
  *  lists display names, in the server's order). */
 export async function listModels(c: ProviderConfig): Promise<{ id: string; label: string }[]> {
-  const r = await fetch(endpoint(c, 'v1/models'), { headers: await headers(c), signal: AbortSignal.timeout(15_000) })
+  const r = await providerFetch(c, 'v1/models', { signal: AbortSignal.timeout(15_000) })
+  if (c.auth === 'chatgpt' && r.status === 401) {
+    throw new Error('cannot list ChatGPT models (401); check the selected account and plan permission in Settings > API')
+  }
   if (r.status !== 200) throw new Error(`cannot list models (${r.status})`)
   const obj = (await r.json()) as { data?: { id: string }[]; models?: { slug: string; display_name?: string; visibility?: string }[] }
   if (c.auth === 'chatgpt' && obj.models) {
@@ -432,7 +447,7 @@ export function warmBody(c: ProviderConfig, system: string, tools: ToolSpec[]): 
 export async function warmCache(c: ProviderConfig, system: string, tools: ToolSpec[], signal?: AbortSignal): Promise<{ cacheRead: number; cacheWrite: number }> {
   try {
     if (c.api !== 'anthropicMessages') return { cacheRead: 0, cacheWrite: 0 }
-    const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(warmBody(c, system, tools)),
+    const r = await providerFetch(c, 'v1/messages', { method: 'POST', body: JSON.stringify(warmBody(c, system, tools)),
       signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]) })
     if (r.status !== 200) return { cacheRead: 0, cacheWrite: 0 }
     const u = ((await r.json()) as { usage?: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }).usage
@@ -445,7 +460,7 @@ export async function warmCache(c: ProviderConfig, system: string, tools: ToolSp
 /** Anthropic Messages API with SSE streaming. */
 async function* messagesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
   const body = messagesBody(c, system, messages, tools)
-  const r = await fetch(endpoint(c, 'v1/messages'), { method: 'POST', headers: await headers(c), body: JSON.stringify(body), signal })
+  const r = await providerFetch(c, 'v1/messages', { method: 'POST', body: JSON.stringify(body), signal })
   if (r.status !== 200) throw await HTTPStatusError.from(r)
   let event = ''
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
@@ -655,18 +670,8 @@ export function responsesBody(c: ProviderConfig, system: string, messages: ChatM
 async function* responsesStream(c: ProviderConfig, system: string, messages: ChatMessage[], tools: ToolSpec[], signal: AbortSignal): AsyncGenerator<StreamEvent> {
   const plan = c.auth === 'chatgpt'
   const body = responsesBody(c, system, messages, tools)
-  let stale: string | undefined
-  let r: Response
-  for (;;) {
-    const h = await headers(c, stale)
-    r = await fetch(endpoint(c, 'v1/responses'), { method: 'POST', headers: h, body: JSON.stringify(body), signal })
-    if (r.status === 200) break
-    // A refused access token is refreshed once (unless refreshed meanwhile).
-    if (plan && r.status === 401 && stale === undefined) {
-      stale = h.authorization.replace(/^Bearer /, '')
-      await r.body?.cancel()
-      continue
-    }
+  const r = await providerFetch(c, 'v1/responses', { method: 'POST', body: JSON.stringify(body), signal })
+  if (r.status !== 200) {
     if (!plan) throw await HTTPStatusError.from(r)
     const text = await r.text()
     let obj: any

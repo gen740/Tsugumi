@@ -357,10 +357,10 @@ public struct MessagesProvider: Sendable {
     session = Self.shared
   }
 
-  /// A request with its credentials: the API key, or the ChatGPT access
-  /// token (`stale`: one the API refused, to be refreshed). Without `asking`
-  /// it fails rather than show the keychain's access dialog.
-  private func request(path: String, stale: String? = nil, asking: Bool = true) async throws -> URLRequest {
+  /// Only a 401 on the ChatGPT plan retries. Keep the refused registration
+  /// with its token so switching accounts cannot replay a request on another plan.
+  private func send<T>(path: String, asking: Bool = true, discard: (T) -> Void = { _ in },
+                       perform: (URLRequest) async throws -> (T, URLResponse)) async throws -> (T, URLResponse) {
     var r = URLRequest(url: config.baseURL.appendingPathComponent(path))
     r.setValue("application/json", forHTTPHeaderField: "content-type")
     if config.api == .anthropicMessages { r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
@@ -375,9 +375,17 @@ public struct MessagesProvider: Sendable {
       case .openAIResponses: r.setValue("Bearer " + key, forHTTPHeaderField: "authorization")
       }
     case .chatGPT:
-      r.setValue("Bearer " + (try await config.chatGPTAuth.accessToken(replacing: stale, asking: asking)), forHTTPHeaderField: "authorization")
+      let auth = config.chatGPTAuth
+      let token = try await auth.accessToken(asking: asking)
+      r.setValue("Bearer " + token.value, forHTTPHeaderField: "authorization")
+      let first = try await perform(r)
+      guard (first.1 as? HTTPURLResponse)?.statusCode == 401 else { return first }
+      discard(first.0)
+      try Task.checkCancellation()
+      let replacement = try await auth.accessToken(replacing: token, asking: asking)
+      r.setValue("Bearer " + replacement.value, forHTTPHeaderField: "authorization")
     }
-    return r
+    return try await perform(r)
   }
 
   /// Model capability discovery (available models).
@@ -385,16 +393,22 @@ public struct MessagesProvider: Sendable {
 
   /// Models with the names to show (the ChatGPT account's catalog lists
   /// display names, in the server's order). Always a new answer of the
-  /// provider, within 15 s. `asking: false` is for lists nobody asked for (the
+  /// provider, with a 15 s timeout per request. `asking: false` is for lists nobody asked for (the
   /// model menu opened): it never shows the keychain's access dialog, and
   /// throws when the secret cannot be read without it.
   public func modelChoices(asking: Bool = true) async throws -> [(id: String, label: String)] {
-    var r = try await request(path: "v1/models", asking: asking)
-    r.timeoutInterval = 15
-    r.cachePolicy = .reloadIgnoringLocalCacheData
-    let (data, resp) = try await session.data(for: r)
-    guard (resp as? HTTPURLResponse)?.statusCode == 200,
-          let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    let (data, resp) = try await send(path: "v1/models", asking: asking) { request in
+      var r = request
+      r.timeoutInterval = 15
+      r.cachePolicy = .reloadIgnoringLocalCacheData
+      return try await session.data(for: r)
+    }
+    let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+    if config.auth == .chatGPT && status == 401 {
+      throw AgentError.provider("cannot list ChatGPT models (401); check the selected account and plan permission in Settings > API")
+    }
+    guard status == 200 else { throw AgentError.provider("cannot list models (\(status))") }
+    guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw AgentError.provider("cannot list models")
     }
     if config.auth == .chatGPT, let list = obj["models"] as? [[String: Any]] {
@@ -486,12 +500,15 @@ public struct MessagesProvider: Sendable {
   /// Failing costs only the saving, so nothing is retried or reported.
   func warmCache(system: String, tools: [ToolSpec]) async -> Usage {
     var usage = Usage()
-    guard config.api == .anthropicMessages, var r = try? await request(path: "v1/messages"),
+    guard config.api == .anthropicMessages,
           let payload = try? JSONSerialization.data(withJSONObject: warmBody(system: system, tools: tools)) else { return usage }
-    r.httpMethod = "POST"
-    r.httpBody = payload
-    r.timeoutInterval = 30
-    guard let (data, resp) = try? await session.data(for: r), (resp as? HTTPURLResponse)?.statusCode == 200,
+    guard let (data, resp) = try? await send(path: "v1/messages", perform: { request in
+      var r = request
+      r.httpMethod = "POST"
+      r.httpBody = payload
+      r.timeoutInterval = 30
+      return try await session.data(for: r)
+    }), (resp as? HTTPURLResponse)?.statusCode == 200,
           let u = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["usage"] as? [String: Any] else { return usage }
     usage.cacheReadTokens = u["cache_read_input_tokens"] as? Int ?? 0
     usage.cacheWriteTokens = u["cache_creation_input_tokens"] as? Int ?? 0
@@ -502,15 +519,10 @@ public struct MessagesProvider: Sendable {
     if config.api == .openAIResponses { return try responsesStream(system: system, messages: messages, tools: tools) }
     let cached = Self.cachedBody(system: system, messages: messages, tools: tools)
     let payload = try JSONSerialization.data(withJSONObject: messagesBody(cached))
-    let session = self.session
     return AsyncThrowingStream { cont in
       let task = Task {
         do {
-          var r = try await request(path: "v1/messages")
-          r.httpMethod = "POST"
-          r.httpBody = payload
-          if config.thinksLong { r.timeoutInterval = Self.longThinkingTimeout }
-          let (bytes, resp) = try await session.bytes(for: r)
+          let (bytes, resp) = try await postStream(path: "v1/messages", payload: payload)
           let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
           if status != 200 {
             var text = ""
@@ -689,36 +701,33 @@ extension MessagesProvider {
     }
   }
 
+  private func postStream(path: String, payload: Data) async throws -> (URLSession.AsyncBytes, URLResponse) {
+    try await send(path: path, discard: { $0.task.cancel() }) { request in
+      var r = request
+      r.httpMethod = "POST"
+      r.httpBody = payload
+      if config.thinksLong { r.timeoutInterval = Self.longThinkingTimeout }
+      return try await session.bytes(for: r)
+    }
+  }
+
   func responsesStream(system: String, messages: [ChatMessage], tools: [ToolSpec]) throws -> AsyncThrowingStream<StreamEvent, Error> {
     let payload = try JSONSerialization.data(withJSONObject: responsesBody(system: system, messages: messages, tools: tools))
     let plan = config.auth == .chatGPT
-    let session = self.session
     return AsyncThrowingStream { cont in
       let task = Task {
         do {
-          var stale: String?
-          var opened: (URLSession.AsyncBytes, URLResponse)?
-          while opened == nil {
-            var r = try await request(path: "v1/responses", stale: stale)
-            r.httpMethod = "POST"
-            r.httpBody = payload
-            let (bytes, resp) = try await session.bytes(for: r)
-            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 200 { opened = (bytes, resp); break }
+          let (bytes, resp) = try await postStream(path: "v1/responses", payload: payload)
+          let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+          if status != 200 {
             var text = ""
             for try await line in bytes.lines { text += line }
-            // A refused access token is refreshed once (unless refreshed meanwhile).
-            if plan && status == 401 && stale == nil {
-              stale = r.value(forHTTPHeaderField: "authorization")?.replacingOccurrences(of: "Bearer ", with: "")
-              continue
-            }
             guard plan else { throw HTTPStatusError(status: status, body: text, retryAfter: Self.retryAfter(resp)) }
             let obj = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
             throw Self.planError(status: status, error: obj?["error"] as? [String: Any],
                                  detail: obj?["detail"] as? String ?? text,
                                  requestId: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id"))
           }
-          let (bytes, resp) = opened!
           var usedTools = false
           var finished = false
           for try await line in bytes.lines {

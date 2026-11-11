@@ -320,7 +320,7 @@ for (const c of fixture.modelOptions) {
     assert.equal((await requests()).at(-1)?.names_web_search, false)
 
     // The ChatGPT plan: the hosted tool beside the namespace, and no include (not known to be accepted).
-    const plan: ProviderConfig = { ...provider(true, 'openAIResponses'), auth: 'chatgpt', apiKey: undefined, token: async () => 'token' }
+    const plan: ProviderConfig = { ...provider(true, 'openAIResponses'), auth: 'chatgpt', apiKey: undefined, token: async () => ({ clientId: 'fixture', value: 'token' }) }
     const planBody = responsesBody(plan, 'rules', [], agentWith(plan).tools)
     assert.deepEqual((planBody.tools as { type: string }[]).map((t) => t.type), ['namespace', 'web_search'])
     assert.equal(planBody.include, undefined)
