@@ -1,0 +1,55 @@
+name: Build cached Nix outputs
+description: Build once, publishing a same-run fallback artifact when Cachix is read-only.
+inputs:
+  package:
+    description: Flake package attribute, without the dot-hash prefix.
+    required: true
+  extra-packages:
+    description: Additional package attributes to build and include in the fallback artifact.
+    required: false
+    default: ''
+  system:
+    description: Expected Nix platform.
+    required: true
+  artifact-name:
+    description: Unique artifact name for this package and platform.
+    required: true
+  artifact-fallback:
+    description: Use a same-run artifact when the build cannot push to Cachix.
+    required: false
+    default: 'false'
+  out-link:
+    description: Optional output symlink for the primary package.
+    required: false
+    default: ''
+outputs:
+  path:
+    description: Primary package output in the Nix store.
+    value: ${{ steps.build.outputs.path }}
+  test-support:
+    description: Test-support output, or an empty string when the package has none.
+    value: ${{ steps.build.outputs.test-support }}
+runs:
+  using: composite
+  steps:
+    - name: Build outputs
+      id: build
+      shell: bash
+      env:
+        NIX_PACKAGE: ${{ inputs.package }}
+        NIX_EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+        NIX_SYSTEM: ${{ inputs.system }}
+        NIX_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        NIX_ARTIFACT_FALLBACK: ${{ inputs.artifact-fallback }}
+        NIX_OUT_LINK: ${{ inputs.out-link }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../tests/ci/nix-cache.py" build
+    - name: Preserve outputs for this read-only run
+      if: inputs.artifact-fallback == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.build.outputs.artifact-path }}
+        compression-level: 0
+        retention-days: 1
+        overwrite: true
+        if-no-files-found: error

@@ -1,0 +1,46 @@
+name: Fetch cached Nix outputs
+description: Reuse the producer job outputs from Cachix or a same-run PR artifact.
+inputs:
+  package:
+    description: Flake package attribute, without the dot-hash prefix.
+    required: true
+  system:
+    description: Expected Nix platform.
+    required: true
+  artifact-name:
+    description: Producer artifact name for this package and platform.
+    required: true
+  artifact-fallback:
+    description: Restore a same-run artifact when the build could not push to Cachix.
+    required: false
+    default: 'false'
+  out-link:
+    description: Optional output symlink for the primary package.
+    required: false
+    default: ''
+outputs:
+  path:
+    description: Primary package output in the Nix store.
+    value: ${{ steps.fetch.outputs.path }}
+  test-support:
+    description: Test-support output, or an empty string when the package has none.
+    value: ${{ steps.fetch.outputs.test-support }}
+runs:
+  using: composite
+  steps:
+    - name: Restore outputs from this read-only run
+      if: inputs.artifact-fallback == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/nix-${{ inputs.artifact-name }}
+    - name: Resolve cached outputs
+      id: fetch
+      shell: bash
+      env:
+        NIX_PACKAGE: ${{ inputs.package }}
+        NIX_SYSTEM: ${{ inputs.system }}
+        NIX_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        NIX_ARTIFACT_FALLBACK: ${{ inputs.artifact-fallback }}
+        NIX_OUT_LINK: ${{ inputs.out-link }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../tests/ci/nix-cache.py" fetch

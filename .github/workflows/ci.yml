@@ -9,14 +9,14 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-env:
-  CORE_TEST_ENV: ${{ github.workspace }}/build-ci/bin/tsugumi-test-env
+
 jobs:
   changes:
     name: What changed
     runs-on: ubuntu-24.04
     outputs:
       app: ${{ steps.diff.outputs.app }}
+      matrix: ${{ steps.diff.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,103 +31,46 @@ jobs:
             read_by_app="$(grep -E '^(README\.md|docs/(Philosophy|Rationale|Vision)\.md)$' <<<"$files" || true)"
             if [ -z "$others$read_by_app" ]; then app=false; fi
           fi
+          matrix=$(jq -cn --argjson app "$app" '{include: ([
+            {system: "x86_64-linux", runner: "ubuntu-24.04"},
+            {system: "aarch64-linux", runner: "ubuntu-24.04-arm"}
+          ] + (if $app then [
+            {system: "aarch64-darwin", runner: "macos-26"}
+          ] else [] end))}')
           echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-  core:
-    name: Core RPC and Linux integrations (${{ matrix.system }})
+  platform:
+    name: Platform (${{ matrix.system }})
+    needs: changes
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-24.04
-          - system: aarch64-linux
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
-      - name: Allow user namespaces for bubblewrap
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Upload completed derivations while the remaining builds and tests run.
-      - name: Build or fetch the native runtime, tests and Web CLI
-        run: |
-          nix build --no-link .#ci-core .#cli
-          nix build .#ci-core --out-link build-ci
-          web=$(nix build '.#web^out' --no-link --print-out-paths)
-          echo "TSUGUMI_WEB_DIST=$web/share/tsugumi/web/dist" >> "$GITHUB_ENV"
-      - name: Public Agent and CLI RPC tests
-        run: |
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
-      - name: Public core RPC scenarios with external doubles
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
-      - name: Web typecheck and behavior contracts
-        run: nix build --no-link .#checks.${{ matrix.system }}.web
-      - name: Core integrations with the real host environment
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration'
-      - name: Python adapter and system tests
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python'
-      - name: Cache the VM runtime
-        if: matrix.system == 'aarch64-linux'
-        run: nix build --no-link .#vm-system
-      - name: Prompt probe scoring (offline)
-        if: matrix.system == 'x86_64-linux'
-        run: python3 -m unittest discover -s tests/prompt
-      - name: Documentation site player is up to date
-        if: matrix.system == 'x86_64-linux'
-        run: nix build --no-link .#checks.x86_64-linux.site-player
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      system: ${{ matrix.system }}
+      runner: ${{ matrix.runner }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
-  macos:
-    name: Swift tests (macOS, no VM)
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
-    runs-on: macos-26
-    timeout-minutes: 120
+  prompt:
+    name: Offline prompt scoring
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
-      - name: Build or fetch the native runtime and public RPC tests
-        run: nix build .#ci-core --out-link build-ci
-      - name: Public Agent and CLI RPC tests
+      - run: python3 -m unittest discover -s tests/prompt
+
+  result:
+    name: CI
+    needs: [changes, platform, prompt]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
-      - name: Public core RPC scenarios with external doubles
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
-      - name: Card isolation on a Mac host (Seatbelt)
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
-      - name: Identify the Apple toolchain and native runtime
-        id: toolchain
-        run: |
-          toolchain=$({ xcodebuild -version; xcrun --sdk macosx --show-sdk-version; swift --version; } | shasum -a 256 | cut -d ' ' -f1)
-          echo "key=$toolchain" >> "$GITHUB_OUTPUT"
-          runtime=$(nix eval --raw .#tsugumid.drvPath)
-          echo "runtime=${runtime##*/}" >> "$GITHUB_OUTPUT"
-      - name: Restore the Swift incremental builds
-        uses: actions/cache@v4
-        with:
-          path: |
-            macOS/.build
-            macOS/CoreTests/.build
-          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('macOS/Sources/**', 'macOS/Tests/**', 'macOS/CoreTests/Tests/**', 'macOS/Resources/**', 'macOS/Plugins/**', 'agent/Sources/**', 'agent/Shared/**', 'protocol/**', 'client/include/**') }}
-          restore-keys: |
-            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-
-      - name: Model, RPC, Agent and launcher adapters
-        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
-      - name: Restore the Dawn renderer build
-        uses: actions/cache@v4
-        with:
-          path: build-renderer
-          key: renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt', 'client/CMakeLists.txt', 'protocol/**') }}
-          restore-keys: |
-            renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
-      - name: Build the Dawn renderer with the current toolchain
-        run: ui/renderer/build.sh
-      - name: App logic
-        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS'
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
+          jq -e 'all(.[]; .result == "success")' <<<"$RESULTS" > /dev/null

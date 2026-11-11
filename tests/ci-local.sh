@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the checks of .github/workflows/ci.yml on this machine, as a local
-# stand-in for GitHub Actions.
+# Runs the checks of ci.yml and ci-platform.yml on this machine, as a local
+# stand-in for the separate GitHub Actions jobs.
 #
 #   tests/ci-local.sh          both jobs (on a Mac: macOS here, Linux in Docker)
 #   tests/ci-local.sh mac      the macOS job: Swift tests and Seatbelt isolation
@@ -11,10 +11,10 @@
 # so that bubblewrap can isolate Cards) on a copy of the tracked files as they
 # are in the working tree, so uncommitted edits are checked too and this
 # checkout's build/ and node_modules are left alone. The container's /nix is a
-# named volume (tsugumi-ci-nix), kept between runs. It differs from CI in the
-# CPU (an Apple silicon Mac gives arm64 Linux, CI x86_64) and, for the macOS
-# job, in the macOS and Xcode of this Mac and its existing build folders.
-# Keep the steps in step with ci.yml.
+# named volume (tsugumi-ci-nix), kept between runs. An Apple silicon Mac runs
+# arm64 Linux, while CI covers both Linux architectures. The macOS checks
+# use this Mac's OS, Xcode and existing build folders.
+# Keep the checks in step with ci-platform.yml.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -34,9 +34,11 @@ linux_job() {
   step "Build or fetch the native runtime, tests and Web CLI"
   nix --extra-experimental-features 'nix-command flakes' build --no-link .#ci-core .#cli
   nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
-  local web system
+  local web web_support system
   web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
+  web_support=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^testSupport' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
+  export TSUGUMI_WEB_NODE_MODULES="$web_support/node_modules"
   step "Public core, Agent and CLI RPC tests"
   core_checks
   step "Web UI typecheck and behavior contracts"

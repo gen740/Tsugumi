@@ -1,0 +1,291 @@
+name: Platform checks
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      system:
+        required: true
+        type: string
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: false
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  CORE_TEST_ENV: ${{ github.workspace }}/build-ci/bin/tsugumi-test-env
+
+jobs:
+  native:
+    name: Build native runtime
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/build-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+
+  web:
+    name: Build Web and Wasm
+    if: inputs.system != 'aarch64-darwin'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/build-nix
+        with:
+          package: web
+          extra-packages: client-wasm
+          system: ${{ inputs.system }}
+          artifact-name: web-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+
+  rpc:
+    name: Core, Agent and CLI RPC
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Allow user namespaces for bubblewrap
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Agent RPC
+        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"'
+      - name: CLI RPC
+        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"'
+      - name: Project RPC with external doubles
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
+
+  host:
+    name: Worker and host isolation
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Allow user namespaces for bubblewrap
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Linux host integrations
+        if: runner.os == 'Linux'
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration'
+      - name: macOS host isolation
+        if: runner.os == 'macOS'
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
+
+  web-contracts:
+    name: Web types and behavior
+    needs: web
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: web
+          system: ${{ inputs.system }}
+          artifact-name: web-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      - name: Typecheck and behavior contracts
+        run: nix build --no-link .#checks.${{ inputs.system }}.web
+
+  adapters:
+    name: Web, plugin and installer adapters
+    needs: [native, web]
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - uses: ./.github/actions/fetch-nix
+        id: web
+        with:
+          package: web
+          system: ${{ inputs.system }}
+          artifact-name: web-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      - name: Allow user namespaces for bubblewrap
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Assemble the CLI from the cached runtime and Web
+        run: nix build --no-link .#cli
+      - name: Adapter behavior
+        env:
+          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/web/dist
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python/test_claude_code_plugin.py tests/python/test_web_server.py tests/python/test_cli.py'
+
+  sdk:
+    name: SDK, examples, demos and system behavior
+    if: inputs.system != 'aarch64-darwin'
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Allow user namespaces for bubblewrap
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: SDK and system checks
+        run: |
+          "$CORE_TEST_ENV" python3 -m pytest -q tests/python \
+            --ignore=tests/python/test_docs.py \
+            --ignore=tests/python/test_claude_code_plugin.py \
+            --ignore=tests/python/test_web_server.py \
+            --ignore=tests/python/test_cli.py
+      - name: Runnable SDK examples
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python/test_docs.py -k card_guide_runs_as_written'
+
+  docs:
+    name: Generated site
+    if: inputs.system == 'x86_64-linux'
+    needs: [native, web]
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - uses: ./.github/actions/fetch-nix
+        id: web
+        with:
+          package: web
+          system: ${{ inputs.system }}
+          artifact-name: web-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      - name: Generated site player
+        run: nix build --no-link .#checks.${{ inputs.system }}.site-player
+      - name: Generated pages and protocol reference
+        env:
+          TSUGUMI_WEB_NODE_MODULES: ${{ steps.web.outputs.test-support }}/node_modules
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python/test_docs.py -k "not card_guide_runs_as_written"'
+
+  swift:
+    name: Swift adapters and application
+    if: inputs.system == 'aarch64-darwin'
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Identify the Apple toolchain and native runtime
+        id: toolchain
+        run: |
+          toolchain=$({ xcodebuild -version; xcrun --sdk macosx --show-sdk-version; swift --version; } | shasum -a 256 | cut -d ' ' -f1)
+          echo "key=$toolchain" >> "$GITHUB_OUTPUT"
+          runtime=$(nix eval --raw .#tsugumid.drvPath)
+          echo "runtime=${runtime##*/}" >> "$GITHUB_OUTPUT"
+      - name: Restore the Swift incremental builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            macOS/.build
+            macOS/CoreTests/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('macOS/Sources/**', 'macOS/Tests/**', 'macOS/CoreTests/Tests/**', 'macOS/Resources/**', 'macOS/Plugins/**', 'agent/Sources/**', 'agent/Shared/**', 'protocol/**', 'client/include/**') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'agent/Package.swift', 'flake.lock') }}-
+      - name: Swift platform adapters
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
+      - name: Restore the Dawn renderer build
+        uses: actions/cache@v4
+        with:
+          path: build-renderer
+          key: renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt', 'client/CMakeLists.txt', 'protocol/**') }}
+          restore-keys: |
+            renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
+      - name: Build the Dawn renderer
+        run: ui/renderer/build.sh
+      - name: Application behavior
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS'
+
+  vm:
+    name: VM runtime package
+    if: inputs.system == 'aarch64-linux'
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      - name: Build or fetch the VM runtime
+        run: nix build --no-link .#vm-system

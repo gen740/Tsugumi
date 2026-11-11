@@ -8,10 +8,11 @@
 //   node docs/site/build.mjs [--check]
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { Marked } from '../../web/node_modules/marked/lib/marked.esm.js'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const modules = process.env.TSUGUMI_WEB_NODE_MODULES ?? path.join(ROOT, 'web/node_modules')
+const { Marked } = await import(pathToFileURL(path.resolve(modules, 'marked/lib/marked.esm.js')).href)
 const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
