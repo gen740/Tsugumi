@@ -1220,6 +1220,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.headers.get("authorization") != "Bearer fixture-key":
             self.send_error(401)
             return
+        # Check Tsugumi's wire contract for edits, for both flat and namespaced tools.
+        # In strict mode Responses may require link_json even when card_json was supplied.
+        for entry in body.get("tools", []):
+            for tool in entry.get("tools", [entry]):
+                if tool.get("name") in ("project_validate", "project_save") and tool.get("strict") is not False:
+                    self._error(400, f"fixture: {tool['name']} must preserve optional fields with strict: false")
+                    return
         if bad := self._refused_option(body):
             self._error(400, bad)
             return

@@ -662,7 +662,9 @@ extension MessagesProvider {
     if config.fast { body["service_tier"] = "fast" }
     if !tools.isEmpty {
       let own = tools.filter { !$0.server }
-      let functions: [[String: Any]] = own.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema] }
+      // Keep absent RPC fields absent (e.g. PutDefinition.link_json for a normal Card).
+      // Responses can otherwise normalize optional properties into required ones.
+      let functions: [[String: Any]] = own.map { ["type": "function", "name": $0.name, "description": $0.description, "parameters": $0.inputSchema, "strict": false] }
       var wire: [[String: Any]] = plan
         ? (functions.isEmpty ? [] : [["type": "namespace", "name": Self.toolNamespace, "description": "Tools of the open Tsugumi project.", "tools": functions]])
         : functions

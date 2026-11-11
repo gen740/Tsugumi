@@ -35,7 +35,7 @@ There are 41 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
-| [`ProjectSave`](#projectsave) |  |  |
+| [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectImport`](#projectimport) | ProjectImportResult | definitions = [] imports every definition of the grant. |

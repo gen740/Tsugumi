@@ -56,7 +56,7 @@
  {
   "name": "project_save",
   "payloadType": 5,
-  "description": "ProjectSave: ",
+  "description": "ProjectSave: -> SaveResult. Apply all changes in one transaction at base_rev.",
   "inputSchema": {
    "type": "object",
    "properties": {

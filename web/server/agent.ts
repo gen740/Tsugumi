@@ -657,7 +657,10 @@ export function responsesBody(c: ProviderConfig, system: string, messages: ChatM
   const own = tools.filter((t) => !t.server)
   const hosted: unknown[] = own.length === tools.length ? [] : [{ type: AGENT.webSearch.openAIType }]
   if (tools.length) {
-    const functions = own.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema }))
+    // Preserve optional RPC fields such as PutDefinition.link_json through Responses.
+    const functions = own.map((t) => ({
+      type: 'function', name: t.name, description: t.description, parameters: t.inputSchema, strict: false,
+    }))
     body.tools = [...(plan ? (functions.length ? [{ type: 'namespace', name: TOOL_NAMESPACE, description: 'Tools of the open Tsugumi project.', tools: functions }] : []) : functions), ...hosted]
   }
   // The sources of a search (the plan's rules do not say it takes `include`:
