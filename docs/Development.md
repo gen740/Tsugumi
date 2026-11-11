@@ -219,7 +219,7 @@ What is provided now, and how it is checked. Automated tests, records of real sc
 | Versions (git, each run's version and result, the version tree; `VersionInit`, `VersionMark`, `VersionCheckout`, `VersionGraph`, `VersionCanvas`, `VersionDiff`, `VersionSummary`) | Implemented ([Versions.md](Versions.md), `test_versions.py`) |
 | Approving the Agent's permissions (a save widening a Card's permissions returns `approval_required`) | Implemented ([security.md](security.md#the-agents-permission-boundary), `test_permissions.py`) |
 | The thrush's guide (`guide_show`, `$demo`), splitting work among helpers (`delegate`) | Implemented ([features.md](features.md#9-agent); the Guide tests in `macOS/CoreTests` and `macOS/Tests`; the Web's helper thrushes in `web/tests/helperBirds.ts`; the script for when there is no key is `agent/Shared/guide-script.json`, shared by the app and the Web, tested in `web/tests/guideScript.ts`) |
-| The Claude Code plugin | Implemented ([claude-code.md](claude-code.md), `test_claude_code_plugin.py`) |
+| The Claude Code plugin | Implemented ([claude-code.md](claude-code.md), `test_claude_code_plugin.py`). Verified on a Mac and on Windows (WSL2) |
 | The Web UI (the same screens, operations and shortcuts in the browser; a tsugumid on the Mac with Cards isolated by Seatbelt) | Implemented ([WebUI.md](WebUI.md)). Besides type checking and builds, there are tests for the UI's behaviour, the Agent's shared contract, the host server and Seatbelt isolation (the test list above) |
 
 ## What has been checked
