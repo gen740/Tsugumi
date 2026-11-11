@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import TsugumiAgent
+import TsugumiAgentClient
 
 struct ConversationSnapshotTests {
   @Test func publicConversationKeepsSearchSourcesAndToolImagesReadable() throws {

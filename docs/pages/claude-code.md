@@ -1,6 +1,6 @@
 # Using it from Claude Code
 
-You can open a Tsugumi project from Claude Code and leave it to make, edit and run Cards and check the results (the Claude Code plugin `tsugumi`, `plugins/tsugumi/`). It has been verified on a Mac and on Windows (WSL2).
+You can open a Tsugumi project from Claude Code and leave it to make, edit and run Cards and check the results (the Claude Code plugin `tsugumi`, `plugins/tsugumi/`).
 The work shows in the [Web UI](webui.md) as it happens: Cards Claude Code saves change on the Canvas, runs show their progress, and the thrush flies next to the Card Claude Code is working on. You watch the same screen and can work on it yourself.
 
 ## How it works

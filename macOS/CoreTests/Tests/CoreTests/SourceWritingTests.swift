@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import TsugumiAgent
+@testable import TsugumiAgentClient
 
 /// The arguments of a save, cut at every place they could be cut.
 struct SourceWritingTests {

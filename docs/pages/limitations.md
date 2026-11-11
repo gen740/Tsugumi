@@ -30,10 +30,10 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 - **The desktop app runs on Apple silicon with macOS 26 or later.** On Linux and Windows, use the Web UI in the browser (the `tsugumi` command) ([Installation](install.md)).
 - **The Mac version installs with the one-line command in the README.** Releases are signed ad hoc, without Apple's notarisation, so a download from a browser is stopped by Gatekeeper. Installing with `curl` is not stopped, and later automatic updates are installed after their checksum and code signature are checked ([Installation](install.md#installing-the-desktop-app-mac)).
 - **x86_64-linux Cards run emulated.** On a Mac with Rosetta, or with qemu when asked for (`TSUGUMI_VM_X86=qemu`); on Linux, with what the system registered. Everything of such a Card runs emulated, its build too: the first C++ or Python Card of a nixpkgs also builds an x86_64 worker for it (minutes, once) ([Another system](features.md#another-system-x86_64-linux)).
-- **Linux has been checked on Ubuntu and NixOS.** On aarch64 in an OrbStack VM (Ubuntu 26.04); on x86_64 on a friend's Ubuntu and on a NixOS machine used through the Web UI over SSH ([Over SSH](webui.md#running-it-on-another-machine-over-ssh)). On x86_64, CI (Ubuntu on GitHub Actions) also builds and runs the tests. Linux and Windows need Nix.
-- **Windows works through WSL2.** Verified with Nix installed in WSL2 without its daemon: `tsugumi` was installed, and a demo opened and ran ([#159](https://github.com/gen740/Tsugumi/issues/159)). Besides `install.ps1`, it can be installed from a shell in the WSL Linux with the same steps as on Linux ([Installation](install.md#using-it-in-the-browser-the-tsugumi-command)).
+- **Linux and Windows need Nix.** A remote Linux installation can be used [over SSH](webui.md#running-it-on-another-machine-over-ssh).
+- **Windows works through WSL2.** Besides `install.ps1`, it can be installed from a shell in the WSL Linux with the same steps as on Linux ([Installation](install.md#using-it-in-the-browser-the-tsugumi-command)).
 - **The stable release starts at v1.0.0.** The current 0.x versions are for moving development fast: compatibility of project documents and settings is not kept between versions, and nothing is migrated ([AGENTS.md](https://github.com/gen740/Tsugumi/blob/main/AGENTS.md)).
-- **The Claude Code plugin works with the Web UI** (verified on a Mac and on Windows in WSL2). You can hand a Web UI project, opened with the `tsugumi` command or otherwise, to Claude Code ([Using it from Claude Code](claude-code.md#what-is-not-supported)). Claude Code's own shell and file operations do not go through Tsugumi's permission checks.
+- **The Claude Code plugin works with the Web UI**. You can hand a Web UI project, opened with the `tsugumi` command or otherwise, to Claude Code ([Using it from Claude Code](claude-code.md#what-is-not-supported)). Claude Code's own shell and file operations do not go through Tsugumi's permission checks.
 
 ## Features
 
@@ -42,11 +42,5 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 - **Dedicated Cards for marimo and R Markdown / Quarto are planned in [#15](https://github.com/gen740/Tsugumi/issues/15) and [#16](https://github.com/gen740/Tsugumi/issues/16).**
 - **The logger Card puts the values it receives in the Card's log and display.** Recording to an external database (SQLite, PostgreSQL and the like) is planned in [#160](https://github.com/gen740/Tsugumi/issues/160).
 - **The app can have 16 projects open at once.** The number of shared devices of the shared VM decides it (`SharedVM.slotCount`).
-- **A large demo (200 Cards) and WASM display are future extensions** ([Future extensions](development.md#future-extensions)).
+- **A large demo (200 Cards) and WASM display are future extensions**.
 - **The `load` of the science demos fetches from the publisher on every run.** If the publisher's content changes, so does the result. Cas A is the one pinned by hash ([The bundled demos](demos.md#science-demos-fetching-and-analysing-public-data)).
-
-## What has been checked
-
-- **Tests of the shared VM run on a Mac that can use Virtualization.framework** (`TSUGUMI_TEST_CONTAINER=1`), because GitHub Actions runners cannot run them ([What has been checked](development.md#what-has-been-checked), [Evidence](evidence.md)).
-- **Many situations have also been tried with the real Claude API and the ChatGPT plan.** Even so, combinations that were not tried may remain. Automated tests use a test model; one record of going through it with the real API is in [Evidence](evidence.md#a-run-with-the-real-claude-api).
-- **Web search is tested automatically with the test model.** It is yet to be checked with the real API and the ChatGPT plan ([Implementation status](development.md#implementation-status)).

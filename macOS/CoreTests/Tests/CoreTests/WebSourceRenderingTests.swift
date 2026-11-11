@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import TsugumiAgent
+@testable import TsugumiAgentClient
 
 struct WebSourceRenderingTests {
   @Test func sourcesAreSafeLinks() {

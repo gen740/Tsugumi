@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Testing
-import TsugumiAgent
+import TsugumiAgentClient
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 

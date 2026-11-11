@@ -1,7 +1,7 @@
 import FlatBuffers
 import Foundation
 import Testing
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// Swift's platform codec. Core behavior is exercised through public RPC in

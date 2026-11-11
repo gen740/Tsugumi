@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// Runs on the main thread soon, also while an NSMenu is open: menu tracking
 /// serves run loop blocks and timers in the common modes, but neither the main

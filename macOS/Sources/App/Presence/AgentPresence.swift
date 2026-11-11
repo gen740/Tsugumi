@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// What the Agent is doing, for the canvas: a queue of short scenes (beats)
 /// that the tsugumi plays one after another. It looks into a Card the Agent

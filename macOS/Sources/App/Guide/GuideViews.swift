@@ -1,5 +1,5 @@
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// What a main window lets the guide's buttons do (MainWindow sets it).
 struct GuideWindowActions {

@@ -2,7 +2,7 @@ import FlatBuffers
 import Foundation
 import Observation
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// A button the guide offers under its reply (guide_show); the user presses

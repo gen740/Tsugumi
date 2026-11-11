@@ -3,8 +3,6 @@
 Make a Card that just multiplies the number it receives, run it, and try other conditions.
 After making it in Python, replace the same Card with bash, C++, R and Julia.
 
-The code on this page is not decoration: [tests/python/test_docs.py](../tests/python/test_docs.py) **takes the files out of this document and actually runs them**.
-
 The full specification is in [agent/Reference/card-guide.md](../agent/Reference/card-guide.md), the same document the app's Agent reads.
 
 ## What you will make
@@ -145,7 +143,6 @@ The body is `main(ctx)`. Import inputs from `inputs.<port>.<namespace>.<table>` 
 ```python
 from inputs.number.hello.Number import Number
 import outputs.result.hello.Result as result_out
-
 
 def main(ctx):
     n = ctx.input("number", Number).Value()
@@ -320,5 +317,5 @@ It runs with the standard library alone. Packages from the General registry are 
 | --- | --- |
 | Branches, merges and loops, passing files, data pinned with Nix | [The Card specification](../agent/Reference/card-guide.md), [The bundled demos](Demos.md) |
 | Examples of code that runs | [demos/](../demos/) (`report`, `collatz` and others) |
-| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent), [a run with the real Claude API](Evidence.md#a-run-with-the-real-claude-api) |
+| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
 | What the words mean | [Glossary](Glossary.md) |

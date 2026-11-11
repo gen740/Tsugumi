@@ -3,7 +3,7 @@ import FlatBuffers
 import Foundation
 import Observation
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 

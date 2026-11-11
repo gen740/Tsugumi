@@ -3,6 +3,7 @@
 # stand-in for the separate GitHub Actions jobs.
 #
 #   tests/ci-local.sh          both jobs (on a Mac: macOS here, Linux in Docker)
+#   tests/ci-local.sh agent    only the public Agent RPC fixtures
 #   tests/ci-local.sh mac      the macOS job: Swift tests and Seatbelt isolation
 #   tests/ci-local.sh linux    the Linux job: tsugumid, C++, Web UI, the tsugumi
 #                              command, the docs player and the Python tests
@@ -24,8 +25,10 @@ extra-substituters = https://tsugumi.cachix.org
 extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI="
 step() { printf '\n== %s\n' "$1"; }
 core_run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
-core_checks() {
+agent_checks() {
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
+}
+core_checks() {
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
   core_run python3 -m pytest -q --core-report -m 'not environment' tests/core
 }
@@ -37,7 +40,9 @@ linux_job() {
   local web system sdk_python
   web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
-  step "Public core, Agent and CLI RPC tests"
+  step "Public Agent RPC tests"
+  agent_checks
+  step "Public core and CLI RPC tests"
   core_checks
   step "Web UI typecheck and behavior contracts"
   system=$(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem)
@@ -78,6 +83,8 @@ linux_in_container() {
 mac_job() {
   step "Build or fetch the native runtime and public RPC tests"
   nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+  step "Public Agent RPC tests"
+  agent_checks
   step "Core RPC behavior tests"
   core_checks
   step "Card isolation on a Mac host (Seatbelt)"
@@ -91,10 +98,13 @@ mac_job() {
 }
 
 case "${1:-all}" in
+  agent)
+    nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+    agent_checks ;;
   mac) mac_job ;;
   linux) if [ "$(uname)" = Linux ]; then linux_job; else linux_in_container; fi ;;
   all)
     if [ "$(uname)" = Darwin ]; then mac_job; linux_in_container; else linux_job; fi ;;
-  *) echo "usage: $0 [all|mac|linux]" >&2; exit 2 ;;
+  *) echo "usage: $0 [all|mac|linux|agent]" >&2; exit 2 ;;
 esac
 step "All checks passed"

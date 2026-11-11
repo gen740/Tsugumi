@@ -18,7 +18,7 @@
 <div class="layout">
 <nav class="side" aria-label="Documents">
   <div class="brand"><a href="../index.html"><img src="../assets/tsugumi-icon.svg" alt="" width="28" height="28">Tsugumi</a><span class="brand-links"><a class="repo" href="https://github.com/gen740/Tsugumi" rel="noopener"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a><button type="button" class="side-close" aria-label="Close the sidebar" title="Close the sidebar"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button></span></div>
-  <details class="nav-fold" open><summary>Documents</summary><div class="nav-group"><h2>Learn about Tsugumi</h2><ul><li><a href="problem.html">The problem</a></li><li><a href="philosophy.html">What to build so that we are not used by AI</a></li></ul></div><div class="nav-group"><h2>Getting started</h2><ul><li><a href="usage.html">Usage</a></li><li><a href="cardguide.html">Your first Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Using it from Claude Code</a></li></ul></div><div class="nav-group"><h2>The ideas</h2><ul><li><a href="rationale.html">Why one Workflow for design, implementation and checking</a></li><li><a href="vision.html">Vision and applications</a></li></ul></div><div class="nav-group"><h2>How it works</h2><ul><li class="on" aria-current="page"><a href="#">Tsugumi's features</a></li><li><a href="versions.html">Versions (git)</a></li><li><a href="security.html">Security and isolation</a></li><li><a href="protocol.html">The RPC contract</a></li><li><a href="glossary.html">Glossary</a></li></ul></div><div class="nav-group"><h2>Records and development</h2><ul><li><a href="evidence.html">Claims and how to check them</a></li><li><a href="development.html">Development</a></li><li><a href="lock.html">Pinned versions</a></li><li><a href="licenseaudit.html">License audit</a></li></ul></div></details>
+  <details class="nav-fold" open><summary>Documents</summary><div class="nav-group"><h2>Learn about Tsugumi</h2><ul><li><a href="problem.html">The problem</a></li><li><a href="philosophy.html">What to build so that we are not used by AI</a></li></ul></div><div class="nav-group"><h2>Getting started</h2><ul><li><a href="usage.html">Usage</a></li><li><a href="cardguide.html">Your first Card</a></li><li><a href="webui.html">Web UI</a></li><li><a href="claude-code.html">Using it from Claude Code</a></li></ul></div><div class="nav-group"><h2>The ideas</h2><ul><li><a href="rationale.html">Why one Workflow for design, implementation and checking</a></li><li><a href="vision.html">Vision and applications</a></li></ul></div><div class="nav-group"><h2>How it works</h2><ul><li class="on" aria-current="page"><a href="#">Tsugumi's features</a></li><li><a href="versions.html">Versions (git)</a></li><li><a href="security.html">Security and isolation</a></li><li><a href="protocol.html">The RPC contract</a></li><li><a href="glossary.html">Glossary</a></li></ul></div><div class="nav-group"><h2>Development</h2><ul><li><a href="development.html">Development</a></li><li><a href="lock.html">Pinned versions</a></li><li><a href="licenseaudit.html">Licenses and distribution</a></li></ul></div></details>
   <script>{
     const fold = document.currentScript.previousElementSibling, narrow = matchMedia('(max-width: 820px)'), set = () => { fold.open = !narrow.matches }; set(); narrow.addEventListener('change', set)
     const side = fold.parentElement, on = fold.querySelector('li.on')
@@ -36,7 +36,7 @@
 <article class="doc">
 <h1 id="tsugumis-features">Tsugumi&#39;s features</h1>
 <p>Tsugumi is a macOS app that runs graphs of Cards connected by ports (Workflows) in environments pinned with Nix, and records which Card did what and when (there is also a <a href="webui.html">Web UI</a> with the same screens in a browser).
-This document is a reference list of what each feature can do and how it is achieved. Each section ends with <strong>Where to check</strong>: the tests and code that show the feature.</p>
+This document is a reference list of what each feature can do and how it is achieved.</p>
 <div class="table-wrap"><table><thead><tr><th>To know</th><th>Read</th></tr></thead><tbody><tr><td>Why it takes this shape</td><td><a href="rationale.html">Rationale</a></td></tr><tr><td>Installing and building</td><td><a href="install.html">INSTALL.md</a></td></tr><tr><td>The list of tests and measurements</td><td><a href="development.html">Development.md</a></td></tr><tr><td>Isolation and secrets</td><td><a href="security.html">security.md</a></td></tr><tr><td>Plans and the scope of the guarantees</td><td><a href="limitations.html">Limitations.md</a></td></tr></tbody></table></div>
 <h2 id="1-architecture">1. Architecture</h2>
 <pre><code class="language-text">macOS (host)                                       Shared Linux VM (one per app)
@@ -50,11 +50,6 @@ This document is a reference list of what each feature can do and how it is achi
 <li><strong>The UI and the Agent are equal clients</strong>: both talk to the core with the same RPC contract, defined in <code>protocol/tsugumi.fbs</code>. The Agent does not imitate operations on screen; it sends RPC requests to the core directly. With the Agent disabled, every ordinary operation still works.</li>
 <li><strong>The shared VM</strong>: one Linux VM started with macOS&#39;s <code>Virtualization.framework</code>, inside which each project&#39;s <code>tsugumid</code> runs with its own namespaces, uid and cgroup (details in <a href="security.html">security.md</a>).</li>
 <li><strong>Web UI</strong>: the same screens from a browser. With the Mac&#39;s <code>tsugumi</code> command it runs inside the same shared VM as the app; on Linux and when started from the repository, <code>tsugumid</code> runs directly on the host (Cards are isolated with Seatbelt on a Mac and bubblewrap on Linux; <a href="webui.html">Web UI</a>).</li>
-</ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>The RPC contract: <a href="https://github.com/gen740/Tsugumi/blob/main/protocol/tsugumi.fbs" rel="noopener">protocol/tsugumi.fbs</a>, <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_contract.py" rel="noopener">test_contract.py</a></li>
-<li>The UI and the Agent using the same contract: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py" rel="noopener">test_agent_contract.py</a></li>
 </ul>
 <h2 id="2-cards-and-workflows">2. Cards and Workflows</h2>
 <h3 id="kinds-of-card">Kinds of Card</h3>
@@ -72,12 +67,6 @@ This document is a reference list of what each feature can do and how it is achi
 <li>Downstream of a path a branch did not take is <code>skipped</code>; a Card that depends on a Draft or a failed upstream Card is <code>blocked</code>, with a reason; paths independent of them keep running.</li>
 <li>A run that was in progress when the process ended abnormally or restarted is recorded as <code>interrupted</code>.</li>
 <li>Partial runs with &quot;Run from Here Downstream&quot; or &quot;Run Only This Card (Last Inputs)&quot; reuse the inputs saved last time (including the contents of Files). When &quot;Run from Here Downstream&quot; reaches a merge, a Card that waits for all its inputs fills only the ports that receive nothing this time with saved inputs (an <code>any</code> Card runs with only the values that arrived).</li>
-</ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>Types, structural compatibility and the union of a merge: <a href="https://github.com/gen740/Tsugumi/tree/main/tests/cpp" rel="noopener">tests/cpp</a></li>
-<li>Passing values across languages: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py" rel="noopener">test_cards_container.py</a>, <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_language_cards.py" rel="noopener">test_language_cards.py</a></li>
-<li><code>all</code> / <code>any</code>, <code>maxRuns</code>, Card in Card and partial runs: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_scheduler.py" rel="noopener">test_scheduler.py</a></li>
 </ul>
 <h2 id="3-reproducible-environments-with-nix">3. Reproducible environments with Nix</h2>
 <h3 id="an-environment-per-card">An environment per Card</h3>
@@ -131,12 +120,6 @@ in { run = &quot;${ciao}/bin/dmlist ...&quot;; }
 <li>All projects share one <code>/nix/store</code>, and each project keeps its build results with its own GC roots (the last two generations per Card; ones unused for 30 days are collected automatically).</li>
 <li>A project&#39;s &quot;Delete the build cache&quot; only removes that project&#39;s GC roots. Garbage collection of the shared store itself runs only from &quot;Clean shared store&quot; under &quot;External Connections&quot; in the app&#39;s settings. With <code>keep-outputs = true</code>, compilers and the nixpkgs source stay after cleaning, so editing a Card does not download them again.</li>
 </ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>A Card&#39;s environment and the SDK: <a href="https://github.com/gen740/Tsugumi/blob/main/sdk/nix/default.nix" rel="noopener">sdk/nix/default.nix</a></li>
-<li>The analysis of upstream references: <a href="https://github.com/gen740/Tsugumi/tree/main/tests/cpp" rel="noopener">tests/cpp</a>, <a href="https://github.com/gen740/Tsugumi/blob/main/core/src/graph.cc" rel="noopener">core/src/graph.cc</a> (<code>compute_guarantees</code>)</li>
-<li>Reusing the shared store, and GC roots: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_shared_vm.py" rel="noopener">test_shared_vm.py</a></li>
-</ul>
 <h2 id="4-card-sdk-and-workers">4. Card SDK and workers</h2>
 <h3 id="stages">Stages</h3>
 <pre><code class="language-text">waiting for inputs → SDK preparation → Nix evaluation → build → preRun → run → postRun → output validation → saving → done
@@ -181,12 +164,6 @@ The worker loads the built shared library <code>lib/main.so</code> into memory a
 <li>By default a Card has no network and cannot see the Mac&#39;s file system (<a href="security.html">security.md</a>).</li>
 <li>In the Experimental section of a Card&#39;s settings, &quot;Allow network access&quot; (<code>network</code>) and &quot;Allow access to folders of the host&quot; (<code>hostFolders</code>; seen from the worker as <code>/host/&lt;name&gt;</code>, read-only by default) can be set per Card.</li>
 </ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>Each language&#39;s SDK, and visualisation, File outputs and params: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_cards_container.py" rel="noopener">test_cards_container.py</a>, <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_language_cards.py" rel="noopener">test_language_cards.py</a></li>
-<li>Resident workers, <code>onRunStart</code>, the network and Mac folders: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_workers.py" rel="noopener">test_workers.py</a></li>
-<li>Your first Card (a test runs the code on that page): <a href="cardguide.html">CardGuide.md</a></li>
-</ul>
 <h2 id="5-documents-and-saving">5. Documents and saving</h2>
 <ul>
 <li>A project is an ordinary folder of <code>tsugumi.json</code>, <code>definitions/&lt;Card&gt;/</code> (<code>_card.json</code>, <code>_meta.json</code> (intentions such as the summary), <code>default.nix</code>, <code>src/</code>, <code>_outputs.fbs</code>) and the layout in <code>layout.json</code>, and can be managed with Git as it is.</li>
@@ -195,10 +172,6 @@ The worker loads the built shared library <code>lib/main.so</code> into memory a
 <li><strong>Conflict detection</strong>: a save is based on the revision at which editing began. If another window or the Agent saved first, it is detected as a conflict and nothing is silently overwritten. A resend with the same <code>op_id</code> is applied only once (if a response is lost to a dropped connection, <code>OperationGet</code> confirms the result).</li>
 <li><strong>Saving during a run</strong>: while a Workflow runs, a save that changes the computation&#39;s definition (its execution fingerprint) is refused with <code>busy</code>; only layout changes and the like are accepted, safely.</li>
 </ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>Save round trips, conflicts, resends with the same <code>op_id</code> and fault injection: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_contract.py" rel="noopener">test_contract.py</a></li>
-</ul>
 <h2 id="6-run-history-and-artifacts">6. Run history and artifacts</h2>
 <ul>
 <li>Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM&#39;s dedicated run-history disk (<code>vm/history.img</code>), so it is written fast without going through a folder shared with the host, and is not lost by &quot;Reset all environments&quot;.</li>
@@ -206,12 +179,6 @@ The worker loads the built shared library <code>lib/main.so</code> into memory a
 <li>With <code>saveRunHistory</code> (default <code>true</code>), the history of finished runs is also written automatically to <code>.tsugumi/runs.sqlite</code> in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card&#39;s types change.</li>
 <li>When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by <code>run_id</code>.</li>
 <li>&quot;Delete Run History&quot; deletes from all three places: inside the VM, <code>.tsugumi/runs.sqlite</code> and the per-run file area.</li>
-</ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>Every combination of <code>recordIO × retainArtifact</code>, and tamper detection: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_history.py" rel="noopener">test_history.py</a></li>
-<li>Writing, importing and deleting <code>.tsugumi/runs.sqlite</code>: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_run_history.py" rel="noopener">test_run_history.py</a></li>
-<li>A run whose history failed to save does not succeed: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_regressions.py" rel="noopener">test_regressions.py</a></li>
 </ul>
 <h2 id="7-visualisation">7. Visualisation</h2>
 <ul>
@@ -344,23 +311,9 @@ The worker loads the built shared library <code>lib/main.so</code> into memory a
 <li>The first time the user connects to a model by saving a key (or signing in to ChatGPT), the main window in front asks once &quot;Would you like to see the guide?&quot;, noting that the guide uses the model&#39;s API and costs money. &quot;See the guide&quot; opens the Data to report demo and starts the guide; &quot;Later&quot; is the same as &quot;Later&quot; in the speech bubble.</li>
 <li>During the guide, the start and end of runs (succeeded, failed, stopped) and disconnections and reconnections are reported to the chat as they really are. What happens while it is answering is reported after it finishes. The guide&#39;s state and the answer to the invitation are saved and not repeated after a restart.</li>
 </ul>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>The list of tools and the FlatJSON conversion being the same on the Mac and the Web: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_agent_contract.py" rel="noopener">test_agent_contract.py</a>, <code>macOS/CoreTests</code></li>
-<li>How the script proceeds without a key (the same on the Mac and the Web): <code>macOS/Tests/TsugumiAppTests/GuideTests.swift</code>, <code>web/tests/guideScript.ts</code></li>
-<li>The rules for saves that implement Drafts: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_draft_intent.py" rel="noopener">test_draft_intent.py</a></li>
-<li>The rules for saving comments, and the version history: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_card_comments.py" rel="noopener">test_card_comments.py</a></li>
-<li>A save in which the Agent widens a Card&#39;s permissions needs approval: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_permissions.py" rel="noopener">test_permissions.py</a></li>
-<li>A record of making Cards from Drafts with the real Claude API, running and checking them: <a href="evidence.html#a-run-with-the-real-claude-api">Evidence</a></li>
-</ul>
 <h2 id="10-demos">10. Demos</h2>
 <p>There are 31 bundled demos (Draft versions included), in a Japanese set and an English set (<code>demos/ja</code>, <code>demos/en</code>): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo&#39;s Cards connect and behave, is in <a href="demos.html">The bundled demos</a>.
 Choose &quot;Open a Copy&quot; on a demo from &quot;Browse Demos&quot; on the home screen to get an editable copy in <code>~/Documents/Tsugumi/&lt;demo&gt;</code>.</p>
-<p><strong>Where to check</strong></p>
-<ul>
-<li>Every demo opens and resolves: <a href="https://github.com/gen740/Tsugumi/blob/main/tests/python/test_demos.py" rel="noopener">test_demos.py</a></li>
-<li>Running demos for real and checking against independently computed values (<code>TSUGUMI_TEST_DEMO_RUNS=1</code>): <code>tests/python/test_demo_*.py</code></li>
-</ul>
 </article>
 </div>
 <p class="source"><a href="https://github.com/gen740/Tsugumi/blob/main/docs/features.md" rel="noopener"><code>docs/features.md</code></a> (<a href="features.md">Markdown</a>)</p>

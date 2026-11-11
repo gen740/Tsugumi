@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// The settings menu's choices. Provider HTTP requests are tested through the
 /// core's public RPC and an independent HTTP peer in tests/core.

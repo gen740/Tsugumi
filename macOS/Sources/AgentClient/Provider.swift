@@ -287,8 +287,6 @@ public enum Keychain {
   }
 }
 
-/// Messages API client with SSE streaming. The same code talks to the real
-/// provider and to the local fixture; only the endpoint and key differ.
 /// Model discovery is a core Agent operation. Credential lookup remains a
 /// platform adapter so the app's Keychain permissions continue to apply.
 public struct MessagesProvider: Sendable {

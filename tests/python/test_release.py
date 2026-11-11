@@ -36,7 +36,7 @@ def test_the_dev_build_can_be_signed_with_your_certificate_and_the_release_never
 
 def test_paths_of_the_build_machine_stay_in_debug_builds():
     outside = []
-    for path in list((ROOT / "macOS/Sources").rglob("*.swift")) + list((ROOT / "agent/Sources").rglob("*.swift")):
+    for path in (ROOT / "macOS/Sources").rglob("*.swift"):
         depth = 0  # how many #if DEBUG blocks the line is in (an #else leaves it)
         stack = []
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -53,7 +53,7 @@ def test_paths_of_the_build_machine_stay_in_debug_builds():
 
 
 def test_the_app_and_the_web_ui_keep_api_keys_in_the_same_keychain_item():
-    swift = (ROOT / "agent/Sources/TsugumiAgent/Provider.swift").read_text(encoding="utf-8")
+    swift = (ROOT / "macOS/Sources/AgentClient/Provider.swift").read_text(encoding="utf-8")
     web = (ROOT / "web/server/chat.ts").read_text(encoding="utf-8")
     service = re.search(r'static let service = "([^"]+)"', swift).group(1)
     assert f"const KEYCHAIN_SERVICE = '{service}'" in web

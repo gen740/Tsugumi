@@ -3,7 +3,7 @@
 "Research should use AI more." I have thought so for a long time.
 At the same time, I have felt a strong unease about handing research over to AI as it is.
 Isn't it people who should find the scientific meaning and take responsibility for the conclusions drawn?
-Thinking between these two feelings is what led me to start building Tsugumi.
+Tsugumi connects these two concerns.
 
 ## Moving research forward, and giving it meaning
 
@@ -50,24 +50,6 @@ Each step of processing split into a size you can see through, so you can follow
 The conditions of a step you were curious about changed, and run again by your own hand.
 Connecting AI and researchers in this way is where Tsugumi starts.
 
-## Where it started
-
-This section condenses an essay the author wrote in Japanese, deliberately without any AI (no Claude, ChatGPT or Gemini, not even for structure or proofreading), on the night of 6 November 2026. The original is kept in the [hackathon snapshot](https://github.com/gen740/tsugumi-hackathon/blob/main/docs/Origin.md); what follows is an AI translation of its substance.
-
-The first specification of Tsugumi had been in the making long before the hackathon. The problem it addresses, and the way it addresses it, come from years of doing research while working with AI. How can research use AI actively and still remain something you enjoy as your own? AI is wonderful: it now knows more than people do, and its ability to turn knowledge into form has grown enormously. But is it really fun if AI does everything? What is it that only people can do?
-
-The author studies astrophysics, a field whose analysis is not simple. Observations carry noise peculiar to space and limits set by the detectors themselves, and the software that analyses them, NASA's open-source [HEASoft](https://heasarc.gsfc.nasa.gov/docs/software/lheasoft/), covers many detectors and is long and hard to use.
-
-Yet space should be close to everyone. Article I of the Outer Space Treaty says that the exploration and use of outer space "shall be carried out for the benefit and in the interests of all countries, irrespective of their degree of economic or scientific development, and shall be the province of all mankind." And space is, in fact, within reach: the data is public on the internet and can be downloaded with one command. With that alone, you can touch messages from deep space observed by the technology people have built up. The author wanted more people to know this, and to be able to do research more easily.
-
-Thinking about how to provide reproducible environments for astrophysics led to Nix, and to [gen740/heasoft](https://github.com/gen740/heasoft), a Nix packaging of the analysis software that the author publishes and uses. Still, the barriers remained, and the author could not yet bring it all into a form within everyone's reach. The architecture, the software structure and the UI had been in mind for a long time, but building software that satisfied all of them was too large for one person. Before the hackathon there were countless prototypes; some got far enough to seem usable, but there was always one step missing. The AI of a few months earlier lacked the power to hold the whole together and build it out under one consistent philosophy.
-
-Claude gave that idea a form. A design refined over a long time took shape in three days. When the author pasted in the specification, Claude's first words were: "The whole specification is large (months of work). How far should we aim in this session?" And then it ran all the way. The author had been prepared for this to be one more attempt among many; instead, they came out of it truly proud of what they made.
-
-The essay ends with a call to everyone who shares the concern:
-
-> "What can we do so that human intellectual and creative activity is not let go of, and remains ours?"
-
 ## The name
 
 **Tsugumi** carries several meanings, all connected to why the tool was made.
@@ -79,21 +61,6 @@ Then, from *tsugumi* to *tsugumu*, and by swapping its sounds (a metathesis), to
 The other origin is the bird, the dusky thrush (*tsugumi* in Japanese). It comes to Japan as a winter bird, about 24 cm long, and is known for hopping a few steps on the ground, stopping, and standing up straight to look around. It does not dash through; it moves, stops, checks where it is, and moves on. That is also how research with AI should move.
 
 One account says the bird got its name because it does not sing in Japan during winter, as if keeping its beak shut, *tsugumu* ([Suntory, "Encyclopedia of Japanese birds"](https://www.suntory.co.jp/eco/birds/encyclopedia/detail/1359.html)). However eloquently AI reports, Tsugumi should not rely on explanation in words alone, but let the process itself, what was actually tried and checked, speak. By following each step, working on it and running it again, researchers can build up their own conviction. In an age that tells results with ever more words, the tool quietly offers the accumulated attempts. That is the bearing of the thrush with its beak shut.
-
-## How it was built
-
-This project is itself an experiment. A runtime and an application of this size were built in the single week of a Claude hackathon, in a back-and-forth where a person wrote intentions and specifications in natural language and AI gave them form.
-
-- **Prepared before the hackathon:** the only code of the author's own that existed beforehand is [hosq](https://github.com/CLI20-dev/hosq), a C++ JSON parser, used for Tsugumi's documents and settings; its version is pinned in [flake.lock](../flake.lock). The first specification prompt, which worked out Cards and Workflows, the runtime, the communication contract and the boundary between UI and Agent in advance, is kept in full in the [first commit's instruction.md](https://github.com/gen740/Tsugumi/blob/98f90945ed92477e6e65ff48f1f410271edaaf96/instruction.md).
-- **Made during the hackathon:** everything else specific to Tsugumi: the document model and scheduler (`core/`, `protocol/`), the Card SDK and the demos (`sdk/`, `demos/`), the macOS app and its VM (`macOS/`), the Web UI (`web/`), the Agent (`agent/`), the `tsugumi` command and the Claude Code plugin (`cli/`, `plugins/`), and the documentation site (`docs/site/`). A person carried the specification, the decisions and the review; AI agents implemented and fixed. Libraries and tools from elsewhere (FlatBuffers, Nix, SQLite, libgit2, SwiftUI, Dawn, Tree-sitter, React and the others listed in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)) are their authors' work, and code generated from Tsugumi's schemas is not counted as written by hand.
-- **The record:** the state submitted to Build with Claude: Japan is the frozen mirror [gen740/tsugumi-hackathon](https://github.com/gen740/tsugumi-hackathon) (tag `hackathon-submission`), with its documents as they were then. The Git history of this repository runs on from there; commit dates are when something was recorded, not necessarily when it was made.
-
-Once you can describe concretely what you want to build, the limit of what one person can make widens astonishingly. But then what is needed, as urgently as speed of building, is **a tool for people to understand, judge and keep working on what was built**.
-
-Tsugumi is my own answer to the question of how to connect people and AI.
-The question reaches beyond research to education, software development and everyday work ([Vision and applications](Vision.md)).
-
-**To do research and work without being used by AI, what tools will you build?**
 
 ## The author
 

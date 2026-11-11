@@ -11,7 +11,6 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
     .package(path: ".."),
-    .package(path: "../../agent"),
   ],
   targets: [
     .testTarget(
@@ -20,7 +19,7 @@ let package = Package(
         .product(name: "FlatBuffers", package: "flatbuffers"),
         .product(name: "TsugumiRPC", package: "macOS"),
         .product(name: "TsugumiLauncher", package: "macOS"),
-        .product(name: "TsugumiAgent", package: "agent"),
+        .product(name: "TsugumiAgentClient", package: "macOS"),
       ],
       path: "Tests/CoreTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),

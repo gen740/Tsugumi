@@ -4,7 +4,7 @@ The versions of the runtime and its dependencies that are pinned to keep things 
 
 | Item | Pinned version / revision |
 | --- | --- |
-| Platforms | macOS (Apple silicon, macOS 26 or later; checked on macOS 27.2, M3 Max), Linux (x86_64 and aarch64, needs Nix; checked in an OrbStack VM (Ubuntu 26.04, aarch64), on a friend's Ubuntu (x86_64) and on NixOS (x86_64, over SSH)), Windows (needs WSL2 and Nix; verified in WSL2, with Nix without its daemon) |
+| Platforms | macOS (Apple silicon, macOS 26 or later), Linux (x86_64 and aarch64, needs Nix), Windows (needs WSL2 and Nix) |
 | Node.js (bundled with the Mac's `tsugumi` command) | `cli/node-version.env` (the official build, checked by checksum). On Linux and Windows, the pinned nixpkgs' `nodejs` |
 | Shared VM | Linux kernel 6.12.115 (`macOS/Container/kernel.nix`; SELinux and io_uring disabled, unprivileged BPF off) + a read-only rootfs (erofs, `macOS/Container/vm-boot.nix`; a boot disk with only Nix from nixpkgs, published at gen740/tsugumi-vm). Tsugumi itself is built inside the VM from the nixpkgs of the same flake.lock (`macOS/Container/vm-system.nix`) |
 | Builder for the VM image | `docker.io/nixos/nix:2.31.2` running on Apple container 0.6.0 (only for building the boot disk during development; not used when the app runs) |

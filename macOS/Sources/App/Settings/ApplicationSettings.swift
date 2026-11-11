@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiLauncher
 
 /// App-wide settings; the category on the left switches the content.

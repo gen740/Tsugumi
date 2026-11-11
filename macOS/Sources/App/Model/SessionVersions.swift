@@ -1,5 +1,5 @@
 import Foundation
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// "Version summaries": a small model writes what a version changed from its diff, only

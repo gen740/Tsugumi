@@ -12,6 +12,7 @@ let package = Package(
   name: "Tsugumi",
   platforms: [.macOS("26.0")],
   products: [
+    .library(name: "TsugumiAgentClient", targets: ["TsugumiAgentClient"]),
     .executable(name: "Tsugumi", targets: ["TsugumiApp"]),
     .executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"]),
     .executable(name: "tsugumi-vmhost", targets: ["TsugumiVMHost"]),
@@ -21,7 +22,6 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
-    .package(path: "../agent"),
     // Editor syntax colors (UI only; Cards and SDKs never use these).
     .package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", exact: "0.25.0"),
     .package(url: "https://github.com/tree-sitter/tree-sitter-c", exact: "0.23.6"),
@@ -40,6 +40,12 @@ let package = Package(
     .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
   ],
   targets: [
+    // macOS adapters for the core-owned Agent service.
+    .target(
+      name: "TsugumiAgentClient",
+      dependencies: [.product(name: "FlatBuffers", package: "flatbuffers")],
+      path: "Sources/AgentClient",
+      swiftSettings: [.swiftLanguageMode(.v5)]),
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
     .plugin(name: "FlatcPlugin", capability: .buildTool(), path: "Plugins/FlatcPlugin"),
     .systemLibrary(name: "TsugumiClientC", path: "Sources/ClientC"),
@@ -105,7 +111,7 @@ let package = Package(
       name: "TsugumiApp",
       dependencies: [
         "TsugumiRPC", "TsugumiLauncher", "TsugumiRenderer",
-        .product(name: "TsugumiAgent", package: "agent"),
+        "TsugumiAgentClient",
         .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
         .product(name: "TreeSitterC", package: "tree-sitter-c"),
         .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
@@ -128,7 +134,7 @@ let package = Package(
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
-      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", .product(name: "TsugumiAgent", package: "agent")],
+      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient"],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Drawing benchmarks: TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks.

@@ -1,7 +1,7 @@
 # Security and isolation
 
 This document describes Tsugumi's four trust boundaries (what is isolated from what) and how secrets (the API keys of outside models and the RPC's authentication token) are handled.
-Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `macOS/Sources/Launcher/`, `agent/Sources/TsugumiAgent/Provider.swift`).
+Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`).
 
 ## Summary
 
@@ -16,18 +16,7 @@ Inside it, Tsugumi takes on the following:
 - **The permissions written are visible.** Widened permissions are in readable files, `_card.json` and `tsugumi.json`, and appear on the Card's icons on the Canvas and among the Experimental items of the Card's settings. The `.tsugumi/` of a project from someone else is inspected before use.
 - **The Mac and other projects are protected.** In the app (the shared VM), even if a project could not be trusted, its files and processes reach only that project and the folders explicitly shared with it (§2, §3).
 
-The two tables below list what is protected inside this boundary, and what lies outside it. The latter are not loopholes: they are where the line of Tsugumi's guarantees is drawn, listed with the reasons. Details are in each section.
-
-| Protected | Where to check |
-| --- | --- |
-| By default a Card cannot reach the network and cannot see the project's definitions, the authentication token or other Cards' work areas (§4) | [test_cards_container.py](../tests/python/test_cards_container.py), [test_workers.py](../tests/python/test_workers.py) (`test_network_is_off_unless_the_card_allows_it`), and on a Mac [test_host_sandbox.py](../tests/python/test_host_sandbox.py) |
-| Projects are separated by uid, namespaces and cgroup (§3) | [test_shared_vm.py](../tests/python/test_shared_vm.py) |
-| Of the Mac's files, the VM sees only the open projects and folders explicitly specified (§2) | [test_workers.py](../tests/python/test_workers.py) (`test_mac_folders_are_read_only_unless_written`) |
-| The RPC listens only on `127.0.0.1`, disconnects without the token and cannot be reached from a browser's page (§6) | [test_transport.py](../tests/python/test_transport.py), [test_frame_fuzz.py](../tests/python/test_frame_fuzz.py) |
-| A save in which the Agent widens a Card's permissions (network, no isolation, Mac folders, external Nix sources) does not go through without the user's approval (§8) | [test_permissions.py](../tests/python/test_permissions.py) |
-| Web search is off by default; while off, the model is not shown the tool and it is not put in requests (§8) | [WebSearchTests.swift](../macOS/CoreTests/Tests/CoreTests/WebSearchTests.swift), [contract.ts](../web/server/contract.ts) |
-| API keys and tokens are kept in the Keychain (a 0600 file for the Web UI's ChatGPT and on Linux) and never given to `tsugumid`, the VM or Cards (§8) | [agent/Sources/TsugumiAgent/Provider.swift](../agent/Sources/TsugumiAgent/Provider.swift), [test_release.py](../tests/python/test_release.py) (the app and the Web UI use the same Keychain item) |
-| The `.tsugumi/` of a project from someone else is inspected before use | [test_untrusted_project.py](../tests/python/test_untrusted_project.py) |
+The table below lists the limits of these guarantees. Details are in each section.
 
 | Outside the guarantees | Why | Details |
 | --- | --- | --- |
@@ -171,7 +160,7 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 - `restrictEval = true`: no files can be read outside the allowed paths (the Card's source, the SDK and the upstream definitions it may refer to).
 - `enableImportFromDerivation = false`: running builds or commands during evaluation of a Nix expression (IFD) is forbidden.
 - `allowedUris = ["https://github.com/NixOS/nixpkgs/archive/"]`: the URLs that can be fetched over the network are limited to the official nixpkgs archives (`NIX_PATH` is empty too). The Cards' evaluator has no `builtins.getFlake`.
-- Flakes a project declares in `nixSources` of `tsugumi.json` are evaluated by `tsugumid` with an evaluator separate from the Cards' ("External Nix sources" in [Features](features.md), [test_nix_sources.py](../tests/python/test_nix_sources.py)). This evaluator is the same pure evaluation as `nix build`, with IFD forbidden. Declarations are limited to ones pinned by commit and hash. Since they are evaluated outside the Cards' isolation, declaring one is a decision to trust the flake's expressions. Only the packages' derivations reach the Card.
+- Flakes a project declares in `nixSources` of `tsugumi.json` are evaluated by `tsugumid` with an evaluator separate from the Cards' ("External Nix sources" in [Features](features.md), [test_nix_sources.py](../tests/core/integration/test_nix_sources.py)). This evaluator is the same pure evaluation as `nix build`, with IFD forbidden. Declarations are limited to ones pinned by commit and hash. Since they are evaluated outside the Cards' isolation, declaring one is a decision to trust the flake's expressions. Only the packages' derivations reach the Card.
 - Builds run in `nix-daemon`'s sandbox (`sandbox = true`, `build-users-group = nixbld`), and with `trusted-users = root` only, a project's uid cannot rewrite substituters or Nix settings.
 - The binary cache is fetched only from `https://cache.nixos.org`, with its signing key pinned.
 - **Fixed-output derivations (`fetchurl` and the like, whose content is pinned by hash) can communicate outside at build time.** That is how Nix works, and it is separate from a Card's `network` setting (the `default.nix` of a `network: false` Card can still fetch data). What is fetched is discarded unless it matches the hash, but the request to the source itself (including any values in the URL) goes out.
@@ -213,7 +202,7 @@ A mechanism that stops an RPC client (the Agent included) from having `tsugumid`
 
 ## 8. The model's API keys (Agent)
 
-- LLM providers' API keys are kept in the user's **login keychain** (the macOS Keychain) (`agent/Sources/TsugumiAgent/Provider.swift`).
+- LLM providers' API keys are kept in the user's **login keychain** (the macOS Keychain) (`macOS/Sources/AgentClient/Provider.swift`).
   - The service name is `app.tsugumi.agent` and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web UI's server use the same item, so a key registered in either works in both.
   - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
   - An item's access list trusts only the program that saved it. When another program (the `security` command included) tries to read a key the app saved, macOS asks the user. An app built with an ad hoc signature asks once on the first read after each rebuild (it does not if signed with `TSUGUMI_CODESIGN_IDENTITY`; "Signing development builds" in [Development](Development.md)).
@@ -282,7 +271,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - The approval is sent in a field the Agent's runtime fills (`approved_permissions`), which the model cannot set.
   - If not allowed, nothing is saved, and the Agent is told to explain the reason to the user.
   - When the user changes it themselves in the Card's settings, nothing is asked. A Card on the Canvas shows the permissions it has as icons.
-- **The Agent can write a Card's comments too.** This is not refused, but `tsugumid` records who wrote, changed and resolved each comment from the save's `origin`, so the model cannot pose as the user's comment (`core/src/comments.cc`, [test_card_comments.py](../tests/python/test_card_comments.py)). Saves that follow comments go through the same approval as above.
+- **The Agent can write a Card's comments too.** This is not refused, but `tsugumid` records who wrote, changed and resolved each comment from the save's `origin`, so the model cannot pose as the user's comment (`core/src/comments.cc`, [test_card_comments.py](../tests/core/test_card_comments.py)). Saves that follow comments go through the same approval as above.
 - **The Claude Code plugin** ([Using it from Claude Code](claude-code.md)) operates only through the Web UI's server.
   - The server runs the same tools as the chat's Agent, with the same checks. A save that widens a Card's permissions waits for the user's approval on the Web UI's page (and is not saved if no page is open). Reading folders attached to the chat is not provided.
   - The plugin's MCP server finds the server through `server.json`, which the server writes in the data folder (the port and a per-start key for agents; 0600, deleted on exit).

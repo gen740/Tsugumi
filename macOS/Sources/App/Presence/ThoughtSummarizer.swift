@@ -1,5 +1,5 @@
 import Foundation
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// "Draw thoughts": what the Agent is thinking, in one short line for the
 /// tsugumi's bubble. A small model reads the Agent's recent words and tool

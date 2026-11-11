@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. Accounts
 /// (registrations) and their tokens stay in the login keychain (the web UI's

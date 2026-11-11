@@ -1,5 +1,5 @@
 import Foundation
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// What Tsugumi says without a model connection (agent/Shared/guide-script.json;

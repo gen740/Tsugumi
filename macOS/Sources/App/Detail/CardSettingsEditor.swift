@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// Local working copy of one Card's settings (its `_card.json`), metadata

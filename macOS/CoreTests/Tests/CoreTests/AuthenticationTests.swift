@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import Testing
-import TsugumiAgent
+import TsugumiAgentClient
 
 /// The native sign-in flow owns the browser callback and Keychain. Model
 /// execution and credential refresh remain behind the public core socket.

@@ -1,4 +1,4 @@
-"""Writes agent/Sources/TsugumiAgent/Shared.swift from the files of this
+"""Writes macOS/Sources/AgentClient/Shared.swift from the files of this
 folder, which the web Agent imports as they are: the system prompts (the Agent's and the guide's), the RPC
 requests offered as tools, the Agent's own texts and the guide's script without a
 model connection. It also writes the list of
@@ -11,7 +11,7 @@ import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-OUT = HERE.parent / "Sources" / "TsugumiAgent" / "Shared.swift"
+OUT = HERE.parents[1] / "macOS" / "Sources" / "AgentClient" / "Shared.swift"
 SDK = HERE.parents[1] / "sdk" / "python" / "tsugumi" / "__init__.py"
 PROMPT = HERE / "system-prompt.md"
 # The list stands in the system prompt between these two lines.

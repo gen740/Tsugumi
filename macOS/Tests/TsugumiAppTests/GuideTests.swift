@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import TsugumiApp
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 

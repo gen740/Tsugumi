@@ -1,7 +1,7 @@
 import AppKit
 import FlatBuffers
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// Token classes the editor colors.

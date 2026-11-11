@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TsugumiAgent
+import TsugumiAgentClient
 import TsugumiRPC
 
 /// Chat: session list or the conversation (answers, progress, input, model
