@@ -212,7 +212,7 @@ extension ProjectSession {
     return CardNodeData(
       title: title, kind: kind,
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
-      summary: summary, inputs: ports.inputs, outputs: outputs ?? ports.outputs,
+      summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
       result: displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
@@ -232,6 +232,12 @@ extension ProjectSession {
   func placedPosition(_ k: CardKey) -> CGPoint {
     let p = position(k), prefs = AppPreferences.shared
     return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
+  }
+
+  private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
+    guard [.code, .draft, .input, .logger, .subgraph].contains(kind(k)) else { return ports }
+    let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []
+    return orderedPorts(ports, saved: saved)
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

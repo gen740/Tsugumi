@@ -31,6 +31,9 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '配線の交差を減らす': 'Untangle Wires',
+    '配線の交差を減らす（Card の位置は保持）': 'Untangle wires (keep Card positions)',
+
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

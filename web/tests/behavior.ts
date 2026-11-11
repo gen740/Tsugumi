@@ -66,3 +66,5 @@ await import("./perchScale")
 await import("./guideScript")
 await import("./demoReplay")
 await import("./evidence")
+
+await import('./untangle')

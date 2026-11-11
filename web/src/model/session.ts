@@ -11,6 +11,7 @@ import {
   snapToGrid,
 } from './canvasKit'
 import { arrangeCards } from './arrange'
+import { orderedPorts, PortOrder, untanglePorts } from './untangle'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
@@ -2991,6 +2992,7 @@ export class ProjectSession extends Observable {
         // The bars of a Card in Card go back to following the Cards.
         l.set('boundary', undefined)
       })
+      x.applyPortOrders(scope, x.untangledOrders(scope))
     })
   }
 
@@ -3374,7 +3376,7 @@ auto run(Card::Input& input) -> Card::Output {
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
-      inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
@@ -3392,6 +3394,77 @@ auto run(Card::Input& input) -> Card::Output {
   placedPosition(k: CardKey): Pt {
     const p = this.position(k)
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
+  }
+
+  private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
+    if (!['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k))) return ports
+    const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
+    return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
+  }
+
+  /** Keep the layout while reducing crossings; one undo restores every port. */
+  untangle(scope: string[]) {
+    const orders = this.untangledOrders(scope)
+    if (orders.length) this.edit(s => s.applyPortOrders(scope, orders))
+  }
+
+  private untangledOrders(scope: string[]): PortOrder[] {
+    const ids = this.cards(scope).flatMap(c => { const id = str(get(c, 'id')); return id ? [id] : [] })
+    const cards = ids.map(id => {
+      const k = key([...scope, id]), g = this.geometry(k)
+      const ports = (names: string[], output: boolean) => names.map(name => ({ name, ...g.port(name, output) }))
+      return { id, ...this.placedPosition(k), ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true),
+        movable: ['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k)) }
+    })
+    const wires = this.connections(scope).flatMap(c => {
+      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
+      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+    })
+    // Boundary bars are fixed nodes, so reordering an inner port also accounts
+    // for its outer wire. Use the same positions as the canvas boundary bars.
+    if (scope.length) {
+      const boundary = this.boundary(key(scope))
+      const entries = (side: string): [string, J][] => { const v = get(boundary, side); return isObj(v) ? v.entries() : [] }
+      const ins = entries('inputs'), outs = entries('outputs')
+      if (ins.length || outs.length) {
+        const left = cards.length ? Math.min(...cards.map(c => c.x)) : 0, top = cards.length ? Math.min(...cards.map(c => c.y)) : 0
+        const right = cards.length ? Math.max(...cards.map(c => c.x + c.width)) : 240, bottom = cards.length ? Math.max(...cards.map(c => c.y + c.height)) : 120
+        const width = Math.max(right - left, Math.max(ins.length, outs.length) * 110 + 40), x = (left + right - width) / 2
+        for (const output of [false, true]) {
+          const side = output ? 'outputs' : 'inputs', list = output ? outs : ins, id = '\u0000' + side
+          const at = this.boundaryPosition(scope, side) ?? { x, y: output ? bottom + 56 : top - 96 }
+          const ports = list.map(([name], i) => ({ name, x: width * (i + 1) / (list.length + 1), y: output ? 0 : 40 }))
+          cards.push({ id, ...at, width, height: 40, movable: false, inputs: output ? ports : [], outputs: output ? [] : ports })
+          for (const [name, endpoint] of list) {
+            const card = str(get(endpoint, 'card')), port = str(get(endpoint, 'port'))
+            if (card && port) wires.push(output ? { from: card, fromPort: port, to: id, toPort: name } : { from: id, fromPort: name, to: card, toPort: port })
+          }
+        }
+      }
+    }
+    const frames = ids.map(id => key([...scope, id])).filter(k => (this.displays.has(k) || this.displayFrame(k) !== undefined) && bool(get(this.displayFrame(k), 'hidden')) !== true).map(k => {
+      const at = this.placedPosition(k), g = this.geometry(k), frame = this.displayFrame(k)
+      const x = dbl(get(frame, 'x')), y = dbl(get(frame, 'y'))
+      return { x: x ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
+        y: y ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
+        width: dbl(get(frame, 'width')) ?? 320, height: dbl(get(frame, 'height')) ?? 170 }
+    })
+    return untanglePorts(this.flow, cards, wires, frames)
+  }
+
+  private applyPortOrders(scope: string[], orders: PortOrder[]) {
+    for (const order of orders) {
+      const k = key([...scope, order.id])
+      const at = this.position(k)
+      this.updateLayout(scope, l => {
+        let cards = l.get('cards')
+        if (!isObj(cards)) { cards = obj(); l.set('cards', cards) }
+        let entry = (cards as JObj).get(this.layoutKey(k))
+        if (!isObj(entry)) { entry = obj([['x', real(at.x)], ['y', real(at.y)]]); (cards as JObj).set(this.layoutKey(k), entry) }
+        ;(entry as JObj).set('inputOrder', order.inputs)
+        ;(entry as JObj).set('outputOrder', order.outputs)
+      })
+    }
   }
 
   geometry(k: CardKey): CardGeometry {

@@ -190,6 +190,8 @@ struct Position {
   Opt<"x", Number> x;
   Opt<"y", Number> y;
   Opt<"collapsed", v::Bool> collapsed;  // display only; the Card still runs
+  Opt<"inputOrder", v::Array<v::String>> input_order;
+  Opt<"outputOrder", v::Array<v::String>> output_order;  // visual order by name; connections stay unchanged
 };
 
 struct StickyNote {

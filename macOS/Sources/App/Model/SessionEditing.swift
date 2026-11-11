@@ -1249,6 +1249,67 @@ extension ProjectSession {
         // The bars of a Card in Card go back to following the Cards.
         l["boundary"] = nil
       }
+      s.applyPortOrders(scope, s.untangledOrders(scope))
+    }
+  }
+
+  /// Reduce crossings while keeping every Card in place, in one undo step.
+  func untangle(_ scope: [String]) {
+    let orders = untangledOrders(scope)
+    if !orders.isEmpty { edit { $0.applyPortOrders(scope, orders) } }
+  }
+
+  private func untangledOrders(_ scope: [String]) -> [PortOrder] {
+    let ids = cards(in: scope).compactMap { $0["id"]?.string }
+    var nodes = ids.map { id in
+      let k = key(scope + [id]), g = geometry(k), at = placedPosition(k)
+      func ports(_ names: [String], output: Bool) -> [ArrangePort] {
+        names.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: p.x, y: p.y) }
+      }
+      return UntangleCard(card: ArrangeCard(id: id, width: g.size.width, height: g.size.height,
+        inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true)), x: at.x, y: at.y,
+        movable: [.code, .draft, .input, .logger, .subgraph].contains(kind(k)))
+    }
+    var wires: [ArrangeWire] = connections(in: scope).compactMap { c in
+      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
+            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      return ArrangeWire(from: f, fromPort: fp, to: t, toPort: tp)
+    }
+    // Fixed boundary nodes account for outer wires when inner ports move.
+    if !scope.isEmpty, let boundary = boundary(key(scope)) {
+      let ins = boundary["inputs"]?.object ?? [], outs = boundary["outputs"]?.object ?? []
+      if !ins.isEmpty || !outs.isEmpty {
+        var box = nodes.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.card.width, height: $1.card.height)) }
+        if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
+        let width = max(box.width, Double(max(ins.count, outs.count)) * 110 + 40), x = box.midX - width / 2
+        for output in [false, true] {
+          let side = output ? "outputs" : "inputs", list = output ? outs : ins, id = "\u{0}" + side
+          let at = boundaryPosition(scope, side) ?? CGPoint(x: x, y: output ? box.maxY + 56 : box.minY - 96)
+          let ports = list.enumerated().map { i, e in ArrangePort(name: e.0, x: width * Double(i + 1) / Double(list.count + 1), y: output ? 0 : 40) }
+          nodes.append(UntangleCard(card: ArrangeCard(id: id, width: width, height: 40, inputs: output ? ports : [], outputs: output ? [] : ports), x: at.x, y: at.y, movable: false))
+          for (name, endpoint) in list {
+            guard let card = endpoint["card"]?.string, let port = endpoint["port"]?.string else { continue }
+            wires.append(output ? ArrangeWire(from: card, fromPort: port, to: id, toPort: name) : ArrangeWire(from: id, fromPort: name, to: card, toPort: port))
+          }
+        }
+      }
+    }
+    let frames = framedCards(in: scope).map { displayRect($0, origin: placedPosition($0)) }
+    return untanglePorts(flow: flow, cards: nodes, wires: wires, extra: frames)
+  }
+
+  private func applyPortOrders(_ scope: [String], _ orders: [PortOrder]) {
+    for order in orders {
+      let k = key(scope + [order.id])
+      let at = position(k)
+      updateLayout(of: scope) { l in
+        var cards = l["cards"] ?? .object([])
+        var entry = cards[layoutKey(k)] ?? .object([("x", .real(at.x)), ("y", .real(at.y))])
+        entry["inputOrder"] = .array(order.inputs.map(JSONValue.string))
+        entry["outputOrder"] = .array(order.outputs.map(JSONValue.string))
+        cards[layoutKey(k)] = entry
+        l["cards"] = cards
+      }
     }
   }
 

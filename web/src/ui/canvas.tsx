@@ -467,6 +467,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
       { label: L('整列'), action: () => session.arrange(scope) },
+      { label: L('配線の交差を減らす'), action: () => session.untangle(scope) },
       tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
   }

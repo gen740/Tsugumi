@@ -139,6 +139,8 @@ struct CanvasWorkspace: View {
       // menu bar, where they are named; small icons for them read as nothing.
       Button { session.arrange(tab.scope) } label: { Image(systemName: "rectangle.grid.2x2") }
         .help("整列（配置だけを変更）")
+      Button { session.untangle(tab.scope) } label: { Image(systemName: "arrow.triangle.swap") }
+        .help("配線の交差を減らす（Card の位置は保持）")
       Divider().frame(height: 16)
       Toggle(isOn: Binding(get: { prefs.showGrid }, set: { prefs.showGrid = $0 })) { Image(systemName: "grid") }
         .toggleStyle(.button)
