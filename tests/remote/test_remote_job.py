@@ -125,7 +125,9 @@ class SubmitTests(JournalTestCase):
 
     def test_public_state_shape(self):
         job_id, _, fp = self.submit_job()
-        self.assertEqual(self.j.status(job_id), {
+        state = self.j.status(job_id)
+        self.assertIsInstance(state.pop("deadline"), float)
+        self.assertEqual(state, {
             "state": "queued", "fingerprint": fp, "claimant": None,
             "result_sha256": None, "error": None,
             "cancel_requested": False, "outcome_sha256": None,

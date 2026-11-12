@@ -17,7 +17,7 @@ openssl rand -hex 32 > "$HOME/.config/tsugumi/remote-token"
 
 The daemon runs in the foreground and listens on `http://127.0.0.1:8765` by default. The default endpoint works when the Tsugumi host and the execution daemon can reach the same loopback interface. A connection across machines uses HTTPS. Choose the listening address and port with `--host` and `--port`, and supply a certificate and private key with `--tls-cert` and `--tls-key`. The Tsugumi host verifies the certificate for the registered endpoint. A tunnel that terminates on loopback can also carry the loopback connection.
 
-The daemon accepts up to eight active jobs by default. Set `--max-jobs` on the execution host to change that limit. Additional submissions remain in the daemon's durable queue. Restart the daemon with the same state directory to continue the queue and adopt surviving jobs.
+The daemon accepts up to eight active jobs by default. Set `--max-jobs` on the execution host to change that limit. Additional submissions remain in the daemon's durable queue. The run timeout begins when the daemon first accepts the submission and includes time waiting for a slot, building and running. Restart the daemon with the same state directory to continue the queue and adopt surviving jobs.
 
 To offer hard CPU and memory limits, pass `--cgroup-root` with a private cgroup v2 subtree delegated to the daemon's user and with the CPU and memory controllers enabled. A job that requests limits gets its own child cgroup. The daemon verifies the configured limits before running that job.
 

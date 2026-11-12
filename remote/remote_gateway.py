@@ -694,7 +694,8 @@ class Scheduler:
                 return "active"
             state = project.journal.status(job_id)
             if state is not None and state["state"] == "queued":
-                return "pending"
+                if time.time() < state["deadline"] or not project.journal.expire_queued(job_id):
+                    return "pending"
             if state is not None and state["state"] == "running":
                 self._lost(project, job_id, state)
             # Terminal and no supervisor: nothing can hold this lock again.
@@ -1213,8 +1214,9 @@ def supervise(root: str, job_id: str, worker: str, unshare: str, lock_fd: int,
     try:
         spec = validate_spec(journal.spec(job_id))
         timeout = spec["timeout_seconds"]
-        deadline = time.monotonic() + timeout
-        _write_identity(project, job_id, time.time() + timeout)
+        accepted_deadline = journal.status(job_id)["deadline"]
+        deadline = time.monotonic() + max(0.0, accepted_deadline - time.time())
+        _write_identity(project, job_id, accepted_deadline)
 
         def should_stop() -> Optional[str]:
             if time.monotonic() >= deadline:

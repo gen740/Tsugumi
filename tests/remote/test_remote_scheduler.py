@@ -86,6 +86,26 @@ class SchedulerTests(DaemonCase):
         daemon.scheduler.tick()
         self.assertEqual(driver.jobs(), [starting, pending])
 
+    def test_queued_deadline_survives_restart_and_prevents_worker_launch(self):
+        job, delayed_claim = "0" * 64, "a" * 64
+        spec = self.spec(timeout=1)
+        with patch("remote_job.time.time", return_value=100.0):
+            self.assertEqual(self.submit(job, spec)["state"], "queued")
+            self.assertEqual(self.submit(delayed_claim, spec)["state"], "queued")
+        driver = FakeDriver()
+        self.addCleanup(driver.close)
+        daemon = make_daemon(self.root, driver)
+        daemon.scheduler.recover()
+        with patch("remote_job.time.time", return_value=102.0):
+            journal = self.journal(daemon=daemon)
+            self.assertFalse(journal.claim(delayed_claim, "too-late"))
+            daemon.scheduler.tick()
+            self.assertEqual(self.submit(job, spec, daemon=daemon)["state"], "failed")
+        self.assertEqual(driver.spawned, [])
+        state = self.journal(daemon=daemon).status(job)
+        self.assertEqual(state["deadline"], 101.0)
+        self.assertIn("timed out after waiting", state["error"])
+
     def test_supervisor_that_never_claims_fails_the_job(self):
         job = "8" * 64
         self.queue(job)

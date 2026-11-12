@@ -24,6 +24,7 @@ import re
 import secrets
 import struct
 import tempfile
+import time
 from pathlib import Path
 from typing import BinaryIO, Iterator, Optional
 
@@ -284,6 +285,7 @@ def _new_state(fingerprint: str, state: str) -> dict:
         "claimant": None,
         "result_sha256": None,
         "error": None,
+        "deadline": None,
         # Internal: cancellation requested while running.
         "cancel_requested": False,
         # Internal: digest of the committed terminal request, for idempotency.
@@ -445,14 +447,28 @@ class Journal:
             self._ensure_dir(job_dir)
             _write_atomic(job_dir / "spec", spec)  # spec before state
             state = _new_state(fingerprint, "queued")
+            state["deadline"] = time.time() + parsed["timeout_seconds"]
             self._write_state(job_dir, state)
             return state
+
+    def _expire_queued(self, job_dir: Path, state: Optional[dict]) -> bool:
+        if state is None or state["state"] != "queued" or time.time() < state["deadline"]:
+            return False
+        state.update(state="failed", error="timed out after waiting for an execution slot")
+        self._write_state(job_dir, state)
+        return True
+
+    def expire_queued(self, job_id: str) -> bool:
+        with self._locked(job_id) as job_dir:
+            return self._expire_queued(job_dir, self._read_state(job_dir))
 
     def claim(self, job_id: str, claimant: str) -> bool:
         _check_claimant(claimant)
         with self._locked(job_id) as job_dir:
             state = self._read_state(job_dir)
             if state is None or state["state"] != "queued":
+                return False
+            if self._expire_queued(job_dir, state):
                 return False
             state.update(state="running", claimant=claimant)
             self._write_state(job_dir, state)
