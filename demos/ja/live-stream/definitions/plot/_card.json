@@ -12,5 +12,6 @@
       "type": "uint64",
       "data": 60
     }
-  ]
+  ],
+  "reuseWorker": true
 }
