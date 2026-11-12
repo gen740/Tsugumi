@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-flatbuffers = "=25.12.19"
+flatbuffers = { path = "flatbuffers" }

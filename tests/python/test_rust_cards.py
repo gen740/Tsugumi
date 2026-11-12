@@ -1,5 +1,6 @@
 """Typed Rust Cards use the same worker, sandbox and output validation as C++."""
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
 from test_language_cards import project, write_project as write_language_project
 from tsugumi_client import path, text
+from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 NIX = '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; }; in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }'
@@ -29,7 +32,6 @@ def rust(source, **card):
     template = ROOT / 'sdk/rust/template'
     return {'card': {'language': 'rust', **card}, 'nix': NIX, 'src': {
         'Cargo.toml': (template / 'Cargo.toml').read_text(),
-        'Cargo.lock': (template / 'Cargo.lock').read_text(),
         'src/lib.rs': source,
     }}
 
@@ -164,7 +166,7 @@ tsugumi::export!(run);''', timeoutSeconds=2, params=[{'name':'slow','type':'bool
     c=connect()
     run_id,status=run_and_wait(c,'start',timeout=1800)
     assert status.state == RunState.failed
-    assert c.call('RunRecordRequest',runId=run_id,card=path('slow')).status.failure.kind == 14
+    assert c.call('RunRecordRequest',runId=run_id,card=path('slow')).status.failure.kind == FailureKind.timeout
     from test_demos import edit_card, set_param
     edit_card(None,c,'slow',lambda card:set_param(card,'slow',False))
     assert text(shown(c,succeeded(c),'slow').value.text)=='recovered'
@@ -256,3 +258,59 @@ def test_ui_scaffold_is_an_executable_card(project):
     c=connect()
     run_id=succeeded(c)
     assert text(shown(c,run_id,'hello').value.text)=='hello'
+
+VENDOR_HASH = "sha256-GgPGaed/lz1W3mE8NjW6M/8VldZfZZ4YSw0u0cz5hjM="
+
+
+def card_with_registry_crate(arguments):
+    card = rust("""use std::net::TcpStream;
+use std::time::Duration;
+use tsugumi::{Context, Input, Output, Result};
+
+fn run(ctx: &Context<'_>, _: Input<'_>) -> Result<Output> {
+    let target = "1.1.1.1:443".parse().unwrap();
+    assert!(TcpStream::connect_timeout(&target, Duration::from_secs(3)).is_err());
+    ctx.display_text(itoa::Buffer::new().format(42))?;
+    Ok(Output::default())
+}
+tsugumi::export!(run);""")
+    card['src']['Cargo.toml'] += '\nitoa = "=1.0.15"\n'
+    lock = Path(__file__).parent / 'fixtures' / 'rust' / 'Cargo.lock'
+    card['src']['Cargo.lock'] = lock.read_text()
+    card['nix'] = NIX.replace('src = ./src;', f'src = ./src; {arguments}')
+    return card
+
+
+def test_rust_crates_are_pinned_and_the_card_runs_offline(project):
+    root, connect = project
+    card = card_with_registry_crate(f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";')
+    write_project(root, {'rust': card}, [])
+    c = connect()
+    assert text(shown(c, succeeded(c), 'rust').value.text) == '42'
+
+
+@pytest.mark.parametrize(('arguments', 'stale', 'message'), [
+    ('lock = ./src/Cargo.lock;', False, 'vendor directory `hash` together'),
+    ('lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;', False, 'hash mismatch'),
+    (f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";', True, 'itoa = "=1.0.14"'),
+])
+def test_rust_rejects_invalid_pins(project, arguments, stale, message):
+    root, connect = project
+    card = card_with_registry_crate(arguments)
+    if stale:
+        card['src']['Cargo.toml'] = card['src']['Cargo.toml'].replace('1.0.15', '1.0.14')
+    write_project(root, {'rust': card}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert message in text(status.failure.diagnostic) + log
+
+
+@pytest.mark.parametrize('language', ['ja', 'en'])
+def test_bundled_rust_pipeline_runs_in_the_sandbox(project, language):
+    root, connect = project
+    shutil.copytree(ROOT / 'demos' / language / 'rust-pipeline', root, dirs_exist_ok=True)
+    c = connect()
+    run_id = succeeded(c)
+    assert text(shown(c, run_id, 'check').value.text) == '21'

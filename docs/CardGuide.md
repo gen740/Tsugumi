@@ -324,8 +324,8 @@ It runs with the standard library alone. Packages from the General registry are 
 
 
 Use `"language": "rust"`. Start from `demos/en/rust-pipeline/definitions/scale`
-(including its `src/Cargo.lock`). The UI's **Rust step**
-creates the same pinned Cargo scaffold. `default.nix`:
+for a Card using only the standard library and SDK. The UI's **Rust step**
+creates the same scaffold. `default.nix`:
 
 ```nix
 { pkgs, inputs, params }:
@@ -334,17 +334,27 @@ in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
 ```
 
 `src/Cargo.toml` declares a `cdylib` and `tsugumi = { path = "tsugumi" }`.
-That path is reserved: Nix generates the crate from this Card's contract at build
-time. Commit `Cargo.lock`; registry checksums and the project's fixed nixpkgs
-pin dependencies. After editing dependencies, run `python3 <sdk>/rust/update-lock.py <card>/src`
-with Cargo on `PATH` (the SDK is `sdk/` in a checkout or
-`share/tsugumi/sdk/` in an installation). It resolves in a temporary copy and
-writes only `Cargo.lock`; do not commit a generated `src/tsugumi` directory.
-The helper supports `--offline` for an already populated Cargo cache.
-Additional native libraries go in `rustCard.buildInputs`; build-time tools such
-as `pkg-config` go in `nativeBuildInputs`;
-git crates also need the `cargoLock.outputHashes` accepted by nixpkgs.
-There is no Cargo/network operation when a Card runs.
+That path is reserved for the crate generated from the Card's contract. The
+SDK includes the Rust runtime source of the same FlatBuffers version as
+`flatc`. A Card without a lock builds offline using the SDK's own crates.
+
+To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
+use the project shell with Cargo on PATH. Build the FlatBuffers source from
+the Card's nixpkgs pin and pass it to the lock helper. For a GitHub nixpkgs
+pin, for example:
+
+```sh
+flatbuffers_src=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/<revision>#flatbuffers.src")
+python3 <sdk>/rust/update-lock.py <card>/src --flatbuffers-source "$flatbuffers_src"
+```
+
+The helper resolves in a temporary copy and writes only `src/Cargo.lock`.
+Reload the project and name it in `rustCard` with
+`lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;`. Run once and copy the
+`got: sha256-…` value from the build log into `hash`. This pins the whole
+vendored directory. Repeat when updating dependencies. Native libraries go in
+`buildInputs` and build tools such as pkg-config in `nativeBuildInputs`. The
+Card never fetches crates when it runs.
 
 ```rust
 use tsugumi::{Context, Input, Output, Result};

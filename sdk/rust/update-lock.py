@@ -8,6 +8,8 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('source', type=Path, help='the Card src directory containing Cargo.toml')
+parser.add_argument('--flatbuffers-source', type=Path, required=True,
+                    help='FlatBuffers source tree from the same nixpkgs pin as the Card')
 parser.add_argument('--offline', action='store_true')
 args = parser.parse_args()
 source = args.source.resolve()
@@ -18,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='tsugumi-cargo-') as tmp:
     generated = copy / 'tsugumi'
     (generated / 'src').mkdir(parents=True)
     shutil.copyfile(sdk / 'Cargo.toml', generated / 'Cargo.toml')
+    shutil.copytree(args.flatbuffers_source.resolve() / 'rust/flatbuffers', generated / 'flatbuffers')
     # Cargo resolves the SDK's dependencies without compiling its generated face.
     (generated / 'src/lib.rs').write_text('')
     subprocess.run(['cargo', 'generate-lockfile', *(['--offline'] if args.offline else [])], cwd=copy, check=True)

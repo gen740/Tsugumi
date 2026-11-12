@@ -162,13 +162,14 @@ custom payload's destructor cannot panic across C. The failed worker is then
 discarded. Native aborts and double panics remain worker crashes, isolated from
 the daemon.
 
-`rustCard` uses `buildRustPackage` and a committed Cargo.lock. Its generated
-local `tsugumi` dependency fixes the FlatBuffers crate to the version used by
-the project's default nixpkgs. The build vendors registry/Git dependencies and
-runs Cargo offline; a running Card never fetches crates. This builder accepts
-one Cargo package with a `cdylib`, not a workspace selection. Use `buildInputs`
-for linked libraries and `nativeBuildInputs` for build tools. The lock update
-helper resolves in a temporary source copy and leaves only Cargo.lock behind.
+`rustCard` uses the FlatBuffers Rust runtime from the same pinned source as
+flatc. For a Card without registry dependencies, a lock in the SDK pins its
+own supporting crates. For external crates, the Card's `lock` and `hash` pin
+a vendored directory built from Cargo.lock. Edits to Rust source reuse that
+directory. Cargo still recompiles the dependency code on a Card rebuild.
+The SDK builds a single package with a `cdylib`. `buildInputs` supplies
+native libraries and `nativeBuildInputs` supplies tools. The lock helper
+resolves in a temporary source copy and leaves only Cargo.lock behind.
 
 The UI scaffold's source is `sdk/rust/template/`; after changing it, run
 `python3 sdk/codegen/scaffold_rust.py` to update both Swift and TypeScript.

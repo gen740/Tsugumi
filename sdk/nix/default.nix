@@ -76,6 +76,7 @@ let
     pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
       mkdir -p $out/src $out/lib
       cp ${sdkRoot}/rust/Cargo.toml $out/Cargo.toml
+      cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers $out/flatbuffers
       cp ${sdkRoot}/rust/src/runtime.rs $out/src/runtime.rs
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --rust --gen-object-api -o $out/src ${dir}/$f.fbs
@@ -185,8 +186,8 @@ rec {
       '';
     };
 
-  # Cargo.lock pins every crate. The generated local dependency is named
-  # tsugumi; no registry or Git access is needed at run time.
+  # The SDK uses the FlatBuffers runtime source that comes with flatc. A
+  # Card that needs registry crates supplies its own lock and vendor hash.
   rustCard =
     {
       src,
@@ -194,36 +195,68 @@ rec {
       name ? "tsugumi-rust-card",
       buildInputs ? [ ],
       nativeBuildInputs ? [ ],
-      cargoLock ? {
-        lockFile = src + "/Cargo.lock";
-      },
+      lock ? null,
+      hash ? null,
     }:
     assert lib.assertMsg (sdk.rust != null) "rustCard: the SDK was made without \"rust\" in languages";
+    assert lib.assertMsg ((lock == null) == (hash == null))
+      "rustCard: give `lock = ./src/Cargo.lock;` and the vendor directory `hash` together for external crates";
     let
       manifest = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
       library = manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] manifest.package.name);
+      sdkCrates = pkgs.rustPlatform.importCargoLock { lockFile = sdkRoot + "/rust/sdk-crates.lock"; };
+      lockedCrates = pkgs.rustPlatform.importCargoLock { lockFile = lock; };
+      # Match the cached path to the lock that produced it, even if an old
+      # hash was left in the Card. Keep all output paths inside the archive.
+      vendor = if lock == null then sdkCrates else
+        pkgs.runCommand "tsugumi-rust-vendor-${builtins.substring 0 16 (builtins.hashFile "sha256" lock)}" {
+          outputHashMode = "recursive";
+          outputHashAlgo = "sha256";
+          outputHash = hash;
+        } ''
+          mkdir -p "$out"
+          cp -rL ${lockedCrates}/. "$out"
+        '';
+      target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+      lockFlag = lib.optionalString (lock != null) "--locked";
     in
-    pkgs.rustPlatform.buildRustPackage {
-      inherit
-        name
-        src
-        buildInputs
-        nativeBuildInputs
-        cargoLock
-        ;
+    pkgs.stdenv.mkDerivation {
+      inherit name src buildInputs;
+      nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ nativeBuildInputs;
+      dontConfigure = true;
       # A panic must unwind to the SDK's catch_unwind, never across C.
       CARGO_PROFILE_RELEASE_PANIC = "unwind";
+      doCheck = true;
       postPatch = ''
         if [ -e tsugumi ]; then
           echo "src/tsugumi is reserved for the generated Card SDK" >&2
           exit 1
         fi
         cp -r --no-preserve=mode ${sdk.rust} tsugumi
+        ${if lock == null then "rm -f Cargo.lock" else "install -m 0644 ${lock} Cargo.lock"}
+      '';
+      buildPhase = ''
+        runHook preBuild
+        export CARGO_HOME="$TMPDIR/cargo-home"
+        mkdir -p "$CARGO_HOME"
+        cat > "$CARGO_HOME/config.toml" <<'EOF'
+        [source.crates-io]
+        replace-with = "vendored-sources"
+        [source.vendored-sources]
+        directory = "${vendor}"
+        EOF
+        cargo build --offline ${lockFlag} --release --target ${target}
+        runHook postBuild
+      '';
+      checkPhase = ''
+        runHook preCheck
+        cargo test --offline ${lockFlag} --release --target ${target}
+        runHook postCheck
       '';
       installPhase = ''
         runHook preInstall
         mkdir -p $out/lib
-        cp target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
+        cp target/${target}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
         runHook postInstall
       '';
     };
