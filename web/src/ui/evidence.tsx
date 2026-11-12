@@ -3,14 +3,14 @@ import { L } from '../i18n'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { Evidence, evidenceExists, isEvidence, parseEvidence } from '../model/evidence'
-import { ProjectSession, key } from '../model/session'
+import { ProjectSession, cardState, key, recordedDisplay, runState } from '../model/session'
 import { WorkflowTab } from '../model/workspace'
 import { D, R, s, segs } from '../shared/rpc'
-import { cardState, runState } from '../model/session'
 import { Markdown } from './markdown'
 import { openWorkflowWindow } from './actions'
 import { describeValue } from '../shared/flatjson'
 import { Button, download } from './controls'
+import { DisplayContent } from './display'
 
 export const EvidenceContext = createContext<{ session: ProjectSession; tab?: WorkflowTab } | undefined>(undefined)
 const streamOf = (t: Evidence) => D.LogStream[t.stream ?? 'stdout']
@@ -96,7 +96,18 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       }
       if (t.card) {
         const r = await rpc.record(t.run!, t.card, t.invocation ?? null)
-        return <><h3>{t.card.join('/')} · #{String(r.record?.summary?.invocation ?? '')}</h3><p>{cardState((r.record?.summary ?? r.status!).state).label}</p><Markdown text={s((r.record?.summary ?? r.status)?.failure?.diagnostic)} />{r.record && <>{[[L('入力'), r.record.inputs], [L('出力'), r.record.outputs]].map(([label, values], i) => <section key={i}><h4>{label as string}</h4>{(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}</section>)}</>}</>
+        const record = r.record
+        const summary = record?.summary ?? r.status
+        const display = record?.display ? recordedDisplay(record.display) : undefined
+        return <>
+          <h3>{t.card.join('/')} · #{String(record?.summary?.invocation ?? t.invocation ?? '')}</h3>
+          {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
+          {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
+          {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
+            <h4>{label as string}</h4>
+            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
+          </section>)}
+        </>
       }
       const status = await rpc.call<R.RunStatusT>(R.RequestPayload.RunStatusRequest, Object.assign(new R.RunStatusRequestT(), { runId: t.run }))
       const page = await rpc.call<R.InvocationPageT>(R.RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId: t.run }))

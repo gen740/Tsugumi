@@ -295,6 +295,20 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 - A search appears in the chat as a row like other tools, so its terms and the URLs found can be followed. Sources the response cites appear as links under it. With the ChatGPT plan, only the cited sources appear (because `include` is not sent).
 - Only the chat's Agent can use it; helpers and the guide's thrush do not search.
 
+### Links to the evidence
+
+Links in chat can open the current Card and an exact saved result. Mac and Web resolve these addresses within the open project. Missing Cards, runs, invocations, logs and artifacts appear as unavailable text. An invocation link opens its recorded display and input/output values while the Canvas keeps showing the current result.
+
+| Markdown destination | Opens |
+| --- | --- |
+| `card:<id>` or `card:<outer>/<inner>` | The current Card on the Canvas |
+| `run:<UUID>` | The run and its Card records |
+| `run:<UUID>/<Card path>#<invocation>` | The cited invocation's saved result |
+| `log:<UUID>/<Card path>?invocation=<number>&stream=stderr&offset=<bytes>` | The log at that byte offset (`stdout`, `stderr`, `build`, or `journal`) |
+| `artifact:<UUID>?id=<artifact id>&path=<member>` | The saved artifact; omit `path` for the whole artifact |
+
+Use these as Markdown links, such as `[spectrum](card:spectrum)`. URL-encode the query values. A Card link points to its present definition. An invocation link identifies the particular result you want to share.
+
 ### Generating Cards from Drafts
 
 - The Draft's summary, processing, additional context, ports and the wires around it are given to the Agent, which saves the types, the Nix definition and the source code in one transaction and then checks them by building and running.
