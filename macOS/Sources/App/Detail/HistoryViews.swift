@@ -47,6 +47,7 @@ struct CardExecutionView: View {
   @State private var error: String?
   @State private var loaded = false
   @State private var invocationsRunId: String?
+  @State private var comparing = false
 
   enum Filter: String, CaseIterable, Identifiable {
     case all, succeeded, failed
@@ -86,6 +87,7 @@ struct CardExecutionView: View {
     .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) {
       await loadRuns()
     }
+    .sheet(isPresented: $comparing) { RunComparisonView(session: session, runs: runs, initial: runId) { comparing = false } }
   }
 
   private struct DetailRefresh: Equatable {
@@ -96,6 +98,7 @@ struct CardExecutionView: View {
 
   private var content: some View {
     VStack(spacing: 0) {
+      HStack { Spacer(); Button("実行を比較") { comparing = true }.disabled(runs.count < 2) }.padding(6)
       if session.runActive, let active = session.currentRunId {
         HStack {
           Label(runId == active ? "進行中の実行を表示しています" : "過去の実行を表示しています。別の実行が進行中です。",

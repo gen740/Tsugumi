@@ -70,6 +70,8 @@ await import("./demoReplay")
 await import("./evidence")
 await import('./environments')
 
+await import('./runComparison')
+await import('./untangle')
 await import('./moduleThumbnails')
 await import('./moduleViewer')
 await import('./figurePreview')

@@ -12,7 +12,7 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 
 ## Following results
 
-- **A screen that puts two runs side by side is planned in [#156](https://github.com/gen740/Tsugumi/issues/156).** For now, open each run's history and compare.
+- **Run comparison shows each Card's last invocation.** It uses retained records, so unrecorded inputs, outputs or parameters cannot be recovered from the current document. Large values and version diffs can be shown only in part; the comparison says when this happens.
 - **Links from the Agent's report to the Cards and runs it rests on are planned in [#157](https://github.com/gen740/Tsugumi/issues/157).**
 - **Keeping each Card's build result (store path) in the run's record is planned in [#158](https://github.com/gen740/Tsugumi/issues/158).** For now, the environment can be traced from the run's commit (which includes `pkgsPath` and `default.nix`).
 - **Partial runs use saved inputs.** After changing something upstream, finish by running the whole Workflow ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)).

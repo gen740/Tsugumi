@@ -10,6 +10,7 @@ struct LogTimelinePanel: View {
   let tab: WorkflowTab
   @State private var runs: [Tsugumi_RPC_RunSummaryT] = []
   @State private var runId: String?
+  @State private var comparing = false
 
   var body: some View {
     if workspace.bottomPanel == .terminal {
@@ -39,6 +40,7 @@ struct LogTimelinePanel: View {
           .frame(maxWidth: 240)
         }
         Spacer()
+        Button("実行を比較") { comparing = true }.disabled(runs.count < 2)
         Button { workspace.showBottom = false } label: { Image(systemName: "xmark").font(.caption) }
           .buttonStyle(.borderless).help("閉じる（下部のアイコンでも開閉できます）")
       }
@@ -66,6 +68,7 @@ struct LogTimelinePanel: View {
       }
     }
     .task(id: session.lastFinished) { await loadRuns() }
+    .sheet(isPresented: $comparing) { RunComparisonView(session: session, runs: runs, initial: runId) { comparing = false } }
     .onChange(of: session.runStatus?.runId) { _, id in
       if let id {
         runId = id

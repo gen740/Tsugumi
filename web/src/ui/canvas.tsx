@@ -474,6 +474,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
       { label: L('整列'), action: () => session.arrange(scope) },
+      { label: L('配線の交差を減らす'), action: () => session.untangle(scope) },
       tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
   }
@@ -851,6 +852,9 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
     get(session.displayFrame(k), 'hidden') === true && {
       label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
+    },
+    [...targets].some((t) => session.hasPortOrder(t)) && {
+      label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
     {
       label: L('グループ化（見た目だけ）'), action: () => {
