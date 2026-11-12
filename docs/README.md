@@ -10,6 +10,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
 | [Usage.md](Usage.md) | Getting started by following a demo's guide, and the operations you use most |
 | [CardGuide.md](CardGuide.md) | Your first Card: a Card that takes an input and computes, written in Python, bash, C++, R and Julia |
+| [CSharp.md](CSharp.md) | C# typed ports, Tasks, NuGet dependencies and the .NET worker lifetime |
 | [Visualization.md](Visualization.md) | Editable library/shape scaffolds, data parameters, saved figures and reports |
 | [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
 | [WebUI.md](WebUI.md) | The same screens in the browser (the `tsugumi` command: the shared VM on a Mac, bubblewrap on Linux, WSL on Windows) |

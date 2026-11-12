@@ -1,0 +1,4 @@
+namespace sample;
+table Numbers { values:[double]; label:string; }
+table Outputs { numbers:Numbers (required); }
+root_type Outputs;

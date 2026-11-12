@@ -43,7 +43,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, input, draft, trigger, fork, branch, merge, logger
+  case python, cpp, csharp, input, draft, trigger, fork, branch, merge, logger
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
   case matplotlib = "visualization_matplotlib"
@@ -60,6 +60,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .draft: return String(localized: "Draft（未実装の計画）")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
+    case .csharp: return String(localized: "C# の処理")
     case .input: return String(localized: "入力値")
     case .switchCard: return String(localized: "スイッチ")
     case .trigger: return String(localized: "開始")
@@ -69,12 +70,12 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
+  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? ([.python, .cpp, .csharp].contains(self) ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
     case .matplotlib, .plotly, .altair: return "visualization"
-    case .python, .cpp: return "card"
+    case .python, .cpp, .csharp: return "card"
     case .trigger: return "start"
     default: return rawValue
     }
@@ -1300,6 +1301,10 @@ extension ProjectSession {
     let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
     func set(_ card: JSONValue, meta: JSONValue? = nil) { setCardDefinition(k, DefinitionDraft(card: card, meta: meta)) }
     switch t {
+    case .csharp:
+      let files = CSharpTemplate.files
+      set(try! JSONValue.parse(files["_card.json"]!))
+      for (file, text) in files where file != "_card.json" { putSource(dir + file, text) }
     case .matplotlib, .plotly, .altair:
       let files = VisualizationTemplates.files(t)!
       set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))

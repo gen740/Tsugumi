@@ -818,7 +818,7 @@ export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem
     label: L('可視化'),
     submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
   }
-  return [item('python'), item('cpp'), item('draft'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
+  return [item('python'), item('cpp'), item('csharp'), item('draft'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
 }
 export { templateIcon }
 
